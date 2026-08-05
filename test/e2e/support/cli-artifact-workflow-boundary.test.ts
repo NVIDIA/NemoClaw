@@ -71,7 +71,11 @@ type RestoreFixtureOptions = {
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
-  preexistingDist?: "dangling-symlink" | "directory" | "plugin-directory";
+  preexistingDist?:
+    | "dangling-symlink"
+    | "directory"
+    | "plugin-directory"
+    | "symlinked-plugin-parent";
 };
 
 type ArchiveFixtureContext = {
@@ -192,10 +196,18 @@ function writePreexistingPluginDistDirectory(workspace: string): void {
   fs.writeFileSync(path.join(shared, "existing.cjs"), "module.exports = {};\n");
 }
 
+function writeSymlinkedPluginParent(workspace: string): void {
+  const escaped = path.join(path.dirname(workspace), "escaped");
+  fs.rmSync(path.join(workspace, "nemoclaw"), { force: true, recursive: true });
+  fs.mkdirSync(escaped);
+  fs.symlinkSync(escaped, path.join(workspace, "nemoclaw"), "dir");
+}
+
 const PREEXISTING_DIST_WRITERS = {
   "dangling-symlink": writeDanglingDistSymlink,
   directory: writePreexistingDistDirectory,
   "plugin-directory": writePreexistingPluginDistDirectory,
+  "symlinked-plugin-parent": writeSymlinkedPluginParent,
 
   none: () => undefined,
 } satisfies Record<
@@ -508,6 +520,23 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           "utf8",
         ),
       ).toBe("module.exports = {};\n");
+      expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects a symlinked shared-boundary parent without escaping the workspace (#7915)", () => {
+    const fixture = runRestoreValidation({ preexistingDist: "symlinked-plugin-parent" });
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain(
+        "consumer nemoclaw directory must be a non-symlink directory",
+      );
+      expect(fs.lstatSync(path.join(fixture.workspace, "nemoclaw")).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(path.join(path.dirname(fixture.workspace), "escaped", "dist"))).toBe(
+        false,
+      );
       expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
     } finally {
       fixture.cleanup();

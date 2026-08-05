@@ -33,7 +33,7 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "0da26d1e8732a185271319888a5f7716596c315d78e5871c7e4125a298839741";
+  "9c463207f5d69db9f8e5b380c9ede2541d00bd6f5484de955f4593bca0069f14";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
@@ -164,6 +164,8 @@ export function validateCliArtifactRestoreAction(
     '*) echo "::error::CLI artifact contains an unsafe member',
     "CLI artifact contains a link or special file",
     '[[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]]',
+    '[[ -d "$GITHUB_WORKSPACE/nemoclaw" && ! -L "$GITHUB_WORKSPACE/nemoclaw" ]]',
+
     '[[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]]',
 
     'restore_dir="$(mktemp -d',

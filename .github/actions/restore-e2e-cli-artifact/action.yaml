@@ -158,6 +158,9 @@ runs:
           { echo "::error::CLI artifact contains a link or special file"; exit 1; }
         [[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]] ||
           { echo "::error::consumer unexpectedly built dist before artifact restore"; exit 1; }
+        [[ -d "$GITHUB_WORKSPACE/nemoclaw" && ! -L "$GITHUB_WORKSPACE/nemoclaw" ]] ||
+          { echo "::error::consumer nemoclaw directory must be a non-symlink directory"; exit 1; }
+
         [[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]] ||
           { echo "::error::consumer unexpectedly built shared boundaries before artifact restore"; exit 1; }
         restore_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-cli-restore.XXXXXX")"
