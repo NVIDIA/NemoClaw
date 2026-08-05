@@ -346,7 +346,7 @@ function normalizePersistedCredentialBindings(
     networkPolicy: { presets: [], entries: [] },
     agentRender: [],
     buildSteps: [],
-    runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
   };
@@ -426,7 +426,6 @@ function normalizeRuntimeSetup(
 ): SandboxMessagingRuntimeSetupPlan {
   return {
     nodePreloads: Array.isArray(setup?.nodePreloads) ? [...setup.nodePreloads] : [],
-    commandRoutes: Array.isArray(setup?.commandRoutes) ? [...setup.commandRoutes] : [],
     envAliases: Array.isArray(setup?.envAliases) ? [...setup.envAliases] : [],
     secretScans: Array.isArray(setup?.secretScans) ? [...setup.secretScans] : [],
   };

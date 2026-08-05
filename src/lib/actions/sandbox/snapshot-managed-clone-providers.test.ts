@@ -106,7 +106,7 @@ function messagingPlan(sandboxName: string): SandboxMessagingPlan {
     networkPolicy: { presets: [], entries: [] },
     agentRender: [],
     buildSteps: [],
-    runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
   } as unknown as SandboxMessagingPlan;

@@ -236,7 +236,6 @@ function isRuntimeSetup(value: unknown): boolean {
   return (
     isObjectRecord(value) &&
     Array.isArray(value.nodePreloads) &&
-    isOptionalObjectArray(value, "commandRoutes") &&
     Array.isArray(value.envAliases) &&
     Array.isArray(value.secretScans) &&
     value.nodePreloads.every(isObjectRecord) &&
@@ -269,7 +268,7 @@ function hasCanonicalNetworkPolicyReferences(value: unknown): boolean {
 function hasCanonicalRuntimeSetupReferences(value: unknown): boolean {
   if (value === undefined) return true;
   if (!isObjectRecord(value)) return false;
-  return ["nodePreloads", "commandRoutes", "envAliases", "secretScans"].every((field) =>
+  return ["nodePreloads", "envAliases", "secretScans"].every((field) =>
     hasCanonicalChannelReferences(value[field]),
   );
 }

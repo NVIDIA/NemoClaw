@@ -745,7 +745,6 @@ describe("MessagingWorkflowPlanner", () => {
         ).toBe(true);
         expect(disabledRebuild?.runtimeSetup).toEqual({
           nodePreloads: [],
-          commandRoutes: [],
           envAliases: [],
           secretScans: [],
         });

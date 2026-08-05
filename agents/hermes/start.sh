@@ -1781,9 +1781,6 @@ TUIENVEOF
     if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
       emit_messaging_connect_runtime_preload_exports
     fi
-    if type emit_messaging_connect_runtime_command_router >/dev/null 2>&1; then
-      emit_messaging_connect_runtime_command_router
-    fi
     for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
@@ -1793,7 +1790,7 @@ TUIENVEOF
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
 hermes() {
-  case "${1:-}" in
+  case "$1" in
     setup|doctor)
       echo "Error: 'hermes $1' cannot modify config inside the sandbox." >&2
       echo "NemoClaw manages sandbox config from the host for integrity checks." >&2
@@ -1803,14 +1800,6 @@ hermes() {
       return 1
       ;;
   esac
-  if type _nemoclaw_messaging_runtime_command_module >/dev/null 2>&1; then
-    local _nemoclaw_runtime_module
-    _nemoclaw_runtime_module="$(_nemoclaw_messaging_runtime_command_module hermes "$@")" || return $?
-    if [ -n "$_nemoclaw_runtime_module" ]; then
-      /usr/local/bin/node "$_nemoclaw_runtime_module"
-      return $?
-    fi
-  fi
   command hermes "$@"
 }
 # nemoclaw-configure-guard end

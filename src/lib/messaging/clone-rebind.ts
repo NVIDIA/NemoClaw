@@ -126,7 +126,7 @@ export function rebindSandboxMessagingPlanForClone(
     networkPolicy: { presets: [], entries: [] },
     agentRender: [],
     buildSteps: [],
-    runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
   } as const;

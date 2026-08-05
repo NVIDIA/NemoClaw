@@ -826,10 +826,10 @@ PY
 
 # ── Messaging runtime setup from manifest metadata ───────────────
 # Channel-owned runtime setup is compiled from manifests at image build time.
-# Both agent entrypoints consume the same generic declarations: commandRoutes,
-# envAliases, nodePreloads, and secretScans. Prefer a forwarded env plan when
-# present; otherwise load the reduced image artifact written by the messaging
-# build applier.
+# Both agent entrypoints consume the same generic declarations: envAliases,
+# nodePreloads, and secretScans. Prefer a forwarded env plan when present;
+# otherwise load the reduced image artifact written by the messaging build
+# applier.
 _MESSAGING_RUNTIME_PLAN_ARTIFACT="${NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH:-/usr/local/share/nemoclaw/messaging-runtime-plan.json}"
 _MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"
 _MESSAGING_CONNECT_PRELOADS_FILE="/tmp/nemoclaw-messaging-connect-preloads.list"
@@ -842,11 +842,10 @@ import os
 import re
 import sys
 
-EMPTY = {"nodePreloads": [], "commandRoutes": [], "envAliases": [], "secretScans": []}
+EMPTY = {"nodePreloads": [], "envAliases": [], "secretScans": []}
 PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"
 PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
-COMMAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def fail(message):
@@ -940,38 +939,6 @@ def clean_node_preload(entry, index):
         "optional": optional,
         "installMessage": clean_message(entry.get("installMessage"), f"nodePreloads[{index}].installMessage"),
         "installedMessage": clean_message(entry.get("installedMessage"), f"nodePreloads[{index}].installedMessage"),
-    }
-
-
-def clean_command_route(entry, index):
-    if not isinstance(entry, dict):
-        fail(f"commandRoutes[{index}] must be an object")
-    command = clean_string(entry.get("command"), f"commandRoutes[{index}].command")
-    if not COMMAND_RE.match(command):
-        fail(f"commandRoutes[{index}].command is not a safe command name")
-    args = entry.get("args")
-    if not isinstance(args, list) or not args:
-        fail(f"commandRoutes[{index}].args must be a non-empty list")
-    clean_args = [
-        clean_string(value, f"commandRoutes[{index}].args[{arg_index}]")
-        for arg_index, value in enumerate(args)
-    ]
-    module = clean_string(entry.get("module"), f"commandRoutes[{index}].module")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", module):
-        fail(f"commandRoutes[{index}].module is not a safe module name")
-    source = clean_preload_path(
-        entry.get("source"),
-        f"commandRoutes[{index}].source",
-        PRELOAD_SOURCE_PREFIX,
-        "runtime JavaScript file",
-    )
-    if source != f"{PRELOAD_SOURCE_PREFIX}{module}.js":
-        fail(f"commandRoutes[{index}].source does not match its module")
-    return {
-        "command": command,
-        "args": clean_args,
-        "module": module,
-        "source": source,
     }
 
 
@@ -1078,11 +1045,9 @@ def runtime_setup_entries(key):
 
 
 node_preloads = []
-command_routes = []
 env_aliases = []
 secret_scans = []
 seen_node_preloads = set()
-seen_command_routes = set()
 seen_aliases = set()
 seen_scans = set()
 
@@ -1092,13 +1057,6 @@ for entry in runtime_setup_entries("nodePreloads"):
     if preload_key not in seen_node_preloads:
         seen_node_preloads.add(preload_key)
         node_preloads.append(preload)
-for entry in runtime_setup_entries("commandRoutes"):
-    route = clean_command_route(entry, len(command_routes))
-    route_key = (route["command"], tuple(route["args"]))
-    if route_key in seen_command_routes:
-        fail(f"commandRoutes contains duplicate route {route['command']} {route['args']!r}")
-    seen_command_routes.add(route_key)
-    command_routes.append(route)
 for entry in runtime_setup_entries("envAliases"):
     alias = clean_env_alias(entry, len(env_aliases))
     alias_key = (alias["envKey"], alias["match"], alias["value"])
@@ -1112,7 +1070,7 @@ for entry in runtime_setup_entries("secretScans"):
         seen_scans.add(scan_key)
         secret_scans.append(scan)
 
-print(json.dumps({"nodePreloads": node_preloads, "commandRoutes": command_routes, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
+print(json.dumps({"nodePreloads": node_preloads, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
 PYMESSAGINGRUNTIME
 }
 
@@ -1241,73 +1199,6 @@ if [ -f "$_MESSAGING_CONNECT_PRELOADS_FILE" ]; then
   done < "$_MESSAGING_CONNECT_PRELOADS_FILE"
 fi
 CONNECTPRELOADSEOF
-}
-
-emit_messaging_connect_runtime_command_router() {
-  cat <<CONNECTCOMMANDSEOF
-_nemoclaw_messaging_runtime_command_module() {
-  /usr/bin/python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" "\$@" <<'PYMESSAGINGCOMMAND'
-import json
-import os
-import re
-import stat
-import sys
-
-
-def fail(message):
-    print(f"[channels] Refusing messaging runtime command: {message}", file=sys.stderr)
-    raise SystemExit(1)
-
-
-plan_path = sys.argv[1]
-command = sys.argv[2] if len(sys.argv) > 2 else ""
-args = sys.argv[3:]
-if not os.path.isfile(plan_path):
-    raise SystemExit(0)
-try:
-    if os.path.getsize(plan_path) > 4 * 1024 * 1024:
-        fail("runtime setup plan is oversized")
-    with open(plan_path, encoding="utf-8") as handle:
-        plan = json.load(handle)
-except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-    fail(f"runtime setup plan is unreadable ({exc.__class__.__name__})")
-if not isinstance(plan, dict):
-    fail("runtime setup plan is not an object")
-
-matches = []
-routes = plan.get("commandRoutes", [])
-if not isinstance(routes, list):
-    fail("commandRoutes is not a list")
-for index, route in enumerate(routes):
-    if not isinstance(route, dict):
-        fail(f"commandRoutes[{index}] is not an object")
-    if route.get("command") != command or route.get("args") != args:
-        continue
-    source = route.get("source")
-    module = route.get("module")
-    if not isinstance(module, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", module):
-        fail(f"commandRoutes[{index}].module is invalid")
-    expected = f"/usr/local/lib/nemoclaw/preloads/{module}.js"
-    if source != expected:
-        fail(f"commandRoutes[{index}].source does not match its module")
-    try:
-        source_stat = os.lstat(source)
-    except OSError as exc:
-        fail(f"runtime command module is unavailable ({exc.__class__.__name__})")
-    if (
-        not stat.S_ISREG(source_stat.st_mode)
-        or source_stat.st_uid != 0
-        or source_stat.st_mode & 0o022
-    ):
-        fail("runtime command module is not a root-owned read-only file")
-    matches.append(source)
-if len(matches) > 1:
-    fail("runtime command route is ambiguous")
-if matches:
-    print(matches[0])
-PYMESSAGINGCOMMAND
-}
-CONNECTCOMMANDSEOF
 }
 
 messaging_runtime_preload_targets() {

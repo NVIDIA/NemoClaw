@@ -52,7 +52,6 @@ function reducedArtifact(agent: Agent): string {
               },
             ]
           : [],
-      commandRoutes: [],
       envAliases: [],
       secretScans: [],
     },

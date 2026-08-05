@@ -33,7 +33,7 @@ function messagingRuntimeSetupSection(
   const end = source.indexOf("# ── End messaging runtime setup", start);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
-  const section = source
+  return source
     .slice(start, end)
     .replace(
       '_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"',
@@ -47,17 +47,9 @@ function messagingRuntimeSetupSection(
       'PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"',
       `PRELOAD_TARGET_PREFIX = ${JSON.stringify(preloadPaths.targetPrefix)}`,
     );
-  return preloadPaths.sourcePrefix === "/usr/local/lib/nemoclaw/preloads/"
-    ? section
-    : section
-        .replaceAll("/usr/local/lib/nemoclaw/preloads/", preloadPaths.sourcePrefix)
-        .replace("source_stat.st_uid != 0", "source_stat.st_uid != os.getuid()");
 }
 
-function encodeRuntimePlan(
-  nodePreloads: Array<Record<string, unknown>>,
-  commandRoutes: Array<Record<string, unknown>> = [],
-): string {
+function encodeRuntimePlan(nodePreloads: Array<Record<string, unknown>>): string {
   return Buffer.from(
     JSON.stringify({
       channels: [
@@ -70,7 +62,6 @@ function encodeRuntimePlan(
       disabledChannels: [],
       runtimeSetup: {
         nodePreloads: nodePreloads.map((entry) => ({ channelId: "whatsapp", ...entry })),
-        commandRoutes: commandRoutes.map((entry) => ({ channelId: "whatsapp", ...entry })),
         envAliases: [],
         secretScans: [],
       },
@@ -79,66 +70,6 @@ function encodeRuntimePlan(
 }
 
 describe("Hermes messaging runtime setup", () => {
-  it("runs exact Hermes command routes from the generated connect environment (#8184)", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-command-route-"));
-    const envFile = path.join(tmpDir, "runtime-env.sh");
-    const modulePath = path.join(tmpDir, "whatsapp-pair.js");
-    const markerPath = path.join(tmpDir, "paired.txt");
-    const fallbackPath = path.join(tmpDir, "fallback.txt");
-    const binDir = path.join(tmpDir, "bin");
-    const hermesPath = path.join(binDir, "hermes");
-    fs.mkdirSync(binDir);
-    fs.writeFileSync(
-      modulePath,
-      `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "paired");\n`,
-    );
-    fs.writeFileSync(
-      hermesPath,
-      `#!/bin/sh\nprintf '%s\\n' "$*" >${JSON.stringify(fallbackPath)}\n`,
-      { mode: 0o755 },
-    );
-
-    try {
-      const result = spawnSync(
-        "bash",
-        [
-          "--noprofile",
-          "--norc",
-          "-c",
-          [
-            "set -euo pipefail",
-            'emit_sandbox_sourced_file() { cat >"$1"; chmod 444 "$1"; }',
-            `emit_messaging_connect_runtime_command_router() { printf '%s\n' '_nemoclaw_messaging_runtime_command_module() {' '  if [ "$#" -eq 2 ] && [ "$1" = hermes ] && [ "$2" = whatsapp ]; then' '    printf "%s\\n" ${JSON.stringify(modulePath)}' '  fi' '}'; }`,
-            "emit_messaging_connect_runtime_preload_exports() { :; }",
-            `_PROXY_ENV_FILE=${JSON.stringify(envFile)}`,
-            '_PROXY_URL="http://10.200.0.1:3128"',
-            '_NO_PROXY_VAL="localhost,127.0.0.1"',
-            `HERMES_DIR=${JSON.stringify(tmpDir)}`,
-            runtimeShellEnvFunction(HERMES_START).replace(
-              "/usr/local/bin/node",
-              JSON.stringify(process.execPath),
-            ),
-            "write_runtime_shell_env",
-            `source ${JSON.stringify(envFile)}`,
-            "hermes whatsapp",
-            "hermes whatsapp --repair",
-          ].join("\n"),
-        ],
-        {
-          encoding: "utf8",
-          timeout: 5000,
-          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
-        },
-      );
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(markerPath, "utf8")).toBe("paired");
-      expect(fs.readFileSync(fallbackPath, "utf8")).toBe("whatsapp --repair\n");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("installs the active WhatsApp preload and rewrites the Hermes bridge session path (#8229)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-plan-"));
     const sourceDir = path.join(tmpDir, "preloads");
@@ -147,8 +78,6 @@ describe("Hermes messaging runtime setup", () => {
     const targetPrefix = path.join(tmpDir, "nemoclaw-");
     const targetPath = `${targetPrefix}whatsapp-hermes-session.js`;
     const planPath = path.join(tmpDir, "runtime-plan.json");
-    const commandRouterPath = path.join(tmpDir, "command-router.sh");
-    const resolvedCommandPath = path.join(tmpDir, "resolved-command.txt");
     const runtimeSourcePath = path.join(
       ROOT,
       "src",
@@ -184,9 +113,6 @@ describe("Hermes messaging runtime setup", () => {
             }),
             "write_messaging_runtime_setup_plan",
             "install_messaging_runtime_preloads",
-            `emit_messaging_connect_runtime_command_router >${JSON.stringify(commandRouterPath)}`,
-            `source ${JSON.stringify(commandRouterPath)}`,
-            `_nemoclaw_messaging_runtime_command_module hermes whatsapp >${JSON.stringify(resolvedCommandPath)}`,
             "node -e 'process.stdout.write(JSON.stringify(process.argv))' /sandbox/.hermes/scripts/whatsapp-bridge/bridge.js --session /tmp/split-session",
           ].join("\n"),
         ],
@@ -196,24 +122,14 @@ describe("Hermes messaging runtime setup", () => {
           env: {
             ...process.env,
             NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: path.join(tmpDir, "missing.json"),
-            NEMOCLAW_MESSAGING_PLAN_B64: encodeRuntimePlan(
-              [
-                {
-                  source: sourcePath,
-                  target: targetPath,
-                  injectInto: ["boot", "connect"],
-                  optional: false,
-                },
-              ],
-              [
-                {
-                  command: "hermes",
-                  args: ["whatsapp"],
-                  module: "whatsapp-hermes-session",
-                  source: sourcePath,
-                },
-              ],
-            ),
+            NEMOCLAW_MESSAGING_PLAN_B64: encodeRuntimePlan([
+              {
+                source: sourcePath,
+                target: targetPath,
+                injectInto: ["boot", "connect"],
+                optional: false,
+              },
+            ]),
             NODE_OPTIONS: "",
           },
         },
@@ -227,15 +143,6 @@ describe("Hermes messaging runtime setup", () => {
         "/sandbox/.hermes/platforms/whatsapp/session",
       ]);
       expect(fs.readFileSync(targetPath, "utf-8")).toBe(fs.readFileSync(sourcePath, "utf-8"));
-      expect(fs.readFileSync(resolvedCommandPath, "utf8").trim()).toBe(sourcePath);
-      expect(JSON.parse(fs.readFileSync(planPath, "utf8")).commandRoutes).toEqual([
-        {
-          command: "hermes",
-          args: ["whatsapp"],
-          module: "whatsapp-hermes-session",
-          source: sourcePath,
-        },
-      ]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

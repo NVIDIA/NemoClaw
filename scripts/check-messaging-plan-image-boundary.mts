@@ -127,7 +127,6 @@ export function createMessagingBoundaryPlan(agent: unknown) {
       ],
       runtimeSetup: {
         nodePreloads: [OPENCLAW_RUNTIME_PRELOAD],
-        commandRoutes: [],
         envAliases: [],
         secretScans: [],
       },
@@ -176,7 +175,7 @@ export function createMessagingBoundaryPlan(agent: unknown) {
         value: { manager: "hermes-uv-pip", spec: HERMES_AIOHTTP_PACKAGE_SPEC },
       },
     ],
-    runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
   };
 }
 
@@ -314,7 +313,6 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
   if (
     !isObject(runtimeSetup) ||
     !Array.isArray(runtimeSetup.nodePreloads) ||
-    !Array.isArray(runtimeSetup.commandRoutes) ||
     !Array.isArray(runtimeSetup.envAliases) ||
     !Array.isArray(runtimeSetup.secretScans)
   ) {
@@ -322,7 +320,7 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
   }
   assertAllowedKeys(
     runtimeSetup,
-    ["nodePreloads", "commandRoutes", "envAliases", "secretScans"],
+    ["nodePreloads", "envAliases", "secretScans"],
     "reduced runtime plan runtimeSetup",
   );
   assertRuntimeSetupEntryAllowlist(
@@ -339,11 +337,6 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
     "nodePreloads",
   );
   assertRuntimeSetupEntryAllowlist(
-    runtimeSetup.commandRoutes,
-    ["channelId", "command", "args", "module", "source"],
-    "commandRoutes",
-  );
-  assertRuntimeSetupEntryAllowlist(
     runtimeSetup.envAliases,
     ["channelId", "envKey", "match", "value", "message"],
     "envAliases",
@@ -353,11 +346,7 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
     ["channelId", "path", "pattern", "message", "exitCode"],
     "secretScans",
   );
-  if (
-    runtimeSetup.commandRoutes.length !== 0 ||
-    runtimeSetup.envAliases.length !== 0 ||
-    runtimeSetup.secretScans.length !== 0
-  ) {
+  if (runtimeSetup.envAliases.length !== 0 || runtimeSetup.secretScans.length !== 0) {
     throw new Error("reduced runtime plan contains unexpected Teams runtime setup entries");
   }
   if (agent === "openclaw") {

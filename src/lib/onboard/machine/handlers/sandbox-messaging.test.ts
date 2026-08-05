@@ -75,7 +75,6 @@ function mixedChannelPlan(): SandboxMessagingPlan {
         source: "manifest",
         target: "agent",
       })),
-      commandRoutes: [],
       envAliases: channelIds.map((channelId) => ({
         channelId,
         envKey: `${channelId.toUpperCase()}_TOKEN`,

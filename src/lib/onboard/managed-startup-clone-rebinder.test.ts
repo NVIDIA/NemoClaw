@@ -56,7 +56,7 @@ function messagingPlan(agent: "openclaw" | "hermes", sandboxName = "source"): Sa
     networkPolicy: { presets: [], entries: [] },
     agentRender: [],
     buildSteps: [],
-    runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
   };

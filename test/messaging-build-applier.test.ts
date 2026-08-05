@@ -411,15 +411,6 @@ describe("messaging-build-applier.mts: agent-install", () => {
             installedMessage: "[channels] installed telegram diagnostics",
           },
         ],
-        commandRoutes: [
-          {
-            channelId: "telegram",
-            command: "hermes",
-            args: ["diagnose-telegram"],
-            module: "telegram-diagnostics",
-            source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
-          },
-        ],
         envAliases: [],
         secretScans: [],
       },
@@ -471,15 +462,6 @@ describe("messaging-build-applier.mts: agent-install", () => {
               target: "/tmp/nemoclaw-telegram-diagnostics.js",
               injectInto: ["boot", "connect"],
               optional: false,
-            },
-          ],
-          commandRoutes: [
-            {
-              channelId: "telegram",
-              command: "hermes",
-              args: ["diagnose-telegram"],
-              module: "telegram-diagnostics",
-              source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
             },
           ],
           envAliases: [],

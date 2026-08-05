@@ -825,12 +825,7 @@ describe("ManifestCompiler", () => {
       "telegram-gateway-conflict-status",
       "telegram-status-health",
     ]);
-    expect(plan.runtimeSetup).toEqual({
-      nodePreloads: [],
-      commandRoutes: [],
-      envAliases: [],
-      secretScans: [],
-    });
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
     expect(plan.agentRender).toEqual([]);
@@ -1287,12 +1282,7 @@ describe("ManifestCompiler", () => {
       "telegram-gateway-conflict-status",
       "telegram-status-health",
     ]);
-    expect(plan.runtimeSetup).toEqual({
-      nodePreloads: [],
-      commandRoutes: [],
-      envAliases: [],
-      secretScans: [],
-    });
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
   });
 
   it("compiles a non-built-in channel manifest through the same generic path", async () => {

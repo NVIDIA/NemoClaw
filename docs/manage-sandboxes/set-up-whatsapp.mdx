@@ -23,14 +23,9 @@ openclaw channels login --channel whatsapp
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-In the NemoClaw-managed connect shell, run:
 ```bash
 hermes whatsapp
 ```
-This command opens QR pairing directly at `/sandbox/.hermes/platforms/whatsapp/session`.
-It reads the WhatsApp mode and sender allowlist from the NemoClaw-managed `/sandbox/.hermes/.env` file without modifying that file.
-Pairing therefore does not cause configuration drift during later host-side `config set --restart` operations or gateway restarts.
-This route applies only to the managed connect shell; direct Hermes executable invocation uses upstream behavior.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">

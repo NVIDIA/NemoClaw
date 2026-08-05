@@ -180,7 +180,7 @@ Important plan sections are:
 | `networkPolicy` | `manifest.policyPresets`. | Policy application during onboard and channel lifecycle changes. |
 | `agentRender` | `manifest.render` after template and credential placeholder resolution. | Host config applier and build-time config applier. |
 | `buildSteps` | `manifest.agentPackages` and hook outputs of kind `build-arg`, `build-file`, or `package-install`. | Image build and post-agent-install application. |
-| `runtimeSetup` | `manifest.runtime`. | Runtime preload, exact command route, env alias, secret scan, and reduced runtime artifact generation. |
+| `runtimeSetup` | `manifest.runtime`. | Runtime preload, env alias, secret scan, and reduced runtime artifact generation. |
 | `stateUpdates` | Config inputs with `statePath`. | Registry persistence and rebuild hydration. |
 | `healthChecks` | Health-check hook declarations. | Lifecycle success gates. |
 
@@ -293,7 +293,7 @@ It is a serializable declaration for one channel and one set of supported agents
 | `policyPresets` | Optional network policy presets and policy keys required by the channel. |
 | `render` | Agent config fragments or env-file lines to render when the channel is active. |
 | `hostForward` | Optional host-side forward for inbound webhooks. |
-| `runtime` | Optional runtime visibility, preload, exact command route, env alias, and secret scan metadata. |
+| `runtime` | Optional runtime visibility, preload, env alias, and secret scan metadata. |
 | `agentPackages` | Optional build-time agent package installs. |
 | `hooks` | Hook references for enrollment, checks, render, apply, status, and diagnostics. |
 

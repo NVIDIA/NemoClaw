@@ -622,7 +622,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
     });
 
@@ -652,7 +652,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
     });
 
@@ -687,7 +687,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
     });
 
@@ -716,7 +716,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
       hashFileContent,
     });

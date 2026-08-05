@@ -3,11 +3,9 @@
 
 import type {
   ChannelManifest,
-  ChannelRuntimeCommandRouteSpec,
   ChannelRuntimeNodePreloadSpec,
   MessagingAgentId,
   SandboxMessagingChannelPlan,
-  SandboxMessagingRuntimeCommandRoutePlan,
   SandboxMessagingRuntimeEnvAliasPlan,
   SandboxMessagingRuntimeNodePreloadPlan,
   SandboxMessagingRuntimeSecretScanPlan,
@@ -17,7 +15,6 @@ import type {
 const PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/";
 const PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-";
 const NODE_PRELOAD_MODULE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 export function planRuntimeSetup(
   manifests: readonly ChannelManifest[],
@@ -30,7 +27,6 @@ export function planRuntimeSetup(
       .map((channel) => channel.channelId),
   );
   const nodePreloads: SandboxMessagingRuntimeNodePreloadPlan[] = [];
-  const commandRoutes: SandboxMessagingRuntimeCommandRoutePlan[] = [];
   const envAliases: SandboxMessagingRuntimeEnvAliasPlan[] = [];
   const secretScans: SandboxMessagingRuntimeSecretScanPlan[] = [];
 
@@ -40,9 +36,6 @@ export function planRuntimeSetup(
     if (!runtime) continue;
     nodePreloads.push(
       ...(runtime.nodePreloads ?? []).map((entry) => resolveNodePreload(manifest, entry)),
-    );
-    commandRoutes.push(
-      ...(runtime.commandRoutes ?? []).map((entry) => resolveCommandRoute(manifest, entry)),
     );
     envAliases.push(
       ...(runtime.envAliases ?? []).map((entry) => ({
@@ -58,33 +51,7 @@ export function planRuntimeSetup(
     );
   }
 
-  return { nodePreloads, commandRoutes, envAliases, secretScans };
-}
-
-function resolveCommandRoute(
-  manifest: ChannelManifest,
-  entry: ChannelRuntimeCommandRouteSpec,
-): SandboxMessagingRuntimeCommandRoutePlan {
-  if (!COMMAND_NAME_PATTERN.test(entry.command)) {
-    throw new Error(
-      `Channel manifest '${manifest.id}' declares invalid runtime command '${entry.command}'.`,
-    );
-  }
-  if (!NODE_PRELOAD_MODULE_PATTERN.test(entry.module)) {
-    throw new Error(
-      `Channel manifest '${manifest.id}' declares invalid runtime command module '${entry.module}'.`,
-    );
-  }
-  if (entry.args.length === 0 || entry.args.some((arg) => !arg || /[\0\r\n\t]/.test(arg))) {
-    throw new Error(
-      `Channel manifest '${manifest.id}' declares invalid runtime command arguments.`,
-    );
-  }
-  return {
-    channelId: manifest.id,
-    ...entry,
-    source: `${PRELOAD_SOURCE_PREFIX}${entry.module}.js`,
-  };
+  return { nodePreloads, envAliases, secretScans };
 }
 
 function resolveNodePreload(

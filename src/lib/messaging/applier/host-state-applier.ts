@@ -119,7 +119,6 @@ function mergeRuntimeSetup(
 ): SandboxMessagingRuntimeSetupPlan {
   return {
     nodePreloads: mergeByChannelId(existing?.nodePreloads ?? [], incoming?.nodePreloads ?? []),
-    commandRoutes: mergeByChannelId(existing?.commandRoutes ?? [], incoming?.commandRoutes ?? []),
     envAliases: mergeByChannelId(existing?.envAliases ?? [], incoming?.envAliases ?? []),
     secretScans: mergeByChannelId(existing?.secretScans ?? [], incoming?.secretScans ?? []),
   };
