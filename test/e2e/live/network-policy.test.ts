@@ -22,6 +22,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { classifyClawHubInstallAttempt } from "../support/clawhub-install-retry.ts";
 import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
 import {
@@ -51,6 +52,9 @@ const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =
   process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 5_000 : 3_000;
 const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const CLAWHUB_INSTALL_ATTEMPTS =
+  process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const CLAWHUB_INSTALL_RETRY_DELAY_MS = 10_000;
 const DENIED_REASON_HOST = "nemoclaw-prr-repro-long-hostname-for-truncation-test.example.invalid";
 const DENIED_REASON_ENDPOINT = `${DENIED_REASON_HOST}:443`;
 const DENIED_REASON_URL = `https://${DENIED_REASON_HOST}/some/long/path`;
@@ -179,14 +183,29 @@ async function curlStatus(
 }
 
 async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
-  const install = await sandboxBash(
-    sandbox,
-    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/sherpa-onnx-tts@2026.6.8' 2>&1",
-    {
-      artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    },
-  );
+  let install: ShellProbeResult | undefined;
+  for (let attempt = 1; attempt <= CLAWHUB_INSTALL_ATTEMPTS; attempt += 1) {
+    install = await sandboxBash(
+      sandbox,
+      "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/sherpa-onnx-tts@2026.6.8' 2>&1",
+      {
+        artifactName:
+          attempt === 1
+            ? "tc-net-restricted-clawhub-scoped-plugin-install"
+            : `tc-net-restricted-clawhub-scoped-plugin-install-attempt-${attempt}`,
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    const disposition = classifyClawHubInstallAttempt(
+      install.exitCode,
+      text(install),
+      attempt,
+      CLAWHUB_INSTALL_ATTEMPTS,
+    );
+    if (disposition !== "retry") break;
+    await sleep(CLAWHUB_INSTALL_RETRY_DELAY_MS * attempt);
+  }
+  if (!install) throw new Error("ClawHub install did not run");
   expect(install.exitCode, text(install)).toBe(0);
 
   const list = await sandboxBash(sandbox, "HOME=/sandbox openclaw plugins list --verbose 2>&1", {
