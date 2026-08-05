@@ -37,13 +37,13 @@ import {
   buildOpenClawFirstTurnLatencyEvidence,
   extractOpenClawAgentPayloadText,
 } from "./agent-turn-latency-helpers.ts";
-import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
-import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
+import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
@@ -145,6 +145,7 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
     env: env(),
     host: input.host,
+    readyText: "gateway connected | idle",
     redactionValues: input.redactionValues,
     sandboxName: SANDBOX_NAME,
   });
