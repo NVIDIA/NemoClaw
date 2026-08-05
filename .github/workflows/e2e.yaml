@@ -2033,6 +2033,270 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  # The trusted plan compiler runs on a standard runner before the protected
+  # job can be assigned. Candidate workflow code is never evaluated; trusted
+  # main compiles the exact candidate's declarative YAML into bounded outputs.
+  llama-cpp-dgx-spark-plan:
+    name: Compile protected llama.cpp DGX Spark plan
+    needs: generate-matrix
+    if: ${{ contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      environment: ${{ steps.plan.outputs.environment }}
+      execution: ${{ steps.plan.outputs.execution }}
+      model_host_path: ${{ steps.plan.outputs.model_host_path }}
+      plan: ${{ steps.plan.outputs.plan }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+      qualification: ${{ steps.plan.outputs.qualification }}
+      runner: ${{ steps.plan.outputs.runner }}
+    steps:
+      - name: Validate trusted llama.cpp plan dispatch
+        env:
+          ACTOR: ${{ github.actor }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
+            echo "::error::Protected llama.cpp planning must run from trusted NVIDIA/NemoClaw main" >&2
+            exit 1
+          }
+          [[ "$ACTOR" == "github-actions[bot]" ]] || {
+            echo "::error::Protected llama.cpp planning requires the trusted controller actor" >&2
+            exit 1
+          }
+          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::Protected llama.cpp planning requires exact PR and base SHAs" >&2
+            exit 1
+          }
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
+            echo "::error::Protected llama.cpp planning requires the exact trusted workflow SHA" >&2
+            exit 1
+          }
+
+      - name: Checkout trusted llama.cpp plan compiler
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact llama.cpp candidate configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          path: .candidate-llama-cpp
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node for trusted llama.cpp plan compilation
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install trusted llama.cpp plan dependencies
+        run: npm ci --ignore-scripts
+
+      - id: plan
+        name: Compile exact candidate llama.cpp qualification plan
+        env:
+          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
+            echo "::error::Protected llama.cpp candidate checkout does not match the exact PR SHA" >&2
+            exit 1
+          }
+          node --experimental-strip-types --no-warnings \
+            scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts \
+            --source-root "$CANDIDATE_ROOT"
+
+  # This explicit-only lane is dormant until a follow-on candidate adds the
+  # YAML activation contract and enables complete protected infrastructure in
+  # the image manifest. Trusted main then proves that exact candidate head.
+  llama-cpp-dgx-spark-qualification:
+    name: Protected llama.cpp on NVIDIA DGX Spark
+    needs: [generate-matrix, llama-cpp-dgx-spark-plan]
+    if: ${{ (contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
+    runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
+    environment:
+      name: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "llama-cpp-dgx-spark-qualification"
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_E2E_SHARD: linux-arm64-gpu-dgx-spark-gb10
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification/evidence.json
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN: ${{ github.workspace }}/.llama-cpp-qualification/plan.json
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY: nemoclaw-llama-cpp-${{ github.run_id }}-${{ github.run_attempt }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      RELEASE_E2E_ACTIVATION_PATH: ci/llama-cpp-dgx-spark-qualification-v1.yaml
+    steps:
+      - name: Validate protected llama.cpp exact-head dispatch
+        env:
+          ACTOR: ${{ github.actor }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
+            echo "::error::Protected llama.cpp qualification must run from trusted NVIDIA/NemoClaw main" >&2
+            exit 1
+          }
+          [[ "$ACTOR" == "github-actions[bot]" ]] || {
+            echo "::error::Protected llama.cpp qualification requires the trusted controller actor" >&2
+            exit 1
+          }
+          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::Protected llama.cpp qualification requires exact PR and base SHAs" >&2
+            exit 1
+          }
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
+            echo "::error::Protected llama.cpp qualification requires the exact trusted workflow SHA" >&2
+            exit 1
+          }
+          [[ "$RUNNER_ARCH_KIND" == "ARM64" ]] || {
+            echo "::error::Protected llama.cpp qualification requires native Linux ARM64" >&2
+            exit 1
+          }
+
+      - name: Checkout trusted llama.cpp qualification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact llama.cpp qualification candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          path: .candidate-llama-cpp
+          fetch-depth: 0
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Set up protected llama.cpp Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver: docker
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Materialize trusted llama.cpp qualification plan
+        env:
+          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          PLAN: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan }}
+          PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
+            echo "::error::Protected llama.cpp candidate checkout does not match the exact PR SHA" >&2
+            exit 1
+          }
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          install -d -m 0700 "$(dirname "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN")"
+          umask 077
+          printf '%s' "$PLAN" > "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN"
+          [[ "sha256:$(sha256sum "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN" | awk '{print $1}')" == "$PLAN_SHA256" ]] || {
+            echo "::error::Protected llama.cpp qualification plan digest changed" >&2
+            exit 1
+          }
+
+      - id: qualify
+        name: Build and qualify exact llama.cpp candidate
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          MODEL_HOST_PATH: ${{ needs.llama-cpp-dgx-spark-plan.outputs.model_host_path }}
+          WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$WORKFLOW_SHA" ]] || {
+            echo "::error::Protected llama.cpp qualification must execute trusted workflow code" >&2
+            exit 1
+          }
+          npx --no-install tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.mts \
+            --base-sha "$BASE_SHA" \
+            --candidate-root "$CANDIDATE_ROOT" \
+            --head-sha "$CHECKOUT_SHA" \
+            --model-host-path "$MODEL_HOST_PATH" \
+            --output "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_EVIDENCE" \
+            --plan "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN" \
+            --plan-sha256 "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN_SHA256" \
+            --registry-name "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --run-id "$GITHUB_RUN_ID" \
+            --workflow-sha "$WORKFLOW_SHA"
+
+      - name: Remove protected llama.cpp qualification resources
+        if: always()
+        shell: bash
+        run: >-
+          npx --no-install tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.mts
+          --cleanup-only
+          --registry-name "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --run-id "$GITHUB_RUN_ID"
+
+      - name: Validate protected llama.cpp evidence
+        shell: bash
+        run: >-
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run
+          --test-path test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts
+
+      - name: Upload protected llama.cpp evidence
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-llama-cpp-dgx-spark-qualification
+          path: e2e-artifacts/live/llama-cpp-dgx-spark-qualification/
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   # This explicit-only lane runs only when the exact candidate includes
   # ci/protected-managed-image-runtime-activation-v1.json. The trusted
   # controller can then qualify that candidate's exact head without executing
@@ -6350,6 +6614,8 @@ jobs:
         cloud-inference,
         gpu-e2e,
         managed-image-multiarch-startup,
+        llama-cpp-dgx-spark-plan,
+        llama-cpp-dgx-spark-qualification,
         managed-image-protected-runtime,
         agent-turn-latency,
         kimi-inference-compat,
