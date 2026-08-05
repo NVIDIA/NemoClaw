@@ -40,7 +40,9 @@ spec:
         retentionDays: 90
     qualification:
       required: true
+      execution: disabled
       profile: dgx-spark-gb10-single
+      recipeRef: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       platform: linux/arm64
       runner: null
       environment: null
