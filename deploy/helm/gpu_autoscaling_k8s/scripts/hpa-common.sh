@@ -626,7 +626,7 @@ hpa_common_enforce_replica_floor() {
   local min="${3:-1}"
   local spec
   spec="$(kubectl get "deployment/${deploy}" -n "${ns}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")"
-  if [[ -z "${spec}" ]] || [[ "${spec}" -lt "${min}" ]]; then
+  if [[ ! "${spec}" =~ ^[0-9]+$ ]] || [[ "${spec}" -lt "${min}" ]]; then
     kubectl patch "deployment/${deploy}" -n "${ns}" \
       --type=merge -p "{\"spec\":{\"replicas\":${min}}}"
   fi

@@ -150,12 +150,27 @@ export KUBECTL_LOG
 
 kubectl() {
   printf '%s\n' "$*" >>"${KUBECTL_LOG}"
-  if [[ "$*" == *"get pods"*"app.kubernetes.io/instance=test-release"* ]]; then
+  if [[ "$*" == *"get deployment/test-agent"* ]]; then
+    printf '%s' "${MOCK_DEPLOYMENT_REPLICAS:-}"
+  elif [[ "$*" == *"get pods"*"app.kubernetes.io/instance=test-release"* ]]; then
     printf 'agent-pod'
   elif [[ "$*" == *"get pods"*"job-name=test-load-job"* ]]; then
     printf 'load-pod'
   fi
 }
+
+: >"${KUBECTL_LOG}"
+MOCK_DEPLOYMENT_REPLICAS=not-a-number \
+  hpa_common_enforce_replica_floor test-namespace test-agent 2
+grep -Fq 'patch deployment/test-agent -n test-namespace --type=merge -p {"spec":{"replicas":2}}' \
+  "${KUBECTL_LOG}" || fail "malformed Deployment replica count did not trigger the replica floor"
+
+: >"${KUBECTL_LOG}"
+MOCK_DEPLOYMENT_REPLICAS=3 \
+  hpa_common_enforce_replica_floor test-namespace test-agent 2
+if grep -Fq 'patch deployment/test-agent' "${KUBECTL_LOG}"; then
+  fail "valid Deployment replica count above the floor triggered a patch"
+fi
 
 RELEASE=test-release CHART_NAME=nemoclaw-gpu \
   hpa_common_clear_stuck_pods test-namespace test-load-job
