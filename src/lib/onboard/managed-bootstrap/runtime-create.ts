@@ -60,6 +60,7 @@ export interface ManagedBootstrapRuntimePatch {
 
 export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly providerId: string;
+  readonly stateRoot: string;
   readonly bootstrapIdentity: string;
   readonly request: ManagedStartupRootApplyRequest;
   readonly image: ManagedBootstrapImageIdentity;

@@ -35,7 +35,7 @@ describe("e2e workflow boundary", () => {
     ).not.toThrow();
   });
 
-  it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
+  it("keeps the live E2E target workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
@@ -125,7 +125,7 @@ describe("e2e workflow boundary", () => {
     ).toEqual({ runLaunchableE2e: false });
     expect(
       evaluateStagingBrevLaunchableDispatch({
-        eventName: "schedule",
+        eventName: "push",
       }),
     ).toEqual({ runLaunchableE2e: false });
     expect(
@@ -155,7 +155,7 @@ describe("e2e workflow boundary", () => {
     };
     workflow["run-name"] = "E2E";
     workflow.on.workflow_dispatch.inputs.include_staging_brev_launchable.default = true;
-    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'schedule' }}";
+    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'push' }}";
     workflow.jobs["staging-brev-launchable-readiness"] = {};
     const dispatchIdentity = workflow.jobs["staging-brev-launchable"]!.steps!.find(
       (step) => step.name === "Record E2E dispatch identity",
@@ -429,7 +429,7 @@ describe("e2e workflow boundary", () => {
       >;
     };
     const generateMatrix = workflow.jobs["generate-matrix"]!;
-    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    generateMatrix.outputs.matrix = "${{ steps.controller_matrix.outputs.matrix }}";
     const [trusted] = generateMatrix.steps.splice(
       generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
       1,
@@ -731,9 +731,7 @@ describe("e2e workflow boundary", () => {
     ];
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
-    expect(portableWorkflow.on?.pull_request?.paths).toEqual(
-      expect.arrayContaining(portableProofInputs),
-    );
+    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
     expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
     expect(inventory.allowedJobs).not.toHaveLength(0);
     expect(inventory.targetToJob.size).toBeGreaterThan(0);
