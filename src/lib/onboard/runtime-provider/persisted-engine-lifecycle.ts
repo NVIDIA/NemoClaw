@@ -152,6 +152,9 @@ const PHASES = new Set<PersistedEngineLifecyclePhase>([
 const PHASE_FILES = ["prepared", "mutation-authorized", "completed"] as const;
 const EXECUTION_LEASE_FILE = "mutation-execution.json";
 const EXECUTION_RECOVERY_FILE = ".mutation-execution-recovery";
+const CURRENT_PROCESS_START_IDENTITY =
+  readMcpLockProcessIdentity(process.pid, true) ??
+  `unverified-self:${String(process.pid)}:${randomUUID()}`;
 const TRANSACTION_PUBLISH_TARGETS = [
   ...PHASE_FILES.map((phase) => `${phase}.json`),
   EXECUTION_LEASE_FILE,
@@ -375,16 +378,17 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-function requireCurrentProcessStartIdentity(): string {
-  const identity = readMcpLockProcessIdentity(process.pid, true);
-  if (!identity) fail("current process start identity is unavailable");
-  return identity;
+function currentProcessStartIdentity(): string {
+  return CURRENT_PROCESS_START_IDENTITY;
 }
 
 function exactExecutionOwnerIsAlive(lease: PersistedEngineLifecycleExecutionLease): boolean {
   if (!processIsAlive(lease.ownerPid)) return false;
   const currentIdentity = readMcpLockProcessIdentity(lease.ownerPid, true);
-  return currentIdentity === null || currentIdentity === lease.ownerStartIdentity;
+  if (currentIdentity !== null) return currentIdentity === lease.ownerStartIdentity;
+  return (
+    lease.ownerPid !== process.pid || lease.ownerStartIdentity === CURRENT_PROCESS_START_IDENTITY
+  );
 }
 
 function currentUid(fallback: number | bigint): bigint {
@@ -743,7 +747,7 @@ export function createFilePersistedEngineLifecycleStore(
       }
       const directory = transactionDirectory(root, transactionId);
       requirePrivateDirectory(directory);
-      const ownerStartIdentity = requireCurrentProcessStartIdentity();
+      const ownerStartIdentity = currentProcessStartIdentity();
       const lease = normalizeExecutionLease({
         schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
         transactionId,
