@@ -1,16 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
-
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
 import {
+  type FakeMcpHttpsServer,
   type FakeMcpRequest,
   HERMES_DEFERRED_TOOL_SEARCH_MISS,
   type StartedHttpServer,
   startCompatibleMock,
 } from "../live/mcp-bridge-servers.ts";
 import {
+  assertAuthenticatedMcpDiscoveryWithOneRestart,
   hasSuccessfulAuthenticatedMcpDiscovery,
+  shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
 } from "../live/mcp-bridge-tool-discovery.ts";
 
@@ -216,6 +219,91 @@ describe("authenticated MCP tool discovery transport retry", () => {
   });
 });
 
+describe("authenticated MCP discovery restart retry", () => {
+  it("retries when no request reached the fixture", () => {
+    expect(shouldRetryMcpDiscoveryAfterRestart([])).toBe(true);
+  });
+
+  it("does not retry after the fixture received a request", () => {
+    expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);
+  });
+
+  it("restarts once and retries discovery when no request reached the fixture", async () => {
+    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const assertDiscovery = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("first discovery failed"))
+      .mockResolvedValueOnce(undefined);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+
+    await assertAuthenticatedMcpDiscoveryWithOneRestart(
+      fakeMcp,
+      {
+        requestOffset: 0,
+        expectedSecret: EXPECTED_SECRET,
+        label: "initial discovery",
+        restart,
+      },
+      { assertDiscovery },
+    );
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(assertDiscovery).toHaveBeenCalledTimes(2);
+    expect(assertDiscovery.mock.calls[1]?.[1]).toMatchObject({
+      label: "initial discovery after one bridge restart",
+    });
+  });
+
+  it("does not restart when the failed attempt reached the fixture", async () => {
+    const fakeMcp = { requests: [request("initialize")] } as unknown as FakeMcpHttpsServer;
+    const failure = new Error("fixture-visible discovery failed");
+    const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+
+    await expect(
+      assertAuthenticatedMcpDiscoveryWithOneRestart(
+        fakeMcp,
+        {
+          requestOffset: 0,
+          expectedSecret: EXPECTED_SECRET,
+          label: "initial discovery",
+          restart,
+        },
+        { assertDiscovery },
+      ),
+    ).rejects.toBe(failure);
+
+    expect(restart).not.toHaveBeenCalled();
+    expect(assertDiscovery).toHaveBeenCalledOnce();
+  });
+
+  it("propagates the retry failure without a second restart", async () => {
+    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const retryFailure = new Error("retry discovery failed");
+    const assertDiscovery = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("first discovery failed"))
+      .mockRejectedValueOnce(retryFailure);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+
+    await expect(
+      assertAuthenticatedMcpDiscoveryWithOneRestart(
+        fakeMcp,
+        {
+          requestOffset: 0,
+          expectedSecret: EXPECTED_SECRET,
+          label: "initial discovery",
+          restart,
+        },
+        { assertDiscovery },
+      ),
+    ).rejects.toBe(retryFailure);
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(assertDiscovery).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("Hermes deferred MCP tool discovery", () => {
   it("uses one tool_search, tool_describe, and tool_call when the deferred target is present", async () => {
     compatibleMock = await startDeferredCompatibleMock();
@@ -292,5 +380,23 @@ describe("Hermes deferred MCP tool discovery", () => {
       content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
     });
     expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+});
+
+describe("MCP mutation concurrency retry", () => {
+  it("retries the explicit OpenShell optimistic-concurrency response", () => {
+    expect(
+      shouldRetryMcpMutationAfterConcurrencyConflict(
+        "Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.",
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    "Failed to detach provider: permission denied",
+    "sandbox was modified by another operation.",
+    "Please retry the command.",
+  ])("does not retry another failure: %s", (output) => {
+    expect(shouldRetryMcpMutationAfterConcurrencyConflict(output)).toBe(false);
   });
 });
