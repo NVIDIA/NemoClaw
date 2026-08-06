@@ -82,21 +82,24 @@ const retainedContextMetadataMutations: RetainedContextMutation[] = [
 
 describe("rebuildSandbox flow: target image", () => {
   installRebuildFlowTestHooks();
-  it("aborts before backup/delete when the durable custom Dockerfile is unreadable", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-from-"));
-    const dockerfile = path.join(tempDir, "Dockerfile.unreadable");
-    fs.writeFileSync(dockerfile, "FROM scratch\n", { mode: 0o000 });
-    const harness = createRebuildFlowHarness({ sandboxEntry: { fromDockerfile: dockerfile } });
-    try {
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("Recorded custom Dockerfile is unavailable");
-      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.onboardSpy).not.toHaveBeenCalled();
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+    "aborts before backup/delete when the durable custom Dockerfile is unreadable",
+    async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-from-"));
+      const dockerfile = path.join(tempDir, "Dockerfile.unreadable");
+      fs.writeFileSync(dockerfile, "FROM scratch\n", { mode: 0o000 });
+      const harness = createRebuildFlowHarness({ sandboxEntry: { fromDockerfile: dockerfile } });
+      try {
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).rejects.toThrow("Recorded custom Dockerfile is unavailable");
+        expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+        expect(harness.onboardSpy).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails closed on a corrupt durable custom Dockerfile value", async () => {
     const harness = createRebuildFlowHarness({ sandboxEntry: { fromDockerfile: 42 } });
@@ -551,11 +554,15 @@ describe("rebuildSandbox flow: target image", () => {
       },
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
 
-    expect(cleanupBuildCtx).toHaveBeenCalledOnce();
-    expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+      expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+      expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(preparedDir, { recursive: true, force: true });
+    }
   });
 });
