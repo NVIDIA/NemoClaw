@@ -8,6 +8,8 @@
  * sandbox, seed durable workspace + live process state, run the current
  * installer upgrade path, then assert the gateway reports the current
  * OpenShell version and the survivor claw remains restored/reachable.
+ * After the outer rebuild destroys the source sandbox, the inner onboarding flow
+ * must continue the upgrade-owned recreation journal without opening a second transaction.
  *
  * The macOS regressions from the shell script remain hermetic installer-script
  * probes in this file: fake Darwin arm64 PATH, fake existing OpenShell tools,

@@ -21,6 +21,7 @@ export interface SandboxResumeSignals {
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
+  readonly recreateJournalHandoff?: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly observabilityChanged?: boolean;
@@ -270,7 +271,20 @@ function runtimeConfigurationResumeDecision(
 }
 
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
+  if (
+    signals.resume &&
+    (signals.sandboxReuseState === "missing" || signals.sandboxReuseState === "not_ready") &&
+    signals.recreateSandboxRequested &&
+    signals.recreateJournalHandoff
+  ) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    };
+  }
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;
   if (canReuseSandbox(signals)) return { kind: "reuse" };
@@ -278,7 +292,6 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
   if (configurationDecision) return configurationDecision;
   const toolDisclosureDecision = toolDisclosureResumeDecision(signals);
   if (toolDisclosureDecision) return toolDisclosureDecision;
-  if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   return {
     kind: "recreate",
     note: "  [resume] Recorded sandbox state is unavailable; recreating it.",

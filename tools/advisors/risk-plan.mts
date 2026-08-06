@@ -18,7 +18,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 15 as const;
+export const RISK_PLAN_VERSION = 16 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -30,6 +30,10 @@ const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
+const JOURNALED_RECREATE_RESUME_RUNTIME_FILES = new Set([
+  "src/lib/onboard/machine/handlers/sandbox-resume.ts",
+  "src/lib/onboard/machine/handlers/sandbox.ts",
+]);
 const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
   "src/lib/onboard/docker-driver-sandbox-recovery.ts",
@@ -46,6 +50,13 @@ const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
   "agents/hermes/validate-cli-adapter.py",
+]);
+const HERMES_CRON_RESTORE_E2E_JOB_IDS = ["rebuild-hermes"] as const;
+const HERMES_CRON_RESTORE_RUNTIME_FILES = new Set([
+  "agents/hermes/cron-restore-control.py",
+  "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
+  "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
 ]);
 const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
   "bedrock-runtime-compatible-anthropic",
@@ -188,7 +199,6 @@ const CREDENTIAL_SECURITY_FILE =
   /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
 const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/e2e.yaml",
-  ".github/workflows/pr-e2e-gate.yaml",
   ".github/workflows/pr.yaml",
   "package-lock.json",
   "package.json",
@@ -237,6 +247,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     changedFiles.filter(
       (file) =>
         file === DEEPAGENTS_HEADLESS_INFERENCE_CHECK ||
+        JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file) ||
         (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
@@ -266,6 +277,9 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
+  const journaledRecreateResumeFiles = stableUnique(
+    changedFiles.filter((file) => JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file)),
+  );
   const managedStartupFiles = stableUnique(
     changedFiles.filter(
       (file) =>
@@ -280,6 +294,11 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const hermesCronRestoreFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_CRON_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
   const hermesManagedPolicyFiles = stableUnique(
     changedFiles.filter(
       (file) =>
@@ -288,10 +307,22 @@ export function focusedPrE2eJobsForChangedFiles(
     ),
   );
   return [
+    ...(journaledRecreateResumeFiles.length > 0
+      ? [
+          {
+            id: "openshell-gateway-upgrade",
+            matchedFiles: journaledRecreateResumeFiles,
+          },
+        ]
+      : []),
     ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesCronRestoreFiles,
     })),
     ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
       id,

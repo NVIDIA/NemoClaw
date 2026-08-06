@@ -337,7 +337,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "update their owning documentation under current repository policy",
     );
     expect(agents).toContain("a PR that updates ordinary pages without the dated changelog entry");
-    expect(docsAgents).toContain("Every pre-tag release-note docs PR must create or update");
+    expect(docsAgents).toContain("CONTRIBUTING.md#updating-the-changelog");
+    expect(docsAgents).not.toContain("Every pre-tag release-note docs PR must create or update");
     expect(docsContributing).toContain("Create the planned release entry in the pre-tag");
     expect(policy).toContain("If any merge lands after `release:plan`, generate a fresh plan");
     expect(releaseNotes).toContain(
@@ -346,6 +347,25 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(releaseNotes).toContain(
       "Never include the candidate SHA, internal E2E failure classifications, rerun details, or waiver rationale in the public Announcement",
     );
+  });
+
+  it("keeps documentation authority links one-way", () => {
+    const agents = read("AGENTS.md");
+    const docsAgents = read("docs/AGENTS.md");
+    const docsContributing = read("docs/CONTRIBUTING.md");
+    const doriSetup = read("docs/DORI_SETUP.md");
+    const writing = read("WRITING.md");
+    const controlledWords = read(".agents/skills/_shared/controlled-words.md");
+
+    expect(agents).toContain("[Documentation Agent Guide](docs/AGENTS.md)");
+    expect(docsAgents).toContain("[documentation contributor guide](CONTRIBUTING.md)");
+    expect(docsAgents).not.toContain("../AGENTS.md");
+    expect(docsContributing).not.toContain("../AGENTS.md");
+    expect(docsContributing).not.toContain("../CONTRIBUTING.md");
+    expect(doriSetup).toContain("[Style Guide](CONTRIBUTING.md#style-guide)");
+    expect(doriSetup).not.toContain("(AGENTS.md");
+    expect(writing).toContain(".agents/skills/_shared/controlled-words.md");
+    expect(controlledWords).not.toContain("WRITING.md");
   });
 
   it("keeps cross-issue sweeping separate from comparator scoring", () => {
@@ -570,12 +590,12 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(createPr).not.toContain('--body "..."');
     expect(judgment).toContain("{candidate_comments}");
     expect(mergeGate).toContain(
-      "The first attempt requires the triggering actor to have current `maintain` or `admin` access.",
+      "The trusted pre-checkout step requires current `maintain` or `admin` access and validates the exact open PR before candidate code runs.",
     );
     expect(mergeGate).toContain(
-      "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and required-check identity still match.",
+      "Leave job and target selectors empty and keep Launchable disabled.",
     );
-    expect(mergeGate).toContain("Approval cannot record success by itself.");
+    expect(mergeGate).toContain("The manual run is advisory.");
     expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");
     expect(salvage).toContain("git push origin <local-branch>:<headRefName>");
     expect(salvage).toContain("If `maintainerCanModify` is false, do not push");

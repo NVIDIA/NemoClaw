@@ -6,7 +6,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
+import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 import {
   inspectExactPodmanHeldWorkload,
   PODMAN_MANAGED_LABEL,
@@ -40,7 +40,7 @@ function listOutput(ids: readonly string[] = [RUNTIME_ID]): string {
 
 function inspectOutput(
   overrides: {
-    readonly command?: readonly string[];
+    readonly bootstrapIdentity?: string;
     readonly id?: string;
     readonly image?: string;
     readonly labels?: Readonly<Record<string, string>>;
@@ -49,7 +49,6 @@ function inspectOutput(
     readonly user?: string;
   } = {},
 ): string {
-  const command = overrides.command ?? HELD_WORKLOAD_ARGV;
   return JSON.stringify([
     {
       Id: overrides.id ?? RUNTIME_ID,
@@ -59,7 +58,8 @@ function inspectOutput(
         Cmd: SUPERVISOR_ARGV.slice(1),
         Entrypoint: [SUPERVISOR_ARGV[0]],
         Env: [
-          `OPENSHELL_SANDBOX_COMMAND=${openshellSandboxCommandEnvValue(command)}`,
+          `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${overrides.bootstrapIdentity ?? BOOTSTRAP_IDENTITY}`,
+          "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
           "OPENSHELL_SANDBOX_TOKEN_FILE=/run/secrets/openshell-token",
         ],
         Labels: overrides.labels ?? {
@@ -243,17 +243,17 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     expect(() => inspect(fake.engine)).toThrow("stably running");
   });
 
-  it("rejects drift in the bootstrap-bound held command", () => {
+  it("rejects drift in the persisted bootstrap identity", () => {
     const fake = engineWith([
       result(listOutput()),
       result(
         inspectOutput({
-          command: ["/usr/local/bin/nemoclaw-managed-hold", "--bootstrap-identity", "7".repeat(64)],
+          bootstrapIdentity: "7".repeat(64),
         }),
       ),
     ]);
 
-    expect(() => inspect(fake.engine)).toThrow("command binding changed");
+    expect(() => inspect(fake.engine)).toThrow("bootstrap identity binding changed");
   });
 
   it("rejects image-content drift during the stable capture", () => {

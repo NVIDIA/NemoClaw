@@ -222,7 +222,6 @@ export interface SandboxStateOptions<
     stringSetsEqual(left: string[], right: string[]): boolean;
     removeSandboxFromRegistry(sandboxName: string): SandboxRemovalReceipt | null;
     restoreSandboxRegistryEntryIfMissing(receipt: SandboxRemovalReceipt): boolean;
-    repairRecordedSandbox(sandboxName: string | null): void;
     ensureValidatedWebSearchCredential(config: WebSearchConfig): Promise<unknown>;
     isBackToSelection(value: unknown): boolean;
     configureWebSearch(
@@ -674,6 +673,7 @@ class SandboxStateFlow<
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
         : false,
       recreateSandboxRequested: this.options.recreateSandbox(false),
+      recreateJournalHandoff: Boolean(this.options.recreateJournalTargetIntentFingerprint),
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,
         storedMessagingConfig,

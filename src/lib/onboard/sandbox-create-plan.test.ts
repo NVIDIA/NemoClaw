@@ -7,6 +7,7 @@ import {
   materializeSandboxCreatePlan,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
+  resolveSandboxCreatePolicyTier,
 } from "./sandbox-create-plan";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
@@ -96,6 +97,15 @@ function expectCredentialBindingFailure({
   expect(cleanupProviders).not.toHaveBeenCalled();
   expect(upsertProviders).not.toHaveBeenCalled();
 }
+
+describe("resolveSandboxCreatePolicyTier", () => {
+  it("recognizes Personal as a create-time policy tier", () => {
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+    vi.stubEnv("NEMOCLAW_POLICY_TIER", "personal");
+
+    expect(resolveSandboxCreatePolicyTier()).toBe("personal");
+  });
+});
 
 describe("resolveSandboxCreateIntent", () => {
   it("turns credential-bearing inputs into secretless provider requests", () => {

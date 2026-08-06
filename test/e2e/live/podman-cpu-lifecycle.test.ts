@@ -119,6 +119,9 @@ test("qualifies rootless Podman and preserves all-agent exact CPU lifecycle iden
       exitCode: 0,
       state: "stopped",
     });
+    const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName);
+    expect(final.Id).toBe(initial.Id);
+    expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
   }
   progress.phase("verify all-agent restart identity and final at-rest state");
 });

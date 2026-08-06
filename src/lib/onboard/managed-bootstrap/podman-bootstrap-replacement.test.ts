@@ -499,6 +499,33 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.calls).toEqual([]);
   });
 
+  it("does not confuse supported long options with protected shorthand", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+    const runtimeArgs = [
+      ...plan.runtimeArgs,
+      "--device",
+      "nvidia.com/gpu=all",
+      "--log-driver",
+      "journald",
+      "--expose",
+      "8080",
+    ];
+
+    const prepared = prepareStoppedPodmanBootstrapReplacement({
+      engine: harness.engine,
+      journalStore: store,
+      watcherLease: watcher.lease,
+      plan: { ...plan, runtimeArgs },
+    });
+
+    expect(prepared.journal.phase).toBe("replacement-created");
+    expect(harness.calls).toContainEqual(
+      expect.arrayContaining(["container", "create", ...runtimeArgs]),
+    );
+  });
+
   it("rejects runtime mounts that could shadow image transaction state", () => {
     const harness = new PodmanHarness();
     const store = journalStore();

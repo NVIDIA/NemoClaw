@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildOnboardFlags, setAgentRegistryReaderForTest } from "./command-support";
+import { buildOnboardFlags, onboardUsage, setAgentRegistryReaderForTest } from "./command-support";
 
 afterEach(() => {
   setAgentRegistryReaderForTest(null);
@@ -61,6 +61,18 @@ describe("buildOnboardFlags temporary managed runtime gate", () => {
 
     expect(flags["temp-managed-runtime"].hidden).toBe(true);
     expect(flags["temp-managed-runtime"].description).toBeUndefined();
+    expect(flags["temp-managed-runtime-catalog"].hidden).toBe(true);
+    expect(flags["temp-managed-runtime-catalog"].dependsOn).toEqual(["temp-managed-runtime"]);
     expect(flags.events.hidden).not.toBe(true);
+  });
+});
+
+describe("buildOnboardFlags experimental profile", () => {
+  it("keeps the portable profile hidden and value constrained", () => {
+    const flags = buildOnboardFlags();
+
+    expect(flags["experimental-profile"].hidden).toBe(true);
+    expect(flags["experimental-profile"].options).toEqual(["portable"]);
+    expect(onboardUsage.join(" ")).not.toContain("experimental-profile");
   });
 });

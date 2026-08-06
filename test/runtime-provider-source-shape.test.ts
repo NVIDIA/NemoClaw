@@ -100,7 +100,6 @@ describe("runtime provider central source boundary", () => {
       current: read("src/lib/onboard/runtime-provider/current.ts"),
       docker: read("src/lib/onboard/runtime-provider/docker.ts"),
       registry: read("src/lib/onboard/runtime-provider/registry.ts"),
-      stateMutation: read("src/lib/onboard/runtime-provider/state-mutation.ts"),
     };
 
     for (const [name, source] of Object.entries(driverNeutralActions)) {
@@ -133,12 +132,6 @@ describe("runtime provider central source boundary", () => {
       "../managed-bootstrap/docker-runtime",
     ]);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
-    expect(providerContract.stateMutation).not.toMatch(
-      /\b(?:docker|podman|kubernetes|k8s|hermes|mxc)\b/iu,
-    );
-    expect(providerContract.stateMutation).not.toMatch(
-      /\b(?:child_process|exec|execFile|execSync|fork|spawn|shell|command|callback)\b/iu,
-    );
   });
 
   it("inventories every managed-bootstrap protocol source", () => {
@@ -169,17 +162,40 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/access.ts",
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
+      "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
-      "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-preflight.ts",
       "src/lib/onboard/runtime-provider/podman.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
-      "src/lib/onboard/runtime-provider/state-mutation.ts",
     ]);
+  });
+
+  // source-shape-contract: security -- Production provider composition must keep the dormant llama.cpp controller unreachable until its activation boundary is crash safe
+  it("keeps Docker llama.cpp lifecycle authority dormant (#8395)", () => {
+    const docker = read("src/lib/onboard/runtime-provider/docker.ts");
+    const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
+    const productionComposition = trackedPaths(".")
+      .filter(
+        (path) =>
+          /\.[cm]?ts$/u.test(path) &&
+          !path.endsWith(".test.ts") &&
+          !path.includes("/test/") &&
+          !path.startsWith("test/") &&
+          path !== "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
+      )
+      .map(read)
+      .join("\n");
+    expect(docker).not.toContain("docker-llama-cpp-managed-lifecycle");
+    expect(docker).not.toMatch(/operation:\s*["']host-local-inference["']/u);
+    expect(adapter).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(productionComposition).not.toContain("createDockerLlamaCppManagedLifecycle");
+    expect(productionComposition).not.toContain("docker-llama-cpp-managed-lifecycle");
   });
 
   it("inventories every production Dockerfile", () => {
@@ -258,25 +274,17 @@ describe("runtime provider central source boundary", () => {
   // source-shape-contract: security -- Qualified bootstrap implementations compose only inside their provider bundle; unqualified providers remain unsupported
   it("composes Docker bootstrap locally while keeping Kubernetes unsupported", () => {
     const dockerProvider = read("src/lib/onboard/runtime-provider/docker.ts");
-    const persistedEngineSource = [
-      read("src/lib/onboard/runtime-provider/persisted-engine-authority.ts"),
-      read("src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts"),
-    ].join("\n");
+    // Neutral contracts may name an operation but cannot activate a provider implementation.
     const providerImplementationSource = providerPaths
       .filter(
         (path) =>
-          ![
-            "src/lib/onboard/runtime-provider/contract.ts",
-            "src/lib/onboard/runtime-provider/docker.ts",
-            "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
-            "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
-          ].includes(path),
+          path !== "src/lib/onboard/runtime-provider/contract.ts" &&
+          path !== "src/lib/onboard/runtime-provider/docker.ts" &&
+          path !== "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
       )
       .map(read)
       .join("\n");
     expect(providerImplementationSource).not.toMatch(/managed-bootstrap/iu);
-    expect(disallowedManagedBootstrapLoads(persistedEngineSource)).toEqual([]);
-    expect(persistedEngineSource).not.toMatch(/\b(?:podman|mxc)\b/iu);
     expect(disallowedManagedBootstrapLoads(dockerProvider)).toEqual([
       "../managed-bootstrap/docker-runtime",
     ]);

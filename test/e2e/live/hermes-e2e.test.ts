@@ -457,6 +457,26 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
   expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
 
+  const dependencyVersions = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/opt/hermes/.venv/bin/python",
+      "-I",
+      "-c",
+      "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual; print('\\n'.join(f'{name}=={actual[name]}' for name in sorted(actual)))",
+    ],
+    {
+      artifactName: "phase-4-hermes-dependency-versions",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(dependencyVersions.exitCode, resultText(dependencyVersions)).toBe(0);
+  expect(dependencyVersions.stdout.trim().split(/\r?\n/u)).toEqual([
+    "aiohttp==3.14.3",
+    "cryptography==50.0.0",
+  ]);
+
   const configProbe = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(

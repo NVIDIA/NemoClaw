@@ -768,6 +768,22 @@ describe("DGX Station Express resume (#7048)", () => {
     }
   });
 
+  it("accepts Personal as the policy tier in an installer resume receipt", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-personal-tier-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, currentReceiptText({ policyTier: "personal" }), { mode: 0o600 });
+
+    try {
+      expect(() =>
+        assertStationExpressInstallerResumeMatches(receiptGeneration, { HOME: home }),
+      ).not.toThrow();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["Nemotron Ultra", "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4"],
     ["DeepSeek V4 Flash", "deepseek-ai/DeepSeek-V4-Flash"],

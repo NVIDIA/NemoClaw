@@ -87,6 +87,8 @@ export interface SandboxCreateIntent {
 export type OnboardOptions = {
   /** Hidden temporary opt-in for new managed-image runtime activation. */
   tempManagedRuntime?: boolean;
+  /** Hidden exact-catalog input for managed-runtime qualification. */
+  tempManagedRuntimeCatalog?: string | null;
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
   /** Internal CLI composition for host-only Google Chat tunnel effects. */
@@ -146,4 +148,7 @@ export type OnboardOptions = {
   gpu?: boolean;
   noGpu?: boolean;
   autoYes?: boolean;
+  experimentalProfile?: import("./docker-driver-platform").ExperimentalOnboardProfile | null;
+  /** Exact secret-free serving catalog identity selected by the generic profile UX. */
+  servingProfileProvenance?: import("../inference/serving/types").ServingProfileProvenance | null;
 };

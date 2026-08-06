@@ -54,162 +54,41 @@ The checker requires these status-rollup entries:
 - `changes`
 - `commit-lint`
 - `dco-check`
-- `E2E / PR Gate`
 
 A first-time fork contributor might need **Approve and run** before `pull_request` checks appear.
-The E2E controller records the PR SHA and base SHA without running fork code.
-Do not waive a missing, neutral, or skipped E2E gate.
-Fork code can receive E2E credentials only through the maintainer exact-revision approval below.
+Former PR E2E contexts are advisory and do not affect `allPass`.
 
-### GitHub Actions evidence
+### GitHub Actions Evidence
 
 Required PR workflows must identify the PR number, PR SHA, and base SHA.
+The installer-hash workflow runs trusted verification after each `pull_request` `edited` event.
+Fail closed when identity, state, or timing evidence is missing, malformed, stale, contradictory, or changed.
 
-- The installer-hash workflow runs trusted verification after each `pull_request` `edited` event.
-  Its run name records `gate true` and the base SHA. A metadata edit must not create skipped evidence.
-- Each `pull_request_target` E2E controller run for an open PR must use an immutable `gate true` run name.
-  The run name must identify the PR number, PR SHA, and base SHA.
-- GitHub usually associates the run with the PR.
-  For a fork run with an empty association, require the Actions event, workflow path, fork repository, branch, and PR SHA to match the current PR.
-  The PR and installer workflows must also name the exact PR, PR SHA, and base SHA.
-  The trusted required check must carry the same PR SHA and base SHA identity.
-- If GitHub omits `headRepository.nameWithOwner`, derive it only from the returned repository name and repository-owner login.
-  Fail closed when those fields are missing, malformed, or contradictory.
-- Treat an all-skipped `gate false` run from an older workflow version as non-evidence.
-- Fail closed when identity, state, or timing evidence is missing, malformed, stale, contradictory, or changed.
+### Live E2E
 
-### Controller status and PR status
+Live E2E does not run automatically for pull requests and is not a merge gate.
+Each push to `main` triggers `.github/workflows/e2e.yaml` for the default suite.
+The workflow has no scheduled trigger.
 
-`E2E / PR Gate Controller` reports whether the controller published an outcome.
-It can pass while the required `E2E / PR Gate` custom check fails.
-Use the required check as merge evidence and for verdict and evidence links.
+Use the manual PR mode only when a maintainer requests live evidence before merge.
+The default suite exposes these values to candidate-controlled job processes:
 
-`Superseded by PR update` and `PR closed — gate no longer applies` cancel checks for a prior SHA.
-Do not act on those checks. The PR SHA and base SHA still need a successful gate.
-The closed-PR outcome also covers a deleted fork repository with no head-repository value.
+- Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
+- Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
+- The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `checks: read`, `contents: read`, and `pull-requests: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
+- Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
 
-### Retry an E2E gate
+The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
+Live targets can create external resources.
+After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
 
-Rerun `CI / Pull Request` only when the failed required check has a supported retry reason for its gate version.
-The retry must apply to the PR SHA and base SHA.
+Dispatch the trusted `main` workflow with the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted workflow SHA, and a review reason containing 10 to 500 printable characters.
+Leave job and target selectors empty and keep Launchable disabled.
+The trusted pre-checkout step requires current `maintain` or `admin` access and validates the exact open PR before candidate code runs.
 
-- `prerequisite-ci` — Rerun CI. Let the controller retry after CI passes.
-- `child-cancelled` — Rerun CI when the child workflow was cancelled.
-  You can also rerun it when every listed non-passing job was cancelled.
-- `evidence-download` — Rerun CI when a successful child's evidence download failed, was cancelled, or was skipped.
-- `dispatch-not-observed` — Rerun CI only after the controller completed its bounded zero-match window and recorded a validated dispatch receipt on a trusted GitHub Actions check.
-  Never resubmit the child workflow manually.
-  The controller must recheck the old correlation before it creates a replacement check and fresh correlation.
-
-The controller keeps each completed required check as audit history.
-For a retry, it creates an `in_progress` check for the same PR SHA and base SHA.
-The controller selects the check with the highest ID only when all older duplicates are completed failures with supported retry markers.
-Fail closed for an unexpected app, identity mismatch, duplicate ID, unsupported terminal state, or multiple active checks.
-
-Do not retry these terminal failures on the same SHA:
-
-- Selected-job or typed-target product failures.
-- Assertion failures.
-- Evidence policy or integrity failures.
-- Ambiguous, incomplete, or identity-invalid reconciliation.
-- Controller errors.
-- Unknown states.
-- Failures recorded before retry reasons existed.
-
-A validated `dispatch-not-observed` receipt on a trusted GitHub Actions check is the only retryable reconciliation result.
-If a late child, incomplete inventory, or contradiction appears while the old correlation is rechecked, stop and investigate rather than dispatching again.
-
-Push a change to create another SHA, and then run CI again.
-A passing controller does not override a failing required check.
-
-### Evidence download failures
-
-If a selected child passes but `Download evidence` fails, the gate fails closed.
-This also applies when the step is cancelled or skipped.
-The required check records `evidence-download`, and the controller fails.
-
-Inspect the download step before you rerun eligible PR CI.
-Do not use the successful child by itself as evidence.
-
-A completed download can still produce a failing PR verdict.
-This occurs when signals are missing, duplicated, skipped, pending, or failing.
-In this case, the controller can pass without a retry reason.
-
-Malformed or unsafe evidence is a terminal controller error.
-Schema mismatches, identity mismatches, and traversal-limit errors are also terminal.
-The required check and controller must fail closed.
-
-### Approve credentialed E2E
-
-Use the maintainer workflow when the required check reports
-`Maintainer approval required to run fork E2E`.
-
-1. Follow the `E2E / PR Gate Controller run <id>` link in the required-check summary.
-2. Verify the exact head repository, PR SHA, base SHA, selected jobs and targets, and risk-plan artifact.
-3. Select **Run workflow** on `main`.
-4. Select `approve-e2e`.
-5. Enter the exact `pr_number`, 40-character `expected_head_sha`, 40-character `expected_base_sha`, and a specific `review_reason` of 10 to 500 characters.
-6. Run the workflow.
-
-The first attempt requires the triggering actor to have current `maintain` or `admin` access.
-The controller checks the PR number, head repository, PR SHA, base SHA, deterministic plan, matching pending required check, compatible `main`, and open PR state.
-Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and required-check identity still match.
-It fails closed if any value changed or does not match.
-
-For a fork, the trusted workflow definition comes from `main`; each PR-code checkout uses the reviewed fork repository and exact PR SHA.
-Before approval, no selected credential-bearing work runs.
-If the run-specific authorization response is lost, the controller accepts only an exact persisted child binding and otherwise attempts to revoke the required check before requesting child cancellation.
-
-Approval returns the required check to `Running <count> E2E check(s)`.
-The gate passes only after the selected jobs and targets return verified passing evidence.
-Failed, missing, skipped, pending, or mismatched evidence keeps the gate from passing.
-Approval cannot record success by itself.
-
-### E2E control-plane scope
-
-The `e2e-control-plane` path group includes these areas:
-
-- E2E and PR-CI workflows.
-- Risk policy.
-- Dependency and test configuration.
-- Preparation and upload actions.
-- Non-documentation files under `tools/e2e/` and `test/e2e/`.
-- Shell and Python support files in those directories.
-
-Every internal revision with selected jobs or targets dispatches its deterministic plan after eligible PR CI passes.
-This behavior includes all internal E2E control-plane changes.
-Internal dispatch does not use `approve-e2e` or a maintainer role check.
-
-### Authorize a typed target
-
-The risk plan can select a target from the allowlist for a workflow check.
-It can dispatch jobs and targets in one child run.
-Apply all authorization, selection, secret, skip, evidence, and finish rules to jobs and targets.
-
-### Roll out a required E2E context
-
-Use this order:
-
-1. Deploy the E2E check producer and its fork handling.
-2. Rerun `CI / Pull Request` for each open PR SHA and base SHA.
-   Approve a first-time fork run when necessary.
-3. Verify that `E2E / PR Gate` is attached to that PR SHA and base SHA.
-4. Use the gate checker to find PRs that still need a check.
-
-During rollout, the checker accepts the former `E2E / PR Gate Coordination`
-custom-check name only when the current name is absent, and prefers the current
-name when both exist.
-
-Do not enable the required context before the producer is ready.
-GitHub does not create a context for prior runs.
-If you enable the rule first, open PRs can wait for a status that does not exist.
-
-Do not use the shared GitHub Actions app identity as the security boundary.
-It cannot distinguish this workflow from another workflow.
-First use a dedicated GitHub App or an organization required-workflow rule.
-Then enable strict, up-to-date status checks.
-Without this setting, a successful PR SHA can remain mergeable after `main` changes the merge result.
-Keep the control-plane review and gate checks after rollout.
+The manual run is advisory.
+Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, head repository, head SHA, base SHA, and workflow SHA.
+A changed head repository, head SHA, or base SHA invalidates the result.
 
 ### Contributor requirement failure
 

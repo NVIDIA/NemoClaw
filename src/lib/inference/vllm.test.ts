@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
+
 const mocks = vi.hoisted(() => ({
   dockerCapture: vi.fn(),
   dockerForceRm: vi.fn(),
@@ -20,6 +22,11 @@ const mocks = vi.hoisted(() => ({
   measureDirectorySizeBytes: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
+  persistHostLocalVllmRuntimeReceipt: vi.fn(),
+  runCurlProbe: vi.fn(),
+  resolveHostLocalVllmSelection: vi.fn<() => HostLocalVllmSelectionResult>(() => ({
+    kind: "not-selected",
+  })),
   runCapture: vi.fn(),
 }));
 
@@ -38,6 +45,10 @@ vi.mock("../adapters/docker", () => ({
   dockerStop: mocks.dockerStop,
 }));
 
+vi.mock("../adapters/http/probe", () => ({
+  runCurlProbe: mocks.runCurlProbe,
+}));
+
 vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
@@ -53,12 +64,21 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   };
 });
 
+vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./serving/vllm-managed-support")>();
+  return {
+    ...actual,
+    persistHostLocalVllmRuntimeReceipt: mocks.persistHostLocalVllmRuntimeReceipt,
+    resolveHostLocalVllmSelection: mocks.resolveHostLocalVllmSelection,
+  };
+});
+
 import { currentPhaseActivityLabel } from "../core/phase-activity";
+import { hfDownloadAuthentication } from "./model-acquisition/hugging-face";
 import {
   assertVllmRegistryDigestRef,
   buildVllmRunArgs,
   detectVllmProfile,
-  hfDownloadAuthentication,
   installVllm,
   isNemoClawManagedVllmRunning,
   NEMOCLAW_VLLM_CONTAINER_NAME,
@@ -93,6 +113,16 @@ beforeEach(() => {
       source: "Hugging Face cache",
     },
   });
+  mocks.persistHostLocalVllmRuntimeReceipt.mockReset();
+  mocks.runCurlProbe.mockReturnValue({
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: "",
+    stderr: "",
+    message: "",
+  });
+  mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
 });
 
 function currentHostIdentity(): string | null {
@@ -190,7 +220,9 @@ function mockSuccessfulVllmInstall(
     ["ps", () => `${containerName}\n`],
   ]);
   mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
-    (dockerCaptureByCommand.get(args[0] ?? "") ?? (() => ""))(),
+    args[0] === "container" && mocks.dockerRunDetached.mock.calls.length > 0
+      ? vllmContainerRow(containerName, { state: "running" })
+      : (dockerCaptureByCommand.get(args[0] ?? "") ?? (() => ""))(),
   );
 }
 
@@ -497,6 +529,39 @@ describe("vLLM run command", () => {
       expect.arrayContaining(["--label", `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`]),
     );
     expect(args).toContain("8000:8000");
+  });
+
+  it("labels catalog-selected host-local containers with immutable recipe provenance (#8246)", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const catalogProfile = {
+      ...profile!,
+      servingCatalog: {
+        catalogDigest: `sha256:${"0".repeat(64)}`,
+        presetId: "vllm.dgx-spark-gb10.single.optional-model",
+        presetDigest: `sha256:${"a".repeat(64)}`,
+        recipeId: "vllm.optional-model.spark-single.v1",
+        recipeDigest: `sha256:${"b".repeat(64)}`,
+      },
+    };
+    const args = buildVllmRunArgs(
+      catalogProfile,
+      catalogProfile.defaultModel,
+      catalogProfile.dockerRunFlags,
+    );
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--label",
+        `com.nvidia.nemoclaw.serving-preset=${catalogProfile.servingCatalog.presetId}`,
+        "--label",
+        `com.nvidia.nemoclaw.serving-preset-digest=${catalogProfile.servingCatalog.presetDigest}`,
+        "--label",
+        `com.nvidia.nemoclaw.serving-recipe=${catalogProfile.servingCatalog.recipeId}`,
+        "--label",
+        `com.nvidia.nemoclaw.serving-recipe-digest=${catalogProfile.servingCatalog.recipeDigest}`,
+      ]),
+    );
   });
 
   it("preserves profile run flags and image as argv tokens", () => {
@@ -965,6 +1030,71 @@ describe("installVllm model resolution", () => {
     expect(summary).not.toContain("Hugging Face authentication is optional");
   });
 
+  it("rejects a gated host-local preset before any Docker work", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const gatedModel = {
+      ...profile.defaultModel,
+      id: "nvidia/gated-host-local-model",
+      gated: true,
+    };
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({
+      kind: "selected",
+      profile: { ...profile, defaultModel: gatedModel },
+      model: gatedModel,
+      presetId: "spark.gated-host-local",
+      recipeId: "vllm.gated-host-local",
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("gated on Hugging Face"));
+  });
+
+  it("persists exact profile ownership before authenticating a catalog-selected runtime (#8246)", async () => {
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const servingCatalog = {
+      catalogDigest: `sha256:${"1".repeat(64)}`,
+      presetId: "vllm.dgx-spark-gb10.single.example",
+      presetDigest: `sha256:${"2".repeat(64)}`,
+      recipeId: "vllm.dgx-spark-gb10.single.example",
+      recipeDigest: `sha256:${"3".repeat(64)}`,
+    };
+    const model = { ...baseProfile.defaultModel, managedBearerAuth: true as const };
+    const profile = { ...baseProfile, defaultModel: model, servingCatalog };
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({
+      kind: "selected",
+      profile,
+      model,
+      presetId: servingCatalog.presetId,
+      recipeId: servingCatalog.recipeId,
+    });
+    mockSuccessfulVllmInstall(profile.containerName);
+
+    const result = await installVllm(baseProfile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+    expect(result).toEqual({ ok: false });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("unauthenticated model inventory"));
+    expect(mocks.persistHostLocalVllmRuntimeReceipt).toHaveBeenCalledWith({
+      containerId: MANAGED_CONTAINER_ID,
+      authFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      serving: servingCatalog,
+    });
+    expect(mocks.persistHostLocalVllmRuntimeReceipt.mock.invocationCallOrder[0]).toBeLessThan(
+      errSpy.mock.invocationCallOrder.at(-1)!,
+    );
+  });
+
   it("guards the effective served model before any docker work (#6315)", async () => {
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
       "--served-model-name",
@@ -1028,7 +1158,7 @@ describe("installVllm model resolution", () => {
       ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
       ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
     ];
-    expect(dockerAdapterOptions).toHaveLength(9);
+    expect(dockerAdapterOptions).toHaveLength(10);
     const canonicalOwnershipOptions = dockerAdapterOptions.filter(
       (options) => options.env?.DOCKER_CONTEXT === "default",
     );
@@ -1036,7 +1166,7 @@ describe("installVllm model resolution", () => {
     const ambientDockerOptions = dockerAdapterOptions.filter(
       (options) => options.env?.DOCKER_CONTEXT !== "default",
     );
-    expect(ambientDockerOptions).toHaveLength(7);
+    expect(ambientDockerOptions).toHaveLength(8);
     for (const options of ambientDockerOptions) {
       expect(options).toEqual(
         expect.objectContaining({

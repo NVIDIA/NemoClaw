@@ -361,10 +361,6 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    stateMutation: unsupported(
-      providerId,
-      "Exact-runtime state mutation requires durable writer exclusion and fresh activation proof.",
-    ),
     bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
@@ -452,10 +448,6 @@ export function createKubernetesRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    stateMutation: unsupported(
-      providerId,
-      "Exact-runtime state mutation is unavailable for the Kubernetes provider.",
-    ),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),
