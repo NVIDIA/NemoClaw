@@ -74,6 +74,28 @@ type PolicyCandidate = {
   readWrite: string[];
 };
 
+export class JetsonOpenRmPolicyRestorationError extends Error {
+  readonly candidateError: unknown | null;
+  readonly restorationError: unknown;
+  readonly cleanupError: unknown | null;
+
+  constructor(options: {
+    candidateError: unknown | null;
+    restorationError: unknown;
+    cleanupError: unknown | null;
+  }) {
+    const detail =
+      options.restorationError instanceof Error
+        ? options.restorationError.message
+        : String(options.restorationError);
+    super(`NemoClaw could not confirm that OpenShell restored the baseline policy: ${detail}`);
+    this.name = "JetsonOpenRmPolicyRestorationError";
+    this.candidateError = options.candidateError;
+    this.restorationError = options.restorationError;
+    this.cleanupError = options.cleanupError;
+  }
+}
+
 function cudaResult(value: string): string {
   return value.match(CUDA_RESULT_PATTERN)?.[1] ?? "missing";
 }
@@ -229,6 +251,7 @@ export function maybeRunJetsonOpenRmPolicyProof(options: OpenRmProofOptions): vo
   fs.writeFileSync(baselinePath, baselinePolicy, { encoding: "utf8", mode: 0o600 });
 
   const candidateResults = new Map<string, string>();
+  let candidateFailure: { readonly error: unknown } | null = null;
   try {
     for (const candidate of candidates) {
       const candidatePath = path.join(temporaryDirectory, `${candidate.name}.yaml`);
@@ -242,10 +265,30 @@ export function maybeRunJetsonOpenRmPolicyProof(options: OpenRmProofOptions): vo
         proofCudaResult(options.verifyDirectSandboxGpu(options.sandboxName)),
       );
     }
-  } finally {
-    setPolicy(options.sandboxName, baselinePath, runOpenshell);
-    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  } catch (error) {
+    candidateFailure = { error };
   }
+  let restorationFailure: { readonly error: unknown } | null = null;
+  try {
+    setPolicy(options.sandboxName, baselinePath, runOpenshell);
+  } catch (error) {
+    restorationFailure = { error };
+  }
+  let cleanupFailure: { readonly error: unknown } | null = null;
+  try {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  } catch (error) {
+    cleanupFailure = { error };
+  }
+  if (restorationFailure !== null) {
+    throw new JetsonOpenRmPolicyRestorationError({
+      candidateError: candidateFailure?.error ?? null,
+      restorationError: restorationFailure.error,
+      cleanupError: cleanupFailure?.error ?? null,
+    });
+  }
+  if (candidateFailure !== null) throw candidateFailure.error;
+  if (cleanupFailure !== null) throw cleanupFailure.error;
 
   const deviceResult = candidateResults.get("devices") ?? "not-tested";
   const sysfsResult = candidateResults.get("sysfs") ?? "not-tested";

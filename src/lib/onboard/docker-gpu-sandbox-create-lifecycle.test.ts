@@ -1,10 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { JetsonOpenRmPolicyRestorationError } from "./diagnostics/jetson-openrm-proof";
 import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+
+const OPENRM_BASE_POLICY = `Version: 2
+Hash: fixture
+---
+version: 1
+filesystem_policy:
+  read_only:
+    - /opt/nvidia
+    - /sys
+  read_write:
+    - /dev/nvmap
+network_policies: {}
+`;
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {
@@ -414,5 +430,80 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("pre-patch container was not restored"),
     );
+  });
+
+  it("blocks lifecycle rollback when OpenShell cannot confirm baseline policy restoration", async () => {
+    vi.stubEnv("NEMOCLAW_DIAGNOSE_JETSON_OPENRM_POLICY", "1");
+    let policySetCount = 0;
+    let temporaryDirectory = "";
+    const deps = {
+      ...makeDeps(),
+      runCaptureOpenshell: vi.fn((args: string[]) =>
+        args[0] === "policy" ? OPENRM_BASE_POLICY : "",
+      ),
+      runOpenshell: vi.fn((args: string[]) => {
+        const policyPath = args[3] ?? "";
+        temporaryDirectory = path.dirname(policyPath);
+        policySetCount += 1;
+        return { status: policySetCount === 1 ? 0 : 1 };
+      }),
+      dockerRun: vi.fn((args: readonly string[]) =>
+        args.includes("0")
+          ? {
+              status: 0,
+              stdout: "/dev/nvidia-caps/nvidia-cap2\n/dev/nvmap",
+              stderr: "",
+            }
+          : { status: 0, stdout: "cuInit(0)=0", stderr: "" },
+      ),
+    };
+    const result = {
+      ...deferredCreateResult(),
+      mode: {
+        kind: "nvidia-runtime" as const,
+        label: "--runtime nvidia",
+        device: "all",
+        args: ["--runtime", "nvidia"],
+      },
+    };
+    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      backend: "jetson",
+      preserveJetsonDeviceGroupMembership: true,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => true),
+        finalizeBackup,
+      },
+    });
+    const verifyDirectSandboxGpu = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("cuInit(0)=801");
+      })
+      .mockReturnValue({
+        status: "verified" as const,
+        cudaVerified: true,
+        at: "2026-08-06T00:00:00.000Z",
+      });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    await expect(patch.verifyGpuOrExit(verifyDirectSandboxGpu)).rejects.toBeInstanceOf(
+      JetsonOpenRmPolicyRestorationError,
+    );
+    await expect(patch.rollbackManagedStartupAfterCreateFailure()).rejects.toBeInstanceOf(
+      JetsonOpenRmPolicyRestorationError,
+    );
+
+    expect(finalizeBackup).not.toHaveBeenCalled();
+    expect(temporaryDirectory).not.toBe("");
+    expect(fs.existsSync(temporaryDirectory)).toBe(false);
   });
 });

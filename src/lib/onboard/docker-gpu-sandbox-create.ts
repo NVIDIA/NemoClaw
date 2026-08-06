@@ -3,7 +3,10 @@
 
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
-import { maybeRunJetsonOpenRmPolicyProof } from "./diagnostics/jetson-openrm-proof";
+import {
+  JetsonOpenRmPolicyRestorationError,
+  maybeRunJetsonOpenRmPolicyProof,
+} from "./diagnostics/jetson-openrm-proof";
 import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
@@ -162,6 +165,7 @@ export function createDockerGpuSandboxCreatePatch(
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
   let cutoverFinalizationFailure: Error | null = null;
+  let policyRestorationFailure: JetsonOpenRmPolicyRestorationError | null = null;
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
@@ -316,6 +320,7 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     async rollbackManagedStartupAfterCreateFailure() {
+      if (policyRestorationFailure) throw policyRestorationFailure;
       const rollbackError = await rollbackAfterFailure();
       if (!rollbackError) return;
       onPatchFailureExit(options.sandboxName, rollbackError, {
@@ -572,6 +577,10 @@ export function createDockerGpuSandboxCreatePatch(
           console.error(
             `  OpenRM A/B inconclusive: ${diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError)}`,
           );
+          if (diagnosticError instanceof JetsonOpenRmPolicyRestorationError) {
+            policyRestorationFailure = diagnosticError;
+            throw diagnosticError;
+          }
         }
         printDockerGpuProofFailure(sandboxName, failure, selectedMode(), {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,

@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DockerGpuPatchResult } from "../docker-gpu-patch-types";
-import { maybeRunJetsonOpenRmPolicyProof } from "./jetson-openrm-proof";
+import {
+  JetsonOpenRmPolicyRestorationError,
+  maybeRunJetsonOpenRmPolicyProof,
+} from "./jetson-openrm-proof";
 
 const BASE_POLICY = `Version: 2
 Hash: fixture
@@ -167,6 +171,49 @@ describe("Jetson OpenRM policy proof", () => {
     expect(appliedPolicies).toHaveLength(2);
     expect(appliedPolicies[0]).toContain("/dev/nvidia-caps/nvidia-cap2");
     expect(appliedPolicies[1]).not.toContain("/dev/nvidia-caps/nvidia-cap2");
+  });
+
+  it("preserves a candidate failure and cleans temporary files when baseline restoration fails", () => {
+    const candidateError = new Error("candidate probe failed");
+    let temporaryDirectory = "";
+    let policySetCount = 0;
+    const runOpenshell = vi.fn((args: string[]) => {
+      const policyPath = args[3] ?? "";
+      temporaryDirectory = path.dirname(policyPath);
+      policySetCount += 1;
+      return { status: policySetCount === 1 ? 0 : 1 };
+    });
+
+    let failure: unknown;
+    try {
+      maybeRunJetsonOpenRmPolicyProof({
+        backend: "jetson",
+        enabled: true,
+        failure: new Error("cuInit(0)=801"),
+        preserveJetsonDeviceGroupMembership: true,
+        result: result(),
+        sandboxName: "alpha",
+        verifyDirectSandboxGpu: vi.fn(() => {
+          throw candidateError;
+        }),
+        deps: {
+          dockerRun: dockerRunForBoundaryProof(),
+          runCaptureOpenshell: vi.fn(() => BASE_POLICY),
+          runOpenshell,
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(JetsonOpenRmPolicyRestorationError);
+    expect((failure as JetsonOpenRmPolicyRestorationError).candidateError).toBe(candidateError);
+    expect((failure as JetsonOpenRmPolicyRestorationError).restorationError).toEqual(
+      expect.objectContaining({ message: expect.stringContaining("baseline.yaml") }),
+    );
+    expect((failure as JetsonOpenRmPolicyRestorationError).cleanupError).toBeNull();
+    expect(temporaryDirectory).not.toBe("");
+    expect(fs.existsSync(temporaryDirectory)).toBe(false);
   });
 
   it("does nothing outside the exact Jetson cuInit 801 failure", () => {
