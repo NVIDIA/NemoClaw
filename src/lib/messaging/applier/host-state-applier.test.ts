@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
+import * as registry from "../../state/registry";
 import type { SandboxMessagingPlan } from "../manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../persistence";
 import { MessagingHostStateApplier } from "./host-state-applier";
 import { MessagingSetupApplier } from "./setup-applier";
-import * as registry from "../../state/registry";
 
 vi.mock("../../state/registry", () => {
   const sandboxes = new Map<string, Record<string, unknown>>();
@@ -134,7 +133,48 @@ describe("MessagingHostStateApplier", () => {
     ]);
     expect(plan.networkPolicy.presets).toEqual(["slack", "telegram"]);
   });
+
+  it("replaces a channel's stored inputs when the same channel is added again (#8312)", () => {
+    registryMock.__setSandbox("demo", {
+      name: "demo",
+      messaging: MessagingHostStateApplier.buildStateFromPlan(makePlanWithMode("self-chat")),
+    });
+
+    const updated = MessagingHostStateApplier.applyPlanToRegistry("demo", makePlanWithMode("bot"), {
+      mode: "merge",
+    });
+
+    // Reconfiguring a channel is how an operator switches WhatsApp to bot mode
+    // after onboarding, so the incoming values have to win over the stored ones.
+    expect(updated).toBe(true);
+    const entry = registryMock.__getSandbox("demo");
+    const plan = (entry?.messaging as { plan: SandboxMessagingPlan }).plan;
+    expect(plan.channels.find((channel) => channel.channelId === "whatsapp")?.inputs).toEqual([
+      expect.objectContaining({ inputId: "mode", value: "bot" }),
+    ]);
+  });
 });
+
+function makePlanWithMode(mode: string): SandboxMessagingPlan {
+  const plan = makePlan(["whatsapp"]);
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) => ({
+      ...channel,
+      inputs: [
+        {
+          channelId: "whatsapp",
+          inputId: "mode",
+          kind: "config",
+          required: false,
+          sourceEnv: "WHATSAPP_MODE",
+          statePath: "whatsappConfig.mode",
+          value: mode,
+        },
+      ],
+    })),
+  };
+}
 
 function makePlan(
   channelIds: readonly string[],

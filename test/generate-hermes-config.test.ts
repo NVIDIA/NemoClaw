@@ -1085,9 +1085,34 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.platforms.whatsapp).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.whatsapp);
     expect(envFile).toContain("WHATSAPP_ENABLED=true\n");
-    expect(envFile).toContain("WHATSAPP_MODE=bot\n");
+    // Hermes' own adapter default. self-chat reads no allowlist, so a paired
+    // sandbox answers the owner's own chat with nothing else configured (#8312).
+    expect(envFile).toContain("WHATSAPP_MODE=self-chat\n");
     expect(envFile).not.toContain("WHATSAPP_BOT_TOKEN=");
     expect(envFile).not.toContain("openshell:resolve:env:WHATSAPP");
+  });
+
+  it("renders the Hermes WhatsApp bot mode when the operator selects it (#8312)", async () => {
+    const { envFile } = await runConfigScriptWithMessaging({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
+      NEMOCLAW_WHATSAPP_CONFIG_B64: encodeJson({ mode: "bot" }),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({ whatsapp: ["15551234567"] }),
+    });
+
+    expect(envFile).toContain("WHATSAPP_MODE=bot\n");
+    expect(envFile).toContain("WHATSAPP_ALLOWED_USERS=15551234567\n");
+  });
+
+  it("falls back to self-chat when the stored Hermes WhatsApp mode is not an accepted value (#8312)", async () => {
+    const { envFile } = await runConfigScriptWithMessaging({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
+      NEMOCLAW_WHATSAPP_CONFIG_B64: encodeJson({ mode: "broadcast" }),
+    });
+
+    // The bundled bridge runs only self-chat and bot; rendering anything else
+    // would start it in a mode it cannot serve.
+    expect(envFile).toContain("WHATSAPP_MODE=self-chat\n");
+    expect(envFile).not.toContain("WHATSAPP_MODE=broadcast");
   });
 
   it("emits Hermes WhatsApp allowed users when configured", async () => {

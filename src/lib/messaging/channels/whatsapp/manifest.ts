@@ -19,6 +19,19 @@ export const whatsappManifest = {
   },
   inputs: [
     {
+      id: "mode",
+      kind: "config",
+      required: false,
+      envKey: "WHATSAPP_MODE",
+      statePath: "whatsappConfig.mode",
+      validValues: ["self-chat", "bot"],
+      // Hermes adapter default. `self-chat` replies only to messages the paired
+      // account sends to itself and reads no allowlist, so a paired sandbox works
+      // with nothing else set. `bot` serves other senders and needs `allowedIds`;
+      // select it by exporting WHATSAPP_MODE before `channels add`.
+      defaultValue: "self-chat",
+    },
+    {
       id: "allowedIds",
       kind: "config",
       required: false,
@@ -68,7 +81,7 @@ export const whatsappManifest = {
       target: "~/.hermes/.env",
       lines: [
         "WHATSAPP_ENABLED=true",
-        "WHATSAPP_MODE=bot",
+        "WHATSAPP_MODE={{whatsappConfig.mode}}",
         "WHATSAPP_ALLOWED_USERS={{allowedIds.whatsapp.csv}}",
       ],
     },

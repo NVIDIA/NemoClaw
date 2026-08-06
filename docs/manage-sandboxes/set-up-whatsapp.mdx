@@ -49,7 +49,28 @@ Pair only one sandbox per WhatsApp account at a time.
 
 For non-interactive onboarding, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list to select WhatsApp for either agent.
 <AgentOnly variant="hermes">
-Hermes also uses these values as its WhatsApp sender allowlist.
+Hermes uses these values as its WhatsApp sender allowlist only when `WHATSAPP_MODE=bot`.
+Refer to the section below.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+## Reply to Other Senders
+
+The paired sandbox replies only to messages the paired account sends to itself.
+To reply to other senders, set `WHATSAPP_MODE=bot` and list the allowed senders:
+
+```bash
+WHATSAPP_MODE=bot WHATSAPP_ALLOWED_IDS=15551234567 $$nemoclaw <sandbox> channels add whatsapp
+$$nemoclaw <sandbox> rebuild
+$$nemoclaw <sandbox> gateway restart
+```
+
+Restart the gateway after the rebuild.
+The WhatsApp adapter reads the paired session once while the gateway starts, and the rebuild restores that session afterwards.
+
+In bot mode the sandbox replies to the listed senders and stops replying to the paired account's self-chat.
+Bot mode rejects every sender when the allowlist is empty, so set both values together.
+Set `WHATSAPP_ALLOWED_IDS='*'` to let any sender reach the paired account.
 </AgentOnly>
 
 Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).

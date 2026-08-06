@@ -10,7 +10,12 @@ import {
 export const whatsappRenderedConfigParser: RenderedChannelConfigParser = {
   listConfigVisibilityKeys(context) {
     if (context.agentId !== "hermes") return [];
-    return [envConfigKey("allowedIds", "~/.hermes/.env", "WHATSAPP_ALLOWED_USERS")];
+    // The mode decides whether an empty allowlist matters: bot rejects every
+    // sender without one, self-chat never reads it. Surface both together.
+    return [
+      envConfigKey("mode", "~/.hermes/.env", "WHATSAPP_MODE"),
+      envConfigKey("allowedIds", "~/.hermes/.env", "WHATSAPP_ALLOWED_USERS"),
+    ];
   },
 
   getValue(key, source) {
