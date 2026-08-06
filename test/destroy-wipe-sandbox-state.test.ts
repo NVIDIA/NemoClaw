@@ -31,6 +31,7 @@ function buildDeps(overrides: Partial<Record<string, unknown>> = {}) {
     loadAgent: vi.fn(() => ({
       configPaths: { dir: "/sandbox/.openclaw" },
       stateDirs: ["agents", "extensions", "workspace", "skills", "hooks", "identity"],
+      stateDirPrefixes: ["workspace-"],
       stateFiles: [],
     })),
     runOpenshell,
@@ -69,13 +70,21 @@ describe("wipeSandboxState (#5449)", () => {
     expect(script).toMatch(/rm\s+-rf/);
   });
 
-  it("also removes multi-agent workspace-* dirs (#1260)", () => {
-    const { deps, runOpenshell } = buildDeps();
+  it("also removes directories matching an agent-declared prefix (#1260)", () => {
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.openclaw" },
+        stateDirs: ["workspace"],
+        stateDirPrefixes: ["worker-"],
+        stateFiles: [],
+      })),
+    });
 
     destroy.wipeSandboxState("test-sb", deps as never);
 
     const { script } = execCommand(runOpenshell);
-    expect(script).toContain("workspace-*");
+    expect(script).toContain("'worker-'*");
+    expect(script).not.toContain("workspace-*");
   });
 
   it("passes ignoreError so a wipe failure never aborts destroy", () => {
@@ -133,6 +142,7 @@ describe("wipeSandboxState (#5449)", () => {
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
         stateDirs: ["workspace", "../etc", "/etc/passwd"],
+        stateDirPrefixes: [],
         stateFiles: [],
       })),
     });
@@ -165,6 +175,7 @@ describe("wipeSandboxState (#5449)", () => {
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
         stateDirs: [],
+        stateDirPrefixes: [],
         stateFiles: [
           { path: "agents.json" },
           { path: "../../../etc/shadow" },
@@ -185,6 +196,28 @@ describe("wipeSandboxState (#5449)", () => {
     }
   });
 
+  it("skips a state_dir prefix that escapes the agent config dir", () => {
+    const warnings: string[] = [];
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.openclaw" },
+        stateDirs: [],
+        stateDirPrefixes: ["workspace-", "../escape-", "/tmp/escape-"],
+        stateFiles: [],
+      })),
+      warn: (message: string) => warnings.push(message),
+    });
+
+    destroy.wipeSandboxState("test-sb", deps as never);
+
+    const { script } = execCommand(runOpenshell);
+    expect(script).toContain("'workspace-'*");
+    expect(script).not.toContain("../escape-");
+    expect(script).not.toContain("/tmp/escape-");
+    expect(warnings.join("\n")).toContain("../escape-");
+    expect(warnings.join("\n")).toContain("/tmp/escape-");
+  });
+
   // PRA-3 on #5455: an accepted manifest path containing shell metacharacters
   // (single quote, backtick, dollar sign, space) must reach the destructive
   // script intact, single-quoted, with no expansion or word-splitting risk.
@@ -198,6 +231,7 @@ describe("wipeSandboxState (#5449)", () => {
         // each carries a shell metacharacter that an unsafe construction
         // would let the shell interpret.
         stateDirs: ["state with space", "state'with'quote", "state`with`backtick"],
+        stateDirPrefixes: ["prefix'with'quote-"],
         stateFiles: [{ path: "file$with$dollar" }],
       })),
     });
@@ -211,6 +245,7 @@ describe("wipeSandboxState (#5449)", () => {
     expect(script).toContain("'state'\\''with'\\''quote'");
     expect(script).toContain("'state`with`backtick'");
     expect(script).toContain("'file$with$dollar'");
+    expect(script).toContain("'prefix'\\''with'\\''quote-'*");
   });
 
   // PRA-2 on #5455 (round 4): a manifest declaring an unsafe top-level config
@@ -236,6 +271,7 @@ describe("wipeSandboxState (#5449)", () => {
       loadAgent: vi.fn(() => ({
         configPaths: { dir },
         stateDirs: ["workspace"],
+        stateDirPrefixes: ["workspace-"],
         stateFiles: [],
       })),
     });
@@ -329,6 +365,7 @@ describe("wipeSandboxState (#5449)", () => {
           loadAgent: vi.fn(() => ({
             configPaths: { dir: fakeConfigDir },
             stateDirs: ["workspace"],
+            stateDirPrefixes: ["workspace-"],
             stateFiles: [],
           })),
           runOpenshell,
@@ -348,6 +385,7 @@ describe("wipeSandboxState (#5449)", () => {
         deps.loadAgent = vi.fn(() => ({
           configPaths: { dir: simulatedConfigDir },
           stateDirs: ["workspace"],
+          stateDirPrefixes: ["workspace-"],
           stateFiles: [],
         }));
         runOpenshell.mockImplementation((args: string[]): { status: number | null } =>
@@ -384,6 +422,7 @@ describe("wipeSandboxState (#5449)", () => {
       agent: "openclaw",
       configDir: "/sandbox/.openclaw",
       stateDirs: ["agents", "extensions", "workspace", "skills", "hooks", "identity"],
+      stateDirPrefixes: ["workspace-"],
       stateFiles: [],
       label: "openclaw",
     },
@@ -402,6 +441,7 @@ describe("wipeSandboxState (#5449)", () => {
         "workspace",
         "profiles",
       ],
+      stateDirPrefixes: [],
       stateFiles: [{ path: "SOUL.md" }, { path: ".hermes_history" }],
       label: "hermes",
     },
@@ -409,6 +449,7 @@ describe("wipeSandboxState (#5449)", () => {
       agent: "langchain-deepagents-code",
       configDir: "/sandbox/.deepagents",
       stateDirs: [".state", "skills", "agent/skills"],
+      stateDirPrefixes: [],
       stateFiles: [{ path: "config.toml" }],
       label: "langchain-deepagents-code",
     },
@@ -416,35 +457,42 @@ describe("wipeSandboxState (#5449)", () => {
     agent,
     configDir,
     stateDirs,
+    stateDirPrefixes,
     stateFiles,
   }) => {
     const { deps, runOpenshell } = buildDeps({
       getSandbox: vi.fn(() => ({ agent }) as never),
-      loadAgent: vi.fn(() => ({ configPaths: { dir: configDir }, stateDirs, stateFiles })),
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: configDir },
+        stateDirs,
+        stateDirPrefixes,
+        stateFiles,
+      })),
     });
 
     destroy.wipeSandboxState("test-sb", deps as never);
 
     const { script } = execCommand(runOpenshell);
     expect(script).toContain(`cd '${configDir}'`);
-    expect(script).toContain("workspace-*");
     for (const dir of stateDirs) {
       expect(script).toContain(`'${dir}'`);
+    }
+    for (const prefix of stateDirPrefixes) {
+      expect(script).toContain(`'${prefix}'*`);
     }
     for (const file of stateFiles) {
       expect(script).toContain(`'${file.path}'`);
     }
   });
 
-  // Ultra advisor PRA-2 on #5455 (empty state dirs): a manifest with empty
-  // state_dirs and state_files must still issue the wipe so the multi-agent
-  // `workspace-*` glob runs, but the `rm -rf --` argv must not collapse into
-  // a syntactically broken command.
-  it("issues a syntactically valid wipe with empty state_dirs and state_files for Ultra PRA-2 (#5455)", () => {
+  // Ultra advisor PRA-2 on #5455 (empty exact state dirs): a manifest with
+  // only a declared prefix must still issue a syntactically valid wipe.
+  it("issues a syntactically valid wipe with only a declared state_dir prefix (#5455)", () => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
         stateDirs: [],
+        stateDirPrefixes: ["workspace-"],
         stateFiles: [],
       })),
     });
@@ -452,9 +500,9 @@ describe("wipeSandboxState (#5449)", () => {
     destroy.wipeSandboxState("test-sb", deps as never);
 
     const { script } = execCommand(runOpenshell);
-    // The script still cd's and runs rm -rf with only the workspace-* glob.
+    // The script still cd's and runs rm -rf with only the declared prefix.
     expect(script).toContain("cd '/sandbox/.openclaw'");
-    expect(script).toMatch(/rm\s+-rf\s+--\s+workspace-\*/);
+    expect(script).toMatch(/rm\s+-rf\s+--\s+'workspace-'\*/);
     // No empty quoted argument that would expand to nothing in sh -c.
     expect(script).not.toMatch(/rm\s+-rf\s+--\s*''/);
   });

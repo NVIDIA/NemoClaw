@@ -243,12 +243,15 @@ describe("repo skill markdown files", () => {
     expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
   });
 
-  it("links fallback validation to current contributor requirements", () => {
+  it("keeps shared documentation routing one-way", () => {
     const documentationReview = fs.readFileSync(
       path.join(skillsRoot, "_shared", "documentation-writing-review.md"),
       "utf8",
     );
-    expect(documentationReview).toContain("../../../AGENTS.md#pr-requirements");
+    expect(documentationReview).toContain("../../../WRITING.md");
+    expect(documentationReview).toContain("../../../docs/CONTRIBUTING.md");
+    expect(documentationReview).not.toContain("../../../AGENTS.md");
+    expect(documentationReview).not.toContain("../../../docs/AGENTS.md");
   });
 
   it("derives messaging channel architecture from the current checkout", () => {

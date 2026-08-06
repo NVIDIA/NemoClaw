@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Host Files and State"
 sidebar-title: "Host Files and State"
-description: "Reference for NemoClaw host-side files and directories under ~/.nemoclaw."
-description-agent: "Lists host-side NemoClaw config and state files under ~/.nemoclaw. Use when identifying config.json, sandboxes.json, usage-notice.json, legacy credentials.json, operational state, backup directories, mounts, or local inference adapter files."
-keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxes json", "nemoclaw usage notice"]
+description: "Reference for NemoClaw host-side state and selected local inference cache paths."
+description-agent: "Lists host-side NemoClaw state and selected local inference cache paths. Use when identifying config.json, sandboxes.json, local inference credentials, model caches, operational state, backup directories, or mounts."
+keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxes json", "nemoclaw local inference cache"]
 content:
   type: "reference"
 ---
 NemoClaw stores host-side configuration, registry metadata, operational state, transient install state, and local backups under `~/.nemoclaw/`.
+Managed local inference profiles also use the cache paths listed on this page.
 Use this page when you need to identify what a file does before deleting, backing up, or sharing diagnostics.
 
 <AgentOnly variant="deepagents">
@@ -18,7 +19,7 @@ Deep Agents-specific runtime state lives inside the sandbox under `/sandbox/.dee
 </AgentOnly>
 
 <Warning>
-Do not paste a legacy `credentials.json`, provider tokens, bot tokens, proxy tokens, `dual-station-vllm-api-key`, or debug archives containing them into chat or issue comments.
+Do not paste a legacy `credentials.json`, provider tokens, bot tokens, proxy tokens, local inference API keys, or debug archives containing them into chat or issue comments.
 Share redacted diagnostics only.
 </Warning>
 
@@ -32,7 +33,10 @@ Share redacted diagnostics only.
 | `~/.nemoclaw/onboard-session.json` | Resume marker for an onboarding attempt that failed before completion. | Yes, when you intentionally want to discard the failed session and start over. Prefer `$$nemoclaw onboard --fresh` when available. |
 | `~/.nemoclaw/usage-notice.json` | Records the third-party software notice version in `acceptedVersion` and the acceptance time in `acceptedAt`. Install, onboarding, and rebuild flows consult this file and prompt again when its recorded version differs from the current notice or the file is absent. | Yes; deleting it makes the next applicable install, onboarding, or rebuild flow prompt for acceptance again. |
 | `~/.nemoclaw/ollama-proxy-token` | Local auth token used by the host-side Ollama auth proxy. | Yes, but re-run onboarding afterward so NemoClaw recreates and registers the proxy token. |
-| `~/.nemoclaw/dual-station-vllm-api-key` | Owner-only host-global bearer API key shared by NemoClaw-managed distributed vLLM profiles. | No while a managed distributed runtime exists. Full uninstall removes it only after managed runtime cleanup succeeds and no sibling gateway remains. |
+| `~/.nemoclaw/dual-station-vllm-api-key` | Owner-only host-global bearer API key shared by authenticated NemoClaw-managed vLLM profiles. | No while any managed vLLM runtime uses it. Full uninstall removes it only after matching runtime cleanup succeeds and no sibling gateway remains. |
+| `~/.nemoclaw/managed-llama-cpp/api-key` | Owner-only bearer API key mounted read-only into the managed llama.cpp container. | No while the managed llama.cpp runtime exists. A retry reuses the same key. Full uninstall removes it with the managed state only after runtime cleanup succeeds. |
+| `~/.nemoclaw/managed-llama-cpp/owner.json` | Owner-only, credential-free runtime binding that matches the managed llama.cpp container and network generation to the cache owner. | No while the managed llama.cpp runtime exists. Full uninstall removes it with runtime state only after exact cleanup succeeds. |
+| `~/.nemoclaw/managed-llama-cpp/runtime.json` | Owner-only runtime receipt that binds the exact managed llama.cpp container ID, network ID, image digest, model identity, owner generation, and API-key fingerprint. It contains no API key. | No while the managed llama.cpp runtime exists. Full uninstall uses it for exact cleanup and preserves it when cleanup is incomplete. |
 | `~/.nemoclaw/managed-cluster-vllm-runtime.json` | Owner-only host-global managed-cluster cleanup receipt. It contains no serving API key and binds the exact plan, ranked nodes, containers, and temporary discovery-claim identities. | No while the managed cluster exists. Full uninstall removes it after every exact container is removed. |
 | `~/.nemoclaw/managed-cluster-vllm-runtime.json.rank-<rank>.ssh-binding/` | Owner-only copied SSH host-key and Docker-command binding needed to reach one recorded worker rank during full uninstall. | No while the managed cluster exists. Full uninstall removes every rank binding with the cleanup receipt after cluster cleanup succeeds. |
 | `~/.nemoclaw/managed-cluster-managed-serving.json.<node-id>.ssh-binding/` | Owner-only host-global temporary SSH host-key and Docker-command claim written for one peer after setup confirmation and repeated topology qualification. Each claim is distinct from its durable runtime binding and applies to every gateway on the host. | Only after confirming that no setup transaction is active. Without a durable runtime receipt, an orphaned claim makes a new managed-vLLM install and full uninstall fail closed without mutation. With the matching host-global managed-cluster receipt, full uninstall retires every recorded claim after it removes every exact container. If claim retirement fails, it preserves the receipt for a retry. Gateway-scoped uninstall preserves each claim. |
@@ -57,6 +61,9 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
 | `~/.nemoclaw/blueprints/` | Cached blueprint inputs used by onboarding and sandbox recreation. | Avoid manual deletion unless you plan to rerun onboarding from fresh inputs. |
+| `~/.cache/huggingface/` | Shared Hugging Face cache used by managed vLLM model downloads. Other applications can use the same cache. | Only after stopping every process that uses the cache. Full uninstall preserves this shared cache. Deleting it makes affected applications download the model files again. |
+| `~/.cache/nemoclaw/llama-cpp/owner.json` | Owner-only, credential-free generation record that binds managed llama.cpp cache receipts to this profile. | No while a managed llama.cpp cache entry uses the recorded generation. Full uninstall preserves it with the cache by default and removes it after receipt validation when you pass `--delete-models`. |
+| `~/.cache/nemoclaw/llama-cpp/<cache-key>/` | Owner-only exact GGUF artifact and receipt for the managed llama.cpp profile. NemoClaw verifies the declared size, SHA-256 digest, owner ID, and generation before reuse. | Only after stopping the managed llama.cpp container. Full uninstall preserves the cache by default and removes the owner-controlled cache root when you pass `--delete-models`. Deleting it makes the next installation download and verify the artifact again. |
 
 ## Migration Snapshot Retention
 
@@ -95,6 +102,12 @@ Uninstall scopes cleanup to one gateway port: it operates on the selected state 
 It names the environments it left behind and prints the command that removes one of them.
 Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to remove every gateway port in one run.
 The shared host state is eligible for removal only when `--keep-openshell` is absent, no port fails or survives, and the selected gateway is not externally supervised.
+
+Before full uninstall deletes shared state, it removes only an exact authenticated host-local vLLM container and exact NemoClaw-owned llama.cpp container and network.
+It refuses the remaining uninstall steps when Docker is unavailable or persisted ownership cannot be proved.
+Resolve the reported Docker or ownership error and rerun uninstall with the state still present.
+The managed llama.cpp cache remains by default, while `--delete-models` removes its owner-controlled cache root after runtime cleanup succeeds.
+The shared Hugging Face cache used by managed vLLM remains in place.
 
 For operational uninstall steps, refer to:
 

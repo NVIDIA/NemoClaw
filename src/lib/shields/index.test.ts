@@ -37,12 +37,32 @@ vi.mock("../policy", () => ({
 }));
 
 vi.mock("../sandbox/agent-config", () => ({
+  resolveAgentStateLockContract: vi.fn(() => ({
+    stateLockPlan: {
+      version: 1,
+      readOnlyRoots: ["skills"],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    },
+    stateLockPlanInImage: true,
+  })),
   resolveAgentConfig: vi.fn(() => ({
     agentName: "openclaw",
     configPath: "/sandbox/.openclaw/openclaw.json",
     configDir: "/sandbox/.openclaw",
     format: "json",
     configFile: "openclaw.json",
+    stateLockPlan: {
+      version: 1,
+      readOnlyRoots: ["skills"],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    },
+    stateLockPlanInImage: true,
   })),
 }));
 
@@ -597,6 +617,60 @@ describe("shields — unit logic", () => {
       expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
     });
 
+    it("auto-restore applies a snapshot with no managed MCP entries when policy staging is unavailable (#7952)", async () => {
+      const sandboxName = "openclaw";
+      const processToken = "d".repeat(32);
+      const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
+      const openshellPath = path.join(tmpDir, "openshell");
+      const openshellArgvPath = path.join(tmpDir, "openshell-argv.txt");
+      fs.writeFileSync(
+        openshellPath,
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$OPENSHELL_TEST_ARGV_PATH"\n',
+        { mode: 0o700 },
+      );
+      vi.stubEnv("PATH", `${tmpDir}${path.delimiter}${process.env.PATH ?? ""}`);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshellPath);
+      vi.stubEnv("OPENSHELL_TEST_ARGV_PATH", openshellArgvPath);
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n");
+      writeState(sandboxName, {
+        shieldsDown: true,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: [],
+      });
+      writeMarker(sandboxName, {
+        pid: 2_147_483_647,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() - 1_000).toISOString(),
+        processToken,
+      });
+      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      const { applyShieldsPolicySnapshot } = await loadShieldsModule();
+      const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+        throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
+          code: "ENOSPC",
+        });
+      });
+
+      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+        transitionProcessToken: processToken,
+        deadlineAuthoritative: true,
+        expiredTimerRecovery: true,
+      });
+
+      expect(result.status).toBe(0);
+      expect(createTempDirectory).not.toHaveBeenCalled();
+      expect(fs.readFileSync(openshellArgvPath, "utf-8").trim().split("\n")).toEqual([
+        "policy",
+        "set",
+        "--policy",
+        snapshotPath,
+        "--wait",
+        sandboxName,
+      ]);
+    });
+
     it("reuses the snapshot without staging when the snapshot and current policy have no managed MCP entries (#7952)", async () => {
       const snapshotPath = "/state/policy-snapshot-no-managed-mcp.yaml";
       const snapshotYaml = "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n";
@@ -898,10 +972,12 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
             configDir: "/sandbox/.openclaw",
+            stateLockPlanInImage: true,
           }),
         }),
       ).toThrow("exit 2");
@@ -928,6 +1004,7 @@ describe("shields — unit logic", () => {
       const { shieldsStatus } = await loadShieldsModule();
       shieldsStatus(sandboxName, true, {
         verifyLockState: () => ({ ok: true, issues: [] }),
+        verifyStateLockPlan: () => [],
         resolveConfig: () => ({
           agentName: "openclaw",
           configPath: "/sandbox/.openclaw/openclaw.json",
@@ -967,6 +1044,7 @@ describe("shields — unit logic", () => {
 
       const { shieldsStatus } = await loadShieldsModule();
       shieldsStatus(sandboxName, true, {
+        verifyStateLockPlan: () => [],
         verifyLockState: (
           _name: string,
           _target: unknown,
@@ -1004,6 +1082,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: true, issues: [] }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1039,6 +1118,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1069,6 +1149,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1099,6 +1180,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: true, issues: [] }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => {
             throw new Error("agent config not found");
           },

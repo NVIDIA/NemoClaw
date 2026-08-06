@@ -33,7 +33,7 @@ Covers the daily maintainer cadence, trusted E2E dispatch, workflow policy, docu
 ### `nemoclaw-contributor-*` (7 skills)
 
 For contributors to the NemoClaw codebase.
-Covers trusted checkout setup and readiness checks, issue planning, issue implementation, dependency
+Covers trusted checkout setup and readiness checks, issue planning and capability slicing, issue implementation, dependency
 migration audits, creating pull requests that follow the project template, monitoring CI and
 automated review feedback, drafting documentation updates, and onboarding new messaging channels.
 
