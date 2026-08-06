@@ -17,8 +17,11 @@ import {
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
-import { parseHttpsPinRouteId } from "../../inference/https-pin-runtime";
-import { revokeHttpsPinRuntimeAdapterRoute } from "../../inference/https-pin-runtime-adapter";
+import {
+  parseHttpsPinRouteId,
+  revokeHttpsPinRuntimeAdapterRoute,
+} from "../../inference/https-pin-runtime-adapter";
+import { cleanupManagedLlamaCppRuntimeForSandbox } from "../../inference/local-model-profile/cleanup";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -553,6 +556,18 @@ async function destroySandboxUnlocked(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
+  if (deleteSucceededOrAlreadyGone) {
+    const managedLlamaCppCleanup = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
+      ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
+    });
+    if (!managedLlamaCppCleanup.ok) {
+      console.error(
+        `  Managed llama.cpp cleanup failed for '${sandboxName}': ${managedLlamaCppCleanup.reason}`,
+      );
+      console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
+      process.exit(1);
+    }
+  }
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.

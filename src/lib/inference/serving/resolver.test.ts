@@ -31,6 +31,7 @@ import type {
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
+  ResolvedHostLocalInferenceSelection,
 } from "./types.js";
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
@@ -311,6 +312,8 @@ describe("managed inference resolver", () => {
     );
     expect(result.outcome).toBe("selected");
     expect(result).not.toHaveProperty("topologyQualification");
+    if (result.outcome !== "selected") throw new Error("expected selected resolution");
+    expect(isHostLocalInferenceServingRecipe(result.recipe)).toBe(true);
     const baseProfile = {
       name: "DGX Spark",
       platform: "spark",
@@ -323,9 +326,7 @@ describe("managed inference resolver", () => {
       loadTimeoutSec: 1,
     } satisfies VllmProfile;
     const selected = materializeHostLocalVllmSelection(
-      result as Extract<typeof result, { outcome: "selected" }> & {
-        topologyQualification?: never;
-      },
+      result as ResolvedHostLocalInferenceSelection,
       baseProfile,
     );
 

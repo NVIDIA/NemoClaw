@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -164,13 +164,15 @@ describe("runtime provider central source boundary", () => {
     ]);
   });
 
-  // source-shape-contract: security -- Production provider composition must keep the dormant llama.cpp controller unreachable until its activation boundary is crash safe
-  it("keeps Docker llama.cpp lifecycle authority dormant (#8395)", () => {
+  // source-shape-contract: security -- Managed llama.cpp activation must remain behind the exact receipt-backed controller and operation-scoped Docker authority
+  it("activates Docker llama.cpp only through its durable lifecycle controller (#8433)", () => {
     const docker = read("src/lib/onboard/runtime-provider/docker.ts");
     const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
+    const installer = read("src/lib/inference/llama-cpp/managed-installer.ts");
     const productionComposition = trackedPaths(".")
       .filter(
         (path) =>
+          existsSync(join(repoRoot, path)) &&
           /\.[cm]?ts$/u.test(path) &&
           !path.endsWith(".test.ts") &&
           !path.includes("/test/") &&
@@ -180,10 +182,11 @@ describe("runtime provider central source boundary", () => {
       .map(read)
       .join("\n");
     expect(docker).not.toContain("docker-llama-cpp-managed-lifecycle");
-    expect(docker).not.toMatch(/operation:\s*["']host-local-inference["']/u);
+    expect(docker).toMatch(/operation:\s*["']host-local-inference["']/u);
     expect(adapter).toContain("createDockerLlamaCppManagedLifecycle");
-    expect(productionComposition).not.toContain("createDockerLlamaCppManagedLifecycle");
-    expect(productionComposition).not.toContain("docker-llama-cpp-managed-lifecycle");
+    expect(installer).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(productionComposition).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(productionComposition).toContain("docker-llama-cpp-managed-lifecycle");
   });
 
   it("inventories every production Dockerfile", () => {

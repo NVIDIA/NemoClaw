@@ -29,6 +29,11 @@ import {
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import {
+  cleanupManagedLlamaCppRuntimeForSandbox,
+  type ManagedLlamaCppCleanupTarget,
+  resolveManagedLlamaCppCleanupTarget,
+} from "../../inference/local-model-profile/cleanup";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import {
   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
@@ -60,11 +65,12 @@ import { isModelRouterCommandLineForPort } from "../../onboard/model-router-proc
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import {
   assertGatewayStatePathSafe,
+  GATEWAYS_SUBDIR,
   type GatewayRegistryDocument,
+  listGatewayStateRoots,
   readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "../../state/gateway-registry";
-import { GATEWAYS_SUBDIR } from "../../state/state-root";
 import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 import {
   stopHttpsPinRuntimeAdapter,
@@ -107,6 +113,7 @@ export interface UninstallRunDeps {
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
   runDualStationRuntimeCleanup?: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup?: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
+  runManagedLlamaCppRuntimeCleanup?: (sandboxName: string, gatewayPort: number) => RunResult;
 }
 
 export interface UninstallRunOutcome {
@@ -414,6 +421,7 @@ interface UninstallRuntime {
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
   runDualStationRuntimeCleanup: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
+  runManagedLlamaCppRuntimeCleanup: (sandboxName: string, gatewayPort: number) => RunResult;
   warn: (message: string) => void;
 }
 
@@ -484,6 +492,21 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
           ],
           options,
         )),
+    runManagedLlamaCppRuntimeCleanup:
+      deps.runManagedLlamaCppRuntimeCleanup ??
+      ((sandboxName, gatewayPort) => {
+        const result = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
+          gatewayPort,
+          homeDir: env.HOME || os.homedir(),
+        });
+        return result.ok
+          ? { status: 0, stdout: result.removed.join("\n"), stderr: "" }
+          : {
+              status: 1,
+              stdout: result.removed.join("\n"),
+              stderr: result.reason,
+            };
+      }),
     warn: deps.error ?? ((message) => console.warn(message)),
   };
 }
@@ -566,11 +589,7 @@ function confirm(
       ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}`
       : "  · Ollama models: kept",
   );
-  runtime.log(
-    options.deleteModels
-      ? "  · NemoClaw-managed llama.cpp model cache: removed"
-      : "  · NemoClaw-managed llama.cpp model cache: kept",
-  );
+  runtime.log("  · Shared Hugging Face model cache: kept");
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
@@ -1439,18 +1458,11 @@ function removeHostLocalModelRuntimes(
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const hasLlamaState = runtime.existsSync(path.join(sharedRoot, "managed-llama-cpp"));
   const hasManagedKey = runtime.existsSync(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE));
-  const hasLlamaCache = runtime.existsSync(
-    path.join(runtime.env.HOME || os.homedir(), ".cache", "nemoclaw", "llama-cpp"),
-  );
   const hasDistributedReceipt = [
     MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
-  if (
-    !hasLlamaState &&
-    (!hasManagedKey || hasDistributedReceipt) &&
-    !(deleteModels && hasLlamaCache)
-  ) {
+  if (!hasLlamaState && (!hasManagedKey || hasDistributedReceipt)) {
     return true;
   }
   const result = runtime.runLocalModelRuntimeCleanup(deleteModels, {
@@ -1464,12 +1476,65 @@ function removeHostLocalModelRuntimes(
   return false;
 }
 
+function managedLlamaCppCleanupPorts(homeDir: string, scopedToSelectedGateway: boolean): number[] {
+  const ports = new Set<number>([GATEWAY_PORT]);
+  if (scopedToSelectedGateway) return [...ports];
+  for (const { gatewayPort } of listGatewayStateRoots(homeDir)) ports.add(gatewayPort);
+  return [...ports].sort((left, right) => left - right);
+}
+
+function managedLlamaCppCleanupTargets(
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+): ManagedLlamaCppCleanupTarget[] | null {
+  const homeDir = runtime.env.HOME || os.homedir();
+  try {
+    const targets: ManagedLlamaCppCleanupTarget[] = [];
+    for (const gatewayPort of managedLlamaCppCleanupPorts(homeDir, scopedToSelectedGateway)) {
+      const target = resolveManagedLlamaCppCleanupTarget(homeDir, gatewayPort);
+      if (target) targets.push(target);
+    }
+    return targets;
+  } catch (error) {
+    runtime.error(
+      `Managed llama.cpp cleanup could not safely inventory gateway-scoped ownership state: ${formatError(error)}. NemoClaw did not start the remaining uninstall steps.`,
+    );
+    return null;
+  }
+}
+
+function removeManagedLlamaCppRuntimes(
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+): boolean {
+  const targets = managedLlamaCppCleanupTargets(runtime, scopedToSelectedGateway);
+  if (targets === null) return false;
+  for (const target of targets) {
+    const result = runtime.runManagedLlamaCppRuntimeCleanup(target.sandboxName, target.gatewayPort);
+    for (const removed of splitNonEmptyLines(result.stdout)) runtime.log(`Removed ${removed}`);
+    if (result.status !== 0) {
+      runtime.error(
+        `Managed llama.cpp cleanup for sandbox '${target.sandboxName}' on gateway port ${String(target.gatewayPort)} did not complete: ${result.stderr.trim() || "unknown cleanup error"}. NemoClaw did not start the remaining uninstall steps.`,
+      );
+      return false;
+    }
+    if (fs.lstatSync(target.stateDir, { throwIfNoEntry: false }) !== undefined) {
+      runtime.error(
+        `Managed llama.cpp cleanup for sandbox '${target.sandboxName}' on gateway port ${String(target.gatewayPort)} returned without retiring its ownership state. NemoClaw did not start the remaining uninstall steps.`,
+      );
+      return false;
+    }
+  }
+  return true;
+}
+
 function removeManagedModelRuntimes(
   paths: UninstallPaths,
   deleteModels: boolean,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
 ): boolean {
+  if (!removeManagedLlamaCppRuntimes(runtime, scopedToSelectedGateway)) return false;
   if (scopedToSelectedGateway) return true;
   if (!removeHostLocalModelRuntimes(paths, deleteModels, runtime)) return false;
   if (!removeManagedDistributedVllmRuntime(paths, runtime)) return false;

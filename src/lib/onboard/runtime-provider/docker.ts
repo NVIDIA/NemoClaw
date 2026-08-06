@@ -379,6 +379,7 @@ export function createDockerRuntimeProviderBundle(
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
         { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
+        { operation: "host-local-inference", engineId: "docker", displayName: "Docker" },
         { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
         { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
       ],

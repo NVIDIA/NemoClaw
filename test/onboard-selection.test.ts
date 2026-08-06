@@ -156,6 +156,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     experimental: false,
     ollamaPort: 11434,
     vllmPort: 8000,
+    getGatewayPort: () => 8080,
     step: () => {},
     isNonInteractive: () => false,
     getNonInteractiveProvider: () => null,
@@ -4723,7 +4724,6 @@ process.exit(0);
     const script = String.raw`
 const runner = require(${runnerPath});
 // Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
-// Handles verifyInferenceRoute's "openshell inference get" call.
 runner.runCapture = (cmd) => {
   const args = Array.isArray(cmd) ? cmd : [];
   if (args[1] === "inference" && args[2] === "get") {
