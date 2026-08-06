@@ -309,6 +309,8 @@ If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable prof
 Run `$$nemoclaw profiles list` to inspect an incompatibility reason before onboarding.
 
 If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
+The onboarding review screen identifies the resolved profile, recipe, model, runtime image, support state, and download estimates before confirmation.
+After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
 #### `--events=jsonl`
 
@@ -334,7 +336,10 @@ Without `--events=jsonl`, terminal output and behavior are unchanged.
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue.
-Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, and custom Dockerfile path recorded by the original run.
+Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, custom Dockerfile path, and any explicitly selected serving-profile provenance recorded by the original run.
+For a profile-backed session, resume requires the same catalog, preset, and recipe digests and exits before effects if the installed definition changed.
+Omit `--profile` to reuse that recorded selection, or pass the same profile explicitly; use `--fresh` to adopt a changed catalog definition.
+Legacy sessions without a profile-provenance record continue to resume normally, but cannot acquire a new `--profile` selection during resume.
 
 <AgentOnly variant="openclaw">
 

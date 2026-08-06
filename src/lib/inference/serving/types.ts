@@ -6,6 +6,30 @@ import type { SystemReadinessReport } from "../../readiness/types.js";
 export type ServingDefinitionKind = "ServingRecipe" | "ServingPreset";
 export type ServingSelectionPolicy = "automatic" | "explicit-only" | "disabled";
 export type ServingSupportState = "supported" | "experimental" | "disabled";
+
+/** Secret-free, immutable catalog identity persisted across onboarding lifecycle operations. */
+export interface ServingProfileProvenance {
+  readonly schemaVersion: 1;
+  readonly catalogDigest: string;
+  readonly preset: {
+    readonly id: string;
+    readonly digest: string;
+    readonly displayName: string;
+    readonly supportState: ServingSupportState;
+  };
+  readonly recipe: {
+    readonly id: string;
+    readonly digest: string;
+    readonly backend: string;
+  };
+  readonly model: {
+    readonly id: string;
+    readonly revision: string;
+  };
+  readonly runtimeImage: string | null;
+  readonly estimatedImageDownloadBytes: number | null;
+  readonly estimatedModelDownloadBytes: number | null;
+}
 export type ReadinessEntityKind = "observation" | "capability" | "qualification";
 export type ReadinessValueType = "boolean" | "number" | "string" | "version";
 export type ServingReadinessObservationRole =

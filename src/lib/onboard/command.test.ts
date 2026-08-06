@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
@@ -113,6 +115,54 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("incompatible: A host requirement is not met");
   });
 
+  it("reuses exact recorded profile identity on resume and rejects catalog drift (#8246)", () => {
+    const catalog = loadServingCatalog();
+    const recorded = servingProfileProvenance(catalog, catalog.presets[0]!.metadata.id);
+    const resumed = resolve(
+      { resume: true },
+      {
+        loadServingCatalog: () => catalog,
+        loadSession: () => ({ servingProfileProvenance: recorded }) as never,
+      },
+    );
+    expect(resumed.servingProfile).toBe(recorded.preset.id);
+    expect(resumed.servingProfileProvenance).toEqual(recorded);
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { resume: true },
+        {
+          loadServingCatalog: () => ({
+            ...catalog,
+            catalogDigest: `sha256:${"f".repeat(64)}`,
+          }),
+          loadSession: () => ({ servingProfileProvenance: recorded }) as never,
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("changed since onboarding started");
+  });
+
+  it("keeps legacy resume compatible but refuses to add new profile intent (#8384)", () => {
+    expect(
+      resolve({ resume: true }, { loadSession: () => ({}) as never }).servingProfile,
+    ).toBeNull();
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { resume: true, profile: COMPATIBLE_NANO_PROFILE.id },
+        {
+          listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+          loadSession: () => ({}) as never,
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("legacy onboarding session");
+  });
+
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
@@ -160,6 +210,7 @@ describe("onboard command options", () => {
       noOllamaAutostart: true,
       experimentalProfile: null,
       servingProfile: null,
+      servingProfileProvenance: null,
     });
   });
 
@@ -185,6 +236,7 @@ describe("onboard command options", () => {
       noOllamaAutostart: false,
       experimentalProfile: null,
       servingProfile: null,
+      servingProfileProvenance: null,
     });
   });
 

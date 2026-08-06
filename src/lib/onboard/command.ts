@@ -5,12 +5,18 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
   resolveServingProfileSelection,
-  ServingProfileSelectionError,
   type ServingProfileListEntry,
+  ServingProfileSelectionError,
 } from "../inference/serving/profile-list";
+import {
+  assertServingProfileProvenanceCurrent,
+  servingProfileProvenance,
+} from "../inference/serving/profile-provenance";
+import type { CompiledServingCatalog, ServingProfileProvenance } from "../inference/serving/types";
 import { VLLM_EXTRA_ARGS_ENV } from "../inference/vllm-models";
 import {
   resolveToolDisclosureRequest,
@@ -52,12 +58,15 @@ export interface OnboardCommandOptions {
   noOllamaAutostart: boolean;
   experimentalProfile: ExperimentalOnboardProfile | null;
   servingProfile: string | null;
+  servingProfileProvenance: ServingProfileProvenance | null;
 }
 
 export interface ResolveOnboardOptionsDeps {
   env: NodeJS.ProcessEnv;
   listAgents?: () => string[];
   listServingProfiles?: () => ServingProfileListEntry[];
+  loadServingCatalog?: () => CompiledServingCatalog;
+  loadSession?: () => { servingProfileProvenance?: ServingProfileProvenance | null } | null;
   error?: (message?: string) => void;
   exit?: (code: number) => never;
 }
@@ -196,11 +205,13 @@ function validateServingProfileConflicts(
 function resolveServingProfile(
   requested: string | undefined,
   deps: ResolveOnboardOptionsDeps,
-): string | null {
+): ServingProfileProvenance | null {
   if (requested === undefined) return null;
+  const catalog = (deps.loadServingCatalog ?? loadServingCatalog)();
   let selectedProfileId: string;
   try {
     selectedProfileId = resolveServingProfileSelection(requested.trim(), {
+      catalog,
       listProfiles: deps.listServingProfiles ? () => deps.listServingProfiles!() : undefined,
     });
   } catch (error) {
@@ -208,7 +219,49 @@ function resolveServingProfile(
     throw error;
   }
   validateServingProfileConflicts(selectedProfileId, deps);
-  return selectedProfileId;
+  return servingProfileProvenance(catalog, selectedProfileId);
+}
+
+function resolveServingProfileLifecycle(
+  flags: OnboardFlags,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const requested = resolveServingProfile(flags.profile, deps);
+  if (flags.resume !== true) return requested;
+  return resolveResumedServingProfile(requested, deps);
+}
+
+function resolveResumedServingProfile(
+  requested: ServingProfileProvenance | null,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const recorded = deps.loadSession?.()?.servingProfileProvenance ?? null;
+  if (!recorded) {
+    if (requested) {
+      fail(
+        deps,
+        "  --profile cannot be added while resuming a legacy onboarding session; start fresh instead.",
+      );
+    }
+    return null;
+  }
+  let current: ServingProfileProvenance;
+  try {
+    current = assertServingProfileProvenanceCurrent(
+      recorded,
+      (deps.loadServingCatalog ?? loadServingCatalog)(),
+    );
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (requested && JSON.stringify(requested) !== JSON.stringify(current)) {
+    fail(
+      deps,
+      `  --profile ${requested.preset.id} does not match resumed profile ${current.preset.id}.`,
+    );
+  }
+  validateServingProfileConflicts(current.preset.id, deps);
+  return current;
 }
 
 function validateExperimentalProfileLifecycle(
@@ -235,6 +288,7 @@ export function resolveOnboardOptions(
   const experimentalProfile = resolveExperimentalProfile(flags);
   validateExperimentalProfileLifecycle(flags, experimentalProfile, deps);
   const agent = resolveAgent(flags.agent, deps);
+  const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
   try {
@@ -263,7 +317,8 @@ export function resolveOnboardOptions(
     autoYes: withPortableDefault(flags.yes, experimentalProfile),
     noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
     experimentalProfile,
-    servingProfile: resolveServingProfile(flags.profile, deps),
+    servingProfile: servingProfileProvenance?.preset.id ?? null,
+    servingProfileProvenance,
   };
 }
 

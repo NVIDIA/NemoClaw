@@ -4045,6 +4045,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         cannotPrompt,
         nonInteractive: isNonInteractive(),
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+        servingProfileProvenance: opts.servingProfileProvenance ?? null,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
         ...stationSessionInput,
