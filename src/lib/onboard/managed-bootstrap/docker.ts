@@ -980,6 +980,32 @@ function scrubVerifiedReplacementDeltas(canonicalJson: string): string {
   return JSON.stringify(root);
 }
 
+function differingJsonPaths(
+  left: unknown,
+  right: unknown,
+  path = "$",
+  result: string[] = [],
+): string[] {
+  if (JSON.stringify(left) === JSON.stringify(right)) return result;
+  if (
+    typeof left !== "object" ||
+    left === null ||
+    typeof right !== "object" ||
+    right === null ||
+    Array.isArray(left) ||
+    Array.isArray(right)
+  ) {
+    result.push(path);
+    return result;
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)])) {
+    differingJsonPaths(leftRecord[key], rightRecord[key], `${path}.${key}`, result);
+  }
+  return result;
+}
+
 function assertReplacementMatchesIntent(
   originalCanonicalJson: string,
   replacement: DockerContainerInspect,
@@ -1050,8 +1076,14 @@ function assertReplacementMatchesIntent(
   const expectedPreserved = scrubVerifiedReplacementDeltas(originalCanonicalJson);
   const observedPreserved = scrubVerifiedReplacementDeltas(replacementSpec.canonicalJson);
   if (observedPreserved !== expectedPreserved) {
+    const changedPaths = differingJsonPaths(
+      JSON.parse(expectedPreserved),
+      JSON.parse(observedPreserved),
+    )
+      .sort()
+      .slice(0, 16);
     throw new Error(
-      "Managed bootstrap Docker replacement normalized spec changed outside declared deltas.",
+      `Managed bootstrap Docker replacement normalized spec changed outside declared deltas: ${changedPaths.join(", ")}.`,
     );
   }
   return replacementSpec.hash;

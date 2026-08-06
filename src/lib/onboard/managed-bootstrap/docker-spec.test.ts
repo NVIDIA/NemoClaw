@@ -43,17 +43,22 @@ describe("managed bootstrap Docker launch spec", () => {
       MaskedPaths: ["/proc/kcore", "/sys/firmware"],
       ReadonlyPaths: ["/proc/sys", "/proc/sysrq-trigger"],
     });
-    const second = structuredClone(first);
-    second.HostConfig!.MaskedPaths = ["/proc/kcore"];
+    const reordered = structuredClone(first);
+    reordered.HostConfig!.MaskedPaths = ["/sys/firmware", "/proc/kcore"];
+    reordered.HostConfig!.ReadonlyPaths = ["/proc/sysrq-trigger", "/proc/sys"];
+    const changed = structuredClone(first);
+    changed.HostConfig!.MaskedPaths = ["/proc/kcore"];
 
     const expected = normalizeDockerManagedBootstrapLaunchSpec(first);
-    const observed = normalizeDockerManagedBootstrapLaunchSpec(second);
+    const sameSet = normalizeDockerManagedBootstrapLaunchSpec(reordered);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(changed);
 
     expect(expected.spec.inspect.HostConfig).toMatchObject({
       ConsoleSize: [0, 0],
       MaskedPaths: ["/proc/kcore", "/sys/firmware"],
       ReadonlyPaths: ["/proc/sys", "/proc/sysrq-trigger"],
     });
+    expect(sameSet.hash).toBe(expected.hash);
     expect(observed.hash).not.toBe(expected.hash);
   });
 
@@ -91,6 +96,13 @@ describe("managed bootstrap Docker launch spec", () => {
       Ulimits: null,
     });
     const cliInspect = structuredClone(apiInspect);
+    Object.assign(cliInspect.Config!, {
+      ArgsEscaped: false,
+      MacAddress: "",
+      OnBuild: null,
+      Shell: null,
+      Volumes: null,
+    });
     Object.assign(cliInspect.HostConfig!, {
       Binds: ["/host/b:/sandbox/b:ro", "/host/a:/sandbox/a:ro"],
       BlkioDeviceReadBps: [],
@@ -104,7 +116,13 @@ describe("managed bootstrap Docker launch spec", () => {
       DnsOptions: [],
       DnsSearch: [],
       OomKillDisable: false,
+      MaskedPaths: ["/sys/firmware", "/proc/kcore"],
+      ReadonlyPaths: ["/proc/sysrq-trigger", "/proc/sys"],
       Ulimits: [],
+    });
+    Object.assign(apiInspect.HostConfig!, {
+      MaskedPaths: ["/proc/kcore", "/sys/firmware"],
+      ReadonlyPaths: ["/proc/sys", "/proc/sysrq-trigger"],
     });
 
     const expected = normalizeDockerManagedBootstrapLaunchSpec(apiInspect);
@@ -168,7 +186,9 @@ describe("managed bootstrap Docker launch spec", () => {
     {
       name: "multiple attached networks",
       mutate: (inspect: ReturnType<typeof createDockerGpuInspectFixture>) => {
-        inspect.NetworkSettings!.Networks!.secondary = { Aliases: ["alpha-secondary"] };
+        inspect.NetworkSettings!.Networks!.secondary = {
+          Aliases: ["alpha-secondary"],
+        };
       },
       error: /multiple attached networks/u,
     },
