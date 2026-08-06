@@ -12,21 +12,26 @@ import { resolve } from "node:path";
  * tracking is asserted.
  */
 
+/** One entry in the in-memory filesystem store. */
 export interface RunnerFsEntry {
   type: "file" | "dir";
   content?: string;
 }
 
+/** The home directory every runner suite mocks os.homedir() to. */
 export const FAKE_HOME = "/fakehome";
 
+/** The deterministic UUID every runner suite mocks crypto.randomUUID() to. */
 export const FIXED_RUN_UUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
+/** An in-memory filesystem store with its seeding helpers. */
 export interface RunnerFsStore {
   store: Map<string, RunnerFsEntry>;
   addFile: (path: string, content: string) => void;
   addDir: (path: string) => void;
 }
 
+/** Creates a fresh in-memory filesystem store for one suite. */
 export function createRunnerFsStore(): RunnerFsStore {
   const store = new Map<string, RunnerFsEntry>();
   return {
@@ -40,6 +45,7 @@ function missingEntry(path: string): never {
   throw new Error(`ENOENT: ${path}`);
 }
 
+/** Behavior options for inMemoryFsMethods. */
 export interface InMemoryFsOptions {
   /** Canonical-path overrides consulted by realpathSync before the store. */
   realpaths?: Map<string, string>;
@@ -107,6 +113,7 @@ export interface StdoutCapture {
   reset: () => void;
 }
 
+/** Creates a fresh stdout capture for one suite. */
 export function createStdoutCapture(): StdoutCapture {
   const chunks: string[] = [];
   const text = (): string => chunks.join("");

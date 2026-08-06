@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/** The smallest valid blueprint: one inference profile, one sandbox, empty policy. */
 export function minimalBlueprint(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
     version: "1.0",
@@ -27,6 +28,7 @@ export function minimalBlueprint(overrides?: Record<string, unknown>): Record<st
   };
 }
 
+/** A valid blueprint routed through the local router profile. */
 export function routedBlueprint(): Record<string, unknown> {
   return {
     version: "1.0",
@@ -59,6 +61,7 @@ export function routedBlueprint(): Record<string, unknown> {
   };
 }
 
+/** minimalBlueprint with the given policy additions substituted in. */
 export function blueprintWithPolicyAdditions(
   additions: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -73,6 +76,7 @@ export function blueprintWithPolicyAdditions(
   };
 }
 
+/** Fails the given two-word command with stderr; every other command succeeds. */
 export function resultForCommandFailure(
   args: readonly string[],
   command: readonly [string, string],
@@ -83,12 +87,22 @@ export function resultForCommandFailure(
     : { exitCode: 0, stdout: "", stderr: "" };
 }
 
+/** An empty successful command result. */
 export function successResult(): {
   exitCode: number;
   stdout: string;
   stderr: string;
 } {
   return { exitCode: 0, stdout: "", stderr: "" };
+}
+
+/** A failed command result carrying only stderr. */
+export function failureResult(stderr: string): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return { exitCode: 1, stdout: "", stderr };
 }
 
 /** The `provider get` listing for the sandbox's matching runtime identity provider. */

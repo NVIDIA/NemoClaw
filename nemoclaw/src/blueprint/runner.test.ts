@@ -14,6 +14,7 @@ import {
 } from "./runner-mock-fixtures.js";
 import {
   blueprintWithPolicyAdditions,
+  failureResult,
   minimalBlueprint,
   resultForCommandFailure,
   routedBlueprint,
@@ -794,7 +795,7 @@ describe("runner", () => {
     });
 
     it("reuses sandbox when 'already exists' error", async () => {
-      mockExeca.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "already exists" });
+      mockExeca.mockResolvedValueOnce(failureResult("already exists"));
       // Subsequent calls succeed
       mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
 
@@ -803,7 +804,7 @@ describe("runner", () => {
     });
 
     it("throws when sandbox creation fails with other error", async () => {
-      mockExeca.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "disk full" });
+      mockExeca.mockResolvedValueOnce(failureResult("disk full"));
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
         /Failed to create sandbox.*disk full/,

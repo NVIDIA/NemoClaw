@@ -14,6 +14,7 @@ import {
   resolvedEndpointFor,
 } from "./runner-mock-fixtures.js";
 import {
+  failureResult,
   MATCHING_INFERENCE_PROVIDER_LISTING,
   MATCHING_INFERENCE_ROUTE_LISTING,
   MATCHING_RUNTIME_PROVIDER_LISTING,
@@ -67,8 +68,8 @@ function responseQueue(
   overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
 ) {
   const responses = new Map([
-    ["sandbox get test-sandbox", [{ exitCode: 1, stdout: "", stderr: "sandbox not found" }]],
-    ["provider get test-provider", [{ exitCode: 1, stdout: "", stderr: "provider not found" }]],
+    ["sandbox get test-sandbox", [failureResult("sandbox not found")]],
+    ["provider get test-provider", [failureResult("provider not found")]],
     ["inference get", [{ exitCode: 0, stdout: matchingInferenceRoute, stderr: "" }]],
     ...overrides,
   ]);
@@ -228,7 +229,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
         ],
       ],
@@ -295,7 +296,7 @@ describe("blueprint identity wrapper", () => {
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
     responseQueue([
-      ["provider get acme-okta-runtime", [{ exitCode: 1, stdout: "", stderr: "not found" }]],
+      ["provider get acme-okta-runtime", [failureResult("not found")]],
       [
         "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
         [{ exitCode: undefined, stdout: "", stderr: "terminated by SIGTERM" }],
@@ -317,10 +318,7 @@ describe("blueprint identity wrapper", () => {
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
     responseQueue([
-      [
-        "sandbox get test-sandbox",
-        [{ exitCode: 1, stdout: "", stderr: "gateway configuration not found" }],
-      ],
+      ["sandbox get test-sandbox", [failureResult("gateway configuration not found")]],
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
@@ -357,7 +355,7 @@ describe("blueprint identity wrapper", () => {
   it.each([
     [
       "cannot be inspected",
-      { exitCode: 1, stdout: "", stderr: "gateway route unavailable" },
+      failureResult("gateway route unavailable"),
       /Failed to inspect sandbox 'test-sandbox' after concurrent creation.*gateway route unavailable/,
     ],
     [
@@ -370,14 +368,11 @@ describe("blueprint identity wrapper", () => {
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
     responseQueue([
-      [
-        "sandbox get test-sandbox",
-        [{ exitCode: 1, stdout: "", stderr: "sandbox not found" }, racedSandbox],
-      ],
+      ["sandbox get test-sandbox", [failureResult("sandbox not found"), racedSandbox]],
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           ...Array.from({ length: 4 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
@@ -387,7 +382,7 @@ describe("blueprint identity wrapper", () => {
       ],
       [
         "sandbox create --from openclaw --name test-sandbox --forward 18789",
-        [{ exitCode: 1, stdout: "", stderr: "sandbox already exists" }],
+        [failureResult("sandbox already exists")],
       ],
     ]);
 
@@ -410,10 +405,7 @@ describe("blueprint identity wrapper", () => {
         "sandbox get test-sandbox",
         [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
       ],
-      [
-        "provider get test-provider",
-        [{ exitCode: 1, stdout: "", stderr: "gateway configuration not found" }],
-      ],
+      ["provider get test-provider", [failureResult("gateway configuration not found")]],
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
@@ -472,10 +464,7 @@ describe("blueprint identity wrapper", () => {
         "provider get test-provider",
         [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
       ],
-      [
-        "inference get",
-        [{ exitCode: 1, stdout: "", stderr: "gateway route inspection unavailable" }],
-      ],
+      ["inference get", [failureResult("gateway route inspection unavailable")]],
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
@@ -511,7 +500,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           ...Array.from({ length: 4 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
@@ -554,7 +543,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           ...Array.from({ length: 4 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
@@ -589,7 +578,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           ...Array.from({ length: 4 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
@@ -619,7 +608,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get test-provider",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           {
             exitCode: 0,
             stdout: matchingInferenceProvider.replace("Type: openai", "Type: anthropic"),
@@ -630,7 +619,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
@@ -638,7 +627,7 @@ describe("blueprint identity wrapper", () => {
       ],
       [
         "provider create --name test-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
-        [{ exitCode: 1, stdout: "", stderr: "provider already exists" }],
+        [failureResult("provider already exists")],
       ],
     ]);
 
@@ -671,7 +660,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
@@ -679,7 +668,7 @@ describe("blueprint identity wrapper", () => {
       ],
       [
         "inference set --provider test-provider --model test-model",
-        [{ exitCode: 1, stdout: "", stderr: "route failed" }],
+        [failureResult("route failed")],
       ],
     ]);
 
@@ -718,16 +707,13 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
         ],
       ],
-      [
-        "policy get --base test-sandbox",
-        [{ exitCode: 1, stdout: "", stderr: "policy read rejected" }],
-      ],
+      ["policy get --base test-sandbox", [failureResult("policy read rejected")]],
     ]);
 
     await expect(
@@ -784,7 +770,7 @@ describe("blueprint identity wrapper", () => {
     responseQueue([
       [
         "inference set --provider test-provider --model test-model",
-        [{ exitCode: 1, stdout: "", stderr: "route failed" }],
+        [failureResult("route failed")],
       ],
     ]);
 
@@ -813,7 +799,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           ...Array.from({ length: 4 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
@@ -887,11 +873,11 @@ describe("blueprint identity wrapper", () => {
         "sandbox get test-sandbox",
         [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
       ],
-      ["provider get test-provider", [{ exitCode: 1, stdout: "", stderr: "provider not found" }]],
+      ["provider get test-provider", [failureResult("provider not found")]],
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
         ],
       ],
@@ -945,9 +931,7 @@ describe("blueprint identity wrapper", () => {
         sandbox_created_by_apply: true,
       }),
     });
-    responseQueue([
-      ["sandbox remove owned-sandbox", [{ exitCode: 1, stdout: "", stderr: "remove denied" }]],
-    ]);
+    responseQueue([["sandbox remove owned-sandbox", [failureResult("remove denied")]]]);
 
     await expect(actionRollback("failed-sandbox-removal")).rejects.toThrow(
       /Failed to remove owned sandbox 'owned-sandbox': remove denied/,
@@ -966,12 +950,7 @@ describe("blueprint identity wrapper", () => {
         inference: { provider_name: "test-provider" },
       }),
     });
-    responseQueue([
-      [
-        "provider delete test-provider",
-        [{ exitCode: 1, stdout: "", stderr: "provider delete denied" }],
-      ],
-    ]);
+    responseQueue([["provider delete test-provider", [failureResult("provider delete denied")]]]);
 
     await expect(actionRollback("failed-inference-provider-removal")).rejects.toThrow(
       /Failed to remove owned inference provider 'test-provider': provider delete denied/,
@@ -1006,7 +985,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           ...Array.from({ length: 5 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
@@ -1016,14 +995,11 @@ describe("blueprint identity wrapper", () => {
       ],
       [
         "provider delete acme-okta-runtime",
-        [
-          { exitCode: 1, stdout: "", stderr: "delete denied" },
-          { exitCode: 0, stdout: "", stderr: "" },
-        ],
+        [failureResult("delete denied"), { exitCode: 0, stdout: "", stderr: "" }],
       ],
       [
         "inference set --provider test-provider --model test-model",
-        [{ exitCode: 1, stdout: "", stderr: "route failed" }],
+        [failureResult("route failed")],
       ],
     ]);
 
@@ -1053,7 +1029,7 @@ describe("blueprint identity wrapper", () => {
       [
         "provider get acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          failureResult("provider not found"),
           ...Array.from({ length: 3 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
@@ -1063,13 +1039,13 @@ describe("blueprint identity wrapper", () => {
       ],
       [
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
-        [{ exitCode: 1, stdout: "", stderr: "rotate failed" }],
+        [failureResult("rotate failed")],
       ],
       [
         "provider delete acme-okta-runtime",
         [
-          { exitCode: 1, stdout: "", stderr: "first delete denied" },
-          { exitCode: 1, stdout: "", stderr: "second delete denied" },
+          failureResult("first delete denied"),
+          failureResult("second delete denied"),
           { exitCode: 0, stdout: "", stderr: "" },
         ],
       ],
