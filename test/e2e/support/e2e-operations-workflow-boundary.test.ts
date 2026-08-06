@@ -210,9 +210,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   });
 
   it.each([
-    ["maintain", 0],
-    ["write", 1],
-  ])("requires a maintainer role before manual PR E2E for %s", (role, expectedStatus) => {
+    ["maintain", 0, ""],
+    ["write", 1, "requires a repository maintainer or administrator"],
+  ])("requires a maintainer role before manual PR E2E for %s", (role, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
@@ -258,9 +258,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
 
     expect(result.status, result.stderr).toBe(expectedStatus);
-    if (expectedStatus !== 0) {
-      expect(result.stderr).toContain("requires a repository maintainer or administrator");
-    }
+    expect(result.stderr).toContain(expectedStderr);
   });
 
   it("keeps every planned job wired to bound evidence", () => {
