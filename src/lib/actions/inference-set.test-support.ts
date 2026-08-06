@@ -136,6 +136,7 @@ export function createDeps(options: {
   ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute?: InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"];
   updateSandbox?: InferenceSetDeps["updateSandbox"];
+  updateSandboxInferenceRoute?: InferenceSetDeps["updateSandboxInferenceRoute"];
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
@@ -146,6 +147,7 @@ export function createDeps(options: {
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     seedHermesDashboardConfig: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
+    updateSandboxInferenceRoute: ReturnType<typeof vi.fn>;
     readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
     appendAuditEntry: ReturnType<typeof vi.fn>;
@@ -171,6 +173,9 @@ export function createDeps(options: {
   }, {});
   const defaultSandbox =
     options.defaultSandbox === undefined ? (entries[0]?.name ?? null) : options.defaultSandbox;
+  const updateSandboxInferenceRoute = vi.fn(
+    options.updateSandboxInferenceRoute ?? options.updateSandbox ?? (() => true),
+  );
   const calls = {
     captureOpenshell: vi.fn(
       options.captureOpenshell ??
@@ -184,7 +189,8 @@ export function createDeps(options: {
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
-    updateSandbox: vi.fn(options.updateSandbox ?? (() => true)),
+    updateSandbox: updateSandboxInferenceRoute,
+    updateSandboxInferenceRoute,
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       const current = session ?? baseSession();
@@ -238,6 +244,7 @@ export function createDeps(options: {
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
     updateSandbox: calls.updateSandbox,
+    updateSandboxInferenceRoute: calls.updateSandboxInferenceRoute,
     getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,
     updateSession: calls.updateSession,

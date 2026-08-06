@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENTS_DIR,
   getAgentChoices,
+  listAgents,
   loadAgent,
   requireAgentPolicyAdditionsPath,
   resolveAgentName,
@@ -36,6 +37,27 @@ afterEach(() => {
 });
 
 describe("agent definitions", () => {
+  it("cannot discover or load a local NemoCUA manifest while the feature is disabled (#7755)", () => {
+    const realExistsSync = fs.existsSync.bind(fs);
+    vi.spyOn(fs, "existsSync").mockImplementation((candidate) =>
+      candidate === path.join(AGENTS_DIR, "nemocua", "manifest.yaml")
+        ? true
+        : realExistsSync(candidate),
+    );
+    vi.spyOn(fs, "readdirSync").mockReturnValue([
+      { name: "nemocua", isDirectory: () => true } as fs.Dirent,
+    ] as never);
+    const disabledEnv = {
+      NEMOCLAW_CUA_RUNTIME_MANIFEST: "/private/untrusted/runtime-manifest.json",
+      NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256: "a".repeat(64),
+    };
+
+    expect(listAgents(disabledEnv)).not.toContain("nemocua");
+    expect(() => loadAgent("nemocua", disabledEnv)).toThrow(
+      "use the supported Brev Launchable activation",
+    );
+  });
+
   it("orders OpenClaw first in interactive choices", () => {
     const choices = getAgentChoices();
     expect(choices[0]?.name).toBe("openclaw");
@@ -78,7 +100,7 @@ describe("agent definitions", () => {
   });
 
   it("resolves common user-facing agent aliases to canonical manifest names", () => {
-    const available = ["openclaw", "hermes", "langchain-deepagents-code"];
+    const available = ["openclaw", "hermes", "langchain-deepagents-code", "nemocua"];
 
     expect(resolveAgentNameAlias("nemohermes", available)).toBe("hermes");
     expect(resolveAgentNameAlias("NEMO_HERMES", available)).toBe("hermes");
@@ -89,6 +111,8 @@ describe("agent definitions", () => {
     expect(resolveAgentNameAlias("deepagentscode", available)).toBe("langchain-deepagents-code");
     expect(resolveAgentNameAlias("langchain", available)).toBe("langchain-deepagents-code");
     expect(resolveAgentNameAlias("nemoclaw", available)).toBe("openclaw");
+    expect(resolveAgentNameAlias("cua", available)).toBe("nemocua");
+    expect(resolveAgentNameAlias("nemo-cua", available)).toBe("nemocua");
   });
 
   it("resolves --agent and NEMOCLAW_AGENT aliases through resolveAgentName", () => {

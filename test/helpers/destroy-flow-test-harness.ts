@@ -12,6 +12,13 @@ const requireDist = createRequire(
   new URL("../../src/lib/actions/sandbox/destroy-flow.test.ts", import.meta.url),
 );
 const destroyModulePath = "./destroy.js";
+const destroyPresenceModulePath = "./destroy-presence.js";
+
+// Warm the compiled dependency graph outside individual test timeouts. Each
+// harness reloads only destroy.js after installing spies on those cached
+// dependencies.
+requireDist(destroyModulePath);
+delete require.cache[requireDist.resolve(destroyModulePath)];
 
 export type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
@@ -30,6 +37,7 @@ export type DestroyHarness = {
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
   promptSpy: MockInstance;
+  requireCuaReconciliationSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
@@ -62,6 +70,7 @@ type DestroyHarnessOptions = {
   promptResponses?: string[];
   registeredSandboxCount?: number;
   restoreMcpError?: string;
+  requireCuaReconciliation?: boolean;
   sandboxPresent?: boolean;
   shieldsDown?: boolean;
   shieldsUpError?: Error;
@@ -103,11 +112,11 @@ type DestroySandboxPresenceClassifier = (
 ) => string;
 
 export function loadDestroySandboxPresenceClassifier(): DestroySandboxPresenceClassifier {
-  resetDestroyModuleCache();
-  const destroyModule = requireDist(destroyModulePath) as {
+  delete require.cache[requireDist.resolve(destroyPresenceModulePath)];
+  const destroyPresenceModule = requireDist(destroyPresenceModulePath) as {
     classifyDestroySandboxPresence: DestroySandboxPresenceClassifier;
   };
-  return destroyModule.classifyDestroySandboxPresence;
+  return destroyPresenceModule.classifyDestroySandboxPresence;
 }
 
 export function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
@@ -178,6 +187,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
     return true;
   });
+  const requireCuaReconciliationSpy = vi
+    .spyOn(registry, "requireCuaReconciliationBeforeSandboxMutation")
+    .mockReturnValue(options.requireCuaReconciliation ?? false);
   const revokeHttpsPinRuntimeAdapterRouteSpy = vi
     .spyOn(httpsPinRuntimeAdapter, "revokeHttpsPinRuntimeAdapterRoute")
     .mockResolvedValue(true);
@@ -353,6 +365,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
     promptSpy,
+    requireCuaReconciliationSpy,
     removeSandboxSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,

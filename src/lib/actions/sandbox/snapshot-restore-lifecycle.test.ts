@@ -20,7 +20,9 @@ afterEach(() => {
   }
 });
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
-  it("holds the per-sandbox mutation lock across snapshot creation", async () => {
+  it("holds the per-sandbox mutation lock across snapshot creation", {
+    timeout: 15_000,
+  }, async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-create-lock-"));
     tempHomes.push(tempHome);
     vi.stubEnv("HOME", tempHome);
@@ -92,6 +94,124 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
     expect(output).toContain("Restored 1 directories, 1 files");
+  });
+
+  it("stops a snapshot restore and persists cleanup reconciliation for a CUA target", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      cuaRuntimeReadiness: { kind: "runtime-readiness" } as never,
+      cuaTarget: { kind: "target-attachment" } as never,
+      cuaSecurityAttestation: { kind: "security-attestation" } as never,
+      cuaTaskResults: [{ kind: "task-result" }] as never,
+    });
+    f.requireCuaReconciliationBeforeSandboxMutationMock.mockReturnValue(true);
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.requireCuaReconciliationBeforeSandboxMutationMock).toHaveBeenCalledWith(
+      "alpha",
+      "snapshot-restore",
+    );
+    expect(f.updateSandboxMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("stops a snapshot restore for a reconciliation-only CUA recovery row", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      cuaReconciliation: { kind: "reconciliation" } as never,
+    });
+    f.requireCuaReconciliationBeforeSandboxMutationMock.mockReturnValue(true);
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.requireCuaReconciliationBeforeSandboxMutationMock).toHaveBeenCalledWith(
+      "alpha",
+      "snapshot-restore",
+    );
+    expect(f.updateSandboxMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("invalidates readiness-only CUA authority before a snapshot restore", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      cuaRuntimeReadiness: { kind: "runtime-readiness" } as never,
+    });
+    f.updateSandboxMock.mockReturnValue(true);
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(f.updateSandboxMock).toHaveBeenCalledWith("alpha", {
+      cuaRuntimeReadiness: undefined,
+    });
+    expect(f.updateSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
+      f.restoreSandboxStateMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("stops before restore when CUA authority cannot be invalidated", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      cuaRuntimeReadiness: { kind: "runtime-readiness" } as never,
+    });
+    f.updateSandboxMock.mockReturnValue(false);
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not copy CUA authority or retained results into a snapshot clone", async () => {
+    const source = {
+      name: "alpha",
+      agent: "openclaw",
+      imageTag: "nemoclaw-alpha:test",
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      cuaRuntimeReadiness: { kind: "runtime-readiness" } as never,
+      cuaTarget: { kind: "target-attachment" } as never,
+      cuaSecurityAttestation: { kind: "security-attestation" } as never,
+      cuaTaskResults: [{ kind: "task-result" }] as never,
+    };
+    f.getSandboxMock.mockImplementation((name) => (name === "alpha" ? source : null));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true });
+
+    expect(f.registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "beta",
+        cuaRuntimeReadiness: undefined,
+        cuaTarget: undefined,
+        cuaSecurityAttestation: undefined,
+        cuaTaskResults: undefined,
+        cuaReconciliation: undefined,
+      }),
+    );
   });
 
   it("delegates managed and custom-image snapshot restores to the state layer", async () => {

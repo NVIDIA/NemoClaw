@@ -51,14 +51,14 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
     // The dashboard re-seed is Hermes-only; OpenClaw has no isolated dashboard config. (#6893)
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+    expect(deps.calls.updateSandboxInferenceRoute).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
       }),
     );
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(deps.calls.updateSandboxInferenceRoute.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "nvidia-prod",

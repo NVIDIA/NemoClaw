@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +10,9 @@ import type { ExecutionEvidence } from "../registry/parity-evidence.ts";
 import { redactString } from "./redaction.ts";
 
 export type TargetContract = string | readonly string[];
+
+const ARTIFACT_DIRECTORY_MODE = 0o700;
+const ARTIFACT_FILE_MODE = 0o600;
 
 export type TargetMetadata<Extension extends object = Record<string, unknown>> = {
   id: string;
@@ -102,14 +106,16 @@ export class ArtifactSink {
 
   constructor(rootDir: string, redactionValues: Iterable<string> = []) {
     const resolvedRoot = path.resolve(rootDir);
-    fsSync.mkdirSync(resolvedRoot, { recursive: true });
+    fsSync.mkdirSync(resolvedRoot, { recursive: true, mode: ARTIFACT_DIRECTORY_MODE });
     this.rootDir = fsSync.realpathSync(resolvedRoot);
+    this.assertPrivateDirectorySync(this.rootDir);
     this.target = new TargetEvidenceWriter(this);
     this.addRedactionValues(redactionValues);
   }
 
   async ensureRoot(): Promise<void> {
-    await fs.mkdir(this.rootDir, { recursive: true });
+    await fs.mkdir(this.rootDir, { recursive: true, mode: ARTIFACT_DIRECTORY_MODE });
+    await this.assertPrivateDirectory(this.rootDir);
   }
 
   pathFor(relativePath: string): string {
@@ -131,9 +137,57 @@ export class ArtifactSink {
 
   async writeText(relativePath: string, text: string): Promise<string> {
     const target = this.pathFor(relativePath);
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, redactString(text, this.redactionValues), "utf8");
-    return target;
+    const parent = path.dirname(target);
+    await this.ensurePrivateDirectoryChain(parent);
+
+    const temporary = path.join(
+      parent,
+      `.${path.basename(target)}.${String(process.pid)}.${randomUUID()}.tmp`,
+    );
+    let handle: fs.FileHandle | undefined;
+    try {
+      handle = await fs.open(
+        temporary,
+        fsSync.constants.O_WRONLY |
+          fsSync.constants.O_CREAT |
+          fsSync.constants.O_EXCL |
+          fsSync.constants.O_NOFOLLOW,
+        ARTIFACT_FILE_MODE,
+      );
+      await handle.chmod(ARTIFACT_FILE_MODE);
+      await handle.writeFile(redactString(text, this.redactionValues), "utf8");
+      await handle.sync();
+      const staged = await handle.stat({ bigint: true });
+      if (
+        !staged.isFile() ||
+        staged.isSymbolicLink() ||
+        staged.nlink !== 1n ||
+        (staged.mode & 0o777n) !== BigInt(ARTIFACT_FILE_MODE)
+      ) {
+        throw new Error("artifact temporary file authority is invalid");
+      }
+      await handle.close();
+      handle = undefined;
+
+      await fs.rename(temporary, target);
+      const published = await fs.lstat(target, { bigint: true });
+      if (
+        !published.isFile() ||
+        published.isSymbolicLink() ||
+        published.dev !== staged.dev ||
+        published.ino !== staged.ino ||
+        published.nlink !== 1n ||
+        (published.mode & 0o777n) !== BigInt(ARTIFACT_FILE_MODE)
+      ) {
+        throw new Error("artifact file authority changed during publication");
+      }
+      return target;
+    } finally {
+      await handle?.close().catch(() => undefined);
+      await fs.unlink(temporary).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }
   }
 
   async writeJson(relativePath: string, value: unknown): Promise<string> {
@@ -150,6 +204,42 @@ export class ArtifactSink {
       );
     }
     return this.writeJson(path.join("execution", `${resultId}.json`), evidence);
+  }
+
+  private assertPrivateDirectorySync(directory: string): void {
+    const stat = fsSync.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error("artifact directory authority is invalid");
+    }
+    fsSync.chmodSync(directory, ARTIFACT_DIRECTORY_MODE);
+  }
+
+  private async assertPrivateDirectory(directory: string): Promise<void> {
+    const stat = await fs.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error("artifact directory authority is invalid");
+    }
+    await fs.chmod(directory, ARTIFACT_DIRECTORY_MODE);
+  }
+
+  private async ensurePrivateDirectoryChain(directory: string): Promise<void> {
+    await this.ensureRoot();
+    const relative = path.relative(this.rootDir, directory);
+    if (relative === "") return;
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error("artifact directory escapes root");
+    }
+
+    let current = this.rootDir;
+    for (const component of relative.split(path.sep)) {
+      current = path.join(current, component);
+      try {
+        await fs.mkdir(current, { mode: ARTIFACT_DIRECTORY_MODE });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      await this.assertPrivateDirectory(current);
+    }
   }
 }
 

@@ -3,6 +3,7 @@
 
 import path from "node:path";
 import * as onboardSession from "../state/onboard-session";
+import * as registry from "../state/registry";
 import {
   DEFAULT_TOOL_DISCLOSURE,
   resolveSandboxToolDisclosure,
@@ -11,6 +12,7 @@ import {
   type ToolDisclosure,
 } from "../tool-disclosure";
 import { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
+import { requiresCuaReconciliationBeforeOnboard } from "./sandbox-agent";
 import type { SandboxLifecycleHelpers } from "./sandbox-lifecycle";
 
 export function applyOnboardToolDisclosureRequest(value: unknown): ToolDisclosure | null {
@@ -59,6 +61,19 @@ export function prepareSandboxToolDisclosure(
     }
   }
 
+  // Keep inspection and validation ahead of every mutation. MCP and baseline
+  // exclusions are registry-only rebuild intent: replacement registration
+  // overwrites the retained row, while a failed create leaves retry metadata.
+  if (
+    existingEntry &&
+    !liveExists &&
+    !preservedMcpState &&
+    (existingEntry.baselineExclusions?.length ?? 0) === 0 &&
+    existingEntry.pendingRouteReservation !== true &&
+    !requiresCuaReconciliationBeforeOnboard(existingEntry)
+  ) {
+    registry.removeSandbox(sandboxName);
+  }
   onboardSession.updateSession((session) => {
     session.toolDisclosure = mode;
     return session;

@@ -11,18 +11,28 @@ import { getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
+import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
+import {
+  type CuaStateValidationDeps,
+  getCuaReconciliationForProjection,
+  getObservedValidatedCuaState,
+  getValidatedCuaState,
+  isCuaPublicStateEnabled,
+  type ObservedCuaInferenceRoute,
+} from "../../cua/state";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
+  resolveGatewayName,
+  resolveSandboxGatewayName,
 } from "../../gateway-runtime-action";
-import { parseGatewayInference } from "../../inference/config";
+import { type GatewayInference, parseGatewayInference } from "../../inference/config";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
-import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderSelectionError,
   requireRuntimeProviderBundle,
   resolveCurrentRuntimeProviderBundle,
-  RuntimeProviderSelectionError,
 } from "../../onboard/runtime-provider/access";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
@@ -300,7 +310,7 @@ function resolveInferenceRoute(
   sb: SandboxEntry | null | undefined,
   openshellBin: ReturnType<typeof resolveOpenshell>,
   openshellConnected: boolean,
-): DoctorInferenceRoute {
+): DoctorInferenceRoute & { liveInference: GatewayInference | null } {
   const live =
     openshellBin && openshellConnected
       ? parseGatewayInference(
@@ -314,6 +324,7 @@ function resolveInferenceRoute(
     model: live?.model || sb?.model || "unknown",
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
+    liveInference: live,
   };
 }
 
@@ -457,6 +468,198 @@ function baselineExclusionDoctorChecks(sandboxName: string): DoctorCheck[] {
   return checks;
 }
 
+type ValidatedCuaDoctorState = ReturnType<typeof getValidatedCuaState>;
+
+function buildCuaTargetDoctorCheckFromState(
+  sandboxName: string,
+  cua: ValidatedCuaDoctorState,
+): DoctorCheck | null {
+  if (!cua.readiness) return null;
+  const attachment = cua.target;
+  if (!attachment || attachment.status === "detached" || !attachment.target) {
+    return {
+      group: "Sandbox",
+      label: "CUA target",
+      status: "info",
+      detail: "no target attached",
+      hint: `run \`${CLI_NAME} ${sandboxName} cua target attach\` with an operator-owned adapter`,
+    };
+  }
+  const capabilities = attachment.target.capabilities
+    .map((capability) => `${capability.id}=${capability.health}`)
+    .join(", ");
+  return {
+    group: "Sandbox",
+    label: "CUA target",
+    status: attachment.status === "attached" ? "ok" : "fail",
+    detail: `${attachment.status}; ${attachment.target.identityDigest}; ${capabilities}`,
+    hint:
+      attachment.status === "attached"
+        ? undefined
+        : `run \`${CLI_NAME} ${sandboxName} cua target health\` with the operator-owned adapter`,
+  };
+}
+
+function buildCuaSecurityDoctorCheckFromState(
+  sandboxName: string,
+  cua: ValidatedCuaDoctorState,
+): DoctorCheck | null {
+  if (!cua.readiness) return null;
+  const attestation = cua.security;
+  if (!cua.target?.target || !attestation) {
+    return {
+      group: "Sandbox",
+      label: "CUA security",
+      status: "fail",
+      detail: "deny-default security boundary is not verified for the current identities",
+      hint: `run \`${CLI_NAME} ${sandboxName} cua security verify\` with the operator-owned verifier`,
+    };
+  }
+  return {
+    group: "Sandbox",
+    label: "CUA security",
+    status: "ok",
+    detail: `enforced; policy=${attestation.bindings.components.policy.digest}; target=${attestation.bindings.targetIdentityDigest}`,
+  };
+}
+
+function invalidCuaRuntimeDoctorCheck(): DoctorCheck {
+  return {
+    group: "Sandbox",
+    label: "CUA runtime",
+    status: "fail",
+    detail: "stored readiness is invalid or does not match the current inference route",
+    hint: `re-run canonical onboarding before using CUA lifecycle commands`,
+  };
+}
+
+function cuaReconciliationDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorCheck | null {
+  let reconciliation: SandboxEntry["cuaReconciliation"];
+  try {
+    reconciliation = getCuaReconciliationForProjection(sb) ?? undefined;
+  } catch {
+    return {
+      group: "Sandbox",
+      label: "CUA reconciliation",
+      status: "fail",
+      detail: "stored external lifecycle reconciliation state is invalid",
+      hint: "repair the registry recovery gate before using CUA lifecycle commands",
+    };
+  }
+  if (!reconciliation) return null;
+  return {
+    group: "Sandbox",
+    label: "CUA reconciliation",
+    status: "fail",
+    detail: `external lifecycle cleanup is required (${reconciliation.trigger}; ${reconciliation.phase})`,
+    hint: `run \`${CLI_NAME} ${sandboxName} cua target health\`, cancel any observed task, then run target reset or target destroy`,
+  };
+}
+
+export function buildCuaTargetDoctorCheck(
+  sandboxName: string,
+  sb: SandboxEntry,
+  liveInference: ObservedCuaInferenceRoute | null = null,
+  validationDeps: CuaStateValidationDeps = {},
+): DoctorCheck | null {
+  return buildCuaTargetDoctorCheckFromState(
+    sandboxName,
+    getValidatedCuaState(sb, process.env, liveInference, validationDeps),
+  );
+}
+
+export function buildCuaSecurityDoctorCheck(
+  sandboxName: string,
+  sb: SandboxEntry,
+  liveInference: ObservedCuaInferenceRoute | null = null,
+  validationDeps: CuaStateValidationDeps = {},
+): DoctorCheck | null {
+  return buildCuaSecurityDoctorCheckFromState(
+    sandboxName,
+    getValidatedCuaState(sb, process.env, liveInference, validationDeps),
+  );
+}
+
+export function buildCuaRuntimeDoctorCheck(
+  sb: SandboxEntry,
+  liveInference: ObservedCuaInferenceRoute | null = null,
+  validationDeps: CuaStateValidationDeps = {},
+): DoctorCheck | null {
+  const reconciliation = cuaReconciliationDoctorCheck(sb.name, sb);
+  if (reconciliation) return reconciliation;
+  const observed = getObservedValidatedCuaState(sb, process.env, {
+    observeLiveInference: () => {
+      if (!liveInference) throw new Error("the live managed inference route is unavailable");
+      return liveInference;
+    },
+    validation: validationDeps,
+  });
+  if (observed.observation === "not-applicable" || observed.readiness) {
+    return null;
+  }
+  return invalidCuaRuntimeDoctorCheck();
+}
+
+interface CuaDoctorProjectionDeps {
+  observeCuaLiveInferenceImpl?: (entry: SandboxEntry) => ObservedCuaInferenceRoute;
+  observeCuaLiveAppliedPolicyImpl?: (entry: SandboxEntry) => CuaAppliedPolicyIdentity;
+  validationDeps?: CuaStateValidationDeps;
+}
+
+function collectEnabledCuaDoctorChecks(
+  sandboxName: string,
+  sb: SandboxEntry | null | undefined,
+  deps: CuaDoctorProjectionDeps = {},
+): DoctorCheck[] {
+  if (sb?.cuaReconciliation) {
+    return [cuaReconciliationDoctorCheck(sandboxName, sb)!];
+  }
+  const observed = getObservedValidatedCuaState(sb, process.env, {
+    observeLiveInference: deps.observeCuaLiveInferenceImpl,
+    observeLiveAppliedPolicy: deps.observeCuaLiveAppliedPolicyImpl,
+    validation: deps.validationDeps,
+  });
+  if (observed.observation === "not-applicable") return [];
+  if (observed.observation === "failed") {
+    const policyFailure = observed.failure === "policy";
+    return [
+      {
+        group: "Sandbox",
+        label: "CUA runtime",
+        status: "fail",
+        detail: policyFailure
+          ? "the live applied OpenShell policy identity could not be verified"
+          : "the live managed inference provider identity could not be verified",
+        hint: policyFailure
+          ? `restore or reapply the sandbox policy, then re-run \`${CLI_NAME} ${sandboxName} doctor\``
+          : `restore the registered gateway provider, then re-run \`${CLI_NAME} ${sandboxName} doctor\``,
+      },
+    ];
+  }
+
+  const checks: DoctorCheck[] = [];
+  if (!observed.readiness) {
+    checks.push(invalidCuaRuntimeDoctorCheck());
+    return checks;
+  }
+
+  const target = buildCuaTargetDoctorCheckFromState(sandboxName, observed);
+  if (target) checks.push(target);
+  const security = buildCuaSecurityDoctorCheckFromState(sandboxName, observed);
+  if (security) checks.push(security);
+  return checks;
+}
+
+/** Re-observe the exact provider binding before projecting any durable CUA authority. */
+export function collectCuaDoctorChecks(
+  sandboxName: string,
+  sb: SandboxEntry | null | undefined,
+  deps: CuaDoctorProjectionDeps = {},
+): DoctorCheck[] {
+  if (!isCuaPublicStateEnabled()) return [];
+  return collectEnabledCuaDoctorChecks(sandboxName, sb, deps);
+}
+
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -465,6 +668,7 @@ function collectRegisteredSandboxChecks(
 ): DoctorCheck[] {
   if (!sb) return [];
   const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
+  checks.push(...collectCuaDoctorChecks(sandboxName, sb));
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));

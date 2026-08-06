@@ -133,6 +133,31 @@ function snapshotExit(exitCode = 1): never {
   throw new SnapshotCommandError([], exitCode);
 }
 
+function invalidateCuaAuthorityBeforeSnapshotRestore(sandboxName: string): void {
+  const entry = registry.getSandbox(sandboxName);
+  if (
+    !entry?.cuaRuntimeReadiness &&
+    !entry?.cuaTarget &&
+    !entry?.cuaSecurityAttestation &&
+    !entry?.cuaTaskResults &&
+    !entry?.cuaReconciliation
+  ) {
+    return;
+  }
+  if (registry.requireCuaReconciliationBeforeSandboxMutation(sandboxName, "snapshot-restore")) {
+    console.error(`  Cannot restore into '${sandboxName}' while CUA target cleanup is unverified.`);
+    console.error(
+      `  Run '${CLI_NAME} ${sandboxName} cua target health', then cancel any observed task and run target reset or target destroy before retrying.`,
+    );
+    snapshotExit(1);
+  }
+  if (registry.updateSandbox(sandboxName, { cuaRuntimeReadiness: undefined })) return;
+  console.error(
+    `  Cannot invalidate CUA runtime authority before restoring '${sandboxName}'. Destination state was not changed.`,
+  );
+  snapshotExit(1);
+}
+
 function formatSnapshotVersion(b: unknown) {
   const snapshotVersion = (b as { snapshotVersion?: number }).snapshotVersion ?? 0;
   return `v${snapshotVersion}`;
@@ -437,6 +462,13 @@ async function autoCreateSandboxFromSource(
     name: dstName,
     createdAt: new Date().toISOString(),
     policies: [],
+    // Runtime readiness and every derived CUA record are sandbox-lifecycle
+    // authority. A clone must re-onboard, attach, and verify its own target.
+    cuaRuntimeReadiness: undefined,
+    cuaTarget: undefined,
+    cuaSecurityAttestation: undefined,
+    cuaTaskResults: undefined,
+    cuaReconciliation: undefined,
     observabilityEnabled: sourceObservabilityEnabled,
     // dst has its own lifecycle; don't inherit src's local NIM container
     // reference, or destroying dst would stop src's NIM.
@@ -1366,6 +1398,7 @@ async function runSnapshotRestoreUnlocked(
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
     }
+    invalidateCuaAuthorityBeforeSnapshotRestore(targetSandbox);
     const result =
       snapshotRestoreAuthority && validateManagedRestoreBeforeMutation
         ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {

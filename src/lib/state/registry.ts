@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import {
+  type CuaReconciliationAuthorityTrigger,
+  hasPotentialExternalCuaEffect,
+  quarantineCuaAuthority,
+} from "../cua/reconciliation";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -158,6 +163,17 @@ export function registerSandbox(entry: SandboxEntry): void {
       // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
+      cuaRuntimeReadiness: entry.cuaRuntimeReadiness
+        ? structuredClone(entry.cuaRuntimeReadiness)
+        : undefined,
+      cuaTarget: entry.cuaTarget ? structuredClone(entry.cuaTarget) : undefined,
+      cuaSecurityAttestation: entry.cuaSecurityAttestation
+        ? structuredClone(entry.cuaSecurityAttestation)
+        : undefined,
+      cuaTaskResults: entry.cuaTaskResults ? structuredClone(entry.cuaTaskResults) : undefined,
+      cuaReconciliation: entry.cuaReconciliation
+        ? structuredClone(entry.cuaReconciliation)
+        : undefined,
       openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
         ? entry.openclawImagePluginInstalls.map((install) => ({
             ...install,
@@ -262,6 +278,56 @@ export function isPendingReservationForSession(
   );
 }
 
+const CUA_AUTHORITY_INPUT_FIELDS = [
+  "agent",
+  "agentVersion",
+  "fromDockerfile",
+  "gatewayName",
+  "gatewayPort",
+  "gpuEnabled",
+  "hostGpuDetected",
+  "imageTag",
+  "nemoclawVersion",
+  "openshellDriver",
+  "openshellVersion",
+  "policies",
+  "customPolicies",
+  "baselineExclusions",
+  "baselineExclusionTransition",
+  "policyTier",
+  "policyPresetsFinalized",
+  "sandboxGpuDevice",
+  "sandboxGpuEnabled",
+  "sandboxGpuMode",
+  "sandboxGpuProof",
+  "workload",
+] as const satisfies readonly (keyof SandboxEntry)[];
+
+function clearDerivedCuaState(entry: SandboxEntry): void {
+  delete entry.cuaTarget;
+  delete entry.cuaSecurityAttestation;
+  delete entry.cuaTaskResults;
+  delete entry.cuaReconciliation;
+}
+
+/**
+ * Persist a cleanup gate before a sandbox-level mutation can orphan a target
+ * or task. Returns true when the caller must stop and reconcile first.
+ */
+export function requireCuaReconciliationBeforeSandboxMutation(
+  name: string,
+  trigger: CuaReconciliationAuthorityTrigger,
+): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox || !hasPotentialExternalCuaEffect(sandbox)) return false;
+    quarantineCuaAuthority(sandbox, trigger);
+    save(data);
+    return true;
+  });
+}
+
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
@@ -269,10 +335,74 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     if (Object.prototype.hasOwnProperty.call(updates, "name") && updates.name !== name) {
       return false;
     }
-    Object.assign(data.sandboxes[name], updates);
+    const current = data.sandboxes[name];
+    const inferenceChanges = !isDeepStrictEqual(
+      normalizeInferenceSelection(current),
+      normalizeInferenceSelection({ ...current, ...updates }),
+    );
+    const authorityInputChanges = CUA_AUTHORITY_INPUT_FIELDS.some(
+      (field) =>
+        Object.prototype.hasOwnProperty.call(updates, field) &&
+        !isDeepStrictEqual(current[field], updates[field]),
+    );
+    const policyAuthorityChanges = [
+      "policies",
+      "customPolicies",
+      "baselineExclusions",
+      "baselineExclusionTransition",
+      "policyTier",
+      "policyPresetsFinalized",
+    ].some(
+      (field) =>
+        Object.prototype.hasOwnProperty.call(updates, field) &&
+        !isDeepStrictEqual(
+          (current as unknown as Record<string, unknown>)[field],
+          (updates as unknown as Record<string, unknown>)[field],
+        ),
+    );
+    const readinessWasUpdated = Object.prototype.hasOwnProperty.call(
+      updates,
+      "cuaRuntimeReadiness",
+    );
+    const readinessWasReplaced =
+      readinessWasUpdated &&
+      (updates.cuaRuntimeReadiness === undefined ||
+        !isDeepStrictEqual(current.cuaRuntimeReadiness, updates.cuaRuntimeReadiness));
+    if (readinessWasUpdated && current.cuaReconciliation) {
+      return false;
+    }
+    if (readinessWasReplaced && hasPotentialExternalCuaEffect(current)) {
+      quarantineCuaAuthority(current, "readiness-change");
+      save(data);
+      return false;
+    }
+    Object.assign(current, updates);
+    if (inferenceChanges || authorityInputChanges) {
+      quarantineCuaAuthority(
+        current,
+        inferenceChanges
+          ? "inference-change"
+          : policyAuthorityChanges
+            ? "policy-change"
+            : "runtime-authority-change",
+      );
+    } else if (readinessWasReplaced) {
+      if (updates.cuaRuntimeReadiness === undefined) delete current.cuaRuntimeReadiness;
+      clearDerivedCuaState(current);
+    }
     save(data);
     return true;
   });
+}
+
+/**
+ * Commit a durable inference-route write through the registry's CUA authority
+ * boundary. The provider/model update and any required reconciliation journal
+ * are one registry-file replacement, so a successful route switch can never
+ * leave stale CUA readiness or derived lifecycle authority reusable.
+ */
+export function updateSandboxInferenceRoute(name: string, updates: Partial<SandboxEntry>): boolean {
+  return updateSandbox(name, updates);
 }
 
 /** Atomically capture and remove one registry row for a reversible lifecycle operation. */
@@ -376,6 +506,7 @@ export function addCustomPolicy(name: string, entry: CustomPolicyEntry): boolean
     const list = (sandbox.customPolicies ?? []).filter((p) => p.name !== entry.name);
     list.push({ ...entry, appliedAt: entry.appliedAt ?? new Date().toISOString() });
     sandbox.customPolicies = list;
+    quarantineCuaAuthority(sandbox, "policy-change");
     save(data);
     return true;
   });
@@ -391,6 +522,7 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
     const next = list.filter((p) => p.name !== presetName);
     if (next.length === list.length) return false;
     sandbox.customPolicies = next.length > 0 ? next : undefined;
+    quarantineCuaAuthority(sandbox, "policy-change");
     save(data);
     return true;
   });
@@ -411,6 +543,7 @@ export function addBaselineExclusion(name: string, entry: BaselineExclusionEntry
     const list = (sandbox.baselineExclusions ?? []).filter((e) => e.key !== entry.key);
     list.push({ ...entry, acknowledgedAt: entry.acknowledgedAt ?? new Date().toISOString() });
     sandbox.baselineExclusions = list;
+    quarantineCuaAuthority(sandbox, "policy-change");
     save(data);
     return true;
   });
@@ -426,6 +559,7 @@ export function removeBaselineExclusion(name: string, key: string): boolean {
     const next = list.filter((e) => e.key !== key);
     if (next.length === list.length) return false;
     sandbox.baselineExclusions = next.length > 0 ? next : undefined;
+    quarantineCuaAuthority(sandbox, "policy-change");
     save(data);
     return true;
   });
@@ -450,6 +584,7 @@ export function beginBaselineExclusionTransition(
     const sandbox = data.sandboxes[name];
     if (!sandbox || sandbox.baselineExclusionTransition) return false;
     sandbox.baselineExclusionTransition = normalizeBaselineExclusionTransition(transition);
+    quarantineCuaAuthority(sandbox, "policy-change");
     save(data);
     return true;
   });
@@ -484,6 +619,7 @@ export function commitBaselineExclusionTransition(name: string, id: string): boo
       sandbox.baselineExclusions = next.length > 0 ? next : undefined;
     }
     sandbox.baselineExclusionTransition = undefined;
+    quarantineCuaAuthority(sandbox, "policy-change");
     save(data);
     return true;
   });
@@ -496,6 +632,7 @@ export function clearBaselineExclusionTransition(name: string, id: string): bool
     const sandbox = data.sandboxes[name];
     if (!sandbox || sandbox.baselineExclusionTransition?.id !== id) return false;
     sandbox.baselineExclusionTransition = undefined;
+    quarantineCuaAuthority(sandbox, "policy-change");
     save(data);
     return true;
   });

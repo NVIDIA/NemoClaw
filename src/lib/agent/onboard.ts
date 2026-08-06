@@ -9,10 +9,23 @@ import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
+import { requireCuaFrameworkEnabled } from "../cua/feature";
+import {
+  type CuaBuildIdentity,
+  type CuaLiveInferenceObservation,
+  type CuaRuntimeReadiness,
+  isCuaQualificationEnabled,
+  observeCuaLiveInference,
+  requireCurrentCuaRuntimeReadiness,
+  resolveSandboxGatewayName,
+  withGatewayRouteMutationLock,
+} from "../cua/onboard-runtime";
 import { getProviderSelectionConfig } from "../inference/config";
+import { type InferenceSelectionInput, normalizeInferenceSelection } from "../inference/selection";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import { redact, run } from "../runner";
+import type { SandboxEntry } from "../state/registry/types";
 import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
@@ -42,6 +55,18 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+  getSandboxInferenceSelection?: (
+    sandboxName: string,
+  ) => InferenceSelectionInput & { gatewayName?: string | null; gatewayPort?: number | null };
+  updateSandbox?: (
+    sandboxName: string,
+    updates: { cuaRuntimeReadiness: CuaRuntimeReadiness },
+  ) => boolean;
+  cuaRuntimeEnvironment?: NodeJS.ProcessEnv;
+  cuaBuildIdentity?: CuaBuildIdentity;
+  cuaRootDir?: string;
+  cuaObserveLiveInference?: (entry: SandboxEntry) => CuaLiveInferenceObservation;
+  cuaWithGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
 }
@@ -137,6 +162,7 @@ export function resolveAgent({
  */
 export function getAgentPolicyPath(agent: AgentDefinition): string | null {
   if (agent.name === "openclaw") return null;
+  if (agent.name === "nemocua") requireCuaFrameworkEnabled();
   return requireAgentPolicyAdditionsPath(agent);
 }
 
@@ -239,6 +265,83 @@ async function failAgentSetup(
   process.exit(1);
 }
 
+async function recordCuaRuntimeReadiness(
+  sandboxName: string,
+  agent: AgentDefinition,
+  provider: string,
+  model: string,
+  context: Pick<
+    OnboardContext,
+    | "getSandboxInferenceSelection"
+    | "recordStepFailed"
+    | "updateSandbox"
+    | "cuaRuntimeEnvironment"
+    | "cuaBuildIdentity"
+    | "cuaRootDir"
+    | "openshellBinary"
+    | "cuaObserveLiveInference"
+    | "cuaWithGatewayRouteMutationLock"
+  >,
+): Promise<void> {
+  if (agent.name !== "nemocua") return;
+  try {
+    const recordedSandbox = context.getSandboxInferenceSelection?.(sandboxName) ?? {
+      provider,
+      model,
+    };
+    const recordedInference = normalizeInferenceSelection(recordedSandbox);
+    const env = context.cuaRuntimeEnvironment ?? process.env;
+    const entry: SandboxEntry = {
+      name: sandboxName,
+      agent: agent.name,
+      ...recordedInference,
+      ...(recordedSandbox.gatewayName !== undefined
+        ? { gatewayName: recordedSandbox.gatewayName }
+        : {}),
+      ...(recordedSandbox.gatewayPort !== undefined
+        ? { gatewayPort: recordedSandbox.gatewayPort }
+        : {}),
+    };
+    await (context.cuaWithGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
+      resolveSandboxGatewayName(entry),
+      () => {
+        const live = context.cuaObserveLiveInference
+          ? context.cuaObserveLiveInference(entry)
+          : observeCuaLiveInference(entry, {
+              openshellBinary: context.openshellBinary,
+              env,
+            });
+        const cuaRuntimeReadiness = requireCurrentCuaRuntimeReadiness({
+          agentName: agent.name,
+          recordedInference,
+          liveInference: {
+            ...recordedInference,
+            provider: live.provider,
+            model: live.model,
+          },
+          liveProviderAuthorityDigest: live.providerAuthorityDigest,
+          ...(live.openshellDigest ? { expectedOpenshellDigest: live.openshellDigest } : {}),
+          acceptance: isCuaQualificationEnabled(env) ? "candidate-qualification" : "final",
+          env,
+          openshellBinary: context.openshellBinary,
+          ...(context.cuaBuildIdentity ? { buildIdentity: context.cuaBuildIdentity } : {}),
+          ...(context.cuaRootDir ? { rootDir: context.cuaRootDir } : {}),
+        });
+        if (!context.updateSandbox?.(sandboxName, { cuaRuntimeReadiness })) {
+          throw new Error(`NemoCUA runtime readiness could not be recorded for '${sandboxName}'`);
+        }
+      },
+    );
+  } catch (error) {
+    await failAgentSetup(
+      sandboxName,
+      agent,
+      error instanceof Error ? error.message : String(error),
+      context.recordStepFailed,
+    );
+  }
+}
+
 /**
  * Interpret an agent health-probe response as healthy or unhealthy.
  */
@@ -277,6 +380,13 @@ export async function handleAgentSetup(
     recordStepComplete,
     recordStepFailed,
     skippedStepMessage,
+    getSandboxInferenceSelection,
+    updateSandbox,
+    cuaRuntimeEnvironment,
+    cuaBuildIdentity,
+    cuaRootDir,
+    cuaObserveLiveInference,
+    cuaWithGatewayRouteMutationLock,
   } = ctx;
 
   const syncNemoClawConfig = (): void => {
@@ -308,6 +418,17 @@ export async function handleAgentSetup(
           await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
             beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
             onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+          });
+          await recordCuaRuntimeReadiness(sandboxName, agent, provider, model, {
+            getSandboxInferenceSelection,
+            recordStepFailed,
+            updateSandbox,
+            cuaRuntimeEnvironment,
+            cuaBuildIdentity,
+            cuaRootDir,
+            openshellBinary: openshellBin,
+            cuaObserveLiveInference,
+            cuaWithGatewayRouteMutationLock,
           });
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
@@ -371,6 +492,17 @@ export async function handleAgentSetup(
     }
     await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
       onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+    });
+    await recordCuaRuntimeReadiness(sandboxName, agent, provider, model, {
+      getSandboxInferenceSelection,
+      recordStepFailed,
+      updateSandbox,
+      cuaRuntimeEnvironment,
+      cuaBuildIdentity,
+      cuaRootDir,
+      openshellBinary: openshellBin,
+      cuaObserveLiveInference,
+      cuaWithGatewayRouteMutationLock,
     });
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });

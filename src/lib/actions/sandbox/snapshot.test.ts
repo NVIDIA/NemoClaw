@@ -122,6 +122,7 @@ const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
 const registerSandboxMock = vi.fn();
 const updateSandboxMock = vi.fn();
+const requireCuaReconciliationBeforeSandboxMutationMock = vi.fn(() => false);
 const restoreSandboxStateMock = vi.fn();
 const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
@@ -225,6 +226,7 @@ vi.mock("../../state/registry", () => ({
   }),
   registerSandbox: registerSandboxMock,
   removeSandbox: vi.fn(),
+  requireCuaReconciliationBeforeSandboxMutation: requireCuaReconciliationBeforeSandboxMutationMock,
   updateSandbox: updateSandboxMock,
 }));
 
@@ -272,6 +274,8 @@ describe("runSandboxSnapshot", () => {
     listBackupsMock.mockReturnValue([]);
     registerSandboxMock.mockReset();
     updateSandboxMock.mockReset();
+    requireCuaReconciliationBeforeSandboxMutationMock.mockReset();
+    requireCuaReconciliationBeforeSandboxMutationMock.mockReturnValue(false);
     restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: [],

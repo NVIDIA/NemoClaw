@@ -4,6 +4,18 @@
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
+import { getCuaRuntimeReadinessDigest } from "../../cua/contract";
+import {
+  createCuaReconciliationState,
+  parseCuaReconciliationState,
+  requireCuaReconciliation,
+} from "../../cua/reconciliation";
+import {
+  parseCuaRuntimeReadiness,
+  parseCuaSecurityAttestation,
+  parseCuaTargetAttachment,
+  parseCuaTaskResult,
+} from "../../cua/schema";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
@@ -106,6 +118,132 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   return base;
 }
 
+type NormalizedCuaFields = Pick<
+  SandboxEntry,
+  | "cuaRuntimeReadiness"
+  | "cuaTarget"
+  | "cuaSecurityAttestation"
+  | "cuaTaskResults"
+  | "cuaReconciliation"
+>;
+
+const CUA_REGISTRY_RECOVERY_ATTEMPT_ID = "00000000-0000-4000-8000-000000000000";
+
+function createCuaRegistryRecoveryGate(): NonNullable<SandboxEntry["cuaReconciliation"]> {
+  // Persisted CUA fields are an untrusted recovery boundary. A malformed
+  // parent must still leave a durable deny gate, but none of its identities
+  // are safe to copy into that gate until their complete record has parsed.
+  return createCuaReconciliationState({
+    trigger: "registry-recovery",
+    attemptId: CUA_REGISTRY_RECOVERY_ATTEMPT_ID,
+  });
+}
+
+function hasPersistedCuaDependentAuthority(entry: SandboxEntry): boolean {
+  return (
+    entry.cuaTarget !== undefined ||
+    entry.cuaSecurityAttestation !== undefined ||
+    entry.cuaTaskResults !== undefined
+  );
+}
+
+function normalizeCuaReconciliationForRuntime(
+  entry: SandboxEntry,
+): SandboxEntry["cuaReconciliation"] {
+  if (entry.cuaReconciliation === undefined) return undefined;
+  try {
+    const parsed = parseCuaReconciliationState(entry.cuaReconciliation);
+    return parsed.phase === "pending" ? requireCuaReconciliation(parsed) : parsed;
+  } catch {
+    // A malformed journal must never turn an uncertain external effect back
+    // into ordinary lifecycle authority. Preserve a closed recovery gate while
+    // dropping every untrusted field from the malformed record.
+    return createCuaRegistryRecoveryGate();
+  }
+}
+
+/**
+ * Treat CUA rows as one optional authority chain. Legacy or malformed CUA
+ * fields must not make unrelated sandbox commands unable to load the registry,
+ * while a broken parent record must never leave its derived authority usable.
+ */
+function normalizeCuaFieldsForRuntime(entry: SandboxEntry): NormalizedCuaFields {
+  let cuaReconciliation = normalizeCuaReconciliationForRuntime(entry);
+  const normalized: NormalizedCuaFields = {};
+  const requireRegistryRecovery = (): void => {
+    cuaReconciliation = createCuaRegistryRecoveryGate();
+    normalized.cuaReconciliation = cuaReconciliation;
+    delete normalized.cuaSecurityAttestation;
+    delete normalized.cuaTaskResults;
+  };
+  if (cuaReconciliation) normalized.cuaReconciliation = cuaReconciliation;
+
+  let cuaTarget: SandboxEntry["cuaTarget"];
+  if (entry.cuaTarget !== undefined) {
+    try {
+      cuaTarget = parseCuaTargetAttachment(entry.cuaTarget);
+    } catch {
+      requireRegistryRecovery();
+    }
+  }
+
+  if (entry.cuaRuntimeReadiness === undefined) {
+    if (hasPersistedCuaDependentAuthority(entry)) requireRegistryRecovery();
+    if (cuaTarget) normalized.cuaTarget = cuaTarget;
+    return normalized;
+  }
+
+  try {
+    normalized.cuaRuntimeReadiness = parseCuaRuntimeReadiness(entry.cuaRuntimeReadiness);
+  } catch {
+    if (hasPersistedCuaDependentAuthority(entry)) requireRegistryRecovery();
+    if (cuaTarget) normalized.cuaTarget = cuaTarget;
+    return normalized;
+  }
+
+  if (entry.cuaTarget === undefined) {
+    if (entry.cuaSecurityAttestation !== undefined || entry.cuaTaskResults !== undefined) {
+      requireRegistryRecovery();
+    }
+    return normalized;
+  }
+  if (!cuaTarget) return normalized;
+  normalized.cuaTarget = cuaTarget;
+  if (
+    cuaTarget.runtimeReadinessDigest !==
+    getCuaRuntimeReadinessDigest(normalized.cuaRuntimeReadiness)
+  ) {
+    requireRegistryRecovery();
+    return normalized;
+  }
+  if (cuaReconciliation) return normalized;
+  if (!cuaTarget.target || entry.cuaSecurityAttestation === undefined) {
+    if (entry.cuaSecurityAttestation !== undefined || entry.cuaTaskResults !== undefined) {
+      requireRegistryRecovery();
+    }
+    return normalized;
+  }
+
+  try {
+    normalized.cuaSecurityAttestation = parseCuaSecurityAttestation(entry.cuaSecurityAttestation);
+  } catch {
+    requireRegistryRecovery();
+    return normalized;
+  }
+  if (entry.cuaTaskResults === undefined) return normalized;
+
+  try {
+    if (!Array.isArray(entry.cuaTaskResults)) {
+      requireRegistryRecovery();
+      return normalized;
+    }
+    normalized.cuaTaskResults = entry.cuaTaskResults.slice(-16).map(parseCuaTaskResult);
+  } catch {
+    requireRegistryRecovery();
+  }
+  return normalized;
+}
+
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
@@ -119,6 +257,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     entry.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
+  const cua = normalizeCuaFieldsForRuntime(entry);
   const {
     messaging: _messaging,
     workload: _workload,
@@ -127,6 +266,11 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
+    cuaRuntimeReadiness: _cuaRuntimeReadiness,
+    cuaTarget: _cuaTarget,
+    cuaSecurityAttestation: _cuaSecurityAttestation,
+    cuaTaskResults: _cuaTaskResults,
+    cuaReconciliation: _cuaReconciliation,
     ...rest
   } = entry;
   return {
@@ -138,6 +282,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
+    ...cua,
   };
 }
 
@@ -173,6 +318,24 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     durable.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(durable.customPolicies);
+  const cuaReconciliation =
+    durable.cuaReconciliation === undefined
+      ? undefined
+      : parseCuaReconciliationState(durable.cuaReconciliation);
+  const cuaRuntimeReadiness =
+    durable.cuaRuntimeReadiness === undefined
+      ? undefined
+      : parseCuaRuntimeReadiness(durable.cuaRuntimeReadiness);
+  const cuaTarget =
+    durable.cuaTarget === undefined ? undefined : parseCuaTargetAttachment(durable.cuaTarget);
+  const cuaSecurityAttestation =
+    cuaReconciliation || durable.cuaSecurityAttestation === undefined
+      ? undefined
+      : parseCuaSecurityAttestation(durable.cuaSecurityAttestation);
+  const cuaTaskResults =
+    cuaReconciliation || durable.cuaTaskResults === undefined
+      ? undefined
+      : durable.cuaTaskResults.slice(-16).map(parseCuaTaskResult);
   const {
     messaging: _messaging,
     workload: _workload,
@@ -181,6 +344,11 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
+    cuaRuntimeReadiness: _cuaRuntimeReadiness,
+    cuaTarget: _cuaTarget,
+    cuaSecurityAttestation: _cuaSecurityAttestation,
+    cuaTaskResults: _cuaTaskResults,
+    cuaReconciliation: _cuaReconciliation,
     ...rest
   } = durable;
   return {
@@ -193,5 +361,10 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
+    ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
+    ...(cuaTarget ? { cuaTarget } : {}),
+    ...(cuaSecurityAttestation ? { cuaSecurityAttestation } : {}),
+    ...(cuaTaskResults ? { cuaTaskResults } : {}),
+    ...(cuaReconciliation ? { cuaReconciliation } : {}),
   };
 }
