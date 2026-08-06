@@ -419,7 +419,7 @@ export function prepareInitialSandboxCreatePolicy(
             hasNvidiaGpu: options.hostGpuAvailable,
           }),
         jetsonGpuDevicePaths:
-          options.agentName === "openclaw"
+          (options.agentName ?? "openclaw") === "openclaw"
             ? (options.jetsonGpuDevicePaths ?? detectTegraGpuDevicePaths())
             : [],
       })

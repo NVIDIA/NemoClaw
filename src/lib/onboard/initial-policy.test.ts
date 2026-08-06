@@ -397,6 +397,11 @@ network_policies: {}
   it("keeps Jetson filesystem grants scoped to OpenClaw direct GPU policy (#7610)", () => {
     const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
     const devicePaths = ["/dev/nvmap", "/dev/nvhost-gpu"];
+    const defaultOpenclaw = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      directGpu: true,
+      jetsonGpuDevicePaths: devicePaths,
+      stationGb300SysfsReadOnlyPaths: [],
+    });
     const openclaw = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
       directGpu: true,
       agentName: "openclaw",
@@ -409,13 +414,19 @@ network_policies: {}
       jetsonGpuDevicePaths: devicePaths,
       stationGb300SysfsReadOnlyPaths: [],
     });
+    const defaultOpenclawDoc = YAML.parse(fs.readFileSync(defaultOpenclaw.policyPath, "utf-8"));
     const openclawDoc = YAML.parse(fs.readFileSync(openclaw.policyPath, "utf-8"));
     const hermesDoc = YAML.parse(fs.readFileSync(hermes.policyPath, "utf-8"));
 
+    expect(defaultOpenclawDoc.filesystem_policy.read_only).toContain("/opt/nvidia");
+    expect(defaultOpenclawDoc.filesystem_policy.read_write).toEqual(
+      expect.arrayContaining(devicePaths),
+    );
     expect(openclawDoc.filesystem_policy.read_only).toContain("/opt/nvidia");
     expect(openclawDoc.filesystem_policy.read_write).toEqual(expect.arrayContaining(devicePaths));
     expect(hermesDoc.filesystem_policy.read_only).not.toContain("/opt/nvidia");
     expect(hermesDoc.filesystem_policy.read_write).not.toEqual(expect.arrayContaining(devicePaths));
+    expect(defaultOpenclaw.cleanup?.()).toBe(true);
     expect(openclaw.cleanup?.()).toBe(true);
     expect(hermes.cleanup?.()).toBe(true);
   });
