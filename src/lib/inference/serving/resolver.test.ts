@@ -3,8 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 import type { SystemReadinessReport } from "../../readiness/types.js";
+import type { VllmProfile } from "../vllm.js";
+import {
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  isHostLocalInferenceServingRecipe,
+  isManagedClusterInferenceServingRecipe,
+} from "./adapter-registry.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./catalog-loader.js";
+import { materializeHostLocalVllmSelection } from "./host-local-vllm-selection.js";
 import {
   FIXTURE_MANAGED_CLUSTER_PRESET_ID,
   fixtureManagedClusterSelection,
@@ -16,6 +24,7 @@ import {
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type {
   CompiledManagedInferenceCatalog,
+  HostLocalInferenceServingRecipe,
   ManagedInferencePresetRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolverInput,
@@ -55,7 +64,9 @@ function shippedCompiledRecipe(
 }
 
 function shippedRecipe(catalog = shippedCatalog()): ManagedInferenceServingRecipe {
-  return shippedCompiledRecipe(catalog);
+  const recipe = shippedCompiledRecipe(catalog);
+  expect(isManagedClusterInferenceServingRecipe(recipe)).toBe(true);
+  return recipe as ManagedInferenceServingRecipe;
 }
 
 function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
@@ -67,23 +78,68 @@ function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
   };
 }
 
-function catalogReadinessEntities(): Pick<
-  SystemReadinessReport,
-  "observations" | "capabilities" | "qualifications"
-> {
-  const readinessRequirements = shippedPreset().spec.requirements.all.flatMap((requirement) =>
+function hostLocalFixtureCatalog(): CompiledManagedInferenceCatalog {
+  const catalog = shippedCatalog();
+  const sourceRecipe = catalog.recipes.find(isHostLocalInferenceServingRecipe);
+  expect(sourceRecipe).toBeDefined();
+  const sourcePreset = catalog.presets.find(
+    ({ spec }) => spec.plan.recipeRef === sourceRecipe!.metadata.id,
+  );
+  expect(sourcePreset).toBeDefined();
+  const recipe = {
+    ...sourceRecipe!,
+    metadata: { id: "test.vllm-host-local-recipe" },
+    spec: {
+      ...sourceRecipe!.spec,
+      model: { ...sourceRecipe!.spec.model },
+      execution: { ...sourceRecipe!.spec.execution },
+      runtime: { ...sourceRecipe!.spec.runtime },
+    },
+  } satisfies HostLocalInferenceServingRecipe;
+  const preset = {
+    ...sourcePreset!,
+    metadata: { id: "test.vllm-host-local-preset" },
+    spec: {
+      ...sourcePreset!.spec,
+      selection: "explicit-only",
+      requirements: {
+        all: sourcePreset!.spec.requirements.all.filter(
+          (requirement) => "readiness" in requirement,
+        ),
+      },
+      plan: { backend: "vllm", recipeRef: recipe.metadata.id },
+    },
+  } as ManagedInferenceServingPreset;
+  return { ...catalog, recipes: [recipe], presets: [preset] };
+}
+
+function catalogReadinessEntities(
+  preset: ManagedInferenceServingPreset = shippedPreset(),
+): Pick<SystemReadinessReport, "observations" | "capabilities" | "qualifications"> {
+  const readinessRequirements = preset.spec.requirements.all.flatMap((requirement) =>
     "readiness" in requirement ? [requirement.readiness] : [],
   );
   return {
     observations: readinessRequirements.flatMap((readiness) =>
-      readiness.kind === "observation" && "state" in readiness
-        ? [
-            {
-              id: readiness.id,
-              state: readiness.state as SystemReadinessReport["observations"][number]["state"],
-            },
-          ]
-        : [],
+      readiness.kind !== "observation"
+        ? []
+        : "state" in readiness
+          ? [
+              {
+                id: readiness.id,
+                state: readiness.state as SystemReadinessReport["observations"][number]["state"],
+              },
+            ]
+          : [
+              {
+                id: readiness.id,
+                state: "present" as const,
+                value:
+                  readiness.comparison.operator === "one-of"
+                    ? readiness.comparison.values[0]
+                    : readiness.comparison.value,
+              },
+            ],
     ),
     capabilities: readinessRequirements.flatMap((readiness) =>
       readiness.kind === "capability"
@@ -108,8 +164,11 @@ function catalogReadinessEntities(): Pick<
   };
 }
 
-function readinessReport(overrides: Partial<SystemReadinessReport> = {}): SystemReadinessReport {
-  const entities = catalogReadinessEntities();
+function readinessReport(
+  overrides: Partial<SystemReadinessReport> = {},
+  preset: ManagedInferenceServingPreset = shippedPreset(),
+): SystemReadinessReport {
+  const entities = catalogReadinessEntities(preset);
   return {
     schemaVersion: "1.1.0",
     mutated: false,
@@ -218,6 +277,75 @@ function catalogWithSecondProfile(options: {
 }
 
 describe("managed inference resolver", () => {
+  it("resolves an explicit host-local vLLM preset without topology data (#8246)", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const presetId = catalog.presets[0]!.metadata.id;
+    const input = resolverInput({
+      intent: { preset: presetId },
+      readinessReports: [{ nodeId: "spark", report: readinessReport({}, catalog.presets[0]!) }],
+    });
+    const result = resolveManagedInferenceServing(
+      { ...input, topologyQualifications: [] },
+      catalog,
+    );
+
+    expect(result).toMatchObject({
+      outcome: "selected",
+      selection: "explicit",
+      preset: { metadata: { id: presetId } },
+      recipe: { metadata: { id: catalog.recipes[0]!.metadata.id } },
+    });
+    expect(result).not.toHaveProperty("topologyQualification");
+  });
+
+  it("materializes a host-local selection into the existing single-Spark runtime (#8246)", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const presetId = catalog.presets[0]!.metadata.id;
+    const input = resolverInput({
+      intent: { preset: presetId },
+      readinessReports: [{ nodeId: "spark", report: readinessReport({}, catalog.presets[0]!) }],
+    });
+    const result = resolveManagedInferenceServing(
+      { ...input, topologyQualifications: [] },
+      catalog,
+    );
+    expect(result.outcome).toBe("selected");
+    expect(result).not.toHaveProperty("topologyQualification");
+    const baseProfile = {
+      name: "DGX Spark",
+      platform: "spark",
+      image: "example.invalid/vllm@sha256:" + "a".repeat(64),
+      imageDownloadSizeBytes: 1,
+      defaultModel: {} as never,
+      containerName: "nemoclaw-vllm",
+      dockerRunFlags: ["--gpus", "all"],
+      pullTimeoutSec: 1,
+      loadTimeoutSec: 1,
+    } satisfies VllmProfile;
+    const selected = materializeHostLocalVllmSelection(
+      result as Extract<typeof result, { outcome: "selected" }> & {
+        topologyQualification?: never;
+      },
+      baseProfile,
+    );
+
+    expect(selected).toMatchObject({
+      presetId,
+      recipeId: catalog.recipes[0]!.metadata.id,
+      profile: {
+        platform: "spark",
+        servingCatalog: {
+          presetId,
+          recipeId: catalog.recipes[0]!.metadata.id,
+        },
+      },
+      model: {
+        id: catalog.recipes[0]!.spec.model.id,
+        platforms: ["spark"],
+      },
+    });
+  });
+
   it("selects the shipped automatic preset from catalog data", () => {
     const catalog = shippedFixtureCatalog();
     const compiledPreset = shippedCompiledPreset(catalog);
@@ -467,7 +595,10 @@ describe("managed inference resolver", () => {
     );
 
     expect(result.outcome).toBe("selected");
-    const selected = result as Extract<typeof result, { outcome: "selected" }>;
+    const selected = result as Extract<typeof result, { outcome: "selected" }> & {
+      readonly topologyQualification: ManagedInferenceTopologyQualification<ManagedClusterTopologyOutput>;
+    };
+    expect("topologyQualification" in selected).toBe(true);
     (artifact.output as { masterAddress: string }).masterAddress = "192.168.100.99";
     expect(selected.topologyQualification.output.masterAddress).toBe("192.168.100.10");
     expect(Object.isFrozen(selected.topologyQualification.output)).toBe(true);
@@ -476,7 +607,10 @@ describe("managed inference resolver", () => {
   it.each([
     { name: "provider", intent: { provider: "vllm" } },
     { name: "model", intent: { vllmModel: "another/model" } },
-    { name: "extra arguments", intent: { vllmExtraArguments: ["--another-option"] } },
+    {
+      name: "extra arguments",
+      intent: { vllmExtraArguments: ["--another-option"] },
+    },
   ])("leaves existing $name intent authoritative for automatic selection", ({ intent }) => {
     expect(
       resolveManagedInferenceServing({
@@ -491,7 +625,10 @@ describe("managed inference resolver", () => {
   it("rejects an unknown explicit preset", () => {
     expect(
       resolveManagedInferenceServing(resolverInput({ intent: { preset: "vllm.unknown" } })),
-    ).toMatchObject({ outcome: "rejected", code: "unknown-preset" });
+    ).toMatchObject({
+      outcome: "rejected",
+      code: "unknown-preset",
+    });
   });
 
   it("rejects a disabled explicit preset", () => {
@@ -549,13 +686,19 @@ describe("managed inference resolver", () => {
 
     expect(
       resolveManagedInferenceServing(resolverInput({ readinessReports: sources })),
-    ).toMatchObject({ outcome: "rejected", code: "invalid-readiness" });
+    ).toMatchObject({
+      outcome: "rejected",
+      code: "invalid-readiness",
+    });
   });
 
   it("rejects a non-finite resolution time", () => {
     expect(
       resolveManagedInferenceServing(resolverInput({ now: new Date(Number.NaN) })),
-    ).toMatchObject({ outcome: "rejected", code: "invalid-readiness" });
+    ).toMatchObject({
+      outcome: "rejected",
+      code: "invalid-readiness",
+    });
   });
 
   it.each([1, 3])("does not activate automatically for %i readiness reports", (count) => {
@@ -566,13 +709,19 @@ describe("managed inference resolver", () => {
 
     expect(
       resolveManagedInferenceServing(resolverInput({ readinessReports: reports })),
-    ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
+    ).toMatchObject({
+      outcome: "no-match",
+      code: "requirements-not-met",
+    });
   });
 
   it("does not activate automatically without the required topology artifact", () => {
     expect(
       resolveManagedInferenceServing(resolverInput({ topologyQualifications: [] })),
-    ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
+    ).toMatchObject({
+      outcome: "no-match",
+      code: "requirements-not-met",
+    });
   });
 
   it("rejects a topology artifact for different physical subjects", () => {
@@ -591,7 +740,10 @@ describe("managed inference resolver", () => {
 
     expect(
       resolveManagedInferenceServing(resolverInput({ topologyQualifications: [artifact] })),
-    ).toMatchObject({ outcome: "rejected", code: "invalid-topology" });
+    ).toMatchObject({
+      outcome: "rejected",
+      code: "invalid-topology",
+    });
   });
 
   it("rejects a stale topology subject digest", () => {
@@ -613,7 +765,10 @@ describe("managed inference resolver", () => {
 
     expect(
       resolveManagedInferenceServing(resolverInput({ topologyQualifications: [artifact] })),
-    ).toMatchObject({ outcome: "rejected", code: "invalid-topology" });
+    ).toMatchObject({
+      outcome: "rejected",
+      code: "invalid-topology",
+    });
   });
 
   it("rejects ambiguous topology artifacts", () => {

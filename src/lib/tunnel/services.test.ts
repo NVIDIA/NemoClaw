@@ -14,7 +14,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 
 // Import source directly so tests cannot pass against a stale build.
 import { registerTunnelOrigin } from "./allowed-origins";
@@ -445,9 +447,7 @@ describe("stopAll", () => {
   let spawnSyncCalls: Array<{ command: string; args: readonly string[] }>;
   let originalSpawnSync: typeof childProcess.spawnSync;
 
-  beforeEach(() => {
-    pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-test-"));
-    spawnSyncCalls = [];
+  beforeAll(() => {
     originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — partial mock signature is intentional.
     childProcess.spawnSync = (command: string, args: readonly string[]) => {
@@ -468,16 +468,24 @@ describe("stopAll", () => {
       return reply;
     };
     // The Ollama proxy source module destructures `spawnSync` at
-    // require time, so to make `stopAll` pick up the patched function we
-    // bust its cache. `services.ts` requires the proxy lazily, so the
-    // next call sees the freshly-loaded module.
+    // require time. Load it once with the stable suite-level mock instead of
+    // re-evaluating the large module under coverage for every stopAll test.
     delete require.cache[require.resolve(ollamaProxySourcePath)];
+    require(ollamaProxySourcePath);
+  });
+
+  beforeEach(() => {
+    pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-test-"));
+    spawnSyncCalls = [];
   });
 
   afterEach(() => {
+    rmSync(pidDir, { recursive: true, force: true });
+  });
+
+  afterAll(() => {
     childProcess.spawnSync = originalSpawnSync;
     delete require.cache[require.resolve(ollamaProxySourcePath)];
-    rmSync(pidDir, { recursive: true, force: true });
   });
 
   // A scripted ProcessControl models PID identity/liveness/signalling without
@@ -501,23 +509,29 @@ describe("stopAll", () => {
     return { control, signals };
   }
 
-  it("does not signal a live PID recycled to a non-cloudflared process", () => {
-    const { control, signals } = scriptedControl({
-      alive: [true],
-      cmdlines: ["/usr/bin/node vitest"],
-    });
-    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+  // The first stopAll call instruments the lazily loaded Ollama proxy dependency
+  // graph. Loaded coverage shards can exceed the unit-test default here.
+  it(
+    "does not signal a live PID recycled to a non-cloudflared process",
+    testTimeoutOptions(15_000),
+    () => {
+      const { control, signals } = scriptedControl({
+        alive: [true],
+        cmdlines: ["/usr/bin/node vitest"],
+      });
+      writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      stopAll({ pidDir, processControl: control });
-    } finally {
-      logSpy.mockRestore();
-    }
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        stopAll({ pidDir, processControl: control });
+      } finally {
+        logSpy.mockRestore();
+      }
 
-    expect(signals).toEqual([]);
-    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
-  });
+      expect(signals).toEqual([]);
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    },
+  );
 
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({
@@ -588,16 +602,18 @@ describe("stopAll", () => {
     logSpy.mockRestore();
   });
 
-  it("unloads Ollama models before reporting services stopped", () => {
+  it("runs injected Ollama cleanup before reporting services stopped", () => {
+    const cleanup = vi.fn();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
+    stopAll({ pidDir, unloadOllamaModels: cleanup });
+    const stoppedCallIndex = logSpy.mock.calls.findIndex(([message]) =>
+      String(message).includes("All services stopped"),
+    );
+    const stoppedCallOrder = logSpy.mock.invocationCallOrder[stoppedCallIndex];
     logSpy.mockRestore();
 
-    const psCall = spawnSyncCalls.find(
-      (c) => c.command === "curl" && c.args.some((a) => a.endsWith("/api/ps")),
-    );
-    expect(psCall).toBeDefined();
-    expect(psCall?.args).toContain("--max-time");
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
   });
 });
 

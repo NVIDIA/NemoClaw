@@ -115,6 +115,32 @@ export interface ManagedInferenceServingRecipe {
   };
 }
 
+/** A single-host vLLM recipe, with cluster-only inputs unavailable by construction. */
+export interface HostLocalInferenceServingRecipe
+  extends Omit<ManagedInferenceServingRecipe, "spec"> {
+  readonly spec: Omit<
+    ManagedInferenceServingRecipe["spec"],
+    "backend" | "bindings" | "execution"
+  > & {
+    readonly backend: "vllm";
+    readonly bindings?: never;
+    readonly execution: {
+      readonly materializerRef: "vllm.host-local/v1";
+      readonly lifecycleRef: "vllm.host-local.lifecycle/v1";
+      readonly topologyBinding?: never;
+      readonly nodeCount?: never;
+      readonly tensorParallelSize?: never;
+      readonly pipelineParallelSize?: never;
+      readonly distributedExecutorBackend?: never;
+      readonly rendezvousPort?: never;
+    };
+  };
+}
+
+export type ManagedInferenceRuntimeServingRecipe =
+  | ManagedInferenceServingRecipe
+  | HostLocalInferenceServingRecipe;
+
 interface ServingRecipeEnvelope {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingRecipe";
@@ -185,6 +211,25 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
         readonly quantization: string;
         readonly license: string;
       }[];
+      readonly acquisition: {
+        readonly ref: "hugging-face-exact-file/v1";
+        readonly authentication: {
+          readonly mode: "optional";
+          readonly environment: "HF_TOKEN";
+        };
+      };
+      readonly cache: {
+        readonly ref: "llama-cpp.gguf-content-addressed/v1";
+        readonly receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1";
+        readonly root: "user-cache";
+        readonly quotaBytes: number;
+        readonly stagingHeadroomBytes: number;
+        readonly staging: "same-filesystem";
+        readonly publication: "atomic-no-clobber";
+        readonly reuse: "verified-only-offline";
+        readonly sharing: "owner-only";
+        readonly cleanup: "receipt-owner-only";
+      };
     };
     readonly runtime: {
       readonly image: string;
@@ -346,11 +391,12 @@ export interface ManagedInferenceServingPreset {
   readonly spec: {
     readonly selection: ServingSelectionPolicy;
     readonly priority: number;
+    readonly featureGate?: string;
     readonly requirements: { readonly all: readonly ServingPresetRequirement[] };
     readonly plan: {
       readonly backend: string;
       readonly recipeRef: string;
-      readonly bindings: Readonly<Record<string, ServingPresetTopologyBinding>>;
+      readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
 }
@@ -362,6 +408,7 @@ export interface ServingPreset {
   readonly spec: {
     readonly selection: ServingSelectionPolicy;
     readonly priority: number;
+    readonly featureGate?: string;
     readonly requirements?: { readonly all: readonly ServingPresetRequirement[] };
     readonly plan: {
       readonly backend: string;
@@ -380,7 +427,7 @@ export interface ServingCatalogSourceProvenance {
 
 export interface CompiledServingCatalogPayload {
   readonly schemaVersion: "1.0.0";
-  readonly compilerVersion: "1.1.0";
+  readonly compilerVersion: "1.2.0";
   readonly sourceRevision: string;
   readonly readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json";
   readonly recipes: readonly ServingRecipe[];
@@ -443,7 +490,7 @@ export type ManagedInferencePresetTopologyBinding = ServingPresetTopologyBinding
 export interface CompiledManagedInferenceCatalog
   extends Omit<CompiledServingCatalog, "presets" | "recipes"> {
   readonly presets: readonly ManagedInferenceServingPreset[];
-  readonly recipes: readonly ManagedInferenceServingRecipe[];
+  readonly recipes: readonly ManagedInferenceRuntimeServingRecipe[];
 }
 
 const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([
@@ -506,8 +553,19 @@ export interface ResolvedManagedInferenceSelection<TTopologyOutput = unknown> {
   readonly topologyQualification: ManagedInferenceTopologyQualification<TTopologyOutput>;
 }
 
+export interface ResolvedHostLocalInferenceSelection {
+  readonly outcome: "selected";
+  readonly selection: "automatic" | "explicit";
+  readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: HostLocalInferenceServingRecipe;
+}
+
 export type ManagedInferenceResolution<TTopologyOutput = unknown> =
   | ResolvedManagedInferenceSelection<TTopologyOutput>
+  | ResolvedHostLocalInferenceSelection
   | {
       readonly outcome: "no-match";
       readonly code: "explicit-intent" | "requirements-not-met";

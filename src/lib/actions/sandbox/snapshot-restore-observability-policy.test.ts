@@ -72,7 +72,9 @@ describe("runSandboxSnapshot restore: observability policy replay", () => {
     f.getAppliedPresetsMock.mockReturnValue(["npm"]);
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(f.removePresetMock).not.toHaveBeenCalled();
   });
 
@@ -94,7 +96,9 @@ describe("runSandboxSnapshot restore: observability policy replay", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
   });
 
@@ -117,7 +121,9 @@ describe("runSandboxSnapshot restore: observability policy replay", () => {
       "alpha",
       f.builtinObservabilityPolicy,
     );
-    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(f.updateSandboxMock).not.toHaveBeenCalled();
   });
 

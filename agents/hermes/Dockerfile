@@ -102,6 +102,7 @@ COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
+COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
@@ -133,8 +134,10 @@ COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtim
 COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
 COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
+COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py
 COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
+COPY agents/hermes/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 
 FROM scratch AS hermes-wrapper-payload
@@ -150,24 +153,70 @@ COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+# Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
+# onboard detects an operator-supplied corporate CA on the host it bakes it
+# here; the RUN below decodes it to a root-owned file that the entrypoint
+# appends to the OpenShell trust bundle at runtime. The CA is a public
+# certificate, not a secret, so baking it into an image layer is acceptable.
+ARG NEMOCLAW_CORPORATE_CA_B64
+
+# Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
+# when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
+# ARG is expanded by the shell (not interpolated into source), and its value is
+# base64 sanitized host-side, so this is not an injection vector. Must run as
+# root, before the USER sandbox drop below.
+# hadolint ignore=DL3059,DL4006
+RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
+      command -v openssl >/dev/null 2>&1 || { echo "[nemoclaw] openssl is required to validate NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image (#6210)" >&2; exit 1; }; \
+      mkdir -p /usr/local/share/nemoclaw \
+      && { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.decoded 2>/dev/null \
+           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; } \
+      && awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' /tmp/nemoclaw-corporate-ca.decoded > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && rm -f /tmp/nemoclaw-corporate-ca.decoded \
+      && { grep -qF -- "-----BEGIN CERTIFICATE-----" /usr/local/share/nemoclaw/corporate-ca.pem || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && { openssl crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null 2>&1 || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
+      && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
+      && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
+    fi
+
+# Use the decoded CA for Node.js package operations in this final stage. Node.js
+# ignores the path when no CA was baked. At runtime, nemoclaw-start replaces it
+# with the merged OpenShell and corporate bundle.
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
+
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
 
 # The final Hermes image owns the shipped dependency boundary independently of
-# base freshness. Reassert the idempotent npm-private node-tar fix here.
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
-    --npm-root /usr/local/lib/node_modules/npm
+# base freshness. Reassert the idempotent npm-private node-tar fix here. When
+# onboarding supplied a corporate CA, use it for the registry-backed download.
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+      --npm-root /usr/local/lib/node_modules/npm
 
 # Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# When onboarding supplied a corporate CA, use it for the registry-backed
+# download.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
-    --npm-root /usr/local/lib/node_modules/npm
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+      --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the exact final filesystem.
+# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
-    --npm-root /usr/local/lib/node_modules/npm
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+      --npm-root /usr/local/lib/node_modules/npm
 
 # Keep the final image contract explicit even when the published base image
 # changes independently of this Dockerfile.
@@ -311,10 +360,10 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
-    && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
+    && chmod 700 /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
+    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
@@ -346,6 +395,34 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-star
 # made executable. Catches COPY path drift or a silent chmod failure.
 RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
+
+# Hermes v0.19.0's operator drain is scoped to one container epoch. NemoClaw's
+# rebuild drain must instead survive gateway and container restarts until the
+# restored scripts and cron jobs are revalidated. Patch the exact pinned drain
+# predicate to compose an independent root-owned marker, and hydrate that
+# predicate during GatewayRunner construction so startup cannot dispatch before
+# the asynchronous watcher gets its first tick.
+ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=10f757140106e88133e160a62fdbf0fa971cf8edcdbba13948eb88b12a8aeb2e
+ARG NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256=5436daa7807ce3e765dac084974af025c8ffd0515faca15ac455ade2595e4af7
+ARG NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256=c6e0f443772e4a8a7eac0d9ccf9a4f659de5fc5493c572a69a46e4c61a8aa966
+ARG NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256=544da7eebee82a1de1291f1921325ec5a1f2a70ca08ad64f27f8efe868a0089b
+ARG NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256=3180fe6e62ee986243c7bc85c343108075b94f3cbda42d91273a6a104ad47c1b
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
+        "$NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256" /opt/hermes/gateway/drain_control.py \
+        "$NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256" /opt/hermes/gateway/run.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes cron restore drain source identity mismatch" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
+        --drain-control /opt/hermes/gateway/drain_control.py \
+        --gateway-run /opt/hermes/gateway/run.py \
+    && printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256" /opt/hermes/gateway/drain_control.py \
+        "$NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256" /opt/hermes/gateway/run.py \
+    | sha256sum -c -
 
 # Fresh named profiles do not receive config.yaml, so pin the reviewed
 # NemoClaw policy at Hermes' source defaults as well as in generated default
@@ -505,18 +582,21 @@ RUN node --experimental-strip-types \
     && /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py langfuse-credentials
 
-# Cryptographic integrity gate for the security-critical Python entrypoints:
-# the wrapper, its CLI adapter, the runtime env validator, and the descriptor-
-# safe Tirith marker finalizer. Any content change MUST be
-# accompanied by an updated hash below; otherwise the build fails. This blocks
+# Cryptographic integrity gate for the security-critical entrypoints: the
+# wrapper, its CLI adapter, the runtime env validator, the descriptor-safe
+# Tirith marker finalizer, and cron restore control. Cron restore control is the
+# rebuild-time gate that keeps Hermes cron dispatch disabled until the restored
+# jobs and scripts are validated. Any content change must be accompanied by an
+# updated hash below; otherwise the build fails. This blocks
 # silent supply-chain tampering of the build context (an attacker rewriting a
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
-# Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
+# Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=a841a3673cd2543dd53559e513741dd66929361b8ca94b9196b72badf7827d3c
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
+ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=a674de12d1c30d907491aa7c7b5d40711b077c5b2eca69ca58c5c36e8231e4c8
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
@@ -527,6 +607,11 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256" /usr/local/lib/nemoclaw/finalize-tirith-marker.py \
     | sha256sum -c - \
     || { echo "ERROR: finalize-tirith-marker.py hash mismatch (update NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256)" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256" /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
+    | sha256sum -c - \
+    || { echo "ERROR: hermes-cron-restore-control.py hash mismatch (update NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256)" >&2; exit 1; }
 
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
@@ -605,12 +690,6 @@ ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
-# Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
-# onboard detects an operator-supplied corporate CA on the host it bakes it
-# here; the RUN below decodes it to a root-owned file that the entrypoint
-# appends to the OpenShell trust bundle at runtime. The CA is a public
-# certificate, not a secret, so baking it into an image layer is acceptable.
-ARG NEMOCLAW_CORPORATE_CA_B64
 # Total model context window (input + output tokens). Empty by default so
 # Hermes auto-detects from the endpoint's /v1/models max_model_len; onboard
 # rewrites this ARG (via dockerfile-patch) when it probes a runtime value or
@@ -660,32 +739,18 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # Apply messaging agent-install hooks as root so Hermes Python packages can update
 # /opt/hermes/.venv before the runtime drops to the sandbox user.
 WORKDIR /opt/hermes
+# Clear inherited Python and uv trust overrides before package installation.
+# When the decoded corporate CA exists, use it only for this RUN instruction.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install \
+RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \
+    if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+      export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent hermes --phase managed-image-capability-union; \
-    fi
-
-# Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
-# when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
-# ARG is expanded by the shell (not interpolated into source), and its value is
-# base64 sanitized host-side, so this is not an injection vector. Must run as
-# root, before the USER sandbox drop below.
-# hadolint ignore=DL3059,DL4006
-RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
-      command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
-      command -v openssl >/dev/null 2>&1 || { echo "[nemoclaw] openssl is required to validate NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image (#6210)" >&2; exit 1; }; \
-      mkdir -p /usr/local/share/nemoclaw \
-      && { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.decoded 2>/dev/null \
-           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; } \
-      && awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' /tmp/nemoclaw-corporate-ca.decoded > /usr/local/share/nemoclaw/corporate-ca.pem \
-      && rm -f /tmp/nemoclaw-corporate-ca.decoded \
-      && { grep -qF -- "-----BEGIN CERTIFICATE-----" /usr/local/share/nemoclaw/corporate-ca.pem || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
-      && { openssl crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null 2>&1 || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
-      && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
-      && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
-      && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
     fi
 
 WORKDIR /sandbox
@@ -865,7 +930,7 @@ RUN set -eu; \
         "$config_dir/weixin" \
         "$config_dir/weixin/accounts" \
         "$config_dir/runtime" \
-        "$config_dir/dashboard-home"; \
+        "$config_dir/profiles/dashboard-home"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
         exit 1; \
@@ -918,7 +983,7 @@ RUN set -eu; \
         /sandbox/.hermes/weixin \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
-        /sandbox/.hermes/dashboard-home \
+        /sandbox/.hermes/profiles/dashboard-home \
     && chmod 2770 \
         /sandbox/.hermes/logs \
         /sandbox/.hermes/logs/curator \
@@ -948,17 +1013,17 @@ RUN set -eu; \
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
     && test ! -e /sandbox/.hermes/cron/executions.db \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py cron-create
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "gateway:sandbox 640" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py cron-backup
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py cron-reopen
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
@@ -972,17 +1037,17 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "
 # reopens that replacement for a write.
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 2770" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py discord-create
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "gateway:sandbox 660" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py discord-reopen
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
@@ -1068,6 +1133,7 @@ RUN check_metadata() { \
     && check_absent /root/.cache/node-gyp \
     && check_absent /root/.cache/uv \
     && check_absent /sandbox/.cache \
+    && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444' \
@@ -1081,6 +1147,8 @@ RUN check_metadata() { \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root 444' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
+    && check_metadata /usr/local/share/nemoclaw/state-lock-plan.json 'root:root 444' \
+    && check_metadata /usr/local/lib/nemoclaw/hermes-cron-restore-control.py 'root:root 700' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
@@ -1139,6 +1207,6 @@ RUN set -eu; \
 # End completed-image security package verification.
 
 # start.sh handles privilege separation: runs as root initially, then drops
-# to 'gateway' user via gosu for the agent process. See start.sh.
+# to the 'gateway' user via setpriv for the agent process. See start.sh.
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]

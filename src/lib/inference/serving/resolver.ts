@@ -4,11 +4,14 @@
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
 import { getSystemReadinessReferenceErrors } from "../../readiness/references.js";
 import {
+  getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
+  isHostLocalInferenceServingRecipe,
+  isManagedClusterInferenceServingRecipe,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { immutableManagedInferenceCopy, managedInferenceDigest } from "./catalog-integrity.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import type {
   CompiledManagedInferenceCatalog,
   ManagedInferenceFactRequirement,
@@ -16,12 +19,16 @@ import type {
   ManagedInferenceReadinessRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolution,
+  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceResolverInput,
   ManagedInferenceSelectionIntent,
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ManagedInferenceTopologyRequirement,
+  ResolvedHostLocalInferenceSelection,
+  ResolvedManagedInferenceSelection,
+  ServingReadinessComparison,
 } from "./types.js";
 
 export const MANAGED_INFERENCE_READINESS_MAX_AGE_MS = 30_000;
@@ -43,10 +50,10 @@ type RequirementEvaluation<TOutput> =
 interface MatchingCandidate<TOutput> {
   readonly preset: ManagedInferenceServingPreset;
   readonly presetDigest: string;
-  readonly recipe: ManagedInferenceServingRecipe;
+  readonly recipe: ManagedInferenceRuntimeServingRecipe;
   readonly recipeDigest: string;
   readonly priority: number;
-  readonly topologyQualification: ManagedInferenceTopologyQualification<TOutput>;
+  readonly topologyQualification?: ManagedInferenceTopologyQualification<TOutput>;
 }
 
 function hasText(value: string | undefined): value is string {
@@ -145,6 +152,37 @@ function matchesOperator(actual: unknown, operator: SelectionOperator, expected:
   }
 }
 
+function versionAtLeast(actual: unknown, minimum: string): boolean {
+  if (typeof actual !== "string") return false;
+  const versionPattern = /^\d+(?:\.\d+)*$/u;
+  if (!versionPattern.test(actual) || !versionPattern.test(minimum)) return false;
+  const actualParts = actual.split(".").map(Number);
+  const minimumParts = minimum.split(".").map(Number);
+  const width = Math.max(actualParts.length, minimumParts.length);
+  for (let index = 0; index < width; index += 1) {
+    const actualPart = actualParts[index] ?? 0;
+    const minimumPart = minimumParts[index] ?? 0;
+    if (actualPart !== minimumPart) return actualPart > minimumPart;
+  }
+  return true;
+}
+
+function readinessComparisonMatches(
+  actual: unknown,
+  comparison: ServingReadinessComparison,
+): boolean {
+  switch (comparison.operator) {
+    case "equals":
+      return scalarEquals(actual, comparison.value);
+    case "one-of":
+      return comparison.values.some((candidate) => scalarEquals(actual, candidate));
+    case "at-least":
+      return typeof actual === "number" && actual >= comparison.value;
+    case "version-at-least":
+      return versionAtLeast(actual, comparison.value);
+  }
+}
+
 function readinessScopeMatches(
   scope: string,
   reports: readonly ManagedInferenceReadinessSource[],
@@ -165,7 +203,14 @@ function readinessRequirementMatches(
       const matches = report.qualifications.filter(({ id }) => id === requirement.id);
       return matches.length === 1 && matches[0]!.status === requirement.status;
     }
-    if ("comparison" in requirement) return false;
+    if ("comparison" in requirement) {
+      const matches = report.observations.filter(({ id }) => id === requirement.id);
+      return (
+        matches.length === 1 &&
+        matches[0]!.state === "present" &&
+        readinessComparisonMatches(matches[0]!.value, requirement.comparison)
+      );
+    }
     const collection =
       requirement.kind === "observation" ? report.observations : report.capabilities;
     const matches = collection.filter(({ id }) => id === requirement.id);
@@ -285,7 +330,7 @@ function evaluateRequirements<TOutput>(
 function intentCompatibilityError(
   intent: ManagedInferenceSelectionIntent,
   preset: ManagedInferenceServingPreset,
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
   if (hasText(intent.provider) && intent.provider !== recipe.spec.backend) {
     return `provider ${intent.provider} conflicts with preset ${preset.metadata.id}`;
@@ -342,7 +387,10 @@ function matchingCandidate<TOutput>(
   compiledPreset: CompiledManagedInferenceCatalog["presets"][number],
   input: ManagedInferenceResolverInput<TOutput>,
 ):
-  | { readonly outcome: "matched"; readonly candidate: MatchingCandidate<TOutput> }
+  | {
+      readonly outcome: "matched";
+      readonly candidate: MatchingCandidate<TOutput>;
+    }
   | { readonly outcome: "unmet"; readonly message: string }
   | { readonly outcome: "invalid-topology"; readonly message: string }
   | { readonly outcome: "incompatible-intent"; readonly message: string } {
@@ -357,10 +405,14 @@ function matchingCandidate<TOutput>(
     input.topologyQualifications,
   );
   if (requirements.outcome !== "matched") return requirements;
-  if (requirements.topologyQualifications.length !== 1) {
+  const materializer = getManagedInferenceMaterializerDescriptor(
+    recipe.spec.execution.materializerRef,
+  );
+  const expectedTopologyCount = materializer?.topology ? 1 : 0;
+  if (requirements.topologyQualifications.length !== expectedTopologyCount) {
     return {
       outcome: "invalid-topology",
-      message: `Preset ${preset.metadata.id} must resolve exactly one topology qualification.`,
+      message: `Preset ${preset.metadata.id} must resolve exactly ${String(expectedTopologyCount)} topology qualification${expectedTopologyCount === 1 ? "" : "s"}.`,
     };
   }
   return {
@@ -371,7 +423,9 @@ function matchingCandidate<TOutput>(
       recipe,
       recipeDigest: managedInferenceDigest(compiledRecipe),
       priority: presetPriority(preset),
-      topologyQualification: requirements.topologyQualifications[0]!,
+      ...(requirements.topologyQualifications[0]
+        ? { topologyQualification: requirements.topologyQualifications[0] }
+        : {}),
     },
   };
 }
@@ -381,17 +435,19 @@ function selectedResolution<TOutput>(
   candidate: MatchingCandidate<TOutput>,
   selection: "automatic" | "explicit",
 ): ManagedInferenceResolution<TOutput> {
-  let topologyQualification: ManagedInferenceTopologyQualification<TOutput>;
-  try {
-    topologyQualification = immutableManagedInferenceCopy(candidate.topologyQualification);
-  } catch {
-    return {
-      outcome: "rejected",
-      code: "invalid-topology",
-      message: "Topology qualification is not immutable JSON data.",
-    };
+  let topologyQualification: ManagedInferenceTopologyQualification<TOutput> | undefined;
+  if (candidate.topologyQualification) {
+    try {
+      topologyQualification = immutableManagedInferenceCopy(candidate.topologyQualification);
+    } catch {
+      return {
+        outcome: "rejected",
+        code: "invalid-topology",
+        message: "Topology qualification is not immutable JSON data.",
+      };
+    }
   }
-  return {
+  const common = {
     outcome: "selected",
     selection,
     catalogDigest: catalog.catalogDigest,
@@ -399,7 +455,17 @@ function selectedResolution<TOutput>(
     recipeDigest: candidate.recipeDigest,
     preset: candidate.preset,
     recipe: candidate.recipe,
-    topologyQualification,
+  } as const;
+  if (topologyQualification && isManagedClusterInferenceServingRecipe(common.recipe)) {
+    return { ...common, recipe: common.recipe, topologyQualification };
+  }
+  if (isHostLocalInferenceServingRecipe(common.recipe)) {
+    return { ...common, recipe: common.recipe };
+  }
+  return {
+    outcome: "rejected",
+    code: "invalid-topology",
+    message: `Preset ${common.preset.metadata.id} selected a topology-dependent recipe without a topology qualification.`,
   };
 }
 
@@ -428,7 +494,11 @@ export function resolveManagedInferenceServing<TOutput>(
   }
   const reportsError = readinessReportsError(input.readinessReports, nowMs, maxAgeMs);
   if (reportsError) {
-    return { outcome: "rejected", code: "invalid-readiness", message: reportsError };
+    return {
+      outcome: "rejected",
+      code: "invalid-readiness",
+      message: reportsError,
+    };
   }
 
   if (explicitPresetId) {

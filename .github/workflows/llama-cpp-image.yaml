@@ -288,9 +288,11 @@ jobs:
             exit 1
           fi
           if ! jq -e '
-            (keys | sort) == ["environment", "gpu", "model", "platform", "probes", "profile", "required", "runner"]
+            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probes", "profile", "recipeRef", "required", "runner"]
             and .required == true
+            and .execution == "enabled"
             and .profile == "dgx-spark-gb10-single"
+            and .recipeRef == "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
             and .platform == "linux/arm64"
             and (.runner | type) == "string" and (.runner | length) > 0
             and (.environment | type) == "string" and (.environment | length) > 0
@@ -357,7 +359,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Authenticate to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -477,7 +479,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Authenticate to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -599,7 +601,7 @@ jobs:
             platform: linux/arm64
     steps:
       - name: Authenticate to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -678,7 +680,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Authenticate to GHCR for cryptographic verification
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
