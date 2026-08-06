@@ -243,7 +243,15 @@ describe("maintainer skills follow canonical workflow policy", () => {
       evening.indexOf("Load `cut-release-tag`"),
     );
     expect(evening).toContain("contains the exact `## <version>` heading");
-    expect(release).toContain("git grep -n '^## vX\\.Y\\.Z$'");
+    expect(release).toContain('NEXT_TAG="<selected-vX.Y.Z>"');
+    expect(release).toContain('[[ "$NEXT_TAG" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]');
+    expect(release).toContain('git grep -n -E "^## ${NEXT_TAG//.');
+    expect(release).toContain(
+      "':(glob)docs/changelog/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].mdx'",
+    );
+    expect(release).toContain('CHANGELOG_MATCH_COUNT="$(printf');
+    expect(release).toContain('[[ "$CHANGELOG_MATCH_COUNT" != "1" ]]');
+    expect(release).toContain("Expected exactly one dated changelog heading");
     expect(release).toContain("Unless Step 1 records an explicit waiver");
     expect(release).toContain("show the recorded waiver reason");
     expect(release).toContain("A conventional Release Notes page or post-tag Announcement draft");

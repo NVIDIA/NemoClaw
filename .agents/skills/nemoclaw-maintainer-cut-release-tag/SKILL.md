@@ -34,10 +34,24 @@ Use the release scripts for release operations. Do not run raw `git tag`, `git p
 
 ### Step 1: Verify release prep and generate the plan
 
-Refresh `origin/main`. Confirm the release-prep docs PR is merged and require exactly one dated changelog file with the planned version heading:
+Refresh `origin/main` and confirm the release-prep docs PR is merged. Set `NEXT_TAG` to the selected release version, then require exactly one matching heading in a directly nested dated changelog:
 
 ```bash
-git grep -n '^## vX\.Y\.Z$' origin/main -- 'docs/changelog/*.mdx'
+NEXT_TAG="<selected-vX.Y.Z>"
+[[ "$NEXT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "NEXT_TAG must be a semver tag such as v0.0.58" >&2
+  exit 1
+}
+CHANGELOG_MATCHES="$(
+  git grep -n -E "^## ${NEXT_TAG//./\\.}$" origin/main -- \
+    ':(glob)docs/changelog/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].mdx' || true
+)"
+CHANGELOG_MATCH_COUNT="$(printf '%s\n' "$CHANGELOG_MATCHES" | sed '/^$/d' | wc -l | tr -d ' ')"
+if [[ "$CHANGELOG_MATCH_COUNT" != "1" ]]; then
+  echo "Expected exactly one dated changelog heading for $NEXT_TAG; found $CHANGELOG_MATCH_COUNT" >&2
+  exit 1
+fi
+printf '%s\n' "$CHANGELOG_MATCHES"
 ```
 
 Unless Step 1 records an explicit waiver, require the plan's next tag to match that dated changelog heading. When waived, show the recorded waiver reason in the plan presentation. A conventional Release Notes page or post-tag Announcement draft cannot replace the dated changelog.
