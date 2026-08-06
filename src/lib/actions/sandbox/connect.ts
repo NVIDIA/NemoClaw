@@ -72,7 +72,11 @@ import {
 } from "./connect-inference-route-probe";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
+import {
+  ensureLiveSandboxOrExit,
+  printGatewayLifecycleHint,
+  recoverPortableDemoSandboxLifecycleForConnect,
+} from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
@@ -1072,9 +1076,12 @@ async function runConnectEntryPreflight(
         `Sandbox '${sandboxName}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before connecting.`,
       );
     }
-    if (registered && registry.getSandboxEntryInference(registered).kind === "configured") {
+    if (registered) {
       const gatewayName = resolveSandboxGatewayName(registered);
-      assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
+      if (registry.getSandboxEntryInference(registered).kind === "configured") {
+        assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
+      }
+      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
