@@ -2641,7 +2641,6 @@ async function createSandboxWithBaseImageResolution(
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
-      agentName: agent?.name ?? "openclaw",
       provider,
       sandboxGpuConfig: effectiveSandboxGpuConfig,
       gpuRoutePlan,

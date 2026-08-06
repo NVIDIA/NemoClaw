@@ -18,14 +18,16 @@ export function resolveDockerStartupCommandPatch(
   agent: AgentDefinition | null | undefined,
   dockerDriverGateway: boolean | null | undefined,
 ): {
+  agentName: string;
   persistStartupCommand: boolean;
   requiredUlimits: readonly DockerUlimit[] | null;
 } {
-  if (dockerDriverGateway !== true) {
-    return { persistStartupCommand: false, requiredUlimits: null };
-  }
   const agentName = agent?.name ?? "openclaw";
+  if (dockerDriverGateway !== true) {
+    return { agentName, persistStartupCommand: false, requiredUlimits: null };
+  }
   return {
+    agentName,
     persistStartupCommand:
       agentName === "openclaw" || agentName === "hermes" || agentName === DCODE_AGENT_NAME,
     requiredUlimits: agentName === DCODE_AGENT_NAME ? DCODE_DOCKER_ULIMITS : null,
