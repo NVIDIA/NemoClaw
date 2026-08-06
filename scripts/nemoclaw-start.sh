@@ -4068,10 +4068,15 @@ GUARDENVEOF
       # URL, including loopback, while WhatsApp revalidates its local override
       # immediately at the specialized exec boundary.
       printf 'export OPENCLAW_GATEWAY_TOKEN\n'
+      # Resolve the intended token into a temp var per URL case, then reconcile
+      # it against any pre-existing value below. A blind assignment would abort
+      # sourcing with the shell's raw readonly error (exit 2) — and could echo
+      # the failing assignment line — when the sourcing shell already pinned
+      # OPENCLAW_GATEWAY_TOKEN readonly to a conflicting value (#8428).
       cat <<'GATEWAYTOKENENVEOF'
 case "${OPENCLAW_GATEWAY_URL:-}" in
   *@*)
-    OPENCLAW_GATEWAY_TOKEN=
+    _nemoclaw_intended_gateway_token=
     ;;
   '' | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
     wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
@@ -4080,12 +4085,31 @@ case "${OPENCLAW_GATEWAY_URL:-}" in
     "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
     "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*)
 GATEWAYTOKENENVEOF
-      printf "    OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+      printf "    _nemoclaw_intended_gateway_token='%s'\n" "$_escaped_gateway_token"
       printf '    ;;\n'
       printf '  *)\n'
-      printf '    OPENCLAW_GATEWAY_TOKEN=\n'
+      printf '    _nemoclaw_intended_gateway_token=\n'
       printf '    ;;\n'
       printf 'esac\n'
+      cat <<'GATEWAYTOKENRECONCILEEOF'
+# nemoclaw-gateway-token-reconcile start
+# The proxy-env file is the trust anchor for OPENCLAW_GATEWAY_TOKEN. Probe
+# writability in a subshell so a readonly pin cannot abort sourcing: advance the
+# anchor when writable (also the fresh-source and repeated-source paths), stay
+# silent when it already holds the intended value, and otherwise emit a
+# controlled conflict diagnostic that never echoes the trusted token.
+if ( OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_intended_gateway_token" ) 2>/dev/null; then
+  OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_intended_gateway_token"
+elif [ "${OPENCLAW_GATEWAY_TOKEN-}" = "$_nemoclaw_intended_gateway_token" ]; then
+  :
+else
+  echo "Error: conflicting trust anchor" >&2
+  unset _nemoclaw_intended_gateway_token
+  return 1 2>/dev/null || exit 1
+fi
+unset _nemoclaw_intended_gateway_token
+# nemoclaw-gateway-token-reconcile end
+GATEWAYTOKENRECONCILEEOF
     fi
   } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 }
