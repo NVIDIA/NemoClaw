@@ -663,6 +663,19 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
+
+  it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
+    const input = createInput();
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
+
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
+      input.sandboxName,
+      input.sandboxStartupCommand,
+    );
+  });
 });
 
 describe("runSandboxGpuCreateFlow fallback ordering", () => {

@@ -190,6 +190,10 @@ export function preparePortableExperimentalHost(
     "Refreshing the rootless container service",
   );
   requireCommand(
+    systemctl(["--user", "enable", "podman-restart.service"], env),
+    "Enabling rootless container restart after login",
+  );
+  requireCommand(
     systemctl(["--user", "enable", "--now", "podman.socket"], env),
     "Starting the rootless container socket",
   );

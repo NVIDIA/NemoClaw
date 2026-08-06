@@ -10,6 +10,7 @@ import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types"
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
+import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import {
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
@@ -104,6 +105,8 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  /** Production callers configure the hidden portable lifecycle through the default implementation. */
+  installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */
   createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
 }
@@ -245,6 +248,11 @@ export async function runSandboxGpuCreateFlow(
     console.error(`  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`);
     process.exit(1);
   }
+
+  (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+    input.sandboxName,
+    input.sandboxStartupCommand,
+  );
 
   return {
     ...gpuCreateOutcome.value,

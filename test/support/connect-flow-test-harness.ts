@@ -33,6 +33,7 @@ export type ConnectHarness = {
   logSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   readSandboxConfigSpy: MockInstance;
+  recoverPortableDemoLifecycleSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
   runAutoPairSpy: MockInstance;
@@ -184,6 +185,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
+  const recoverPortableDemoLifecycleSpy = vi
+    .spyOn(gatewayState, "recoverPortableDemoSandboxLifecycleForConnect")
+    .mockReturnValue({ kind: "not-installed" });
   const ensureOllamaAuthProxySpy = vi
     .spyOn(ollamaProxy, "ensureOllamaAuthProxy")
     .mockImplementation(() => undefined);
@@ -261,6 +265,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     logSpy,
     preflightVllmSpy,
     readSandboxConfigSpy,
+    recoverPortableDemoLifecycleSpy,
     registryEntries,
     resolveAgentConfigSpy,
     runAutoPairSpy,
