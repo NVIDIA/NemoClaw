@@ -170,20 +170,20 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(false);
-      expect(result.stderr).toContain("stopped serving port 18789");
+      expect(result.stderr).toContain("[gateway-watchdog] CRITICAL");
       expect(result.stderr).toContain("connection refused");
       expect(gatewayLog).toContain("[gateway-watchdog] CRITICAL");
-      expect(gatewayLog).toContain("stopped serving port 18789");
+      expect(gatewayLog).toContain("[gateway-watchdog] CRITICAL");
       expect(gatewayLog).toContain("(#7377)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("does not arm or kill when the gateway has not served yet", () => {
-    // A gateway that is still booting (or failed to boot) refuses from the
-    // start; that case belongs to the respawn loop and the Docker
-    // HEALTHCHECK, not the watchdog.
+  it("keeps a gateway that has not served yet inside the boot grace window", () => {
+    // A gateway that is still booting refuses from the start, and the watchdog
+    // cannot tell that apart from one that came up broken. It must wait out the
+    // slowest plausible boot before acting, while still reporting what it sees.
     const { result, fakeAlive, gatewayLog, tmpDir } = runWatchdog({
       curlPlan: [7],
       expectKill: false,
@@ -191,8 +191,86 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(true);
-      expect(result.stderr).not.toContain("stopped serving port 18789");
+      expect(result.stderr).toContain("having never served");
+      expect(result.stderr).not.toContain("CRITICAL");
       expect(gatewayLog).toBe("");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a gateway that never served once the boot grace window passes (#7377)", () => {
+    // The QA reproduction on v0.0.102: a freshly onboarded sandbox whose
+    // gateway was alive with a refused listener from launch. Requiring a prior
+    // serving response to arm meant the watchdog never acted and never logged,
+    // so the sandbox stayed wedged with no explanation.
+    const { result, fakeAlive, gatewayLog, tmpDir } = runWatchdog({
+      curlPlan: [7, 7, 7],
+      env: { NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES: "3" },
+      expectKill: true,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fakeAlive).toBe(false);
+      expect(result.stderr).toContain("having never served");
+      expect(result.stderr).toContain("[gateway-watchdog] CRITICAL");
+      expect(gatewayLog).toContain("having never served");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("holds a never-served gateway to the boot grace window, not the serving threshold", () => {
+    // Four not-serving probes would already have crossed the post-serving
+    // threshold. An unproven gateway must survive them.
+    const { result, fakeAlive, tmpDir } = runWatchdog({
+      curlPlan: [7, 7, 7, 7],
+      env: { NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES: "1000" },
+      expectKill: false,
+      settleSeconds: 1.2,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fakeAlive).toBe(true);
+      expect(result.stderr).toContain("(4/1000 since launch, having never served)");
+      expect(result.stderr).not.toContain("CRITICAL");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("switches a slow gateway to the serving threshold once it serves", () => {
+    // A boot that refuses and then comes up must never be killed, and from its
+    // first serving response it is held to the tighter post-serving threshold.
+    const { result, fakeAlive, tmpDir } = runWatchdog({
+      curlPlan: [7, 7, 7, 0, 0],
+      env: { NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES: "5" },
+      expectKill: false,
+      settleSeconds: 1.2,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fakeAlive).toBe(true);
+      expect(result.stderr).toContain("(3/5 since launch, having never served)");
+      expect(result.stderr).not.toContain("CRITICAL");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the default boot grace window when the override is invalid", () => {
+    const { result, fakeAlive, tmpDir } = runWatchdog({
+      curlPlan: [7],
+      env: { NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES: "0" },
+      expectKill: false,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fakeAlive).toBe(true);
+      expect(result.stderr).toContain(
+        "invalid NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES='0'; defaulting to 20",
+      );
+      expect(result.stderr).not.toContain("CRITICAL");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -208,8 +286,8 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(true);
-      expect(result.stderr).not.toContain("stopped serving port 18789");
-      expect(result.stderr).toContain("connection refused (1/4)");
+      expect(result.stderr).not.toContain("[gateway-watchdog] CRITICAL");
+      expect(result.stderr).toContain("connection refused (1/4 since the last serving response)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -237,7 +315,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(false);
       expect(result.stderr).toContain(reason);
-      expect(result.stderr).toContain("stopped serving port 18789");
+      expect(result.stderr).toContain("[gateway-watchdog] CRITICAL");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -268,7 +346,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(true);
-      expect(result.stderr).not.toContain("stopped serving port 18789");
+      expect(result.stderr).not.toContain("[gateway-watchdog] CRITICAL");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -304,7 +382,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(true);
       expect(result.stderr).toContain("health probe inconclusive (curl exit 127)");
-      expect(result.stderr).not.toContain("stopped serving port 18789");
+      expect(result.stderr).not.toContain("[gateway-watchdog] CRITICAL");
       expect(String(result.stderr).match(/health probe inconclusive/g)).toHaveLength(1);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -326,7 +404,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.stderr).toContain(
         "[gateway-watchdog] curl is unavailable; serving watchdog disabled (#7377)",
       );
-      expect(result.stderr).not.toContain("stopped serving port 18789");
+      expect(result.stderr).not.toContain("[gateway-watchdog] CRITICAL");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -362,7 +440,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(true);
       expect(result.stderr).toContain("no longer looks like the openclaw gateway");
-      expect(result.stderr).not.toContain("stopped serving port 18789");
+      expect(result.stderr).not.toContain("[gateway-watchdog] CRITICAL");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -491,7 +569,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       const bPid = stdout.match(/^B_PID=(\d+)$/m)?.[1];
       expect(bPid).toBeDefined();
       expect(result.stderr).not.toContain(
-        `gateway pid ${bPid} is alive but stopped serving port 18789`,
+        `gateway pid ${bPid} is alive but not serving port 18789`,
       );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -4839,16 +4839,42 @@ gateway_watchdog_positive_int_ok() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
+# Is this PID still the tracked gateway process, regardless of who its parent
+# is now? This is the same evidence the Docker HEALTHCHECK trusts: the kernel's
+# start time from /proc/<pid>/stat pins the identity against PID reuse, and the
+# cmdline check keeps an unrelated process from matching. It deliberately omits
+# the parent-process test in openclaw_supervised_pid_is_live, because being
+# reparented does not change which process this is; it only changes who can
+# relaunch it. The watchdog uses this to report an orphaned gateway rather than
+# failing the liveness test and going silent (#7377).
+gateway_watchdog_pid_is_tracked_gateway() {
+  local pid="$1"
+  local expected_identity="$2"
+  [ -n "$expected_identity" ] || return 1
+  gateway_control_pid_is_live "$pid" || return 1
+  openclaw_load_pid_identity "$pid" || return 1
+  [ "$OPENCLAW_OBSERVED_START_IDENTITY" = "$expected_identity" ] || return 1
+  gateway_pid_is_openclaw_gateway "$pid"
+}
+
 start_gateway_serving_watchdog() {
   (
     local interval not_serving_threshold armed=0 not_serving_count=0
     local pid start_identity extra tracked_identity last_identity="" msg
-    local probe_rc inconclusive_logged=0
+    local probe_rc inconclusive_logged=0 unsupervised_logged=0
+    local boot_grace_probes effective_threshold since
     interval="${NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS:-30}"
     # Environment variable name kept from #4710 for compatibility; it now
     # sets the number of not-serving probes since the last serving response
     # that triggers recovery.
     not_serving_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
+    # Recovery bound for a gateway that has never served on this port. It is
+    # deliberately much larger than the post-serving threshold: the watchdog
+    # cannot tell a still-booting gateway from one that came up broken, so it
+    # waits out the slowest plausible boot before acting. At the default
+    # interval this is 10 minutes, well past the 90-second startup readiness
+    # wait and the Docker HEALTHCHECK start period.
+    boot_grace_probes="${NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES:-20}"
     # Both environment values must be positive integers. A zero or invalid
     # interval would busy-loop the probe, and a zero threshold would kill on
     # the first refusal. Fall back to the defaults for invalid input.
@@ -4861,6 +4887,10 @@ start_gateway_serving_watchdog() {
     if ! gateway_watchdog_positive_int_ok "$not_serving_threshold"; then
       echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${not_serving_threshold}'; defaulting to 4" >&2
       not_serving_threshold=4
+    fi
+    if ! gateway_watchdog_positive_int_ok "$boot_grace_probes"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES='${boot_grace_probes}'; defaulting to 20" >&2
+      boot_grace_probes=20
     fi
     [ -n "${_DASHBOARD_PORT:-}" ] || exit 0
     if ! command -v curl >/dev/null 2>&1; then
@@ -4905,12 +4935,23 @@ start_gateway_serving_watchdog() {
         not_serving_count=0
       fi
       if ! openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
-        # Process exit is the respawn loop's signal, not ours.
+        # Process exit is the respawn loop's signal, not ours. A tracked
+        # gateway that is still alive and still matches its recorded identity
+        # is a different case: this shell is no longer its parent, so the
+        # respawn loop that recovery depends on is gone. Say so once. Staying
+        # silent there is what left #7377 with an unrecoverable gateway and no
+        # explanation in the container log.
+        if [ "$unsupervised_logged" -eq 0 ] \
+          && gateway_watchdog_pid_is_tracked_gateway "$pid" "$start_identity"; then
+          echo "[gateway-watchdog] CRITICAL: gateway pid $pid is alive and still matches its recorded identity, but this supervisor is no longer its parent (ppid ${OPENCLAW_OBSERVED_PARENT_PID:-unknown}, expected $$); the respawn loop cannot relaunch it, so the watchdog is standing down (#7377)" >&2
+          unsupervised_logged=1
+        fi
         last_identity=""
         armed=0
         not_serving_count=0
         continue
       fi
+      unsupervised_logged=0
       probe_rc=0
       gateway_watchdog_probe_gateway "$_DASHBOARD_PORT" || probe_rc=$?
       if [ "$probe_rc" -eq 2 ]; then
@@ -4930,10 +4971,21 @@ start_gateway_serving_watchdog() {
         not_serving_count=0
         continue
       fi
-      [ "$armed" -eq 1 ] || continue
       not_serving_count=$((not_serving_count + 1))
-      if [ "$not_serving_count" -lt "$not_serving_threshold" ]; then
-        echo "[gateway-watchdog] gateway pid $pid alive but not serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count/$not_serving_threshold) (#7377)" >&2
+      if [ "$armed" -eq 1 ]; then
+        effective_threshold="$not_serving_threshold"
+        since="since the last serving response"
+      else
+        # The gateway has never answered on this port. Before #7377 the
+        # watchdog simply never acted here, so a sandbox whose gateway came up
+        # already unable to serve stayed wedged forever with nothing logged.
+        # A slow boot still must not be killed, so an unproven gateway gets a
+        # much longer grace window than one that served and then stopped.
+        effective_threshold="$boot_grace_probes"
+        since="since launch, having never served"
+      fi
+      if [ "$not_serving_count" -lt "$effective_threshold" ]; then
+        echo "[gateway-watchdog] gateway pid $pid alive but not serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count/$effective_threshold $since) (#7377)" >&2
         continue
       fi
       if ! gateway_pid_is_openclaw_gateway "$pid"; then
@@ -4949,7 +5001,7 @@ start_gateway_serving_watchdog() {
         not_serving_count=0
         continue
       fi
-      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but stopped serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count not-serving probes since the last serving response); killing it so the respawn loop can relaunch (#7377)"
+      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but not serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count not-serving probes $since); killing it so the respawn loop can relaunch (#7377)"
       echo "$msg" >&2
       append_openclaw_gateway_log_line "$msg" || true
       record_gateway_watchdog_kill "$tracked_identity"
