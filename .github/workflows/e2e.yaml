@@ -1995,7 +1995,6 @@ jobs:
     steps:
       - name: Validate protected exact-head dispatch
         env:
-          ACTOR: ${{ github.actor }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -2010,10 +2009,6 @@ jobs:
           set -euo pipefail
           [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
             echo "::error::Protected managed-image startup must run from trusted NVIDIA/NemoClaw main" >&2
-            exit 1
-          }
-          [[ "$ACTOR" == "github-actions[bot]" ]] || {
-            echo "::error::Protected managed-image startup requires the trusted controller actor" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
@@ -2618,7 +2613,6 @@ jobs:
     steps:
       - name: Validate protected runtime exact-head dispatch
         env:
-          ACTOR: ${{ github.actor }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -2632,10 +2626,6 @@ jobs:
           set -euo pipefail
           [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
             echo "::error::Protected managed-image runtime must run from trusted NVIDIA/NemoClaw main" >&2
-            exit 1
-          }
-          [[ "$ACTOR" == "github-actions[bot]" ]] || {
-            echo "::error::Protected managed-image runtime requires the trusted controller actor" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {

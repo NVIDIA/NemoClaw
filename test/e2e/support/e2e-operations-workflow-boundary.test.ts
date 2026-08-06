@@ -263,6 +263,24 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(result.stderr).toContain(expectedStderr);
   });
 
+  it("uses central maintainer authorization for protected managed-image qualification", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const guards = [
+      ["managed-image-multiarch-startup", "Validate protected exact-head dispatch"],
+      ["managed-image-protected-runtime", "Validate protected runtime exact-head dispatch"],
+    ].map(
+      ([jobName, stepName]) =>
+        workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
+    );
+
+    for (const guard of guards) {
+      expect(guard.env).not.toHaveProperty("ACTOR");
+      expect(guard.run).not.toContain("github-actions[bot]");
+      expect(guard.run).toContain('"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"');
+      expect(guard.run).toContain('"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$');
+    }
+  });
+
   it("accepts the default target matrix for an exact-revision manual PR run", () => {
     const workflow = readE2eOperationsWorkflow();
     const generateMatrix = workflow.jobs["generate-matrix"];
