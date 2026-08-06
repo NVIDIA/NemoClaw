@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Add an MCP Server"
 sidebar-title: "Add an MCP Server"
-description: "Register an authenticated Streamable HTTP MCP server with a NemoClaw sandbox."
-description-agent: "Explains mcp add inputs, credential-name restrictions, URL and DNS validation, policy pinning, and agent capability checks. Use when adding a managed MCP server."
-keywords: ["nemoclaw mcp add", "streamable http mcp", "mcp bearer credential"]
+description: "Register an authenticated public or trusted private Streamable HTTP MCP server with a NemoClaw sandbox."
+description-agent: "Explains mcp add inputs, trusted private endpoints, credential-name restrictions, URL and DNS validation, policy pinning, and agent capability checks. Use when adding a managed MCP server."
+keywords: ["nemoclaw mcp add", "streamable http mcp", "mcp bearer credential", "trusted private mcp"]
 content:
   type: "how_to"
 skill:
@@ -48,6 +48,78 @@ NemoClaw persists only the variable name, writes `openshell:resolve:env:KEY` int
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
+## Add a Trusted Private Server
+
+Use an exact trusted private host when the MCP endpoint must remain on an operator-controlled private network.
+This flow is the same for OpenClaw, Hermes, and Deep Agents Code.
+
+Before registration, configure an HTTPS endpoint that meets these requirements:
+
+- The endpoint hostname resolves to stable RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, or the URL uses one exact private IPv4 literal.
+- The OpenShell gateway can route to every resolved address.
+- The Transport Layer Security (TLS) certificate matches the endpoint hostname and chains to a trust root available to the managed runtime.
+- A host firewall limits the listener to the OpenShell gateway or the required deployment subnet.
+- The endpoint exposes only the required MCP path and methods.
+
+If the endpoint certificate chains to a private CA, provide that CA with `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
+Rebuild an existing sandbox after adding or changing the CA so both the OpenShell upstream proxy and sandbox clients receive the trust anchor.
+For source validation and custom-image requirements, refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust).
+
+For a host-local MCP process, keep the process bound to loopback when practical.
+Place an operator-managed HTTPS reverse proxy on one stable, routed private address.
+Bind the proxy to the exact private interface instead of every host interface.
+NemoClaw preserves the URL hostname for TLS Server Name Indication and certificate validation.
+A direct private IPv4 URL requires a certificate with the matching IP subject alternative name.
+Use a DNS hostname for an IPv6 unique local address.
+OpenShell `v0.0.85` cannot safely represent a direct IPv6 literal as a proxy target, so NemoClaw rejects that URL form.
+
+Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
+Sandbox loopback is not the host service, and trusted-private admission does not create a route to it.
+
+<Warning>
+The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` admit private network access to the matching exact host for this registration.
+Confirm that you operate the endpoint and its network before you run the command.
+</Warning>
+
+Export one dedicated bearer credential, then register the endpoint with its exact URL hostname:
+
+```bash
+export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw my-sandbox mcp add local-tools \
+  --url https://mcp-host.corp.example/mcp \
+  --env LOCAL_MCP_TOKEN \
+  --trusted-private-host mcp-host.corp.example
+unset LOCAL_MCP_TOKEN
+```
+
+The declaration must equal the normalized host from `--url`.
+NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations before mutation.
+It also rejects a hostname when any answer is outside the admitted private ranges or otherwise disallowed.
+
+As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
+NemoClaw combines the environment list with any `--trusted-private-host` options.
+It normalizes and deduplicates environment entries, ignores entries unrelated to this URL, and persists only the matching private host.
+The command records the resulting exact trust intent, so later lifecycle commands do not depend on the ambient environment.
+
+NemoClaw records the normalized trust intent and every validated address as exact policy pins.
+The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
+The sandbox configuration contains only the `openshell:resolve:env:LOCAL_MCP_TOKEN` credential placeholder.
+You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
+An exported replacement updates it during restart, and `mcp remove` or sandbox destroy deletes the registry-owned provider.
+
+Inspect the registration after the add returns:
+
+```bash
+$$nemoclaw my-sandbox mcp status local-tools --json
+```
+
+The JSON field `trustedPrivateTarget.state` must report `match`.
+The ordinary provider, policy, and adapter checks must also report readiness.
+
+<Note>
+NemoClaw does not start, configure, monitor, or retain the reverse proxy, MCP process, certificate, DNS record, or host firewall state.
+</Note>
+
 ## Choose a Dedicated Credential Name
 
 Do not reuse OpenShell Google Cloud compatibility names such as `GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `GCP_LOCATION`, `GCP_SERVICE_ACCOUNT_EMAIL`, `GOOSE_PROVIDER`, `ANTHROPIC_VERTEX_PROJECT_ID`, or `VERTEX_LOCATION`.
@@ -84,14 +156,22 @@ Deep Agents Code supports at most 64 managed MCP servers in one sandbox.
 Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenShell glob metacharacters.
 Endpoint URLs cannot use port `0`.
 
-NemoClaw resolves public hostnames before registration, rejects private, local, and special-use targets, and pins the resolved addresses in the generated policy.
+NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
+Public endpoints need no trusted-private declaration.
+Private endpoints require an exact trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
+Supply the declaration with `--trusted-private-host` or the generic `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` environment variable.
+NemoClaw continues to reject loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
 OpenShell re-resolves the hostname for each new connection, requires every current answer to match the pinned `allowed_ips`, and connects to the validated socket addresses.
 
 A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
 
+Cloudflare Quick Tunnels and other endpoints with rotating address sets are not durable managed MCP deployments.
+A named tunnel can stabilize the hostname without stabilizing its exact address set.
+Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
+
 Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal` on stable OpenShell `v0.0.85`.
 That release has a trusted-gateway branch for one narrow link-local topology, but it does not expose an attested driver gateway address that NemoClaw can pin.
-Use a normal HTTPS DNS endpoint with public address records until OpenShell exposes attested gateway state for exact policy pinning.
+Use a routed HTTPS endpoint on a stable private address instead.
 
 ## Understand the Generated Method Profile
 

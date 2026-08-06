@@ -280,6 +280,12 @@ export function runDockerfileCorporateCaDecode(
     .join("\n")
     .replace(/^RUN /, "")
     .replaceAll("/usr/local/share/nemoclaw", outDir)
+    .replaceAll("/usr/local/share/ca-certificates", path.join(outDir, "ca-certificates"))
+    // The shipped block refreshes the image OS trust store. Keep this
+    // unprivileged extraction focused on the decode/split contract and prevent
+    // it from mutating the test host's trust store.
+    .replaceAll("command -v update-ca-certificates >/dev/null 2>&1", "true")
+    .replaceAll("&& update-ca-certificates \\", "&& true \\")
     // Redirect the fixed /tmp decode scratch path into the per-test dir so
     // concurrent test runs never collide.
     .replaceAll("/tmp/nemoclaw-corporate-ca.decoded", path.join(outDir, "decoded"))

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
+  normalizeCustomPolicyEntries,
 } from "./registry-normalization";
 
 const originalHome = process.env.HOME;
@@ -179,6 +181,60 @@ describe("sandbox registry normalization", () => {
       },
     });
     expect(() => registry.getSandbox("profile")).toThrow("invalid serving profile provenance");
+  });
+});
+
+describe("custom policy pin receipt normalization (#8176)", () => {
+  const content = `network_policies:
+  private-api:
+    endpoints:
+      - host: api.corp.example
+        allowed_ips: [10.20.30.40]
+`;
+  const receipt = {
+    version: 1 as const,
+    contentDigest: createHash("sha256").update(content).digest("hex"),
+  };
+
+  it("keeps exact generated-pin authority bound to custom policy content", () => {
+    expect(
+      normalizeCustomPolicyEntries([
+        {
+          name: "private-api",
+          content,
+          sourcePath: "/tmp/private-api.yaml",
+          trustedPrivatePins: receipt,
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "private-api",
+        content,
+        sourcePath: "/tmp/private-api.yaml",
+        trustedPrivatePins: receipt,
+      },
+    ]);
+  });
+
+  it("fails closed when persisted pin authority does not match exact content", () => {
+    expect(() =>
+      normalizeCustomPolicyEntries([
+        {
+          name: "private-api",
+          content: `${content}\n# changed`,
+          trustedPrivatePins: receipt,
+        },
+      ]),
+    ).toThrow(/invalid trusted-private pin authority.*before rebuilding/i);
+    expect(() =>
+      normalizeCustomPolicyEntries([
+        {
+          name: "private-api",
+          content,
+          trustedPrivatePins: { contentDigest: receipt.contentDigest },
+        },
+      ]),
+    ).toThrow(/invalid trusted-private pin authority.*before rebuilding/i);
   });
 });
 

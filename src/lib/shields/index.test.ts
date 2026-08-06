@@ -621,16 +621,6 @@ describe("shields — unit logic", () => {
       const sandboxName = "openclaw";
       const processToken = "d".repeat(32);
       const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
-      const openshellPath = path.join(tmpDir, "openshell");
-      const openshellArgvPath = path.join(tmpDir, "openshell-argv.txt");
-      fs.writeFileSync(
-        openshellPath,
-        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$OPENSHELL_TEST_ARGV_PATH"\n',
-        { mode: 0o700 },
-      );
-      vi.stubEnv("PATH", `${tmpDir}${path.delimiter}${process.env.PATH ?? ""}`);
-      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshellPath);
-      vi.stubEnv("OPENSHELL_TEST_ARGV_PATH", openshellArgvPath);
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n");
       writeState(sandboxName, {
@@ -647,6 +637,7 @@ describe("shields — unit logic", () => {
       });
       vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();
+      const { run } = await import("../runner");
       const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
         throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
           code: "ENOSPC",
@@ -661,14 +652,18 @@ describe("shields — unit logic", () => {
 
       expect(result.status).toBe(0);
       expect(createTempDirectory).not.toHaveBeenCalled();
-      expect(fs.readFileSync(openshellArgvPath, "utf-8").trim().split("\n")).toEqual([
-        "policy",
-        "set",
-        "--policy",
-        snapshotPath,
-        "--wait",
-        sandboxName,
-      ]);
+      expect(run).toHaveBeenCalledWith(
+        [
+          expect.stringMatching(/(?:^|\/)openshell$/),
+          "policy",
+          "set",
+          "--policy",
+          snapshotPath,
+          "--wait",
+          sandboxName,
+        ],
+        { ignoreError: true },
+      );
     });
 
     it("reuses the snapshot without staging when the snapshot and current policy have no managed MCP entries (#7952)", async () => {
