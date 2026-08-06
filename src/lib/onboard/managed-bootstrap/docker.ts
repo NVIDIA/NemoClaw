@@ -790,6 +790,21 @@ function modeEnvironment(mode: DockerGpuPatchMode): string[] {
   return values;
 }
 
+function canonicalEnvironmentBindings(value: unknown, label: string): string[] {
+  const entries = exactStringArray(value ?? [], label);
+  const keys = entries.map((entry) => {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) {
+      throw new Error(`Managed bootstrap Docker ${label} contains an invalid binding.`);
+    }
+    return entry.slice(0, separator);
+  });
+  if (new Set(keys).size !== keys.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate keys.`);
+  }
+  return entries.sort();
+}
+
 function assertExactEnvironmentDelta(
   original: Record<string, unknown>,
   replacement: Record<string, unknown>,
@@ -808,8 +823,13 @@ function assertExactEnvironmentDelta(
           : entry,
       ),
   ];
-  const observed = exactStringArray(replacement.Env ?? [], "replacement environment");
-  if (!exactArrayEqual(observed, expected)) {
+  const observed = canonicalEnvironmentBindings(replacement.Env ?? [], "replacement environment");
+  if (
+    !exactArrayEqual(
+      observed,
+      canonicalEnvironmentBindings(expected, "expected replacement environment"),
+    )
+  ) {
     throw new Error(
       "Managed bootstrap Docker replacement environment changed outside declared deltas.",
     );

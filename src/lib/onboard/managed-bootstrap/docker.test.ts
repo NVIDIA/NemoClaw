@@ -82,6 +82,57 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
+  it("accepts Docker-reordered environment bindings before cutover", async () => {
+    const fake = fixture({
+      replacementEnvironment: (environment) => [...environment].reverse(),
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority();
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: { values: {} },
+      }),
+    ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+  });
+
+  it("rejects replacement environment value drift before cutover", async () => {
+    const fake = fixture({
+      replacementEnvironment: (environment) =>
+        environment.map((entry) => (entry === "A=1" ? "A=changed" : entry)),
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority();
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: { values: {} },
+      }),
+    ).rejects.toThrow("replacement environment changed outside declared deltas");
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+  });
+
   it("rejects a live OpenShell workload whose persisted bootstrap identity drifted", async () => {
     const fake = fixture();
     const environment = fake.original?.Config?.Env;

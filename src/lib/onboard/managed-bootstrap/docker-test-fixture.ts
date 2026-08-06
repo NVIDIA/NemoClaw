@@ -81,6 +81,7 @@ export type DockerFixtureOptions = {
   >;
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
+  readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
   readonly sharedReceiptClearFailures?: readonly Error[];
@@ -363,7 +364,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
             Config: {
               ...structuredClone(source.Config),
               Image: IMAGE,
-              Env: env,
+              Env: [...(options.replacementEnvironment?.(env) ?? env)],
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
             },
