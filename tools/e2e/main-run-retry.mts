@@ -189,6 +189,7 @@ function validateAttemptEvidence(value: unknown, attempt: number): AttemptEviden
   const response = record(value);
   if (
     !Array.isArray(response.jobs) ||
+    response.jobs.length === 0 ||
     response.jobs.length > 100 ||
     !Number.isSafeInteger(response.total_count) ||
     response.total_count !== response.jobs.length

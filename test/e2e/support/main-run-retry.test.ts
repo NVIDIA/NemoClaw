@@ -200,4 +200,22 @@ describe("main E2E retry controller", () => {
       }),
     ).rejects.toThrow("GitHub returned invalid E2E job identity");
   });
+
+  it("rejects an empty successful attempt job listing", async () => {
+    const fixture = setup({ attempt: 1, conclusion: "success" });
+    const request = async (path: string, init?: { method?: "GET" | "POST" }) =>
+      path.includes("/attempts/1/jobs")
+        ? { total_count: 0, jobs: [] }
+        : fixture.request(path, init);
+
+    await expect(
+      evaluateMainRunRetry({
+        repository: REPOSITORY,
+        token: "token",
+        sourceRunId: RUN_ID,
+        controllerAttempt: 1,
+        request,
+      }),
+    ).rejects.toThrow("GitHub returned an invalid or truncated E2E job list");
+  });
 });
