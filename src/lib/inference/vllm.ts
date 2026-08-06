@@ -41,6 +41,7 @@ import {
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
   type MaterializedHostLocalVllmSelection,
+  persistHostLocalVllmRuntimeReceipt,
   recoverHostLocalManagedVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
   resolveHostLocalVllmSelection,
@@ -134,6 +135,7 @@ export interface VllmProfile {
   // this to guard the host Hugging Face cache before a cold download.
   modelDownloadSizeBytes?: number;
   servingCatalog?: {
+    catalogDigest: string;
     presetId: string;
     presetDigest: string;
     recipeId: string;
@@ -533,6 +535,8 @@ export function buildVllmRunArgs(
     ...(profile.servingCatalog
       ? [
           "--label",
+          `com.nvidia.nemoclaw.serving-catalog-digest=${profile.servingCatalog.catalogDigest}`,
+          "--label",
           `com.nvidia.nemoclaw.serving-preset=${profile.servingCatalog.presetId}`,
           "--label",
           `com.nvidia.nemoclaw.serving-preset-digest=${profile.servingCatalog.presetDigest}`,
@@ -836,7 +840,7 @@ function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
-): { ok: boolean; reason?: string } {
+): { ok: true; containerId: string } | { ok: false; reason: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
   // The explicit download completed before this long-lived container starts,
   // so do not retain the host Hugging Face token in the serving process.
@@ -868,7 +872,11 @@ function startContainer(
   if (result.status !== 0) {
     return { ok: false, reason: `docker run failed (exit ${String(result.status)})` };
   }
-  return { ok: true };
+  const launched = inspectVllmContainerOwnershipInDockerEnv(profile.containerName, dockerEnv);
+  if (launched.kind !== "managed") {
+    return { ok: false, reason: "the launched vLLM container identity could not be verified" };
+  }
+  return { ok: true, containerId: launched.containerId };
 }
 
 function vllmEndpointReady(baseUrl?: string): boolean {
@@ -1961,6 +1969,34 @@ async function runVllmInstall(
   if (!start.ok) {
     console.error(`  vLLM install failed: ${String(start.reason)}`);
     return { ok: false };
+  }
+  if (runtimeProfile.servingCatalog) {
+    if (!hostLocalApiKey) {
+      dockerForceRm(start.containerId, {
+        env: localDockerEnv,
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      console.error("  vLLM install failed: managed host-local API key was not provisioned");
+      return { ok: false };
+    }
+    try {
+      persistHostLocalVllmRuntimeReceipt({
+        containerId: start.containerId,
+        authFingerprint: runtimeAuthFingerprint(hostLocalApiKey),
+        serving: runtimeProfile.servingCatalog,
+      });
+    } catch (error) {
+      dockerForceRm(start.containerId, {
+        env: localDockerEnv,
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      console.error(
+        `  vLLM install failed: could not persist the host-local ownership receipt: ${(error as Error).message}`,
+      );
+      return { ok: false };
+    }
   }
 
   emit("Launching vLLM");
