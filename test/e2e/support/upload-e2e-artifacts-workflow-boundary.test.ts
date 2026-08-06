@@ -138,16 +138,12 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects restoring a scorecard artifact uploader", () => {
+  it("rejects scorecard push runtime summary drift", () => {
     const workflow = mutableWorkflow();
-    workflow.jobs.scorecard.steps!.push({
-      name: "Upload obsolete runtime summary",
-      uses: UPLOAD_E2E_ARTIFACTS_ACTION,
-      with: { name: "e2e-runtime-summary", path: "runtime-summary.json" },
-    });
+    uploadStep(workflow.jobs.scorecard).with!.path = "runtime-summary.json";
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "scorecard must not upload an obsolete runtime summary",
+      "scorecard must use upload-e2e-artifacts exactly once with its push runtime summary contract",
     );
   });
 

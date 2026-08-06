@@ -66,9 +66,10 @@ gh workflow run .github/workflows/e2e.yaml \
 The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and empty selectors.
 A second validation after checkout rejects a changed PR identity before preparation.
 
-Find the first-attempt `E2E PR #<number>` run created by this dispatch.
+Find exactly one first-attempt run titled `E2E PR #${PR_NUMBER} (${CORRELATION_ID})`.
 Require its workflow SHA to equal `WORKFLOW_SHA`, wait for completion, and require a `success` conclusion.
-Return the PR number, head SHA, base SHA, workflow SHA, workflow URL, and result.
+Re-read the PR and require its head repository, head SHA, and base SHA to match the recorded values before accepting the run.
+Return the PR number, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
 A changed head or base invalidates the evidence and requires a new run.
 
 ## Select the Main Mode

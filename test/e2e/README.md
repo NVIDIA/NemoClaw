@@ -157,7 +157,7 @@ and exact-staging Launchable job own its product coverage:
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
-The retired nightly caller duplicated push unified E2E coverage.
+The retired nightly caller no longer runs. Pushes to `main` now start the unified E2E suite.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
 
@@ -278,13 +278,6 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
-## Retired selector compatibility
-
-Manual PR E2E requests using the retired `sandbox-rebuild` and
-`upgrade-stale-sandbox` job or target selectors run focused replacement tests
-through the compatibility controller. `rebuild-openclaw` is the canonical live
-rebuild and upgrade target.
-
 ## Current OpenClaw plugin EXDEV lifecycle
 
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
@@ -319,7 +312,7 @@ Manual PR E2E dispatches and direct push or manual `main` runs use a
 bounded swap fallback for eligible hosted Hermes image-building lanes. The
 fallback does not change runner routing. The trusted workflow provisions the
 fallback as the first job step, before checking out or executing the selected
-revision. PR E2E requires a controller-supplied lowercase 40-hex
+revision. Manual PR E2E requires a maintainer-supplied lowercase 40-character
 checkout SHA plus matching trusted workflow and dispatch revisions. Direct-main
 mode rejects alternate checkout and workflow revisions and requires the
 workflow source to match the run revision. Both modes require an ephemeral
@@ -418,7 +411,7 @@ graph as the live targets:
     completed push runs; and
   - compares the trusted cloud-onboard timing summary with the latest
     prior-release `e2e.yaml` run.
-- The nightly comparison reads only validated `e2e-runtime-summary.json`
+- The push comparison reads only validated `e2e-runtime-summary.json`
   artifacts retained for 14 days. Manual runs can display the comparison but
   never enter its baseline. The table reports the current outcome, prior median
   and p95, prior pass/fail/skip counts and rates, the failure streak including
@@ -689,7 +682,7 @@ npm run test:runtime-audit -- path/to/run-1 path/to/run-2
 The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability plus the slowest observed phase's duration
 and outcome. Push and ordinary manual runs include the same table for that
-run in the GitHub Actions scorecard summary. Their nightly trend uses only the
+run in the GitHub Actions scorecard summary. Their push trend uses only the
 bounded timing and outcome summary rather than downloading historical raw test
 artifacts. Keep phase labels specific to test behavior, call
 `progress.phase("literal phase label")` at the declared boundaries in order,
@@ -767,9 +760,9 @@ changes affect onboard behavior, trace timing, scorecard analysis, budget
 configuration, or the unified E2E workflow. Compatibility schema fields may
 classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
-deterministic floor. The independent PR E2E controller rebuilds the plan rather
-than consuming those recommendations, and the scorecard remains the source of
-truth for advisory warm-system trend evaluation.
+deterministic floor. PR Review Advisor recommendations remain advisory.
+A maintainer decides whether to dispatch the default E2E suite for the exact PR
+revision. No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span
@@ -801,7 +794,7 @@ least one earlier anomaly.
 A current sample without an anomaly does not fail because of an earlier anomaly.
 Missing, malformed, or functionally unsuccessful samples do not enter the window.
 The scorecard waits for 12 eligible samples when retained history is incomplete.
-The canonical E2E uploader retains each nightly summary for 14 days.
+The canonical E2E uploader retains each push summary for 14 days.
 
 When changed base-image inputs require the authoritative local OpenClaw base
 build, the target applies the separately calibrated 90-second allowance only to

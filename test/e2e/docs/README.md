@@ -145,7 +145,7 @@ During fixture teardown, every passing or failing live test writes
 `test-progress.json` beside its other target artifacts. The runtime audit
 groups those files by target, optional shard, and test name, then reports
 median, p95, maximum, p95-minus-median variability, and the slowest observed
-phase with its duration and outcome. Scheduled and ordinary manual workflows
+phase with its duration and outcome. Push and ordinary manual workflows
 publish the current run's table in the GitHub Actions scorecard summary. The
 summary reads the target identity from `E2E_TARGET_ID`, falling back to the
 Actions `GITHUB_JOB`, and reads `NEMOCLAW_E2E_SHARD` when set. It retains

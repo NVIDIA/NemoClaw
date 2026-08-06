@@ -517,7 +517,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       buildRuntimeHistory: vi
         .fn()
         .mockResolvedValue("## E2E Nightly Runtime Trend\n\n| Target | Prior median |"),
-      loadPriorNightlySummaries: vi.fn(),
+      loadPriorPushSummaries: vi.fn(),
     };
     const firstTurnLatency = {
       readCurrentFirstTurnLatencySample: vi.fn().mockReturnValue(null),
@@ -575,7 +575,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "/runner/e2e-runtime-summary.json",
       {
         currentFirstTurnLatency: null,
-        loadPriorNightlySummaries: runtimeHistory.loadPriorNightlySummaries,
+        loadPriorPushSummaries: runtimeHistory.loadPriorPushSummaries,
       },
     );
     expect(firstTurnLatency.readCurrentFirstTurnLatencySample).toHaveBeenCalledWith(

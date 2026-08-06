@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: E2E
-run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0}', inputs.pr_number) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   push:
@@ -7420,7 +7420,7 @@ jobs:
                       firstTurnLatency.readCurrentFirstTurnLatencySample(
                         process.env.RUNTIME_ARTIFACTS,
                       ),
-                    loadPriorNightlySummaries: runtimeHistory.loadPriorNightlySummaries,
+                    loadPriorPushSummaries: runtimeHistory.loadPriorPushSummaries,
                   },
                 );
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
@@ -7504,3 +7504,11 @@ jobs:
             if (!response.ok) {
               core.setFailed(`Slack webhook returned ${response.status}`);
             }
+
+
+      - name: Upload E2E runtime summary
+        if: ${{ always() && github.event_name == 'push' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-runtime-summary
+          path: ${{ runner.temp }}/e2e-runtime-summary.json

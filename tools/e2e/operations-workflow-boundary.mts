@@ -702,7 +702,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/analyze-first-turn-latency.mts",
     "firstTurnLatency.readCurrentFirstTurnLatencySample",
     "currentFirstTurnLatency",
-    "runtimeHistory.loadPriorNightlySummaries",
+    "runtimeHistory.loadPriorPushSummaries",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -762,6 +762,18 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
       errors.push(`scorecard Slack publisher must not execute workflow-ref code via ${forbidden}`);
     }
   }
+
+  const runtimeUpload = findStep(job, "Upload E2E runtime summary");
+  requirePinnedAction(errors, runtimeUpload, "scorecard runtime summary upload");
+  if (
+    runtimeUpload.if !== "${{ always() && github.event_name == 'push' }}" ||
+    !String(runtimeUpload.uses ?? "").startsWith(E2E_ARTIFACT_ACTION) ||
+    runtimeUpload.with?.name !== "e2e-runtime-summary" ||
+    runtimeUpload.with?.path !== "${{ runner.temp }}/e2e-runtime-summary.json"
+  ) {
+    errors.push("scorecard must upload only the bounded push runtime summary");
+  }
+
 
 }
 
