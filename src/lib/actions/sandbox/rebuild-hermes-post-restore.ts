@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privileged-exec";
+import type { GatewayRestartResult } from "./gateway-restart";
 import * as processRecovery from "./process-recovery";
 
 const HERMES_CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
@@ -74,14 +75,28 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     options: { quiet: boolean },
   ) => GatewayRecoveryObservation;
+  restartSandboxGateway?: (
+    sandboxName: string,
+    options: { quiet: boolean },
+  ) => GatewayRestartResult;
 }
 
 /**
- * Re-prove Hermes gateway health after workspace state restoration.
+ * Bind the running Hermes gateway to the state this rebuild just restored.
  *
- * Inner onboarding verifies the fresh image before rebuild restores the prior
- * state. That restore can still stop or wedge the gateway, so its earlier
- * readiness message is not authoritative for rebuild completion.
+ * Recreation starts the gateway, and the restore replaces its durable state
+ * afterwards. An adapter that reads that state once at startup keeps the
+ * pre-restore result for the life of the process — the WhatsApp bridge reads
+ * its paired session that way — so the gateway can be alive and healthy while
+ * still serving the state the rebuild replaced. A liveness check cannot see
+ * that difference, so restart first and let the check report on the process
+ * that restart produced. `relaunchManagedSupervisorSession` already restarts
+ * after its own restore for the same reason.
+ *
+ * The restart belongs here rather than inside `runHermesCronRestoreTransaction`:
+ * that gate records the gateway `pid` and `start_time` when it drains dispatch
+ * and compares them again on validate and release, so a restart inside it would
+ * fail its own identity check.
  */
 export function ensureHermesGatewayAfterStateRestore(
   sandboxName: string,
@@ -89,6 +104,8 @@ export function ensureHermesGatewayAfterStateRestore(
   deps: HermesPostRestoreGatewayDeps = {},
 ): HermesPostRestoreGatewayState {
   if (agentName !== "hermes") return "not-applicable";
+  const restart = deps.restartSandboxGateway ?? processRecovery.restartSandboxGateway;
+  const restarted = restart(sandboxName, { quiet: true }).ok;
   const checkAndRecover =
     deps.checkAndRecoverSandboxProcesses ?? processRecovery.checkAndRecoverSandboxProcesses;
   const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, { quiet: true });
@@ -100,8 +117,13 @@ export function ensureHermesGatewayAfterStateRestore(
   ) {
     return "unverified";
   }
-  if (observation.wasRunning === true) return "healthy";
+  // Recovery replaces the process, so a recovered gateway reads the restored
+  // state whatever the restart reported. A gateway that stayed up through a
+  // failed restart is still serving what it read before the restore, which is
+  // the state this step exists to replace.
   if (observation.recovered) return "recovered";
+  if (!restarted) return "unverified";
+  if (observation.wasRunning === true) return "healthy";
   return "unverified";
 }
 
@@ -112,7 +134,7 @@ export function printHermesGatewayRestoreRecovery(
 ): void {
   if (state !== "unverified") return;
   writeLine(
-    `    Hermes gateway health was not verified after state restore — run \`${CLI_NAME} ${sandboxName} recover\` before relying on this sandbox`,
+    `    Hermes gateway health was not verified after state restore — it can still be serving the state this rebuild replaced; run \`${CLI_NAME} ${sandboxName} gateway restart\`, then \`${CLI_NAME} ${sandboxName} recover\` if that fails`,
   );
 }
 

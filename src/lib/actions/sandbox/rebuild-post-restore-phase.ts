@@ -255,7 +255,7 @@ export async function runRebuildPostRestorePhase(
   );
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   if (hermesGatewayRestoreState === "healthy") {
-    console.log(`  ${G}\u2713${R} Hermes gateway health verified after state restore`);
+    console.log(`  ${G}\u2713${R} Hermes gateway restarted and verified after state restore`);
   } else if (hermesGatewayRestoreState === "recovered") {
     console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
   }

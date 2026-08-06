@@ -1,12 +1,91 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
   resetRebuildFlowTestEnvironment,
   restoreRebuildFlowTestEnvironment,
 } from "../../../../test/helpers/rebuild-flow-harness";
+import { ensureHermesGatewayAfterStateRestore } from "./rebuild-hermes-post-restore";
+
+const RESTART_SUCCEEDED = {
+  ok: true,
+  restarted: true,
+  healthPassed: true,
+  forwardRecovered: false,
+} as const;
+const RESTART_FAILED = {
+  ok: false,
+  failureLayer: "health timeout",
+  detail: "gateway did not become healthy",
+} as const;
+
+describe("binding the Hermes gateway to restored state", () => {
+  it("restarts the gateway before reading its health (#8184)", () => {
+    const order: string[] = [];
+    const state = ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => {
+        order.push("restart");
+        return RESTART_SUCCEEDED;
+      },
+      checkAndRecoverSandboxProcesses: () => {
+        order.push("check");
+        return { checked: true, wasRunning: true, recovered: false };
+      },
+    });
+
+    expect(state).toBe("healthy");
+    expect(order).toEqual(["restart", "check"]);
+  });
+
+  // The bug this replaces: the gateway read its durable state at startup, the
+  // restore replaced that state afterwards, and a live process satisfied the
+  // old liveness check while still serving what it read before the restore.
+  it("refuses a gateway that stayed up through a failed restart (#8184)", () => {
+    const state = ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => RESTART_FAILED,
+      checkAndRecoverSandboxProcesses: () => ({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+      }),
+    });
+
+    expect(state).toBe("unverified");
+  });
+
+  it("accepts a gateway the recovery check replaced after a failed restart (#8184)", () => {
+    const state = ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => RESTART_FAILED,
+      checkAndRecoverSandboxProcesses: () => ({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+      }),
+    });
+
+    expect(state).toBe("recovered");
+  });
+
+  it("leaves a non-Hermes rebuild without a gateway restart (#8184)", () => {
+    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    }));
+
+    const state = ensureHermesGatewayAfterStateRestore("alpha", "openclaw", {
+      restartSandboxGateway,
+      checkAndRecoverSandboxProcesses,
+    });
+
+    expect(state).toBe("not-applicable");
+    expect(restartSandboxGateway).not.toHaveBeenCalled();
+    expect(checkAndRecoverSandboxProcesses).not.toHaveBeenCalled();
+  });
+});
 
 describe("Hermes rebuild post-restore verification", () => {
   beforeEach(resetRebuildFlowTestEnvironment);
@@ -198,6 +277,28 @@ describe("Hermes rebuild post-restore verification", () => {
     expect(harness.restoreMcpBridgesAfterRebuildSpy).not.toHaveBeenCalled();
     expect(harness.logSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("rebuilt successfully"),
+    );
+  });
+
+  it("restarts the gateway between the state restore and the health check (#8184)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "hermes",
+      sandboxEntry: { agent: "hermes" },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.restartSandboxGatewaySpy).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(harness.restoreSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.restartSandboxGatewaySpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.restartSandboxGatewaySpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.checkAndRecoverSandboxProcessesSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Hermes gateway restarted and verified after state restore"),
     );
   });
 

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
+import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 
 type RebuildSandbox = typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
 
@@ -102,6 +103,7 @@ export type RebuildFlowOverrides = {
     secretBoundaryRefused?: boolean;
     mcpReconciliationRefused?: boolean;
   };
+  restartSandboxGateway?: () => GatewayRestartResult;
   onboard?: (session: RebuildFlowSession) => Promise<void> | void;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
@@ -166,6 +168,7 @@ export type RebuildFlowHarness = {
   restoreTrustedAgentRemoteBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
+  restartSandboxGatewaySpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
@@ -777,6 +780,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           forwardRecovered: false,
         })),
     );
+  const restartSandboxGatewaySpy = vi
+    .spyOn(processRecovery, "restartSandboxGateway")
+    .mockImplementation(
+      overrides.restartSandboxGateway ??
+        (() => ({
+          ok: true,
+          restarted: true,
+          healthPassed: true,
+          forwardRecovered: false,
+        })),
+    );
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
@@ -833,6 +847,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreTrustedAgentRemoteBaseImageOverrideSpy,
     executeSandboxCommandSpy,
     checkAndRecoverSandboxProcessesSpy,
+    restartSandboxGatewaySpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
     finalizeIncompleteOnboardStepSpy,
