@@ -17,11 +17,14 @@ shift 3
 [ "${1:-}" = "/opt/openshell/bin/openshell-sandbox" ] \
   || fail "OpenShell supervisor entrypoint is invalid"
 /usr/bin/id sandbox >/dev/null 2>&1 || fail "sandbox user is missing"
-[ -f /etc/group ] && [ ! -L /etc/group ] || fail "container group database is invalid"
+if [ ! -f /etc/group ] || [ -L /etc/group ]; then
+  fail "container group database is invalid"
+fi
 
 IFS=',' read -r -a gids <<<"$group_gids"
-[ "${#gids[@]}" -gt 0 ] && [ "${#gids[@]}" -le 16 ] \
-  || fail "device group count is invalid"
+if [ "${#gids[@]}" -eq 0 ] || [ "${#gids[@]}" -gt 16 ]; then
+  fail "device group count is invalid"
+fi
 
 declare -A seen=()
 for gid in "${gids[@]}"; do
@@ -36,8 +39,9 @@ for gid in "${gids[@]}"; do
     /usr/sbin/groupadd --gid "$gid" "$group_name"
   else
     IFS=':' read -r group_name _ resolved_gid _ <<<"$group_record"
-    [ -n "$group_name" ] && [ "$resolved_gid" = "$gid" ] \
-      || fail "device group record is invalid"
+    if [ -z "$group_name" ] || [ "$resolved_gid" != "$gid" ]; then
+      fail "device group record is invalid"
+    fi
   fi
   /usr/sbin/usermod --append --groups "$group_name" sandbox
 done

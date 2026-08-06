@@ -150,13 +150,11 @@ export function maybeRunJetsonOpenRmPolicyProof(options: OpenRmProofOptions): vo
   fs.writeFileSync(candidatePath, candidate, { encoding: "utf8", mode: 0o600 });
 
   let candidateResult = "missing";
-  let candidateApplied = false;
   try {
-    candidateApplied = true;
     setPolicy(options.sandboxName, candidatePath, runOpenshell);
     candidateResult = proofCudaResult(options.verifyDirectSandboxGpu(options.sandboxName));
   } finally {
-    if (candidateApplied) setPolicy(options.sandboxName, baselinePath, runOpenshell);
+    setPolicy(options.sandboxName, baselinePath, runOpenshell);
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 
