@@ -27,8 +27,12 @@ Use a non-empty placeholder such as `dummy` for an unauthenticated Anthropic-com
 ## Understand URL Validation
 
 Explicit endpoint URLs saved through Hermes Provider setup, `inference set`, host-side `config set`, or a direct blueprint run must pass host-side server-side request forgery validation.
-NemoClaw rejects loopback, link-local, private, and internal addresses in these paths.
-It also rejects public hostnames that resolve to a private address.
+NemoClaw rejects loopback, link-local, private, internal, reserved, and special-purpose addresses in these paths.
+Blocked special-purpose targets include documentation, translation, benchmarking, multicast, and metadata destinations.
+It also rejects public hostnames that resolve to a blocked address.
+
+A direct blueprint run rejects endpoint URLs that contain userinfo, such as an embedded username or password, before DNS resolution.
+Configure the provider credential separately instead of putting it in the endpoint URL.
 
 Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
 

@@ -115,6 +115,32 @@ export interface ManagedInferenceServingRecipe {
   };
 }
 
+/** A single-host vLLM recipe, with cluster-only inputs unavailable by construction. */
+export interface HostLocalInferenceServingRecipe
+  extends Omit<ManagedInferenceServingRecipe, "spec"> {
+  readonly spec: Omit<
+    ManagedInferenceServingRecipe["spec"],
+    "backend" | "bindings" | "execution"
+  > & {
+    readonly backend: "vllm";
+    readonly bindings?: never;
+    readonly execution: {
+      readonly materializerRef: "vllm.host-local/v1";
+      readonly lifecycleRef: "vllm.host-local.lifecycle/v1";
+      readonly topologyBinding?: never;
+      readonly nodeCount?: never;
+      readonly tensorParallelSize?: never;
+      readonly pipelineParallelSize?: never;
+      readonly distributedExecutorBackend?: never;
+      readonly rendezvousPort?: never;
+    };
+  };
+}
+
+export type ManagedInferenceRuntimeServingRecipe =
+  | ManagedInferenceServingRecipe
+  | HostLocalInferenceServingRecipe;
+
 interface ServingRecipeEnvelope {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingRecipe";
@@ -369,7 +395,7 @@ export interface ManagedInferenceServingPreset {
     readonly plan: {
       readonly backend: string;
       readonly recipeRef: string;
-      readonly bindings: Readonly<Record<string, ServingPresetTopologyBinding>>;
+      readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
 }
@@ -462,7 +488,7 @@ export type ManagedInferencePresetTopologyBinding = ServingPresetTopologyBinding
 export interface CompiledManagedInferenceCatalog
   extends Omit<CompiledServingCatalog, "presets" | "recipes"> {
   readonly presets: readonly ManagedInferenceServingPreset[];
-  readonly recipes: readonly ManagedInferenceServingRecipe[];
+  readonly recipes: readonly ManagedInferenceRuntimeServingRecipe[];
 }
 
 const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([
@@ -525,8 +551,19 @@ export interface ResolvedManagedInferenceSelection<TTopologyOutput = unknown> {
   readonly topologyQualification: ManagedInferenceTopologyQualification<TTopologyOutput>;
 }
 
+export interface ResolvedHostLocalInferenceSelection {
+  readonly outcome: "selected";
+  readonly selection: "automatic" | "explicit";
+  readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: HostLocalInferenceServingRecipe;
+}
+
 export type ManagedInferenceResolution<TTopologyOutput = unknown> =
   | ResolvedManagedInferenceSelection<TTopologyOutput>
+  | ResolvedHostLocalInferenceSelection
   | {
       readonly outcome: "no-match";
       readonly code: "explicit-intent" | "requirements-not-met";

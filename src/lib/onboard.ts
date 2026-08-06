@@ -784,7 +784,7 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
   });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, runOpenshell, getSandboxStateFromOutputs, note, getGatewayName: () => GATEWAY_NAME });
+const { getSandboxReuseState, getSandboxRecreateObservation } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME });
 
 const {
   executeSandboxCommandForVerification,
@@ -1461,7 +1461,6 @@ async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
-
   const { gpu, host, sandboxGpuConfig } = fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
     preflightOpts,
     {
@@ -4372,7 +4371,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           removeSandboxFromRegistry: registry.removeSandboxWithReceipt.bind(registry),
           restoreSandboxRegistryEntryIfMissing:
             registry.restoreSandboxEntryIfMissing.bind(registry),
-          repairRecordedSandbox,
           ensureValidatedWebSearchCredential,
           isBackToSelection,
           configureWebSearch,
@@ -4643,7 +4641,6 @@ module.exports = {
   parsePolicyPresetEnv,
   parseSandboxStatus,
   preflightAuthoritativeRebuildTarget,
-  repairRecordedSandbox,
   recoverGatewayRuntime,
   buildChain,
   buildControlUiUrls,

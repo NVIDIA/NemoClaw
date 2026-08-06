@@ -34,9 +34,17 @@ They are the preferred backup and restore path.
 
 ## Understand Snapshot Contents
 
-Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+Snapshots capture the manifest-declared snapshot state directories and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
 Agent manifests can also declare durable top-level state files.
 Treat snapshot directories as private local data.
+
+<AgentOnly variant="openclaw">
+<Warning>
+Inside an OpenClaw sandbox, `~` expands to `/sandbox`, not to the OpenClaw workspace.
+Files such as `~/USER.md` and `~/SOUL.md` are therefore outside OpenClaw's managed state and are not included in snapshots.
+Store them as `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOUL.md` so snapshot and restore operations preserve them.
+</Warning>
+</AgentOnly>
 
 Before NemoClaw marks a snapshot complete, it strips recognized credential values from copied JSON, YAML, and `.env` files.
 It preserves OpenShell credential placeholders so rebuild can reattach the host-side provider.
@@ -47,9 +55,12 @@ This sanitization uses an isolated `python3` helper on POSIX hosts to keep reads
 If a copied file or parent directory changes identity during the operation, snapshot creation fails closed instead of following the changed path.
 
 <AgentOnly variant="hermes">
-Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/profiles/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+On the first startup after this layout change, NemoClaw moves an existing `.hermes/dashboard-home/` directory when the canonical profile is absent or empty and the legacy path is not a symlink.
+Startup sets the canonical dashboard profile directory to mode `0700`, whether it migrates legacy state or reuses an existing destination.
+During normal startup, NemoClaw refuses unsafe paths and does not merge two populated profile directories.
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
-NemoClaw captures cron job definitions from `.hermes/cron` as directory state.
+NemoClaw captures cron job definitions from `.hermes/cron` and user-authored cron scripts from `.hermes/scripts` as directory state.
 NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
 After it replaces a database, NemoClaw opens a write transaction against the result and fails the restore when the database cannot be written.
 Named-profile cron and Discord databases under `.hermes/profiles/<name>/` use raw directory capture and can be inconsistent if a write overlaps the snapshot.
@@ -70,10 +81,10 @@ Wait for active `dcode` work to finish before running `$$nemoclaw <name> snapsho
 Snapshots preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy add --from-file` or `policy add --from-dir` and baseline network policy entries excluded with `policy exclude`.
 When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk, and rebuild continues to apply the recorded baseline exclusions.
 
-The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
-NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
-Restore limits directory cleanup to state directories declared by the snapshot manifest.
-It preserves directories that exist only in the target manifest or whose backup failed.
+The target sandbox's current agent manifest remains authoritative for directory and state-file restore behavior.
+NemoClaw rejects the restore when the snapshot's agent, config directory, any snapshot directory, state-file path, or state-file strategy conflicts with that manifest.
+Restore limits directory cleanup to state directories authorized by both the snapshot and the current manifest.
+It preserves target-only directories and directories whose backup failed.
 
 For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
 For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
@@ -106,6 +117,11 @@ Tag a snapshot with a human-readable label:
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
+When a directory or state file cannot be captured, `snapshot create` reports the failed items, removes the incomplete snapshot, and exits nonzero.
+`snapshot list` shows no new entry, so a later restore cannot select a capture that never completed.
+If removal fails, the command reports the listed snapshot path.
+Remove that directory manually before you run `snapshot restore` because the incomplete capture remains selectable.
+
 ## Restore a Snapshot
 
 Restore the latest snapshot:
@@ -122,6 +138,19 @@ $$nemoclaw my-assistant snapshot restore v3
 $$nemoclaw my-assistant snapshot restore before-upgrade
 $$nemoclaw my-assistant snapshot restore 2026-04-14T09-40-09-760Z
 ```
+
+<Warning>
+Post-restore policy reconciliation is best-effort.
+NemoClaw warns and continues the remaining restore steps in these cases:
+
+- NemoClaw cannot verify whether a custom policy owns the live `observability-otlp-local` policy entry.
+- The built-in `observability-otlp-local` policy preset has drifted or cannot be inspected.
+- NemoClaw cannot add or remove a recorded policy preset.
+
+The live network policy can then retain unwanted egress or omit expected egress until you repair the named preset.
+After a warning, run `$$nemoclaw <name> policy list`.
+Confirm that the named preset is recorded in the sandbox registry and active on the gateway, or absent from both.
+</Warning>
 
 <AgentOnly variant="hermes">
 A running Hermes gateway keeps serving its pre-restore state databases until it reopens them.
@@ -177,6 +206,23 @@ OpenClaw regenerates its device identity on demand.
 Credential-bearing Hermes files such as `auth.json` are intentionally excluded from snapshots.
 NemoClaw-regenerated Hermes config files, including `config.yaml` and `.env`, are also excluded.
 NemoClaw recreates model, provider, and messaging credentials from host-side onboarding and OpenShell provider state during rebuild.
+
+If a Hermes rebuild cannot validate or release its NemoClaw cron restore gate, NemoClaw preserves the state backup.
+If the rebuild already accepted the replacement sandbox, it also preserves the replacement journal.
+New Hermes turns and cron dispatch remain blocked while the gate exists.
+
+<Warning>
+Do not manually remove the root-owned cron restore marker.
+Removing it bypasses validation of the restored cron jobs and scripts.
+Correct the reported restore problem, then run `$$nemoclaw <sandbox-name> recover`.
+Recovery validates the restored cron tree before it clears the NemoClaw gate.
+If an independent Hermes operator drain exists, recovery leaves it active.
+After recovery succeeds, rerun `rebuild` with the same replacement settings so NemoClaw can retire the replacement journal.
+</Warning>
+
+After a rebuild restores `dashboard-home` or `profiles`, NemoClaw reruns the dashboard state migration before it reports the restore as complete.
+During rebuild restore, NemoClaw moves disjoint top-level entries from the legacy dashboard directory without replacing entries in the canonical profile.
+If an entry collides or migration otherwise fails, NemoClaw marks the restore incomplete instead of reporting success.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 ### Excluded Deep Agents State
