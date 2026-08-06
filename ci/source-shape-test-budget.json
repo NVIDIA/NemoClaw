@@ -562,6 +562,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps Docker llama.cpp lifecycle authority dormant (#8395)",
+      "category": "security"
+    },
+    {
       "file": "test/source-architecture.test.ts",
       "test": "keeps removed step mutation APIs out of production source (#7703)",
       "category": "compatibility"
