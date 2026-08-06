@@ -4723,12 +4723,12 @@ start_plugin_registry_refresh() {
 # startup failed: ... Process will stay alive"). The #2757 respawn loop only
 # observes process exit, so a gateway process that is alive but not serving
 # would remain in that state until a human runs `nemoclaw <sandbox> recover`.
-# This watchdog probes the local health endpoint. Once the gateway has returned
-# a serving response, the watchdog kills it after the configured number of
-# not-serving probes without another serving response so the respawn loop can
-# relaunch it. A slow first boot is never killed because the watchdog does not
-# arm before the first serving response. Failed first boots stay the respawn
-# loop's and HEALTHCHECK's job.
+# This watchdog probes the local health endpoint. After the gateway returns a
+# serving response, the watchdog kills it after the configured number of
+# not-serving probes without another serving response. Before the gateway has
+# served, the watchdog preserves it through the longer boot grace window, then
+# kills it if it still does not serve. In both cases, the respawn loop relaunches
+# the gateway after the watchdog terminates it.
 #
 # "Serving" uses the same response requirement as the boot-time readiness gate
 # (openclaw_gateway_healthy): /health must answer 200 or 401. Before #7377 the
@@ -4834,9 +4834,9 @@ gateway_watchdog_positive_int_ok() {
   [[ "$1" =~ ^[1-9][0-9]{0,8}$ ]]
 }
 
-# Is this PID still the tracked gateway process, regardless of who its parent
-# is now? This is the same evidence the Docker HEALTHCHECK trusts: the kernel's
-# start time from /proc/<pid>/stat pins the identity against PID reuse, and the
+# Validate that this PID is still the tracked gateway process, regardless of
+# its current parent. The Docker HEALTHCHECK uses the same evidence.
+# The kernel's start time from /proc/<pid>/stat pins the identity against PID reuse, and the
 # cmdline check keeps an unrelated process from matching. It deliberately omits
 # the parent-process test in openclaw_supervised_pid_is_live, because being
 # reparented does not change which process this is; it only changes who can
@@ -4870,7 +4870,7 @@ start_gateway_serving_watchdog() {
     # interval this is 10 minutes, well past the 90-second startup readiness
     # wait and the Docker HEALTHCHECK start period.
     boot_grace_probes="${NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES:-20}"
-    # Both environment values must be positive integers. A zero or invalid
+    # All three environment values must be positive integers. A zero or invalid
     # interval would busy-loop the probe, and a zero threshold would kill on
     # the first refusal. Fall back to the defaults for invalid input.
     # gateway_watchdog_positive_int_ok uses regex (=~), not glob, so trailing

@@ -7,8 +7,8 @@
 // the #2757 respawn loop only sees process exit. The watchdog must recognize
 // every not-serving outcome: refused, timed out, reset, or an HTTP error
 // response. It must kill the gateway so the respawn loop can relaunch it while
-// never touching a gateway that has not served yet or one whose probe could
-// not run.
+// preserving a never-served gateway through the boot grace window and never
+// touching one whose probe could not run.
 // Split from test/nemoclaw-start-gateway-health.test.ts, which is at its size
 // budget (ci/test-file-size-budget.json).
 
@@ -204,7 +204,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     }
   });
 
-  it("recovers a gateway that never served once the boot grace window passes (#7377)", () => {
+  it("recovers a gateway that never served after the boot grace window passes (#7377)", () => {
     // The QA reproduction on v0.0.102: a freshly onboarded sandbox whose
     // gateway was alive with a refused listener from launch. Requiring a prior
     // serving response to arm meant the watchdog never acted and never logged,
