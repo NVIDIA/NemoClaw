@@ -80,6 +80,8 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly apiKeyHostPath: string;
   readonly containerName: string;
   readonly imageReference: string;
+  /** Fixed loopback host port for product installs; omitted only by isolated qualification. */
+  readonly hostPort?: number;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
   readonly network: {
@@ -87,6 +89,7 @@ export interface LlamaCppHostLocalRuntimeBindings {
     readonly name: string;
   };
   readonly ownerLabel: { readonly name: string; readonly value: string };
+  readonly identityLabels?: readonly { readonly name: string; readonly value: string }[];
   readonly runtimeGid: number;
   readonly runtimeUid: number;
 }
@@ -221,12 +224,23 @@ function validateBindings(
     DOCKER_BUILTIN_NETWORKS.has(bindings.network.name) ||
     !SAFE_LABEL_NAME.test(bindings.ownerLabel.name) ||
     !SAFE_LABEL_VALUE.test(bindings.ownerLabel.value) ||
+    bindings.identityLabels?.some(
+      ({ name, value }) =>
+        name === bindings.ownerLabel.name ||
+        !SAFE_LABEL_NAME.test(name) ||
+        !SAFE_LABEL_VALUE.test(value),
+    ) ||
+    new Set(bindings.identityLabels?.map(({ name }) => name)).size !==
+      (bindings.identityLabels?.length ?? 0) ||
     !IMAGE_DIGEST.test(bindings.imageReference)
   ) {
     throw new Error("llama.cpp host-local runtime binding is invalid");
   }
   positiveInteger(bindings.runtimeUid, "llama.cpp runtime uid", 2_147_483_647);
   positiveInteger(bindings.runtimeGid, "llama.cpp runtime gid", 2_147_483_647);
+  if (bindings.hostPort !== undefined) {
+    positiveInteger(bindings.hostPort, "llama.cpp host port", 65_535);
+  }
 }
 
 /**
@@ -250,12 +264,16 @@ export function buildLlamaCppHostLocalDockerArgv(
     bindings.containerName,
     "--label",
     `${bindings.ownerLabel.name}=${bindings.ownerLabel.value}`,
+    ...(bindings.identityLabels ?? []).flatMap(({ name, value }) => [
+      "--label",
+      `${name}=${value}`,
+    ]),
     "--network",
     bindings.network.name,
     "--user",
     runtimeIdentity,
     "--publish",
-    `127.0.0.1::${String(serve.port)}`,
+    `127.0.0.1:${bindings.hostPort === undefined ? "" : String(bindings.hostPort)}:${String(serve.port)}`,
     "--read-only",
     "--cap-drop",
     "ALL",
