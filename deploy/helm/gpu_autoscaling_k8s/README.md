@@ -8,7 +8,9 @@
 This Helm chart uses Kubernetes to autoscale NemoClaw and NGINX to balance workloads.
 A Kubernetes Horizontal Pod Autoscaler (HPA) scales the pods, and each replica requests one NVIDIA GPU.
 
-The HPA reads the per-pod `gpu_utilization_percent` custom metric. The metric pipeline is:
+GPU utilization is the chart's only supported HPA scaling signal.
+The HPA reads the per-pod `gpu_utilization_percent` custom metric.
+The metric pipeline is:
 
 ```text
 NVIDIA GPU
@@ -450,7 +452,6 @@ autoscaling:
   enabled: true
   minReplicas: 1
   maxReplicas: 4
-  mode: gpu
   targetGPUUtilizationPercentage: 40
 ```
 

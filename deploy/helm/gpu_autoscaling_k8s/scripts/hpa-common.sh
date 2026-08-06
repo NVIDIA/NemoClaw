@@ -6,7 +6,7 @@
 hpa_common_log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 # Kubernetes custom metrics use Quantity milli-units (33500m = 33.5). Format as plain % for scripts.
-# Style: script (metric-specific column + subtitle) | kubectl (matches kubectl get hpa TARGETS column).
+# Style: script (GPU UTIL % column + subtitle) | kubectl (matches kubectl get hpa TARGETS column).
 hpa_common_format_hpa() {
   local ns="${1:?namespace}"
   local headers="${2:-1}"
@@ -64,44 +64,7 @@ def targets(h):
             cur_raw = cur_raw.get("averageValue") or cur_raw.get("value")
             if name == "gpu_utilization_percent":
                 parts.append(f"{fmt_pct(qty(cur_raw))}/{fmt_pct(qty(tgt_raw))}")
-            else:
-                cur = cur_raw if cur_raw not in (None, "") else "<unknown>"
-                parts.append(f"{name}: {cur}/{tgt_raw}")
-        elif mtype == "Resource":
-            res = sm["resource"]["name"]
-            target = sm["resource"]["target"]
-            cur_res = (cm.get("resource") or {}).get("current", {})
-            if target.get("type") == "Utilization":
-                cur = cur_res.get("averageUtilization")
-                tgt = target.get("averageUtilization")
-                cur_s = f"{cur}%" if cur is not None else "<unknown>"
-                parts.append(f"{res}: {cur_s}/{tgt}%")
-            else:
-                cur = cur_res.get("averageValue") or cur_res.get("value")
-                tgt = target.get("averageValue") or target.get("value")
-                parts.append(f"{res}: {cur or '<unknown>'}/{tgt}")
     return " ".join(parts) if parts else "<unknown>"
-
-def metric_heading(h):
-    spec_metrics = h.get("spec", {}).get("metrics") or []
-    if not spec_metrics:
-        return "HPA targets: current / target", "TARGETS"
-
-    metric = spec_metrics[0]
-    mtype = metric.get("type")
-    if mtype == "Pods":
-        name = metric.get("pods", {}).get("metric", {}).get("name", "pod metric")
-        if name == "gpu_utilization_percent":
-            return "GPU utilization rate (avg per pod): current / target", "GPU UTIL %"
-        return f"{name} (avg per pod): current / target", name
-    if mtype == "Resource":
-        resource = metric.get("resource", {})
-        name = resource.get("name", "resource")
-        target_type = resource.get("target", {}).get("type")
-        if target_type == "Utilization":
-            return f"{name.upper()} utilization: current / target", f"{name.upper()} UTIL %"
-        return f"{name} usage: current / target", name.upper()
-    return f"{mtype or 'HPA'} targets: current / target", "TARGETS"
 
 def print_row(h):
     meta = h["metadata"]
@@ -124,7 +87,7 @@ def print_row(h):
         print(
             f"{meta['name']:<22} "
             f"{ref_str:<31} "
-            f"{tgt:<{script_target_width}} "
+            f"{tgt:<18} "
             f"{spec.get('minReplicas', ''):<8} "
             f"{spec.get('maxReplicas', ''):<8} "
             f"{status.get('currentReplicas', ''):<10} "
@@ -144,9 +107,6 @@ except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
 if not items:
     sys.exit(1)
 
-metric_subtitle, metric_label = metric_heading(items[0])
-script_target_width = max([18, len(metric_label)] + [len(targets(h)) for h in items])
-
 if headers:
     if style == "kubectl":
         print(
@@ -154,9 +114,9 @@ if headers:
             f"{'MINPODS':<9} {'MAXPODS':<9} {'REPLICAS':<10} AGE"
         )
     else:
-        print(metric_subtitle)
+        print("GPU utilization rate (avg per pod): current / target")
         print(
-            f"{'NAME':<22} {'REFERENCE':<31} {metric_label:<{script_target_width}} "
+            f"{'NAME':<22} {'REFERENCE':<31} {'GPU UTIL %':<18} "
             f"{'MINPODS':<8} {'MAXPODS':<8} {'REPLICAS':<10} AGE"
         )
 
@@ -165,7 +125,7 @@ for h in items:
 PY
 }
 
-# Autoscaling-only stdout: metric-specific current/target values; GPU quantities render as percentages.
+# Autoscaling-only stdout: GPU utilization as 30.25%/40% (not kubectl milli-units).
 hpa_common_print_hpa() {
   local ns="${1:?namespace}"
   if ! hpa_common_format_hpa "${ns}" 1 "script"; then
@@ -538,7 +498,6 @@ hpa_common_gpu_helm_upgrade() {
     --set inference.model="${inference_model}"
     --set probes.readinessChecksInference=true
     --set autoscaling.enabled=true
-    --set autoscaling.mode=gpu
     --set autoscaling.minReplicas="${min}"
     --set autoscaling.maxReplicas="${max}"
     --set "autoscaling.targetGPUUtilizationPercentage=${gpu_target}"

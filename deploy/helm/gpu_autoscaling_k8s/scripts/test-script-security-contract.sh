@@ -144,19 +144,6 @@ assert_hpa_format \
   'GPU utilization rate (avg per pod): current / target' \
   'GPU UTIL %' \
   '30.25%/40%'
-assert_hpa_format \
-  '{"items":[{"metadata":{"name":"performance-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"agent"},"metrics":[{"type":"Pods","pods":{"metric":{"name":"nemoclaw_http_inflight_requests"},"target":{"type":"AverageValue","averageValue":"8"}}}]},"status":{"currentMetrics":[{"type":"Pods","pods":{"current":{"averageValue":"3"}}}]}}]}' \
-  'nemoclaw_http_inflight_requests (avg per pod): current / target' \
-  'nemoclaw_http_inflight_requests: 3/8'
-assert_hpa_format \
-  '{"items":[{"metadata":{"name":"latency-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"agent"},"metrics":[{"type":"Pods","pods":{"metric":{"name":"nemoclaw_llm_latency_p95_milliseconds"},"target":{"type":"AverageValue","averageValue":"2000"}}}]},"status":{"currentMetrics":[{"type":"Pods","pods":{"current":{"averageValue":"900"}}}]}}]}' \
-  'nemoclaw_llm_latency_p95_milliseconds (avg per pod): current / target' \
-  'nemoclaw_llm_latency_p95_milliseconds: 900/2000'
-assert_hpa_format \
-  '{"items":[{"metadata":{"name":"cpu-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"agent"},"metrics":[{"type":"Resource","resource":{"name":"cpu","target":{"type":"Utilization","averageUtilization":70}}}]},"status":{"currentMetrics":[{"type":"Resource","resource":{"current":{"averageUtilization":45}}}]}}]}' \
-  'CPU utilization: current / target' \
-  'CPU UTIL %' \
-  'cpu: 45%/70%'
 
 KUBECTL_LOG="${TEST_TMP}/kubectl.log"
 export KUBECTL_LOG
@@ -209,4 +196,4 @@ grep -Fq 'RESTART_MICROK8S="${RESTART_MICROK8S:-0}"' "${SCRIPT_DIR}/cluster-reco
 grep -Fq 'INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"' "${SCRIPT_DIR}/install-hpa.sh" \
   || fail "installer ingress Service does not default to ClusterIP"
 
-echo "OK: recovery ownership, cleartext ingress security, and HPA formatting contracts hold"
+echo "OK: recovery ownership, cleartext ingress security, and GPU HPA formatting contracts hold"

@@ -5,8 +5,8 @@
 # Static (no cluster required) Helm render test for the HPA/Deployment/Service/
 # ServiceMonitor label-and-name contract this chart depends on at runtime:
 #   - hpa.yaml's scaleTargetRef.name must match deployment.yaml's Deployment name.
-#   - hpa.yaml's gpu metric name/target must match values.autoscaling.gpu.metricName
-#     and .targetGPUUtilizationPercentage.
+#   - hpa.yaml must use only gpu_utilization_percent and its target must match
+#     values.autoscaling.targetGPUUtilizationPercentage.
 #   - service.yaml's selector and servicemonitor.yaml's selector must both match
 #     deployment.yaml's pod template labels — otherwise the Service has no
 #     endpoints, or Prometheus scrapes nothing, while the chart still renders
@@ -122,8 +122,10 @@ fi
 
 RENDERED_FILE="$(mktemp)"
 trap 'rm -f "${TLS_RENDERED_FILE}" "${RENDERED_FILE}"' EXIT
+# A legacy non-GPU metric-name override must not alter the fixed HPA metric.
 helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.yaml" \
   --set autoscaling.enabled=true \
+  --set-string autoscaling.gpu.metricName=nemoclaw_http_inflight_requests \
   --set ollama.persistence.enabled=true \
   --set-string ollama.persistence.hostPath= \
   --set ollama.persistence.accessMode=ReadWriteMany \
@@ -169,18 +171,26 @@ if deploy:
                 f"HPA scaleTargetRef.name={target_name!r} != Deployment name={deploy_name!r}"
             )
         metrics = hpa["spec"]["metrics"]
-        gpu_metrics = [
-            m for m in metrics if m.get("type") == "Pods" and m["pods"]["metric"]["name"] == "gpu_utilization_percent"
-        ]
-        if not gpu_metrics:
-            failures.append("HPA has no gpu_utilization_percent Pods metric (autoscaling.mode=gpu)")
+        if len(metrics) != 1:
+            failures.append(f"HPA must have exactly one GPU metric, found {len(metrics)}")
+        elif metrics[0].get("type") != "Pods":
+            failures.append(f"HPA metric type={metrics[0].get('type')!r}, expected 'Pods'")
         else:
-            target_value = gpu_metrics[0]["pods"]["target"]["averageValue"]
+            gpu_metric = metrics[0]["pods"]
+            metric_name = gpu_metric["metric"]["name"]
+            if metric_name != "gpu_utilization_percent":
+                failures.append(
+                    f"HPA Pods metric={metric_name!r}, expected 'gpu_utilization_percent'"
+                )
+            target_value = gpu_metric["target"]["averageValue"]
             if str(target_value) != "40":
                 failures.append(
                     f"HPA gpu_utilization_percent averageValue={target_value!r}, expected 40 "
                     "(values-step2-hpa.yaml default targetGPUUtilizationPercentage)"
                 )
+        hpa_mode = hpa.get("metadata", {}).get("annotations", {}).get("nemoclaw.ai/hpa-mode")
+        if hpa_mode != "gpu":
+            failures.append(f"HPA mode annotation={hpa_mode!r}, expected 'gpu'")
 
     for kind, obj in (("Service", svc), ("ServiceMonitor", svcmon)):
         if not obj:

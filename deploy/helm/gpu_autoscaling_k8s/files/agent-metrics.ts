@@ -78,7 +78,7 @@ export function llmMetricsLines() {
     "# HELP nemoclaw_llm_latency_p50_milliseconds Rolling p50 LLM latency (recent window)",
     "# TYPE nemoclaw_llm_latency_p50_milliseconds gauge",
     `nemoclaw_llm_latency_p50_milliseconds ${Math.round(p50)}`,
-    "# HELP nemoclaw_llm_latency_p95_milliseconds Rolling p95 LLM latency (recent window; HPA-friendly)",
+    "# HELP nemoclaw_llm_latency_p95_milliseconds Rolling p95 LLM latency (recent window)",
     "# TYPE nemoclaw_llm_latency_p95_milliseconds gauge",
     `nemoclaw_llm_latency_p95_milliseconds ${Math.round(p95)}`,
     "# HELP nemoclaw_llm_latency_avg_milliseconds Rolling average LLM latency (recent window)",

@@ -15,25 +15,11 @@ metadata:
     {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
   annotations:
     nemoclaw.ai/hpa-policy: "min-{{ $hpaMin }}-max-{{ $hpaMax }}-gpu-target-{{ .Values.autoscaling.targetGPUUtilizationPercentage }}pct"
-    nemoclaw.ai/hpa-mode: {{ .Values.autoscaling.mode | quote }}
-    {{- if eq .Values.autoscaling.mode "gpu" }}
-    nemoclaw.ai/hpa-metric: {{ .Values.autoscaling.gpu.metricName | quote }}
+    nemoclaw.ai/hpa-mode: "gpu"
+    nemoclaw.ai/hpa-metric: "gpu_utilization_percent"
     nemoclaw.ai/hpa-metric-display: "GPU utilization % (DCGM / nvidia-smi family)"
     nemoclaw.ai/hpa-metric-source: "DCGM_FI_DEV_GPU_UTIL"
-    nemoclaw.ai/hpa-targets-format: "{{ .Values.autoscaling.gpu.metricName }}: <current>%/<target>% (GPU utilization avg per pod)"
-    {{- else if eq .Values.autoscaling.mode "performance" }}
-    nemoclaw.ai/hpa-metric: "nemoclaw_http_inflight_requests"
-    nemoclaw.ai/hpa-metric-display: "In-flight HTTP requests per pod"
-    nemoclaw.ai/hpa-targets-format: "nemoclaw_http_inflight_requests: <current>/<target>"
-    {{- else if eq .Values.autoscaling.mode "latency" }}
-    nemoclaw.ai/hpa-metric: "nemoclaw_llm_latency_p95_milliseconds"
-    nemoclaw.ai/hpa-metric-display: "LLM response time p95 (ms per pod)"
-    nemoclaw.ai/hpa-targets-format: "nemoclaw_llm_latency_p95_milliseconds: <current>/<target> (ms)"
-    {{- else }}
-    nemoclaw.ai/hpa-metric: "cpu"
-    nemoclaw.ai/hpa-metric-display: "CPU utilization % of pod request"
-    nemoclaw.ai/hpa-targets-format: "cpu: <current>%/<target>%"
-    {{- end }}
+    nemoclaw.ai/hpa-targets-format: "gpu_utilization_percent: <current>%/<target>% (GPU utilization avg per pod)"
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -42,46 +28,13 @@ spec:
   minReplicas: {{ $hpaMin }}
   maxReplicas: {{ $hpaMax }}
   metrics:
-    {{- if eq .Values.autoscaling.mode "gpu" }}
     - type: Pods
       pods:
         metric:
-          name: {{ .Values.autoscaling.gpu.metricName | quote }}
+          name: gpu_utilization_percent
         target:
           type: AverageValue
           averageValue: {{ .Values.autoscaling.targetGPUUtilizationPercentage | quote }}
-    {{- else if eq .Values.autoscaling.mode "performance" }}
-    - type: Pods
-      pods:
-        metric:
-          name: nemoclaw_http_inflight_requests
-        target:
-          type: AverageValue
-          averageValue: {{ .Values.autoscaling.performance.inflightRequestsPerPod | quote }}
-    {{- else if eq .Values.autoscaling.mode "latency" }}
-    - type: Pods
-      pods:
-        metric:
-          name: nemoclaw_llm_latency_p95_milliseconds
-        target:
-          type: AverageValue
-          averageValue: {{ .Values.autoscaling.performance.latencyP95Milliseconds | quote }}
-    {{- else }}
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
-    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
-    {{- end }}
-    {{- end }}
   {{- with .Values.autoscaling.behavior }}
   behavior:
     {{- toYaml . | nindent 4 }}

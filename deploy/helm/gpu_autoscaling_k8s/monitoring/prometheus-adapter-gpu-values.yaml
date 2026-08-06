@@ -1,9 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# prometheus-adapter: expose DCGM GPU utilization and agent LLM metrics to HPA.
+# prometheus-adapter: expose DCGM GPU utilization to HPA.
 # DCGM_FI_DEV_GPU_UTIL is scraped from nvidia-dcgm-exporter (GPU operator).
-# Agent /metrics (inflight, LLM latency) require ServiceMonitor on nemoclaw-gpu-agent.
 
 prometheus:
   url: http://REPLACE_PROMETHEUS_SERVICE.monitoring.svc
@@ -23,26 +22,4 @@ rules:
       name:
         matches: "^(.*)$"
         as: "gpu_utilization_percent"
-      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
-    - seriesQuery: 'nemoclaw_http_inflight_requests{namespace!="",pod!=""}'
-      resources:
-        overrides:
-          namespace:
-            resource: namespace
-          pod:
-            resource: pod
-      name:
-        matches: "^(.*)$"
-        as: "nemoclaw_http_inflight_requests"
-      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
-    - seriesQuery: 'nemoclaw_llm_latency_p95_milliseconds{namespace!="",pod!=""}'
-      resources:
-        overrides:
-          namespace:
-            resource: namespace
-          pod:
-            resource: pod
-      name:
-        matches: "^(.*)$"
-        as: "nemoclaw_llm_latency_p95_milliseconds"
       metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'

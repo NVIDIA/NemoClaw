@@ -166,15 +166,8 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 4
   maxGpus: 4
-  # gpu (default) | performance | latency | resource
-  # gpu: DCGM_FI_DEV_GPU_UTIL via Prometheus + prometheus-adapter (see install-hpa.sh)
-  mode: gpu
+  # DCGM_FI_DEV_GPU_UTIL via Prometheus + prometheus-adapter (see install-hpa.sh)
   targetGPUUtilizationPercentage: 40
-  targetCPUUtilizationPercentage: 65
-  targetMemoryUtilizationPercentage: null
-  gpu:
-    # Exposed to HPA / kubectl get hpa TARGETS column (Prometheus source: DCGM_FI_DEV_GPU_UTIL)
-    metricName: gpu_utilization_percent
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -196,11 +189,6 @@ autoscaling:
           value: 1
           periodSeconds: 60
       selectPolicy: Max
-  performance:
-    requestsPerSecondPerPod: "5"
-    inflightRequestsPerPod: "4"
-    latencyP95Milliseconds: "2000"
-
 loadTest:
   chatOnly: true
   concurrencyPerPod: 20

@@ -9,7 +9,6 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 4
   maxGpus: 4
-  mode: gpu
   targetGPUUtilizationPercentage: 40
   behavior:
     # One pod per reconcile (~15s sync period) — visible, gradual scale-up

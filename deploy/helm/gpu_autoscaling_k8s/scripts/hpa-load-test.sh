@@ -121,7 +121,6 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set inference.model="${INFERENCE_MODEL}" \
   --set probes.readinessChecksInference=true \
   --set autoscaling.enabled=true \
-  --set autoscaling.mode=gpu \
   --set autoscaling.minReplicas=1 \
   --set autoscaling.maxReplicas="${TARGET_PODS}" \
   --set "autoscaling.targetGPUUtilizationPercentage=${HPA_TARGET_GPU}" \
