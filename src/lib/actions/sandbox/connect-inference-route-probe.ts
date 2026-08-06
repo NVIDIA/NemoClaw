@@ -43,7 +43,7 @@ const INFERENCE_ROUTE_PROBE_CORE_SCRIPT = [
   'case "$TLS_VERIFY_RESULT" in ""|*[!0-9]*) TLS_VERIFY_RESULT=0 ;; esac',
   'CANONICAL_DETAIL=""',
   'if [ "$CURL_EXIT" -eq 60 ] && [ -r /etc/openshell-tls/ca-bundle.pem ]; then CANONICAL_CURL_EXIT=0; CANONICAL_RESULT=$(/usr/bin/curl -q -s -o /dev/null -w \'%{http_code} %{ssl_verify_result}\' --cacert /etc/openshell-tls/ca-bundle.pem --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || CANONICAL_CURL_EXIT=$?; CANONICAL_HTTP_CODE="${CANONICAL_RESULT%% *}"; CANONICAL_TLS_VERIFY="${CANONICAL_RESULT#* }"; case "$CANONICAL_HTTP_CODE" in [0-9][0-9][0-9]) ;; *) CANONICAL_HTTP_CODE=000 ;; esac; case "$CANONICAL_TLS_VERIFY" in ""|*[!0-9]*) CANONICAL_TLS_VERIFY=0 ;; esac; CANONICAL_DETAIL=" canonical_curl_exit=$CANONICAL_CURL_EXIT canonical_http=$CANONICAL_HTTP_CODE canonical_tls_verify=$CANONICAL_TLS_VERIFY"; fi',
-  'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s curl_exit=%s tls_verify=%s%s\' "$HTTP_CODE" "$CURL_EXIT" "$TLS_VERIFY_RESULT" "$CANONICAL_DETAIL" ;; esac',
+  'case "$HTTP_CODE:$CURL_EXIT" in [2-4][0-9][0-9]:0) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s curl_exit=%s tls_verify=%s%s\' "$HTTP_CODE" "$CURL_EXIT" "$TLS_VERIFY_RESULT" "$CANONICAL_DETAIL" ;; esac',
 ].join("; ");
 export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_FROM_ENV,

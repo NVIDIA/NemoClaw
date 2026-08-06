@@ -163,6 +163,57 @@ describe("portable demo sandbox lifecycle", () => {
     expect(podman).not.toHaveBeenCalled();
   });
 
+  it("ignores an installed receipt for another agent (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "hermes", gatewayName: "nemoclaw" },
+        { platform: "linux", stateDir, podman: runtime.podman },
+      ),
+    ).toEqual({ kind: "not-installed" });
+    expect(runtime.podman).not.toHaveBeenCalled();
+  });
+
+  it("rejects an installed receipt outside Linux (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw" },
+        { platform: "darwin", stateDir, podman: runtime.podman },
+      ),
+    ).toThrow("receipt is only valid on Linux");
+  });
+
+  it("rejects a receipt with an out-of-range dashboard port (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    const receipt = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    fs.writeFileSync(filePath, `${JSON.stringify({ ...receipt, dashboardPort: 65_536 })}\n`, {
+      mode: 0o600,
+    });
+    runtime.podman.mockClear();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw" },
+        { platform: "linux", stateDir, podman: runtime.podman },
+      ),
+    ).toThrow("receipt values are invalid");
+    expect(runtime.podman).not.toHaveBeenCalled();
+  });
+
   it("records the exact OpenShell container and applies unless-stopped restart (#8441)", () => {
     const stateDir = temporaryStateDir();
     const { podman } = createPodman();
@@ -320,6 +371,28 @@ describe("portable demo sandbox lifecycle", () => {
     expect(launchOpenshell).toHaveBeenCalledTimes(2);
     expect(runtime.podman).not.toHaveBeenCalledWith(["start", expect.any(String)]);
     expect(fs.readFileSync(receiptPath, "utf-8")).toBe(originalReceipt);
+  });
+
+  it("removes a stale receipt when its exact container no longer exists (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    runtime.podman.mockImplementation((args: readonly string[]) => {
+      if (args[0] === "inspect") {
+        return { status: 125, stderr: `Error: no such container ${CONTAINER_ID}` };
+      }
+      throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
+    });
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw" },
+        { platform: "linux", stateDir, podman: runtime.podman },
+      ),
+    ).toEqual({ kind: "not-installed" });
+    expect(fs.existsSync(filePath)).toBe(false);
   });
 
   it("does not launch a second startup command when the agent gateway responds (#8441)", () => {

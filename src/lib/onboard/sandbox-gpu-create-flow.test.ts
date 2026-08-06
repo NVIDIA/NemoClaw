@@ -680,6 +680,22 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       input.sandboxStartupCommand,
     );
   });
+
+  it("keeps a created sandbox when portable lifecycle setup fails (#8441)", async () => {
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => {
+      throw new Error("Authorization: Bearer portable-secret");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "native",
+    });
+
+    const warning = vi.mocked(console.warn).mock.calls.flat().join("\n");
+    expect(warning).toContain("Portable demo lifecycle setup did not complete");
+    expect(warning).toContain("Authorization: Bearer <REDACTED>");
+    expect(warning).not.toContain("portable-secret");
+  });
 });
 
 describe("runSandboxGpuCreateFlow fallback ordering", () => {

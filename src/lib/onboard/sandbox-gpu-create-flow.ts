@@ -250,10 +250,15 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
-  (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-    input.sandboxName,
-    input.sandboxStartupCommand,
-  );
+  try {
+    (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+      input.sandboxName,
+      input.sandboxStartupCommand,
+    );
+  } catch (error) {
+    const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
+    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+  }
 
   return {
     ...gpuCreateOutcome.value,

@@ -96,6 +96,30 @@ describe("sandbox connect inference route probe argv", () => {
     ).toMatchObject({ healthy: false, broken: false, httpStatus: 0 });
   });
 
+  it("rejects a reachable HTTP status when curl exits unsuccessfully (#8441)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-route-probe-"));
+    try {
+      const caBundle = path.join(home, "openshell-ca.pem");
+      const fakeCurl = path.join(home, "curl");
+      fs.writeFileSync(caBundle, "test CA boundary", "utf8");
+      fs.writeFileSync(fakeCurl, "#!/bin/sh\nprintf '200 0'\nexit 7\n", { mode: 0o755 });
+      const script = INFERENCE_ROUTE_PROBE_SCRIPT.replaceAll("/usr/bin/curl", fakeCurl);
+
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf8",
+        env: { ...process.env, CURL_CA_BUNDLE: caBundle, SSL_CERT_FILE: "" },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("BROKEN 200 curl_exit=7 tls_verify=0");
+      expect(
+        parseSandboxInferenceRouteProbeResult({ status: result.status, output: result.stdout }),
+      ).toMatchObject({ healthy: false, broken: true, httpStatus: 200, curlExitCode: 7 });
+    } finally {
+      fs.rmSync(home, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     "OK 200",
     "BROKEN 503",

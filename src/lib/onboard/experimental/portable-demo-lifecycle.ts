@@ -3,6 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -197,6 +198,14 @@ function loadReceipt(sandboxName: string, stateDir: string): PortableDemoLifecyc
   }
 }
 
+function removeReceipt(sandboxName: string, stateDir: string): void {
+  try {
+    fs.unlinkSync(receiptPath(sandboxName, stateDir));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
 function startupEnvValue(startupArgv: readonly string[], name: string): string | null {
   const prefix = `${name}=`;
   for (let index = startupArgv.length - 2; index >= 1; index -= 1) {
@@ -228,8 +237,8 @@ function inspectPodmanContainer(
   containerId: string,
   sandboxName: string,
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  result: CommandResult = podman(["inspect", containerId]),
 ): PodmanContainerInspection {
-  const result = podman(["inspect", containerId]);
   requireCommand(result, `Inspecting portable sandbox '${sandboxName}'`);
   let parsed: unknown;
   try {
@@ -258,6 +267,14 @@ function inspectPodmanContainer(
     );
   }
   return { containerId, sandboxId, running: state.Running };
+}
+
+function isMissingPodmanContainer(result: CommandResult): boolean {
+  if (result.status === 0 && !result.error) return false;
+  const detail = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
+  return /\b(?:no such (?:object|container)|no container with (?:name|id)|container .* not found)\b/iu.test(
+    detail,
+  );
 }
 
 function discoverPodmanContainer(
@@ -397,11 +414,11 @@ export function installPortableDemoSandboxLifecycle(
     containerId: inspection.containerId,
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
   };
+  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
   requireCommand(
     podman(["update", "--restart=unless-stopped", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
-  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
 }
 
 /**
@@ -422,7 +439,18 @@ export function recoverPortableDemoSandboxLifecycle(
   }
 
   const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
-  let inspection = inspectPodmanContainer(receipt.containerId, sandboxName, podman);
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  const initialInspection = podman(["inspect", receipt.containerId]);
+  if (isMissingPodmanContainer(initialInspection)) {
+    removeReceipt(sandboxName, stateDir);
+    return { kind: "not-installed" };
+  }
+  let inspection = inspectPodmanContainer(
+    receipt.containerId,
+    sandboxName,
+    podman,
+    initialInspection,
+  );
   if (inspection.sandboxId !== receipt.sandboxId) {
     throw new Error(
       `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
