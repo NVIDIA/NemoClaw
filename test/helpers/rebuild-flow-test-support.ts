@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type MockInstance, vi } from "vitest";
+import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type {
   finalizePreparedRebuildImageMessagingPlan,
   RebuildImagePreflightResult,
 } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
-import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
+import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
@@ -51,6 +52,7 @@ export type RebuildFlowOverrides = {
     secretBoundaryRefused?: boolean;
     mcpReconciliationRefused?: boolean;
   };
+  restartSandboxGateway?: () => GatewayRestartResult;
   onboard?: (
     session: RebuildFlowSession,
     options: RebuildRecreateOnboardOpts,
@@ -132,6 +134,7 @@ export type RebuildFlowHarness = {
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
+  restartSandboxGatewaySpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
