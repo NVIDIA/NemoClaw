@@ -100,7 +100,9 @@ After schema validation, NemoClaw resolves each declared endpoint and inserts ev
 The dry-run output shows the generated pins for review.
 NemoClaw applies and records the transformed preset instead of the unpinned source file.
 Rebuild replays recorded pins from the sandbox registry without depending on the ambient environment.
-A snapshot does not grant private-host authority to a clean target by itself; reapply the source preset with explicit trust after a cross-sandbox restore.
+A cross-sandbox restore or imported snapshot does not grant private-host authority to a target that lacks the same content-bound registry receipt.
+NemoClaw reports a reconciliation warning instead of applying snapshot-carried private address pins to that target.
+Reapply the original unpinned source preset with explicit trust after the restore.
 
 To change a recorded address set, apply the source preset again with explicit trust.
 NemoClaw performs a new preflight and shows the changed pins before it applies them.
@@ -126,9 +128,13 @@ Apply preset files in lexicographic order:
 $$nemoclaw my-assistant policy add --from-dir ./presets/ --yes
 ```
 
-Processing stops at the first failure.
-NemoClaw does not remove presets that it already applied.
-Fix the failing file and run the command again to continue.
+A directory can contain public and trusted-private endpoints.
+Before the first live policy mutation, NemoClaw loads and validates every file and prepares every required trusted-private declaration as one batch.
+If a file or trusted-private destination preflight fails, the command applies no presets from the directory.
+
+After preflight, NemoClaw applies the files in lexicographic order.
+If a live application fails, processing stops, and NemoClaw does not remove presets that it already applied.
+Fix the failing operation and run the command again to continue.
 
 ## Add a Preset to the Source Catalog
 
@@ -155,6 +161,43 @@ $$nemoclaw my-assistant policy remove my-service-api --yes
 ```
 
 Run `$$nemoclaw <name> policy list` to see every maintained and custom preset recorded for the sandbox.
+
+## Recover an Interrupted Change
+
+NemoClaw records a durable journal before it changes the live policy for a custom apply or remove.
+The journal preserves the exact recorded source and intended target if the process stops before both systems agree.
+
+Inspect the pending operation with these commands:
+
+```bash
+$$nemoclaw my-assistant policy list
+$$nemoclaw my-assistant status
+$$nemoclaw my-assistant doctor
+```
+
+Each command identifies the interrupted preset and operation.
+`policy list` also prints the required repair command.
+While the journal remains, NemoClaw refuses other policy changes, rebuild, snapshot creation, and snapshot restore.
+
+For an interrupted apply, run a `policy add --from-file` or `policy add --from-dir` command.
+NemoClaw validates the add options, then checks the journal before it reads the source path or resolves trusted-private DNS.
+Invalid option combinations fail without changing the journal.
+`--dry-run` leaves the pending journal and live policy unchanged, so omit it when you repair.
+It uses the exact source and target stored in the journal, so the original file and current DNS answers are not required for repair.
+The repair invocation reconciles only the pending apply and then exits.
+After a `--from-dir` repair, run the command again to load the directory and continue with the remaining files.
+For an interrupted remove, rerun the removal:
+
+```bash
+$$nemoclaw my-assistant policy remove my-service-api
+```
+
+The retry reads the live policy before it changes or clears the journal.
+If the live policy matches the exact target, NemoClaw records the completed operation.
+If an interrupted apply matches the exact source, NemoClaw reapplies the durable target from the journal.
+If an interrupted remove matches the exact source, NemoClaw retries the removal.
+If the live policy is unreadable or matches neither state, NemoClaw preserves the journal and continues to block the listed operations.
+Inspect the live policy before you retry in that state.
 
 <AgentOnly variant="openclaw,hermes">
 
