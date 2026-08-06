@@ -17,12 +17,13 @@ export default class PolicyAddCommand extends NemoClawCommand {
   static summary = "Add a network or filesystem policy preset";
   static description = "Add a built-in or custom policy preset to a sandbox.";
   static usage = [
-    "<name> [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>]",
+    "<name> [preset] [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>] [--trusted-private-host <host>]",
   ];
   static examples = [
     "<%= config.bin %> sandbox policy add alpha slack --yes",
     "<%= config.bin %> sandbox policy add alpha --from-file ./policy.yaml --dry-run",
     "<%= config.bin %> sandbox policy add alpha --from-dir ./policies --yes",
+    "<%= config.bin %> sandbox policy add alpha --from-file ./policy.yaml --trusted-private-host api.corp.example --dry-run",
   ];
   static args = policyMutationArgs;
   static flags = {
@@ -35,6 +36,10 @@ export default class PolicyAddCommand extends NemoClawCommand {
       description: "Load all custom preset YAML files in a directory",
       exclusive: ["from-file"],
     }),
+    "trusted-private-host": Flags.string({
+      description: "Trust one exact private endpoint host in custom preset input. Repeatable.",
+      multiple: true,
+    }),
   };
 
   public async run(): Promise<void> {
@@ -44,6 +49,7 @@ export default class PolicyAddCommand extends NemoClawCommand {
       ...commonPolicyOptions(flags),
       fromFile: flags["from-file"],
       fromDir: flags["from-dir"],
+      trustedPrivateHosts: flags["trusted-private-host"],
     });
   }
 }

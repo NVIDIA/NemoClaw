@@ -69,6 +69,43 @@ NemoClaw rejects that field in files passed through `--from-file` or `--from-dir
 Use hostnames, ports, protocols, methods, paths, and binary restrictions instead.
 The only exception is the `host.openshell.internal` bridge endpoint for explicit sandbox-to-host service access.
 
+## Admit an Exact Private Host
+
+Use explicit private-host trust when a custom preset targets an operator-controlled endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
+This flow applies to REST, WebSocket, JSON-RPC, and MCP endpoint protocols.
+
+<Warning>
+The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` grant the custom preset access to each matching exact private host.
+Review the preset, resolved addresses, requesting binaries, methods, and paths before you apply it.
+</Warning>
+
+Pass the exact endpoint host with `--from-file` or `--from-dir`:
+
+```bash
+$$nemoclaw my-assistant policy add \
+  --from-file ./presets/my-internal-api.yaml \
+  --trusted-private-host api.corp.example \
+  --dry-run
+```
+
+The option is invalid for a built-in preset because maintained presets own their reviewed destinations.
+NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations.
+It also rejects loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
+
+As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
+NemoClaw combines the environment list with any `--trusted-private-host` options.
+It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
+
+After schema validation, NemoClaw resolves each declared endpoint and inserts every validated address as an exact `allowed_ips` value in memory.
+The dry-run output shows the generated pins for review.
+NemoClaw applies and records the transformed preset instead of the unpinned source file.
+Rebuild replays recorded pins from the sandbox registry without depending on the ambient environment.
+A snapshot does not grant private-host authority to a clean target by itself; reapply the source preset with explicit trust after a cross-sandbox restore.
+
+To change a recorded address set, apply the source preset again with explicit trust.
+NemoClaw performs a new preflight and shows the changed pins before it applies them.
+Do not add `allowed_ips` to the source YAML.
+
 ## Apply a Single File
 
 Preview the file before you apply it:

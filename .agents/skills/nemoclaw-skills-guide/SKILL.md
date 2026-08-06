@@ -30,10 +30,10 @@ Covers routing human users' AI agents to the canonical NemoClaw Markdown documen
 For project maintainers.
 Covers the daily maintainer cadence, trusted E2E dispatch, workflow policy, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
 
-### `nemoclaw-contributor-*` (6 skills)
+### `nemoclaw-contributor-*` (7 skills)
 
 For contributors to the NemoClaw codebase.
-Covers trusted checkout setup and readiness checks, issue planning and capability slicing, dependency
+Covers trusted checkout setup and readiness checks, issue planning and capability slicing, issue implementation, dependency
 migration audits, creating pull requests that follow the project template, monitoring CI and
 automated review feedback, drafting documentation updates, and onboarding new messaging channels.
 
@@ -73,6 +73,7 @@ automated review feedback, drafting documentation updates, and onboarding new me
 |-------|---------|
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-plan-issue` | Research, refine, and divide a named issue into independently valuable capability slices without implementing or publishing them. |
+| `nemoclaw-contributor-implement-issue` | Implement the smallest accepted issue capability slice with focused validation and no pull request publication. |
 | `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
 | `nemoclaw-contributor-update-dependencies` | Audit and implement a dependency upgrade from current upstream and downstream contracts, including Hermes CalVer and base-image upgrades. |
 | `nemoclaw-contributor-onboard-messaging-channel` | Add or review a messaging channel through the current messaging architecture and accepted product scope. |
@@ -91,7 +92,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 7 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 22 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 8 | `nemoclaw-contributor-onboard` |
+| Maintainer | All skills | 23 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

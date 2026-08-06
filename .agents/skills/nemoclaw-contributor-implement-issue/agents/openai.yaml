@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "Implement a NemoClaw Issue"
+  short_description: "Implement one accepted issue capability slice"
+  default_prompt: "Use $nemoclaw-contributor-implement-issue to implement the smallest accepted capability slice with focused validation, security evidence, and no PR publication."
