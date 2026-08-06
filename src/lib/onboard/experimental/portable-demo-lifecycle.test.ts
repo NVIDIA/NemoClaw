@@ -265,6 +265,61 @@ describe("portable demo sandbox lifecycle", () => {
     expect(log).toHaveBeenCalledWith("  Portable demo lifecycle recovered sandbox 'alpha'.");
   });
 
+  it("retries the same receipt after a detached startup times out (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    const originalReceipt = fs.readFileSync(receiptPath, "utf-8");
+    const launchOpenshell = vi.fn();
+    let now = 0;
+    const captureOpenshell = vi.fn((args: readonly string[]) => {
+      const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+      switch (command) {
+        case "true":
+          return { status: 0 };
+        case "pgrep":
+          return { status: 1 };
+        case "curl":
+          return launchOpenshell.mock.calls.length >= 2
+            ? { status: 0, stdout: "200" }
+            : { status: 0, stdout: "000" };
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+      }
+    });
+    const deps = {
+      platform: "linux" as const,
+      stateDir,
+      podman: runtime.podman,
+      captureOpenshell,
+      launchOpenshell,
+      now: () => now,
+      sleep: (milliseconds: number) => {
+        now += milliseconds;
+      },
+    };
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        deps,
+      ),
+    ).toThrow("startup did not start its agent gateway");
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        deps,
+      ),
+    ).toEqual({ kind: "recovered" });
+    expect(launchOpenshell).toHaveBeenCalledTimes(2);
+    expect(runtime.podman).not.toHaveBeenCalledWith(["start", expect.any(String)]);
+    expect(fs.readFileSync(receiptPath, "utf-8")).toBe(originalReceipt);
+  });
+
   it("does not launch a second startup command when the agent gateway responds (#8441)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman();
