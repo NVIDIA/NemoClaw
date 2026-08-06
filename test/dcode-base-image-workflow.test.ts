@@ -387,13 +387,13 @@ describe("base-image publication behavior", () => {
         agent: "openclaw",
         arch: "amd64",
         platform: "linux/amd64",
-        runner: "ubuntu-24.04",
+        runner: "linux-amd64-cpu4",
       },
       {
         agent: "openclaw",
         arch: "arm64",
         platform: "linux/arm64",
-        runner: "ubuntu-24.04-arm",
+        runner: "linux-arm64-cpu4",
       },
     ]);
 
@@ -534,25 +534,25 @@ describe("base-image publication behavior", () => {
         agent: "hermes",
         arch: "amd64",
         platform: "linux/amd64",
-        runner: "ubuntu-24.04",
+        runner: "linux-amd64-cpu4",
       },
       {
         agent: "hermes",
         arch: "arm64",
         platform: "linux/arm64",
-        runner: "ubuntu-24.04-arm",
+        runner: "linux-arm64-cpu4",
       },
       {
         agent: "langchain-deepagents-code",
         arch: "amd64",
         platform: "linux/amd64",
-        runner: "ubuntu-24.04",
+        runner: "linux-amd64-cpu4",
       },
       {
         agent: "langchain-deepagents-code",
         arch: "arm64",
         platform: "linux/arm64",
-        runner: "ubuntu-24.04-arm",
+        runner: "linux-arm64-cpu4",
       },
     ]);
 

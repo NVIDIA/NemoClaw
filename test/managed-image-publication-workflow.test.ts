@@ -359,7 +359,7 @@ describe("complete managed-image publication workflow", () => {
     expect(reviewedAudit).toMatchObject({
       if: "github.repository == 'NVIDIA/NemoClaw'",
       permissions: { contents: "read" },
-      "runs-on": "ubuntu-latest",
+      "runs-on": "linux-amd64-cpu4",
       "timeout-minutes": 15,
     });
     expect(step(reviewedAudit, "Checkout").with?.["persist-credentials"]).toBe(false);
@@ -438,12 +438,12 @@ describe("complete managed-image publication workflow", () => {
           expect.objectContaining({
             arch: "amd64",
             platform: "linux/amd64",
-            runner: "ubuntu-24.04",
+            runner: "linux-amd64-cpu4",
           }),
           expect.objectContaining({
             arch: "arm64",
             platform: "linux/arm64",
-            runner: "ubuntu-24.04-arm",
+            runner: "linux-arm64-cpu4",
           }),
         ]),
       );
@@ -457,7 +457,7 @@ describe("complete managed-image publication workflow", () => {
     const steps = prBuilder.steps ?? [];
 
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
-    expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
+    expect(prBuilder["runs-on"]).toBe("linux-amd64-cpu4");
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
@@ -684,7 +684,7 @@ fi
         platform: "linux/amd64",
         artifact_platform: "linux-amd64",
         required_binary: "/usr/local/bin/openclaw",
-        runner: "ubuntu-24.04",
+        runner: "linux-amd64-cpu4",
       },
       {
         agent: "openclaw",
@@ -696,7 +696,7 @@ fi
         platform: "linux/arm64",
         artifact_platform: "linux-arm64",
         required_binary: "/usr/local/bin/openclaw",
-        runner: "ubuntu-24.04-arm",
+        runner: "linux-arm64-cpu4",
       },
       {
         agent: "hermes",
@@ -708,7 +708,7 @@ fi
         platform: "linux/amd64",
         artifact_platform: "linux-amd64",
         required_binary: "/usr/local/bin/hermes",
-        runner: "ubuntu-24.04",
+        runner: "linux-amd64-cpu4",
       },
       {
         agent: "hermes",
@@ -720,7 +720,7 @@ fi
         platform: "linux/arm64",
         artifact_platform: "linux-arm64",
         required_binary: "/usr/local/bin/hermes",
-        runner: "ubuntu-24.04-arm",
+        runner: "linux-arm64-cpu4",
       },
       {
         agent: "langchain-deepagents-code",
@@ -732,7 +732,7 @@ fi
         platform: "linux/amd64",
         artifact_platform: "linux-amd64",
         required_binary: "/usr/local/bin/dcode",
-        runner: "ubuntu-24.04",
+        runner: "linux-amd64-cpu4",
       },
       {
         agent: "langchain-deepagents-code",
@@ -744,7 +744,7 @@ fi
         platform: "linux/arm64",
         artifact_platform: "linux-arm64",
         required_binary: "/usr/local/bin/dcode",
-        runner: "ubuntu-24.04-arm",
+        runner: "linux-arm64-cpu4",
       },
     ]);
     expect(

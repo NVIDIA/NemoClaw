@@ -15,7 +15,6 @@ import {
   createAsynchronousLockReplacementClock,
   createSynchronousLockReplacementClock,
 } from "./helpers/mcp-lifecycle-lock-deadline-clock";
-import "./helpers/mcp-lifecycle-lock-properties";
 
 const requireDist = createRequire(import.meta.url);
 const lockModulePath = requireDist.resolve("../src/lib/state/mcp-lifecycle-lock.js");

@@ -92,7 +92,7 @@ env:
 jobs:
   reviewed-npm-audit:
     if: github.repository == 'NVIDIA/NemoClaw'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     permissions:
       contents: read
@@ -125,13 +125,13 @@ jobs:
           - agent: openclaw
             arch: amd64
             platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: linux-amd64-cpu4
             dockerfile: Dockerfile.base
             image: nvidia/nemoclaw/sandbox-base
           - agent: openclaw
             arch: arm64
             platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: linux-arm64-cpu4
             dockerfile: Dockerfile.base
             image: nvidia/nemoclaw/sandbox-base
     steps:
@@ -246,14 +246,14 @@ jobs:
             display_name: Hermes
             arch: amd64
             platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: linux-amd64-cpu4
             dockerfile: agents/hermes/Dockerfile.base
             image: nvidia/nemoclaw/hermes-sandbox-base
           - agent: hermes
             display_name: Hermes
             arch: arm64
             platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: linux-arm64-cpu4
             dockerfile: agents/hermes/Dockerfile.base
             image: nvidia/nemoclaw/hermes-sandbox-base
     steps:
@@ -361,14 +361,14 @@ jobs:
             display_name: Deep Agents Code
             arch: amd64
             platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: linux-amd64-cpu4
             dockerfile: agents/langchain-deepagents-code/Dockerfile.base
             image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
           - agent: langchain-deepagents-code
             display_name: Deep Agents Code
             arch: arm64
             platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: linux-arm64-cpu4
             dockerfile: agents/langchain-deepagents-code/Dockerfile.base
             image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
     steps:
@@ -467,7 +467,7 @@ jobs:
     needs:
       - build-hermes-platforms
       - reviewed-npm-audit
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -636,7 +636,7 @@ jobs:
     needs:
       - build-dcode-platforms
       - reviewed-npm-audit
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -807,7 +807,7 @@ jobs:
     needs:
       - build-openclaw-platforms
       - reviewed-npm-audit
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
