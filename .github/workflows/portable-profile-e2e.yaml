@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   rootless-linux:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout

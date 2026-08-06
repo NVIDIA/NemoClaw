@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   static-checks:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -34,7 +34,7 @@ jobs:
         uses: ./.github/actions/ci-static-checks
 
   build-typecheck:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -46,7 +46,7 @@ jobs:
         uses: ./.github/actions/ci-build-typecheck
 
   installer-integration:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -58,7 +58,7 @@ jobs:
         uses: ./.github/actions/ci-installer-integration
 
   wechat-runtime-audit:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -82,7 +82,7 @@ jobs:
           retention-days: 14
 
   reviewed-npm-audit:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -97,7 +97,7 @@ jobs:
           report-dir: artifacts/reviewed-npm-audit
 
   real-openclaw-dist-harness:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       # This required proof reads reviewed npm metadata/tarballs. Keep npm's
@@ -136,7 +136,7 @@ jobs:
         run: npx vitest run --project integration test/openclaw-security-audit-suppressions-real.test.ts --silent=false --reporter=default
 
   cli-test-shards:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -163,7 +163,7 @@ jobs:
       code-quality: write
       contents: read
       pull-requests: read
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Verify CLI shards completed
@@ -237,7 +237,7 @@ jobs:
       code-quality: write
       contents: read
       pull-requests: read
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -262,7 +262,7 @@ jobs:
     if: always()
     permissions:
       actions: read
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Verify required main checks

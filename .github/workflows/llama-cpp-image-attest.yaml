@@ -32,7 +32,7 @@ permissions: {}
 jobs:
   validate-inputs:
     name: Validate attestation inputs
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     outputs:
@@ -94,7 +94,7 @@ jobs:
   attest:
     name: Generate and publish image evidence
     needs: validate-inputs
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       attestations: write

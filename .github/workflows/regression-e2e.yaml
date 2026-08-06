@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   select_regression_jobs:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     outputs:
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
       openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
@@ -85,7 +85,7 @@ jobs:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       needs.select_regression_jobs.outputs.model_router_provider_routed_inference == 'true'
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
@@ -125,7 +125,7 @@ jobs:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       needs.select_regression_jobs.outputs.openclaw_plugin_runtime_exdev == 'true'
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 55
@@ -179,7 +179,7 @@ jobs:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       needs.select_regression_jobs.outputs.openclaw_plugin_runtime_exdev == 'true'
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     # Two bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
@@ -237,7 +237,7 @@ jobs:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       needs.select_regression_jobs.outputs.whatsapp_qr_compact == 'true'
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
