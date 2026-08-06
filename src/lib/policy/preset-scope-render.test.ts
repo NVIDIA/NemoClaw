@@ -37,6 +37,21 @@ network_policies:
 `;
 
 describe("renderPresetScope (#7179)", () => {
+  it("discloses generated destination pins in previews (#8176)", () => {
+    const content = `network_policies:
+  private-api:
+    endpoints:
+      - host: api.corp.example
+        port: 443
+        protocol: rest
+        allowed_ips: [10.20.30.40, 2001:db8::20]
+`;
+
+    expect(renderPresetScope(content).join("\n")).toContain(
+      "allowed IPs: 10.20.30.40, 2001:db8::20",
+    );
+  });
+
   it("returns an empty list for content with no network_policies", () => {
     expect(renderPresetScope("preset:\n  name: x\n  description: 'y'\n")).toEqual([]);
     expect(renderPresetScope("")).toEqual([]);

@@ -38,7 +38,7 @@ describe("onboard shared gateway route containment", () => {
       expectedTrustedPrivateAddresses: [],
     },
   ])("handles a resumed $scenario endpoint at the shared preflight", async (scenario) => {
-    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", scenario.trustedHosts);
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_HOSTS", scenario.trustedHosts);
     let lookupCount = 0;
     const resolveEndpointHost = vi.fn(async () => {
       lookupCount += 1;

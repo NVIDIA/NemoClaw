@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseTrustedPrivateHosts } from "../security/trusted-private-endpoint";
+
 export type CustomPolicySource =
   | { kind: "none" }
   | { kind: "file"; path: string }
@@ -12,6 +14,8 @@ export type ParsedPolicyAddOptions = {
   skipConfirm: boolean;
   source: CustomPolicySource;
   presetArg: string | null;
+  trustedPrivateHosts: readonly string[];
+  commandTrustedPrivateHosts: readonly string[];
 };
 
 export type PolicyAddOptions = {
@@ -21,6 +25,7 @@ export type PolicyAddOptions = {
   force?: boolean;
   fromFile?: string;
   fromDir?: string;
+  trustedPrivateHosts?: readonly string[];
 };
 
 export type PolicyRemoveOptions = {
@@ -63,10 +68,25 @@ export function parsePolicyAddOptions(
   options: PolicyAddOptions = {},
   env: Record<string, string | undefined> = process.env,
 ): ParsedPolicyAddOptions {
+  const source = customPolicySourceFromOptions(options);
+  const commandTrustedPrivateHosts = options.trustedPrivateHosts ?? [];
+  const trustedPrivateHosts = [
+    ...parseTrustedPrivateHosts(env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS),
+    ...commandTrustedPrivateHosts,
+  ];
+  const effectiveSource =
+    source.kind === "none" && commandTrustedPrivateHosts.length > 0
+      ? {
+          kind: "error" as const,
+          message: "--trusted-private-host requires --from-file or --from-dir.",
+        }
+      : source;
   return {
     dryRun: Boolean(options.dryRun),
     skipConfirm: Boolean(options.yes || options.force || env.NEMOCLAW_NON_INTERACTIVE === "1"),
-    source: customPolicySourceFromOptions(options),
+    source: effectiveSource,
     presetArg: options.preset ?? null,
+    trustedPrivateHosts,
+    commandTrustedPrivateHosts,
   };
 }
