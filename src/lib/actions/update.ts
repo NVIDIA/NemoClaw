@@ -225,12 +225,23 @@ function parsePublicVersion(version: string): ParsedPublicVersion | null {
   const described = DESCRIBED_VERSION.exec(normalized);
   const match = PUBLIC_VERSION.exec(described?.[1] ?? normalized);
   if (!match) return null;
-  const release = [Number(match[1]), Number(match[2]), Number(match[3])] as const;
+  const releaseParts = [match[1], match[2], match[3]] as const;
+  if (releaseParts.some((part) => part.length > 1 && part.startsWith("0"))) return null;
+  const prerelease = match[4] ? match[4].split(".") : [];
+  if (
+    prerelease.some(
+      (identifier) =>
+        /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"),
+    )
+  ) {
+    return null;
+  }
+  const release = releaseParts.map(Number) as [number, number, number];
   if (release.some((part) => !Number.isSafeInteger(part))) return null;
   return {
     describedAfterTag: described !== null,
     normalized,
-    prerelease: match[4] ? match[4].split(".") : [],
+    prerelease,
     release,
   };
 }
