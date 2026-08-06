@@ -41,7 +41,7 @@ describe("trusted E2E target routing boundary (#7824)", () => {
   it("rejects a dead approved case block before unsafe target routing", () => {
     const { controllerMatrix, workflow } = fixture();
     const run = controllerMatrix.run!;
-    const caseStart = run.indexOf('case "${TARGETS}" in');
+    const caseStart = run.indexOf('case "${JOBS}:${TARGETS}" in');
     const caseEnd = run.indexOf("\nesac", caseStart) + "\nesac".length;
     requireFixture(caseStart >= 0, "trusted target fixture case is missing");
     requireFixture(caseEnd > caseStart, "trusted target fixture case terminator is missing");
@@ -57,7 +57,7 @@ describe("trusted E2E target routing boundary (#7824)", () => {
 
   it("rejects an executable wildcard before approved target routing", () => {
     const { controllerMatrix, workflow } = fixture();
-    const caseStart = 'case "${TARGETS}" in';
+    const caseStart = 'case "${JOBS}:${TARGETS}" in';
     const unsafeWildcard = [
       "*)",
       'matrix=\'[{"id":"untrusted","runner":"self-hosted","label":"untrusted"}]\'',
