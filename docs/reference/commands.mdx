@@ -1766,7 +1766,7 @@ The image lane supplies one external, sanitized runtime manifest and all payload
 - `NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256` as the exact lowercase SHA-256 of the manifest's raw bytes; and
 - `NEMOCLAW_CUA_SANDBOX_IMAGE_REF` as an immutable image reference ending in `@sha256:<digest>`, with the same digest declared by the manifest.
 
-On Linux, the manifest and its parent directory must be owned by root or the effective process user and must not be group-writable, world-writable, or symbolic links.
+On POSIX hosts, the manifest and its parent directory must be owned by root or the effective process user and must not be group-writable, world-writable, or symbolic links.
 Every declared payload is a sibling file with a fixed basename, size, and raw SHA-256 digest.
 NemoClaw verifies the agent manifest, policy, Dockerfiles, host CLI, target services, and target, task, and security adapters before staging or running them.
 Each Dockerfile must use strict UTF-8, LF line endings, and one instruction per line.
