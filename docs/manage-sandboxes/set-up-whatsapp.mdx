@@ -89,10 +89,24 @@ $$nemoclaw <sandbox> gateway restart
 Restart the gateway after the rebuild.
 The WhatsApp adapter reads the paired session once while the gateway starts, and the rebuild restores that session afterward.
 
+Configurations created before WhatsApp mode was stored use `self-chat` after their next rebuild.
+If the sandbox must continue replying to other senders, run the commands above again with `WHATSAPP_MODE=bot` and the intended allowlist.
+
+Verify the applied mode and allowlist:
+
+```bash
+$$nemoclaw <sandbox> channels status --channel whatsapp
+```
+
+Confirm that the output reports the intended mode and allowlist without a rendered-config mismatch.
+
 In bot mode the sandbox replies to the listed senders and stops replying to the paired account's self-chat.
 Bot mode rejects every sender when the allowlist is empty, so set `WHATSAPP_MODE` and `WHATSAPP_ALLOWED_IDS` together.
 For individual sender IDs, use digits only, such as `15551234567`, without a leading `+`.
+
+<Warning>
 Set `WHATSAPP_ALLOWED_IDS='*'` to let any sender reach the paired account.
+</Warning>
 </AgentOnly>
 
 Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).
