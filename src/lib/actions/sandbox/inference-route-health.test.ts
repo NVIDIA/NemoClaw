@@ -74,17 +74,18 @@ describe("sandbox inference route health", () => {
   it("reports when only OpenShell's canonical CA verifies the route (#8441)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
       captureOpenshellImpl: makeCapture(
-        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_tls_verify=0",
+        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=200 canonical_tls_verify=0",
       ),
     });
 
+    expect(result).toMatchObject({ ok: true, httpStatus: 200 });
     expect(result?.detail).toContain("inherited CA bundle did not verify");
   });
 
   it("reports when TLS validation also fails with OpenShell's canonical CA (#8441)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
       captureOpenshellImpl: makeCapture(
-        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=60 canonical_tls_verify=19",
+        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=60 canonical_http=000 canonical_tls_verify=19",
       ),
     });
 

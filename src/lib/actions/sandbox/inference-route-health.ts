@@ -99,7 +99,12 @@ export async function probeSandboxInferenceGatewayHealth(
       ok: true,
       endpoint,
       httpStatus: status,
-      detail: `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
+      detail:
+        parsed.curlExitCode === 60 &&
+        parsed.canonicalCurlExitCode === 0 &&
+        parsed.canonicalTlsVerifyResult === 0
+          ? `Inference gateway responded HTTP ${status} on ${endpoint} using OpenShell's canonical runtime CA; the inherited CA bundle did not verify the route.`
+          : `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
     };
   }
   if (classifyInferenceRouteFailureLabel(status) === "unhealthy") {

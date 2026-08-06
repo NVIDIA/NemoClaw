@@ -25,6 +25,16 @@ const STARTUP_ARGV = [
   "NEMOCLAW_SANDBOX_NAME=alpha",
   "/usr/local/bin/nemoclaw-start",
 ];
+const RECOVERY_STARTUP_ARGV = [
+  "env",
+  "NODE_EXTRA_CA_CERTS=/etc/openshell-tls/openshell-ca.pem",
+  "DENO_CERT=/etc/openshell-tls/openshell-ca.pem",
+  "SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem",
+  "REQUESTS_CA_BUNDLE=/etc/openshell-tls/ca-bundle.pem",
+  "CURL_CA_BUNDLE=/etc/openshell-tls/ca-bundle.pem",
+  "GIT_SSL_CAINFO=/etc/openshell-tls/ca-bundle.pem",
+  ...STARTUP_ARGV.slice(1),
+];
 
 const temporaryDirectories: string[] = [];
 
@@ -204,7 +214,7 @@ describe("portable demo sandbox lifecycle", () => {
     expect(receipt).not.toContain("user:password");
   });
 
-  it("starts the stopped container and launches the fixed OpenClaw startup command (#8441)", () => {
+  it("starts the stopped container with the current OpenShell CA environment (#8441)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman({ running: false });
     installReceipt(stateDir, runtime.podman);
@@ -250,7 +260,7 @@ describe("portable demo sandbox lifecycle", () => {
       "alpha",
       "--no-tty",
       "--",
-      ...STARTUP_ARGV,
+      ...RECOVERY_STARTUP_ARGV,
     ]);
     expect(log).toHaveBeenCalledWith("  Portable demo lifecycle recovered sandbox 'alpha'.");
   });

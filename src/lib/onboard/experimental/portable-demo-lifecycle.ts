@@ -22,6 +22,8 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const PODMAN_MANAGED_LABEL = "openshell.managed";
 const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
 const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
+const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
+const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
 const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 type CommandResult = {
@@ -288,8 +290,18 @@ function discoverPodmanContainer(
 
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
   const port = String(receipt.dashboardPort);
+  // A raw Podman restart can preserve login-profile exports from the previous
+  // OpenShell supervisor generation. Seed the relaunched process from the
+  // root-owned v0.0.85 runtime paths so nemoclaw-start can rebuild any merged
+  // CA bundle from the current OpenShell CA.
   return [
     "env",
+    `NODE_EXTRA_CA_CERTS=${OPENSHELL_RUNTIME_CA_CERT}`,
+    `DENO_CERT=${OPENSHELL_RUNTIME_CA_CERT}`,
+    `SSL_CERT_FILE=${OPENSHELL_RUNTIME_CA_BUNDLE}`,
+    `REQUESTS_CA_BUNDLE=${OPENSHELL_RUNTIME_CA_BUNDLE}`,
+    `CURL_CA_BUNDLE=${OPENSHELL_RUNTIME_CA_BUNDLE}`,
+    `GIT_SSL_CAINFO=${OPENSHELL_RUNTIME_CA_BUNDLE}`,
     `CHAT_UI_URL=http://127.0.0.1:${port}`,
     `NEMOCLAW_DASHBOARD_PORT=${port}`,
     "OPENCLAW_HOME=/sandbox",
