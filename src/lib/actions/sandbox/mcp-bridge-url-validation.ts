@@ -11,6 +11,7 @@ import {
 import { TOKEN_PREFIX_PATTERNS } from "../../security/secret-patterns";
 import {
   assertEndpointResolvesPublic,
+  isOperatorTrustablePrivateIp,
   isTrustedPrivateEndpointCapability,
   normalizeTrustedPrivateHost,
   type TrustedPrivateEndpointCapability,
@@ -287,9 +288,16 @@ export async function preflightMcpServerUrlResolvedTarget(
       .map((address) => address.toLowerCase())
       .sort();
     if (
+      result.trustedPrivateCapability.host !== normalizedHostname ||
       capabilityAddresses.length !== addresses.length ||
       capabilityAddresses.some((address, index) => address !== addresses[index])
     ) {
+      throw new McpBridgeError(
+        `MCP server URL host '${normalizedHostname}' returned address pins that do not match its trusted-private capability.`,
+        2,
+      );
+    }
+    if (addresses.some((address) => !isOperatorTrustablePrivateIp(address))) {
       throw new McpBridgeError(
         `MCP server URL host '${normalizedHostname}' returned mixed public and private addresses. Trusted-private MCP endpoints must resolve only to supported routed private addresses.`,
         2,

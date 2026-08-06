@@ -717,7 +717,8 @@ export function assertMcpBridgePolicyTarget(
   }
   if (
     target.trustedPrivateHost !== entry.trustedPrivateHost ||
-    !isTrustedPrivateEndpointCapability(target.trustedPrivateCapability)
+    !isTrustedPrivateEndpointCapability(target.trustedPrivateCapability) ||
+    target.trustedPrivateCapability.host !== entry.trustedPrivateHost
   ) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no provenance-checked capability for trusted private host '${entry.trustedPrivateHost}'.`,

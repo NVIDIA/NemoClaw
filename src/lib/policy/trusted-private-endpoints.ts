@@ -314,23 +314,24 @@ export async function prepareTrustedPrivatePolicyPresets(
       }
       continue;
     }
+    if (result.trustedPrivateCapability.host !== host) {
+      throw new Error(
+        `Trusted private host '${host}' returned authority for '${result.trustedPrivateCapability.host}'.`,
+      );
+    }
     const resolvedPins = [
-      ...new Set(
-        (result.addresses?.length
-          ? result.addresses
-          : result.trustedPrivateCapability.addresses
-        ).map((address) => address.toLowerCase()),
-      ),
+      ...new Set((result.addresses ?? []).map((address) => address.toLowerCase())),
     ].sort();
     const capabilityPins = [...result.trustedPrivateCapability.addresses]
       .map((address) => address.toLowerCase())
       .sort();
     if (
-      resolvedPins.length !== capabilityPins.length ||
-      resolvedPins.some((address, index) => address !== capabilityPins[index])
+      resolvedPins.length > 0 &&
+      (resolvedPins.length !== capabilityPins.length ||
+        resolvedPins.some((address, index) => address !== capabilityPins[index]))
     ) {
       throw new Error(
-        `Trusted private host '${host}' returned mixed public and private addresses. Trusted-private policy endpoints must resolve only to supported routed private addresses.`,
+        `Trusted private host '${host}' returned address pins that do not match its capability.`,
       );
     }
     const pins = capabilityPins;
