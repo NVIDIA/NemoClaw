@@ -34,7 +34,7 @@ They are the preferred backup and restore path.
 
 ## Understand Snapshot Contents
 
-Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+Snapshots capture the manifest-declared snapshot state directories and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
 Agent manifests can also declare durable top-level state files.
 Treat snapshot directories as private local data.
 
@@ -81,10 +81,10 @@ Wait for active `dcode` work to finish before running `$$nemoclaw <name> snapsho
 Snapshots preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy add --from-file` or `policy add --from-dir` and baseline network policy entries excluded with `policy exclude`.
 When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk, and rebuild continues to apply the recorded baseline exclusions.
 
-The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
-NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
-Restore limits directory cleanup to state directories declared by the snapshot manifest.
-It preserves directories that exist only in the target manifest or whose backup failed.
+The target sandbox's current agent manifest remains authoritative for directory and state-file restore behavior.
+NemoClaw rejects the restore when the snapshot's agent, config directory, any snapshot directory, state-file path, or state-file strategy conflicts with that manifest.
+Restore limits directory cleanup to state directories authorized by both the snapshot and the current manifest.
+It preserves target-only directories and directories whose backup failed.
 
 For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
 For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.

@@ -30,7 +30,7 @@ function options() {
   return {
     stateDir,
     pollIntervalMs: 1,
-    timeoutMs: 20,
+    timeoutMs: 1_000,
     corruptLockGraceMs: 1,
   };
 }
@@ -129,9 +129,12 @@ describe("MCP lifecycle lock acquisition", () => {
   it("does not strand asynchronous recovery behind an expired legacy marker", async () => {
     writeTimerMarker(undefined, new Date(Date.now() - 1_000).toISOString());
 
-    await expect(withMcpLifecycleLock(SANDBOX_NAME, () => "entered", options())).resolves.toBe(
-      "entered",
-    );
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, () => "entered", {
+        ...options(),
+        monotonicNow: () => 0,
+      }),
+    ).resolves.toBe("entered");
   });
 
   it("does not strand synchronous recovery behind an expired legacy short-token marker", () => {

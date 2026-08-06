@@ -458,7 +458,7 @@ function renderAdvisorLanes(lanes?: AdvisorLaneReports): string {
   lines.push(...renderSecondOpinionE2eRecommendations(lanes.primary, lanes.secondOpinion));
   lines.push(
     "",
-    "_Second-opinion terminology and E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate._",
+    "_Second-opinion terminology and E2E selections are advisory. Live E2E does not run automatically for pull requests._",
     "",
   );
   return `${lines.join("\n")}\n`;
@@ -687,7 +687,7 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   const lines = [
     "",
     "### E2E guidance",
-    "_Advisory only. E2E / PR Gate selects and runs jobs independently._",
+    "_Advisory only. A maintainer can dispatch the default E2E suite against this exact revision._",
     "",
   ];
 

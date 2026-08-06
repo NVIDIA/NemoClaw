@@ -209,6 +209,7 @@ export interface SandboxRecreateSourceProof {
   readonly gatewayPort: number;
   readonly sourceRegistryFingerprint: string;
   readonly sourceLiveIdentityFingerprint: string | null;
+  readonly sourceConfirmedAbsent: boolean;
   readonly targetGeneration: string;
 }
 
@@ -234,6 +235,7 @@ export function sandboxRecreateSourceProof(
     gatewayPort: transaction.gatewayPort,
     sourceRegistryFingerprint: transaction.sourceRegistryFingerprint,
     sourceLiveIdentityFingerprint: transaction.sourceLiveIdentityFingerprint,
+    sourceConfirmedAbsent: sandboxRecreatePhaseReached(transaction.phase, "deleted"),
     targetGeneration: transaction.targetGeneration,
   };
 }
@@ -266,12 +268,16 @@ export function assertSandboxRecreateSourceProof(
   if (fingerprintSandboxRegistryEntry(check.registryEntry) !== proof.sourceRegistryFingerprint) {
     return fail("the source registry row changed after the transaction recorded it");
   }
-  if (check.observation.state !== "missing" && !check.observation.liveIdentityFingerprint) {
+  if (check.observation.state === "missing") {
+    if (!proof.sourceConfirmedAbsent) {
+      return fail("the recreate journal has not confirmed source deletion");
+    }
+    return proof;
+  }
+  if (!check.observation.liveIdentityFingerprint) {
     return fail("the live same-name sandbox reports no OpenShell Id");
   }
-  const observedIdentity =
-    check.observation.state === "missing" ? null : check.observation.liveIdentityFingerprint;
-  if (observedIdentity !== proof.sourceLiveIdentityFingerprint) {
+  if (check.observation.liveIdentityFingerprint !== proof.sourceLiveIdentityFingerprint) {
     return fail("the live same-name sandbox is not the recorded source");
   }
   return proof;

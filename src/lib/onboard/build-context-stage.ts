@@ -97,10 +97,8 @@ export function stageCreateSandboxBuildContext(
     // failing at the first COPY (#7205).
     const agentDockerfile = input.agent?.dockerfilePath ?? null;
     if (input.agent && agentDockerfile && isSameFile(fromResolved, agentDockerfile)) {
-      log(`  Using custom Dockerfile: ${fromResolved}`);
-      log(
-        `  This is the managed ${input.agent.displayName} Dockerfile; staging the repository root as the Docker build context.`,
-      );
+      log(`  Using trusted ${input.agent.displayName} Dockerfile: ${fromResolved}`);
+      log(`  Staging the repository root as the managed ${input.agent.displayName} build context.`);
       try {
         build = input.createAgentSandbox(input.agent);
       } catch (err) {
@@ -112,7 +110,7 @@ export function stageCreateSandboxBuildContext(
       }
       return {
         ...build,
-        origin,
+        origin: "generated",
         cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
       };
     }
