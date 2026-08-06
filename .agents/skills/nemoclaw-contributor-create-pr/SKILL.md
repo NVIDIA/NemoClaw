@@ -184,7 +184,10 @@ Read the PR template from the trusted base branch. Use it as the source of truth
 Do not use a branch-modified template unless the PR changes the template.
 Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers.
 Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
-contract for the PR body, other changed explanatory text, and the final review receipt.
+contract for the PR body and other changed explanatory text.
+Follow the
+[Documentation Writer Review Receipt](../../../CONTRIBUTING.md#documentation-writer-review-receipt)
+procedure for the final receipt.
 
 Complete each section from the diff against the same base ref.
 Select the applicable boxes and leave the other boxes clear.
