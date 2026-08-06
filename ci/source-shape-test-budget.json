@@ -13,7 +13,7 @@
     },
     {
       "file": "src/lib/agent/base-image-hermes.test.ts",
-      "test": "requires the pinned Hermes base image and unconditional dependency guard during ordinary onboarding (#8328)",
+      "test": "requires the pinned Hermes base image and checks installed dependency versions after messaging package installation (#8328)",
       "category": "security"
     },
     {
