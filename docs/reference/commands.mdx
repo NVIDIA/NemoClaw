@@ -3748,7 +3748,7 @@ It preserves upstream Linux package units, the macOS Homebrew service, and unrel
 Gateway-scoped cleanup removes that gateway's OpenShell resources first, then the marked Linux unit.
 The OpenShell gateway service therefore keeps running while uninstall deletes the selected gateway's sandboxes.
 If OpenShell resource cleanup fails, uninstall exits nonzero and preserves the marked Linux unit and gateway process.
-If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process.
+If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process or continues with later Docker and gateway-state cleanup.
 OpenShell resource and Linux unit cleanup can partially complete before either failure.
 Resolve the reported error.
 Inspect the remaining gateways with `openshell gateway list`.

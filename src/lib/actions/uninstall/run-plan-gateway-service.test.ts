@@ -304,16 +304,20 @@ describe("uninstall OpenShell gateway user service", () => {
   it("preserves the gateway process when marked Linux unit cleanup fails (#8220)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
+    const gatewayStatePath = writeGatewayState(test);
     writeSelectedSandboxRegistry(test, "my-assistant");
     const calls: string[][] = [];
     const kill = vi.fn();
+    const runDocker = vi.fn(() => ok());
 
     const result = uninstall(
       test,
       false,
       {
-        commandExists: (command) => command === "systemctl" || command === "pgrep",
+        commandExists: (command) =>
+          command === "systemctl" || command === "pgrep" || command === "docker",
         kill,
+        runDocker,
         run: (command, args) => {
           calls.push([command, ...args]);
           return command === "systemctl" && args.includes("disable")
@@ -328,9 +332,11 @@ describe("uninstall OpenShell gateway user service", () => {
 
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
+    expect(fs.existsSync(gatewayStatePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(true);
     expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
     expect(kill).not.toHaveBeenCalled();
+    expect(runDocker).not.toHaveBeenCalled();
   });
 
   it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {
