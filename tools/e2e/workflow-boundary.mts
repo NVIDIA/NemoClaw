@@ -4326,7 +4326,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const generateOutputs = asRecord(generateMatrix.outputs);
   if (
     generateOutputs.matrix !==
-    "${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}"
+    "${{ steps.matrix.outputs.matrix }}"
   ) {
     errors.push("generate-matrix job must expose trusted controller matrix output");
   }
@@ -4361,17 +4361,22 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("trusted controller matrix step must bind targets through TARGETS env");
   }
   requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
-  requireRunContains(errors, controllerMatrix, "matrix='[]'");
   const controllerMatrixScript = stringValue(controllerMatrix?.run);
+  const policyTarget = "ubuntu-policy-custom-missing-presets-negative";
   const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const openClawTarget = "ubuntu-repo-cloud-openclaw";
   const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
+  const defaultMappings = [policyTarget, deepAgentsTarget, openClawTarget, postRebootTarget]
+    .map((target) => `{"id":"${target}","runner":"ubuntu-latest"}`)
+    .join(",");
   const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
   const trustedControllerMatrixScript = [
     "set -euo pipefail",
     'case "${TARGETS}" in',
     '"")',
-    "matrix='[]'",
+    `matrix='[${defaultMappings}]'`,
     ";;",
     `${deepAgentsTarget})`,
     `matrix='[${deepAgentsMapping}]'`,

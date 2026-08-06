@@ -19,11 +19,12 @@ It is advisory and does not create a required PR check.
 
 The default suite exposes these values to candidate-controlled job processes:
 
-- Long-lived provider credentials from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
+- Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
+- Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
 - The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `checks: read`, `contents: read`, and `pull-requests: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
 - Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
 
-The workflow does not rotate or revoke provider credentials. It cannot erase identifiers copied by candidate code. Rotate or revoke each provider credential at its provider to remove later access. Review the complete candidate diff before dispatch.
+The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
 
@@ -107,8 +108,8 @@ test "$(jq -r .baseRefOid <<<"$CURRENT_PR")" = "$BASE_SHA"
 test "$(jq -r .headRepository.nameWithOwner <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
 ```
 
-Return the PR number, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
-A changed head or base invalidates the evidence and requires a new run.
+Return the PR number, head repository, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
+A changed head repository, head SHA, or base SHA invalidates the evidence and requires a new run.
 
 ## Select the Main Mode
 

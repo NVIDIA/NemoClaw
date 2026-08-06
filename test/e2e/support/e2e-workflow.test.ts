@@ -429,7 +429,7 @@ describe("e2e workflow boundary", () => {
       >;
     };
     const generateMatrix = workflow.jobs["generate-matrix"]!;
-    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    generateMatrix.outputs.matrix = "${{ steps.controller_matrix.outputs.matrix }}";
     const [trusted] = generateMatrix.steps.splice(
       generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
       1,
