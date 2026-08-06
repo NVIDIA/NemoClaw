@@ -2121,13 +2121,7 @@ function assertNoLegacyStateLayout(sandboxName: string, configDir: string): void
 // read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
 
-/**
- * Lower shields on an OpenClaw sandbox whose startup terminally failed.
- *
- * Returns false when the sandbox is not in that state. The guard proves a
- * stable supervisor with no startup process and no readiness marker, then
- * unseals both layers in one mutex window.
- */
+/** Whether a guard error reports the OpenClaw startup readiness lease. */
 function isOpenClawStartupNotReady(error: unknown): boolean {
   return (error instanceof Error ? error.message : String(error)).includes(
     "[startup-not-ready]",
@@ -2137,6 +2131,13 @@ function isOpenClawStartupNotReady(error: unknown): boolean {
 /** The guard's refusal when the sandbox is simply not in a failed startup. */
 const NOT_A_FAILED_STARTUP = "requires a proven terminal startup failure";
 
+/**
+ * Lower shields on an OpenClaw sandbox whose startup terminally failed.
+ *
+ * Returns false when the sandbox is not in that state. The guard proves a
+ * stable supervisor with no startup process and no readiness marker, then
+ * unseals both layers in one mutex window.
+ */
 function recoverOpenClawFailedStartupShields(
   sandboxName: string,
   target: AgentConfigTarget,

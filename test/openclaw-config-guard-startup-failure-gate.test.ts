@@ -116,6 +116,7 @@ const TRANSACTION_HARNESS = String.raw`
 import importlib.util
 import json
 import subprocess
+import time
 import sys
 import types
 
@@ -137,7 +138,13 @@ def timeout_run(command, **kwargs):
 
 guard.subprocess.run = timeout_run
 try:
-    guard._run_state_dir_guard("unlock", guard.PRODUCTION_CONFIG_DIR, "{}", 91)
+    guard._run_state_dir_guard(
+        "unlock",
+        guard.PRODUCTION_CONFIG_DIR,
+        "{}",
+        91,
+        time.monotonic() + guard.STATE_DIR_GUARD_TIMEOUT_SECONDS,
+    )
 except guard.GuardError as error:
     timeout_code = error.code
 
@@ -149,7 +156,7 @@ def transition(action, _opened, _identity, **_kwargs):
             "mutable-handoff-incomplete", guard.PRODUCTION_CONFIG_DIR, "handoff failed"
         )
 
-def state_dir(action, _config_dir, _plan_json, lock_fd):
+def state_dir(action, _config_dir, _plan_json, lock_fd, _deadline):
     assert lock_fd == 91
     events.append(f"state-{action}")
     if action == "lock":
@@ -171,7 +178,7 @@ timeout_events = []
 def timeout_transition(action, _opened, _identity, **_kwargs):
     timeout_events.append(f"config-{action}")
 
-def timeout_state_dir(action, _config_dir, _plan_json, lock_fd):
+def timeout_state_dir(action, _config_dir, _plan_json, lock_fd, _deadline):
     assert lock_fd == 91
     timeout_events.append(f"state-{action}")
     if action == "unlock":

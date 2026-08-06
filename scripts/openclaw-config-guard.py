@@ -1414,13 +1414,12 @@ def _validate_action_readiness(
             # Provisional: a child can still appear after this scan, so main()
             # reconfirms under the mutation mutex before any effect (#8304).
             return True
-        if installed_current:
-            raise GuardError(
-                "startup-not-ready",
-                STARTUP_READY_PATH,
-                "installed config guard requires NemoClaw PID 1",
-            )
-        return False
+        # The early return above leaves `installed_current` true here.
+        raise GuardError(
+            "startup-not-ready",
+            STARTUP_READY_PATH,
+            "installed config guard requires NemoClaw PID 1",
+        )
     # Source injected into an older image retains compatibility until that
     # image explicitly opts in. The trusted installed helper requires the
     # protocol from its very first exec, closing the pre-revoke boot race.
@@ -1479,7 +1478,11 @@ def _reconfirm_startup_failure_recovery(action: Action, identity: Identity) -> N
 
 
 def _run_state_dir_guard(
-    action: str, config_dir: str, plan_json: str, mutation_lock_fd: int
+    action: str,
+    config_dir: str,
+    plan_json: str,
+    mutation_lock_fd: int,
+    deadline: float,
 ) -> None:
     """Run the recursive state-dir guard under this process's mutation mutex.
 
@@ -1492,6 +1495,13 @@ def _run_state_dir_guard(
             "state-dir-guard-missing",
             INSTALLED_STATE_DIR_GUARD,
             "recursive state guard is required for failed-startup recovery",
+        )
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise GuardError(
+            "state-dir-transition-timeout",
+            config_dir,
+            f"no recovery budget left for state-dir {action}",
         )
     try:
         completed = subprocess.run(  # noqa: S603
@@ -1509,7 +1519,7 @@ def _run_state_dir_guard(
             ],
             capture_output=True,
             text=True,
-            timeout=STATE_DIR_GUARD_TIMEOUT_SECONDS,
+            timeout=remaining,
             check=False,
             pass_fds=(mutation_lock_fd,),
         )
@@ -1517,7 +1527,7 @@ def _run_state_dir_guard(
         raise GuardError(
             "state-dir-transition-timeout",
             config_dir,
-            f"state-dir {action} exceeded the {STATE_DIR_GUARD_TIMEOUT_SECONDS}s timeout",
+            f"state-dir {action} exceeded the remaining recovery budget",
         ) from exc
     except subprocess.SubprocessError as exc:
         raise GuardError(
@@ -1543,10 +1553,16 @@ def _run_failed_startup_unlock(
     *,
     quarantine_untrusted: bool,
 ) -> None:
-    """Unseal both OpenClaw state layers or restore their locked posture."""
+    """Unseal both OpenClaw state layers or restore their locked posture.
+
+    One deadline covers the unseal and its rollback, so a slow unseal cannot
+    leave the relock without budget, and neither can outlast the host.
+    """
+
+    deadline = time.monotonic() + STATE_DIR_GUARD_TIMEOUT_SECONDS
 
     try:
-        _run_state_dir_guard("unlock", config_dir, plan_json, mutation_lock_fd)
+        _run_state_dir_guard("unlock", config_dir, plan_json, mutation_lock_fd, deadline)
         _transition(
             "unlock",
             opened,
@@ -1560,7 +1576,7 @@ def _run_failed_startup_unlock(
         except (GuardError, OSError) as rollback_exc:
             rollback_errors.append(f"config lock: {rollback_exc}")
         try:
-            _run_state_dir_guard("lock", config_dir, plan_json, mutation_lock_fd)
+            _run_state_dir_guard("lock", config_dir, plan_json, mutation_lock_fd, deadline)
         except (GuardError, OSError) as rollback_exc:
             rollback_errors.append(f"state-dir lock: {rollback_exc}")
 
