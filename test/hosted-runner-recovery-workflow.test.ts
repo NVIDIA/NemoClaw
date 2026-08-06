@@ -115,7 +115,7 @@ describe("hosted-runner recovery workflow boundary", () => {
       "github.event.workflow_run.head_branch == 'main'",
       "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
       "github.event.workflow_run.path == '.github/workflows/e2e.yaml'",
-      "github.event.workflow_run.event == 'schedule'",
+      "github.event.workflow_run.event == 'push'",
       "github.event.workflow_run.event == 'workflow_dispatch'",
       "github.event.workflow_run.display_title == 'E2E main'",
       "github.event.workflow_run.event == 'push'",
