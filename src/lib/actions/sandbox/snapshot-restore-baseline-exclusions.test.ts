@@ -9,6 +9,16 @@ beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
 
 describe("runSandboxSnapshot restore: baseline exclusions", () => {
+  it("preserves the nullable production baseline resolver contract", () => {
+    expect(f.resolveAgentBaselinePolicyMock(undefined)).toBeNull();
+    expect(f.resolveAgentBaselinePolicyMock(null)).toBeNull();
+    expect(f.resolveAgentBaselinePolicyMock("openclaw")).toEqual({
+      agent: "openclaw",
+      policyPath: "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+      content: "version: 1\nnetwork_policies: {}\n",
+    });
+  });
+
   it("creates a clone with the source exclusions applied to its live policy (#7178)", async () => {
     const exclusion = {
       version: 1 as const,

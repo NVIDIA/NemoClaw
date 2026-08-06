@@ -4,13 +4,13 @@
 export function resolveTestAgentBaselinePolicy(
   agent: string | null | undefined,
 ): { agent: string; policyPath: string; content: string } | null {
-  const resolvedAgent = agent || "openclaw";
+  if (!agent) return null;
   return {
-    agent: resolvedAgent,
+    agent,
     policyPath:
-      resolvedAgent === "openclaw"
+      agent === "openclaw"
         ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
-        : `/repo/agents/${resolvedAgent}/policy-additions.yaml`,
+        : `/repo/agents/${agent}/policy-additions.yaml`,
     content: "version: 1\nnetwork_policies: {}\n",
   };
 }
