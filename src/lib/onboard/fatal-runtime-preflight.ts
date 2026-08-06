@@ -3,7 +3,11 @@
 
 import { detectGpu, type GpuDetection } from "../inference/nim";
 import { assertDockerBridgeAndContainerDnsHealthy } from "./bridge-dns-preflight";
-import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import {
+  isLinuxDockerDriverGatewayEnabled,
+  isPortableExperimentalProfile,
+} from "./docker-driver-platform";
+import { preparePortableExperimentalHost } from "./experimental/portable-host-preparation";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import {
   assertCdiNvidiaGpuSpecPresent,
@@ -46,17 +50,19 @@ export function rejectUnsupportedContainerRuntime(
   exitProcess: (code: number) => never = exitProcessByDefault,
 ): void {
   if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
+    if (isPortableExperimentalProfile()) return;
     printUnsupportedRuntimeError();
     exitProcess(1);
   }
 }
 
-/** Run the non-mutating runtime gates shared by fresh, resume, and rebuild onboarding. */
+/** Prepare and run the runtime gates shared by fresh, resume, and rebuild onboarding. */
 export function runFatalOnboardRuntimePreflight(
   options: FatalRuntimePreflightOptions,
   context: FatalRuntimePreflightContext,
 ): FatalRuntimePreflightResult {
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
+  preparePortableExperimentalHost(process.env);
   const host = assessHost();
   if (!host.dockerReachable) {
     printDockerNotReachableError();

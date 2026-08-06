@@ -1,0 +1,363 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from "node:crypto";
+import { isIP } from "node:net";
+
+import YAML from "yaml";
+
+import { isPrivateIp, OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
+import {
+  assertEndpointResolvesPublic,
+  type EndpointDnsLookupFn,
+  isOperatorTrustablePrivateIp,
+  isTrustedPrivateEndpointCapability,
+  normalizeTrustedPrivateHost,
+} from "../security/trusted-private-endpoint";
+
+export interface ExternalPolicyPreset {
+  filePath: string;
+  presetName: string;
+  content: string;
+  trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
+  trustedPrivatePinCapability?: TrustedPrivatePolicyPinCapability;
+}
+
+export interface TrustedPrivatePolicyPinReceipt {
+  version: 1;
+  contentDigest: string;
+}
+
+declare const trustedPrivatePolicyPinCapabilityBrand: unique symbol;
+
+export interface TrustedPrivatePolicyPinCapability {
+  readonly receipt: TrustedPrivatePolicyPinReceipt;
+  readonly [trustedPrivatePolicyPinCapabilityBrand]: true;
+}
+
+const TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES = new WeakSet<object>();
+
+export interface TrustedPrivatePolicyPreparationDependencies {
+  lookup?: EndpointDnsLookupFn;
+  /** Command-scoped declarations that must match this exact input batch. */
+  requiredDeclarations?: readonly string[];
+}
+
+type EndpointReference = {
+  endpoint: Record<string, unknown>;
+  host: string;
+};
+
+const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function policyContentDigest(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function createTrustedPrivatePolicyPinReceipt(content: string): TrustedPrivatePolicyPinReceipt {
+  validateTrustedPrivatePinnedContent(content);
+  return { version: 1, contentDigest: policyContentDigest(content) };
+}
+
+function isHostGatewayBridge(host: string): boolean {
+  return host === OPENSHELL_SANDBOX_HOST_BRIDGE;
+}
+
+/**
+ * Re-parse durable generated content before it can regain process-local pin
+ * authority. The digest binds bytes; this check binds semantics and prevents a
+ * crafted registry receipt from admitting loopback, metadata, link-local, or
+ * other reserved destinations. The existing host-gateway bridge exception is
+ * separate reviewed policy authority and is ignored here.
+ */
+function validateTrustedPrivatePinnedContent(content: string): void {
+  let document: unknown;
+  try {
+    document = YAML.parse(content) as unknown;
+  } catch {
+    throw new Error("trusted private policy pin receipt content is not valid YAML");
+  }
+  if (!isObjectRecord(document) || !isObjectRecord(document.network_policies)) {
+    throw new Error("trusted private policy pin receipt content has no network policies");
+  }
+
+  let validatedPinnedEndpoint = false;
+  for (const policy of Object.values(document.network_policies)) {
+    if (!isObjectRecord(policy)) continue;
+    if (Object.prototype.hasOwnProperty.call(policy, "allowed_ips")) {
+      throw new Error("trusted private policy pins must be attached to exact endpoints");
+    }
+    if (!Array.isArray(policy.endpoints)) continue;
+    for (const endpoint of policy.endpoints) {
+      if (
+        !isObjectRecord(endpoint) ||
+        !Object.prototype.hasOwnProperty.call(endpoint, "allowed_ips")
+      ) {
+        continue;
+      }
+      if (typeof endpoint.host !== "string") {
+        throw new Error("trusted private policy pin endpoint has no exact host");
+      }
+      const host = normalizeTrustedPrivateHost(endpoint.host);
+      if (isHostGatewayBridge(host)) continue;
+      if (!Array.isArray(endpoint.allowed_ips) || endpoint.allowed_ips.length === 0) {
+        throw new Error(`trusted private policy endpoint '${host}' has no exact address pins`);
+      }
+      const addresses = endpoint.allowed_ips.map((address) => {
+        if (
+          typeof address !== "string" ||
+          isIP(address) === 0 ||
+          address !== address.toLowerCase()
+        ) {
+          throw new Error(`trusted private policy endpoint '${host}' has a malformed address pin`);
+        }
+        if (isPrivateIp(address) && !isOperatorTrustablePrivateIp(address)) {
+          throw new Error(`trusted private policy endpoint '${host}' has a disallowed address pin`);
+        }
+        return address;
+      });
+      const canonical = [...new Set(addresses)].sort();
+      if (
+        canonical.length !== addresses.length ||
+        canonical.some((address, index) => address !== addresses[index]) ||
+        !addresses.some((address) => isOperatorTrustablePrivateIp(address))
+      ) {
+        throw new Error(`trusted private policy endpoint '${host}' has non-canonical private pins`);
+      }
+      validatedPinnedEndpoint = true;
+    }
+  }
+  if (!validatedPinnedEndpoint) {
+    throw new Error("trusted private policy pin receipt content has no generated private pins");
+  }
+}
+
+function issueTrustedPrivatePolicyPinCapability(
+  receipt: TrustedPrivatePolicyPinReceipt,
+): TrustedPrivatePolicyPinCapability {
+  const capability = Object.freeze({
+    receipt: Object.freeze({ ...receipt }),
+  }) as unknown as TrustedPrivatePolicyPinCapability;
+  TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES.add(capability);
+  return capability;
+}
+
+/** Validate and clone the durable receipt bound to generated policy content. */
+export function normalizeTrustedPrivatePolicyPinReceipt(
+  content: string,
+  value: unknown,
+): TrustedPrivatePolicyPinReceipt | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isObjectRecord(value) ||
+    value.version !== 1 ||
+    typeof value.contentDigest !== "string" ||
+    !SHA256_DIGEST_PATTERN.test(value.contentDigest) ||
+    Object.keys(value).some((key) => key !== "version" && key !== "contentDigest") ||
+    value.contentDigest !== policyContentDigest(content)
+  ) {
+    throw new Error("trusted private policy pin receipt does not match its exact content");
+  }
+  validateTrustedPrivatePinnedContent(content);
+  return { version: 1, contentDigest: value.contentDigest };
+}
+
+/** True when a durable receipt is valid for this exact generated content. */
+export function hasTrustedPrivatePolicyPinReceipt(content: string, value: unknown): boolean {
+  try {
+    return normalizeTrustedPrivatePolicyPinReceipt(content, value) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** True only for process-local authority issued for this exact policy content. */
+export function isTrustedPrivatePolicyPinCapability(
+  content: string,
+  value: unknown,
+): value is TrustedPrivatePolicyPinCapability {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES.has(value) &&
+    hasTrustedPrivatePolicyPinReceipt(content, (value as TrustedPrivatePolicyPinCapability).receipt)
+  );
+}
+
+/**
+ * Reissue process-local authority from a validated durable registry receipt.
+ * The host registry is the operator-approved authority boundary for rebuild;
+ * snapshot content alone is deliberately insufficient to reach this function.
+ */
+export function replayTrustedPrivatePolicyPinCapability(
+  content: string,
+  receipt: unknown,
+): TrustedPrivatePolicyPinCapability {
+  const normalized = normalizeTrustedPrivatePolicyPinReceipt(content, receipt);
+  if (!normalized) throw new Error("trusted private policy pin receipt is missing");
+  return issueTrustedPrivatePolicyPinCapability(normalized);
+}
+
+function endpointUrl(host: string): string {
+  return `https://${isIP(host) === 6 ? `[${host}]` : host}/`;
+}
+
+function collectEndpointReferences(document: unknown): EndpointReference[] {
+  if (!isObjectRecord(document) || !isObjectRecord(document.network_policies)) return [];
+  const references: EndpointReference[] = [];
+  for (const policy of Object.values(document.network_policies)) {
+    if (!isObjectRecord(policy) || !Array.isArray(policy.endpoints)) continue;
+    for (const endpoint of policy.endpoints) {
+      if (!isObjectRecord(endpoint) || typeof endpoint.host !== "string") continue;
+      let host: string;
+      try {
+        host = normalizeTrustedPrivateHost(endpoint.host);
+      } catch {
+        continue;
+      }
+      references.push({ endpoint, host });
+    }
+  }
+  return references;
+}
+
+function normalizeDeclarations(values: readonly string[], rejectDuplicates: boolean): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const host = normalizeTrustedPrivateHost(value);
+    if (seen.has(host) && rejectDuplicates) {
+      throw new Error(
+        `Trusted private host '${host}' was declared more than once after normalization.`,
+      );
+    }
+    if (!seen.has(host)) {
+      seen.add(host);
+      normalized.push(host);
+    }
+  }
+  return normalized;
+}
+
+/**
+ * Inject exact, validated private-address pins into already-validated custom
+ * policy presets. User-authored content remains untrusted: only a
+ * provenance-checked capability issued by the shared preflight can produce
+ * `allowed_ips` entries.
+ */
+export async function prepareTrustedPrivatePolicyPresets(
+  presets: readonly ExternalPolicyPreset[],
+  declarations: readonly string[],
+  dependencies: TrustedPrivatePolicyPreparationDependencies = {},
+): Promise<ExternalPolicyPreset[]> {
+  if (declarations.length === 0) return presets.map((preset) => ({ ...preset }));
+
+  const trustedHosts = normalizeDeclarations(declarations, false);
+  const requiredHosts = normalizeDeclarations(
+    dependencies.requiredDeclarations ?? declarations,
+    true,
+  );
+  const requiredHostSet = new Set(requiredHosts);
+  const parsedPresets = presets.map((preset) => {
+    const document = YAML.parse(preset.content) as unknown;
+    if (!isObjectRecord(document)) {
+      throw new Error(`Preset '${preset.presetName}' is not a YAML mapping.`);
+    }
+    const references = collectEndpointReferences(document);
+    for (const { endpoint, host } of references) {
+      if (
+        Object.prototype.hasOwnProperty.call(endpoint, "allowed_ips") &&
+        !isHostGatewayBridge(host)
+      ) {
+        throw new Error(
+          `Preset '${preset.presetName}' contains user-authored allowed_ips, which is not permitted.`,
+        );
+      }
+    }
+    return { preset, document, references, injectedEndpoints: new Set<Record<string, unknown>>() };
+  });
+
+  const referencesByHost = new Map<string, EndpointReference[]>();
+  for (const host of trustedHosts) referencesByHost.set(host, []);
+  for (const { references } of parsedPresets) {
+    for (const reference of references) {
+      referencesByHost.get(reference.host)?.push(reference);
+    }
+  }
+
+  for (const host of requiredHosts) {
+    if ((referencesByHost.get(host)?.length ?? 0) === 0) {
+      throw new Error(
+        `Trusted private host '${host}' does not match an endpoint in the custom preset input.`,
+      );
+    }
+  }
+  for (const [host, references] of referencesByHost) {
+    if (references.length === 0) continue;
+    const result = await assertEndpointResolvesPublic(endpointUrl(host), dependencies.lookup, {
+      trustedPrivateHosts: [host],
+    });
+    if (!result.ok) {
+      throw new Error(
+        `Trusted private host '${host}' failed destination preflight: ${result.reason ?? "validation failed"}.`,
+      );
+    }
+    if (!isTrustedPrivateEndpointCapability(result.trustedPrivateCapability)) {
+      if (requiredHostSet.has(host)) {
+        throw new Error(
+          `Trusted private host '${host}' did not resolve to an operator-trustable private address.`,
+        );
+      }
+      continue;
+    }
+    const resolvedPins = [
+      ...new Set(
+        (result.addresses?.length
+          ? result.addresses
+          : result.trustedPrivateCapability.addresses
+        ).map((address) => address.toLowerCase()),
+      ),
+    ].sort();
+    const capabilityPins = [...result.trustedPrivateCapability.addresses]
+      .map((address) => address.toLowerCase())
+      .sort();
+    if (
+      resolvedPins.length !== capabilityPins.length ||
+      resolvedPins.some((address, index) => address !== capabilityPins[index])
+    ) {
+      throw new Error(
+        `Trusted private host '${host}' returned mixed public and private addresses. Trusted-private policy endpoints must resolve only to supported routed private addresses.`,
+      );
+    }
+    const pins = capabilityPins;
+    if (pins.length === 0) {
+      throw new Error(`Trusted private host '${host}' produced no validated address pins.`);
+    }
+    for (const { endpoint } of references) {
+      endpoint.allowed_ips = [...pins];
+      for (const parsedPreset of parsedPresets) {
+        if (parsedPreset.references.some((reference) => reference.endpoint === endpoint)) {
+          parsedPreset.injectedEndpoints.add(endpoint);
+          break;
+        }
+      }
+    }
+  }
+
+  return parsedPresets.map(({ preset, document, injectedEndpoints }) => {
+    const content = YAML.stringify(document);
+    const injectedPins = injectedEndpoints.size > 0;
+    if (!injectedPins) return { ...preset, content };
+    const trustedPrivatePins = createTrustedPrivatePolicyPinReceipt(content);
+    return {
+      ...preset,
+      content,
+      trustedPrivatePins,
+      trustedPrivatePinCapability: issueTrustedPrivatePolicyPinCapability(trustedPrivatePins),
+    };
+  });
+}

@@ -44,10 +44,10 @@ describe("built-in channel manifests", () => {
     ).toEqual(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [manifest.id, true]));
   });
 
-  it("limits the WhatsApp live-health hook to its OpenClaw status contract", () => {
+  it("limits the WhatsApp status hook to OpenClaw live health and Hermes session-location checks", () => {
     const whatsapp = BUILT_IN_CHANNEL_MANIFESTS.find((manifest) => manifest.id === "whatsapp");
     const statusHealth = whatsapp?.hooks.find((hook) => hook.id === "whatsapp-status-health");
-    expect(statusHealth?.agents).toEqual(["openclaw"]);
+    expect(statusHealth?.agents).toEqual(["openclaw", "hermes"]);
   });
 
   it("keeps rendered config parser keys limited to manifest config inputs", () => {

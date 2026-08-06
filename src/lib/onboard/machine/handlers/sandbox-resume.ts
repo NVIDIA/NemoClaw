@@ -21,6 +21,7 @@ export interface SandboxResumeSignals {
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
+  readonly recreateJournalHandoff?: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly observabilityChanged?: boolean;
@@ -269,8 +270,33 @@ function runtimeConfigurationResumeDecision(
   return null;
 }
 
+function continuesJournaledRecreate(signals: SandboxResumeSignals): boolean {
+  return (
+    signals.resume &&
+    (signals.sandboxReuseState === "missing" || signals.sandboxReuseState === "not_ready") &&
+    signals.recreateSandboxRequested &&
+    Boolean(signals.recreateJournalHandoff)
+  );
+}
+
+function requiresUnownedNotReadyRepair(signals: SandboxResumeSignals): boolean {
+  return (
+    signals.sandboxReuseState === "not_ready" &&
+    signals.recreateSandboxRequested &&
+    !signals.recreateJournalHandoff
+  );
+}
+
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
+  if (continuesJournaledRecreate(signals)) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    };
+  }
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  if (requiresUnownedNotReadyRepair(signals)) return { kind: "repair-and-recreate" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;
   if (canReuseSandbox(signals)) return { kind: "reuse" };

@@ -24,6 +24,7 @@ import {
   recoverManagedBootstrapTransactions,
 } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
+import { createDockerManagedBootstrapAuthorityStore } from "./docker-authority-store";
 import type {
   ManagedBootstrapRuntimeCompatibilityLaunchInput,
   ManagedBootstrapRuntimeCreateLaunchResult,
@@ -119,7 +120,9 @@ function createDockerLifecycle(
         }
       : {}),
   });
-  const adapter = input.adapterOverride ?? createDockerManagedBootstrapAdapter(input.dependencies);
+  const adapter =
+    input.adapterOverride ??
+    createDockerManagedBootstrapAdapter({ ...input.dependencies, stateRoot: input.stateRoot });
   const createPlan = {
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandboxName: input.sandboxName,
@@ -277,13 +280,14 @@ function createDockerOnboardRouting(input: ManagedBootstrapRuntimeOnboardRouting
   };
 }
 
-/** Candidate Docker surface. Production activation remains a later qualification slice. */
+/** Complete Docker bootstrap surface selected only through a runtime bundle. */
 export function createDockerManagedBootstrapSurface(
   providerId = "docker",
 ): SupportedBootstrapSurface {
   return {
     providerId,
     supported: true,
+    createAuthorityStore: ({ stateRoot }) => createDockerManagedBootstrapAuthorityStore(stateRoot),
     createLifecycle: (input) => createDockerLifecycle(providerId, input),
     createOnboardRouting: createDockerOnboardRouting,
   };
