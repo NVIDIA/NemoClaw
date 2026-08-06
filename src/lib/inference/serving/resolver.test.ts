@@ -195,17 +195,22 @@ function readinessSources(): ManagedInferenceReadinessSource[] {
 
 function storageRemediableReadinessReport(
   extraFindings: SystemReadinessReport["findings"] = [],
+  preset: ManagedInferenceServingPreset = shippedPreset(),
 ): SystemReadinessReport {
-  const report = readinessReport();
+  const report = readinessReport({}, preset);
   return {
     ...report,
     capabilities: [
       ...report.capabilities.map((capability) =>
         capability.id === "host.docker.storage_compatible"
           ? { ...capability, state: "absent" as const }
-          : capability,
+          : capability.id === "host.docker.storage_remediation_available"
+            ? { ...capability, state: "present" as const }
+            : capability,
       ),
-      { id: "host.docker.storage_remediation_available", state: "present" },
+      ...(report.capabilities.some(({ id }) => id === "host.docker.storage_remediation_available")
+        ? []
+        : [{ id: "host.docker.storage_remediation_available", state: "present" as const }]),
     ],
     findings: [
       {
@@ -628,6 +633,11 @@ describe("managed inference resolver", () => {
       ["at-least", "host.gpu.count", 0],
       ["version-at-least", "host.gpu.driver_version", "579.99.0"],
       ["malformed version-at-least", "host.gpu.driver_version", "580.65.x"],
+      [
+        "version segment above Number.MAX_SAFE_INTEGER",
+        "host.gpu.driver_version",
+        "9007199254740992.1",
+      ],
     ] as const;
     for (const [caseName, id, value] of nonmatchingObservations) {
       const rejectedReports = reports.map(({ nodeId, report }, index) => ({
@@ -826,12 +836,14 @@ describe("managed inference resolver", () => {
 
   it("admits a storage conflict that the public lifecycle can remediate (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
-    const presetId = catalog.presets[0]!.metadata.id;
+    const preset = catalog.presets[0]!;
     const result = resolveManagedInferenceServing(
       {
-        readinessReports: [{ nodeId: "spark-head", report: storageRemediableReadinessReport() }],
+        readinessReports: [
+          { nodeId: "spark-head", report: storageRemediableReadinessReport([], preset) },
+        ],
         topologyQualifications: [],
-        intent: { preset: presetId },
+        intent: { preset: preset.metadata.id },
         now: NOW,
       },
       catalog,

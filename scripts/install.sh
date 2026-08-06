@@ -3769,7 +3769,7 @@ validate_station_express_resume_sandbox() {
 
 validate_station_express_resume_policy_tier() {
   case "${1:-}" in
-    restricted | balanced | open) return 0 ;;
+    restricted | balanced | open | personal) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -4804,6 +4804,10 @@ describe_express_install() {
     open)
       policy_summary="base sandbox policy plus broad third-party presets"
       policy_summary="${policy_summary}, and local-inference access when needed"
+      ;;
+    personal)
+      policy_summary="base sandbox policy plus TCP egress from every sandbox binary to public and private address ranges on destination ports 80 and 443"
+      policy_summary="${policy_summary} (excluding unspecified, loopback, and link-local ranges), every maintained applicable preset, and local-inference access when needed"
       ;;
     *)
       policy_summary="base sandbox policy plus tier presets supported by the active agent"

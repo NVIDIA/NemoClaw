@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Troubleshoot MCP Servers"
 sidebar-title: "Troubleshoot MCP Servers"
-description: "Diagnose managed MCP credential resolution, incomplete transactions, capability gaps, policy drift, and lifecycle-lock failures."
-description-agent: "Provides symptom-based remediation for NemoClaw-managed MCP servers. Use when mcp add, status, restart, remove, rebuild, or destroy does not converge."
-keywords: ["troubleshoot nemoclaw mcp", "mcp credential resolution", "mcp policy drift", "mcp transaction"]
+description: "Diagnose managed MCP credential resolution, DNS pin drift, incomplete transactions, capability gaps, policy drift, and lifecycle-lock failures."
+description-agent: "Provides symptom-based remediation for NemoClaw-managed MCP servers, including trusted private endpoints. Use when mcp add, status, restart, remove, rebuild, or destroy does not converge."
+keywords: ["troubleshoot nemoclaw mcp", "mcp credential resolution", "mcp dns pin drift", "mcp policy drift", "mcp transaction"]
 content:
   type: "troubleshooting"
 ---
@@ -180,16 +180,57 @@ Before a credential or provider side effect, the MCP command loads the exact gen
 
 A runtime that rejects `protocol: mcp` therefore fails closed.
 
-## Local or Plain-HTTP MCP URL Is Rejected
+## Private or Plain-HTTP MCP URL Is Rejected
 
-If `$$nemoclaw <sandbox> mcp add` rejects a `http://` or local URL and requires HTTPS, this is the managed registration boundary, not a Hermes-specific limitation.
-Managed `mcp add` enforces HTTPS, a publicly reachable endpoint, and pinned egress policy the same way for OpenClaw, Hermes, and Deep Agents Code so OpenShell forwards the bearer credential over TLS.
+If `$$nemoclaw <sandbox> mcp add` rejects an `http://` URL, use HTTPS before you retry.
+This requirement applies to OpenClaw, Hermes, and Deep Agents Code so OpenShell forwards the bearer credential over TLS.
+
+If the endpoint resolves to RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, add its exact host with `--trusted-private-host`.
+The declared host must equal the normalized hostname from `--url`.
+NemoClaw rejects a private endpoint without that explicit declaration before provider, policy, registry, or adapter mutation.
 
 An agent-native registration path, such as OpenClaw `mcporter` run inside the sandbox, may accept a plain-HTTP or local URL, but it bypasses NemoClaw credential replacement and generated egress policy.
 A URL that the agent-native path accepts is therefore not registrable through managed `mcp add`.
 
-For local development, expose the MCP server over HTTPS on a publicly reachable endpoint — a public hostname or IP address with public address records — then register it with `$$nemoclaw <sandbox> mcp add`.
+For a host-local server, keep the MCP process on loopback when practical.
+Place an operator-managed HTTPS reverse proxy on a stable private address that the OpenShell gateway can route to.
+The certificate must match the original endpoint hostname and chain to a trust root available to the managed runtime.
+For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rebuild the existing sandbox after setting it.
+The managed image installs that CA for both the OpenShell upstream proxy and sandbox TLS clients.
+Restrict the proxy listener to the OpenShell gateway or required deployment subnet with host firewall rules.
+
+Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
+Sandbox loopback is not the host service, and `--trusted-private-host` does not create a route to it.
+Use a DNS hostname for an IPv6 unique local address.
+OpenShell `v0.0.85` cannot represent a direct IPv6 literal proxy target.
 See [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for the full endpoint requirements.
+
+## DNS Pins Drift
+
+If `mcp status <server>` reports `private address pins: drift`, review the endpoint address change before updating access.
+Status, restart, rebuild, and restore do not add the new addresses.
+
+Remove and re-add the server with the same exact trusted host to perform a new preflight and record new pins:
+
+```bash
+export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw <sandbox> mcp remove <server>
+$$nemoclaw <sandbox> mcp add <server> \
+  --url https://mcp-host.corp.example/mcp \
+  --env LOCAL_MCP_TOKEN \
+  --trusted-private-host mcp-host.corp.example
+unset LOCAL_MCP_TOKEN
+```
+
+A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
+Do not add a provider's complete address range or broaden the policy to bypass the denial.
+
+Cloudflare Quick Tunnels rotate public edge addresses and are not durable for exact address pinning.
+A named tunnel can keep one hostname while its resolved addresses still change.
+Use stable private DNS and a routed private HTTPS endpoint for a host-local MCP server.
+
+If status reports matching pins but the request still receives `CONNECT 403`, inspect the OpenShell policy and audit logs.
+Do not treat matching DNS pins as evidence that the path, method, adapter identity, or provider attachment also matches.
 
 ## Lifecycle Lock Times Out
 
