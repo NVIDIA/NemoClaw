@@ -4,11 +4,9 @@
 /**
  * Acknowledgement package contract for `policy restore`.
  *
- * Both paths that stop before the mutation must say so. Declining the
- * confirmation exited 0 with no output, so an operator could not tell a
- * cancelled restore from a command that did nothing. The
- * `NEMOCLAW_NON_INTERACTIVE=1` guard exited 1 without the usage line that the
- * stdin-EOF guard prints, so the two refusals disagreed on what to do next.
+ * Declining confirmation must report cancellation so the operator knows no
+ * mutation occurred. A non-interactive refusal must print the same usage line
+ * as the prompt EOF path.
  *
  * These tests drive the compiled CLI (`dist/nemoclaw.js`) over a real stdin
  * pipe. The helper stubs registry and baseline lookups. It replaces
