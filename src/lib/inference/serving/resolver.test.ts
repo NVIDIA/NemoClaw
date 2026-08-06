@@ -837,14 +837,13 @@ describe("managed inference resolver", () => {
   it("admits a storage conflict that the public lifecycle can remediate (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
     const preset = catalog.presets[0]!;
-    const presetId = preset.metadata.id;
     const result = resolveManagedInferenceServing(
       {
         readinessReports: [
           { nodeId: "spark-head", report: storageRemediableReadinessReport([], preset) },
         ],
         topologyQualifications: [],
-        intent: { preset: presetId },
+        intent: { preset: preset.metadata.id },
         now: NOW,
       },
       catalog,

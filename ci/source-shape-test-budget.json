@@ -148,6 +148,11 @@
     },
     {
       "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test": "binds the cleanup action and helper content to the pinned commit",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
       "test": "binds the composite action and helper to their immutable reviewed revision (#6961)",
       "category": "security"
     },
@@ -279,6 +284,11 @@
     {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "routes only the measured heavy lanes on trusted main (#7145)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
+      "test": "runs as a credential-free exact-head PR workflow",
       "category": "security"
     },
     {
@@ -558,12 +568,12 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
+      "test": "keeps central activation paths disconnected from driver bootstrap adapters",
       "category": "security"
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps registered providers bootstrap-unsupported",
+      "test": "composes Docker bootstrap locally while keeping Kubernetes unsupported",
       "category": "security"
     },
     {

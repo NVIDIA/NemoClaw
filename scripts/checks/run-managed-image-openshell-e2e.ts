@@ -804,6 +804,7 @@ async function run(input: Inputs): Promise<void> {
           terminalAgent: input.agent === "langchain-deepagents-code",
           managedBootstrap: {
             bootstrapIdentity: launch.managedBootstrapIdentity,
+            stateRoot: stateDir,
             runtimeProvider,
             authorityStore: createProtectedAuthorityStore(stateDir),
             request: launch.managedStartupRootApplyRequest,
