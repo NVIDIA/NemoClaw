@@ -155,12 +155,15 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     expect(argv).toContain("--gpus");
   });
 
-  it("uses an arch-correct CUDA sample image (not the amd64-only nbody) on this ARM64 path", () => {
+  it("uses the approved immutable multi-architecture CUDA sample image on this ARM64 path", () => {
     // The proof only runs on ARM64, so the image must ship a real aarch64 CUDA
     // binary. `cuda-sample:nbody` packs an x86-64 binary in its arm64 tag and
     // fails with `exec format error` on the N1X target (#4565); the chosen
     // vectorAdd image ships a genuine aarch64 binary.
-    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("cuda-sample:vectoradd");
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toBe(
+      "docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41",
+    );
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).not.toContain("vectoradd-cuda12.5.0");
     expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).not.toContain("nbody");
   });
 

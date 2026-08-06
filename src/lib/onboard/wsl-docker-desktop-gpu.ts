@@ -11,13 +11,15 @@ const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
 // so the proof image MUST ship a real aarch64 CUDA binary. The older
 // `cuda-sample:nbody` image is unusable here: its arm64 manifest entry actually
 // contains an x86-64 ELF, so on the N1X Windows-ARM target it fails with
-// `exec /cuda-samples/sample: exec format error` (#4565). `vectoradd-cuda12.5.0`
-// ships a genuine aarch64 binary and runs a real CUDA kernel (device alloc +
-// add + result verification), which is a strong usability proof that still
-// fails closed on the Snapdragon nvidia-smi shim (no usable CUDA device, #3988).
-// The image's entrypoint runs vectorAdd directly, so no trailing args are needed.
+// `exec /cuda-samples/sample: exec format error` (#4565). The immutable
+// vectorAdd manifest below contains both linux/amd64 and linux/arm64 images; its
+// ARM64 image ships a genuine aarch64 binary and runs a real CUDA kernel (device
+// alloc + add + result verification), which is a strong usability proof that
+// still fails closed on the Snapdragon nvidia-smi shim (no usable CUDA device,
+// #3988). The image's entrypoint runs vectorAdd directly, so no trailing args
+// are needed.
 export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND =
-  "docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0";
+  "docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41";
 
 // The proof runs a real CUDA workload and may first pull the CUDA sample image,
 // so it is bounded generously (3 min) rather than with the 30s detection

@@ -810,7 +810,7 @@ Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the 
 The workload uses this command:
 
 ```bash
-docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41
 ```
 
 The run is bounded to 3 minutes.
@@ -2690,7 +2690,7 @@ nvidia-ctk cdi list
 On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
 
 ```bash
-docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
