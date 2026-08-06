@@ -228,6 +228,17 @@ def _validate_matrix(matrix: dict) -> None:
                 f"ci/platform-matrix.json: {section}[{idx}] missing required keys: {missing}"
             )
 
+    def _check_platform_runtimes(idx: int, runtimes: object) -> None:
+        if (
+            not isinstance(runtimes, list)
+            or not runtimes
+            or any(not isinstance(runtime, str) or runtime.strip() == "" for runtime in runtimes)
+        ):
+            raise ValueError(
+                f"ci/platform-matrix.json: platforms[{idx}].runtimes must be a "
+                "non-empty list of non-empty strings"
+            )
+
     sections = {
         "platforms": ("name", "runtimes", "status", "notes"),
         "providers": ("name", "status", "endpoint_type", "notes"),
@@ -254,6 +265,8 @@ def _validate_matrix(matrix: dict) -> None:
     for section, keys in sections.items():
         for idx, entry in enumerate(matrix[section]):
             _require_keys(section, idx, entry, keys)
+            if section == "platforms":
+                _check_platform_runtimes(idx, entry["runtimes"])
             _check_status(section, idx, entry["status"])
 
     owners = matrix.get("owners") or {}

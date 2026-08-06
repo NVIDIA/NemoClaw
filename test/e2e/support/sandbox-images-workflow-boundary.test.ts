@@ -153,6 +153,27 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("requires the canonical no-CA Hermes build and its default-trust image proof", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const build = producer.steps!.find((step) => step.name === "Build Hermes production image")!;
+    build.with!["build-args"] = `${build.with!["build-args"]}\nNEMOCLAW_CORPORATE_CA_B64=test`;
+    const proof = producer.steps!.find(
+      (step) => step.name === "Verify Hermes default-trust final image",
+    )!;
+    proof.run = proof.run!.replace(
+      "test ! -e /usr/local/share/nemoclaw/corporate-ca.pem",
+      "test -e /usr/local/share/nemoclaw/corporate-ca.pem",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+        "Hermes producer must prove the no-CA final image uses default trust before completed-image scans",
+      ]),
+    );
+  });
+
   it("rejects non-canonical Hermes Buildx action pins", () => {
     for (const stepName of ["Set up Docker Buildx", "Build Hermes production image"]) {
       const { imageWorkflow, mainWorkflow } = readWorkflows();
@@ -537,10 +558,20 @@ describe("sandbox image workflow boundary", () => {
     const hermes = probe.steps!.find(
       (step) => step.name === "Build and verify Hermes messaging plan boundary",
     )!;
-    hermes.run = hermes.run!.replace(
-      "check-messaging-plan-image-boundary.mts verify",
-      "check-messaging-plan-image-boundary.mts bypass",
-    );
+    hermes.run = hermes
+      .run!.replace(
+        'scripts/check-production-build-args.sh "${build_args[@]}"',
+        'echo "guard bypassed"',
+      )
+      .replace(
+        '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
+        '--build-arg "NEMOCLAW_CORPORATE_CA_B64="',
+      )
+      .replace("crl2pkcs7 -nocrl", "version")
+      .replace(
+        "check-messaging-plan-image-boundary.mts verify",
+        "check-messaging-plan-image-boundary.mts bypass",
+      );
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
@@ -549,9 +580,100 @@ describe("sandbox image workflow boundary", () => {
         "messaging plan image boundary must set up Node exactly once",
         "messaging plan image boundary must use Node 22.19.0",
         'openclaw messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        'hermes messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        'hermes messaging plan image boundary must include --build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
+        "hermes messaging plan image boundary must include docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null",
         "hermes messaging plan image boundary must include node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify nemoclaw-hermes-plan-boundary hermes",
         "messaging plan image boundary must not publish probe image artifacts",
       ]),
+    );
+  });
+
+  it("requires the exact compact CA root helper invocation", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = hermes.run!.replace(
+      "select-ci-endpoint-ca-roots.mts",
+      "select-ci-endpoint-ca-roots.mts --endpoint registry.example.invalid",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      'hermes messaging plan image boundary must include exactly node --experimental-strip-types scripts/checks/select-ci-endpoint-ca-roots.mts --output "$compact_ca_bundle"',
+    );
+  });
+
+  it("rejects direct base64 encoding of the broad system CA bundle", () => {
+    for (const forbidden of [
+      'forbidden_ca_b64="$(base64 -w 0 "$system_ca_bundle")"',
+      [
+        "corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt",
+        'forbidden_ca_b64="$(base64 -w 0 "$corporate_ca_bundle")"',
+      ].join("\n"),
+    ]) {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
+      const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+        (step) => step.name === "Build and verify Hermes messaging plan boundary",
+      )!;
+      hermes.run = `${hermes.run}\n${forbidden}`;
+
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+        "hermes messaging plan image boundary must not encode the system CA bundle directly",
+      );
+    }
+  });
+
+  it("requires offline equality and parse proofs for the installed Hermes CA bundle", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = hermes
+      .run!.replace(
+        'test "$installed_ca_sha256" = "$corporate_ca_sha256"',
+        'test -n "$installed_ca_sha256"',
+      )
+      .replace("crl2pkcs7 -nocrl", "version");
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        'hermes messaging plan image boundary must include test "$installed_ca_sha256" = "$corporate_ca_sha256"',
+        "hermes messaging plan image boundary must include docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null",
+      ]),
+    );
+  });
+
+  it("requires the Hermes build guard before the build and offline CA proofs", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    const guard = 'scripts/check-production-build-args.sh "${build_args[@]}"';
+    hermes.run = `${hermes.run!.replace(guard, "")}\n${guard}`;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "hermes messaging plan image boundary steps are out of order",
+        "hermes messaging plan image boundary CA fixture steps are out of order",
+      ]),
+    );
+  });
+
+  it("rejects the Hermes CA build argument after the image build", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    const buildArg = '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"';
+    const buildCommand = 'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary .';
+    expect(hermes.run).toContain(buildArg);
+    hermes.run = hermes
+      .run!.replace(buildArg, "")
+      .replace(buildCommand, `${buildCommand}\n${buildArg}`);
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "hermes messaging plan image boundary CA fixture steps are out of order",
     );
   });
 
