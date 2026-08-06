@@ -314,7 +314,9 @@ async function waitForChildlessStartup(
     ["exec", "--user", "0", containerId, "kill", "-TERM", String(startupPid)],
     { artifactName: "phase-12-terminate-startup-child", timeoutMs: 30_000 },
   );
-  expect(terminate.exitCode, resultText(terminate)).toBe(0);
+  if (terminate.exitCode !== 0 && !/no such process/i.test(resultText(terminate))) {
+    expect(terminate.exitCode, resultText(terminate)).toBe(0);
+  }
 
   let lastCensus: StartupCensus | undefined;
   for (let attempt = 1; attempt <= 20; attempt += 1) {

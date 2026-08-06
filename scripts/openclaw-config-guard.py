@@ -1575,7 +1575,12 @@ def _run_failed_startup_unlock(
     except (GuardError, OSError) as exc:
         rollback_errors: list[str] = []
         try:
-            _transition("lock", opened, identity)
+            _transition(
+                "lock",
+                opened,
+                identity,
+                quarantine_untrusted=quarantine_untrusted,
+            )
         except (GuardError, OSError) as rollback_exc:
             rollback_errors.append(f"config lock: {rollback_exc}")
         try:
@@ -3680,7 +3685,11 @@ def _transition(
         freeze_started = False
         try:
             freeze_started = True
-            _freeze(opened, identity)
+            _freeze(
+                opened,
+                identity,
+                quarantine_reserved=quarantine_untrusted,
+            )
             _settle_pending_transaction_for_lock(opened, identity)
             _repair_absent_hash_for_lock(opened, identity)
             source = _snapshot_raw_pair(opened)
@@ -3725,7 +3734,11 @@ def _transition(
     _verify_locked_posture(opened, pair, identity, allow_blocking_flags=True)
     snapshots: list[FileSnapshot] = []
     try:
-        _freeze(opened, identity)
+        _freeze(
+            opened,
+            identity,
+            quarantine_reserved=quarantine_untrusted,
+        )
         snapshots.extend(_snapshot_pair(opened))
         targets, _digest = _canonical_targets(
             (snapshots[0], snapshots[1]), identity, locked=False

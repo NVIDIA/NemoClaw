@@ -148,9 +148,32 @@ try:
 except guard.GuardError as error:
     timeout_code = error.code
 
+freeze_flags = []
+def capture_freeze(_opened, _identity, **kwargs):
+    freeze_flags.append(kwargs.get("quarantine_reserved"))
+    raise guard.GuardError("injected-freeze-stop", guard.PRODUCTION_CONFIG_DIR, "stop")
+
+guard._freeze = capture_freeze
+guard._has_clamped_locked_dir_posture = lambda _opened, _identity: False
+guard._has_locked_dir_posture = lambda _opened, _identity: False
+guard._force_fail_closed_lock = lambda _opened, _identity: []
+try:
+    guard._transition("lock", object(), object(), quarantine_untrusted=True)
+except guard.GuardError as error:
+    assert error.code == "injected-freeze-stop"
+
+guard._is_mutable_dir_posture = lambda _opened, _identity: False
+guard._snapshot_pair = lambda _opened: (object(), object())
+guard._verify_locked_posture = lambda *_args, **_kwargs: None
+guard._restore_originals = lambda _opened, _snapshots, _identity: []
+try:
+    guard._transition("unlock", object(), object(), quarantine_untrusted=True)
+except guard.GuardError as error:
+    assert error.code == "injected-freeze-stop"
+
 events = []
-def transition(action, _opened, _identity, **_kwargs):
-    events.append(f"config-{action}")
+def transition(action, _opened, _identity, **kwargs):
+    events.append(f"config-{action}-quarantine-{kwargs.get('quarantine_untrusted')}")
     if action == "unlock":
         raise guard.MutableHandoffError(
             "mutable-handoff-incomplete", guard.PRODUCTION_CONFIG_DIR, "handoff failed"
@@ -166,7 +189,7 @@ guard._transition = transition
 guard._run_state_dir_guard = state_dir
 try:
     guard._run_failed_startup_unlock(
-        object(), object(), guard.PRODUCTION_CONFIG_DIR, "{}", 91, quarantine_untrusted=False
+        object(), object(), guard.PRODUCTION_CONFIG_DIR, "{}", 91, quarantine_untrusted=True
     )
 except guard.GuardError as error:
     transaction_error = {
@@ -175,8 +198,8 @@ except guard.GuardError as error:
     }
 
 timeout_events = []
-def timeout_transition(action, _opened, _identity, **_kwargs):
-    timeout_events.append(f"config-{action}")
+def timeout_transition(action, _opened, _identity, **kwargs):
+    timeout_events.append(f"config-{action}-quarantine-{kwargs.get('quarantine_untrusted')}")
 
 def timeout_state_dir(action, _config_dir, _plan_json, lock_fd, _deadline):
     assert lock_fd == 91
@@ -190,7 +213,7 @@ guard._transition = timeout_transition
 guard._run_state_dir_guard = timeout_state_dir
 try:
     guard._run_failed_startup_unlock(
-        object(), object(), guard.PRODUCTION_CONFIG_DIR, "{}", 91, quarantine_untrusted=False
+        object(), object(), guard.PRODUCTION_CONFIG_DIR, "{}", 91, quarantine_untrusted=True
     )
 except guard.GuardError as error:
     timeout_transaction_code = error.code
@@ -199,6 +222,7 @@ print(json.dumps({
     "timeout_code": timeout_code,
     "lock_fd_flag": run_call["command"][-2:],
     "pass_fds": run_call["pass_fds"],
+    "freeze_flags": freeze_flags,
     "events": events,
     "transaction_error": transaction_error,
     "timeout_events": timeout_events,
@@ -287,12 +311,18 @@ describe("OpenClaw failed-startup unlock transaction (#8304)", () => {
       timeout_code: "state-dir-transition-timeout",
       lock_fd_flag: ["--transition-lock-fd", "91"],
       pass_fds: [91],
-      events: ["state-unlock", "config-unlock", "config-lock", "state-lock"],
+      freeze_flags: [true, true],
+      events: [
+        "state-unlock",
+        "config-unlock-quarantine-True",
+        "config-lock-quarantine-True",
+        "state-lock",
+      ],
       transaction_error: {
         code: "mutable-handoff-incomplete",
         detail: "handoff failed; rollback issues: state-dir lock: lock failed",
       },
-      timeout_events: ["state-unlock", "config-lock", "state-lock"],
+      timeout_events: ["state-unlock", "config-lock-quarantine-True", "state-lock"],
       timeout_transaction_code: "state-dir-transition-timeout",
     });
   });
