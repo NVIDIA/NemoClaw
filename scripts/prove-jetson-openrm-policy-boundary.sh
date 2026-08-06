@@ -13,7 +13,7 @@ fi
 printf 'The proof is armed for sandbox %s. Complete the normal onboarding prompts.\n' \
   "$sandbox_name"
 printf 'The sandbox will be rebuilt with the current checkout before the proof runs.\n'
-printf 'When the live replacement returns cuInit(0)=801, NemoClaw will run the one-path A/B before its normal rollback.\n'
+printf 'When the live replacement returns cuInit(0)=801, NemoClaw will run the device/sysfs policy matrix before its normal rollback.\n'
 
 npm run build:cli
 
