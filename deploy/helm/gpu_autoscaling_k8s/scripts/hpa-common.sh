@@ -527,6 +527,17 @@ hpa_common_gpu_helm_upgrade() {
   helm "${helm_args[@]}" >/dev/null
 }
 
+hpa_common_cleanup_load_test_resources() {
+  local ns="${1:?namespace}"
+  local job_name="${2:?jobName}"
+
+  kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete rolebinding "${job_name}-endpoints-reader" -n "${ns}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete role "${job_name}-endpoints-reader" -n "${ns}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete serviceaccount "${job_name}-sa" -n "${ns}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete configmap "${job_name}-scripts" -n "${ns}" --ignore-not-found=true >/dev/null 2>&1 || true
+}
+
 # Recovery touches only pods owned by this Helm release and the named load-test Job.
 hpa_common_clear_stuck_pods() {
   local ns="${1:?namespace}"

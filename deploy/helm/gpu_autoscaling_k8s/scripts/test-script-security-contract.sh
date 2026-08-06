@@ -141,6 +141,25 @@ grep -q 'app.kubernetes.io/name=nemoclaw-gpu,app.kubernetes.io/instance=test-rel
 if grep -Eq -- '(^| )-l job-name( |$)' "${KUBECTL_LOG}"; then
   fail "pod cleanup used an existential job-name selector"
 fi
+
+: >"${KUBECTL_LOG}"
+hpa_common_cleanup_load_test_resources test-namespace test-load-job
+for resource in \
+  'job test-load-job' \
+  'rolebinding test-load-job-endpoints-reader' \
+  'role test-load-job-endpoints-reader' \
+  'serviceaccount test-load-job-sa' \
+  'configmap test-load-job-scripts'; do
+  grep -Fq "delete ${resource} -n test-namespace" "${KUBECTL_LOG}" \
+    || fail "load-test cleanup did not delete ${resource}"
+done
+
+awk '
+  /^cleanup$/ { cleanup_line = NR }
+  /^trap - EXIT$/ && cleanup_line < NR { found = 1 }
+  END { exit !found }
+' "${SCRIPT_DIR}/hpa-load-test.sh" \
+  || fail "load test does not run cleanup before disabling its EXIT trap"
 if grep -q -- '--all' "${SCRIPT_DIR}/cluster-recover.sh"; then
   fail "cluster recovery contains namespace-wide deletion"
 fi

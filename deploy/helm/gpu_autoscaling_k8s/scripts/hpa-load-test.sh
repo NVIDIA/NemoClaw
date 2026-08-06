@@ -182,11 +182,7 @@ LOAD_SA="${JOB_NAME}-sa"
 cleanup() {
   # Remove every resource this script creates (Job, RBAC, ConfigMap) so repeated runs
   # don't accumulate unused ServiceAccounts/Roles/RoleBindings/ConfigMaps in the namespace.
-  kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete rolebinding "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete role "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete serviceaccount "${LOAD_SA}" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete configmap "${JOB_NAME}-scripts" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
+  hpa_common_cleanup_load_test_resources "${NAMESPACE}" "${JOB_NAME}"
 }
 trap cleanup EXIT
 
@@ -401,6 +397,7 @@ done
 
 hpa_common_print_hpa "${NAMESPACE}"
 
+cleanup
 trap - EXIT
 if [[ "${SCALE_UP_OK}" -ne 1 ]]; then
   echo "HPA load test incomplete: did not reach ${SCALE_UP_TARGET} replicas" >&2
