@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Shared setup mechanics for the source suites that drive installVllm:
+// Shared setup for the source tests that exercise installVllm:
 // vllm.test.ts, vllm-install-storage.test.ts, and
 // vllm-compute-capability.test.ts (#8351). vi.hoisted and
 // vi.mock are hoisted per file, so each suite still declares and owns its own
-// mocks; every export here takes that object as a parameter. The setup helpers
-// replace probe results and Docker ownership responses for each setup. This is
-// not a *.test.ts file, so Vitest does not collect it as a suite.
+// mocks. Exports that configure suite mocks take that suite's `mocks` object
+// as a parameter. The setup helpers replace probe results and Docker ownership
+// responses for each setup. This is not a *.test.ts file, so Vitest does not
+// collect it as a suite.
 
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
@@ -55,7 +56,10 @@ export function vllmContainerRow(
   return `${id}|${containerName}|${state}|${label}|||`;
 }
 
-/** Prepare probe results for an ordinary vLLM setup response. */
+/**
+ * Replace probe results with an uncached image, writable model cache, zero
+ * cached model bytes, and 1 TB storage responses.
+ */
 export function applyVllmInstallProbeDefaults(mocks: VllmInstallMocks): void {
   mocks.dockerImageInspectFormat.mockReturnValue("");
   mocks.findUnwritableModelCachePath.mockReturnValue(null);
@@ -125,8 +129,8 @@ export function mockDockerSpawnFailure(
 }
 
 /**
- * Prepare a successful vLLM setup response with installed-version probe
- * results and Docker ownership responses. Each
+ * Prepare a successful vLLM setup response with prerequisite and readiness
+ * probe responses plus Docker ownership responses. Each
  * `dockerCapture(["container", ...])` call alternates between two outcomes:
  * the first call and every other call after it (0, 2, 4, ...) unconditionally
  * return an empty row; the second call and every other call after that
