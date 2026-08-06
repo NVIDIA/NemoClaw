@@ -75,7 +75,7 @@ MATCHES='[]'
 for POLL_INDEX in $(seq 1 30); do
   RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
     --event workflow_dispatch --branch main --limit 50 \
-    --json databaseId,displayTitle)"
+    --json databaseId,displayTitle,url)"
   MATCHES="$(jq -c --arg title "$RUN_TITLE" \
     '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
   test "$(jq 'length' <<<"$MATCHES")" -le 1
@@ -87,6 +87,7 @@ if test "$(jq 'length' <<<"$MATCHES")" -ne 1; then
   exit 1
 fi
 RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")
+RUN_URL="$(jq -r '.[0].url' <<<"$MATCHES")"
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
 RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '

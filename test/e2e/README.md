@@ -712,7 +712,7 @@ a custom, copied, or no-op adapter.
 
 Live E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
-Every push to `main` starts the default live E2E suite.
+Each push to `main` triggers the default live E2E suite.
 The central workflow has no scheduled trigger.
 
 A repository maintainer or administrator can manually run the same default suite against the current exact head of an open internal or fork pull request.

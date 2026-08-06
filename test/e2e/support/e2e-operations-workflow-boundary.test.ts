@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -259,6 +259,73 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(result.status, result.stderr).toBe(expectedStatus);
     expect(result.stderr).toContain(expectedStderr);
+  });
+
+  it("accepts the default target matrix for an exact-revision manual PR run", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const generateMatrix = workflow.jobs["generate-matrix"];
+    const controller = generateMatrix.steps!.find(
+      (step) => step.name === "Build trusted controller target matrix",
+    )!;
+    const planner = generateMatrix.steps!.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-manual-pr-matrix-"));
+    const output = join(directory, "output");
+    const summary = join(directory, "summary");
+
+    try {
+      writeFileSync(output, "");
+      writeFileSync(summary, "");
+      const controllerResult = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", controller.run!],
+        {
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_OUTPUT: output, TARGETS: "" },
+        },
+      );
+      expect(controllerResult.status, controllerResult.stderr).toBe(0);
+      const controllerMatrix = readFileSync(output, "utf8")
+        .trim()
+        .replace(/^matrix=/u, "");
+
+      writeFileSync(output, "");
+      const plannerResult = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", planner.run!],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CHECKOUT_SHA: "a".repeat(40),
+            CONTROLLER_MATRIX: controllerMatrix,
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
+            INFERENCE_MODE: "mock",
+            JOBS: "",
+            TARGETS: "",
+          },
+        },
+      );
+      expect(plannerResult.status, plannerResult.stderr).toBe(0);
+      const matrixLine = readFileSync(output, "utf8")
+        .split("\n")
+        .find((line) => line.startsWith("matrix="))!;
+      const actualMatrix = JSON.parse(matrixLine.slice("matrix=".length));
+      expect(
+        actualMatrix.map(({ id, runner }: { id: string; runner: string }) => ({ id, runner })),
+      ).toEqual(JSON.parse(controllerMatrix));
+      expect(actualMatrix).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "ubuntu-policy-custom-missing-presets-negative" }),
+          expect.objectContaining({ id: "ubuntu-repo-cloud-openclaw" }),
+        ]),
+      );
+      expect(generateMatrix.outputs!.matrix).toBe("${{ steps.matrix.outputs.matrix }}");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("keeps every planned job wired to bound evidence", () => {

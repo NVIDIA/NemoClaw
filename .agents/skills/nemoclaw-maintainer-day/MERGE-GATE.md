@@ -67,7 +67,7 @@ Fail closed when identity, state, or timing evidence is missing, malformed, stal
 ### Live E2E
 
 Live E2E does not run automatically for pull requests and is not a merge gate.
-Every push to `main` starts `.github/workflows/e2e.yaml` with the default suite.
+Each push to `main` triggers `.github/workflows/e2e.yaml` for the default suite.
 The workflow has no scheduled trigger.
 
 Use the manual PR mode only when a maintainer requests live evidence before merge.
