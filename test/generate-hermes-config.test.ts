@@ -12,8 +12,10 @@ import {
   readHermesBuildSettings,
 } from "../agents/hermes/config/build-env.ts";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
-import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy.ts";
-import { MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS } from "../agents/hermes/config/managed-policy.ts";
+import {
+  buildHermesManagedPolicy,
+  MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS,
+} from "../agents/hermes/config/managed-policy.ts";
 import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../src/lib/hermes-managed-route";
 import {
