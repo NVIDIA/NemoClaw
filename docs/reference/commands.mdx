@@ -114,6 +114,41 @@ For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to 
 
 </AgentOnly>
 
+## Hosted Installer Options
+
+The hosted installer accepts options after `bash -s --`.
+These options control installation and the onboarding run that follows it.
+
+### `--local-model-runtime=<vllm|llama-cpp>`
+
+Enable the fixed local model profile and select its serving runtime.
+The flag accepts only `vllm` or `llama-cpp`.
+It makes the remaining onboarding non-interactive and disables Express profile selection.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+<AgentOnly variant="openclaw">
+  NEMOCLAW_AGENT=openclaw \
+</AgentOnly>
+<AgentOnly variant="hermes">
+  NEMOCLAW_AGENT=hermes \
+</AgentOnly>
+<AgentOnly variant="deepagents">
+  NEMOCLAW_AGENT=langchain-deepagents-code \
+</AgentOnly>
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  bash -s -- --local-model-runtime=vllm
+```
+
+The profile selects a fixed catalog model and serving command for the chosen runtime from the managed-inference catalog.
+The hosted installer rejects `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, and a vLLM `NEMOCLAW_VLLM_PORT` override before onboarding.
+The dedicated vLLM onboarder rejects `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before it installs vLLM.
+
+The hosted installer's equivalent environment-variable form requires both `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME`.
+Use the installer flag unless an automation boundary cannot pass installer arguments.
+For prerequisites, effects, verification, and recovery, refer to [Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server#install-a-fixed-local-model-profile).
+
 ## Standalone Host Commands
 
 The CLI handles host-side operations that run outside the selected agent runtime.
@@ -3613,6 +3648,15 @@ When uninstall confirms that no sibling gateways remain, it also deletes NemoCla
 For a managed dual-Station vLLM runtime, full uninstall revalidates the exact recorded pair and removes both managed containers before starting the remaining uninstall steps.
 If that cleanup fails, uninstall exits nonzero, preserves its owner-only cleanup receipt, and tells you to resolve the reported peer error before retrying.
 Pair cleanup can partially complete before an error; verify both Stations before the retry.
+For an authenticated host-local vLLM runtime, full uninstall verifies the exact named container, NemoClaw ownership label, persisted API key, and authentication fingerprint before removing the container by its inspected ID.
+For managed llama.cpp, full uninstall verifies the exact named container and network ownership before removing both resources by their inspected IDs.
+These host-local checks run before NemoClaw deletes their state.
+If Docker is unavailable or a resource does not match its persisted ownership state, uninstall exits nonzero before the remaining uninstall steps and preserves that state for recovery.
+Host-local cleanup can partially complete before an error.
+Restore Docker access or resolve the named ownership conflict, inspect the remaining container and network, and retry uninstall.
+Full uninstall preserves the managed llama.cpp model cache by default.
+Pass `--delete-models` to remove that cache after runtime cleanup succeeds.
+Managed vLLM model files remain in the shared Hugging Face cache.
 It does not use the legacy `gateway destroy` command for that gateway.
 <AgentOnly variant="openclaw">
 
@@ -3638,7 +3682,7 @@ Uninstall does not otherwise target the declared external directory.
 |---|---|
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process |
-| `--delete-models` | Also remove NemoClaw-pulled Ollama models |
+| `--delete-models` | Also remove NemoClaw-pulled Ollama models and the owner-controlled managed llama.cpp model cache after runtime cleanup succeeds |
 | `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
 | `--all-gateway-ports` | Uninstall every gateway port on the host, not only the port `NEMOCLAW_GATEWAY_PORT` selects |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
@@ -3911,6 +3955,8 @@ Set them before running `$$nemoclaw onboard`.
 | `SANDBOX_NAME` | sandbox name | Compatibility spelling used after `NEMOCLAW_SANDBOX_NAME` and `NEMOCLAW_SANDBOX`. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`. Overridden by the `--install-ref` flag. |
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
+| `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed local model profile. Requires `NEMOCLAW_LOCAL_MODEL_RUNTIME`. Direct `$$nemoclaw onboard` use also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer makes onboarding non-interactive, disables Express selection, and sets this value automatically when it receives `--local-model-runtime`. |
+| `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` or `llama-cpp` | Selects one serving-runtime combination for the fixed local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from `--local-model-runtime`. |
 | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX Station peer for Nemotron 3 Ultra pair qualification. The peer must match the reciprocal private `/30` rail and hardware checks; an explicit peer failure stops setup instead of falling back. NemoClaw does not enroll SSH trust or accept a port or SSH option in this value. When unset, DGX Station installer discovery checks only the two deterministic `/30` counterpart addresses. A peer cannot be combined with an explicit non-Ultra model; conflicting explicit selections fail before pair preparation. |
 | `NEMOCLAW_DGX_STATION_SSH_BINDING` | opaque installer-managed token | Carries the qualified peer endpoint and host-key binding from DGX Station pair preparation into the current managed-vLLM install. The installer creates and clears this token; operators should not set or persist it. Missing, changed, or mismatched binding state fails before peer SSH or Docker work. |
