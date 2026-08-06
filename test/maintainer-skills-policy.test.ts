@@ -267,7 +267,6 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain("No changelog waiver exists");
     expect(releaseNotes).toContain("does not replace or create that canonical entry");
     expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
-    expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
     expect(policy).toContain("No changelog waiver exists");
     expect(priorities).toContain("require the dated changelog entry");
     expect(skillsGuide).toContain(

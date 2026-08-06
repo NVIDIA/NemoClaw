@@ -148,7 +148,7 @@ For overnight diagnosis, start from the trusted frozen plan. Every push to `main
 
 ```bash
 export PLAN_PATH=/path/to/downloaded-release-edition-plan/plan.json
-CANDIDATE_SHA="$(node -p "require(process.env.PLAN_PATH).candidateCommit")"
+FROZEN_CANDIDATE_SHA="$(node -p "require(process.env.PLAN_PATH).candidateCommit")"
 export EDITION_CUTOFF_AT="$(node -p "require(process.env.PLAN_PATH).authorization.cutoffAt")"
 CUTOFF_SECONDS="$(node -p "Date.parse(process.env.EDITION_CUTOFF_AT) / 1000")"
 WINDOW_START_SECONDS="$((CUTOFF_SECONDS - 8 * 60 * 60))"
@@ -158,10 +158,11 @@ RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
 MATCHES="$(jq -c --argjson start "$WINDOW_START_SECONDS" --argjson end "$CUTOFF_SECONDS" \
   '[.[] | select((.createdAt | fromdateiso8601) >= $start and
                  (.createdAt | fromdateiso8601) <= $end)] | sort_by(.createdAt)' <<<"$RUNS")"
+jq -e 'length >= 1' <<<"$MATCHES" >/dev/null
 jq -e 'all(.[]; (.headSha // "") | test("^[0-9a-f]{40}$"))' <<<"$MATCHES" >/dev/null
 ```
 
-The inventory covers the 8:00 AM–4:00 PM merge window ending at the plan's exact cutoff. More than one run is expected. Fetch `origin/main` and require every selected `headSha` to be an ancestor of `CANDIDATE_SHA`; exclude and report any unrelated run instead of silently treating it as edition evidence. If a merge's push run is not visible yet, report it as pending and poll. Do not silently substitute full mode.
+The inventory covers the 8:00 AM–4:00 PM merge window ending at the plan's exact cutoff. More than one run is expected. Fetch `origin/main` and require every selected `headSha` to be an ancestor of `FROZEN_CANDIDATE_SHA`; exclude and report any unrelated run instead of silently treating it as edition evidence. If a merge's push run is not visible yet, report it as pending and poll. Do not silently substitute full mode.
 
 Each run is keyed to its own `headSha`; a later push does not cancel an earlier main-push run. `.github/workflows/e2e-main-retry.yaml` may rerun failed jobs from a non-superseded main-push run up to two times. Keep the source run ID, attempt, SHA, job conclusion, artifacts, and retry evidence together. The tag remains bound only to the frozen plan.
 

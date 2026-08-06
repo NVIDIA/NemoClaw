@@ -560,7 +560,7 @@ describe("release-latest-tag.sh", () => {
       "candidate before cutoff",
       "2026-08-06T15:00:00-07:00",
     );
-    const lateCommit = commitAt(fixture, "late next-edition merge", "2026-08-06T14:00:00-07:00");
+    const lateCommit = commitAt(fixture, "late next-edition merge", "2026-08-06T16:30:00-07:00");
     const planPath = path.join(fixture.root, "release", "plan.json");
 
     const planResult = runScript(
@@ -617,6 +617,42 @@ describe("release-latest-tag.sh", () => {
     expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(frozenCommit);
     expect(remoteCommit(fixture, "refs/heads/main")).toBe(lateCommit);
   }, 30_000);
+
+  it("rejects a scheduled candidate recorded after the Los Angeles cutoff", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const candidate = commitReleaseAt(
+      fixture,
+      "candidate before cutoff",
+      "2026-08-06T15:00:00-07:00",
+    );
+    const planPath = path.join(fixture.root, "release", "plan.json");
+
+    const planResult = runScript(
+      fixture.work,
+      [
+        tsxPath,
+        planScriptPath,
+        "--scheduled-edition",
+        "2026-08-06",
+        "--candidate-sha",
+        candidate,
+        "--candidate-run-id",
+        "43",
+        "--candidate-recorded-at",
+        "2026-08-06T23:00:01Z",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+
+    expect(planResult.status).not.toBe(0);
+    expect(planResult.stderr).toContain(
+      "Candidate source time 2026-08-06T23:00:01.000Z is after edition cutoff 2026-08-06T23:00:00.000Z",
+    );
+    expect(fs.existsSync(planPath)).toBe(false);
+  });
 
   it("rejects scheduled authority outside the canonical schedule event", () => {
     const fixture = createFixture();
