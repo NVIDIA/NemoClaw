@@ -101,7 +101,7 @@ describe("preparePortableExperimentalHost", () => {
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
   });
 
-  it("keeps the portable firewall driver in the podman default search path (#8441)", () => {
+  it("keeps the portable firewall driver in the Podman default search path (#8441)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const systemctl = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
