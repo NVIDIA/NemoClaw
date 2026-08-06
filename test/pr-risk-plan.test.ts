@@ -748,7 +748,6 @@ describe("deterministic PR risk plan", () => {
 
   it.each([
     ".github/workflows/e2e.yaml",
-    ".github/workflows/pr-e2e-gate.yaml",
     ".github/workflows/pr.yaml",
     ".github/actions/prepare-e2e/action.yaml",
     ".github/actions/upload-e2e-artifacts/action.yaml",
@@ -759,7 +758,6 @@ describe("deterministic PR risk plan", () => {
     "tools/advisors/github.mts",
     "tools/advisors/io.mts",
     "tools/advisors/risk-plan.mts",
-    "tools/e2e/pr-e2e-gate.mts",
     "tools/e2e/risk-signal.ts",
     "tools/e2e/private-file.mts",
     "tools/e2e/workflow-plan.mts",

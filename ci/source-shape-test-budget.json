@@ -502,26 +502,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "limits triggers and job permissions",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "pins both controller checkouts and installs without lifecycle scripts or caches",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "orders the coordinate steps and always finalizes through the controller",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-shards.test.ts",
-      "test": "rejects malformed configured matrix shard selectors",
-      "category": "security"
-    },
-    {
       "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "binds host-prepared GitHub context to the selected repository and pull request",
       "category": "compatibility"

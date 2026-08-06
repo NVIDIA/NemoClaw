@@ -19,14 +19,14 @@ export const TRUSTED_HERMES_SWAP_STEP_NAME = "Provision trusted Hermes E2E swap"
 export const TRUSTED_HERMES_SWAP_STEP_ID = "trusted_hermes_swap";
 
 const TRUSTED_HERMES_SWAP_IF =
-  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')";
 const TRUSTED_HERMES_E2E_SELECTION = `(${selectorsForCanonicalE2eId("hermes-e2e")
   .flatMap((selector) => [
     `contains(format(',{0},', inputs.jobs), ',${selector},')`,
     `contains(format(',{0},', inputs.targets), ',${selector},')`,
   ])
   .join(" || ")})`;
-const TRUSTED_HERMES_E2E_ELIGIBILITY = `(github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && ${TRUSTED_HERMES_E2E_SELECTION}))`;
+const TRUSTED_HERMES_E2E_ELIGIBILITY = `(github.event_name == 'push' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && ${TRUSTED_HERMES_E2E_SELECTION}))`;
 const TRUSTED_HERMES_SWAP_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_HERMES_SWAP_ENV = {
   BASH_ENV: "/dev/null",
@@ -63,10 +63,10 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
   'if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then',
   '  fail "workflow must run from NVIDIA/NemoClaw main"',
   "fi",
-  'if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then',
-  '  fail "workflow event must be schedule or workflow_dispatch"',
+  'if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then',
+  '  fail "workflow event must be push or workflow_dispatch"',
   "fi",
-  "# PR E2E mode: controller-dispatched PR commit.",
+  "# PR E2E mode: maintainer-dispatched PR commit.",
   'if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then',
   '  if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then',
   '    fail "checkout SHA must be lowercase 40-hex"',
@@ -75,7 +75,7 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
   '    fail "workflow source must match the trusted dispatch revision"',
   "  fi",
   "else",
-  "  # Direct-main mode: schedule or manual trigger on main.",
+  "  # Direct-main mode: push or manual trigger on main.",
   '  if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then',
   '    fail "direct main runs must not request an alternate checkout or workflow revision"',
   "  fi",
