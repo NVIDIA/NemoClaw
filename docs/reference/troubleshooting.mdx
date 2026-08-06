@@ -32,10 +32,11 @@ The `$$nemoclaw` binary is installed but the shell session does not know where t
 
 Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal window.
 
-When installing from a source checkout with `npm install`, NemoClaw first tries `npm link`.
-If the global npm prefix is not writable, it writes a user-local shim to `~/.local/bin/nemoclaw` instead.
-Installer verification checks this user-local shim independently of the active npm prefix.
-If the shim is valid but your current shell does not resolve it, installation continues using the shim's absolute path and prints commands to refresh your `PATH`.
+When you run `npm install` in a source checkout, NemoClaw first tries `npm link`.
+If `npm link` fails, it creates a development shim at `~/.local/bin/nemoclaw`.
+The installer also creates a user-local shim for each packaged CLI.
+Verification checks the active CLI's shim at `~/.local/bin/$$nemoclaw` independently of the active npm prefix.
+If that valid shim is not the command your current shell resolves, installation continues using its absolute path and prints commands to refresh your `PATH`.
 Add `~/.local/bin` to your `PATH` if the command is still not found.
 Source-checkout installs also bootstrap OpenShell when it is missing before running preflight.
 If a source install still reports that `openshell` is not available, re-run the installer from the repository root and check that `~/.local/bin` is on your `PATH`.
