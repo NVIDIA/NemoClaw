@@ -29,6 +29,16 @@ require_cmd() {
 }
 require_cmd helm
 require_cmd python3
+python3 -c 'import yaml' 2>/dev/null || {
+  echo "missing Python dependency: PyYAML" >&2
+  exit 1
+}
+
+if helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.yaml" \
+  --set autoscaling.enabled=true >/dev/null 2>&1; then
+  echo "FAIL: chart rendered a cleartext Ingress without explicit opt-in" >&2
+  exit 1
+fi
 
 RENDERED_FILE="$(mktemp)"
 trap 'rm -f "${RENDERED_FILE}"' EXIT
@@ -106,3 +116,5 @@ if failures:
 
 print("OK: HPA/Deployment/Service/ServiceMonitor render contract holds")
 PYEOF
+
+echo "OK: chart rejects cleartext Ingress without explicit opt-in"

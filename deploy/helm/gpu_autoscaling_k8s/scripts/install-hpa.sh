@@ -25,6 +25,7 @@ ADAPTER_RELEASE="${ADAPTER_RELEASE:-prometheus-adapter}"
 INGRESS_NS="${INGRESS_NS:-ingress-nginx}"
 INGRESS_RELEASE="${INGRESS_RELEASE:-ingress-nginx}"
 INGRESS_CLASS="${INGRESS_CLASS:-nginx}"
+INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"
 INGRESS_HELM_TIMEOUT="${INGRESS_HELM_TIMEOUT:-5m}"
 INGRESS_HOST="${INGRESS_HOST:-}"
 # Pinned to reviewed chart versions — installing by name alone (no --version) would let a
@@ -47,6 +48,38 @@ ADAPTER_VALUES="${ADAPTER_VALUES:-${CHART_DIR}/monitoring/prometheus-adapter-gpu
 
 require_cmd kubectl
 require_cmd helm
+
+case "${INGRESS_SERVICE_TYPE}" in
+  ClusterIP | NodePort | LoadBalancer) ;;
+  *)
+    echo "INGRESS_SERVICE_TYPE must be ClusterIP, NodePort, or LoadBalancer" >&2
+    exit 1
+    ;;
+esac
+if [[ "${ALLOW_INSECURE_HTTP:-0}" == "1" && "${INGRESS_SERVICE_TYPE}" != "ClusterIP" ]]; then
+  echo "ALLOW_INSECURE_HTTP=1 requires INGRESS_SERVICE_TYPE=ClusterIP" >&2
+  exit 1
+fi
+
+case "${ALLOW_INSECURE_HTTP:-0}" in
+  0)
+    INGRESS_RENDER_ERROR=""
+    if ! INGRESS_RENDER_ERROR="$(helm template ingress-policy-check "${CHART_DIR}" -f "${HPA_VALUES}" \
+      --set ingress.allowInsecureHttp=false 2>&1 >/dev/null)"; then
+      if [[ "${INGRESS_RENDER_ERROR}" == *"ingress.tls is empty"* ]]; then
+        echo "TLS is required. Configure ingress.tls in HPA_VALUES, or set ALLOW_INSECURE_HTTP=1 for an isolated cluster." >&2
+      else
+        printf '%s\n' "${INGRESS_RENDER_ERROR}" >&2
+      fi
+      exit 1
+    fi
+    ;;
+  1) ;;
+  *)
+    echo "ALLOW_INSECURE_HTTP must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
 
 custom_metrics_ready() {
   kubectl get apiservice v1beta1.custom.metrics.k8s.io 2>/dev/null | grep -q True
@@ -136,6 +169,7 @@ ensure_ingress_nginx() {
     --create-namespace \
     --version "${INGRESS_CHART_VERSION}" \
     --set controller.ingressClassResource.name="${INGRESS_CLASS}" \
+    --set controller.service.type="${INGRESS_SERVICE_TYPE}" \
     --set controller.metrics.enabled=true \
     --set controller.metrics.serviceMonitor.enabled=true \
     --timeout "${INGRESS_HELM_TIMEOUT}" \

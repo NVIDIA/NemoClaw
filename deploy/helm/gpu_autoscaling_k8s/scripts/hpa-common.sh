@@ -329,6 +329,146 @@ hpa_common_agent_service() {
   echo "$(hpa_common_release_fullname)-agent"
 }
 
+hpa_common_release_selector() {
+  local release="${RELEASE:-nemoclaw-gpu}"
+  local chart="${CHART_NAME:-nemoclaw-gpu}"
+  printf 'app.kubernetes.io/name=%s,app.kubernetes.io/instance=%s' "${chart}" "${release}"
+}
+
+# Reject cleartext when Kubernetes reports a node or ingress-controller exposure path.
+# The operator must separately restrict access from other hosts on the private network.
+hpa_common_verify_insecure_ingress_isolation() {
+  local ingress_ns="${INGRESS_NS:-ingress-nginx}"
+  local ingress_release="${INGRESS_RELEASE:-ingress-nginx}"
+
+  require_cmd kubectl
+  require_cmd python3
+  python3 - "${ingress_ns}" "${ingress_release}" <<'PY'
+import ipaddress
+import json
+import subprocess
+import sys
+
+namespace, release = sys.argv[1:]
+
+
+def kubectl_json(*args):
+    try:
+        raw = subprocess.check_output(
+            ["kubectl", *args, "-o", "json"],
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return json.loads(raw)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError) as exc:
+        print(f"cannot verify cleartext ingress isolation: kubectl {' '.join(args)} failed", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+private_ranges = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "10.0.0.0/8",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
+
+nodes = kubectl_json("get", "nodes").get("items") or []
+internal_ips = []
+external_ips = []
+for node in nodes:
+    for address in (node.get("status") or {}).get("addresses") or []:
+        if address.get("type") == "InternalIP":
+            internal_ips.append(address.get("address", ""))
+        elif address.get("type") == "ExternalIP":
+            external_ips.append(address.get("address", ""))
+
+if not internal_ips:
+    print("cleartext ingress denied: cluster nodes have no verifiable InternalIP", file=sys.stderr)
+    raise SystemExit(1)
+if external_ips:
+    print("cleartext ingress denied: cluster nodes expose ExternalIP addresses", file=sys.stderr)
+    raise SystemExit(1)
+for raw in internal_ips:
+    try:
+        address = ipaddress.ip_address(raw)
+    except ValueError as exc:
+        print(f"cleartext ingress denied: invalid node InternalIP {raw!r}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if not any(address in network for network in private_ranges):
+        print(f"cleartext ingress denied: node InternalIP {raw} is not private", file=sys.stderr)
+        raise SystemExit(1)
+
+selector = (
+    "app.kubernetes.io/component=controller,"
+    f"app.kubernetes.io/instance={release}"
+)
+services = kubectl_json(
+    "get", "services", "-n", namespace, "-l", selector
+).get("items") or []
+if not services:
+    print("cleartext ingress denied: managed ingress controller Service not found", file=sys.stderr)
+    raise SystemExit(1)
+
+for service in services:
+    name = (service.get("metadata") or {}).get("name", "<unknown>")
+    spec = service.get("spec") or {}
+    status = service.get("status") or {}
+    if spec.get("type") != "ClusterIP":
+        print(f"cleartext ingress denied: Service {name} is not ClusterIP", file=sys.stderr)
+        raise SystemExit(1)
+    if spec.get("externalIPs"):
+        print(f"cleartext ingress denied: Service {name} has externalIPs", file=sys.stderr)
+        raise SystemExit(1)
+    if ((status.get("loadBalancer") or {}).get("ingress") or []):
+        print(f"cleartext ingress denied: Service {name} has a load-balancer address", file=sys.stderr)
+        raise SystemExit(1)
+
+pods = kubectl_json(
+    "get", "pods", "-n", namespace, "-l", selector
+).get("items") or []
+if not pods:
+    print("cleartext ingress denied: managed ingress controller pods not found", file=sys.stderr)
+    raise SystemExit(1)
+for pod in pods:
+    name = (pod.get("metadata") or {}).get("name", "<unknown>")
+    spec = pod.get("spec") or {}
+    if spec.get("hostNetwork"):
+        print(f"cleartext ingress denied: pod {name} uses hostNetwork", file=sys.stderr)
+        raise SystemExit(1)
+    for container in spec.get("containers") or []:
+        for port in container.get("ports") or []:
+            if port.get("hostPort"):
+                print(f"cleartext ingress denied: pod {name} uses hostPort", file=sys.stderr)
+                raise SystemExit(1)
+PY
+}
+
+hpa_common_ingress_allow_insecure_value() {
+  case "${ALLOW_INSECURE_HTTP:-0}" in
+    0)
+      printf 'false'
+      ;;
+    1)
+      if ! hpa_common_verify_insecure_ingress_isolation; then
+        echo "Configure ingress.tls instead, or restrict the reported exposure path before retrying cleartext." >&2
+        return 1
+      fi
+      printf 'true'
+      ;;
+    *)
+      echo "ALLOW_INSECURE_HTTP must be 0 or 1" >&2
+      return 1
+      ;;
+  esac
+}
+
 # Old releases used component=agent; chart now uses gpu-agent + workload-type (immutable selector).
 hpa_common_gpu_stale_workload() {
   local ns="${1:?namespace}"
@@ -362,6 +502,9 @@ hpa_common_gpu_helm_upgrade() {
   local inference_model="${8:-llama3.2:3b}"
   local ingress_host="${9:-}"
 
+  local allow_insecure_http
+  allow_insecure_http="$(hpa_common_ingress_allow_insecure_value)"
+
   local helm_args=(
     upgrade --install "${release}" "${chart_dir}"
     --namespace "${ns}"
@@ -375,10 +518,7 @@ hpa_common_gpu_helm_upgrade() {
     --set autoscaling.minReplicas="${min}"
     --set autoscaling.maxReplicas="${max}"
     --set "autoscaling.targetGPUUtilizationPercentage=${gpu_target}"
-    # These scripts target private/dev clusters with no TLS cert for ingress.host — this is
-    # the explicit, documented acknowledgment the chart requires (see templates/ingress.yaml)
-    # to render an Ingress without ingress.tls. Set ingress.tls yourself for a real cert.
-    --set ingress.allowInsecureHttp=true
+    --set "ingress.allowInsecureHttp=${allow_insecure_http}"
   )
   if [[ -n "${ingress_host}" ]]; then
     helm_args+=(--set "ingress.host=${ingress_host}")
@@ -387,31 +527,30 @@ hpa_common_gpu_helm_upgrade() {
   helm "${helm_args[@]}" >/dev/null
 }
 
-# Recovery boundary: only touches pods that are either chart-owned (selector label
-# app.kubernetes.io/name=nemoclaw-gpu) or belong to a Kubernetes Job (job-name label —
-# this chart's load-test Jobs are the only Jobs expected in a namespace dedicated to it).
-# Never force-deletes every pod in the namespace, so an unrelated workload sharing the
-# namespace (a misconfiguration, not the documented usage) is left alone.
+# Recovery touches only pods owned by this Helm release and the named load-test Job.
 hpa_common_clear_stuck_pods() {
   local ns="${1:?namespace}"
+  local job_name="${2:-nemoclaw-gpu-hpa-load-test}"
+  local release_selector
+  release_selector="$(hpa_common_release_selector)"
   local pod
   for pod in $(kubectl get pods -n "${ns}" \
-    -l 'app.kubernetes.io/name=nemoclaw-gpu' \
+    -l "${release_selector}" \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     [[ -z "${pod}" ]] && continue
     kubectl patch pod "${pod}" -n "${ns}" -p '{"metadata":{"finalizers":null}}' --type=merge \
       >/dev/null 2>&1 || true
   done
   for pod in $(kubectl get pods -n "${ns}" \
-    -l 'job-name' \
+    -l "job-name=${job_name}" \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     [[ -z "${pod}" ]] && continue
     kubectl patch pod "${pod}" -n "${ns}" -p '{"metadata":{"finalizers":null}}' --type=merge \
       >/dev/null 2>&1 || true
   done
-  kubectl delete pods -n "${ns}" -l 'app.kubernetes.io/name=nemoclaw-gpu' \
+  kubectl delete pods -n "${ns}" -l "${release_selector}" \
     --force --grace-period=0 >/dev/null 2>&1 || true
-  kubectl delete pods -n "${ns}" -l 'job-name' \
+  kubectl delete pods -n "${ns}" -l "job-name=${job_name}" \
     --force --grace-period=0 >/dev/null 2>&1 || true
 }
 
@@ -424,13 +563,15 @@ hpa_common_ensure_agent_ready() {
   local deploy
   deploy="$(RELEASE="${release}" hpa_common_agent_deployment)"
 
+  local allow_insecure_http
+  allow_insecure_http="$(hpa_common_ingress_allow_insecure_value)"
+
   local helm_args=(
     upgrade --install "${release}" "${chart_dir}" -n "${ns}"
     --set "namespace.create=false"
     --set "autoscaling.enabled=false"
     --set "gpuScaling.count=1"
-    # See the matching comment in hpa_common_gpu_helm_upgrade above.
-    --set "ingress.allowInsecureHttp=true"
+    --set "ingress.allowInsecureHttp=${allow_insecure_http}"
   )
   if [[ -n "${values_file}" && -f "${values_file}" ]]; then
     helm_args+=(-f "${values_file}")

@@ -78,10 +78,9 @@ ingress:
   path: /
   pathType: Prefix
   tls: []
-  # The chart refuses to render a routable Ingress unless ingress.tls is configured (a real
-  # cert) or this is explicitly true — see README "Ingress security". install-hpa.sh sets
-  # this for you because its scripts target private/dev clusters that don't have a TLS
-  # cert for ingress.host; a bare `helm install` of this chart does not set it.
+  # The chart refuses to render a routable Ingress unless ingress.tls is configured or this
+  # value is explicitly true. The scripts keep this false unless ALLOW_INSECURE_HTTP=1 passes
+  # their Kubernetes exposure preflight. See README "Ingress security".
   allowInsecureHttp: false
   # Basic auth in front of the completion proxy, which has no authentication of its own.
   # On by default. Leaving password unset (null, not an empty string — this is intentional,

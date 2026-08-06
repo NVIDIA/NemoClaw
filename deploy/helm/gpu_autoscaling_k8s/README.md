@@ -63,17 +63,75 @@ For MicroK8s, the installer enables the GPU and Metrics Server add-ons when need
 
 ## Install
 
-Before installing (or after editing the chart), check that the HPA/Deployment/Service/
-ServiceMonitor name-and-label contract still holds — no cluster required:
-
-```bash
-./scripts/test-render-contract.sh
-```
-
-From the NemoClaw repository:
+From the NemoClaw repository, enter the chart directory:
 
 ```bash
 cd deploy/helm/gpu_autoscaling_k8s
+```
+
+Before installing (or after editing the chart), check that the HPA/Deployment/Service/
+ServiceMonitor name-and-label contract and the script security contract still hold.
+These checks do not require a cluster:
+
+```bash
+./scripts/test-render-contract.sh
+./scripts/test-script-security-contract.sh
+```
+
+The scripts require TLS by default.
+Before installation, create the target namespace and its certificate Secret:
+
+```bash
+kubectl create namespace nemoclaw-gpu --dry-run=client -o yaml \
+  | kubectl apply -f -
+kubectl create secret tls nemoclaw-example-tls \
+  --namespace nemoclaw-gpu \
+  --cert=/path/to/tls.crt \
+  --key=/path/to/tls.key \
+  --dry-run=client -o yaml \
+  | kubectl apply -f -
+```
+
+Kubernetes stores the certificate and private key in the `nemoclaw-example-tls` Secret.
+The chart does not create, rotate, or delete this Secret.
+
+Copy the GPU HPA values file and add an `ingress` block that references the Secret:
+
+```bash
+cp values-step2-hpa.yaml /path/to/hpa-tls-values.yaml
+```
+
+Add this configuration to `/path/to/hpa-tls-values.yaml`:
+
+```yaml
+ingress:
+  host: nemoclaw.example.com
+  tls:
+    - secretName: nemoclaw-example-tls
+      hosts:
+        - nemoclaw.example.com
+```
+
+Export the values file and hostname in the shell that runs the installation and later operational scripts:
+
+```bash
+export HPA_VALUES=/path/to/hpa-tls-values.yaml
+export INGRESS_HOST=nemoclaw.example.com
+```
+
+The installer creates the ingress-nginx controller Service as `ClusterIP` by default.
+Use port forwarding to reach it from outside the cluster.
+Set `INGRESS_SERVICE_TYPE=NodePort` or `LoadBalancer` only when the cluster network must expose the controller.
+Those types can make the Ingress reachable outside the cluster.
+Verify the assigned addresses and network access controls before you send credentials or completion traffic:
+
+```bash
+kubectl get service ingress-nginx-controller -n ingress-nginx -o wide
+```
+
+Install the chart:
+
+```bash
 ./scripts/install-hpa.sh
 ```
 
@@ -103,16 +161,10 @@ MAX_REPLICAS=4 \
 ./scripts/install-hpa.sh
 ```
 
-Set a custom Ingress hostname:
-
-```bash
-INGRESS_HOST=nemoclaw.example.com ./scripts/install-hpa.sh
-```
-
 `hpa-reset.sh` does not persist the release's current Ingress host — it re-applies whatever
 `INGRESS_HOST` is set in its own environment (default: unset, which falls back to
 `values.yaml`'s `nemoclaw.local`). If you set a custom host, pass the same `INGRESS_HOST`
-to `hpa-reset.sh` too, e.g. `INGRESS_HOST=nemoclaw.example.com ./scripts/hpa-reset.sh`.
+and `HPA_VALUES` to later script invocations.
 
 ## Verify the deployment
 
@@ -198,6 +250,8 @@ Run the test with `TARGET_PODS` and `SCALE_UP_TARGET` set to your full allocatab
 Run the full test:
 
 ```bash
+HPA_VALUES=/path/to/hpa-tls-values.yaml \
+INGRESS_HOST=nemoclaw.example.com \
 ./scripts/hpa-load-test.sh
 ```
 
@@ -219,6 +273,8 @@ The script exits with a nonzero status if it does not reach the scale-up target 
 Restore the normal one-to-four bounds after every load test, including successful runs:
 
 ```bash
+HPA_VALUES=/path/to/hpa-tls-values.yaml \
+INGRESS_HOST=nemoclaw.example.com \
 ./scripts/hpa-reset.sh
 ```
 
@@ -241,6 +297,8 @@ Restore the normal one-to-four bounds after every load test, including successfu
 Override a setting by placing it before the command:
 
 ```bash
+HPA_VALUES=/path/to/hpa-tls-values.yaml \
+INGRESS_HOST=nemoclaw.example.com \
 TARGET_PODS=4 MAX_TOKENS=256 DURATION_SEC=600 \
   ./scripts/hpa-load-test.sh
 ```
@@ -260,8 +318,16 @@ All commands below are run from `deploy/helm/gpu_autoscaling_k8s`.
 | `scripts/hpa-watch.sh` | Watch HPA changes |
 | `scripts/hpa-common.sh` | Shared script helpers |
 | `scripts/test-render-contract.sh` | Static `helm template` check: HPA/Deployment/Service/ServiceMonitor names and labels agree |
+| `scripts/test-script-security-contract.sh` | Static recovery-selector and cleartext-ingress security regression check |
 
-Typical workflow:
+Export the TLS configuration before you run operational scripts:
+
+```bash
+export HPA_VALUES=/path/to/hpa-tls-values.yaml
+export INGRESS_HOST=nemoclaw.example.com
+```
+
+Run these commands as separate activities:
 
 ```text
 Install:             ./scripts/install-hpa.sh
@@ -269,8 +335,60 @@ Watch HPA:           ./scripts/hpa-watch.sh
 Watch GPU pods:      ./scripts/get-agent-pods.sh -w
 Test autoscaling:    ./scripts/hpa-load-test.sh
 Restore idle state:  ./scripts/hpa-reset.sh
-Recover cluster:     ./scripts/cluster-recover.sh
 ```
+
+Run `./scripts/cluster-recover.sh` only when the selected release needs the destructive recovery described in the next section.
+
+## Recover the Chart Workload
+
+`cluster-recover.sh` deletes and recreates the selected release's workload resources during recovery.
+It restricts pod cleanup to the selected Helm release and the named load-test Job.
+It preserves Helm resources that have the `helm.sh/resource-policy: keep` annotation, including the generated Basic auth Secret.
+
+The default load-test Job is `nemoclaw-gpu-hpa-load-test`.
+Set `JOB_NAME` when the load test used a different name:
+
+```bash
+NAMESPACE=nemoclaw-gpu \
+RELEASE=nemoclaw-gpu \
+JOB_NAME=nemoclaw-gpu-hpa-load-test \
+HPA_VALUES=/path/to/hpa-tls-values.yaml \
+INGRESS_HOST=nemoclaw.example.com \
+./scripts/cluster-recover.sh
+```
+
+The script performs these destructive operations in `NAMESPACE`:
+
+- Deletes the Deployment, Service, Horizontal Pod Autoscaler, ReplicaSets, and pods that have the selected release's chart ownership labels.
+- Deletes only the Job named by `JOB_NAME` and pods with `job-name=${JOB_NAME}`.
+- Clears finalizers only from pods in those two groups before force deletion.
+- Uninstalls only the Helm release named by `RELEASE`.
+
+The script does not delete other Jobs or pods that have a different `job-name` value.
+
+The script does not restart MicroK8s by default.
+Set `RESTART_MICROK8S=1` only when the cluster runtime must restart.
+That setting stops every workload in the MicroK8s cluster before recovery continues:
+
+```bash
+RESTART_MICROK8S=1 ./scripts/cluster-recover.sh
+```
+
+After an opt-in restart, verify all namespaces before you treat the cluster as restored:
+
+```bash
+kubectl get pods --all-namespaces
+```
+
+After recovery, verify that unrelated resources remain and the selected release is available:
+
+```bash
+kubectl get jobs,pods -n nemoclaw-gpu --show-labels
+./scripts/get-agent-pods.sh -n nemoclaw-gpu
+./scripts/get-hpa.sh -n nemoclaw-gpu
+```
+
+The recovery boundary is correct when nonmatching Jobs and pods remain and the selected release reports its agent pods and HPA.
 
 ## Configuration files
 
@@ -326,7 +444,7 @@ kubectl describe hpa nemoclaw-gpu-agent -n nemoclaw-gpu
 NGINX is the load balancer for this chart — every install creates an Ingress in front of the agent Service, and `install-hpa.sh` installs the ingress-nginx controller automatically when the cluster does not already have one. There is no toggle to disable it.
 
 ```text
-HTTP client
+HTTPS client
   → ingress-nginx
   → Service nemoclaw-gpu-agent:8081 (ClusterIP)
   → ready agent pod
@@ -346,10 +464,12 @@ kubectl get ingressclass nginx
 kubectl get ingress -n nemoclaw-gpu
 ```
 
-Set a custom hostname at install time, or re-run on an existing release — `install-hpa.sh` is idempotent:
+Set a custom hostname at install time, or rerun on an existing release:
 
 ```bash
-INGRESS_HOST=nemoclaw.example.com ./scripts/install-hpa.sh
+HPA_VALUES=/path/to/hpa-tls-values.yaml \
+INGRESS_HOST=nemoclaw.example.com \
+./scripts/install-hpa.sh
 ```
 
 The default NGINX annotations allow long inference requests and streaming responses:
@@ -373,16 +493,20 @@ Verify the route without requiring an external load balancer:
 kubectl port-forward \
   -n ingress-nginx \
   service/ingress-nginx-controller \
-  8080:80
+  8443:443
 ```
 
-In another terminal (retrieve the auto-generated basic-auth password first — see "Ingress security" below):
+In another terminal, retrieve the auto-generated Basic auth password.
+Send an HTTPS request with the configured hostname and the certificate authority file that verifies your certificate:
 
 ```bash
 PASSWORD=$(kubectl get secret nemoclaw-gpu-agent-ingress-auth -n nemoclaw-gpu \
   -o jsonpath='{.data.password}' | base64 -d)
-curl -s -u "admin:${PASSWORD}" -H 'Host: nemoclaw.local' \
-  http://127.0.0.1:8080/healthz
+curl --fail --show-error --silent \
+  --cacert /path/to/ca.crt \
+  --resolve 'nemoclaw.example.com:8443:127.0.0.1' \
+  -u "admin:${PASSWORD}" \
+  https://nemoclaw.example.com:8443/healthz
 ```
 
 Rate limiting is disabled by default because it can suppress the load that drives autoscaling. Enable it only when the limit is intentionally part of the deployment policy:
@@ -413,13 +537,45 @@ enforces two things at the Ingress level:
   own `kubernetes.io/basic-auth`-style secret (must contain an `auth` key in htpasswd
   format), to use a specific credential instead.
 
-- **TLS is not automatic.** The chart refuses to render an Ingress at all unless either
-  `ingress.tls` is configured with a real certificate, or `ingress.allowInsecureHttp: true`
-  is explicitly set. `install-hpa.sh` (and the other scripts) set `allowInsecureHttp=true`
-  for you, because they target private/dev clusters with no cert for `ingress.host` — that
-  is the documented, explicit tradeoff for this workflow, not a silent default. Set
-  `ingress.tls` with a cert-manager-issued (or your own) certificate before exposing this
-  endpoint anywhere it isn't already network-isolated.
+  The generated credential is in the `nemoclaw-gpu-agent-ingress-auth` Secret in the
+  `nemoclaw-gpu` namespace. A Kubernetes subject that can read Secrets in that namespace
+  can retrieve it. The Secret has the Helm `keep` policy, so `helm uninstall` and
+  `cluster-recover.sh` preserve it for a later reinstall. Delete it explicitly to remove
+  the credential or force the next install to generate a new value:
+
+  ```bash
+  kubectl delete secret nemoclaw-gpu-agent-ingress-auth -n nemoclaw-gpu
+  ```
+
+  Deleting the namespace also deletes the generated credential. The TLS Secret is
+  operator-owned and remains until the operator deletes the Secret or its namespace.
+
+- **TLS is required by default.** The chart refuses to render the Ingress unless
+  `ingress.tls` references a certificate Secret or you explicitly opt in to cleartext HTTP.
+  The scripts do not set `ingress.allowInsecureHttp` during the normal workflow.
+
+Cleartext HTTP exposes the reusable Basic auth credential and completion traffic to interception on any network path that can observe the request.
+Use the cleartext exception only after a firewall, VPN, or equivalent access control restricts the cluster nodes to trusted clients:
+
+```bash
+ALLOW_INSECURE_HTTP=1 ./scripts/install-hpa.sh
+```
+
+`ALLOW_INSECURE_HTTP=1` acknowledges that Kubernetes cannot verify the surrounding network boundary.
+Each script invocation also runs a Kubernetes exposure preflight before it sets `ingress.allowInsecureHttp=true`.
+The preflight requires all of these conditions:
+
+- At least one cluster node has an `InternalIP` address.
+- Every node `InternalIP` address is private, loopback, or link-local.
+- No cluster node has an `ExternalIP` address.
+- At least one managed ingress-nginx controller Service exists.
+- Every matching controller Service uses `ClusterIP`, has no `externalIPs`, and has no entry in `.status.loadBalancer.ingress`.
+- Managed ingress-nginx controller pods do not use `hostNetwork` or `hostPort`.
+
+These checks reject Kubernetes-reported exposure paths.
+They do not prove that other hosts on a private network cannot reach the cluster.
+If the preflight cannot verify every condition, the script exits before enabling cleartext and instructs you to configure TLS.
+Set `ALLOW_INSECURE_HTTP=1` separately for each install, reset, recovery, or load-test command that must preserve cleartext operation.
 
 Do not expose the endpoint on a public network until you've confirmed both of the above are
 configured the way you intend.

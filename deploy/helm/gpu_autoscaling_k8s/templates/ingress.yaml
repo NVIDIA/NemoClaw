@@ -1,7 +1,7 @@
 {{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{- if and (not .Values.ingress.tls) (not .Values.ingress.allowInsecureHttp) }}
-{{- fail "ingress.tls is empty and ingress.allowInsecureHttp is false: refusing to render an Ingress that would expose /v1/chat/completions over plain HTTP. Configure ingress.tls with a real certificate, or set --set ingress.allowInsecureHttp=true to explicitly accept cleartext HTTP (e.g. for a private/dev cluster — install-hpa.sh does this for you). See README \"Ingress security\"." }}
+{{- fail "ingress.tls is empty and ingress.allowInsecureHttp is false: refusing to render an Ingress that would expose /v1/chat/completions over plain HTTP. Configure ingress.tls with a real certificate, or set ALLOW_INSECURE_HTTP=1 when running the chart scripts to acknowledge cleartext HTTP after their exposure preflight. See README \"Ingress security\"." }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress

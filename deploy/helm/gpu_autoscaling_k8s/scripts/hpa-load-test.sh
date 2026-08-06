@@ -89,6 +89,8 @@ LAST_HPA_LINE=""
 require_cmd kubectl
 require_cmd helm
 
+ALLOW_INSECURE_VALUE="$(hpa_common_ingress_allow_insecure_value)"
+
 kubectl get apiservice v1beta1.metrics.k8s.io 2>/dev/null | grep -q True || {
   echo "metrics-server not ready" >&2
   exit 1
@@ -123,7 +125,7 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set autoscaling.minReplicas=1 \
   --set autoscaling.maxReplicas="${TARGET_PODS}" \
   --set "autoscaling.targetGPUUtilizationPercentage=${HPA_TARGET_GPU}" \
-  --set ingress.allowInsecureHttp=true \
+  --set "ingress.allowInsecureHttp=${ALLOW_INSECURE_VALUE}" \
   >/dev/null
 
 hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${DEPLOYMENT}" 1 "${TARGET_PODS}" || true
@@ -240,12 +242,21 @@ kind: Job
 metadata:
   name: ${JOB_NAME}
   namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: nemoclaw-gpu
+    app.kubernetes.io/instance: ${RELEASE}
+    nemoclaw.ai/workload-type: load-test
 spec:
   backoffLimit: 0
   parallelism: ${JOB_PARALLELISM}
   completions: ${JOB_PARALLELISM}
   ttlSecondsAfterFinished: 600
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nemoclaw-gpu
+        app.kubernetes.io/instance: ${RELEASE}
+        nemoclaw.ai/workload-type: load-test
     spec:
       serviceAccountName: ${LOAD_SA}
       restartPolicy: Never

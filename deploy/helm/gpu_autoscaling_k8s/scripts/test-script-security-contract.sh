@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=hpa-common.sh
+source "${SCRIPT_DIR}/hpa-common.sh"
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+TEST_TMP="$(mktemp -d)"
+trap 'rm -f "${TEST_TMP}/kubectl" "${TEST_TMP}/kubectl.log"; rmdir "${TEST_TMP}"' EXIT
+
+cat >"${TEST_TMP}/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$*" == "get nodes -o json" ]]; then
+  case "${MOCK_NODE_MODE:-private}" in
+    private)
+      printf '%s' '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"10.1.2.3"}]}}]}'
+      ;;
+    external)
+      printf '%s' '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"10.1.2.3"},{"type":"ExternalIP","address":"203.0.113.10"}]}}]}'
+      ;;
+  esac
+elif [[ "$*" == get\ services* ]]; then
+  case "${MOCK_SERVICE_MODE:-internal}" in
+    internal)
+      printf '%s' '{"items":[{"metadata":{"name":"ingress-nginx-controller"},"spec":{"type":"ClusterIP"},"status":{}}]}'
+      ;;
+    external)
+      printf '%s' '{"items":[{"metadata":{"name":"ingress-nginx-controller"},"spec":{"type":"LoadBalancer"},"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.20"}]}}}]}'
+      ;;
+    missing)
+      printf '%s' '{"items":[]}'
+      ;;
+  esac
+elif [[ "$*" == get\ pods* ]]; then
+  case "${MOCK_POD_MODE:-internal}" in
+    internal)
+      printf '%s' '{"items":[{"metadata":{"name":"ingress-nginx-controller"},"spec":{"hostNetwork":false,"containers":[{"ports":[{"containerPort":80}]}]}}]}'
+      ;;
+    host-network)
+      printf '%s' '{"items":[{"metadata":{"name":"ingress-nginx-controller"},"spec":{"hostNetwork":true,"containers":[{}]}}]}'
+      ;;
+    host-port)
+      printf '%s' '{"items":[{"metadata":{"name":"ingress-nginx-controller"},"spec":{"hostNetwork":false,"containers":[{"ports":[{"containerPort":80,"hostPort":80}]}]}}]}'
+      ;;
+  esac
+else
+  echo "unexpected kubectl call: $*" >&2
+  exit 1
+fi
+MOCK
+chmod +x "${TEST_TMP}/kubectl"
+
+export MOCK_NODE_MODE=private
+export MOCK_SERVICE_MODE=internal
+export MOCK_POD_MODE=internal
+[[ "$(PATH="${TEST_TMP}:${PATH}" ALLOW_INSECURE_HTTP=1 hpa_common_ingress_allow_insecure_value)" == "true" ]] \
+  || fail "isolated ClusterIP ingress did not pass the cleartext preflight"
+
+export MOCK_NODE_MODE=external
+if PATH="${TEST_TMP}:${PATH}" ALLOW_INSECURE_HTTP=1 \
+  hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
+  fail "cleartext preflight accepted a node ExternalIP"
+fi
+
+export MOCK_NODE_MODE=private
+export MOCK_SERVICE_MODE=external
+if PATH="${TEST_TMP}:${PATH}" ALLOW_INSECURE_HTTP=1 \
+  hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
+  fail "cleartext preflight accepted an external ingress Service"
+fi
+
+export MOCK_SERVICE_MODE=missing
+if PATH="${TEST_TMP}:${PATH}" ALLOW_INSECURE_HTTP=1 \
+  hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
+  fail "cleartext preflight accepted an unverifiable ingress controller"
+fi
+
+export MOCK_SERVICE_MODE=internal
+export MOCK_POD_MODE=host-network
+if PATH="${TEST_TMP}:${PATH}" ALLOW_INSECURE_HTTP=1 \
+  hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
+  fail "cleartext preflight accepted ingress controller hostNetwork"
+fi
+
+export MOCK_POD_MODE=host-port
+if PATH="${TEST_TMP}:${PATH}" ALLOW_INSECURE_HTTP=1 \
+  hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
+  fail "cleartext preflight accepted ingress controller hostPort"
+fi
+
+[[ "$(ALLOW_INSECURE_HTTP=0 hpa_common_ingress_allow_insecure_value)" == "false" ]] \
+  || fail "cleartext opt-in default is not false"
+
+# shellcheck disable=SC2329 # hpa_common_ingress_allow_insecure_value invokes this override.
+hpa_common_verify_insecure_ingress_isolation() { return 17; }
+if ALLOW_INSECURE_HTTP=1 hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
+  fail "cleartext opt-in bypassed the isolation preflight"
+else
+  status=$?
+  [[ "${status}" == "1" ]] || fail "cleartext opt-in did not return the preflight failure"
+fi
+
+# shellcheck disable=SC2329 # hpa_common_ingress_allow_insecure_value invokes this override.
+hpa_common_verify_insecure_ingress_isolation() { return 0; }
+[[ "$(ALLOW_INSECURE_HTTP=1 hpa_common_ingress_allow_insecure_value)" == "true" ]] \
+  || fail "verified cleartext opt-in did not return true"
+
+if ALLOW_INSECURE_HTTP=yes hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
+  fail "invalid cleartext opt-in value was accepted"
+fi
+
+KUBECTL_LOG="${TEST_TMP}/kubectl.log"
+export KUBECTL_LOG
+
+kubectl() {
+  printf '%s\n' "$*" >>"${KUBECTL_LOG}"
+  if [[ "$*" == *"get pods"*"app.kubernetes.io/instance=test-release"* ]]; then
+    printf 'agent-pod'
+  elif [[ "$*" == *"get pods"*"job-name=test-load-job"* ]]; then
+    printf 'load-pod'
+  fi
+}
+
+RELEASE=test-release CHART_NAME=nemoclaw-gpu \
+  hpa_common_clear_stuck_pods test-namespace test-load-job
+
+grep -q 'job-name=test-load-job' "${KUBECTL_LOG}" \
+  || fail "load-test pod cleanup did not use the exact Job name"
+grep -q 'app.kubernetes.io/name=nemoclaw-gpu,app.kubernetes.io/instance=test-release' \
+  "${KUBECTL_LOG}" || fail "pod cleanup did not use the Helm release selector"
+if grep -Eq -- '(^| )-l job-name( |$)' "${KUBECTL_LOG}"; then
+  fail "pod cleanup used an existential job-name selector"
+fi
+if grep -q -- '--all' "${SCRIPT_DIR}/cluster-recover.sh"; then
+  fail "cluster recovery contains namespace-wide deletion"
+fi
+# shellcheck disable=SC2016 # Match the literal default expression in the target script.
+grep -Fq 'RESTART_MICROK8S="${RESTART_MICROK8S:-0}"' "${SCRIPT_DIR}/cluster-recover.sh" \
+  || fail "cluster recovery enables a MicroK8s restart by default"
+# shellcheck disable=SC2016 # Match the literal default expression in the target script.
+grep -Fq 'INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"' "${SCRIPT_DIR}/install-hpa.sh" \
+  || fail "installer ingress Service does not default to ClusterIP"
+
+echo "OK: recovery ownership and cleartext ingress security contracts hold"

@@ -2,9 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Tear down load-test Jobs and GPU agent pods, then helm upgrade idle baseline.
-# Recovery boundary: assumes NAMESPACE is dedicated to this chart (see cluster-recover.sh);
-# pod/finalizer cleanup is scoped to the chart's selector label or job-name, never --all.
+# Tear down the configured load-test Job and this release's GPU agent pods, then
+# helm upgrade the idle baseline.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
@@ -38,6 +37,7 @@ INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
 # silently changing the route clients use to reach the agent.
 INGRESS_HOST="${INGRESS_HOST:-}"
 SERVICE="${SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_agent_service)}"
+RELEASE_SELECTOR="$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_release_selector)"
 
 require_cmd kubectl
 
@@ -49,19 +49,18 @@ namespace_exists() {
   kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1
 }
 
-# Scoped to chart-owned pods (selector label) or Job-owned pods (job-name) — never every
-# pod in NAMESPACE — so a namespace accidentally shared with unrelated workloads is safe.
+# Scoped to this release and the configured load-test Job.
 clear_pod_finalizers() {
   local pod
   for pod in $(kubectl get pods -n "${NAMESPACE}" \
-    -l 'app.kubernetes.io/name=nemoclaw-gpu' \
+    -l "${RELEASE_SELECTOR}" \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     [[ -z "${pod}" ]] && continue
     kubectl patch pod "${pod}" -n "${NAMESPACE}" -p '{"metadata":{"finalizers":null}}' --type=merge \
       >/dev/null 2>&1 || true
   done
   for pod in $(kubectl get pods -n "${NAMESPACE}" \
-    -l 'job-name' \
+    -l "job-name=${JOB_NAME}" \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     [[ -z "${pod}" ]] && continue
     kubectl patch pod "${pod}" -n "${NAMESPACE}" -p '{"metadata":{"finalizers":null}}' --type=merge \
@@ -83,22 +82,22 @@ kubectl delete serviceaccount "${JOB_NAME}-sa" -n "${NAMESPACE}" --ignore-not-fo
 
 if [[ "${DELETE_HPA}" == "1" ]]; then
   kubectl delete hpa "${HPA_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
-  kubectl delete hpa -n "${NAMESPACE}" -l app.kubernetes.io/name=nemoclaw-gpu --ignore-not-found --wait=false 2>/dev/null || true
+  kubectl delete hpa -n "${NAMESPACE}" -l "${RELEASE_SELECTOR}" --ignore-not-found --wait=false 2>/dev/null || true
 fi
 
 if [[ "${DELETE_DEPLOYMENT}" == "1" ]]; then
   kubectl delete deployment "${DEPLOYMENT}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
 fi
 
-kubectl delete pods -n "${NAMESPACE}" -l 'app.kubernetes.io/name=nemoclaw-gpu' --force --grace-period=0 2>/dev/null || true
-kubectl delete pods -n "${NAMESPACE}" -l 'job-name' --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l "${RELEASE_SELECTOR}" --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l "job-name=${JOB_NAME}" --force --grace-period=0 2>/dev/null || true
 sleep 2
 clear_pod_finalizers
-kubectl delete pods -n "${NAMESPACE}" -l 'app.kubernetes.io/name=nemoclaw-gpu' --force --grace-period=0 2>/dev/null || true
-kubectl delete pods -n "${NAMESPACE}" -l 'job-name' --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l "${RELEASE_SELECTOR}" --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l "job-name=${JOB_NAME}" --force --grace-period=0 2>/dev/null || true
 
-kubectl delete rs -n "${NAMESPACE}" -l app.kubernetes.io/name=nemoclaw-gpu --ignore-not-found --wait=false 2>/dev/null || true
-hpa_common_clear_stuck_pods "${NAMESPACE}"
+kubectl delete rs -n "${NAMESPACE}" -l "${RELEASE_SELECTOR}" --ignore-not-found --wait=false 2>/dev/null || true
+hpa_common_clear_stuck_pods "${NAMESPACE}" "${JOB_NAME}"
 
 if [[ "${SKIP_HELM}" == "1" ]]; then
   hpa_common_print_hpa "${NAMESPACE}"
