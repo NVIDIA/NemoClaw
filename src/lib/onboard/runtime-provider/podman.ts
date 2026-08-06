@@ -127,6 +127,7 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       operations: ["start", "stop"],
     },
+    stateMutation: unsupported(providerId, deferred),
     bootstrap: unsupported(providerId, deferred),
     snapshot: unsupported(providerId, deferred),
     recovery: unsupported(providerId, deferred),

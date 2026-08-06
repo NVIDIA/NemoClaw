@@ -194,6 +194,8 @@ export function createDeps(
       reserveSandboxInferenceRoute: calls.reserveRoute,
       registryUpdateSandbox: calls.updateSandbox,
       promptValidatedSandboxName: calls.promptName,
+      assessHost: () => ({ cpus: 8 }),
+      formatSandboxBuildEstimateNote: () => "estimate",
       formatOnboardConfigSummary: (options: {
         provider: string;
         model: string;

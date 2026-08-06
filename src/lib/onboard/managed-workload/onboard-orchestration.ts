@@ -75,7 +75,6 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly managedWorkloadRebuild: ManagedWorkloadRebuildHandoff | null;
   readonly tempManagedRuntime: boolean;
   readonly tempManagedRuntimeCatalog: string | null;
-  readonly tempManagedRuntimeCatalog: string | null;
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
