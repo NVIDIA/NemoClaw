@@ -322,7 +322,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           expect.objectContaining({ id: "ubuntu-repo-cloud-openclaw" }),
         ]),
       );
-      expect(generateMatrix.outputs!.matrix).toBe("${{ steps.matrix.outputs.matrix }}");
+      expect(
+        (generateMatrix as unknown as { outputs: Record<string, string> }).outputs.matrix,
+      ).toBe("${{ steps.matrix.outputs.matrix }}");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
