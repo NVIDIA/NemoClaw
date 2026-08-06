@@ -400,3 +400,41 @@ describe("OpenClaw top-config guard host wiring", () => {
     expect(parseOpenClawConfigGuardOutput("lock", plain).resealedDrift).toBeUndefined();
   });
 });
+
+describe("OpenClaw config guard failed-startup recovery wiring (#8304)", () => {
+  it("accepts the recovery action's result record instead of discarding it", () => {
+    const { privileged } = createExec(true);
+
+    const result = runOpenClawConfigGuard(privileged, "unlock-failed-startup", {
+      planJson: '{"version":1}',
+    });
+
+    // A missing entry in the parser's action set turns a successful guard run
+    // into an "unknown record" issue, which silently disables the whole path.
+    expect(result.issues).toEqual([]);
+  });
+
+  it("outlasts the guard's own recursive fan-out budget and forwards the plan", () => {
+    const { calls, privileged } = createExec(true);
+
+    runOpenClawConfigGuard(privileged, "unlock-failed-startup", { planJson: '{"version":1}' });
+    const recovery = calls.map(({ cmd }) => cmd).find((cmd) => cmd.includes("unlock-failed-startup"));
+
+    // The guard allows the state-dir fan-out 12m, so a 5m host timeout would
+    // kill it mid-unseal, past its rollback and its JSON error contract.
+    expect(recovery?.slice(0, 4)).toEqual(["timeout", "--signal=TERM", "--kill-after=5s", "15m"]);
+    expect(recovery).toContain("--plan-json");
+  });
+
+  it("refuses the recovery action when the sandbox has no installed guard", () => {
+    const { privileged } = createExec(false);
+
+    const result = runOpenClawConfigGuard(privileged, "unlock-failed-startup", {
+      planJson: '{"version":1}',
+    });
+
+    expect(result.issues).toEqual([
+      "OpenClaw config guard is absent in the sandbox; rebuild before recovering a failed startup",
+    ]);
+  });
+});
