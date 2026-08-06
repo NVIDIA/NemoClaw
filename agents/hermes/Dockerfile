@@ -101,6 +101,7 @@ COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/p
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
+COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
@@ -124,6 +125,7 @@ COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/valid
 COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py
 COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py
 COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
+COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py
 COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
@@ -318,13 +320,13 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 # read-only.
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
-    && chmod 444 /src/lib/tool-disclosure.ts \
+    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/openclaw-npm-remediation.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=284e2bf46c82f25967b86f73fbefcd97315a1284a4b079bd6f13e6153bece4b6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=61fec509d9c0229650f71d1fc53d103a39fd830976213dbdef0d222592981d03
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -363,7 +365,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-star
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
+    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/managed_policy.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
@@ -423,57 +425,6 @@ RUN /usr/bin/python3 -I \
         "$NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256" /opt/hermes/gateway/drain_control.py \
         "$NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256" /opt/hermes/gateway/run.py \
     | sha256sum -c -
-
-# Fresh named profiles do not receive config.yaml, so pin the reviewed
-# NemoClaw policy at Hermes' source defaults as well as in generated default
-# and dashboard homes. The patcher binds all seven input modules to the exact
-# upstream v2026.7.20 source hashes before editing them.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=0a05a28e39194016edc3b41448e5ec40abf759c8a445ad2083eb6e6705766599
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
-    | sha256sum -c - \
-    || { echo "ERROR: patch-hermes-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
-RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
-
-# Hermes v0.19.0 has several built-in environment override paths that can
-# re-enable an explicitly disabled platform when ambient credentials exist.
-# Apply this after the profile-policy patch above, then bind both its exact
-# output module and this narrow patcher before preserving explicit disables
-# across environment processing.
-ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256=29769d0ae10646dd0a66b32dbefd5f85540544172d57cac96bb4f0941e260948
-ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=2084c652a07614761d85703787f8697fc29560fe447f23362aa0bda5179dffa7
-ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256=5a1375664d1451b2fe9c3f2325f673149a90b9035588dfd4eb6618f785ecd6a2
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
-        "$NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256" /opt/hermes/gateway/config.py \
-    | sha256sum -c - \
-    || { echo "ERROR: Hermes neutral platform environment source identity mismatch" >&2; exit 1; }
-# hadolint ignore=DL4006
-RUN /usr/bin/python3 -I \
-        /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
-        /opt/hermes/gateway/config.py \
-    && printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256" /opt/hermes/gateway/config.py \
-    | sha256sum -c -
-
-# Prove the source-level fallback on the real installed runtime through the
-# user-facing profile creation path. The new home must remain config-less while
-# all security, privacy, update, browser, and session defaults fail safe.
-RUN set -eu; \
-    profile_probe_root="$(mktemp -d)"; \
-    trap 'rm -rf "$profile_probe_root"' EXIT; \
-    profile_probe_default="$profile_probe_root/.hermes"; \
-    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_default" \
-        /usr/local/bin/hermes profile create nemoclaw-policy-probe \
-        --no-alias --no-skills; \
-    profile_probe_home="$profile_probe_default/profiles/nemoclaw-policy-probe"; \
-    test -d "$profile_probe_home"; \
-    test ! -e "$profile_probe_home/config.yaml"; \
-    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
-        /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
 
 # Hermes v0.19.0 writes gateway lifecycle metadata directly below HERMES_HOME.
 # Shields-up deliberately makes that config root root-owned and non-writable,
@@ -591,7 +542,7 @@ RUN node --experimental-strip-types \
 # silent supply-chain tampering of the build context (an attacker rewriting a
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=a841a3673cd2543dd53559e513741dd66929361b8ca94b9196b72badf7827d3c
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=f4276e9833638b7a620176c88bd329d6b6d4948538a3227b727a1397146a0e0e
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
@@ -774,6 +725,50 @@ RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
     && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 30; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.3"'; \
+    fi \
+    && rm -rf /sandbox/.cache
+
+USER root
+
+# Install the generated policy manifest outside the mutable Hermes home. Python
+# consumers read this versioned artifact instead of embedding managed defaults.
+RUN install -o root -g root -m 0444 \
+        /sandbox/.hermes/managed-policy.json \
+        /usr/local/share/nemoclaw/hermes-managed-policy.json \
+    && rm -f /sandbox/.hermes/managed-policy.json
+
+# Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
+# fallback readers from the generated manifest, then validate a real profile.
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=7468555c7596b3b95732fb98aec6152537778d8519a4409c3da8aa6a76c9a3f7
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-hermes-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
+RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
+# Hermes v0.19.0 has several built-in environment override paths that can
+# re-enable an explicitly disabled platform when ambient credentials exist.
+# Apply this after the profile-policy patch above, then bind both its exact
+# output module and this narrow patcher before preserving explicit disables
+# across environment processing.
+ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256=29769d0ae10646dd0a66b32dbefd5f85540544172d57cac96bb4f0941e260948
+ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=b50a8390311c828fa9e13084e9af0caadafe2380ae161ef36dd4bdf792b22ee6
+ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256=77ad342af30d59a5b863d9f5f817247d816fd582fb12d38e074243f88d85b9f4
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
+        "$NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256" /opt/hermes/gateway/config.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes neutral platform environment source identity mismatch" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
+        /opt/hermes/gateway/config.py \
+    && printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256" /opt/hermes/gateway/config.py \
+    | sha256sum -c -
+
+RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         GOOGLE_CHAT_PROJECT_ID=nemoclaw-hostile \
         GOOGLE_CHAT_SUBSCRIPTION_NAME=projects/nemoclaw-hostile/subscriptions/nemoclaw-hostile \
         GOOGLE_CHAT_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"nemoclaw-hostile"}' \
@@ -781,8 +776,23 @@ RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
         WHATSAPP_CLOUD_ACCESS_TOKEN=nemoclaw-hostile \
         HERMES_HOME=/sandbox/.hermes /opt/hermes/.venv/bin/python -I \
             /opt/nemoclaw-hermes-config/image-build-probes.py neutral-platform-inertness; \
-    fi \
-    && rm -rf /sandbox/.cache
+    fi
+
+RUN set -eu; \
+    profile_probe_root="$(mktemp -d)"; \
+    trap 'rm -rf "$profile_probe_root"' EXIT; \
+    profile_probe_default="$profile_probe_root/.hermes"; \
+    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_default" \
+        /usr/local/bin/hermes profile create nemoclaw-policy-probe \
+        --no-alias --no-skills; \
+    profile_probe_home="$profile_probe_default/profiles/nemoclaw-policy-probe"; \
+    test -d "$profile_probe_home"; \
+    test ! -e "$profile_probe_home/config.yaml"; \
+    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
+        /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
+
+USER sandbox
 
 # Prove that the installed dashboard seeder carries every reviewed policy value
 # from the generated default home into a fresh isolated dashboard home. This is
@@ -792,6 +802,7 @@ RUN dashboard_probe=/tmp/nemoclaw-dashboard-policy-probe.yaml \
     && rm -f "$dashboard_probe" "$dashboard_probe.nemoclaw.tmp" \
     && /opt/hermes/.venv/bin/python -I \
         /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py \
+        /usr/local/share/nemoclaw/hermes-managed-policy.json \
         /sandbox/.hermes/config.yaml "$dashboard_probe" \
     && /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -1135,6 +1146,7 @@ RUN check_metadata() { \
     && check_absent /root/.cache/node-gyp \
     && check_absent /root/.cache/uv \
     && check_absent /sandbox/.cache \
+    && check_absent /sandbox/.hermes/managed-policy.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
@@ -1144,6 +1156,8 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755' \
+    && check_metadata /usr/local/lib/nemoclaw/managed_policy.py 'root:root 444' \
+    && check_metadata /usr/local/share/nemoclaw/hermes-managed-policy.json 'root:root 444' \
     && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
     && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root 755' \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \

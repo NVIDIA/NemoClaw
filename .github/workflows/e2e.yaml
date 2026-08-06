@@ -10,12 +10,12 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "Optional comma-separated typed target ids. Empty runs all supported live targets."
+        description: "Optional comma-separated typed target IDs. On trusted main runs, empty jobs and targets select all supported registry E2E tests. PR revision runs use the trusted controller target matrix."
         required: false
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
+        description: "Optional comma-separated E2E test IDs. On trusted main runs, empty jobs and targets select every workflow E2E except Exact staging Brev Launchable; set include_staging_brev_launchable to include it. PR revision runs use the trusted controller target matrix and exclude Launchable."
         required: false
         default: ""
         type: string
@@ -263,7 +263,7 @@ jobs:
           case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}" in
             ::false | managed-image-protected-runtime::false) ;;
             *)
-              echo "::error::Manual PR E2E accepts only the default suite or managed-image-protected-runtime without target or Launchable selectors" >&2
+              echo "::error::Manual PR E2E accepts only empty selectors or managed-image-protected-runtime without target or Launchable selectors" >&2
               exit 1
               ;;
           esac
@@ -594,7 +594,7 @@ jobs:
               targets: $targets,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
-              defaultSuiteSelected: ($jobs == "" and $targets == "")
+              emptySelectors: ($jobs == "" and $targets == "")
             }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
 
       - name: Upload trusted E2E dispatch receipt
@@ -644,7 +644,7 @@ jobs:
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -655,7 +655,6 @@ jobs:
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
-      E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
       INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -671,10 +670,10 @@ jobs:
       - id: workspace
         name: Prepare the trusted lane
         env:
-          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.BREV_API_KEY || '' }}
+          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
           BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
           BREV_CLI_VERSION: 0.6.330
-          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.BREV_ORG_ID || '' }}
+          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
@@ -714,14 +713,14 @@ jobs:
               jobs: $jobs,
               targets: $targets,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
-              defaultSuiteSelected: ($jobs == "" and $targets == "")
+              emptySelectors: ($jobs == "" and $targets == "")
             }' >"$WORK_DIR/dispatch.json"
 
       - name: Build, deploy, verify, test, and clean up
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
-          GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh
 
@@ -729,7 +728,7 @@ jobs:
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}
+          name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
             ${{ steps.workspace.outputs.work_dir }}/dispatch.json
@@ -985,16 +984,12 @@ jobs:
 
   openshell-gateway-auth-contract:
     needs: generate-matrix
-    # Accepted release-gate tradeoff: this resource-heavy live probe remains
-    # selective because regular PR CI enforces the generated auth/JWT config and
-    # package-service fail-closed boundary in focused unit tests. Affected PRs
-    # must explicitly dispatch this job and record its result before merge.
-    if: ${{ contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}
+    # Run on every main push. Exact manual selection remains available for diagnosis.
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       E2E_JOB: "1"
-      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "openshell-gateway-auth-contract"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -1508,9 +1503,8 @@ jobs:
 
   mcp-bridge-dev:
     needs: generate-matrix
-    # Moving OpenShell dev artifacts are compatibility evidence only and must
-    # never enter default main-push or manual runs without explicit selection.
-    if: ${{ contains(format(',{0},', inputs.jobs), ',mcp-bridge-dev,') || contains(format(',{0},', inputs.targets), ',mcp-bridge-dev,') }}
+    # Run moving OpenShell development artifacts on every main push.
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge-dev,') || contains(format(',{0},', inputs.targets), ',mcp-bridge-dev,') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1521,7 +1515,6 @@ jobs:
         agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
-      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "mcp-bridge-dev"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -1952,14 +1945,12 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # This explicit-only lane is intentionally dormant until the checked-out
-  # candidate carries ci/protected-managed-image-multiarch-activation-v1.json.
-  # The workflow and its narrow activation rule must first land on trusted main;
-  # only then can the follow-on candidate execute and prove its own exact head.
+  # Every main push runs this lane. Manual PR qualification also requires the
+  # exact candidate activation contract.
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
     needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
     permissions:
@@ -1976,29 +1967,28 @@ jobs:
             shard: linux-arm64
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}
-      E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-multiarch-startup"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-multiarch-activation-v1.json
-      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
-      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}
-      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/evidence.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: ${{ matrix.platform }}
-      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
       NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-managed-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
       - name: Validate protected exact-head dispatch
         env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
           PLATFORM: ${{ matrix.platform }}
           REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
@@ -2007,12 +1997,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
             echo "::error::Protected managed-image startup must run from trusted NVIDIA/NemoClaw main" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "::error::Protected managed-image startup requires exact PR and base SHAs" >&2
+            echo "::error::Protected managed-image startup requires candidate and base SHAs" >&2
             exit 1
           }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
@@ -2051,13 +2041,13 @@ jobs:
 
       - name: Validate candidate activation contract
         env:
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
           activation="ci/protected-managed-image-multiarch-activation-v1.json"
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
-            echo "::error::Protected managed-image checkout does not match the exact PR SHA" >&2
+            echo "::error::Protected managed-image checkout does not match the candidate SHA" >&2
             exit 1
           }
           [[ -f "$activation" && ! -L "$activation" ]] || {
@@ -2163,7 +2153,7 @@ jobs:
           BASE_DCODE: ${{ steps.bases.outputs.dcode }}
           BASE_HERMES: ${{ steps.bases.outputs.hermes }}
           BASE_OPENCLAW: ${{ steps.bases.outputs.openclaw }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2183,9 +2173,9 @@ jobs:
 
       - name: Run every exact managed-image contract directly
         env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
+          WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2302,7 +2292,7 @@ jobs:
   llama-cpp-dgx-spark-plan:
     name: Compile protected llama.cpp DGX Spark plan
     needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2318,27 +2308,22 @@ jobs:
     steps:
       - name: Validate trusted llama.cpp plan dispatch
         env:
-          ACTOR: ${{ github.actor }}
-          BASE_SHA: ${{ inputs.base_sha }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
           REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
             echo "::error::Protected llama.cpp planning must run from trusted NVIDIA/NemoClaw main" >&2
             exit 1
           }
-          [[ "$ACTOR" == "github-actions[bot]" ]] || {
-            echo "::error::Protected llama.cpp planning requires the trusted controller actor" >&2
-            exit 1
-          }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "::error::Protected llama.cpp planning requires exact PR and base SHAs" >&2
+            echo "::error::Protected llama.cpp planning requires candidate and base SHAs" >&2
             exit 1
           }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
@@ -2350,7 +2335,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -2376,25 +2361,24 @@ jobs:
         name: Compile exact candidate llama.cpp qualification plan
         env:
           CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
-            echo "::error::Protected llama.cpp candidate checkout does not match the exact PR SHA" >&2
+            echo "::error::Protected llama.cpp candidate checkout does not match the candidate SHA" >&2
             exit 1
           }
           node --experimental-strip-types --no-warnings \
             scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts \
             --source-root "$CANDIDATE_ROOT"
 
-  # This explicit-only lane is dormant until a follow-on candidate adds the
-  # YAML activation contract and enables complete protected infrastructure in
-  # the image manifest. Trusted main then proves that exact candidate head.
+  # Every main push evaluates the trusted llama.cpp plan. Qualification runs
+  # only when that plan reports execution=enabled.
   llama-cpp-dgx-spark-qualification:
     name: Protected llama.cpp on NVIDIA DGX Spark
     needs: [generate-matrix, llama-cpp-dgx-spark-plan]
-    if: ${{ (contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
     runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
     environment:
       name: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
@@ -2403,28 +2387,26 @@ jobs:
       contents: read
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification
-      E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
       E2E_TARGET_ID: "llama-cpp-dgx-spark-qualification"
-      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_E2E_SHARD: linux-arm64-gpu-dgx-spark-gb10
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification/evidence.json
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN: ${{ github.workspace }}/.llama-cpp-qualification/plan.json
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY: nemoclaw-llama-cpp-${{ github.run_id }}-${{ github.run_attempt }}
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       RELEASE_E2E_ACTIVATION_PATH: ci/llama-cpp-dgx-spark-qualification-v1.yaml
     steps:
       - name: Validate protected llama.cpp exact-head dispatch
         env:
-          ACTOR: ${{ github.actor }}
-          BASE_SHA: ${{ inputs.base_sha }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
           REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
           RUNNER_ARCH_KIND: ${{ runner.arch }}
@@ -2432,16 +2414,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
             echo "::error::Protected llama.cpp qualification must run from trusted NVIDIA/NemoClaw main" >&2
             exit 1
           }
-          [[ "$ACTOR" == "github-actions[bot]" ]] || {
-            echo "::error::Protected llama.cpp qualification requires the trusted controller actor" >&2
-            exit 1
-          }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "::error::Protected llama.cpp qualification requires exact PR and base SHAs" >&2
+            echo "::error::Protected llama.cpp qualification requires candidate and base SHAs" >&2
             exit 1
           }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
@@ -2457,7 +2435,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -2485,14 +2463,14 @@ jobs:
       - name: Materialize trusted llama.cpp qualification plan
         env:
           CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           PLAN: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan }}
           PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
-            echo "::error::Protected llama.cpp candidate checkout does not match the exact PR SHA" >&2
+            echo "::error::Protected llama.cpp candidate checkout does not match the candidate SHA" >&2
             exit 1
           }
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
@@ -2507,11 +2485,11 @@ jobs:
       - id: qualify
         name: Build and qualify exact llama.cpp candidate
         env:
-          BASE_SHA: ${{ inputs.base_sha }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
           CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           MODEL_HOST_PATH: ${{ needs.llama-cpp-dgx-spark-plan.outputs.model_host_path }}
-          WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2560,10 +2538,9 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # This explicit-only lane runs only when the exact candidate includes
-  # ci/protected-managed-image-runtime-activation-v1.json. The trusted
-  # controller can then qualify that candidate's exact head without executing
-  # PR-controlled workflow code. Its hosted amd64 prerequisite exports the
+  # Every main push runs this lane after managed-image startup succeeds. Manual
+  # PR qualification requires the exact candidate activation contract. Its
+  # hosted amd64 prerequisite exports the exact candidate build cache.
   # exact candidate build cache; this GPU lane imports it and rebuilds with
   # BuildKit networking disabled so a cache miss fails closed.
   # invalidState: Cold managed-image builds on the protected GPU runner can
@@ -2585,14 +2562,13 @@ jobs:
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
     needs: [generate-matrix, managed-image-multiarch-startup]
-    if: ${{ always() && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
     permissions:
       contents: read
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
-      E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-protected-runtime"
       E2E_WORKLOAD_SOURCE: "managed-image"
@@ -2600,23 +2576,23 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_SHARD: linux-amd64-gpu
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64
-      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: linux/amd64
-      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
       NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-managed-runtime-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
     steps:
       - name: Validate protected runtime exact-head dispatch
         env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
           REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
           RUNNER_ARCH_KIND: ${{ runner.arch }}
@@ -2624,12 +2600,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
             echo "::error::Protected managed-image runtime must run from trusted NVIDIA/NemoClaw main" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "::error::Protected managed-image runtime requires exact PR and base SHAs" >&2
+            echo "::error::Protected managed-image runtime requires candidate and base SHAs" >&2
             exit 1
           }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
@@ -2645,7 +2621,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -2679,14 +2655,14 @@ jobs:
 
       - name: Validate protected runtime activation contract
         env:
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
           candidate_root=".candidate-runtime"
           activation="$candidate_root/ci/protected-managed-image-runtime-activation-v1.json"
           [[ "$(git -C "$candidate_root" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
-            echo "::error::Protected managed-image runtime checkout does not match the exact PR SHA" >&2
+            echo "::error::Protected managed-image runtime checkout does not match the candidate SHA" >&2
             exit 1
           }
           [[ -f "$activation" && ! -L "$activation" ]] || {
@@ -2790,7 +2766,7 @@ jobs:
           BASE_DCODE: ${{ steps.runtime-bases.outputs.dcode }}
           BASE_HERMES: ${{ steps.runtime-bases.outputs.hermes }}
           BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -3621,7 +3597,7 @@ jobs:
 
   hermes-gpu-startup:
     needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,')) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,')))) }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 90
     strategy:
@@ -4822,18 +4798,14 @@ jobs:
 
   jetson-nvmap-gpu:
     needs: generate-matrix
-    # Explicit-only until a stable Jetson runner is available; otherwise full-suite dispatches remain queued forever.
-    # Required validation path: dispatch with jobs=jetson-nvmap-gpu or targets=jetson-nvmap-gpu.
-    # Re-enable default dispatch only after a stable Jetson runner exists, then remove E2E_DEFAULT_ENABLED.
-    if: ${{ contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,') }}
-    # GitHub does not apply timeout-minutes until after runner assignment. Keep
-    # unconfirmed manual Jetson dispatches on a hosted runner so they fail fast
-    # instead of queueing forever on an offline self-hosted runner label.
-    runs-on: ${{ inputs.allow_jetson_runner_queue && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}
+    # Every main push queues the repository-owned Jetson runner. GitHub starts
+    # timeout-minutes only after runner assignment. Maintainers must keep the
+    # configured runner label online.
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
+    runs-on: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
-      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "jetson-nvmap-gpu"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/jetson-nvmap-gpu
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -4852,7 +4824,7 @@ jobs:
           persist-credentials: false
 
       - name: Guard Jetson runner dispatch
-        if: ${{ !inputs.allow_jetson_runner_queue }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.jobs != '' || inputs.targets != '') && !inputs.allow_jetson_runner_queue }}
         env:
           JETSON_E2E_RUNNER_LABEL: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
         run: |

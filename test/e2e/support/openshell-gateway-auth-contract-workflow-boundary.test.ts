@@ -10,7 +10,7 @@ import {
 } from "../../../tools/e2e/openshell-gateway-auth-contract-workflow-boundary.mts";
 
 describe("OpenShell gateway auth contract workflow boundary", () => {
-  it("accepts the checked-in workflow and rejects explicit-only trust-boundary mutations", () => {
+  it("accepts the checked-in workflow and rejects protected trust-boundary mutations", () => {
     expect(validateOpenShellGatewayAuthContractWorkflowBoundary()).toEqual([]);
 
     const workflow = readOpenShellGatewayAuthContractWorkflow();
@@ -22,7 +22,6 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
       ...job.env,
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim",
       E2E_ARTIFACT_DIR: "/tmp/gateway-auth",
-      E2E_DEFAULT_ENABLED: "1",
       NEMOCLAW_OPENSHELL_PIN_VERSION: "latest",
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
     };
@@ -67,12 +66,11 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
 
     expect(validateOpenShellGatewayAuthContractWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "openshell-gateway-auth-contract must run only when explicitly selected",
+        "openshell-gateway-auth-contract must run on main pushes and retain manual selectors",
         "openshell-gateway-auth-contract must run on ubuntu-latest",
         "openshell-gateway-auth-contract must retain its 20 minute resource budget",
         "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba",
         "openshell-gateway-auth-contract must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
-        "openshell-gateway-auth-contract must set E2E_DEFAULT_ENABLED=0",
         "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION to an exact version",
         "openshell-gateway-auth-contract must not expose NVIDIA_API_KEY at job scope",
         "openshell-gateway-auth-contract action 'actions/checkout@v6' must pin a full SHA",
