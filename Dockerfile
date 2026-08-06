@@ -336,13 +336,13 @@ WORKDIR /opt/nemoclaw
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
-    NODE_OPTIONS=--dns-result-order=ipv4first \
     NPM_CONFIG_MAXSOCKETS=4 \
     NPM_CONFIG_FETCH_RETRIES=5 \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
     NPM_CONFIG_FETCH_TIMEOUT=60000
-RUN /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev \
+RUN NODE_OPTIONS=--dns-result-order=ipv4first \
+        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev \
     && rm -f /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 
 # Copy the grouped plugin and blueprint payload after runtime dependency

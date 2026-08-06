@@ -40,6 +40,7 @@ describe("OpenClaw final image layout", () => {
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
+    const entrypoint = fs.readFileSync(path.join(ROOT, "scripts", "nemoclaw-start.sh"), "utf-8");
     const payloads = [
       {
         stage: "openclaw-dependency-payload",
@@ -124,6 +125,12 @@ describe("OpenClaw final image layout", () => {
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(hasBuildKitRunMount(dockerfile)).toBe(false);
     expectManagedBootstrapNativeImageContract(dockerfile);
+    expect(finalStage).not.toMatch(/^\s*ENV\b[^\n]*(?:\\\n[^\n]*)*NODE_OPTIONS=/mu);
+    expect(finalStage).toContain("RUN NODE_OPTIONS=--dns-result-order=ipv4first \\");
+    expect(entrypoint).toContain('export NODE_OPTIONS="--dns-result-order=ipv4first"');
+    expect(
+      indexOfRequired(entrypoint, 'export NODE_OPTIONS="--dns-result-order=ipv4first"'),
+    ).toBeLessThan(indexOfRequired(entrypoint, "# managed-entrypoint-env-wrapper begin"));
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
       expect(stage?.match(/^COPY\b.*$/gmu)).toEqual(payload.copies);
@@ -175,7 +182,7 @@ describe("OpenClaw final image layout", () => {
     );
     const pluginInstall = indexOfRequired(
       finalStage,
-      "RUN /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev",
+      "RUN NODE_OPTIONS=--dns-result-order=ipv4first \\",
     );
     const managedMessagingUnionInstall = indexOfRequired(
       finalStage,
