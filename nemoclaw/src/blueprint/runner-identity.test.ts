@@ -2,54 +2,45 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type fs from "node:fs";
-import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-interface FsEntry {
-  type: "file" | "dir";
-  content?: string;
-}
+import {
+  createRunnerFsStore,
+  FAKE_HOME,
+  FIXED_RUN_UUID,
+  inMemoryFsMethods,
+  resolvedEndpointFor,
+} from "./runner-mock-fixtures.js";
+import {
+  MATCHING_INFERENCE_PROVIDER_LISTING,
+  MATCHING_INFERENCE_ROUTE_LISTING,
+  MATCHING_RUNTIME_PROVIDER_LISTING,
+  providersV2EnabledResult,
+  successResult,
+} from "./runner-test-fixtures.js";
 
-const store = new Map<string, FsEntry>();
+const { store } = createRunnerFsStore();
 const realpaths = new Map<string, string>();
 const mockExeca = vi.fn();
-const missingEntry = (path: string): never => {
-  throw new Error(`ENOENT: ${path}`);
-};
 
 vi.mock("node:os", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:os")>();
-  return { ...original, homedir: () => "/fakehome" };
+  return { ...original, homedir: () => FAKE_HOME };
 });
-vi.mock("node:crypto", () => ({ randomUUID: () => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }));
+vi.mock("node:crypto", () => ({ randomUUID: () => FIXED_RUN_UUID }));
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
+  const memory = inMemoryFsMethods(store, { realpaths, spy: vi.fn });
   return {
     ...original,
-    mkdirSync: vi.fn((path: string) => store.set(path, { type: "dir" })),
-    readFileSync: (path: string) => {
-      const entry = store.get(path);
-      return entry?.type === "file" ? (entry.content ?? "") : missingEntry(path);
-    },
-    writeFileSync: vi.fn((path: string, content: string) =>
-      store.set(path, { type: "file", content }),
-    ),
-    readdirSync: (path: string) => {
-      const prefix = path.endsWith("/") ? path : `${path}/`;
-      const entries = [...store.keys()]
-        .filter((key) => key.startsWith(prefix))
-        .map((key) => key.slice(prefix.length).split("/")[0]);
-      return entries.length > 0 || store.has(path) ? [...new Set(entries)] : missingEntry(path);
-    },
-    realpathSync: (path: string) => {
-      const resolved = resolve(path);
-      return realpaths.get(resolved) ?? (store.has(resolved) ? resolved : missingEntry(resolved));
-    },
-    statSync: (path: string) => ({
-      isFile: () => store.get(resolve(path))?.type === "file",
-    }),
+    mkdirSync: memory.mkdirSync,
+    readFileSync: memory.readFileSync,
+    writeFileSync: memory.writeFileSync,
+    readdirSync: memory.readdirSync,
+    realpathSync: memory.realpathSync,
+    statSync: memory.statSync,
   };
 });
 vi.mock("execa", () => ({ execa: (...args: unknown[]) => mockExeca(...args) }));
@@ -57,13 +48,7 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./ssrf.js")>();
   return {
     ...actual,
-    validateEndpointUrl: vi.fn(async (url: string) => ({
-      url,
-      pinnedUrl: url,
-      protocol: "https:",
-      hostname: new URL(url).hostname,
-      dnsResolved: false,
-    })),
+    validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
 
@@ -71,42 +56,12 @@ const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } =
   "./runner.js"
 );
 
-const matchingProvider = [
-  "Name: acme-okta-runtime",
-  "Type: okta-runtime-v1",
-  "Credential keys: OKTA_ACCESS_TOKEN",
-  "Config keys: <none>",
-  "",
-].join("\n");
+const matchingProvider = MATCHING_RUNTIME_PROVIDER_LISTING;
+const matchingInferenceProvider = MATCHING_INFERENCE_PROVIDER_LISTING;
+const matchingInferenceRoute = MATCHING_INFERENCE_ROUTE_LISTING;
 
-const matchingInferenceProvider = [
-  "Name: test-provider",
-  "Type: openai",
-  "Credential keys: <none>",
-  "Config keys: OPENAI_BASE_URL",
-  "",
-].join("\n");
-
-const matchingInferenceRoute = [
-  "Gateway inference:",
-  "",
-  "  Provider: test-provider",
-  "  Model: test-model",
-  "  Version: 1",
-  "  Timeout: 180s",
-  "",
-].join("\n");
-
-const success = { exitCode: 0, stdout: "", stderr: "" };
-const providersV2Enabled = {
-  exitCode: 0,
-  stdout: JSON.stringify({
-    scope: "global",
-    settings_revision: 1,
-    settings: { providers_v2_enabled: "true" },
-  }),
-  stderr: "",
-};
+const success = successResult();
+const providersV2Enabled = providersV2EnabledResult();
 
 function responseQueue(
   overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,

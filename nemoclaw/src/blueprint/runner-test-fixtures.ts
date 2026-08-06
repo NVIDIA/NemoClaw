@@ -82,3 +82,57 @@ export function resultForCommandFailure(
     ? { exitCode: 1, stdout: "", stderr }
     : { exitCode: 0, stdout: "", stderr: "" };
 }
+
+export function successResult(): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return { exitCode: 0, stdout: "", stderr: "" };
+}
+
+/** The `provider get` listing for the sandbox's matching runtime identity provider. */
+export const MATCHING_RUNTIME_PROVIDER_LISTING = [
+  "Name: acme-okta-runtime",
+  "Type: okta-runtime-v1",
+  "Credential keys: OKTA_ACCESS_TOKEN",
+  "Config keys: <none>",
+  "",
+].join("\n");
+
+/** The `provider get` listing for the blueprint's matching inference provider. */
+export const MATCHING_INFERENCE_PROVIDER_LISTING = [
+  "Name: test-provider",
+  "Type: openai",
+  "Credential keys: <none>",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+/** The `inference get` listing for the gateway route the blueprint expects. */
+export const MATCHING_INFERENCE_ROUTE_LISTING = [
+  "Gateway inference:",
+  "",
+  "  Provider: test-provider",
+  "  Model: test-model",
+  "  Version: 1",
+  "  Timeout: 180s",
+  "",
+].join("\n");
+
+/** A `settings get` payload with gateway providers v2 enabled. */
+export function providersV2EnabledResult(): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      scope: "global",
+      settings_revision: 1,
+      settings: { providers_v2_enabled: "true" },
+    }),
+    stderr: "",
+  };
+}
