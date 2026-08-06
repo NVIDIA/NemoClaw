@@ -64,13 +64,29 @@ NODE
       exit "$install_status"
     fi
     echo "[nemoclaw] fetching one missing lockfile archive for offline retry: $missing_url" >&2
-    if npm cache add "$missing_url" >"$install_log" 2>&1; then
-      cat "$install_log"
-    else
-      install_status=$?
+    cache_fetch_attempt=1
+    while :; do
+      if NPM_CONFIG_FETCH_RETRIES=0 NPM_CONFIG_FETCH_TIMEOUT=15000 \
+        npm cache add "$missing_url" >"$install_log" 2>&1; then
+        cat "$install_log"
+        break
+      else
+        install_status=$?
+      fi
+
       cat "$install_log" >&2
-      exit "$install_status"
-    fi
+      if ! grep -Eq 'npm error code (EAI_AGAIN|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT)' "$install_log"; then
+        exit "$install_status"
+      fi
+      if [ "$cache_fetch_attempt" -ge 4 ]; then
+        echo "[nemoclaw] missing lockfile archive fetch exhausted its bounded network retries" >&2
+        exit "$install_status"
+      fi
+
+      echo "[nemoclaw] retrying the missing lockfile archive after a transient network failure" >&2
+      sleep "$cache_fetch_attempt"
+      cache_fetch_attempt=$((cache_fetch_attempt + 1))
+    done
   done
 fi
 

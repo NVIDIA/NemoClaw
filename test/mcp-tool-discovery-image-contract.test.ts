@@ -150,6 +150,14 @@ if [ "$invocation" -eq 2 ]; then
   echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
   exit 1
 fi
+case "$invocation" in
+  3|4)
+    echo 'npm error code EAI_AGAIN' >&2
+    echo 'npm error syscall getaddrinfo' >&2
+    echo 'npm error request failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org' >&2
+    exit 1
+    ;;
+esac
 exit 0
 `,
         { mode: 0o755 },
@@ -169,10 +177,15 @@ exit 0
         expect(result.status).toBe(0);
         expect(result.stderr).toContain("completing the locked install offline from cache");
         expect(result.stderr).toContain("fetching one missing lockfile archive for offline retry");
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("9");
-        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 4)).toEqual([
+        expect(result.stderr).toContain(
+          "retrying the missing lockfile archive after a transient network failure",
+        );
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("11");
+        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 6)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
           "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
         ]);
