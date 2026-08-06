@@ -2729,6 +2729,14 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
 The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates eligible host group IDs for the supported Jetson GPU device nodes.
+<AgentOnly variant="openclaw">
+
+For OpenClaw direct GPU onboarding, the creation-time filesystem policy adds no Jetson entries unless `/dev/nvmap` is an existing, non-symlink character device.
+When that condition is met, the policy adds `/opt/nvidia` as read-only.
+It adds each existing, non-symlink character device on the eligible GPU path list as read-write.
+Generic GPU and CPU-only policies do not receive these Jetson entries.
+
+</AgentOnly>
 Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
 
 #### Common compatibility-path recovery

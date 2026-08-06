@@ -5,7 +5,37 @@ import fs from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
+import { detectTegraDeviceGroupGids, detectTegraGpuDevicePaths } from "./docker-gpu-jetson-groups";
+
+describe("detectTegraGpuDevicePaths", () => {
+  it("returns only existing character devices without following symlinks (#7610)", () => {
+    const paths = ["/dev/nvmap", "/dev/nvhost-gpu", "/dev/nvgpu/igpu0/link"];
+
+    expect(
+      detectTegraGpuDevicePaths({
+        listDevicePaths: () => paths,
+        statDevicePath: (devicePath) =>
+          devicePath === "/dev/nvmap"
+            ? { isCharacterDevice: true, isSymbolicLink: false }
+            : devicePath === "/dev/nvgpu/igpu0/link"
+              ? { isCharacterDevice: true, isSymbolicLink: true }
+              : null,
+      }),
+    ).toEqual(["/dev/nvmap"]);
+  });
+
+  it("requires a character device at /dev/nvmap before returning DRI render devices (#7610)", () => {
+    expect(
+      detectTegraGpuDevicePaths({
+        listDevicePaths: () => ["/dev/nvmap", "/dev/dri/renderD128"],
+        statDevicePath: (devicePath) => ({
+          isCharacterDevice: devicePath === "/dev/dri/renderD128",
+          isSymbolicLink: false,
+        }),
+      }),
+    ).toEqual([]);
+  });
+});
 
 describe("detectTegraDeviceGroupGids", () => {
   afterEach(() => {
