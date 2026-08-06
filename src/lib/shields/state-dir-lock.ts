@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { AgentStateLockPlan } from "../agent/definition-types";
 
 // State-dir lock fan-out for shields up/down. The actual traversal lives in a
 // root-only Python helper because shell `chown -R` / `chmod -R` cannot provide
@@ -21,37 +22,18 @@ export interface PrivilegedExec {
   run(cmd: string[], input?: string): PrivilegedExecResult;
 }
 
-// Keep this inventory exported for documentation/tests that compare the host
-// contract with shipped agent manifests. The helper owns enforcement and must
-// be updated in the same change when this inventory changes.
-export const HIGH_RISK_STATE_DIRS = [
-  "skills",
-  "agent",
-  "hooks",
-  "cron",
-  "agents",
-  "extensions",
-  "plugins",
-  "workspace",
-  "memory",
-  "devices",
-  "canvas",
-  "telegram",
-  "wechat",
-  "whatsapp",
-  "platforms",
-  "weixin",
-  "profiles",
-  "skins",
-];
-
-export const CONFIDENTIALITY_STATE_DIRS = ["credentials", "identity", "pairing"];
-// The dashboard profile entry applies only to the Hermes configuration root.
-export const WRITABLE_RUNTIME_SUBPATHS = ["agents/*/sessions", "profiles/dashboard-home"];
-
-const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/state-dir-guard.py";
 const HOST_HELPER = path.resolve(__dirname, "../../../scripts/state-dir-guard.py");
+const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/state-dir-guard.py";
+export const CONTAINER_STATE_LOCK_PLAN = "/usr/local/share/nemoclaw/state-lock-plan.json";
 const CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "12m"];
+const PLAN_ARRAY_FIELDS = [
+  "readOnlyRoots",
+  "confidentialRoots",
+  "readOnlyPrefixes",
+  "confidentialPrefixes",
+  "writableSubpaths",
+] as const;
+const PLAN_FIELDS = new Set(["$comment", "version", ...PLAN_ARRAY_FIELDS]);
 
 type GuardAction = "preflight" | "lock" | "unlock" | "startup";
 
@@ -76,6 +58,98 @@ function resultFailure(label: string, result: PrivilegedExecResult): string {
   const termination =
     result.signal !== null ? `signal ${result.signal}` : `status ${String(result.status)}`;
   return `${label} (${termination})${details ? `: ${details}` : ""}`;
+}
+
+function successful(result: PrivilegedExecResult): boolean {
+  return result.status === 0 && result.signal === null && !result.error;
+}
+
+function parseInstalledPlan(payload: string): AgentStateLockPlan | string {
+  let value: unknown;
+  try {
+    value = JSON.parse(payload);
+  } catch (error) {
+    return `installed state lock plan is not valid JSON: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "installed state lock plan must be an object";
+  }
+  const record = value as Record<string, unknown>;
+  const unknown = Object.keys(record).filter((key) => !PLAN_FIELDS.has(key));
+  if (unknown.length > 0) {
+    return `installed state lock plan has unknown fields: ${unknown.join(", ")}`;
+  }
+  if (record.$comment !== undefined && typeof record.$comment !== "string") {
+    return "installed state lock plan has a non-string $comment";
+  }
+  if (record.version !== 1) return "installed state lock plan version must be exactly 1";
+
+  const parsed = { version: 1 } as AgentStateLockPlan;
+  for (const field of PLAN_ARRAY_FIELDS) {
+    const entries = record[field];
+    if (!Array.isArray(entries) || entries.some((entry) => typeof entry !== "string")) {
+      return `installed state lock plan field '${field}' must be a string array`;
+    }
+    if (new Set(entries).size !== entries.length) {
+      return `installed state lock plan field '${field}' contains duplicates`;
+    }
+    parsed[field] = entries as string[];
+  }
+  return parsed;
+}
+
+function plansMatch(actual: AgentStateLockPlan, expected: AgentStateLockPlan): boolean {
+  return PLAN_ARRAY_FIELDS.every(
+    (field) =>
+      JSON.stringify([...actual[field]].sort()) === JSON.stringify([...expected[field]].sort()),
+  );
+}
+
+type RuntimePlanInspection =
+  | { kind: "image-current" }
+  | { kind: "host-current" }
+  | { kind: "historical" }
+  | { kind: "error"; issue: string };
+
+function inspectRuntimePlan(
+  privileged: PrivilegedExec,
+  expected: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
+): RuntimePlanInspection {
+  if (!stateLockPlanInImage) return { kind: "host-current" };
+  const capability = privileged.run(["test", "-r", CONTAINER_STATE_LOCK_PLAN]);
+  if (capability.status === 1 && capability.signal === null && !capability.error) {
+    return { kind: "historical" };
+  }
+  if (!successful(capability)) {
+    return {
+      kind: "error",
+      issue: resultFailure("state lock plan capability probe failed", capability),
+    };
+  }
+  const read = privileged.run(["cat", CONTAINER_STATE_LOCK_PLAN]);
+  if (!successful(read) || read.stderr.trim()) {
+    return { kind: "error", issue: resultFailure("installed state lock plan read failed", read) };
+  }
+  const parsed = parseInstalledPlan(read.stdout);
+  if (typeof parsed === "string") return { kind: "error", issue: parsed };
+  if (!plansMatch(parsed, expected)) {
+    return {
+      kind: "error",
+      issue:
+        "installed state lock plan differs from the current agent manifest; rebuild the sandbox before changing Shields",
+    };
+  }
+  return { kind: "image-current" };
+}
+
+export function stateLockPlanCompatibilityIssues(
+  privileged: PrivilegedExec,
+  expected: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
+): string[] {
+  const inspection = inspectRuntimePlan(privileged, expected, stateLockPlanInImage);
+  return inspection.kind === "error" ? [inspection.issue] : [];
 }
 
 function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): string[] {
@@ -170,37 +244,63 @@ function runStateDirGuard(
   privileged: PrivilegedExec,
   action: GuardAction,
   configDir: string,
+  plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
-  const capability = privileged.run(["test", "-r", CONTAINER_HELPER]);
-  let command: string[];
-  let input: string | undefined;
-  if (capability.status === 0 && capability.signal === null && !capability.error) {
-    command = [
-      ...CONTAINER_TIMEOUT,
-      "python3",
-      "-I",
-      CONTAINER_HELPER,
-      action,
-      "--config-dir",
-      configDir,
-    ];
-  } else if (capability.status === 1 && capability.signal === null && !capability.error) {
-    // New CLIs must still be able to rebuild an old sandbox image. Inject the
-    // exact trusted helper shipped with this CLI over docker exec stdin rather
-    // than falling back to symlink-following recursive shell commands.
-    try {
-      input = readHostHelper();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+  const runtimePlan = inspectRuntimePlan(privileged, plan, stateLockPlanInImage);
+  if (runtimePlan.kind === "error") return [runtimePlan.issue];
+
+  if (runtimePlan.kind !== "host-current") {
+    const capability = privileged.run(["test", "-r", CONTAINER_HELPER]);
+    if (successful(capability)) {
+      const planArgs =
+        runtimePlan.kind === "image-current" ? ["--plan-file", CONTAINER_STATE_LOCK_PLAN] : [];
+      return parseGuardOutput(
+        action,
+        privileged.run([
+          ...CONTAINER_TIMEOUT,
+          "python3",
+          "-I",
+          CONTAINER_HELPER,
+          action,
+          "--config-dir",
+          configDir,
+          ...planArgs,
+        ]),
+      );
+    }
+    if (!(capability.status === 1 && capability.signal === null && !capability.error)) {
+      return [resultFailure("state-dir guard capability probe failed", capability)];
+    }
+    if (runtimePlan.kind === "image-current") {
       return [
-        `state-dir guard is absent in the sandbox and host helper cannot be read: ${message}`,
+        "state-dir guard is unavailable in an image that contains a generated state lock plan",
       ];
     }
-    command = [...CONTAINER_TIMEOUT, "python3", "-I", "-", action, "--config-dir", configDir];
-  } else {
-    return [resultFailure("state-dir guard capability probe failed", capability)];
   }
 
+  let input: string;
+  try {
+    input = readHostHelper();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return [`trusted host state-dir guard cannot be read: ${message}`];
+  }
+
+  // Agent definitions without an image plan, plus images predating the helper,
+  // use the bounded host-injection path. The #8006 compatibility branch ends
+  // when every sandbox image supported for rebuild contains CONTAINER_STATE_LOCK_PLAN.
+  const command = [
+    ...CONTAINER_TIMEOUT,
+    "python3",
+    "-I",
+    "-",
+    action,
+    "--config-dir",
+    configDir,
+    "--plan-json",
+    JSON.stringify(plan),
+  ];
   return parseGuardOutput(action, privileged.run(command, input));
 }
 
@@ -208,6 +308,7 @@ function runHostStateDirGuard(
   privileged: PrivilegedExec,
   action: GuardAction,
   configDir: string,
+  plan: AgentStateLockPlan,
 ): string[] {
   let input: string;
   try {
@@ -216,15 +317,30 @@ function runHostStateDirGuard(
     const message = error instanceof Error ? error.message : String(error);
     return [`host state-dir helper cannot be read: ${message}`];
   }
-  const command = [...CONTAINER_TIMEOUT, "python3", "-I", "-", action, "--config-dir", configDir];
+  const command = [
+    ...CONTAINER_TIMEOUT,
+    "python3",
+    "-I",
+    "-",
+    action,
+    "--config-dir",
+    configDir,
+    "--plan-json",
+    JSON.stringify(plan),
+  ];
   return parseGuardOutput(action, privileged.run(command, input));
 }
 
 // Read-only recursive validation. Call this before top-level config mutation so
 // a hostile nested link, hardlink, special entry, or cross-device mount fails
 // without partially changing the protected tree.
-export function preflightStateDirLock(privileged: PrivilegedExec, configDir: string): string[] {
-  return runStateDirGuard(privileged, "preflight", configDir);
+export function preflightStateDirLock(
+  privileged: PrivilegedExec,
+  configDir: string,
+  plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
+): string[] {
+  return runStateDirGuard(privileged, "preflight", configDir, plan, stateLockPlanInImage);
 }
 
 // Apply and independently verify the complete recursive state-dir posture.
@@ -235,6 +351,8 @@ export function applyStateDirLockMode(
   configDir: string,
   highRiskOwner: string,
   isLocking: boolean,
+  plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
   const expectedOwner = isLocking ? "root:sandbox" : "sandbox:sandbox";
   if (highRiskOwner !== expectedOwner) {
@@ -242,20 +360,42 @@ export function applyStateDirLockMode(
       `state-dir guard owner contract mismatch: ${highRiskOwner} (expected ${expectedOwner})`,
     ];
   }
-  return runStateDirGuard(privileged, isLocking ? "lock" : "unlock", configDir);
+  return runStateDirGuard(
+    privileged,
+    isLocking ? "lock" : "unlock",
+    configDir,
+    plan,
+    stateLockPlanInImage,
+  );
 }
 
 export function restoreStateDirLockPosture(
   privileged: PrivilegedExec,
   configDir: string,
   originallyLocked: boolean,
+  plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
   if (!originallyLocked) {
-    return applyStateDirLockMode(privileged, configDir, "sandbox:sandbox", false);
+    return applyStateDirLockMode(
+      privileged,
+      configDir,
+      "sandbox:sandbox",
+      false,
+      plan,
+      stateLockPlanInImage,
+    );
   }
-  const preflightIssues = preflightStateDirLock(privileged, configDir);
+  const preflightIssues = preflightStateDirLock(privileged, configDir, plan, stateLockPlanInImage);
   if (preflightIssues.length > 0) return preflightIssues;
-  return applyStateDirLockMode(privileged, configDir, "root:sandbox", true);
+  return applyStateDirLockMode(
+    privileged,
+    configDir,
+    "root:sandbox",
+    true,
+    plan,
+    stateLockPlanInImage,
+  );
 }
 
 // Existing sandboxes may contain an older in-image guard, so startup always
@@ -264,6 +404,7 @@ export function restoreStateDirLockPosture(
 export function restoreStateDirStartupAccess(
   privileged: PrivilegedExec,
   configDir: string,
+  plan: AgentStateLockPlan,
 ): string[] {
-  return runHostStateDirGuard(privileged, "startup", configDir);
+  return runHostStateDirGuard(privileged, "startup", configDir, plan);
 }

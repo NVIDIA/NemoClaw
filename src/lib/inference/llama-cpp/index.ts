@@ -221,20 +221,48 @@ export function probeLlamaCppAttachment(
     );
   }
   const probe = options.runCurlProbeImpl ?? runCurlProbe;
-  const anonymousModels = probe(probeArgs([], `${baseUrl}/v1/models`), {
+  const anonymousProbeOptions: CurlProbeOptions = {
     maxResponseBytes: LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES,
     pinnedAddresses: [],
-  });
+  };
+  const anonymousModels = probe(probeArgs([], `${baseUrl}/v1/models`), anonymousProbeOptions);
   const anonymousBoundFailure = boundedProbeFailure(anonymousModels);
   if (anonymousBoundFailure) return anonymousBoundFailure;
   if (anonymousModels.curlStatus !== 0 || anonymousModels.httpStatus === 0) {
     return failure("unreachable", `No llama.cpp server responded on fixed port ${LLAMA_CPP_PORT}.`);
   }
-  if (anonymousModels.httpStatus !== 401 && anonymousModels.httpStatus !== 403) {
+  if (
+    anonymousModels.httpStatus !== 200 &&
+    anonymousModels.httpStatus !== 401 &&
+    anonymousModels.httpStatus !== 403
+  ) {
     return failure(
-      "authentication-required",
-      "The server exposes its model catalog without native API-key authentication.",
+      "not-llama-cpp",
+      "The server did not return a recognizable status from the model catalog endpoint.",
     );
+  }
+  if (anonymousModels.httpStatus === 200) {
+    const anonymousProps = probe(probeArgs([], `${baseUrl}/props`), anonymousProbeOptions);
+    const anonymousPropsBoundFailure = boundedProbeFailure(anonymousProps);
+    if (anonymousPropsBoundFailure) return anonymousPropsBoundFailure;
+    if (anonymousProps.curlStatus !== 0 || anonymousProps.httpStatus === 0) {
+      return failure(
+        "not-llama-cpp",
+        "The protected llama.cpp endpoint did not provide authentication evidence.",
+      );
+    }
+    if (anonymousProps.httpStatus !== 401 && anonymousProps.httpStatus !== 403) {
+      if (anonymousProps.ok) {
+        return failure(
+          "authentication-required",
+          "The server did not require the API key for a protected llama.cpp endpoint.",
+        );
+      }
+      return failure(
+        "not-llama-cpp",
+        "The protected llama.cpp endpoint did not provide authentication evidence.",
+      );
+    }
   }
 
   let auth;

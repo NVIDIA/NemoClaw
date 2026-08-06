@@ -13,6 +13,7 @@ describe("persisted auto-restore target resolution", () => {
       configFile: "openclaw.json",
       format: "json" as const,
       sensitiveFiles: ["/sandbox/.openclaw/credentials.json"],
+      stateLockPlanInImage: true,
     };
 
     expect(
@@ -37,6 +38,7 @@ describe("persisted auto-restore target resolution", () => {
       configDir: "/sandbox/.openclaw",
       configFile: "openclaw.json",
       format: "json" as const,
+      stateLockPlanInImage: true,
     };
 
     expect(
@@ -52,6 +54,7 @@ describe("persisted auto-restore target resolution", () => {
       configPath: "/sandbox/.legacy/config.json",
       configDir: "/sandbox/.legacy/",
       sensitiveFiles: ["/sandbox/.legacy/.config-hash"],
+      stateLockPlanInImage: false,
     });
   });
 
@@ -62,6 +65,7 @@ describe("persisted auto-restore target resolution", () => {
       configDir: "/sandbox/.hermes/",
       configFile: "config.yaml",
       format: "yaml" as const,
+      stateLockPlanInImage: true,
     };
 
     expect(
@@ -79,6 +83,8 @@ describe("persisted auto-restore target resolution", () => {
       configPath: "/sandbox/.hermes/config.yaml",
       configDir: "/sandbox/.hermes/",
       sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
+      stateLockPlan: expect.any(Object),
+      stateLockPlanInImage: true,
     });
   });
 
@@ -100,6 +106,7 @@ describe("persisted auto-restore target resolution", () => {
       configPath: "/sandbox/.legacy/config.json",
       configDir: "/sandbox/.legacy/",
       sensitiveFiles: ["/sandbox/.legacy/.config-hash"],
+      stateLockPlanInImage: false,
     });
   });
 });
