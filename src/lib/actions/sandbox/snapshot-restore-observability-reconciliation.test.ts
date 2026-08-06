@@ -8,6 +8,44 @@ import * as f from "./snapshot-restore-test-fixture";
 beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: observability policy reconciliation", () => {
+  it("does not promote a forged snapshot digest into trusted-private pin authority", async () => {
+    const content =
+      "network_policies:\n  private-api:\n    endpoints:\n      - host: api.corp.example\n        allowed_ips:\n          - 10.20.30.40\n";
+    const customPolicy = {
+      name: "private-api",
+      content,
+      sourcePath: "/policies/private-api.yaml",
+      trustedPrivatePins: {
+        version: 1 as const,
+        contentDigest: "a".repeat(64),
+      },
+    };
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      policyTier: "balanced",
+    } as never);
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
+      policyPresets: [customPolicy.name],
+      customPolicies: [customPolicy],
+    });
+    f.getCustomPoliciesMock.mockReturnValue([]);
+    f.applyPresetContentMock.mockReturnValue(false);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(f.applyPresetContentMock).toHaveBeenCalledWith(
+      "alpha",
+      customPolicy.name,
+      customPolicy.content,
+      { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
+    );
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("private-api (apply failed)");
+  });
+
   it("does not resurrect an earlier removed preset while restoring unverified OTLP attribution", async () => {
     let registryEntry = {
       name: "alpha",

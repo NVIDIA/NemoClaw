@@ -9,6 +9,10 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { diagnosticPreview } from "../../name-validation";
 import * as policies from "../../policy";
 import { isBlockedMcpUrlTargetHost } from "../../security/mcp-url-target";
+import {
+  isTrustedPrivateEndpointCapability,
+  replayTrustedPrivateEndpoint,
+} from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -21,6 +25,7 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
 } from "./mcp-bridge-policy-render";
+import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 
 export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 export {
@@ -83,7 +88,12 @@ function readManagedNetworkPolicies(
   return networkPolicies as Record<string, unknown>;
 }
 
-function requireCanonicalAllowedIps(networkPolicy: unknown, policyName: string): readonly string[] {
+function requireCanonicalAllowedIps(
+  networkPolicy: unknown,
+  policyName: string,
+  bridge: McpBridgeEntry,
+): readonly string[] {
+  const addressKind = bridge.trustedPrivateHost ? "trusted-private" : "public";
   if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
     throw new Error(`Managed MCP policy '${policyName}' has non-canonical generated content`);
   }
@@ -97,7 +107,7 @@ function requireCanonicalAllowedIps(networkPolicy: unknown, policyName: string):
   }
   const allowedIps = (endpoint as Record<string, unknown>).allowed_ips;
   if (!Array.isArray(allowedIps) || allowedIps.length === 0) {
-    throw new Error(`Managed MCP policy '${policyName}' has no exact public address pins`);
+    throw new Error(`Managed MCP policy '${policyName}' has no exact ${addressKind} address pins`);
   }
   if (
     allowedIps.some(
@@ -105,15 +115,37 @@ function requireCanonicalAllowedIps(networkPolicy: unknown, policyName: string):
         typeof address !== "string" ||
         address !== address.toLowerCase() ||
         address.includes("%") ||
-        isIP(address) === 0 ||
-        isBlockedMcpUrlTargetHost(address),
+        isIP(address) === 0,
     )
   ) {
-    throw new Error(`Managed MCP policy '${policyName}' has invalid public address pins`);
+    throw new Error(`Managed MCP policy '${policyName}' has invalid ${addressKind} address pins`);
   }
   const pins = allowedIps as string[];
   if (new Set(pins).size !== pins.length || !isDeepStrictEqual(pins, [...pins].sort())) {
-    throw new Error(`Managed MCP policy '${policyName}' has non-canonical public address pins`);
+    throw new Error(
+      `Managed MCP policy '${policyName}' has non-canonical ${addressKind} address pins`,
+    );
+  }
+  if (bridge.trustedPrivateHost) {
+    let replay;
+    try {
+      replay = replayTrustedPrivateEndpoint(bridge.trustedPrivateHost, bridge.allowedIps ?? []);
+    } catch {
+      throw new Error(
+        `Managed MCP policy '${policyName}' has invalid trusted-private address pins`,
+      );
+    }
+    if (
+      replay.host !== bridge.trustedPrivateHost ||
+      !isDeepStrictEqual(replay.addresses, bridge.allowedIps) ||
+      !isDeepStrictEqual(pins, bridge.allowedIps)
+    ) {
+      throw new Error(
+        `Managed MCP policy '${policyName}' does not match its recorded trusted-private address pins`,
+      );
+    }
+  } else if (pins.some((address) => isBlockedMcpUrlTargetHost(address))) {
+    throw new Error(`Managed MCP policy '${policyName}' has invalid public address pins`);
   }
   return pins;
 }
@@ -192,7 +224,7 @@ function requireCanonicalManagedPolicy(
   }
 
   const registeredNetworkPolicy = registeredPolicies[policyKey];
-  const allowedIps = requireCanonicalAllowedIps(registeredNetworkPolicy, policyName);
+  const allowedIps = requireCanonicalAllowedIps(registeredNetworkPolicy, policyName, bridge);
   let expectedDocument: Record<string, unknown>;
   try {
     expectedDocument = parseManagedPolicyDocument(
@@ -562,8 +594,9 @@ function reconcileGeneratedPolicyRegistration(
 export function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
-  resolvedAddresses: readonly string[],
+  target: McpBridgeTargetValidation,
 ): void {
+  const resolvedAddresses = assertMcpBridgePolicyTarget(entry, target);
   if (resolvedAddresses.length === 0) {
     throw new McpBridgeError(
       `Refusing to apply generated MCP policy '${entry.policyName}' without exact public address pins.`,
@@ -665,6 +698,48 @@ export function applyGeneratedPolicy(
   );
 }
 
+export function assertMcpBridgePolicyTarget(
+  entry: McpBridgeEntry,
+  target: McpBridgeTargetValidation,
+): readonly string[] {
+  if (target.addresses.length === 0) {
+    throw new McpBridgeError(
+      `Refusing to apply generated MCP policy '${entry.policyName}' without exact ${entry.trustedPrivateHost ? "trusted-private" : "public"} address pins.`,
+    );
+  }
+  if (!entry.trustedPrivateHost) {
+    if (target.trustedPrivateCapability || target.trustedPrivateHost) {
+      throw new McpBridgeError(
+        `MCP server '${entry.server}' has no durable trusted-private intent. Refusing private policy mutation.`,
+      );
+    }
+    return target.addresses;
+  }
+  if (
+    target.trustedPrivateHost !== entry.trustedPrivateHost ||
+    !isTrustedPrivateEndpointCapability(target.trustedPrivateCapability)
+  ) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' has no provenance-checked capability for trusted private host '${entry.trustedPrivateHost}'.`,
+    );
+  }
+  const recordedPins = entry.allowedIps ?? [];
+  const capabilityPins = [...target.trustedPrivateCapability.addresses].sort();
+  if (
+    recordedPins.length === 0 ||
+    target.addresses.length !== recordedPins.length ||
+    target.addresses.some((address, index) => address !== recordedPins[index]) ||
+    capabilityPins.length !== recordedPins.length ||
+    capabilityPins.some((address, index) => address !== recordedPins[index])
+  ) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' no longer resolves to its recorded trusted-private address pins. Remove and re-add the server to approve changed pins.`,
+      2,
+    );
+  }
+  return recordedPins;
+}
+
 function generatedPolicyContent(entry: McpBridgeEntry): string {
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
   return buildMcpBridgePolicyYaml(entry.server, entry.url, adapter);
@@ -718,8 +793,9 @@ export function assertGeneratedPolicyExactReadOnly(
   sandboxName: string,
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter,
-  resolvedAddresses: readonly string[],
+  target: McpBridgeTargetValidation,
 ): registry.CustomPolicyEntry {
+  const resolvedAddresses = assertMcpBridgePolicyTarget(entry, target);
   const canonicalOwnershipError = (): McpBridgeError =>
     new McpBridgeError(
       "Generated MCP policy ownership is not canonical for its recorded bridge definition. Refusing host-side rebuild recovery.",

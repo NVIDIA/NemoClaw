@@ -80,6 +80,7 @@ SENSITIVE_PAYLOAD_KEY_RE = re.compile(
 )
 MAX_ERROR_MESSAGE_LENGTH = 512
 MAX_GATEWAY_PID_RECORD_BYTES = 4096
+MCP_RACE_RECOVERY_ATTEMPTS = 3
 GATEWAY_INTERNAL_PORT = 18642
 GATEWAY_PUBLIC_PORT = 8642
 BLOCKED_IPV4_NETWORKS = tuple(
@@ -591,6 +592,38 @@ def _restore_hash_snapshots(
             raise RuntimeError(f"Failed to restore Hermes hash file {path}")
 
 
+def _is_retryable_mcp_snapshot_race(error: Exception) -> bool:
+    message = str(error)
+    return "refusing raced runtime config path:" in message or (
+        "refusing raced Hermes MCP integrity snapshot" in message
+    )
+
+
+def _recover_committed_apply_snapshot(
+    guard: ModuleType, privileged: bool, expected_text: str
+) -> bool:
+    """Reopen a bounded number of snapshots across an atomic hash replacement."""
+    compatibility_hash_path = os.path.join(HERMES_DIR, ".config-hash")
+    for attempt in range(MCP_RACE_RECOVERY_ATTEMPTS):
+        try:
+            integrity = guard.inspect_mcp_integrity_snapshot(
+                HERMES_DIR,
+                STRICT_HASH_PATH if privileged else compatibility_hash_path,
+                compatibility_hash_path if privileged else None,
+            )
+            if integrity.config_text != expected_text or integrity.state != "current":
+                return False
+            guard.assert_mcp_integrity_snapshot_current(integrity)
+            return True
+        except guard.UnsafePathError as recovery_error:
+            if (
+                not _is_retryable_mcp_snapshot_race(recovery_error)
+                or attempt + 1 == MCP_RACE_RECOVERY_ATTEMPTS
+            ):
+                raise
+    return False
+
+
 def apply_transaction(action: str, payload: dict[str, object]) -> bool:
     _validate_payload(action, payload)
     privileged = os.geteuid() == 0
@@ -695,14 +728,7 @@ def apply_transaction_and_reload(
         # anchors are current, rolling it back would undo a live configuration.
         if reload_completed:
             try:
-                compatibility_hash_path = os.path.join(HERMES_DIR, ".config-hash")
-                integrity = guard.inspect_mcp_integrity_snapshot(
-                    HERMES_DIR,
-                    STRICT_HASH_PATH if privileged else compatibility_hash_path,
-                    compatibility_hash_path if privileged else None,
-                )
-                if integrity.config_text == expected_text and integrity.state == "current":
-                    guard.assert_mcp_integrity_snapshot_current(integrity)
+                if _recover_committed_apply_snapshot(guard, privileged, expected_text):
                     return {"ok": True, "changed": True, "reloaded": True}
             except Exception as recovery_error:
                 logging.getLogger(__name__).warning(

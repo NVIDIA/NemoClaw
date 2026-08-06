@@ -63,6 +63,8 @@ export const onboardExamples = [
 ];
 
 export type OnboardFlags = {
+  "temp-managed-runtime"?: boolean;
+  "temp-managed-runtime-catalog"?: string;
   "non-interactive"?: boolean;
   resume?: boolean;
   fresh?: boolean;
@@ -89,6 +91,11 @@ export type OnboardFlags = {
 
 export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Record<string, any> {
   const flags = {
+    "temp-managed-runtime": Flags.boolean({ hidden: true }),
+    "temp-managed-runtime-catalog": Flags.string({
+      hidden: true,
+      dependsOn: ["temp-managed-runtime"],
+    }),
     "non-interactive": Flags.boolean({ description: "Run without interactive prompts" }),
     resume: Flags.boolean({
       description: "Resume an interrupted onboarding session",

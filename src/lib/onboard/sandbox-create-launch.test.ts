@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./managed-bootstrap/adapter";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { createOpenshellCliHelpers } from "./openshell-cli";
@@ -148,7 +149,35 @@ describe("prepareSandboxCreateLaunch", () => {
       result.managedBootstrapIdentity,
       "--",
     ]);
+    expect(result.createArgv).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${result.managedBootstrapIdentity}`,
+      ]),
+    );
     expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
+  });
+
+  it("rejects a caller-supplied managed bootstrap identity environment", () => {
+    const request = createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+    });
+
+    expect(() =>
+      prepareSandboxCreateLaunch({
+        agent: loadAgent("openclaw"),
+        chatUiUrl: "",
+        createArgs: ["--env", `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${"a".repeat(64)}`],
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: disabledHermesDashboardState,
+        manageDashboard: false,
+        openshellShellCommand: (args) => args.join(" "),
+        managedStartupRootApplyRequest: request,
+      }),
+    ).toThrow(`must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}`);
   });
 
   it("builds the sandbox create command and runtime env envelope", () => {
