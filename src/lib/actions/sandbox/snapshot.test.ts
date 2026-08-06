@@ -645,6 +645,9 @@ describe("runSandboxSnapshot", () => {
       throwOnError: true,
       allowLegacyHermesProtocol: true,
     });
+    expect(f.lifecycleMock.events).toEqual(
+      expect.arrayContaining(["harden", "delete", "cleanup-shields"]),
+    );
     expect(f.lifecycleMock.events.indexOf("harden")).toBeLessThan(
       f.lifecycleMock.events.indexOf("delete"),
     );
