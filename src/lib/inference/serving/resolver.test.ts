@@ -195,17 +195,22 @@ function readinessSources(): ManagedInferenceReadinessSource[] {
 
 function storageRemediableReadinessReport(
   extraFindings: SystemReadinessReport["findings"] = [],
+  preset: ManagedInferenceServingPreset = shippedPreset(),
 ): SystemReadinessReport {
-  const report = readinessReport();
+  const report = readinessReport({}, preset);
   return {
     ...report,
     capabilities: [
       ...report.capabilities.map((capability) =>
         capability.id === "host.docker.storage_compatible"
           ? { ...capability, state: "absent" as const }
-          : capability,
+          : capability.id === "host.docker.storage_remediation_available"
+            ? { ...capability, state: "present" as const }
+            : capability,
       ),
-      { id: "host.docker.storage_remediation_available", state: "present" },
+      ...(report.capabilities.some(({ id }) => id === "host.docker.storage_remediation_available")
+        ? []
+        : [{ id: "host.docker.storage_remediation_available", state: "present" as const }]),
     ],
     findings: [
       {
@@ -829,7 +834,12 @@ describe("managed inference resolver", () => {
     const presetId = catalog.presets[0]!.metadata.id;
     const result = resolveManagedInferenceServing(
       {
-        readinessReports: [{ nodeId: "spark-head", report: storageRemediableReadinessReport() }],
+        readinessReports: [
+          {
+            nodeId: "spark-head",
+            report: storageRemediableReadinessReport([], catalog.presets[0]!),
+          },
+        ],
         topologyQualifications: [],
         intent: { preset: presetId },
         now: NOW,
