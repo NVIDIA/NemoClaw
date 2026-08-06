@@ -51,7 +51,7 @@ jobs:
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 90
     permissions:
       contents: read
@@ -368,7 +368,7 @@ jobs:
     name: PR exact all-agent managed runtime activation
     needs: pr-build-and-entrypoint
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 90
     permissions:
       contents: read
@@ -475,7 +475,7 @@ jobs:
             platform: linux/amd64
             artifact_platform: linux-amd64
             required_binary: /usr/local/bin/openclaw
-            runner: ubuntu-24.04
+            runner: linux-amd64-cpu4
           - agent: openclaw
             arch: arm64
             display_name: OpenClaw
@@ -485,7 +485,7 @@ jobs:
             platform: linux/arm64
             artifact_platform: linux-arm64
             required_binary: /usr/local/bin/openclaw
-            runner: ubuntu-24.04-arm
+            runner: linux-arm64-cpu4
           - agent: hermes
             arch: amd64
             display_name: Hermes
@@ -495,7 +495,7 @@ jobs:
             platform: linux/amd64
             artifact_platform: linux-amd64
             required_binary: /usr/local/bin/hermes
-            runner: ubuntu-24.04
+            runner: linux-amd64-cpu4
           - agent: hermes
             arch: arm64
             display_name: Hermes
@@ -505,7 +505,7 @@ jobs:
             platform: linux/arm64
             artifact_platform: linux-arm64
             required_binary: /usr/local/bin/hermes
-            runner: ubuntu-24.04-arm
+            runner: linux-arm64-cpu4
           - agent: langchain-deepagents-code
             arch: amd64
             display_name: Deep Agents Code
@@ -515,7 +515,7 @@ jobs:
             platform: linux/amd64
             artifact_platform: linux-amd64
             required_binary: /usr/local/bin/dcode
-            runner: ubuntu-24.04
+            runner: linux-amd64-cpu4
           - agent: langchain-deepagents-code
             arch: arm64
             display_name: Deep Agents Code
@@ -525,7 +525,7 @@ jobs:
             platform: linux/arm64
             artifact_platform: linux-arm64
             required_binary: /usr/local/bin/dcode
-            runner: ubuntu-24.04-arm
+            runner: linux-arm64-cpu4
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1074,7 +1074,7 @@ jobs:
   promote:
     name: Promote complete multi-platform managed image cohort
     needs: build-and-validate
-    runs-on: ubuntu-24.04
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 30
     permissions:
       contents: read

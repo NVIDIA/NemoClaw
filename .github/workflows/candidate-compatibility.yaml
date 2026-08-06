@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   resolve:
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -109,7 +109,7 @@ jobs:
 
   deterministic:
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -248,7 +248,7 @@ jobs:
 
   live:
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 25
     steps:
       - name: Check out trusted compatibility controller
@@ -377,7 +377,7 @@ jobs:
       - resolve
       - deterministic
       - live
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     permissions:
       actions: read

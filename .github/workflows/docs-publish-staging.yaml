@@ -27,7 +27,7 @@ env:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     environment: docs-staging
     steps:
@@ -58,7 +58,7 @@ jobs:
           npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE"
 
   delete-preview:
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     needs: publish
     timeout-minutes: 5
     permissions:

@@ -38,7 +38,7 @@ jobs:
       group: hosted-runner-recovery-${{ github.event.workflow_run.workflow_id }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     permissions:
       actions: write

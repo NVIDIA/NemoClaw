@@ -20,7 +20,7 @@ jobs:
   # Detect which files changed so we can skip expensive jobs for docs-only PRs.
   changes:
     if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 2
     permissions:
       pull-requests: read
@@ -46,7 +46,7 @@ jobs:
   docs-only-checks:
     needs: changes
     if: needs.changes.outputs.code != 'true'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -93,7 +93,7 @@ jobs:
   static-checks:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -123,7 +123,7 @@ jobs:
   build-typecheck:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -152,7 +152,7 @@ jobs:
   installer-integration:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -213,7 +213,7 @@ jobs:
   wechat-runtime-audit:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -291,7 +291,7 @@ jobs:
   reviewed-npm-audit:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -376,7 +376,7 @@ jobs:
   cli-test-shards:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -495,7 +495,7 @@ jobs:
       code-quality: write
       contents: read
       pull-requests: read
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Verify CLI shards completed
@@ -586,7 +586,7 @@ jobs:
       code-quality: write
       contents: read
       pull-requests: read
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -626,7 +626,7 @@ jobs:
     if: always()
     permissions:
       actions: read
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 1
     steps:
       - name: Verify required PR checks
