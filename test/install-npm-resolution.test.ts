@@ -135,6 +135,10 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
   echo "$ACTIVE_NPM_PREFIX"
   exit 0
 fi
+if [ "$1" = "uninstall" ] && [ "$2" = "-g" ] && [ "$3" = "nemoclaw" ] && [ -n "$NPM_UNINSTALL_TARGET" ]; then
+  rm -f -- "$NPM_UNINSTALL_TARGET"
+  exit 0
+fi
 exit 99
 `,
   );
@@ -160,6 +164,7 @@ function runVerifyNemoclaw(
     {
       ACTIVE_NPM_PREFIX: tree.prefix,
       HOME: tree.tmp,
+      NPM_UNINSTALL_TARGET: "",
       ...extraEnv,
     },
   );
@@ -440,6 +445,30 @@ echo "placeholder package"
     });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(normalizeShellPathForAssert(result.stdout)).toContain(
+      `CLI_PATH=${normalizeShellPathForAssert(tree.shimPath)}`,
+    );
+    expect(result.stdout).toContain("READY=true");
+    expect(result.stdout).toContain("REFRESH=false");
+  });
+
+  it("resolves the CLI name to the user-local shim after npm removes a rejected PATH command (#8311)", () => {
+    const tree = createStaleNpmPrefixTree();
+    const shadowPath = path.join(tree.fakeBin, "nemoclaw");
+    writeExecutable(
+      shadowPath,
+      `#!/usr/bin/env bash
+echo "placeholder package"
+`,
+    );
+
+    const result = runVerifyNemoclaw(tree, {
+      NPM_UNINSTALL_TARGET: shadowPath,
+      PATH: [tree.fakeBin, path.dirname(tree.shimPath), TEST_SYSTEM_PATH].join(path.delimiter),
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(fs.existsSync(shadowPath)).toBe(false);
     expect(normalizeShellPathForAssert(result.stdout)).toContain(
       `CLI_PATH=${normalizeShellPathForAssert(tree.shimPath)}`,
     );
