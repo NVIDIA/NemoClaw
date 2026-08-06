@@ -301,7 +301,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
-  it("preserves the gateway process when scoped Linux unit removal fails (#8220)", () => {
+  it("preserves the gateway process when marked Linux unit cleanup fails (#8220)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     writeSelectedSandboxRegistry(test, "my-assistant");
