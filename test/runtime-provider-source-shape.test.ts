@@ -183,6 +183,7 @@ describe("runtime provider central source boundary", () => {
     const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
     const operation = read("src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts");
     const hostLocalContract = read("src/lib/onboard/runtime-provider/host-local-inference.ts");
+    const podman = read("src/lib/onboard/runtime-provider/podman.ts");
     const installer = read("src/lib/inference/llama-cpp/managed-installer.ts");
     const localModelProfilePlan = read("src/lib/onboard/local-model-profile/plan.ts");
     const allTrackedPaths = trackedPaths(".");
@@ -205,6 +206,8 @@ describe("runtime provider central source boundary", () => {
     expect(installer).toContain("requireRuntimeProviderHostLocalInferenceOperation");
     expect(installer).not.toMatch(/(?:createDocker|docker-llama-cpp)/u);
     expect(hostLocalContract).not.toMatch(/(?:Docker|Podman|createDocker)/u);
+    expect(podman).toMatch(/hostLocalInference:\s*unsupported\(/u);
+    expect(podman).not.toContain("createDockerLlamaCppHostLocalOperation");
     expect(productionComposition).toContain("createDockerLlamaCppManagedLifecycle");
     expect(productionComposition).toContain("docker-llama-cpp-managed-lifecycle");
     expect(localModelProfilePlan).toContain(
