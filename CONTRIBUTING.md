@@ -65,6 +65,7 @@ clear and testable, stop exploring and implement it.
 ### Writing Guide
 
 Follow the [NemoClaw Writing Guide](WRITING.md) when you add or modify explanatory text.
+Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms.
 The Writing Guide defines its scope, rules, examples, and review policy.
 
 ## Before You Open an Issue
