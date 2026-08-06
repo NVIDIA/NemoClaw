@@ -91,9 +91,9 @@ describe("MCP tool discovery image contract", () => {
       'export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"',
     );
     expect(installer).toContain('export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"');
-    expect(fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8")).toContain(
-      "FROM builder AS mcp-tool-discovery-runtime",
-    );
+    const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    expect(openClawDockerfile).toContain("FROM builder AS mcp-tool-discovery-runtime");
+    expect(openClawDockerfile).toContain("RUN /opt/nemoclaw-build-tools/npm-ci-locked.sh");
   });
 
   it.each(
@@ -104,6 +104,7 @@ describe("MCP tool discovery image contract", () => {
     expect(dockerfile).toContain(
       `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
     );
+    expect(dockerfile).toContain("tools/mcp-tool-discovery-runtime/npm-ci-locked.sh");
     expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
     expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
   });
@@ -121,6 +122,12 @@ describe("MCP tool discovery image contract", () => {
         path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "install-reviewed-runtime.sh"),
         script,
       );
+      const retryHelper = path.join(fixture, "npm-ci-locked.sh");
+      fs.copyFileSync(
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
+        retryHelper,
+      );
+      fs.chmodSync(retryHelper, 0o755);
       fs.writeFileSync(counter, "0\n");
       fs.writeFileSync(
         path.join(mockBin, "npm"),
@@ -151,7 +158,7 @@ exit 0
         });
 
         expect(result.status).toBe(0);
-        expect(result.stderr).toContain("retrying the locked install once");
+        expect(result.stderr).toContain("retrying the locked install once from cache");
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("7");
         expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 2)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
@@ -175,6 +182,12 @@ exit 0
         path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "install-reviewed-runtime.sh"),
         script,
       );
+      const retryHelper = path.join(fixture, "npm-ci-locked.sh");
+      fs.copyFileSync(
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
+        retryHelper,
+      );
+      fs.chmodSync(retryHelper, 0o755);
       fs.writeFileSync(counter, "0\n");
       fs.writeFileSync(
         path.join(mockBin, "npm"),

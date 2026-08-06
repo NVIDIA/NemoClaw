@@ -56,32 +56,7 @@ if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then
   export NODE_EXTRA_CA_CERTS="$ca_file"
 fi
 
-install_log=$(mktemp)
-trap 'rm -f "$install_log"' EXIT
-install_attempt=1
-while :; do
-  set -- ci --ignore-scripts --no-audit --no-fund --no-progress
-  if [ "$install_attempt" -gt 1 ]; then
-    set -- "$@" --prefer-offline
-  fi
-  if npm "$@" >"$install_log" 2>&1; then
-    cat "$install_log"
-    break
-  else
-    install_status=$?
-  fi
-
-  cat "$install_log" >&2
-  if [ "$install_attempt" -ge 2 ] || ! grep -Fq 'Exit handler never called!' "$install_log"; then
-    exit "$install_status"
-  fi
-
-  echo "[nemoclaw] npm hit its internal exit-handler failure; retrying the locked install once" >&2
-  rm -rf node_modules
-  install_attempt=$((install_attempt + 1))
-done
-rm -f "$install_log"
-trap - EXIT
+./npm-ci-locked.sh --ignore-scripts --no-audit --no-fund --no-progress
 npm audit signatures
 npm test
 npm run typecheck
