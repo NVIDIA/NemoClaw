@@ -35,7 +35,12 @@ installMock(source("state", "registry.js"), {
 });
 installMock(source("agent", "defs.js"), {
   loadAgent: () => ({
-    configPaths: { dir: "/sandbox/.hermes", configFile: "config.yaml", format: "yaml" },
+    configPaths: {
+      dir: "/sandbox/.hermes",
+      configFile: "config.yaml",
+      format: "yaml",
+      shieldsFiles: [".env"],
+    },
   }),
 });
 installMock(source("adapters", "openshell", "client.js"), {
