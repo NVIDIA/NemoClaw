@@ -104,7 +104,7 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     expect(runProof).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps failing closed when the bounded proof does not pass", () => {
+  it("returns the failed bounded proof result on native Linux ARM64", () => {
     // The Snapdragon nvidia-smi shim reaches the same path; only the CUDA
     // workload separates it from real hardware (#3988/#4565).
     const failingProof = { passed: false, timedOut: false, exitCode: 1, diagnostic: "" };
@@ -164,7 +164,7 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).not.toContain("nbody");
   });
 
-  it("propagates a failing proof so detection stays fail-closed", () => {
+  it("returns the failed bounded proof result on Docker Desktop WSL", () => {
     const failing = { passed: false, timedOut: false, exitCode: 1, diagnostic: "no CUDA device" };
     const prover = createArm64WslDockerDesktopGpuProver({
       platform: "linux",

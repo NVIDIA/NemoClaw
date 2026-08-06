@@ -805,7 +805,7 @@ The wizard cleans up stale port forwards and waits for gateway readiness automat
 On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 
-On ARM64 Linux hosts that are native or Docker Desktop-backed WSL, onboarding clears a placeholder name with one bounded Docker CUDA workload before rejecting the GPU:
+On native or Docker Desktop-backed WSL ARM64 Linux hosts without firmware-confirmed NVIDIA platform metadata, onboarding clears a placeholder name with one bounded Docker CUDA workload before rejecting the GPU:
 
 ```
 docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0

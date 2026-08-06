@@ -752,10 +752,10 @@ describe("nim", () => {
       }
     });
 
-    // Snapdragon WoA fail-closed: the same placeholder name, but the bounded
-    // CUDA proof fails because there is no usable NVIDIA device. The detection
-    // must stay null so #3988/#4424 is not reopened.
-    it("keeps rejecting a denylisted ARM64 GPU when the Docker GPU proof fails (#4565/#3988)", () => {
+    // A generic ARM64 host can be native Linux or Windows on ARM with WSL2.
+    // When the bounded CUDA proof fails, public detection must return null so
+    // the native Linux path does not reopen #3988/#4424.
+    it("rejects a denylisted generic ARM64 GPU when the Docker proof fails (#4565/#8096/#3988)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
