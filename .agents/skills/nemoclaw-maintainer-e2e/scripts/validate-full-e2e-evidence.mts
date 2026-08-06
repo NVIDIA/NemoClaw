@@ -136,6 +136,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
       ({ attempt: jobAttempt, job, runId: jobRunId }) =>
         jobRunId === runId &&
         jobAttempt <= attempt &&
+        jobAttempt === receiptAttempt &&
         job.status === "completed" &&
         job.conclusion === "success",
     )
@@ -176,7 +177,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
   }
 
   return {
-    attempt,
+    attempt: receiptAttempt,
     candidateSha: input.candidateSha,
     cleanup: {
       status: "ABSENT",
