@@ -161,7 +161,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
-it("continues an outer rebuild journal after the source sandbox was deleted", async () => {
+it("continues an outer rebuild journal after the outer rebuild deletes the source sandbox", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
   session.steps.sandbox.status = "complete";
   session.machine.state = "agent_setup";
