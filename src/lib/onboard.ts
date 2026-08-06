@@ -4027,7 +4027,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     GATEWAY_PORT = authoritativeGateway.port;
     process.env.OPENSHELL_GATEWAY = authoritativeGateway.name;
   }
-
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,
