@@ -249,11 +249,13 @@ function renderMcpHelp(subcommand: string): void {
   switch (subcommand) {
     case "add":
       console.log(`USAGE
-  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY
+  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]
 
 FLAGS
   --url URL        MCP Streamable HTTP endpoint
   --env KEY        Required host credential reference registered with OpenShell
+  --trusted-private-host HOST
+                   Trust the exact URL host when it resolves only to routed private addresses
   --no-probe       Skip the post-add wire-level credential-resolution probe
 
 SECURITY
@@ -314,7 +316,7 @@ export async function dispatchMcpBridgeCommand(
         const { probe, rest: addRest } = parseProbeFlags(rest);
         if (probe === true)
           throw new McpBridgeError(
-            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--no-probe]",
+            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST] [--no-probe]",
             2,
           );
         const options = parseMcpAddArgs(addRest);

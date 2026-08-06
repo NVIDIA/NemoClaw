@@ -181,7 +181,14 @@ async function addSandboxPolicyUnlocked(
   sandboxName: string,
   options: PolicyAddOptions,
 ): Promise<void> {
-  const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddOptions(options);
+  const {
+    dryRun,
+    skipConfirm,
+    source,
+    presetArg,
+    trustedPrivateHosts,
+    commandTrustedPrivateHosts,
+  } = parsePolicyAddOptions(options);
 
   if (source.kind === "error") {
     console.error(`  ${source.message}`);
@@ -189,7 +196,19 @@ async function addSandboxPolicyUnlocked(
   }
 
   if (source.kind === "file") {
-    const ok = await applyExternalPreset(sandboxName, source.path, { dryRun, yes: skipConfirm });
+    const prepared = await prepareExternalPolicyPresets(
+      [source.path],
+      trustedPrivateHosts,
+      commandTrustedPrivateHosts,
+    );
+    if (!prepared) {
+      process.exit(1);
+      return;
+    }
+    const ok = await applyExternalPreset(sandboxName, prepared[0], {
+      dryRun,
+      yes: skipConfirm,
+    });
     if (!ok) process.exit(1);
     return;
   }
@@ -213,11 +232,39 @@ async function addSandboxPolicyUnlocked(
       console.error(`  No .yaml/.yml preset files in ${dirPath}`);
       process.exit(1);
     }
-    for (const f of files) {
-      const ok = await applyExternalPreset(sandboxName, f, { dryRun, yes: skipConfirm });
-      if (!ok) {
-        console.error(`  Aborting --from-dir: ${f} failed. Remaining presets not applied.`);
+    if (commandTrustedPrivateHosts.length === 0) {
+      for (const file of files) {
+        const prepared = await prepareExternalPolicyPresets([file], trustedPrivateHosts, []);
+        const preset = prepared?.[0];
+        if (
+          !preset ||
+          !(await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm }))
+        ) {
+          console.error(`  Aborting --from-dir: ${file} failed. Remaining presets not applied.`);
+          process.exit(1);
+          return;
+        }
+      }
+      return;
+    }
+
+    // Command-line declarations are strict and must be consumed exactly once
+    // across the whole directory. Prepare that batch before mutating policy so
+    // an unused or duplicate declaration cannot partially apply the directory.
+    const prepared = await prepareExternalPolicyPresets(files, trustedPrivateHosts, [
+      ...commandTrustedPrivateHosts,
+    ]);
+    if (!prepared) {
+      process.exit(1);
+      return;
+    }
+    for (const preset of prepared) {
+      if (!(await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm }))) {
+        console.error(
+          `  Aborting --from-dir: ${preset.filePath} failed. Remaining presets not applied.`,
+        );
         process.exit(1);
+        return;
       }
     }
     return;
@@ -346,21 +393,40 @@ async function addSandboxPolicyUnlocked(
  * `policies.applyPresetContent`. Returns `true` on success, `false` on any
  * load/apply failure so the caller can decide whether to abort.
  */
-async function applyExternalPreset(
-  sandboxName: string,
-  filePath: string,
-  { dryRun, yes }: { dryRun: boolean; yes: boolean },
-): Promise<boolean> {
-  let loaded;
+async function prepareExternalPolicyPresets(
+  filePaths: readonly string[],
+  trustedPrivateHosts: readonly string[],
+  commandTrustedPrivateHosts: readonly string[],
+): Promise<policies.ExternalPolicyPreset[] | null> {
+  const loaded: policies.ExternalPolicyPreset[] = [];
+  for (const filePath of filePaths) {
+    let preset;
+    try {
+      preset = policies.loadPresetFromFile(filePath);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  Failed to load preset ${filePath}: ${message}`);
+      return null;
+    }
+    if (!preset) return null;
+    loaded.push({ filePath, ...preset });
+  }
   try {
-    loaded = policies.loadPresetFromFile(filePath);
+    return await policies.prepareTrustedPrivatePolicyPresets(loaded, trustedPrivateHosts, {
+      requiredDeclarations: commandTrustedPrivateHosts,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`  Failed to load preset ${filePath}: ${message}`);
-    return false;
+    console.error(`  Failed to prepare trusted private policy endpoints: ${message}`);
+    return null;
   }
-  if (!loaded) return false;
+}
 
+async function applyExternalPreset(
+  sandboxName: string,
+  loaded: policies.ExternalPolicyPreset,
+  { dryRun, yes }: { dryRun: boolean; yes: boolean },
+): Promise<boolean> {
   const scopeLines = policies.renderPresetScope(loaded.content);
   if (scopeLines.length > 0) {
     console.log(`  [${loaded.presetName}]`);
@@ -377,14 +443,19 @@ async function applyExternalPreset(
 
   if (!yes) {
     const confirm = await askPrompt(
-      `  Apply '${loaded.presetName}' from ${filePath} to sandbox '${sandboxName}'? [Y/n]: `,
+      `  Apply '${loaded.presetName}' from ${loaded.filePath} to sandbox '${sandboxName}'? [Y/n]: `,
     );
     if (confirm.trim().toLowerCase().startsWith("n")) return true; // user-cancel counts as success (no abort)
   }
 
   try {
     const result = policies.applyPresetContent(sandboxName, loaded.presetName, loaded.content, {
-      custom: { sourcePath: path.resolve(filePath) },
+      custom: {
+        sourcePath: path.resolve(loaded.filePath),
+        ...(loaded.trustedPrivatePinCapability
+          ? { trustedPrivatePinCapability: loaded.trustedPrivatePinCapability }
+          : {}),
+      },
       suppressDisclosure: true,
     });
     if (result !== false) {

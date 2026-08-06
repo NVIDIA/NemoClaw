@@ -132,14 +132,22 @@ npm run test:live-e2e -- --silent=false --reporter=default
 npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 ```
 
-The aggregate live command rebuilds the CLI before Vitest starts and runs live
-test files serially.
-Live E2E projects do not retry an entire failed test.
-These tests mutate host, Docker, gateway, and sandbox state, so re-entering one
-on the same runner can replace the original failure with stale-lock,
-storage-exhaustion, or ownership noise. A target may retry a transient operation
-only inside its own cleanup boundary.
-Retry a full target by starting a fresh workflow run and runner.
+The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
+test files serially. It does not retry a failed test.
+
+After an eligible `E2E main` push workflow fails, `E2E / Main Retry` asks
+GitHub Actions to rerun its failed jobs. It can request two reruns, for three total
+attempts. The controller does not verify that GitHub schedules a different runner,
+so do not treat a retry as evidence of a fresh host. If a later attempt succeeds,
+the source workflow concludes with `success`. The evidence sets `action` to
+`passed-after-retry` and `flaky` to `true`.
+
+After the controller evaluates attempt N, it uploads an artifact named for that
+attempt. The artifact contains one `attempts` entry for each source attempt through
+N. `totalRunnerMinutes` is the sum across those entries. If evaluation or file
+creation fails, the upload step warns that the file is missing and publishes no
+evidence artifact. The controller does not retry manual PR runs or a run
+superseded by a newer `main` push.
 
 During fixture teardown, every passing or failing live test writes
 `test-progress.json` beside its other target artifacts. The runtime audit
