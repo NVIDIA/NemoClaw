@@ -504,6 +504,9 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(activation.permissions).toEqual({ contents: "read" });
     expect(activation.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
+      "${{ github.workspace }}/managed-pr-catalog.json",
+    );
     expect(JSON.stringify(activation)).not.toContain("secrets.");
     expect(JSON.stringify(activation)).not.toContain("github.token");
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
