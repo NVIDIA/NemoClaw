@@ -24,6 +24,7 @@ const testState = vi.hoisted(() => {
     adapterCalls: [] as string[],
     adapterRegistered: true,
     applyPresetContent: vi.fn(),
+    assertInternalShieldsPolicyMutationAllowed: vi.fn(),
     calls: [] as string[],
     captureOpenshell: vi.fn(),
     executeGatewaySupervisorAction: vi.fn(),
@@ -68,6 +69,7 @@ vi.mock("../src/lib/gateway-runtime-action", () => ({
 
 vi.mock("../src/lib/policy", () => ({
   applyPresetContent: testState.applyPresetContent,
+  assertInternalShieldsPolicyMutationAllowed: testState.assertInternalShieldsPolicyMutationAllowed,
   getPresetContentGatewayState: testState.getPresetContentGatewayState,
   removePreset: testState.removePreset,
 }));
