@@ -170,6 +170,8 @@ function verifyCopiedManagedStartupReceipt(
       "no-new-privileges",
       "--cap-drop",
       "ALL",
+      "--cap-add",
+      "DAC_OVERRIDE",
       ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
       "--mount",
       transactionReceiptMount(receiptPath, receiptDirectory),
@@ -185,6 +187,7 @@ function verifyCopiedManagedStartupReceipt(
       profileFingerprint,
       "--bootstrap-identity",
       transaction.bootstrapIdentity,
+      "--read-only-receipt",
     ],
     DOCKER_MUTATION_OPTIONS,
   );

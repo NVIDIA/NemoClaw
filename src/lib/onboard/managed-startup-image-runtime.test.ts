@@ -36,6 +36,7 @@ import {
   applyManagedStartupImageProfile,
   applyManagedStartupRootRequest,
   buildManagedStartupImageActionPlan,
+  main as mainManagedStartupImageRuntime,
   MANAGED_STARTUP_PROFILE_ENV,
   type ManagedStartupImageActionPlanInput,
 } from "./managed-startup/image-runtime";
@@ -332,6 +333,34 @@ describe("managed startup image runtime", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("verifies a host-copied transaction only through the explicit read-only receipt mode", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const profileFingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const status = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue("pending");
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await mainManagedStartupImageRuntime([
+      "--shared-state-transaction-status",
+      "--agent",
+      profile.agent,
+      "--profile-fingerprint",
+      profileFingerprint,
+      "--bootstrap-identity",
+      bootstrapIdentity,
+      "--read-only-receipt",
+    ]);
+
+    expect(status).toHaveBeenCalledWith(
+      { agent: profile.agent, profileFingerprint, bootstrapIdentity },
+      { readOnlyReceipt: true },
+    );
+    expect(write).toHaveBeenCalledWith("pending\n");
   });
 
   it("rejects invalid OpenClaw launch controls before filesystem or coordinator mutation", async () => {
