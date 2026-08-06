@@ -122,6 +122,21 @@ describe("Docker GPU clone envelope", () => {
     expect(args).not.toContain("nofile=1024:1024");
   });
 
+  it("preserves each Docker attach stream independently", () => {
+    const inspect = inspectFixture();
+    Object.assign(inspect.Config!, {
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"));
+
+    expect(args).toEqual(
+      expect.arrayContaining(["--attach", "stdin", "--attach", "stdout", "--attach", "stderr"]),
+    );
+  });
+
   it("uses exact managed-bootstrap container, entrypoint, and command overrides", () => {
     const args = buildDockerGpuCloneRunArgs(
       inspectFixture(),

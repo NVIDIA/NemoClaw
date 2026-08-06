@@ -57,6 +57,22 @@ describe("managed bootstrap Docker launch spec", () => {
     expect(observed.hash).not.toBe(expected.hash);
   });
 
+  it("hash-binds reproducible Docker attach streams", () => {
+    const first = createDockerGpuInspectFixture();
+    Object.assign(first.Config!, { AttachStdout: true, AttachStderr: true });
+    const second = structuredClone(first);
+    Object.assign(second.Config!, { AttachStderr: false });
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(first);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(second);
+
+    expect(expected.spec.inspect.Config).toMatchObject({
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    expect(observed.hash).not.toBe(expected.hash);
+  });
+
   it("orders durable launch keys by code unit across host locale settings", () => {
     const inspect = createDockerGpuInspectFixture();
     inspect.Config!.Labels = {

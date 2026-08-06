@@ -106,14 +106,15 @@ const HOST_CONFIG_KEYS = new Set([
 
 const UNSUPPORTED_CONFIG_KEYS = new Set([
   "ArgsEscaped",
-  "AttachStderr",
-  "AttachStdin",
-  "AttachStdout",
   "MacAddress",
   "OnBuild",
   "Shell",
   "Volumes",
 ]);
+
+// Docker exposes each attach stream independently through `--attach`, so the
+// clone renderer can preserve these Config booleans exactly. Keep them in the
+// normalized launch spec and verify the stopped replacement before cutover.
 
 const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "BlkioDeviceReadBps",
