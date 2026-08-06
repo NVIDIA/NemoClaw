@@ -34,12 +34,13 @@ function runIdentityValidation(overrides: Record<string, unknown> = {}, consumer
   const workflowSha = "d".repeat(40);
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-identity-"));
   try {
-    return spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
+    const outputPath = path.join(outputDirectory, "github-output");
+    const result = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
       encoding: "utf8",
       env: {
         ...process.env,
         CALLER_WORKFLOW_SHA: workflowSha,
-        GITHUB_OUTPUT: path.join(outputDirectory, "github-output"),
+        GITHUB_OUTPUT: outputPath,
         GITHUB_RUN_ATTEMPT: consumerAttempt,
         GITHUB_RUN_ID: "98765",
         PROVENANCE_JSON: JSON.stringify({
@@ -57,6 +58,10 @@ function runIdentityValidation(overrides: Record<string, unknown> = {}, consumer
         }),
       },
     });
+    return {
+      ...result,
+      outputs: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
+    };
   } finally {
     fs.rmSync(outputDirectory, { force: true, recursive: true });
   }
@@ -78,11 +83,13 @@ type RestoreFixtureOptions = {
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
+  manifestRunAttempt?: string;
   preexistingDist?:
     | "dangling-symlink"
     | "directory"
     | "plugin-directory"
     | "symlinked-plugin-parent";
+  producerRunAttempt?: string;
 };
 
 type ArchiveFixtureContext = {
@@ -314,7 +321,11 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
         sourceTree,
         lockfileSha256: sha256File(path.join(workspace, "package-lock.json")),
       },
-      workflow: { sha: workflowSha, runId: "98765", runAttempt: "1" },
+      workflow: {
+        sha: workflowSha,
+        runId: "98765",
+        runAttempt: options.manifestRunAttempt ?? options.producerRunAttempt ?? "1",
+      },
       toolchain: {
         node: "v22.23.1",
         npm: "10.9.2",
@@ -346,7 +357,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
       GITHUB_WORKSPACE: workspace,
       PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
       PAYLOAD_SHA256: expectedPayloadSha256,
-      PRODUCER_RUN_ATTEMPT: "1",
+      PRODUCER_RUN_ATTEMPT: options.producerRunAttempt ?? "1",
       RUN_ID: "98765",
       RUNNER_TEMP: runnerTemp,
       WORKFLOW_SHA: workflowSha,
@@ -407,9 +418,31 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("accepts producer provenance from an earlier attempt of the same workflow run", () => {
-    const result = runIdentityValidation({ runAttempt: "1" }, "2");
-    expect(result.status, result.stderr).toBe(0);
+  it("restores an earlier-attempt producer artifact during a later failed-job rerun", () => {
+    const identity = runIdentityValidation({ runAttempt: "1" }, "2");
+    expect(identity.status, identity.stderr).toBe(0);
+    expect(identity.outputs).toContain("producer_run_attempt=1\n");
+    expect(identity.outputs).toContain("consumer_run_attempt=2\n");
+
+    const fixture = runRestoreValidation({ producerRunAttempt: "1" });
+    try {
+      expect(fixture.result.status, fixture.output).toBe(0);
+      expect(fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw.js"))).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
+        ),
+      ).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects a producer attempt that does not match the restored artifact manifest", () => {
+    expectRestoreFailure(
+      { manifestRunAttempt: "2", producerRunAttempt: "1" },
+      "exact-commit CLI artifact provenance mismatch",
+    );
   });
 
   it("rejects consumer workflow attempt zero", () => {
