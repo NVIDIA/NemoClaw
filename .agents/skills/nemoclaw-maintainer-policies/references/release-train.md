@@ -61,15 +61,31 @@ If no commits follow the latest semver tag at cutoff, the edition succeeds as `n
 
 Every non-initial push to `main` dispatches the existing isolated PR Review Advisor with the exact immutable `before...after` SHA range. Advisor concurrency includes the head SHA, so a later merge does not cancel an earlier review. These post-merge reviews are asynchronous findings for the overnight loop and morning triage; they are not required status checks.
 
-`.github/workflows/e2e.yaml` is scheduled for 4:17 PM. One agent may use its consolidated results, prior exact-SHA runs, and selective reruns to:
+`.github/workflows/e2e.yaml` is scheduled for 4:17 PM. Assign one overnight agent to own the loop continuously from edition close through the 8:00 AM handoff. Keep the shared handoff state with that agent across the 4:00 AM tag boundary. The agent must use the consolidated results, prior exact-SHA runs, and selective reruns to:
 
 1. classify product regressions, flaky tests, infrastructure failures, and stale tests;
 2. consolidate duplicates;
 3. prepare focused fix PRs or test cleanups;
 4. validate those PRs without merging during the freeze; and
-5. preserve unresolved state for the 8:00 AM handoff.
+5. immediately select the next actionable failure after each diagnosis, rerun, or prepared fix;
+6. preserve unresolved state for the 8:00 AM handoff.
 
-E2E never enters the tag authorization. Do not create an E2E waiver ledger, wait for a run, or advance the candidate in response to E2E results. This trades repeated per-PR E2E for one methodical post-merge validation window while retaining fast deterministic checks and agent review on changes.
+Do not stop the loop when the 4:00 AM tag is cut. Stop only at the 8:00 AM handoff, or hand the same state to a replacement agent when the active agent cannot continue.
+
+E2E never enters the tag authorization. Do not create an E2E waiver ledger, wait for a run, or advance the candidate in response to E2E results. This trades repeated per-PR E2E for one methodical post-merge validation window while retaining exact-SHA agent review and the required deterministic `checks` aggregate on every code-changing PR.
+
+The deterministic merge floor remains fail-closed after PR E2E gating is removed. It includes static checks, build and typecheck, installer integration, CLI and plugin tests, package contracts, and hermetic E2E-support tests. The `build-typecheck` lane runs `npm run test:smoke`, which builds the CLI and plugin, starts the compiled CLI with an isolated home, and verifies the packed CLI and plugin entrypoints without requiring credentials, containers, GPUs, or external services. Do not waive, skip, or remove `checks`, `build-typecheck`, or `installer-integration` as part of removing live E2E gating.
+
+Before retiring `.github/workflows/pr-e2e-gate.yaml` or removing its `E2E / PR Gate` required check, require all of these rollout receipts:
+
+- the post-merge exact-SHA advisor dispatcher, edition-close workflow, consolidated schedule, edition-cut workflow, and deterministic smoke floor are merged on `main`, and the rollout commit has a passing `CI / Main` `checks` result;
+- one successful post-merge dispatcher run identifies its exact `before...after` range and creates the matching advisor run;
+- the first scheduled close run after rollout uploads its frozen plan, and the overnight agent can inspect the consolidated E2E run for that edition;
+- the `release-tag` environment and dedicated signing identity are configured, and a manual `release-edition-cut.yaml` dispatch for a non-empty frozen edition completes signing preflight;
+- one overnight agent owner is scheduled for the complete 4:00 PM–8:00 AM window and its 8:00 AM handoff destination is named; and
+- the GitHub ruleset continues to require the `checks` aggregate, and its change removes only `E2E / PR Gate`.
+
+The consolidated E2E run may fail. Its conclusion remains advisory and does not invalidate these rollout receipts.
 
 ## Tag and Promotion
 

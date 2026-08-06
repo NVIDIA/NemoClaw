@@ -124,20 +124,7 @@ function commitRelease(fixture: Fixture, text: string): string {
   return run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
 }
 
-function commitAt(
-  fixture: Fixture,
-  text: string,
-  isoDate: string,
-  options: { changelog?: boolean } = {},
-): string {
-  if (options.changelog) {
-    const changelogDir = path.join(fixture.work, "docs", "changelog");
-    fs.mkdirSync(changelogDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(changelogDir, "2026-08-06.mdx"),
-      "<!-- SPDX-License-Identifier: Apache-2.0 -->\n\n## v0.0.2\n\nFrozen release test.\n",
-    );
-  }
+function commitAt(fixture: Fixture, text: string, isoDate: string): string {
   fs.appendFileSync(path.join(fixture.work, "file.txt"), `${text}\n`);
   run(fixture.work, ["git", "add", "."]);
   const commitResult = runScript(fixture.work, ["git", "commit", "-m", text], {
@@ -147,6 +134,16 @@ function commitAt(
   expect(commitResult.status).toBe(0);
   run(fixture.work, ["git", "push", "origin", "main"]);
   return run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
+}
+
+function commitReleaseAt(fixture: Fixture, text: string, isoDate: string): string {
+  const changelogDir = path.join(fixture.work, "docs", "changelog");
+  fs.mkdirSync(changelogDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(changelogDir, "2026-08-06.mdx"),
+    "<!-- SPDX-License-Identifier: Apache-2.0 -->\n\n## v0.0.2\n\nFrozen release test.\n",
+  );
+  return commitAt(fixture, text, isoDate);
 }
 
 function pushTag(fixture: Fixture, tag: string, target = "HEAD", annotated = true): void {
@@ -558,9 +555,11 @@ describe("release-latest-tag.sh", () => {
   it("freezes the GitHub-recorded main push before the Los Angeles cutoff", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const frozenCommit = commitAt(fixture, "candidate before cutoff", "2026-08-06T15:00:00-07:00", {
-      changelog: true,
-    });
+    const frozenCommit = commitReleaseAt(
+      fixture,
+      "candidate before cutoff",
+      "2026-08-06T15:00:00-07:00",
+    );
     const lateCommit = commitAt(fixture, "late next-edition merge", "2026-08-06T14:00:00-07:00");
     const planPath = path.join(fixture.root, "release", "plan.json");
 
@@ -622,9 +621,11 @@ describe("release-latest-tag.sh", () => {
   it("rejects scheduled authority outside the canonical schedule event", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const candidate = commitAt(fixture, "candidate before cutoff", "2026-08-06T15:00:00-07:00", {
-      changelog: true,
-    });
+    const candidate = commitReleaseAt(
+      fixture,
+      "candidate before cutoff",
+      "2026-08-06T15:00:00-07:00",
+    );
     const planPath = path.join(fixture.root, "release", "plan.json");
     expect(
       runScript(

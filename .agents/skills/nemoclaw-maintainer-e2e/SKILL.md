@@ -66,6 +66,20 @@ gh run view "$RUN_ID" --repo NVIDIA/NemoClaw --log-failed
 
 Classify failures before choosing selective reruns. Dispatch full mode only for an explicit full or release-candidate rerun request.
 
+## Operate the Overnight Loop
+
+For the frozen edition, keep one agent session active from 4:00 PM through the 8:00 AM handoff. Do not start competing agents over the same failure set. Repeat this sequence until the handoff boundary:
+
+1. inspect newly completed consolidated or selective E2E jobs and exact-SHA post-merge advisor findings;
+2. choose the highest-impact unresolved failure that is not already owned by a prepared fix;
+3. classify it as a product regression, flaky test, infrastructure failure, or stale test;
+4. prepare the smallest focused fix or justified test cleanup and run its deterministic checks;
+5. open or update a fix PR without merging it during the freeze;
+6. dispatch only the selective rerun needed to test the diagnosis; and
+7. update the shared handoff state, then immediately choose the next actionable item.
+
+Do not wait idly for an unrelated rerun when another unresolved failure can be diagnosed. Continue across the 4:00 AM tag without changing the frozen candidate or treating the tag as E2E success. At 8:00 AM, stop the loop and hand over every unresolved failure, rerun, and prepared PR. If the active agent cannot continue before then, transfer the same state to one replacement agent.
+
 ## Resolve the Candidate
 
 Run from a trusted NemoClaw checkout:

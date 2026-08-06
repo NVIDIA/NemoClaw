@@ -194,10 +194,18 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("Tag the frozen candidate regardless of E2E state");
     expect(policy).toContain("Do not create an E2E waiver ledger");
     expect(policy).toContain("E2E never enters the tag authorization");
+    expect(policy).toContain("Assign one overnight agent");
+    expect(policy).toContain("Do not stop the loop when the 4:00 AM tag is cut");
+    expect(policy).toContain("The deterministic merge floor remains fail-closed");
+    expect(policy).toContain("The `build-typecheck` lane runs `npm run test:smoke`");
+    expect(policy).toContain("the GitHub ruleset continues to require the `checks` aggregate");
     expect(release).toContain("Never regenerate or advance the frozen candidate");
     expect(release).toContain("E2E is advisory");
+    expect(release).toContain("Assign one agent to the complete 4:00 PM–8:00 AM loop");
+    expect(release).toContain("Do not retire the PR E2E controller until");
     expect(release).toContain("Do not merge during the freeze");
     expect(evening).toContain("Do not merge fixes during the freeze");
+    expect(evening).toContain("Assign one agent to remain active through the 8:00 AM handoff");
     expect(evening).toContain("E2E does not authorize or block the 4:00 AM tag");
     expect(dailyFlow).toContain("tag the frozen candidate at 4 AM regardless of its state");
     expect(priorities).toContain("Tag the frozen candidate regardless of E2E state");

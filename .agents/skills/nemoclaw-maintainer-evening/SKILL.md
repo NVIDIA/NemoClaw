@@ -48,7 +48,7 @@ Run the handoff summary:
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary.ts
 ```
 
-Load `nemoclaw-maintainer-e2e`. Use the consolidated scheduled run and selective reruns to classify failures, consolidate duplicates, delete stale tests when justified, and prepare focused fix PRs. Include exact-SHA post-merge advisor runs. Do not merge fixes during the freeze.
+Assign one agent to remain active through the 8:00 AM handoff. Load `nemoclaw-maintainer-e2e`. Use the consolidated scheduled run and selective reruns to classify failures, consolidate duplicates, delete stale tests when justified, and prepare focused fix PRs. Include exact-SHA post-merge advisor runs. After each diagnosis, rerun, or prepared fix, immediately select the next actionable failure. Do not merge fixes during the freeze and do not stop the loop when the 4:00 AM tag is cut.
 
 E2E does not authorize or block the 4:00 AM tag. Do not build a release evidence ledger or request exceptions.
 
@@ -61,8 +61,10 @@ Provide:
 - QA focus areas;
 - exact-SHA agent-review runs and actionable findings;
 - E2E failures, classifications, reruns, and prepared fixes; and
-- carry-forward and released-label retirement state; and
+- carry-forward and released-label retirement state;
 - the expected 4:00 AM cut and 8:00 AM handoff checkpoints.
+
+Name the overnight agent owner and the 8:00 AM handoff destination. If the agent cannot continue, transfer the same state to one replacement instead of starting competing loops.
 
 Save state:
 

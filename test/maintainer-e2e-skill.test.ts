@@ -180,6 +180,11 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("--event schedule --branch main");
     expect(skill).toContain("do not silently substitute full mode");
     expect(skill).toContain("Dispatch full mode only for an explicit full");
+    expect(skill).toContain(
+      "keep one agent session active from 4:00 PM through the 8:00 AM handoff",
+    );
+    expect(skill).toContain("immediately choose the next actionable item");
+    expect(skill).toContain("Continue across the 4:00 AM tag");
     expect(skill).toContain("run release-candidate E2E");
     expect(skill).toContain("must not authorize the Brev Launchable path");
     expect(skill).toContain(

@@ -30,6 +30,7 @@ A merge after 4:00 PM belongs to the next edition. Never regenerate or advance t
 ## Authority and Invariants
 
 - E2E is advisory. Never inspect E2E state to authorize, delay, cancel, or select the tag.
+- Keep the required deterministic `checks` aggregate, including `npm run test:smoke` and installer integration, as the PR merge floor when live E2E gating is removed.
 - Require exactly one direct `docs/changelog/*.mdx` entry with the exact `## vX.Y.Z` heading at a non-empty candidate. No changelog waiver exists.
 - Require the frozen candidate to remain an ancestor of `origin/main` and the planned previous tag to remain the newest remote semver tag.
 - Treat trusted workflow-run and artifact provenance, plan consistency, tag collision checks, signing, GitHub verification, `latest`, `lkg`, carry-forward, and label retirement as fail-closed controls.
@@ -63,7 +64,7 @@ If a merge creates its `main` push run after 4:00 PM, the cutoff selection exclu
 
 ### 3. Use the Freeze for Advisory Validation
 
-Load `nemoclaw-maintainer-e2e` to inspect the consolidated scheduled run or dispatch selective reruns. Classify failures as product regressions, flaky tests, infrastructure failures, or stale tests. Prepare and validate fix PRs, but do not merge them until 8:00 AM.
+Assign one agent to the complete 4:00 PM–8:00 AM loop. Load `nemoclaw-maintainer-e2e` to inspect the consolidated scheduled run or dispatch selective reruns. Classify failures as product regressions, flaky tests, infrastructure failures, or stale tests. After each result, immediately select the next actionable failure, rerun, or prepared fix. Prepare and validate fix PRs, but do not merge them until 8:00 AM. Keep the loop running after the 4:00 AM tag; stop only at handoff or transfer the same state to a replacement agent.
 
 Keep this state for the morning handoff:
 
@@ -74,6 +75,10 @@ Keep this state for the morning handoff:
 - cut, `latest`, housekeeping, and release-note artifact URLs.
 
 Do not put internal E2E classifications or rerun details in the public Announcement.
+
+### Roll Out Before Removing the PR E2E Gate
+
+Do not retire the PR E2E controller until you complete the rollout-receipt checklist in the maintainer policy [release train](../nemoclaw-maintainer-policies/references/release-train.md). Until then, keep `.github/workflows/pr-e2e-gate.yaml` and the `E2E / PR Gate` required check. The checklist requires active replacement workflows on `main`, successful signing preflight, named overnight ownership and handoff, and a GitHub ruleset that preserves the required `checks` aggregate.
 
 ### 4. Cut at 4 AM
 
