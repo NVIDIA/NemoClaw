@@ -199,7 +199,7 @@ describe("host-local create journal", () => {
         processIsAlive: () => true,
       });
       setup.list();
-      if (withLease) setup.acquireExecution(TRANSACTION_ID);
+      withLease ? setup.acquireExecution(TRANSACTION_ID) : undefined;
       fs.writeFileSync(
         executionPath(".execution-recovery.json"),
         executionSource("2".repeat(64), OWNER_TWO, 202),
@@ -271,9 +271,10 @@ describe("host-local create journal", () => {
     let reconciled = false;
     vi.spyOn(fs, "linkSync").mockImplementation((existingPath, newPath) => {
       linkSync(existingPath, newPath);
-      if (!reconciled && newPath === journalPath()) {
-        reconciled = true;
-        expect(reader.load(TRANSACTION_ID)).toEqual(prepared());
+      switch (!reconciled && newPath === journalPath()) {
+        case true:
+          reconciled = true;
+          expect(reader.load(TRANSACTION_ID)).toEqual(prepared());
       }
     });
 
