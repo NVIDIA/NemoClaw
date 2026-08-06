@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listAgents } from "../agent/defs";
 import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlechat/hooks/tunnel-runtime";
 import { type OnboardCommandOptions, runOnboardCommand } from "../onboard/command";
-import type { OnboardFlags } from "../onboard/command-support";
+import { type OnboardFlags, readAgentRegistryNames } from "../onboard/command-support";
 import type { OnboardOptions } from "../onboard/types";
 
 export interface OnboardActionRuntimeDeps {
@@ -28,7 +27,7 @@ function buildOnboardCommandDeps(flags: OnboardFlags, runtimeDeps: OnboardAction
     flags,
     env: process.env,
     runOnboard: (options: OnboardCommandOptions) => runOnboard(options, runtimeDeps),
-    listAgents,
+    listAgents: () => [...readAgentRegistryNames()],
     log: console.log,
     error: console.error,
     exit: (code: number) => process.exit(code),

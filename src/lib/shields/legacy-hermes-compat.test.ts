@@ -15,6 +15,18 @@ const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const LOCK_TOKEN = "a".repeat(64);
 const OLD_GUARD_HELP = "usage: guard {ensure-api-key,refresh-hashes,provider-placeholders}";
 const PARTIAL_GUARD_HELP = "begin-shields-transition --rollback-shields-mode";
+const PREVIOUS_SEALED_GUARD_HELP = [
+  "begin-shields-transition",
+  "run-state-dir-transition",
+  "apply-shields-transition",
+  "finish-shields-transition",
+  "prepare-shields-abort",
+  "abort-shields-transition",
+  "--rollback-shields-mode",
+  "ensure-api-key",
+  "refresh-hashes",
+  "provider-placeholders",
+].join(" ");
 const CURRENT_GUARD_HELP = [
   "begin-shields-transition",
   "run-state-dir-transition",
@@ -23,9 +35,19 @@ const CURRENT_GUARD_HELP = [
   "prepare-shields-abort",
   "abort-shields-transition",
   "--rollback-shields-mode",
+  "--state-lock-plan-json",
 ].join(" ");
 
 type ShieldsModule = typeof import("./index");
+
+const STATE_LOCK_PLAN = {
+  version: 1 as const,
+  readOnlyRoots: ["skills"],
+  confidentialRoots: ["pairing"],
+  readOnlyPrefixes: [],
+  confidentialPrefixes: [],
+  writableSubpaths: [],
+};
 
 function hermesTarget() {
   return {
@@ -35,6 +57,8 @@ function hermesTarget() {
     format: "yaml",
     configFile: "config.yaml",
     sensitiveFiles: ["/sandbox/.hermes/.env", "/sandbox/.hermes/.config-hash"],
+    stateLockPlan: STATE_LOCK_PLAN,
+    stateLockPlanInImage: true,
   };
 }
 
@@ -108,6 +132,7 @@ describe("legacy Hermes shields compatibility", () => {
       applyStateDirLockModeSpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
       vi.spyOn(stateDirLock, "restoreStateDirLockPosture").mockReturnValue([]),
+      vi.spyOn(stateDirLock, "stateLockPlanCompatibilityIssues").mockReturnValue([]),
       vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined),
       vi
         .spyOn(permissiveRuntime, "buildRuntimePermissivePolicy")
@@ -260,9 +285,28 @@ describe("legacy Hermes shields compatibility", () => {
           isGuardAction(cmd, "run-state-dir-transition") &&
           cmd.includes("--state-action") &&
           cmd.includes("unlock") &&
+          cmd.includes("--state-lock-plan-json") &&
+          cmd.includes(JSON.stringify(STATE_LOCK_PLAN)) &&
           cmd.includes(LOCK_TOKEN),
       ),
     ).toBe(true);
+    expect(commands.some((cmd) => isGuardAction(cmd, "apply-shields-transition"))).toBe(true);
+    expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(true);
+    expect(commands.some(isInlinePython)).toBe(false);
+  });
+
+  it("keeps the immediately previous sealed protocol token-owned without sending a plan argument", () => {
+    installExecResponses(PREVIOUS_SEALED_GUARD_HELP);
+
+    expect(() =>
+      shields.unlockAgentConfig("previous-hermes", hermesTarget(), true, true),
+    ).not.toThrow();
+
+    const commands = dockerExecSpy.mock.calls.map(commandFromCall);
+    expect(commands.some((cmd) => isGuardAction(cmd, "begin-shields-transition"))).toBe(true);
+    const transition = commands.find((cmd) => isGuardAction(cmd, "run-state-dir-transition"));
+    expect(transition).toEqual(expect.arrayContaining(["--state-action", "unlock", LOCK_TOKEN]));
+    expect(transition).not.toContain("--state-lock-plan-json");
     expect(commands.some((cmd) => isGuardAction(cmd, "apply-shields-transition"))).toBe(true);
     expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(true);
     expect(commands.some(isInlinePython)).toBe(false);
