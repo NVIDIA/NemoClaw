@@ -1914,8 +1914,8 @@ Failure output uses the versioned `failure` record and does not include raw adap
 
 Before a side-effecting target, task, or security adapter call, NemoClaw records a durable reconciliation journal.
 If the call times out, fails validation, or loses runtime authority before its result is committed, `status --json` reports `cuaReconciliation` and normal CUA operations remain unavailable across restart.
-Run `sandbox cua target health <name>` or `sandbox cua task status <name>` to record an independent observation.
-Cancel the exact observed active task first, then run `sandbox cua target detach <name>` or `sandbox cua target destroy <name>` to prove cleanup.
+Run `$$nemoclaw sandbox cua target health <name>` or `$$nemoclaw sandbox cua task status <name>` to record an independent observation.
+Cancel the exact observed active task first, then run `$$nemoclaw sandbox cua target detach <name>` or `$$nemoclaw sandbox cua target destroy <name>` to prove cleanup.
 Onboarding, rebuild, snapshot restore, inference changes, and sandbox destruction cannot discard an unreconciled target or task.
 
 ### `$$nemoclaw sandbox cua target attach <name>`
@@ -2102,7 +2102,7 @@ Outside reconciliation, every non-null `target-attachment.activeTask` and `task-
 Reconciliation observations and an exact task-cancel result bind the durable journal's `appliedPolicy` instead.
 NemoClaw compares every terminal result with the recorded OpenShell executable, runtime, sandbox image, target image, service bundle, declared policy, applied policy, task protocol, inference route, capability protocols, and target identity.
 Any identity drift fails closed.
-The most recent 16 terminal results and their content-addressed evidence references remain available through `cua task result` and `cua task status` after a normal CLI reconnect.
+The most recent 16 terminal results and their content-addressed evidence references remain available through `$$nemoclaw sandbox cua task result <name>` and `$$nemoclaw sandbox cua task status <name>` after a normal CLI reconnect.
 NemoClaw does not retain the private task input or artifact bytes in its registry or backups.
 The host-side boundary keeps private screenshots, page content, browser state, runtime files, and adapter state only until target detach or destroy.
 
