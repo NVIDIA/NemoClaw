@@ -2122,6 +2122,39 @@ function assertNoLegacyStateLayout(sandboxName: string, configDir: string): void
 // read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
 
+/** Whether a guard error reports the OpenClaw startup readiness lease. */
+function isOpenClawStartupNotReady(error: unknown): boolean {
+  return (error instanceof Error ? error.message : String(error)).includes("[startup-not-ready]");
+}
+
+/** The guard's refusal when the sandbox is simply not in a failed startup. */
+const NOT_A_FAILED_STARTUP = "requires a proven terminal startup failure";
+
+/**
+ * Lower shields on an OpenClaw sandbox whose startup terminally failed.
+ *
+ * Returns false when the sandbox is not in that state. The guard proves a
+ * stable supervisor with no startup process and no readiness marker, then
+ * unseals both layers in one mutex window.
+ */
+function recoverOpenClawFailedStartupShields(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): boolean {
+  assertCanonicalOpenClawConfigTarget(target);
+  const result = runOpenClawConfigGuard(
+    openClawConfigGuardExec(sandboxName),
+    "unlock-failed-startup",
+    { planJson: JSON.stringify(requireStateLockPlan(target)) },
+  );
+  if (result.issues.length === 0) return true;
+  // Only "not a failed startup" falls back. A transition, rollback, contract,
+  // parse, or timeout failure must surface instead of being masked.
+  const notApplicable = result.issues.every((issue) => issue.includes(NOT_A_FAILED_STARTUP));
+  if (notApplicable) return false;
+  throw new Error(`Failed-startup shields recovery failed: ${result.issues.join(", ")}`);
+}
+
 function unlockAgentConfigUnderMutationLock(
   sandboxName: string,
   rawTarget: AgentConfigTarget,
@@ -2161,7 +2194,16 @@ function unlockAgentConfigUnderMutationLock(
   let openClawMutationStarted = false;
   try {
     if (openClawProtocol) {
-      transitionOpenClawTopConfig(sandboxName, target, "preflight");
+      try {
+        transitionOpenClawTopConfig(sandboxName, target, "preflight");
+      } catch (preflightError) {
+        // Preflight is read-only, so nothing is mutated yet. Hand the whole
+        // unseal to the guard, which does it atomically (#8304).
+        if (!isOpenClawStartupNotReady(preflightError)) throw preflightError;
+        if (!recoverOpenClawFailedStartupShields(sandboxName, target)) throw preflightError;
+        console.log("  Lowered shields on a sandbox whose startup never completed.");
+        return;
+      }
     }
     if (target.agentName === "hermes" && !legacyHermesProtocol) {
       transaction = beginHermesConfigShields(
