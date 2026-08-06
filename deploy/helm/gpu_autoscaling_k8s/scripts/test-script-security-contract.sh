@@ -101,8 +101,14 @@ fi
 [[ "$(ALLOW_INSECURE_HTTP=0 hpa_common_ingress_allow_insecure_value)" == "false" ]] \
   || fail "cleartext opt-in default is not false"
 
-# shellcheck disable=SC2329 # hpa_common_ingress_allow_insecure_value invokes this override.
-hpa_common_verify_insecure_ingress_isolation() { return 17; }
+MOCK_ISOLATION_STATUS=17
+hpa_common_verify_insecure_ingress_isolation() { return "${MOCK_ISOLATION_STATUS}"; }
+if hpa_common_verify_insecure_ingress_isolation; then
+  fail "cleartext preflight failure override unexpectedly passed"
+else
+  status=$?
+  [[ "${status}" == "17" ]] || fail "cleartext preflight failure override returned ${status}"
+fi
 if ALLOW_INSECURE_HTTP=1 hpa_common_ingress_allow_insecure_value >/dev/null 2>&1; then
   fail "cleartext opt-in bypassed the isolation preflight"
 else
@@ -110,8 +116,7 @@ else
   [[ "${status}" == "1" ]] || fail "cleartext opt-in did not return the preflight failure"
 fi
 
-# shellcheck disable=SC2329 # hpa_common_ingress_allow_insecure_value invokes this override.
-hpa_common_verify_insecure_ingress_isolation() { return 0; }
+MOCK_ISOLATION_STATUS=0
 [[ "$(ALLOW_INSECURE_HTTP=1 hpa_common_ingress_allow_insecure_value)" == "true" ]] \
   || fail "verified cleartext opt-in did not return true"
 
