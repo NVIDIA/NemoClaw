@@ -5,10 +5,10 @@ name: Release / Edition Close
 
 on:
   schedule:
-    # A minute offset avoids GitHub's busiest cron boundary. The plan itself
-    # still freezes the latest server-recorded main push at exactly 4:00 PM.
-    - cron: "17 16 * * *"
-      timezone: America/Los_Angeles
+    # GitHub cron is UTC-only. These cover 4:17 PM in PDT and PST; the
+    # schedule gate below admits only the offset active in Los Angeles.
+    - cron: "17 23 * * *"
+    - cron: "17 0 * * *"
 
 permissions:
   actions: read
@@ -19,8 +19,46 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  schedule-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      active: ${{ steps.gate.outputs.active }}
+    steps:
+      - name: Select the active Los Angeles schedule
+        id: gate
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        with:
+          script: |
+            const schedule = process.env.SCHEDULE ?? '';
+            const match = /^17 (0|23) \* \* \*$/.exec(schedule);
+            if (!match) throw new Error(`Unexpected edition-close schedule: ${schedule}`);
+            const now = new Date();
+            const scheduledAt = new Date(Date.UTC(
+              now.getUTCFullYear(),
+              now.getUTCMonth(),
+              now.getUTCDate(),
+              Number(match[1]),
+              17,
+            ));
+            if (scheduledAt.getTime() > now.getTime() + 60 * 60 * 1000) {
+              scheduledAt.setUTCDate(scheduledAt.getUTCDate() - 1);
+            }
+            const localTime = new Intl.DateTimeFormat('en-US', {
+              timeZone: 'America/Los_Angeles',
+              hour: '2-digit',
+              minute: '2-digit',
+              hourCycle: 'h23',
+            }).format(scheduledAt);
+            const active = localTime === '16:17';
+            core.info(`${schedule} resolves to ${localTime} America/Los_Angeles`);
+            core.setOutput('active', String(active));
+
   freeze-candidate:
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    needs: schedule-gate
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && needs.schedule-gate.outputs.active == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

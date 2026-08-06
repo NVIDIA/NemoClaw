@@ -22,19 +22,43 @@ const postMerge = readYaml<Workflow>(".github/workflows/post-merge-agent-review.
 const advisor = readYaml<Workflow>(".github/workflows/pr-review-advisor.yaml");
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
+
+async function evaluateScheduleGate(
+  workflow: Workflow,
+  now: string,
+  schedule: string,
+  eventName = "schedule",
+): Promise<string> {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(now));
+  vi.stubEnv("EVENT_NAME", eventName);
+  vi.stubEnv("SCHEDULE", schedule);
+  const step = workflow.jobs["schedule-gate"].steps?.find(
+    (candidate) => candidate.name === "Select the active Los Angeles schedule",
+  );
+  const script = String(step?.with?.script ?? "");
+  const setOutput = vi.fn();
+  await new AsyncFunction("core", script)({ info: vi.fn(), setOutput });
+  return String(setOutput.mock.calls.find(([name]) => name === "active")?.[1]);
+}
 
 describe("release edition workflows", () => {
   // source-shape-contract: security -- The plan artifact freezes a trusted candidate without tag or label write authority
   it("closes the edition after the exact Los Angeles cutoff with read-only permissions", () => {
-    expect(close.on?.schedule).toEqual([{ cron: "17 16 * * *", timezone: "America/Los_Angeles" }]);
+    expect(close.on?.schedule).toEqual([{ cron: "17 23 * * *" }, { cron: "17 0 * * *" }]);
     expect(close.permissions).toEqual({ actions: "read", contents: "read" });
     expect(close.concurrency).toEqual({
       group: "release-edition-close",
       "cancel-in-progress": false,
     });
     const steps = close.jobs["freeze-candidate"].steps ?? [];
+    expect(close.jobs["freeze-candidate"].needs).toBe("schedule-gate");
+    expect(close.jobs["freeze-candidate"].if).toContain(
+      "needs.schedule-gate.outputs.active == 'true'",
+    );
     const checkout = steps.find((step) => step.name === "Check out trusted main history");
     const freeze = steps.find((step) => step.name === "Freeze release candidate");
     const upload = steps.find((step) => step.name === "Upload immutable edition plan");
@@ -54,6 +78,14 @@ describe("release edition workflows", () => {
       "if-no-files-found": "error",
       "retention-days": 3,
     });
+  });
+
+  // source-shape-contract: security -- Paired UTC schedules must select only the Los Angeles close boundary in both PST and PDT
+  it("admits only the UTC close schedule that is 4:17 PM in Los Angeles", async () => {
+    expect(await evaluateScheduleGate(close, "2026-07-15T23:20:00Z", "17 23 * * *")).toBe("true");
+    expect(await evaluateScheduleGate(close, "2026-07-16T00:20:00Z", "17 0 * * *")).toBe("false");
+    expect(await evaluateScheduleGate(close, "2026-01-15T00:20:00Z", "17 0 * * *")).toBe("true");
+    expect(await evaluateScheduleGate(close, "2026-01-15T23:20:00Z", "17 23 * * *")).toBe("false");
   });
 
   it("selects the latest GitHub-recorded main push at or before the cutoff", async () => {
@@ -115,7 +147,7 @@ describe("release edition workflows", () => {
 
   // source-shape-contract: security -- Only the canonical schedule may publish, while manual dispatch remains signing preflight
   it("cuts at 4 AM without E2E input and delegates exact-object promotion", () => {
-    expect(cut.on?.schedule).toEqual([{ cron: "17 4 * * *", timezone: "America/Los_Angeles" }]);
+    expect(cut.on?.schedule).toEqual([{ cron: "17 11 * * *" }, { cron: "17 12 * * *" }]);
     expect(cut.on?.workflow_dispatch?.inputs?.edition_date).toMatchObject({
       required: true,
       type: "string",
@@ -130,6 +162,8 @@ describe("release edition workflows", () => {
     const cleanup = steps.find((step) => step.name === "Remove release signer");
 
     expect(cutJob.environment).toBe("release-tag");
+    expect(cutJob.needs).toBe("schedule-gate");
+    expect(cutJob.if).toContain("needs.schedule-gate.outputs.active == 'true'");
     expect(cutJob.permissions).toEqual({ actions: "read", contents: "write" });
     expect(configure?.env).toMatchObject({
       SIGNING_KEY: "${{ secrets.NEMOCLAW_RELEASE_TAG_SIGNING_KEY }}",
@@ -160,6 +194,17 @@ describe("release edition workflows", () => {
     expect(verify?.if).toBe("${{ needs.cut.outputs.status == 'tagged' }}");
     const upload = handoff.steps?.find((step) => step.name === "Upload verified handoff");
     expect(upload?.with?.name).toContain("no-changes-");
+  });
+
+  // source-shape-contract: security -- Scheduled release authority must admit only the DST-correct 4:17 AM trigger while keeping manual preflight reachable
+  it("admits the correct UTC cut schedule in PST, PDT, and manual mode", async () => {
+    expect(await evaluateScheduleGate(cut, "2026-07-15T11:20:00Z", "17 11 * * *")).toBe("true");
+    expect(await evaluateScheduleGate(cut, "2026-07-15T12:20:00Z", "17 12 * * *")).toBe("false");
+    expect(await evaluateScheduleGate(cut, "2026-01-15T12:20:00Z", "17 12 * * *")).toBe("true");
+    expect(await evaluateScheduleGate(cut, "2026-01-15T11:20:00Z", "17 11 * * *")).toBe("false");
+    expect(await evaluateScheduleGate(cut, "2026-07-15T11:20:00Z", "", "workflow_dispatch")).toBe(
+      "true",
+    );
   });
 
   it("selects only a successful scheduled close artifact with the exact edition name", async () => {

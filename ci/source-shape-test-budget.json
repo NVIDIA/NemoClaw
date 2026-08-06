@@ -698,7 +698,17 @@
     },
     {
       "file": "test/release-edition-workflow.test.ts",
+      "test": "admits only the UTC close schedule that is 4:17 PM in Los Angeles",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
       "test": "cuts at 4 AM without E2E input and delegates exact-object promotion",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "admits the correct UTC cut schedule in PST, PDT, and manual mode",
       "category": "security"
     },
     {

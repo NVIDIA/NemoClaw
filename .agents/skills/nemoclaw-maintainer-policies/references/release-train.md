@@ -41,7 +41,7 @@ The frozen non-empty candidate must contain exactly one matching heading in a di
 
 ## Frozen Plan
 
-`.github/workflows/release-edition-close.yaml` is scheduled for 4:17 PM to avoid the busiest cron boundary while preserving the exact 4:00 PM cutoff. It creates a schema-v2 release plan containing:
+`.github/workflows/release-edition-close.yaml` is scheduled for 4:17 PM to avoid the busiest cron boundary while preserving the exact 4:00 PM cutoff. Because GitHub cron is UTC-only, the workflow registers both PST and PDT UTC times and admits only the schedule that resolves to 4:17 PM in `America/Los_Angeles`. It creates a schema-v2 release plan containing:
 
 - edition date and exact cutoff instant;
 - planning-time `origin/main` and frozen candidate SHAs;
@@ -78,7 +78,7 @@ The deterministic merge floor remains fail-closed. It includes static checks, bu
 
 ## Tag and Promotion
 
-`.github/workflows/release-edition-cut.yaml` is scheduled for 4:17 AM and selects the trusted plan artifact for the previous edition date. It must fail closed on:
+`.github/workflows/release-edition-cut.yaml` uses the same PST/PDT schedule gate for 4:17 AM and selects the trusted plan artifact for the previous edition date. It must fail closed on:
 
 - missing, expired, ambiguous, or wrong-date plan provenance;
 - plan hash or schema mismatch;
