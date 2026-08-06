@@ -5,9 +5,9 @@
 // vllm.test.ts, vllm-install-storage.test.ts, and
 // vllm-compute-capability.test.ts (#8351). vi.hoisted and
 // vi.mock are hoisted per file, so each suite still declares and owns its own
-// mocks; every export here takes that object as a parameter. Nothing in this
-// module holds mutable state, so each call returns fresh state. Not a
-// *.test.ts file, so Vitest does not collect it as a suite.
+// mocks; every export here takes that object as a parameter. The setup helpers
+// replace probe results and Docker ownership responses for each setup. This is
+// not a *.test.ts file, so Vitest does not collect it as a suite.
 
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
@@ -55,7 +55,7 @@ export function vllmContainerRow(
   return `${id}|${containerName}|${state}|${label}|||`;
 }
 
-/** Apply the ordinary probe results a vLLM install sees when nothing is constrained. */
+/** Prepare probe results for an ordinary vLLM setup response. */
 export function applyVllmInstallProbeDefaults(mocks: VllmInstallMocks): void {
   mocks.dockerImageInspectFormat.mockReturnValue("");
   mocks.findUnwritableModelCachePath.mockReturnValue(null);
@@ -125,7 +125,8 @@ export function mockDockerSpawnFailure(
 }
 
 /**
- * Drive a managed vLLM install down its successful path. Each
+ * Prepare a successful vLLM setup response with installed-version probe
+ * results and Docker ownership responses. Each
  * `dockerCapture(["container", ...])` call alternates between two outcomes:
  * the first call and every other call after it (0, 2, 4, ...) unconditionally
  * return an empty row; the second call and every other call after that
@@ -163,7 +164,7 @@ export function mockSuccessfulVllmInstall(
       (
         ownershipQueue.shift() ??
         (() => {
-          throw new Error("Unexpected extra ambient vLLM ownership inspection");
+          throw new Error("No ambient Docker ownership response remains");
         })
       )(),
   ];
@@ -176,7 +177,7 @@ export function mockSuccessfulVllmInstall(
   );
 }
 
-/** Silence and capture the console, cache-directory, and stream writes an install performs. */
+/** Prepare spies for vLLM setup output and filesystem calls. */
 export function createVllmInstallSpies(): VllmInstallSpies {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -199,7 +200,7 @@ export function createVllmInstallSpies(): VllmInstallSpies {
   };
 }
 
-/** Clear the env vars the install suites read, without setting one for any of them. */
+/** Clear the environment inputs read by the vLLM install suites. */
 export function resetVllmInstallEnv(): void {
   delete process.env.NEMOCLAW_VLLM_MODEL;
   delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;

@@ -107,7 +107,7 @@ function currentHostIdentity(): string | null {
 }
 
 describe("shared vLLM install setup", () => {
-  it("replaces mutated probe results and ownership queues on reuse (#8351)", () => {
+  it("setup helpers replace probe results and ownership responses (#8351)", () => {
     applyVllmInstallProbeDefaults(mocks);
     mocks.probeHostStorage().capacity.availableBytes = 0n;
     applyVllmInstallProbeDefaults(mocks);
@@ -118,7 +118,7 @@ describe("shared vLLM install setup", () => {
     expect(mocks.dockerCapture(["container"])).toBe("first-row");
     expect(mocks.dockerCapture(["container"])).toBe("");
     expect(() => mocks.dockerCapture(["container"])).toThrow(
-      "Unexpected extra ambient vLLM ownership inspection",
+      "No ambient Docker ownership response remains",
     );
 
     mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "second-row"]);
