@@ -2629,6 +2629,7 @@ It creates the archive from that snapshot and records each path, normalized mode
 It rejects symlinks and special files.
 Inside the sandbox, it stages the archive and verifies that its paths, normalized modes, and SHA-256 digests match the host snapshot.
 It then moves the staged directory into place only if the destination is still absent.
+On success, the command prints that content digest so you can record it or compare it across installations.
 Deep Agents Code and its built-in skill creator also write to this directory.
 The command therefore refuses any name whose file, directory, or symlink already exists.
 Updates are not automatic.

@@ -393,6 +393,7 @@ export async function installSandboxSkill(
       }
       console.log(`  ${G}✓${R} Installed ${fresh.uploaded} file(s) into the agent skill directory`);
       console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed`);
+      console.log(`  ${D}Content digest (SHA-256): ${fresh.contentDigest}${R}`);
       console.log(`  ${D}Start a new Deep Agents session to load the skill.${R}`);
       return;
     }
