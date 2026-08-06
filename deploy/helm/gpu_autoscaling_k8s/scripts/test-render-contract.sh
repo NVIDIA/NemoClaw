@@ -141,6 +141,7 @@ helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.yaml
   --set ingress.allowInsecureHttp=true >"${RENDERED_FILE}"
 
 python3 - "${RENDERED_FILE}" <<'PYEOF'
+import json
 import sys
 import yaml
 
@@ -162,6 +163,7 @@ def get(kind):
 
 
 deploy = get("Deployment")
+config = get("ConfigMap")
 hpa = get("HorizontalPodAutoscaler")
 svc = get("Service")
 svcmon = get("ServiceMonitor")
@@ -171,6 +173,29 @@ if deploy:
     deploy_name = deploy["metadata"]["name"]
     pod_labels = deploy["spec"]["template"]["metadata"]["labels"]
     deploy_selector = deploy["spec"]["selector"]["matchLabels"]
+
+    agent_containers = [
+        c for c in deploy["spec"]["template"]["spec"]["containers"] if c.get("name") == "agent"
+    ]
+    if len(agent_containers) != 1:
+        failures.append(f"expected exactly one agent container, found {len(agent_containers)}")
+    elif agent_containers[0].get("command") != ["node", "/app/agent-server.ts"]:
+        failures.append("agent container does not execute the mounted TypeScript entry point")
+
+    app_volumes = [
+        v for v in deploy["spec"]["template"]["spec"]["volumes"] if v.get("name") == "app"
+    ]
+    if len(app_volumes) != 1:
+        failures.append(f"expected exactly one app volume, found {len(app_volumes)}")
+    else:
+        app_items = app_volumes[0].get("configMap", {}).get("items", [])
+        package_items = [
+            item
+            for item in app_items
+            if item.get("key") == "package.json" and item.get("path") == "package.json"
+        ]
+        if len(package_items) != 1:
+            failures.append("app volume does not mount package.json next to agent-server.ts")
 
     if hpa:
         target_name = hpa["spec"]["scaleTargetRef"]["name"]
@@ -221,6 +246,18 @@ if deploy:
             )
         elif ollama_volumes[0].get("persistentVolumeClaim", {}).get("claimName") != pvc_name:
             failures.append("Deployment ollama-data volume does not reference the rendered PVC")
+
+if config:
+    package_json = config.get("data", {}).get("package.json")
+    try:
+        package_metadata = json.loads(package_json or "")
+    except json.JSONDecodeError:
+        failures.append("agent ConfigMap package.json is not valid JSON")
+    else:
+        if package_metadata != {"type": "module"}:
+            failures.append(
+                f"agent ConfigMap package.json={package_metadata!r}, expected ESM metadata"
+            )
 
 if pvc:
     if pvc["spec"].get("accessModes") != ["ReadWriteMany"]:

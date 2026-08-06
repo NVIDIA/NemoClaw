@@ -21,7 +21,7 @@ spec:
       labels:
         {{- include "nemoclaw-gpu.selectorLabels" . | nindent 8 }}
       annotations:
-        checksum/agent-config: {{ printf "%s%s%s" (.Files.Get "files/agent-server.ts") (.Files.Get "files/agent-metrics.ts") (.Files.Get "files/ollama-start.sh") | sha256sum }}
+        checksum/agent-config: {{ printf "%s%s%s%s" (.Files.Get "files/agent-server.ts") (.Files.Get "files/agent-metrics.ts") (.Files.Get "files/package.json") (.Files.Get "files/ollama-start.sh") | sha256sum }}
       {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -159,6 +159,8 @@ spec:
                 path: agent-server.ts
               - key: agent-metrics.ts
                 path: agent-metrics.ts
+              - key: package.json
+                path: package.json
         - name: scripts
           configMap:
             name: {{ include "nemoclaw-gpu.fullname" . }}-agent

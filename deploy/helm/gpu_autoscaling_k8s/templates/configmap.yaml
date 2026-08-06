@@ -12,6 +12,8 @@ data:
 {{ .Files.Get "files/agent-server.ts" | indent 4 }}
   agent-metrics.ts: |
 {{ .Files.Get "files/agent-metrics.ts" | indent 4 }}
+  package.json: |
+{{ .Files.Get "files/package.json" | indent 4 }}
   ollama-start.sh: |
 {{ .Files.Get "files/ollama-start.sh" | indent 4 }}
   INFERENCE_BASE_URL: {{ .Values.inference.baseUrl | quote }}
