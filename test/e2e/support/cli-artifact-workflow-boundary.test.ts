@@ -81,6 +81,7 @@ type RestoreFixtureOptions = {
     | "shared-module-directory"
     | "traversal";
   buildIdentitySha?: string;
+  consumerRunAttempt?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
   manifestRunAttempt?: string;
@@ -273,6 +274,9 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     { mode: 0o755 },
   );
   execFileSync("git", ["init", "--quiet"], { cwd: workspace });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/NVIDIA/NemoClaw.git"], {
+    cwd: workspace,
+  });
   execFileSync("git", ["add", "."], { cwd: workspace });
   execFileSync(
     "git",
@@ -309,6 +313,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const actualPayloadSha256 = sha256File(payload);
   const expectedPayloadSha256 = options.expectedPayloadSha256 ?? actualPayloadSha256;
   const artifactName = `nemoclaw-cli-${candidateSha}-${expectedPayloadSha256}`;
+  const producerRunAttempt = options.producerRunAttempt ?? "1";
   const workflowSha = "d".repeat(40);
   fs.writeFileSync(
     path.join(artifactDirectory, "manifest.json"),
@@ -346,28 +351,72 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
-  const result = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
+  const githubOutput = path.join(root, "github-output");
+  const identityResult = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
     cwd: workspace,
     encoding: "utf8",
     env: {
       ...process.env,
-      ARTIFACT_NAME: artifactName,
-      CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
-      CANDIDATE_SHA: candidateSha,
+      CALLER_WORKFLOW_SHA: workflowSha,
+      GITHUB_OUTPUT: githubOutput,
+      GITHUB_RUN_ATTEMPT: options.consumerRunAttempt ?? producerRunAttempt,
+      GITHUB_RUN_ID: "98765",
+      PROVENANCE_JSON: JSON.stringify({
+        kind: "nemoclaw-e2e-cli-provenance-v1",
+        artifactDigest: "c".repeat(64),
+        artifactId: "12345",
+        artifactName,
+        candidateRepository: "NVIDIA/NemoClaw",
+        candidateSha,
+        payloadSha256: expectedPayloadSha256,
+        runAttempt: producerRunAttempt,
+        runId: "98765",
+        workflowSha,
+      }),
+    },
+  });
+  if (identityResult.status !== 0) {
+    return {
+      candidateSha,
+      cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
+      output: `${identityResult.stdout}${identityResult.stderr}`,
+      result: identityResult,
+      runnerTemp,
+      workspace,
+    };
+  }
+  const identityOutputs = Object.fromEntries(
+    fs
+      .readFileSync(githubOutput, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const separator = line.indexOf("=");
+        return [line.slice(0, separator), line.slice(separator + 1)];
+      }),
+  );
+  const restoreResult = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
+    cwd: workspace,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ARTIFACT_NAME: identityOutputs.artifact_name,
+      CANDIDATE_REPOSITORY: identityOutputs.candidate_repository,
+      CANDIDATE_SHA: identityOutputs.candidate_sha,
       GITHUB_WORKSPACE: workspace,
       PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
-      PAYLOAD_SHA256: expectedPayloadSha256,
-      PRODUCER_RUN_ATTEMPT: options.producerRunAttempt ?? "1",
-      RUN_ID: "98765",
+      PAYLOAD_SHA256: identityOutputs.payload_sha256,
+      PRODUCER_RUN_ATTEMPT: identityOutputs.producer_run_attempt,
+      RUN_ID: identityOutputs.run_id,
       RUNNER_TEMP: runnerTemp,
-      WORKFLOW_SHA: workflowSha,
+      WORKFLOW_SHA: identityOutputs.workflow_sha,
     },
   });
   return {
     candidateSha,
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
-    output: `${result.stdout}${result.stderr}`,
-    result,
+    output: `${identityResult.stdout}${identityResult.stderr}${restoreResult.stdout}${restoreResult.stderr}`,
+    result: restoreResult,
     runnerTemp,
     workspace,
   };
@@ -418,15 +467,15 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("restores an earlier-attempt producer artifact during a later failed-job rerun", () => {
-    const identity = runIdentityValidation({ runAttempt: "1" }, "2");
-    expect(identity.status, identity.stderr).toBe(0);
-    expect(identity.outputs).toContain("producer_run_attempt=1\n");
-    expect(identity.outputs).toContain("consumer_run_attempt=2\n");
-
-    const fixture = runRestoreValidation({ producerRunAttempt: "1" });
+  it("reuses an immutable producer artifact during a later failed-job rerun", () => {
+    const fixture = runRestoreValidation({ consumerRunAttempt: "2", producerRunAttempt: "1" });
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fixture.workspace, "dist", "build-identity.json"), "utf8"),
+        ),
+      ).toEqual({ nemoclawVersion: "0.0.0", sourceRevision: fixture.candidateSha });
       expect(fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw.js"))).toBe(true);
       expect(
         fs.existsSync(
