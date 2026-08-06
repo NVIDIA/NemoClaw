@@ -203,38 +203,46 @@ describe("preparePortableExperimentalHost", () => {
     ).toThrow(/invalid socket path/);
   });
 
-  it("names the podman-docker shim when no docker-compatible CLI is present (#8453)", () => {
+  it("names podman-docker and creates the registry only after a successful retry (#8453)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     // The `docker --version` probe returns a spawn ENOENT, i.e. no docker CLI.
-    const docker = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(
-      () =>
-        ({
-          error: Object.assign(new Error("spawnSync docker ENOENT"), { code: "ENOENT" }),
-          output: [null, "", ""],
-          pid: 0,
-          signal: null,
-          status: null,
-          stderr: "",
-          stdout: "",
-        }) as SpawnResult,
-    );
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce({
+        error: Object.assign(new Error("spawnSync docker ENOENT"), { code: "ENOENT" }),
+        output: [null, "", ""],
+        pid: 0,
+        signal: null,
+        status: null,
+        stderr: "",
+        stdout: "",
+      } as SpawnResult)
+      .mockReturnValueOnce(result()) // retry probe: podman-docker is now present
+      .mockReturnValueOnce(result(1)) // inspect: registry was not created by the failed attempt
+      .mockReturnValueOnce(result()); // run
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    const deps = {
+      platform: "linux" as const,
+      home,
+      uid: 1001,
+      systemctl: () => result(),
+      podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+      docker,
+    };
 
-    expect(() =>
-      preparePortableExperimentalHost(
-        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        {
-          platform: "linux",
-          home,
-          uid: 1001,
-          systemctl: () => result(),
-          podman: () => result(0, "/run/user/1001/podman/podman.sock"),
-          docker,
-        },
-      ),
-    ).toThrow(/podman-docker/);
+    expect(() => preparePortableExperimentalHost(env, deps)).toThrow(/podman-docker/);
     // Fails on the CLI probe, before any registry inspect/run is attempted.
     expect(docker).toHaveBeenCalledTimes(1);
     expect(docker.mock.calls[0]?.[0]).toEqual(["--version"]);
+
+    preparePortableExperimentalHost(env, deps);
+
+    expect(docker.mock.calls.map(([args]) => args[0])).toEqual([
+      "--version",
+      "--version",
+      "inspect",
+      "run",
+    ]);
   });
 });
