@@ -318,6 +318,49 @@ describe("portable demo sandbox lifecycle", () => {
     expect(log).toHaveBeenCalledWith("  Portable demo lifecycle recovered sandbox 'alpha'.");
   });
 
+  it("waits through a transient OpenShell registration gap after starting the container (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({ running: false });
+    installReceipt(stateDir, runtime.podman);
+    const launchOpenshell = vi.fn();
+    let now = 0;
+    const captureOpenshell = vi.fn((args: readonly string[]) => {
+      const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+      switch (command) {
+        case "true":
+          return { status: now >= 31_000 ? 0 : 1 };
+        case "pgrep":
+          return { status: 1 };
+        case "curl":
+          return launchOpenshell.mock.calls.length === 0
+            ? { status: 0, stdout: "000" }
+            : { status: 0, stdout: "200" };
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+      }
+    });
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell,
+          launchOpenshell,
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        },
+      ),
+    ).toEqual({ kind: "recovered" });
+    expect(now).toBe(31_000);
+    expect(launchOpenshell).toHaveBeenCalledOnce();
+  });
+
   it("retries the same receipt after a detached startup times out (#8441)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman();

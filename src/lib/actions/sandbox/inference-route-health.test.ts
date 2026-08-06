@@ -47,52 +47,6 @@ describe("sandbox inference route health", () => {
     expect(result?.detail).toContain("unreachable");
   });
 
-  it.each([
-    [5, "proxy hostname"],
-    [6, "DNS resolution"],
-    [7, "connection failed"],
-    [28, "timed out"],
-    [60, "TLS certificate validation"],
-  ] as const)("reports curl exit %i as a bounded %s diagnosis (#8441)", async (exitCode, detail) => {
-    const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture(`BROKEN 000 curl_exit=${String(exitCode)} tls_verify=0`),
-    });
-
-    expect(result).toMatchObject({ ok: false, httpStatus: 0 });
-    expect(result?.detail).toContain(detail);
-  });
-
-  it("reports the bounded TLS verification result without certificate material (#8441)", async () => {
-    const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture("BROKEN 000 curl_exit=60 tls_verify=20"),
-    });
-
-    expect(result).toMatchObject({ ok: false, httpStatus: 0 });
-    expect(result?.detail).toContain("verification result 20");
-  });
-
-  it("reports when only OpenShell's canonical CA verifies the route (#8441)", async () => {
-    const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture(
-        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=200 canonical_tls_verify=0",
-      ),
-    });
-
-    expect(result).toMatchObject({ ok: false, httpStatus: 0 });
-    expect(result?.detail).toContain("inherited CA bundle did not verify");
-  });
-
-  it("reports when TLS validation also fails with OpenShell's canonical CA (#8441)", async () => {
-    const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture(
-        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=60 canonical_http=000 canonical_tls_verify=19",
-      ),
-    });
-
-    expect(result?.detail).toContain("validation also failed");
-    expect(result?.detail).toContain("verification result 19");
-  });
-
   it("returns null when the authoritative probe is unavailable (#6192)", async () => {
     await expect(
       probeSandboxInferenceGatewayHealth("my-sandbox", {

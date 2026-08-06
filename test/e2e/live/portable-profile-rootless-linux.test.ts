@@ -119,9 +119,6 @@ case "$*" in
     fi
     exit 0
     ;;
-  "--user enable podman-restart.service")
-    exit 0
-    ;;
   "--user enable --now podman.socket")
     mkdir -p "\${service_dir}"
     nohup podman system service --time=0 "unix://\${socket_path}" >"\${log_file}" 2>&1 &

@@ -18,38 +18,6 @@ export type SandboxInferenceRouteHealth = {
   detail: string;
 };
 
-function describeInferenceTransportFailure(
-  curlExitCode: number | null,
-  tlsVerifyResult: number | null,
-  canonicalCurlExitCode: number | null,
-  canonicalTlsVerifyResult: number | null,
-): string {
-  switch (curlExitCode) {
-    case 5:
-      return "The configured proxy hostname could not be resolved.";
-    case 6:
-      return "DNS resolution for inference.local failed inside the sandbox.";
-    case 7:
-      return "The inference route connection failed inside the sandbox.";
-    case 28:
-      return "The inference route probe timed out inside the sandbox.";
-    case 60:
-      if (canonicalCurlExitCode === 0 && canonicalTlsVerifyResult === 0) {
-        return "The inherited CA bundle did not verify the inference route; OpenShell's canonical runtime CA did.";
-      }
-      if (canonicalCurlExitCode === 60 && canonicalTlsVerifyResult !== null) {
-        return `TLS certificate validation also failed with OpenShell's canonical runtime CA (verification result ${String(canonicalTlsVerifyResult)}).`;
-      }
-      return tlsVerifyResult === null
-        ? "TLS certificate validation failed for the inference route."
-        : `TLS certificate validation failed for the inference route (verification result ${String(tlsVerifyResult)}).`;
-    case null:
-      return "DNS, connection, timeout, or TLS setup failed.";
-    default:
-      return `The inference route probe failed with curl exit code ${String(curlExitCode)}.`;
-  }
-}
-
 /**
  * Probe the authoritative `https://inference.local/v1/models` route from
  * inside the sandbox using the same agent-aware argv and parser as connect.
@@ -99,12 +67,7 @@ export async function probeSandboxInferenceGatewayHealth(
       ok: true,
       endpoint,
       httpStatus: status,
-      detail:
-        parsed.curlExitCode === 60 &&
-        parsed.canonicalCurlExitCode === 0 &&
-        parsed.canonicalTlsVerifyResult === 0
-          ? `Inference gateway responded HTTP ${status} on ${endpoint} using OpenShell's canonical runtime CA; the inherited CA bundle did not verify the route.`
-          : `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
+      detail: `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
     };
   }
   if (classifyInferenceRouteFailureLabel(status) === "unhealthy") {
@@ -122,12 +85,7 @@ export async function probeSandboxInferenceGatewayHealth(
     detail:
       status === 0
         ? `Inference gateway unreachable on ${endpoint} from inside the sandbox. ` +
-          describeInferenceTransportFailure(
-            parsed.curlExitCode,
-            parsed.tlsVerifyResult,
-            parsed.canonicalCurlExitCode,
-            parsed.canonicalTlsVerifyResult,
-          )
+          `DNS may have failed or the agent gateway / auth proxy is not running.`
         : `Inference gateway returned an invalid HTTP status (${status}) on ${endpoint}; ` +
           `check the in-sandbox proxy and gateway.`,
   };

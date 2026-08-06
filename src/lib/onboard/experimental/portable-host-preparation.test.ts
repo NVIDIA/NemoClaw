@@ -72,7 +72,6 @@ describe("preparePortableExperimentalHost", () => {
         `CONTAINERS_CONF=${path.join(home, ".config/nemoclaw/portable/containers.conf")}`,
       ],
       ["--user", "try-restart", "podman.service"],
-      ["--user", "enable", "podman-restart.service"],
       ["--user", "enable", "--now", "podman.socket"],
     ]);
     expect(podman).toHaveBeenCalledWith(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
