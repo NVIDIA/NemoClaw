@@ -70,6 +70,7 @@ export type DockerFixtureAcknowledgement =
 
 export type DockerFixtureOptions = {
   readonly agent?: ManagedStartupAgent;
+  readonly dockerCliSerializationDefaults?: boolean;
   readonly dockerRemoveFailures?: readonly Error[];
   readonly dockerRemoveResults?: readonly FixtureCommandResult[];
   readonly dockerInspectUnknownIds?: readonly string[];
@@ -222,6 +223,14 @@ function readProtectedEnvelope(source: string): ReturnType<typeof parseManagedBo
 
 export function fixture(options: DockerFixtureOptions = {}) {
   let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
+  if (options.dockerCliSerializationDefaults) {
+    Object.assign(original.Config!, {
+      AttachStdin: false,
+      AttachStdout: false,
+      AttachStderr: false,
+    });
+    Object.assign(original.HostConfig!, { PortBindings: null });
+  }
   let replacement: DockerContainerInspect | null = null;
   let journal: DockerManagedBootstrapJournal | null = null;
   let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
@@ -370,6 +379,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
             },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },
           };
+          if (options.dockerCliSerializationDefaults) {
+            Object.assign(replacement.Config!, {
+              AttachStdin: args.includes("stdin"),
+              AttachStdout: true,
+              AttachStderr: true,
+            });
+            Object.assign(replacement.HostConfig!, { PortBindings: {} });
+          }
           return losesAcknowledgement("container:create")
             ? { status: 1, stdout: "", stderr: "lost create acknowledgement" }
             : ok(NEW_ID);
