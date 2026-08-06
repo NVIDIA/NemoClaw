@@ -36,7 +36,7 @@ type OpenAiLikeProbe = (
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
-  parseTrustedPrivateInferenceHosts,
+  parseTrustedPrivateInferenceHostsFromEnv,
 } from "../inference/endpoint-ssrf-preflight";
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
@@ -142,8 +142,7 @@ export function createInferenceSelectionValidationHelpers(
   const runAnthropicProbe = deps.probeAnthropicEndpoint ?? probeAnthropicEndpoint;
   const runOpenAiLikeProbe = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpointOptimized;
   const trustedPrivateEndpointHosts =
-    deps.trustedPrivateEndpointHosts ??
-    parseTrustedPrivateInferenceHosts(process.env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS);
+    deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
 
   function exitNonInteractiveValidationFailure(): never {
     process.exitCode = 1;
@@ -193,7 +192,7 @@ export function createInferenceSelectionValidationHelpers(
       if (preflight.trustedPrivateEndpoint) {
         console.warn(
           "  ⚠ Using an operator-trusted private inference endpoint; keep " +
-            "NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS restricted to infrastructure you control.",
+            "trusted-private host configuration restricted to infrastructure you control.",
         );
       }
       return {

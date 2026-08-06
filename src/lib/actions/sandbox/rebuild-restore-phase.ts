@@ -8,6 +8,7 @@ import {
   OBSERVABILITY_POLICY_BINDING,
 } from "../../onboard/observability-policy-presets";
 import * as policies from "../../policy";
+import { replayTrustedPrivatePolicyPinCapability } from "../../policy/trusted-private-endpoints";
 import * as sandboxConfig from "../../sandbox/config";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
@@ -280,8 +281,14 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     for (const entry of replayableCustomPolicies) {
       try {
         log(`Applying custom preset: ${entry.name}`);
+        const trustedPrivatePinCapability = entry.trustedPrivatePins
+          ? replayTrustedPrivatePolicyPinCapability(entry.content, entry.trustedPrivatePins)
+          : undefined;
         const applied = policies.applyPresetContent(sandboxName, entry.name, entry.content, {
-          custom: { sourcePath: entry.sourcePath },
+          custom: {
+            sourcePath: entry.sourcePath,
+            ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
+          },
         });
         if (applied) {
           restoredCustomPresets.push(entry.name);
