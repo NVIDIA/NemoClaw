@@ -35,7 +35,7 @@ describe("e2e workflow boundary", () => {
     ).not.toThrow();
   });
 
-  it("keeps the live E2E target workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
+  it("keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
@@ -78,7 +78,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("selects Launchable E2E only for trusted manual full or Launchable dispatches (#7487)", () => {
+  it("selects Launchable E2E for main pushes and trusted manual dispatches (#7487)", () => {
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -127,7 +127,7 @@ describe("e2e workflow boundary", () => {
       evaluateStagingBrevLaunchableDispatch({
         eventName: "push",
       }),
-    ).toEqual({ runLaunchableE2e: false });
+    ).toEqual({ runLaunchableE2e: true });
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -171,7 +171,7 @@ describe("e2e workflow boundary", () => {
         "workflow run-name must expose the unique manual-dispatch correlation ID",
         "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
         "workflow must not define superseded staging-brev-launchable-readiness job",
-        "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
+        "staging-brev-launchable must run on main pushes and retain trusted manual selection",
         "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
         `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
       ]),

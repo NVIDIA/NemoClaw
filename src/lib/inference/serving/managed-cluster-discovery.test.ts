@@ -22,7 +22,10 @@ import {
   parseManagedClusterHostObservation,
   probeManagedClusterManagedServingCapability,
 } from "./managed-cluster-discovery.js";
-import { FIXTURE_MANAGED_CLUSTER_PRESET_ID } from "./managed-cluster-fixture.test-support.js";
+import {
+  FIXTURE_MANAGED_CLUSTER_PRESET_ID,
+  STOPPED_FOREIGN_CONTAINER_FIXTURES,
+} from "./managed-cluster-fixture.test-support.js";
 import { MANAGED_CLUSTER_MANAGED_LABEL } from "./managed-cluster-materialize.js";
 import {
   type ManagedVllmSshBinding,
@@ -43,34 +46,6 @@ const REQUIRED_CAPABILITIES = [
   "host.gpu.container_toolkit_available",
   "host.gpu.cdi_healthy",
 ] as const;
-
-type StoppedForeignContainerFixture = {
-  readonly signal: string;
-  readonly name: string;
-  readonly image: string;
-  readonly labels: Readonly<Record<string, string>>;
-};
-
-const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixture[] = [
-  {
-    signal: "name",
-    name: "foreign-vllm-server",
-    image: "example.invalid/inference:latest",
-    labels: {},
-  },
-  {
-    signal: "image",
-    name: "foreign-inference",
-    image: "vllm/vllm-openai:latest",
-    labels: {},
-  },
-  {
-    signal: "managed label",
-    name: "foreign-inference",
-    image: "example.invalid/inference:latest",
-    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
-  },
-];
 
 function expectDetectedCluster(
   detected: ReturnType<typeof probeManagedClusterManagedServingCapability>,
