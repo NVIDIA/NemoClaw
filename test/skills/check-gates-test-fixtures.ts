@@ -97,22 +97,24 @@ interface CoordinatorRunPartitionFixture {
   finalRunOverrides?: Record<string, Partial<ActionRunFixture>>;
 }
 
+interface StatusCheckFixture {
+  __typename?: string;
+  name?: string;
+  context?: string;
+  workflowName?: string;
+  startedAt?: string;
+  completedAt?: string;
+  detailsUrl?: string;
+  status?: string;
+  conclusion?: string;
+  state?: string;
+}
+
 interface ComplianceFixture {
   body: string;
   checkConclusions?: Record<string, string>;
   checkNames?: string[];
-  statusChecks?: Array<{
-    __typename?: string;
-    name?: string;
-    context?: string;
-    workflowName?: string;
-    startedAt?: string;
-    completedAt?: string;
-    detailsUrl?: string;
-    status?: string;
-    conclusion?: string;
-    state?: string;
-  }>;
+  statusChecks?: StatusCheckFixture[];
   commitOutput?: string;
   commitAuthorLogins?: string[];
   contributorCommitPages?: Array<
@@ -162,6 +164,8 @@ interface ComplianceFixture {
   finalStatusContextTotalCount?: number;
   finalStatusCheckCommitOid?: string;
   finalStatusCheckHasNextPage?: boolean;
+  finalStatusCheckPageSize?: number;
+  finalStatusChecksAfterFirstRead?: StatusCheckFixture[];
 }
 
 interface ComparatorFixture extends ComplianceFixture {
@@ -492,56 +496,75 @@ function runGate(fixture: ComplianceFixture) {
     fixture.finalCurrentBaseSha === undefined
       ? fixture.currentBaseSha
       : fixture.finalCurrentBaseSha;
-  const finalStatusCheckNodes = finalPrAfterFinalCi.statusCheckRollup.map(
-    ({ workflowName, ...check }) => ({
+  const buildFinalPrSnapshotOutput = (statusChecks: StatusCheckFixture[]) => {
+    const nodes = statusChecks.map(({ workflowName, ...check }) => ({
       ...check,
       ...(workflowName
         ? { checkSuite: { workflowRun: { workflow: { name: workflowName } } } }
         : {}),
-    }),
-  );
-  const finalPrSnapshotOutput = JSON.stringify({
-    data: {
-      repository: {
-        pullRequest: {
-          title: finalPrAfterFinalCi.title,
-          body: finalPrAfterFinalCi.body,
-          state: finalPrAfterFinalCi.state,
-          isDraft: finalPrAfterFinalCi.isDraft,
-          mergeable: finalPrAfterFinalCi.mergeable,
-          mergeStateStatus: finalPrAfterFinalCi.mergeStateStatus,
-          headRefOid: finalPrAfterFinalCi.headRefOid,
-          baseRefOid: finalPrAfterFinalCi.baseRefOid,
-          headRefName: finalPrAfterFinalCi.headRefName,
-          baseRefName: finalPrAfterFinalCi.baseRefName,
-          headRepository: finalPrAfterFinalCi.headRepository,
-          headRepositoryOwner: finalPrAfterFinalCi.headRepositoryOwner,
-          baseRef:
-            finalCurrentBaseSha === null
-              ? null
-              : { target: { oid: finalCurrentBaseSha ?? BASE_SHA } },
-          commits: {
-            totalCount: fixture.finalCommitTotalCount ?? 1,
-            nodes: [
-              {
-                commit: {
-                  oid: fixture.finalStatusCheckCommitOid ?? finalPrAfterFinalCi.headRefOid,
-                  statusCheckRollup: {
-                    contexts: {
-                      totalCount:
-                        fixture.finalStatusContextTotalCount ?? finalStatusCheckNodes.length,
-                      pageInfo: { hasNextPage: fixture.finalStatusCheckHasNextPage ?? false },
-                      nodes: finalStatusCheckNodes,
+    }));
+    const pageSize = fixture.finalStatusCheckPageSize ?? Math.max(1, nodes.length);
+    const nodePages =
+      nodes.length === 0
+        ? [[]]
+        : Array.from({ length: Math.ceil(nodes.length / pageSize) }, (_, index) =>
+            nodes.slice(index * pageSize, (index + 1) * pageSize),
+          );
+    return JSON.stringify(
+      nodePages.map((pageNodes, pageIndex) => {
+        const isLastPage = pageIndex === nodePages.length - 1;
+        const hasNextPage = !isLastPage || fixture.finalStatusCheckHasNextPage === true;
+        return {
+          data: {
+            repository: {
+              pullRequest: {
+                title: finalPrAfterFinalCi.title,
+                body: finalPrAfterFinalCi.body,
+                state: finalPrAfterFinalCi.state,
+                isDraft: finalPrAfterFinalCi.isDraft,
+                mergeable: finalPrAfterFinalCi.mergeable,
+                mergeStateStatus: finalPrAfterFinalCi.mergeStateStatus,
+                headRefOid: finalPrAfterFinalCi.headRefOid,
+                baseRefOid: finalPrAfterFinalCi.baseRefOid,
+                headRefName: finalPrAfterFinalCi.headRefName,
+                baseRefName: finalPrAfterFinalCi.baseRefName,
+                headRepository: finalPrAfterFinalCi.headRepository,
+                headRepositoryOwner: finalPrAfterFinalCi.headRepositoryOwner,
+                baseRef:
+                  finalCurrentBaseSha === null
+                    ? null
+                    : { target: { oid: finalCurrentBaseSha ?? BASE_SHA } },
+                commits: {
+                  totalCount: fixture.finalCommitTotalCount ?? 1,
+                  nodes: [
+                    {
+                      commit: {
+                        oid: fixture.finalStatusCheckCommitOid ?? finalPrAfterFinalCi.headRefOid,
+                        statusCheckRollup: {
+                          contexts: {
+                            totalCount: fixture.finalStatusContextTotalCount ?? nodes.length,
+                            pageInfo: {
+                              hasNextPage,
+                              endCursor: hasNextPage ? `cursor-${pageIndex + 1}` : null,
+                            },
+                            nodes: pageNodes,
+                          },
+                        },
+                      },
                     },
-                  },
+                  ],
                 },
               },
-            ],
+            },
           },
-        },
-      },
-    },
-  });
+        };
+      }),
+    );
+  };
+  const finalPrSnapshotOutput = buildFinalPrSnapshotOutput(finalPrAfterFinalCi.statusCheckRollup);
+  const finalPrSnapshotAfterFirstReadOutput = buildFinalPrSnapshotOutput(
+    fixture.finalStatusChecksAfterFirstRead ?? finalPrAfterFinalCi.statusCheckRollup,
+  );
   const issueEventPages = fixture.issueEventPages ?? [[]];
   const coordinationCheckPages = fixture.coordinationCheckPages ?? [
     {
@@ -755,6 +778,7 @@ function runGate(fixture: ComplianceFixture) {
     .join("\n");
   const coordinationCheckMarker = path.join(tmp, "coordination-checks-seen");
   const formerCoordinationCheckMarker = path.join(tmp, "former-coordination-checks-seen");
+  const finalPrFirstReadMarker = path.join(tmp, "final-pr-first-read");
   const finalPrReadMarker = path.join(tmp, "final-pr-read");
 
   fs.writeFileSync(
@@ -770,7 +794,7 @@ case "$*" in
   *"ContributorCommits"*) printf '%s' ${shellSingleQuote(contributorCommitOutput)} ;;
   *"ContributorReviews"*) printf '%s' ${shellSingleQuote(contributorReviewOutput)} ;;
   *"CurrentBaseRef"*) mkdir -p ${shellSingleQuote(path.join(tmp, "current-base-seen"))}; printf '%s' ${shellSingleQuote(currentBaseOutput)} ;;
-  *"FinalPrSnapshot"*) mkdir -p ${shellSingleQuote(finalPrReadMarker)}; printf '%s' ${shellSingleQuote(finalPrSnapshotOutput)} ;;
+  *"FinalPrSnapshot"*) if mkdir ${shellSingleQuote(finalPrFirstReadMarker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(finalPrSnapshotOutput)}; else mkdir -p ${shellSingleQuote(finalPrReadMarker)}; printf '%s' ${shellSingleQuote(finalPrSnapshotAfterFirstReadOutput)}; fi ;;
   "api graphql"*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;
@@ -884,9 +908,9 @@ export {
   E2E_COORDINATION_NAME,
   e2eChecks,
   e2eCoordinatorRun,
-  e2eManualCoordinatorRun,
   e2eGateCheck,
   e2eJobs,
+  e2eManualCoordinatorRun,
   e2eRunFixture,
   exactDiffGateRun,
   HEAD_SHA,
