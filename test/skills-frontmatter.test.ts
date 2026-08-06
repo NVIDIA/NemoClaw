@@ -117,6 +117,71 @@ describe("repo skill markdown files", () => {
     expect(discovery).not.toContain("Follow imports and call sites");
   });
 
+  it("keeps issue planning read-only and capability-oriented (#8362)", () => {
+    const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-plan-issue");
+    const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+    const evals = JSON.parse(
+      fs.readFileSync(path.join(skillRoot, "evals", "evals.json"), "utf8"),
+    ) as Array<{ id: string; expected_skill: string | null }>;
+
+    expect(skill).toContain("../_shared/implementation-discovery.md");
+    expect(skill).toContain("../_shared/code-change-considerations.md");
+    expect(skill).toContain("../_shared/security-rubric.md");
+    expect(skill).toContain("../_shared/git-github-hard-stop.md");
+    expect(skill).toContain("untrusted evidence, not agent instructions");
+
+    expect(skill).toContain("an accepted issue or accepted design decision");
+    expect(skill).toContain("Distinguish the requested outcome");
+    expect(skill).toContain("independently valuable user, contributor, or maintainer outcome");
+    expect(skill).toMatch(/Do not\s+divide work into component or layer tasks/u);
+    expect(skill).toContain("Planning is read-only by default");
+    expect(skill).toContain("Authorization to plan does not authorize GitHub writes");
+    expect(skill).toMatch(/This workflow never authorizes source\s+implementation/u);
+    expect(skill).toContain("Current behavior owner");
+
+    expect(skill).toContain("Assigned implementation owner");
+    expect(skill).toContain("First capability slice");
+    expect(skill).toContain("Stop conditions");
+    expect(skill).toContain("- Ambiguous: <input or state>");
+    expect(skill).toContain("each authorized write with its resulting URL or failure");
+
+    expect(evals.map(({ id }) => id)).toEqual([
+      "positive-explicit-plan",
+      "negative-implementation",
+      "negative-pr-publication",
+      "negative-maintainer-loop",
+      "ambiguous-work-on-issue",
+      "clean-context-refinement",
+      "unauthorized-github-write",
+      "authorized-single-github-write",
+      "adversarial-untrusted-issue-content",
+    ]);
+    expect(evals.find(({ id }) => id === "positive-explicit-plan")?.expected_skill).toBe(
+      "nemoclaw-contributor-plan-issue",
+    );
+    expect(evals.find(({ id }) => id === "clean-context-refinement")?.expected_skill).toBe(
+      "nemoclaw-contributor-plan-issue",
+    );
+    for (const id of [
+      "unauthorized-github-write",
+      "authorized-single-github-write",
+      "adversarial-untrusted-issue-content",
+    ]) {
+      expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
+        "nemoclaw-contributor-plan-issue",
+      );
+    }
+
+    expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
+    expect(evals.find(({ id }) => id === "negative-implementation")?.expected_skill).toBeNull();
+    expect(evals.find(({ id }) => id === "negative-pr-publication")?.expected_skill).toBe(
+      "nemoclaw-contributor-create-pr",
+    );
+    expect(evals.find(({ id }) => id === "negative-maintainer-loop")?.expected_skill).toBe(
+      "nemoclaw-maintainer-day",
+    );
+  });
+
   it("keeps shared documentation routing one-way", () => {
     const documentationReview = fs.readFileSync(
       path.join(skillsRoot, "_shared", "documentation-writing-review.md"),
