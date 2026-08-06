@@ -449,6 +449,22 @@ async function rebuildSandboxUnlocked(
         },
         durableConfig.webSearchConfig,
       );
+      const capturedCustomPolicies =
+        backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
+        preservedCustomPolicies;
+      const customPoliciesWithRegistryPinAuthority = capturedCustomPolicies.map((entry) => {
+        const { trustedPrivatePins: _capturedPinAuthority, ...captured } = entry;
+        const registryAuthority = preservedCustomPolicies.find(
+          (candidate) =>
+            candidate.name === entry.name &&
+            candidate.content === entry.content &&
+            candidate.trustedPrivatePins?.contentDigest === entry.trustedPrivatePins?.contentDigest,
+        )?.trustedPrivatePins;
+        return {
+          ...captured,
+          ...(registryAuthority ? { trustedPrivatePins: registryAuthority } : {}),
+        };
+      });
 
       const restore = () =>
         runRebuildRestorePhase({
@@ -457,9 +473,7 @@ async function rebuildSandboxUnlocked(
           targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: backup.backupManifest,
           policyPresets: targetPolicyPresets,
-          customPolicies:
-            backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
-            preservedCustomPolicies,
+          customPolicies: customPoliciesWithRegistryPinAuthority,
           reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
           log,
         });

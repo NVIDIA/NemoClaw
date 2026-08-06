@@ -281,18 +281,13 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
 }
 
 function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (entry) =>
-        typeof entry === "object" &&
-        entry !== null &&
-        typeof (entry as { name?: unknown }).name === "string" &&
-        typeof (entry as { content?: unknown }).content === "string" &&
-        ((entry as { pendingContent?: unknown }).pendingContent === undefined ||
-          typeof (entry as { pendingContent?: unknown }).pendingContent === "string"),
-    )
-  );
+  if (!Array.isArray(value)) return false;
+  if (value.length === 0) return true;
+  try {
+    return registry.normalizeCustomPolicyEntries(value) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 function cloneOpenClawImagePluginInstalls(

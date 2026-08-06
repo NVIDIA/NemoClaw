@@ -101,6 +101,31 @@ describe("preparePortableExperimentalHost", () => {
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
   });
 
+  it("keeps the portable firewall driver in the Podman default search path (#8441)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const systemctl = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
+      result(),
+    );
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result(1))
+      .mockReturnValueOnce(result());
+    const podman = vi.fn(() => result(0, "/run/user/1001/podman/podman.sock\n"));
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      { platform: "linux", home, uid: 1001, systemctl, podman, docker },
+    );
+
+    const dropIn = path.join(
+      home,
+      ".config/containers/containers.conf.d/99-nemoclaw-portable.conf",
+    );
+    expect(fs.readFileSync(dropIn, "utf-8")).toContain('firewall_driver = "iptables"');
+    expect(fs.statSync(dropIn).mode & 0o777).toBe(0o600);
+  });
+
   it("refuses to replace an unmanaged registry container", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
