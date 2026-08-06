@@ -235,7 +235,7 @@ describe("portable demo sandbox lifecycle", () => {
     const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(receipt).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       sandboxName: "alpha",
       sandboxId: SANDBOX_ID,
       containerId: CONTAINER_ID,
@@ -414,6 +414,123 @@ describe("portable demo sandbox lifecycle", () => {
 
     expect(result).toEqual({ kind: "already-running" });
     expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("restarts the managed startup process once when recovery upgrades a schema-1 receipt (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
+    fs.writeFileSync(
+      receiptPath,
+      `${JSON.stringify({ ...receipt, schemaVersion: 1 }, null, 2)}\n`,
+      {
+        mode: 0o600,
+      },
+    );
+    let startupRunning = true;
+    let gatewayRunning = true;
+    const launchOpenshell = vi.fn(() => {
+      startupRunning = true;
+      gatewayRunning = true;
+    });
+    const captureOpenshell = vi.fn((args: readonly string[]) => {
+      const command = args.find((arg) => ["true", "pgrep", "pkill", "curl"].includes(arg));
+      switch (command) {
+        case "true":
+          return { status: 0 };
+        case "pgrep":
+          return { status: startupRunning ? 0 : 1 };
+        case "pkill":
+          startupRunning = false;
+          gatewayRunning = false;
+          return { status: 0 };
+        case "curl":
+          return { status: 0, stdout: gatewayRunning ? "200" : "000" };
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+      }
+    });
+    const deps = {
+      platform: "linux" as const,
+      stateDir,
+      podman: runtime.podman,
+      captureOpenshell,
+      launchOpenshell,
+    };
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        deps,
+      ),
+    ).toEqual({ kind: "recovered" });
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "-g",
+        "nemoclaw",
+        "--name",
+        "alpha",
+        "--no-tty",
+        "--",
+        "pkill",
+        "-TERM",
+        "-f",
+        "^(/usr/local/bin/nemoclaw-start|(bash|/bin/bash|/usr/bin/bash) /usr/local/bin/nemoclaw-start)( |$)",
+      ],
+      5000,
+    );
+    expect(launchOpenshell).toHaveBeenCalledOnce();
+    expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({ schemaVersion: 2 });
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        deps,
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(launchOpenshell).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed for a schema-1 receipt when the gateway is healthy without its managed startup process (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
+    fs.writeFileSync(
+      receiptPath,
+      `${JSON.stringify({ ...receipt, schemaVersion: 1 }, null, 2)}\n`,
+      {
+        mode: 0o600,
+      },
+    );
+    const launchOpenshell = vi.fn();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: (args) => {
+            if (args.includes("curl")) return { status: 0, stdout: "200" };
+            if (args.includes("pgrep")) return { status: 1 };
+            return { status: 0 };
+          },
+          launchOpenshell,
+        },
+      ),
+    ).toThrow("agent gateway without its managed startup process");
+    expect(launchOpenshell).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({ schemaVersion: 1 });
   });
 
   it("refuses a container whose OpenShell sandbox ID changed (#8441)", () => {

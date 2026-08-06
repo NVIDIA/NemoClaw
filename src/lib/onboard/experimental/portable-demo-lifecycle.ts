@@ -16,6 +16,7 @@ const MAX_RECEIPT_BYTES = 4096;
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 30_000;
+const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
 const POLL_INTERVAL_MS = 1_000;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
@@ -25,6 +26,9 @@ const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
 const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
+const CURRENT_RECEIPT_SCHEMA_VERSION = 2;
+const STARTUP_PROCESS_PATTERN =
+  "^(/usr/local/bin/nemoclaw-start|(bash|/bin/bash|/usr/bin/bash) /usr/local/bin/nemoclaw-start)( |$)";
 const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 type CommandResult = {
@@ -35,7 +39,7 @@ type CommandResult = {
 };
 
 interface PortableDemoLifecycleReceipt {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   sandboxName: string;
   sandboxId: string;
   containerId: string;
@@ -164,7 +168,7 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
     throw new Error("Portable demo lifecycle receipt fields are invalid");
   }
   if (
-    receipt.schemaVersion !== 1 ||
+    (receipt.schemaVersion !== 1 && receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
     receipt.sandboxName !== sandboxName ||
     typeof receipt.containerId !== "string" ||
     !CONTAINER_ID_PATTERN.test(receipt.containerId) ||
@@ -408,7 +412,7 @@ export function installPortableDemoSandboxLifecycle(
   const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
   const inspection = discoverPodmanContainer(sandboxName, podman);
   const receipt: PortableDemoLifecycleReceipt = {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
     sandboxName,
     sandboxId: inspection.sandboxId,
     containerId: inspection.containerId,
@@ -483,13 +487,48 @@ export function recoverPortableDemoSandboxLifecycle(
   if (!execReady) {
     throw new Error(`Portable sandbox '${sandboxName}' did not reconnect to the OpenShell gateway`);
   }
-  if (gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS)) {
+  const gatewayRunning = gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS);
+  const refreshStartup = receipt.schemaVersion < CURRENT_RECEIPT_SCHEMA_VERSION;
+  if (!refreshStartup && gatewayRunning) {
     return { kind: "already-running" };
   }
-  const startupProbe = capture(
-    openshellExecArgs(gatewayName, sandboxName, ["pgrep", "-f", "/usr/local/bin/nemoclaw-start"]),
+  let startupProbe = capture(
+    openshellExecArgs(gatewayName, sandboxName, ["pgrep", "-f", STARTUP_PROCESS_PATTERN]),
     PROBE_TIMEOUT_MS,
   );
+  if (refreshStartup && gatewayRunning && startupProbe.status === 1 && !startupProbe.error) {
+    throw new Error(
+      `Portable sandbox '${sandboxName}' has an agent gateway without its managed startup process`,
+    );
+  }
+  if (refreshStartup && startupProbe.status === 0 && !startupProbe.error) {
+    const stopped = capture(
+      openshellExecArgs(gatewayName, sandboxName, [
+        "pkill",
+        "-TERM",
+        "-f",
+        STARTUP_PROCESS_PATTERN,
+      ]),
+      PROBE_TIMEOUT_MS,
+    );
+    if (stopped.error || (stopped.status !== 0 && stopped.status !== 1)) {
+      throw new Error(
+        `Stopping the stale managed startup process for portable sandbox '${sandboxName}' failed: ${commandDetail(stopped)}`,
+      );
+    }
+    const startupStopped = waitFor(STARTUP_STOP_TIMEOUT_MS, timing, (remainingMs) => {
+      startupProbe = capture(
+        openshellExecArgs(gatewayName, sandboxName, ["pgrep", "-f", STARTUP_PROCESS_PATTERN]),
+        Math.min(PROBE_TIMEOUT_MS, remainingMs),
+      );
+      return startupProbe.status === 1 && !startupProbe.error;
+    });
+    if (!startupStopped) {
+      throw new Error(
+        `Portable sandbox '${sandboxName}' stale managed startup process did not stop`,
+      );
+    }
+  }
   if (startupProbe.status !== 1 || startupProbe.error) {
     throw new Error(
       startupProbe.status === 0
@@ -508,6 +547,12 @@ export function recoverPortableDemoSandboxLifecycle(
   if (!recovered) {
     throw new Error(
       `Portable sandbox '${sandboxName}' startup did not start its agent gateway; inspect /tmp/nemoclaw-start.log inside the sandbox`,
+    );
+  }
+  if (refreshStartup) {
+    writeReceipt(
+      { ...receipt, schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION },
+      deps.stateDir ?? defaultStateDir(commandEnv),
     );
   }
   (deps.log ?? console.log)(`  Portable demo lifecycle recovered sandbox '${sandboxName}'.`);
