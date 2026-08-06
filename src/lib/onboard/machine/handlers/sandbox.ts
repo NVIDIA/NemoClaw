@@ -673,6 +673,7 @@ class SandboxStateFlow<
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
         : false,
       recreateSandboxRequested: this.options.recreateSandbox(false),
+      recreateJournalHandoff: Boolean(this.options.recreateJournalTargetIntentFingerprint),
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,
         storedMessagingConfig,

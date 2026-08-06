@@ -189,10 +189,10 @@ const HOST_DEPENDENCY_ACTION_PROVENANCE = {
 } as const;
 const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
-// The general E2E workflow runs on schedule/manual dispatch. Its event set is
+// The general E2E workflow runs on push/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
 const TRUSTED_DOCKER_HUB_PREDICATE =
-  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
@@ -718,7 +718,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
 }
 
 export function evaluateStagingBrevLaunchableDispatch(input: {
-  eventName: "schedule" | "workflow_dispatch";
+  eventName: "push" | "workflow_dispatch";
   includeStagingBrevLaunchable?: boolean;
   jobs?: string;
   targets?: string;
@@ -998,22 +998,16 @@ function requireWorkflowDispatch(errors: string[], triggers: WorkflowRecord): Wo
   return workflowDispatch;
 }
 
-function requireScheduledRun(errors: string[], triggers: WorkflowRecord): void {
-  const schedule = triggers.schedule;
-  if (!Array.isArray(schedule)) {
-    errors.push("workflow must support the scheduled E2E run");
-    return;
-  }
-  const cronEntries = schedule
-    .map((entry) => asRecord(entry).cron)
-    .filter((cron): cron is string => typeof cron === "string");
-  if (!cronEntries.includes("0 0 * * *")) {
-    errors.push("workflow schedule must run daily at 00:00 UTC");
+function requirePushRun(errors: string[], triggers: WorkflowRecord): void {
+  const push = asRecord(triggers.push);
+  const branches = Array.isArray(push.branches) ? push.branches : [];
+  if (!branches.includes("main")) {
+    errors.push("workflow push trigger must include main");
   }
 }
 
 function rejectUnexpectedTriggers(errors: string[], triggers: WorkflowRecord): void {
-  for (const unsafe of ["push", "pull_request", "pull_request_target"]) {
+  for (const unsafe of ["schedule", "pull_request", "pull_request_target"]) {
     if (Object.hasOwn(triggers, unsafe)) errors.push(`workflow must not run on ${unsafe}`);
   }
 }
@@ -2406,17 +2400,17 @@ function requireCanonicalDockerHubAuthRun(
   const authWith = asRecord(authStep.with);
   if (authWith["auth-required"] !== GUARDED_DOCKER_HUB_AUTH_REQUIRED) {
     errors.push(
-      "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and push/manual events",
     );
   }
   if (authWith.username !== GUARDED_DOCKER_HUB_USERNAME) {
     errors.push(
-      "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate username on the trusted repository, main ref, and push/manual events",
     );
   }
   if (authWith.token !== GUARDED_DOCKER_HUB_TOKEN) {
     errors.push(
-      "canonical Docker Hub auth must gate token on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate token on the trusted repository, main ref, and push/manual events",
     );
   }
   const unexpectedWith = Object.keys(authWith).filter(
@@ -3975,7 +3969,7 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
   }
@@ -4278,7 +4272,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
-  requireScheduledRun(errors, triggers);
+  requirePushRun(errors, triggers);
   rejectUnexpectedTriggers(errors, triggers);
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
@@ -4332,7 +4326,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const generateOutputs = asRecord(generateMatrix.outputs);
   if (
     generateOutputs.matrix !==
-    "${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}"
+    "${{ steps.matrix.outputs.matrix }}"
   ) {
     errors.push("generate-matrix job must expose trusted controller matrix output");
   }
@@ -4367,17 +4361,22 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("trusted controller matrix step must bind targets through TARGETS env");
   }
   requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
-  requireRunContains(errors, controllerMatrix, "matrix='[]'");
   const controllerMatrixScript = stringValue(controllerMatrix?.run);
+  const policyTarget = "ubuntu-policy-custom-missing-presets-negative";
   const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const openClawTarget = "ubuntu-repo-cloud-openclaw";
   const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
+  const defaultMappings = [policyTarget, deepAgentsTarget, openClawTarget, postRebootTarget]
+    .map((target) => `{"id":"${target}","runner":"ubuntu-latest"}`)
+    .join(",");
   const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
   const trustedControllerMatrixScript = [
     "set -euo pipefail",
     'case "${TARGETS}" in',
     '"")',
-    "matrix='[]'",
+    `matrix='[${defaultMappings}]'`,
     ";;",
     `${deepAgentsTarget})`,
     `matrix='[${deepAgentsMapping}]'`,

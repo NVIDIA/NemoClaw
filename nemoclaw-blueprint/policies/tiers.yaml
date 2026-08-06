@@ -9,7 +9,10 @@
 #
 # access values:
 #   read       — GET only (or equivalent read-only rules for that service)
-#   read-write — GET + POST/PUT/PATCH (explicitly opt-in; never the default)
+#   read-write — GET + POST/PUT/PATCH (must be explicit in the tier definition)
+#
+# A preset can define stricter or broader native OpenShell behavior than this
+# display-level access label. The Personal internet preset uses L4 passthrough.
 
 tiers:
   - name: restricted
@@ -46,3 +49,38 @@ tiers:
       - { name: teams,        access: read-write }
       - { name: jira,         access: read-write }
       - { name: outlook,      access: read-write }
+
+  - name: personal
+    label: Personal
+    description: Trusted personal-use posture. Lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. Unspecified, loopback, and link-local ranges remain blocked. Also enables every maintained preset that applies to the selected agent. Do not use with untrusted prompts or data.
+    presets:
+      - { name: personal-open-internet, access: read-write }
+      - { name: npm, access: read-write }
+      - { name: pypi, access: read-write }
+      - { name: huggingface, access: read-write }
+      - { name: brew, access: read-write }
+      - { name: brave, access: read-write }
+      - { name: tavily, access: read-write }
+      - { name: weather, access: read-write }
+      - { name: public-reference, access: read-write }
+      - { name: github, access: read-write }
+      - { name: gmail, access: read-write }
+      - { name: jira, access: read-write }
+      - { name: outlook, access: read-write }
+      - { name: claude-code, access: read-write }
+      - { name: local-inference, access: read-write }
+      - { name: openclaw-pricing, access: read-write }
+      - { name: openclaw-diagnostics-otel-local, access: read-write }
+      - { name: observability-otlp-local, access: read-write }
+      - { name: nous-web, access: read-write }
+      - { name: nous-image, access: read-write }
+      - { name: nous-audio, access: read-write }
+      - { name: nous-browser, access: read-write }
+      - { name: nous-code, access: read-write }
+      - { name: slack, access: read-write }
+      - { name: discord, access: read-write }
+      - { name: telegram, access: read-write }
+      - { name: googlechat, access: read-write }
+      - { name: wechat, access: read-write }
+      - { name: whatsapp, access: read-write }
+      - { name: teams, access: read-write }
