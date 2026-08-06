@@ -115,7 +115,7 @@ describe("main E2E retry controller", () => {
     expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
-  it("reports a successful retry as flaky and includes every attempt cost", async () => {
+  it("reports a successful retry as flaky and sums runner minutes across attempts", async () => {
     const { evidence, requests } = await evaluate({ attempt: 2, conclusion: "success" });
 
     expect(evidence).toMatchObject({
@@ -181,5 +181,23 @@ describe("main E2E retry controller", () => {
         request,
       }),
     ).rejects.toThrow("GitHub returned an invalid or truncated E2E job list");
+  });
+
+  it("rejects an unbounded job name before evidence serialization", async () => {
+    const fixture = setup({ attempt: 1, conclusion: "failure" });
+    const request = async (path: string, init?: { method?: "GET" | "POST" }) =>
+      path.includes("/attempts/1/jobs")
+        ? { total_count: 1, jobs: [{ ...job(1, "failure"), name: "x".repeat(257) }] }
+        : fixture.request(path, init);
+
+    await expect(
+      evaluateMainRunRetry({
+        repository: REPOSITORY,
+        token: "token",
+        sourceRunId: RUN_ID,
+        controllerAttempt: 1,
+        request,
+      }),
+    ).rejects.toThrow("GitHub returned invalid E2E job identity");
   });
 });

@@ -136,6 +136,55 @@ function validateLatestRun(value: unknown, source: SourceRun): boolean {
   return eligible?.id === source.id;
 }
 
+const JOB_CONCLUSIONS = new Set([
+  "action_required",
+  "cancelled",
+  "failure",
+  "neutral",
+  "skipped",
+  "stale",
+  "startup_failure",
+  "success",
+  "timed_out",
+]);
+
+type ValidatedJob = {
+  name: string;
+  conclusion: string;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
+function validateJob(value: unknown, attempt: number): ValidatedJob {
+  const job = record(value);
+  const name = job.name;
+  const conclusion = job.conclusion;
+  if (
+    typeof name !== "string" ||
+    name.length < 1 ||
+    name.length > 256 ||
+    /[\u0000-\u001f\u007f]/u.test(name) ||
+    typeof conclusion !== "string" ||
+    !JOB_CONCLUSIONS.has(conclusion) ||
+    job.run_attempt !== attempt ||
+    job.status !== "completed"
+  ) {
+    throw new Error("GitHub returned invalid E2E job identity");
+  }
+  const startedAt = typeof job.started_at === "string" ? job.started_at : null;
+  const completedAt = typeof job.completed_at === "string" ? job.completed_at : null;
+  if (
+    conclusion !== "skipped" &&
+    (!startedAt ||
+      !TIMESTAMP_PATTERN.test(startedAt) ||
+      !completedAt ||
+      !TIMESTAMP_PATTERN.test(completedAt))
+  ) {
+    throw new Error("GitHub returned invalid E2E job timestamps");
+  }
+  return { name, conclusion, startedAt, completedAt };
+}
+
 function validateAttemptEvidence(value: unknown, attempt: number): AttemptEvidence {
   const response = record(value);
   if (
@@ -146,20 +195,10 @@ function validateAttemptEvidence(value: unknown, attempt: number): AttemptEviden
   ) {
     throw new Error("GitHub returned an invalid or truncated E2E job list");
   }
-  const jobs = response.jobs.map(record);
-  if (jobs.some((job) => job.run_attempt !== attempt)) {
-    throw new Error("GitHub returned jobs from a different run attempt");
-  }
-  const active = jobs.filter(
-    (job) =>
-      job.conclusion !== "skipped" &&
-      typeof job.started_at === "string" &&
-      TIMESTAMP_PATTERN.test(job.started_at) &&
-      typeof job.completed_at === "string" &&
-      TIMESTAMP_PATTERN.test(job.completed_at),
-  );
+  const jobs = response.jobs.map((job) => validateJob(job, attempt));
+  const active = jobs.filter((job) => job.conclusion !== "skipped");
   const runnerMilliseconds = active.reduce((total, job) => {
-    const duration = Date.parse(job.completed_at as string) - Date.parse(job.started_at as string);
+    const duration = Date.parse(job.completedAt!) - Date.parse(job.startedAt!);
     if (!Number.isFinite(duration) || duration < 0) throw new Error("GitHub returned invalid job timing");
     return total + duration;
   }, 0);
@@ -167,7 +206,7 @@ function validateAttemptEvidence(value: unknown, attempt: number): AttemptEviden
     attempt,
     failedJobs: active
       .filter((job) => job.conclusion !== "success")
-      .map((job) => String(job.name))
+      .map((job) => job.name)
       .sort(),
     nonSkippedJobs: active.length,
     runnerMinutes: Number((runnerMilliseconds / 60_000).toFixed(2)),
@@ -267,19 +306,26 @@ function integerEnvironment(name: string): number {
 }
 
 function writeRetryEvidence(file: string, evidence: MainRunRetryEvidence): void {
-  const descriptor = fs.openSync(
-    file,
-    fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
-    0o600,
-  );
+  const temporaryFile = `${file}.partial.${process.pid}`;
+  let descriptor: number | null = null;
   try {
-    // lgtm[js/network-data-to-file] The controller serializes bounded, validated
-    // GitHub run and job fields to a fixed runner-owned path through an exclusive
-    // 0600 descriptor. The artifact uploader treats the JSON as data and never executes it.
+    descriptor = fs.openSync(
+      temporaryFile,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+      0o600,
+    );
+    // lgtm[js/network-data-to-file] GitHub run and job fields pass type, enum,
+    // count, and length limits before the controller writes them to a fixed
+    // runner-owned path through an exclusive 0600 descriptor.
     // lgtm[js/http-to-file-access]
     fs.writeFileSync(descriptor, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
-  } finally {
+    fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
+    descriptor = null;
+    fs.linkSync(temporaryFile, file);
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    fs.rmSync(temporaryFile, { force: true });
   }
 }
 
