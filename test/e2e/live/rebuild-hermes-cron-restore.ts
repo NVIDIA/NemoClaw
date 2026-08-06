@@ -160,6 +160,14 @@ export function parseHermesCronBeginReceipt(text: string): CronControlReceipt {
   return payload as unknown as CronControlReceipt;
 }
 
+export function parseCronTickerTimestamp(text: string, label: string): number {
+  const timestamp = Number(text.trim());
+  if (!text.trim() || !Number.isFinite(timestamp) || timestamp < 0) {
+    fail(`${label} is invalid`);
+  }
+  return timestamp;
+}
+
 function assertPristineCronJob(
   job: JsonObject,
   seed: SeededCronJob,
@@ -211,6 +219,10 @@ export function parseHermesGatewayEvidence(text: string): GatewayEvidence {
   }
   if (typeof payload.gateway_state !== "string") fail("Hermes gateway state is invalid");
   return payload as unknown as GatewayEvidence;
+}
+
+export function parseGatewayEvidence(text: string): GatewayEvidence {
+  return parseHermesGatewayEvidence(text);
 }
 
 export function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {

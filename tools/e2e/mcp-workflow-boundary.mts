@@ -194,10 +194,12 @@ function validateJobIdentity(
       errors,
       job.if,
       "inputs.jobs == ''",
-      "mcp-bridge must run in default full-suite dispatches",
+      "mcp-bridge must run for empty-selector dispatches",
     );
   } else {
-    requireEqual(errors, env.E2E_DEFAULT_ENABLED, "0", "mcp-bridge-dev must remain explicit-only");
+    if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
+      errors.push("mcp-bridge-dev must remain default-enabled");
+    }
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_CHANNEL,
@@ -207,9 +209,12 @@ function validateJobIdentity(
     if (Object.hasOwn(env, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge-dev must scope unverified artifact opt-in to its installer step");
     }
-    if (asString(job.if).includes("inputs.jobs == ''")) {
-      errors.push("mcp-bridge-dev must not run in default full-suite dispatches");
-    }
+    requireContains(
+      errors,
+      job.if,
+      "inputs.jobs == ''",
+      "mcp-bridge-dev must run for empty-selector dispatches",
+    );
   }
 }
 

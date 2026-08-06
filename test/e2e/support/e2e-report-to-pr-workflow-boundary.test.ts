@@ -577,7 +577,7 @@ it("reports cancelled tests alongside passing tests as a partial pass", () => {
   expect(report.body).toContain("⚠️ Some tests cancelled — partial pass");
 });
 
-it("lists explicit-only jobs skipped by default dispatch with their selection hints", () => {
+it("reports empty selectors without claiming an E2E was omitted", () => {
   const report = renderE2eReport({
     needs: {
       "generate-matrix": { result: "success" },
@@ -594,9 +594,9 @@ it("lists explicit-only jobs skipped by default dispatch with their selection hi
     context: REPORT_CONTEXT,
   });
 
-  expect(report.body).toContain(
-    "> **Explicit-only jobs skipped:** `mcp-bridge-dev` (default dispatch excludes moving OpenShell dev artifacts unless explicitly selected; validate with `jobs=mcp-bridge-dev` or `targets=mcp-bridge-dev`).",
-  );
+  expect(report.body).not.toContain("jobs skipped");
+  expect(report.body).toContain("✅ All tests selected by empty selectors passed");
+  expect(report.body).toContain("**Requested targets:** _(no target selector)_");
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {

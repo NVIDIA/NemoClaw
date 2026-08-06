@@ -61,6 +61,13 @@ import {
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
 import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
+import {
+  type ExternalPolicyPreset,
+  isTrustedPrivatePolicyPinCapability,
+  prepareTrustedPrivatePolicyPresets,
+  replayTrustedPrivatePolicyPinCapability,
+  type TrustedPrivatePolicyPinCapability,
+} from "./trusted-private-endpoints";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -1607,7 +1614,10 @@ function applyPresetContent(
   presetName: string,
   presetContent: string,
   options: {
-    custom?: { sourcePath?: string };
+    custom?: {
+      sourcePath?: string;
+      trustedPrivatePinCapability?: TrustedPrivatePolicyPinCapability;
+    };
     expectedExistingNetworkPolicyContent?: string | null;
     nonFatal?: boolean;
     skipRegistryUpdate?: boolean;
@@ -1627,7 +1637,18 @@ function applyPresetContent(
 
   if (options.custom) {
     const np = parseNetworkPolicies(presetContent);
-    if (np && networkPoliciesHasAllowedIps(np)) {
+    const hasGeneratedPins = np !== null && networkPoliciesHasAllowedIps(np);
+    const trustedPrivatePinsValid = isTrustedPrivatePolicyPinCapability(
+      presetContent,
+      options.custom.trustedPrivatePinCapability,
+    );
+    if (options.custom.trustedPrivatePinCapability && !trustedPrivatePinsValid) {
+      console.error(
+        `  Preset '${presetName}' has an invalid trusted-private pin receipt for its content.`,
+      );
+      return false;
+    }
+    if (hasGeneratedPins && !trustedPrivatePinsValid) {
       console.error(
         `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets.`,
       );
@@ -1766,6 +1787,9 @@ function applyPresetContent(
         name: presetName,
         content: presetContent,
         sourcePath: options.custom.sourcePath,
+        ...(options.custom.trustedPrivatePinCapability
+          ? { trustedPrivatePins: options.custom.trustedPrivatePinCapability.receipt }
+          : {}),
       });
     } else {
       const pols = sandbox.policies || [];
@@ -2299,6 +2323,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   console.log("  Applied permissive policy.");
 }
 
+export type { ExternalPolicyPreset };
 export {
   applyPermissivePolicy,
   applyPreset,
@@ -2339,11 +2364,13 @@ export {
   PRESETS_DIR,
   parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
+  prepareTrustedPrivatePolicyPresets,
   presetContentMatchesGateway,
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
   renderPresetScope,
+  replayTrustedPrivatePolicyPinCapability,
   resolveAgentBaselinePolicy,
   resolvePermissivePolicyPath,
   resolveSandboxBaselinePolicy,

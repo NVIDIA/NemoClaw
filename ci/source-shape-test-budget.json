@@ -148,6 +148,11 @@
     },
     {
       "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test": "binds the cleanup action and helper content to the pinned commit",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
       "test": "binds the composite action and helper to their immutable reviewed revision (#6961)",
       "category": "security"
     },
@@ -769,6 +774,31 @@
     {
       "file": "test/wechat-runtime-audit-workflow.test.ts",
       "test": "makes the trusted audit required in PR and main workflows",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "subscribes only to completed E2E workflow runs",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "accepts only trusted main push attempts one through three",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "uses one source-run concurrency identity and least privileges",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "checks out trusted controller code and invokes the bounded helper",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "runs the bounded evidence-upload step after evaluation failure",
       "category": "security"
     }
   ]

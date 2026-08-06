@@ -51,25 +51,26 @@ The release candidate is the full `origin/main` commit SHA captured by the gener
 
 Before asking for the release confirmation phrase, build and show an evidence ledger for that SHA:
 
-- Preflight the candidate workflow, conditional runner readiness, and existing candidate evidence before dispatching new work.
-- Dispatch independent default-suite and unconditional explicit-only work concurrently. Dispatch a conditional hardware lane only after its authoritative runner inventory confirms that it is online; otherwise record its required itemized exception without queueing it.
-- Derive the denominator and dispatch selectors from the candidate workflow. Do not copy them into a second release test list.
-- An explicit-only job that declares `RELEASE_E2E_ACTIVATION_PATH` enters the release denominator only when that exact relative path exists at the candidate SHA. Until then, treat it as a declared dormant lane: do not dispatch it and do not count it as missing evidence.
-- For every accepted run, require the workflow-produced trusted dispatch receipt to bind the candidate SHA, run ID, attempt, and actual selector inputs. Derive default-suite or selective coverage only from that receipt, never from a release manifest claim.
-- Run `nemoclaw-maintainer-e2e` in full mode if no applicable exact Brev Launchable evidence exists for the candidate SHA.
-- For full-mode exact Brev evidence, require one workflow run for the candidate SHA that includes the default-enabled suite and a successful `Exact staging Brev Launchable` job.
-- For that evidence, require the trusted dispatch receipt to bind the run and attempt to empty selectors and `include_staging_brev_launchable=true`.
-- Require its Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
-- Require its cleanup receipt to identify the qualified workspace and report `ABSENT`.
-- Every release-eligible E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection, including activation-gated jobs whose path exists at that SHA, and every expanded matrix execution.
+- Preflight the candidate workflow and existing candidate evidence before dispatching new work.
+- Derive the denominator from the candidate workflow. Do not copy it into a second release test list.
+- Require every declared `RELEASE_E2E_ACTIVATION_PATH` to exist at the candidate SHA. A missing path is a preflight failure.
+- Require the workflow-produced trusted dispatch receipt to bind the accepted run candidate SHA, run ID, attempt, and selector inputs.
+- Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence for the candidate SHA.
+- Require one completed, successful full workflow run that selects every workflow E2E, including `Exact staging Brev Launchable`.
+- Require the trusted dispatch receipt to bind the workflow run and an attempt no later than the run's latest attempt. The receipt must record empty selectors and `include_staging_brev_launchable=true`.
+- Require the Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
+- Require the cleanup receipt to identify the qualified workspace and report `ABSENT`.
+- Every E2E execution declared by the workflow must have at least one completed, successful execution for the candidate SHA.
 - Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
-- Green evidence may accumulate across multiple workflow runs, selective runs, reruns, and attempts. A later failure does not erase an earlier successful execution for the same test and SHA.
-- Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence.
-- Map each test with green evidence to its successful run or job URL and attempt number.
-- Each test without a successful execution requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale.
-- Missing or invalid exact Brev Launchable E2E evidence requires a separate itemized maintainer exception. Record the run and job URLs, the current result or missing receipt, and the rationale.
+- Successful evidence may accumulate across rerun attempts of that workflow run. Evidence from another workflow run does not satisfy the ledger. A later failure does not erase an earlier successful execution for the same test and SHA.
+- Skipped, unexecuted, queued, in-progress, cancelled, and failing results do not count as successful evidence.
+- Map each test with successful evidence to its successful run or job URL and attempt number.
+- Each missing or skipped execution in the accepted successful workflow run requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result, and the rationale.
+- Missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run requires a separate itemized maintainer exception. Record the run and job URLs, the missing or invalid receipt, and the rationale.
 
-Each test and the exact Brev Launchable E2E job must have successful evidence or its own itemized maintainer exception before release confirmation. Immediately before confirmation, compare `origin/main` with the planned SHA. If the candidate SHA changes, discard the ledger and its exceptions, including Launchable E2E evidence. Regenerate the release plan and repeat the review for the new SHA. This does not freeze `main` or prevent merges. No release-note-only delta exception is currently defined.
+The accepted workflow run must be completed and have a `success` conclusion. A failed workflow run cannot supply the release ledger. Rerun its failed jobs until the workflow concludes with `success`. An itemized test exception applies only to a missing or skipped execution in that otherwise successful run.
+
+Each test and the exact Brev Launchable E2E job in the accepted successful workflow run must have successful evidence or its own permitted itemized exception before release confirmation. Immediately before confirmation, compare `origin/main` with the planned SHA. If the candidate SHA changes, discard the ledger and its exceptions, including Launchable E2E evidence. Regenerate the release plan and repeat the review for the new SHA. This does not freeze `main` or prevent merges. No release-note-only delta exception is currently defined.
 
 ## Carry Forward
 

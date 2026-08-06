@@ -13,7 +13,7 @@ const dockerfileBase = fs.readFileSync(
   "utf8",
 );
 const config = fs.readFileSync(
-  path.join(root, "agents", "hermes", "config", "hermes-config.ts"),
+  path.join(root, "agents", "hermes", "config", "managed-policy.ts"),
   "utf8",
 );
 const manifest = fs.readFileSync(path.join(root, "agents", "hermes", "manifest.yaml"), "utf8");
