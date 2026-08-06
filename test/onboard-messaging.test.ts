@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { describe, it } from "vitest";
+import { beforeEach, describe, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -44,6 +44,9 @@ const yamlModulePath = requireForTest.resolve("yaml");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+beforeEach(() => {
+  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
+});
 describe("onboard messaging", () => {
   it("creates providers for messaging tokens and attaches them to the sandbox", {
     timeout: 60_000,
@@ -73,7 +76,6 @@ const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
-
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
@@ -100,7 +102,6 @@ registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
-
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -124,7 +125,6 @@ childProcess.spawn = (...args) => {
   });
   return child;
 };
-
 const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
 (async () => {

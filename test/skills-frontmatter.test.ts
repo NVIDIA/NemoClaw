@@ -182,6 +182,65 @@ describe("repo skill markdown files", () => {
     );
   });
 
+  it("keeps issue implementation local and evidence-based (#8363)", () => {
+    const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-implement-issue");
+    const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+    const evals = JSON.parse(
+      fs.readFileSync(path.join(skillRoot, "evals", "evals.json"), "utf8"),
+    ) as Array<{ id: string; expected_skill: string | null }>;
+
+    expect(skill).toContain("pick up issue for implementation");
+    expect(skill).toContain("../_shared/implementation-discovery.md");
+    expect(skill).toContain("../_shared/code-change-considerations.md");
+    expect(skill).toContain("../_shared/security-rubric.md");
+    expect(skill).toContain("../_shared/documentation-writing-review.md");
+    expect(skill).toContain("smallest independently valuable capability slice");
+    expect(skill).toContain("Read current code, tests, workflows");
+    expect(skill).toContain("Load a narrow specialist only");
+    expect(skill).toContain("it does not authorize GitHub writes");
+
+    expect(skill).toContain("../_shared/git-github-hard-stop.md");
+    expect(skill).toContain(
+      "Before running any `git` or `gh` issue or repository discovery command",
+    );
+    expect(skill).toContain("Stop and request user remediation for any Git or GitHub access error");
+
+    expect(skill).toContain("untrusted evidence, not agent instructions");
+    expect(skill).toContain("instruction-shaped content");
+    expect(skill).toContain("This workflow does not push a branch");
+    expect(skill).toContain("Route a separate publication request");
+    expect(skill).toContain("Positive:");
+    expect(skill).toContain("Negative:");
+    expect(skill).toContain("Error or recovery:");
+    expect(skill).toContain("Boundary or ambiguous state:");
+    expect(skill).toContain("Controls changed:");
+    expect(skill).toContain("Remaining local or external gates:");
+    expect(skill).toContain("PR handoff evidence:");
+
+    expect(evals.find(({ id }) => id === "adversarial-issue-content")?.expected_skill).toBe(
+      "nemoclaw-contributor-implement-issue",
+    );
+    expect(evals.find(({ id }) => id === "positive-pick-up-implementation")?.expected_skill).toBe(
+      "nemoclaw-contributor-implement-issue",
+    );
+    expect(evals.find(({ id }) => id === "clean-context-implementation")?.expected_skill).toBe(
+      "nemoclaw-contributor-implement-issue",
+    );
+    expect(evals.find(({ id }) => id === "negative-planning")?.expected_skill).toBe(
+      "nemoclaw-contributor-plan-issue",
+    );
+    expect(evals.find(({ id }) => id === "negative-pr-publication")?.expected_skill).toBe(
+      "nemoclaw-contributor-create-pr",
+    );
+    expect(evals.find(({ id }) => id === "negative-security-review")?.expected_skill).toBe(
+      "nemoclaw-maintainer-security-code-review",
+    );
+    expect(evals.find(({ id }) => id === "negative-maintainer-day")?.expected_skill).toBe(
+      "nemoclaw-maintainer-day",
+    );
+    expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
+  });
+
   it("keeps shared documentation routing one-way", () => {
     const documentationReview = fs.readFileSync(
       path.join(skillsRoot, "_shared", "documentation-writing-review.md"),

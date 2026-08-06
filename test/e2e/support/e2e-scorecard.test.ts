@@ -154,7 +154,7 @@ function runSanitizer(source: string, output: string) {
 function scorecardData(overrides: Partial<ScorecardData> = {}): ScorecardData {
   return {
     today: "Jun 29",
-    runMode: "Scheduled E2E",
+    runMode: "Main push",
     actor: "",
     isSelectiveDispatch: false,
     requestedJobs: [],
@@ -518,7 +518,7 @@ describe("E2E scorecard", () => {
     expect(summary.timingRows.map(({ name }) => name)).toEqual(["matrix / slow", "matrix / fast"]);
   });
 
-  it("falls back to needs without counting unselected explicit-only jobs", () => {
+  it("falls back to needs without counting jobs omitted from the run", () => {
     expect(
       scorecardJobs.summarizeJobs({
         apiJobs: null,

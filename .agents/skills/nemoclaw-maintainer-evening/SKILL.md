@@ -55,12 +55,12 @@ The version is already known, so use a patch bump unless the maintainer selects 
 Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
 
 After the release plan captures the candidate SHA, load `nemoclaw-maintainer-e2e`.
-Run full mode if that SHA has no applicable exact Brev Launchable evidence.
+Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E and `Exact staging Brev Launchable` evidence.
 Review the pre-tag E2E evidence ledger from `.github/workflows/e2e.yaml` at that commit.
-When full mode runs, require a successful `Exact staging Brev Launchable` job, matching Launchable E2E identity, and verified workspace absence.
-Each missing test result requires its own itemized maintainer exception.
-Missing or invalid Launchable E2E evidence requires a separate itemized exception with run and job URLs, the result or missing receipt, and rationale.
-Do not ask for the release confirmation phrase until each required result has successful evidence or its own exception.
+Require the accepted workflow run to conclude with `success`. Require successful `Exact staging Brev Launchable` evidence with matching Launchable E2E identity and verified workspace absence, or record the permitted itemized exception described below.
+Each missing or skipped execution in that successful run requires its own itemized maintainer exception.
+Missing or invalid Launchable E2E evidence in that successful run requires a separate itemized exception with run and job URLs, the missing or invalid receipt, and rationale.
+Do not ask for the release confirmation phrase until the run succeeds and each required execution has successful evidence or a permitted exception.
 
 Tag the confirmed release commit with `vX.Y.Z`.
 Let the workflow move `latest`, carry open work forward, and delete the released label.
