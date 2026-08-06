@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ServingProfileProvenance } from "../inference/serving/types";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import { loadResumeCheckpoint } from "../state/onboard-checkpoint-migrate";
 import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
@@ -32,6 +33,7 @@ export interface OnboardSessionBootstrapInput {
   requestedObservabilityEnabled?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
+  servingProfileProvenance?: ServingProfileProvenance | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -303,6 +305,7 @@ function prepareFreshSession(
       observabilityEnabled: input.requestedObservabilityEnabled === true,
       observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       stationExpressIntent: input.stationExpressIntent ?? null,
+      servingProfileProvenance: input.servingProfileProvenance ?? null,
       metadata: {
         gatewayName: "nemoclaw",
         fromDockerfile: fromDockerfile || null,

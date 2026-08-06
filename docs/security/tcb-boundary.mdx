@@ -1,19 +1,19 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Trusted Computing Base for Gateway Lifecycle Control"
+title: "Trusted Computing Base for Lifecycle and Shields Control"
 sidebar-title: "Trusted Computing Base"
-description: "Defines the trusted computing base, privilege boundaries, and review invariants for NemoClaw gateway lifecycle and shields operations."
+description: "Defines the trusted computing base, privilege boundaries, and review invariants for NemoClaw lifecycle and Shields operations."
 description-agent: >-
-  Maps NemoClaw gateway lifecycle and shields components to their trust boundaries, threats, privilege levels, and verification requirements.
-  Use when reviewing privileged gateway restart, config mutation, or shields changes.
+  Maps NemoClaw lifecycle and Shields components to their trust boundaries, threats, privilege levels, and verification requirements.
+  Use when reviewing privileged gateway restart, config mutation, state-directory locking, or Shields changes.
 keywords: ["nemoclaw trusted computing base", "gateway lifecycle security", "shields trust boundary"]
 content:
   type: "reference"
-agent-variants: ["openclaw", "hermes"]
+agent-variants: ["openclaw", "hermes", "deepagents"]
 ---
 
-NemoClaw uses a small set of host and sandbox components to restart built-in gateways and change shields posture without granting lifecycle authority to the sandbox agent.
+NemoClaw uses a small set of host and sandbox components to change Shields posture and, where present, restart built-in gateways without granting lifecycle authority to the sandbox agent.
 This page defines the trusted computing base for those operations and the evidence required when the boundary changes.
 
 ## Security Boundary
@@ -25,11 +25,17 @@ Host root compromise and replacement of root-owned image files are outside this 
 The lifecycle boundary maintains these invariants.
 
 - Only a registry-selected sandbox can receive a host lifecycle request.
-- Only root-owned installed helpers can perform privileged lifecycle or filesystem transitions.
+- Privileged lifecycle transitions use root-owned installed helpers.
+- Filesystem transitions use `/usr/local/lib/nemoclaw/state-dir-guard.py` for current OpenClaw and Hermes images and historical images that include this helper.
+  An agent manifest with `state_lock_plan_in_image: false` selects authenticated root execution of the host helper and manifest-derived plan.
+  Historical images that contain neither installed path use the same execution path.
+  Neither case writes the helper or plan to mutable sandbox state.
+- A filesystem transition fails closed if the image contains `/usr/local/share/nemoclaw/state-lock-plan.json` but `/usr/local/lib/nemoclaw/state-dir-guard.py` is missing.
+  It also fails closed if the installed plan differs from the current agent manifest.
 - A mutable path, status file, process ID, command line, or listener alone never grants authority.
 - Process decisions bind the observed process ID to its start identity, parent chain, user identity, PID namespace, executable shape, and listener ownership where the topology exposes those signals.
 - Filesystem transitions open trusted parents by descriptor, reject symlinks and unsafe hard links, bound traversal and input size, and verify the resulting inode state.
-- A failed or ambiguous proof stops the operation without reporting recovery or a locked shields posture.
+- A failed or ambiguous proof stops the operation without reporting recovery or a successful Shields up transition.
 - The OpenShell-managed topology authenticates the host action but does not create gateway and agent UID isolation.
 
 <Warning>
@@ -41,7 +47,7 @@ A successful build does not replace review of privilege, process identity, descr
 
 | Component | Execution and privilege | Trusted input | Security responsibility |
 |---|---|---|---|
-| `scripts/state-dir-guard.py` | The installed copy is root-owned and mode `0500`; the host reaches it through the shields transaction. | Fixed paths, a bounded action contract, and a lock token from the host coordinator. | Applies descriptor-rooted state-directory posture changes, rejects link and mount substitution, bounds traversal, and verifies the committed modes and ownership. |
+| `scripts/state-dir-guard.py` | Current OpenClaw and Hermes images install a root-owned, mode `0500` copy at `/usr/local/lib/nemoclaw/state-dir-guard.py` and a generated plan at `/usr/local/share/nemoclaw/state-lock-plan.json`. A historical image that has the helper but no plan uses its co-bundled helper. An agent manifest with `state_lock_plan_in_image: false` selects the trusted host CLI copy over standard input to `python3 -I -` and a manifest-derived plan through authenticated root execution. Historical images that contain neither installed file use the same execution path. | Fixed paths and a bounded action contract. Current and host-injected transitions use a strict versioned path plan derived from the selected agent manifest. A historical co-bundled helper uses its reviewed legacy inventory. | Applies descriptor-rooted state-directory posture changes, rejects link and mount substitution, bounds traversal, and verifies the committed modes and ownership. The host refuses a filesystem transition for an image that contains the generated plan if the installed helper is missing or the plan differs from the current agent manifest. |
 | `scripts/lib/normalize_mutable_config_perms.py` | The installed copy is root-owned and mode `0555`; startup invokes it under the entrypoint identity, and only root can reclaim a root-owned tree. | The fixed OpenClaw config path, the resolved sandbox identity, and an exact `root:root 0700/0600` mutable-drift signature under the expected sandbox-owned parent. | Restores the mutable `2770/660` contract, pins every privileged handoff by descriptor, and rejects ambiguous posture, links, mount substitution, metadata races, and sealed config. |
 | `scripts/openclaw-config-guard.py` | The installed copy is root-owned and mode `0500`; direct root PID 1 or the authenticated host transaction invokes it. | Bounded strict JSON for writes, stable captured config bytes for restart validation, and fixed installed parser paths for existing JSON5 config. | Seals and unseals OpenClaw config with no-follow descriptors, stable inode checks, atomic replacement, hash coherence, and recoverable transaction journals. |
 | `scripts/managed-gateway-control.py` | The installed copy is root-owned and mode `0500`; the host invokes it through sanitized registry-scoped direct-container execution. | A fixed action, a 64-character nonce, fixed installed helpers, and a live OpenShell process tree observed through `/proc`. | Authenticates the host action, proves the managed supervisor and gateway identity, holds a root-owned mode `0600` lifecycle lock, publishes one root-owned mode `0444` exact-exit authorization bound to the gateway and live root controller identities, signals through a pidfd, waits for the normal respawn loop, and verifies listener and HTTP health. |
@@ -77,9 +83,10 @@ The host CLI first resolves the sandbox from host-owned registry state and selec
 Gateway restart generates a fresh nonce and enters `nemoclaw-gateway-control` as root with injection-capable environment variables cleared.
 The direct topology publishes a root-owned request to PID 1, while the OpenShell-managed topology executes `managed-gateway-control.py` directly.
 Both paths prove the exact replacement gateway and health state before the host repairs port forwards or reports success.
+Terminal agents do not run these gateway branches; their Shields transitions use the state and verification branches.
 
 Shields mutations acquire the host transition lock before changing network policy, config posture, timer authority, or host state.
-The coordinator invokes the agent-specific config guard and `state-dir-guard.py`, verifies the resulting posture, then commits host state and audit output.
+The coordinator applies the selected agent's config transition, invokes `state-dir-guard.py`, verifies the resulting posture, then commits host state and audit output.
 Rollback keeps the same lock and transaction token so a stale callback cannot adopt the transition.
 
 ## Filesystem and Descriptor Proofs
@@ -136,5 +143,8 @@ The following conditions govern current compatibility code and architecture work
 - Decompose the host shields coordinator only with behavior-preserving changes that keep policy, config, timer, rollback, state, and audit ordering under one typed transaction contract.
 - Keep the managed controller's source-path and fake-root overrides disabled unless the explicit source test flag is present, and keep installed helpers bound to fixed production paths.
 
-Final-image validation must cover both built-in images.
+The agent manifest declaration drives both generated image-plan selection and the derived `AgentDefinition` used by host wiring.
+Final-image validation must cover the recovery-capable OpenClaw and Hermes images.
 It checks helper owners and modes, root and gateway supplementary groups, root execution of the read-only `probe` path, and refusal before helper entry when the sandbox user attempts execution.
+Deep Agents uses the host-injected helper path instead of an installed recovery artifact.
+Host wiring tests validate helper selection and plan handoff, while the shared helper tests validate the descriptor-safe behavior; installed-helper metadata checks do not cover Deep Agents.

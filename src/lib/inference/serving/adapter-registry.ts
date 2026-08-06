@@ -76,6 +76,10 @@ const MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA =
   "nemoclaw.nvidia.com/managed-cluster-topology/v1" as const;
 const MANAGED_CLUSTER_PLAN_SCHEMA = "nemoclaw.nvidia.com/managed-cluster-vllm-plan/v1" as const;
 const LOWERCASE_STABLE_ID = /^[a-z0-9][a-z0-9._/-]{0,159}$/u;
+const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/u;
+const PINNED_IMAGE =
+  /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u;
+const SAFE_ENVIRONMENT_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
 const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "GLOO_SOCKET_IFNAME",
@@ -90,6 +94,23 @@ const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "TP_SOCKET_IFNAME",
   "VLLM_API_KEY",
   "VLLM_HOST_IP",
+]);
+const HOST_LOCAL_MATERIALIZER_OWNED_ENVIRONMENT = new Set(["HF_HOME", "VLLM_API_KEY"]);
+const HOST_LOCAL_MATERIALIZER_OWNED_ARGUMENTS = new Set([
+  "--api-key",
+  "--data-parallel-size",
+  "--distributed-executor-backend",
+  "--headless",
+  "--host",
+  "--master-addr",
+  "--master-port",
+  "--nnodes",
+  "--node-rank",
+  "--pipeline-parallel-size",
+  "--port",
+  "--revision",
+  "--served-model-name",
+  "--tensor-parallel-size",
 ]);
 
 export function isManagedClusterMaterializerOwnedEnvironment(name: string): boolean {
@@ -295,11 +316,99 @@ function validateHostLocalVllmMaterializerRecipe(
   if (runtime.architecture !== "arm64") {
     return "host-local vLLM materializer requires an arm64 runtime";
   }
-  if (recipe.spec.model.preparation?.ref !== NO_PREPARATION_REF) {
-    return "host-local vLLM materializer currently requires an empty preparation operation";
+  if (
+    runtime.networkMode !== "bridge" ||
+    runtime.ipcMode !== "host" ||
+    runtime.gpuRequest !== "all" ||
+    recipe.spec.serve.authentication !== "bearer"
+  ) {
+    return "host-local vLLM requires bridge networking, host IPC, all GPUs, and bearer authentication";
+  }
+  if (!PINNED_IMAGE.test(runtime.image)) {
+    return "host-local vLLM requires a digest-pinned runtime image";
+  }
+  if (
+    runtime.modelCache.source !== MANAGED_CLUSTER_HUGGING_FACE_CACHE_SOURCE ||
+    runtime.modelCache.target !== "/root/.cache/huggingface"
+  ) {
+    return "host-local vLLM requires the registered Hugging Face cache mount";
+  }
+  if (
+    !safeAbsoluteContainerPath(recipe.spec.serve.executable) ||
+    !safeAbsoluteContainerPath(runtime.modelCache.target) ||
+    runtime.devices.some((device) => !safeAbsoluteContainerPath(device)) ||
+    runtime.temporaryFilesystems.some(({ target }) => !safeAbsoluteContainerPath(target))
+  ) {
+    return "host-local vLLM runtime paths must be normalized absolute container paths";
+  }
+  if (
+    runtime.temporaryFilesystems.some(({ target }) =>
+      containerPathContains(target, runtime.modelCache.target),
+    )
+  ) {
+    return "host-local vLLM temporary filesystem cannot shadow the model cache";
+  }
+  if (
+    recipe.spec.serve.executable !== "/usr/local/bin/vllm" ||
+    recipe.spec.model.preparation.ref !== NO_PREPARATION_REF ||
+    recipe.spec.model.installFastSafetensors
+  ) {
+    return "host-local vLLM requires the registered executable without model preparation";
   }
   if (recipe.spec.readiness.expectedModel !== recipe.spec.model.servedName) {
-    return "host-local vLLM readiness must expect the recipe served model";
+    return "host-local vLLM readiness must expect the served model ID";
+  }
+  if (!STABLE_ID.test(recipe.spec.model.id) || !STABLE_ID.test(recipe.spec.model.servedName)) {
+    return "host-local vLLM model identifiers do not match the registered format";
+  }
+  if (positiveIntegerArgument(recipe, "--max-model-len") === undefined) {
+    return "host-local vLLM requires one positive --max-model-len argument";
+  }
+  if (
+    recipe.spec.serve.arguments.some(({ name }) =>
+      HOST_LOCAL_MATERIALIZER_OWNED_ARGUMENTS.has(name),
+    )
+  ) {
+    return "host-local vLLM recipe overrides a materializer-owned serving argument";
+  }
+  if (
+    Object.keys(recipe.spec.runtime.environment).some(
+      (name) =>
+        !SAFE_ENVIRONMENT_NAME.test(name) || HOST_LOCAL_MATERIALIZER_OWNED_ENVIRONMENT.has(name),
+    )
+  ) {
+    return "host-local vLLM recipe overrides a materializer-owned environment value";
+  }
+  const resourceValues = [
+    recipe.spec.model.downloadSizeBytes,
+    runtime.imageDownloadSizeBytes,
+    runtime.pullTimeoutSeconds,
+    runtime.sharedMemoryBytes,
+    runtime.ulimits.stackBytes,
+    ...runtime.temporaryFilesystems.map(({ sizeBytes }) => sizeBytes),
+  ];
+  if (resourceValues.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+    return "host-local vLLM resource values must be positive safe integers";
+  }
+  if (runtime.ulimits.memlock !== -1 && runtime.ulimits.memlock !== "unlimited") {
+    return "host-local vLLM memlock must be unlimited";
+  }
+  if (
+    recipe.spec.serve.arguments.some(
+      ({ value }) =>
+        typeof value === "string" &&
+        (Buffer.byteLength(value, "utf8") > 16_384 ||
+          value.includes("\0") ||
+          !/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)),
+    ) ||
+    Object.values(recipe.spec.runtime.environment).some(
+      (value) =>
+        Buffer.byteLength(value, "utf8") > 4_096 ||
+        value.includes("\0") ||
+        !/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value),
+    )
+  ) {
+    return "host-local vLLM serving values must be bounded safe text";
   }
   return undefined;
 }
@@ -313,7 +422,6 @@ function validateHostLocalVllmLifecycleRecipe(
     ? undefined
     : "recipe does not select the host-local vLLM lifecycle";
 }
-
 interface SnapshotPreparationInput {
   readonly ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF;
   readonly snapshotCopy: {

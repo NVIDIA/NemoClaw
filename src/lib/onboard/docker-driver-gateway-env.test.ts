@@ -88,6 +88,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       expect(toml).toContain('compute_drivers = ["podman"]');
       expect(toml).toContain("[openshell.drivers.podman]");
       expect(toml).toContain('host_gateway_ip = "169.254.1.2"');
+      expect(toml).not.toContain("supervisor_bin");
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });
