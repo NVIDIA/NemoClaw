@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   wsl-e2e:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: windows-latest
     timeout-minutes: 90
     env:
       WSL_DISTRO: Ubuntu

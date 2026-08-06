@@ -23,7 +23,7 @@ permissions:
 jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -45,7 +45,7 @@ jobs:
 
   shellcheck:
     name: ShellCheck SARIF
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout

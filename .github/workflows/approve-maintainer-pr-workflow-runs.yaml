@@ -24,7 +24,7 @@ concurrency:
 jobs:
   approve:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Validate trusted helper revision

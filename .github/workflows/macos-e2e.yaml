@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   macos-e2e:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Checkout
