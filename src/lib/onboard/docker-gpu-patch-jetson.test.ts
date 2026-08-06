@@ -32,6 +32,7 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
       args.filter((arg, index) => args[index - 1] === "--group-add" && arg === "44").length,
     ).toBe(1);
     expect(args).toEqual(expect.arrayContaining(["--group-add", "110"]));
+    expect(args).not.toContain("/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh");
   });
 
   it("does not add --group-add when extraGroupGids is absent", () => {
@@ -39,6 +40,63 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     inspect.HostConfig!.GroupAdd = [];
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
     expect(args).not.toEqual(expect.arrayContaining(["--group-add"]));
+  });
+
+  it("runs the managed bootstrap through the Jetson group bootstrap (#7610)", () => {
+    const args = buildDockerGpuCloneRunArgs(
+      inspectFixture(),
+      buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
+      {
+        extraGroupGids: ["44"],
+        preserveJetsonDeviceGroupMembership: true,
+        containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
+        containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
+      },
+    );
+
+    expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
+      "openshell/sandbox:abc",
+      "--device-group-gids",
+      "44",
+      "--",
+      "/usr/local/bin/nemoclaw-managed-bootstrap",
+      "--request",
+      "/run/nemoclaw/bootstrap-request.json",
+    ]);
+  });
+
+  it("rejects Jetson group preservation outside the managed image boundary (#7610)", () => {
+    expect(() =>
+      buildDockerGpuCloneRunArgs(
+        inspectFixture(),
+        buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
+        {
+          extraGroupGids: ["44"],
+          preserveJetsonDeviceGroupMembership: true,
+        },
+      ),
+    ).toThrow("Jetson device-group bootstrap requires the managed OpenClaw entrypoint.");
+  });
+
+  it("rejects invalid or excessive supplementary group IDs before clone creation (#7610)", () => {
+    const options = {
+      containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
+      containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
+      preserveJetsonDeviceGroupMembership: true,
+    } as const;
+    const build = (extraGroupGids: readonly string[]) =>
+      buildDockerGpuCloneRunArgs(
+        inspectFixture(),
+        buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
+        { ...options, extraGroupGids },
+      );
+
+    expect(() => build(["0"])).toThrow(
+      "Docker clone received invalid or excessive supplementary group IDs.",
+    );
+    expect(() => build(Array.from({ length: 17 }, (_, index) => String(index + 1)))).toThrow(
+      "Docker clone received invalid or excessive supplementary group IDs.",
+    );
   });
 
   it("passes all detected Tegra device GIDs into the Jetson recreate as --group-add", () => {

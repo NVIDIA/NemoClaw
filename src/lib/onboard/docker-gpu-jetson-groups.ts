@@ -92,13 +92,15 @@ export function detectTegraGpuDevicePaths(
 /**
  * Source-of-truth boundary for Jetson/Tegra supplementary device groups:
  *
- * - Invalid state: the non-root sandbox user can see `/dev/nvmap` and `/dev/nvhost-*` but cannot
- *   open them because Docker did not copy their host-owned supplementary GIDs into the container.
+ * - Invalid state: the non-root sandbox user can see `/dev/nvmap` and `/dev/nvhost-*` but loses
+ *   access when OpenShell rebuilds supplementary groups from the container group database.
  * - Source boundary: host device-node ownership is authoritative; NemoClaw only carries each
  *   bounded, non-root numeric GID with effective group read/write permission into the Jetson
- *   compatibility recreation via `--group-add`.
- * - Source-fix constraint: changing host udev ownership or image-local groups cannot reliably fix
- *   device nodes whose ownership is assigned by the Jetson host at runtime.
+ *   compatibility recreation via `--group-add`. OpenClaw also records those same GIDs in the
+ *   replacement container's sandbox account before OpenShell rebuilds its supplementary group
+ *   list.
+ * - Source-fix constraint: the replacement container membership must be derived from the current
+ *   host device nodes; a static group name or GID cannot represent Jetson hosts reliably.
  * - Regression coverage: docker-gpu-jetson-groups.test.ts covers discovery and hostile numeric
  *   values; docker-gpu-patch-jetson.test.ts covers clone-envelope propagation and generic-host
  *   exclusion.

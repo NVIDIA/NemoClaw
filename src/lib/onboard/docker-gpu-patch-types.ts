@@ -125,12 +125,17 @@ export type DockerGpuCloneRunOptions = {
   containerName?: string | null;
   /**
    * Extra supplementary group IDs to add to the recreated container via
-   * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
-   * device nodes; granting the sandbox user membership lets CUDA's nvmap init
-   * open them instead of failing with `NvRmMemInitNvmap ... Permission
-   * denied` (#4231, #7610).
+   * `--group-add`. The OpenClaw Jetson path also records these validated GIDs
+   * in the replacement container's group database before OpenShell calls
+   * initgroups() (#7610).
    */
   extraGroupGids?: readonly string[] | null;
+  /**
+   * Add the detected Jetson device GIDs to the replacement container's sandbox
+   * account before OpenShell rebuilds supplementary groups with initgroups()
+   * (#7610).
+   */
+  preserveJetsonDeviceGroupMembership?: boolean;
 };
 
 export type DockerGpuPatchDiagnostics = {

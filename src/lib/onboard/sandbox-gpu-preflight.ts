@@ -64,9 +64,9 @@ export function resolveSandboxGpuFlagFromOptions(opts: SandboxGpuFlagOptions): S
 export function jetsonGpuProofRemediationLines(): string[] {
   return [
     "Jetson/Tegra CUDA proof did not pass. CUDA needs access to the Tegra device",
-    "nodes; confirm the sandbox propagates them and the agent user's groups:",
+    "nodes; confirm the sandbox receives them and keeps the device group memberships:",
     "  ls -l /dev/nvmap /dev/nvhost-* (must be readable by the sandbox)",
-    "  add the host video/render groups via --group-add when recreating",
+    "  id (must include the groups that own those device nodes)",
     "Then recreate the sandbox, or force CPU behavior with NEMOCLAW_SANDBOX_GPU=0.",
   ];
 }

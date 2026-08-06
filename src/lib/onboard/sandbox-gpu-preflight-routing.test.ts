@@ -11,6 +11,7 @@ import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   dockerNvidiaRuntimeAvailable,
   formatSandboxGpuPassthroughNote,
+  jetsonGpuProofRemediationLines,
   parseDockerRuntimeNames,
   sandboxGpuRemediationLines,
   validateSandboxGpuPreflight,
@@ -28,6 +29,13 @@ function sandboxGpuConfig(overrides: Partial<SandboxGpuConfig> = {}): SandboxGpu
   };
 }
 describe("sandbox GPU preflight routing", () => {
+  it("checks retained Jetson group membership instead of repeating --group-add advice (#7610)", () => {
+    const remediation = jetsonGpuProofRemediationLines().join("\n");
+
+    expect(remediation).toContain("id (must include the groups that own those device nodes)");
+    expect(remediation).not.toContain("via --group-add");
+  });
+
   it("formats Jetson sandbox GPU notes around the NVIDIA runtime backend", () => {
     expect(formatSandboxGpuPassthroughNote({ hostGpuPlatform: "jetson" })).toContain(
       "Docker NVIDIA runtime",

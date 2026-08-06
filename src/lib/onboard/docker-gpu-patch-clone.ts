@@ -10,6 +10,9 @@ import type {
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
+const MANAGED_BOOTSTRAP_ENTRYPOINT = "/usr/local/bin/nemoclaw-managed-bootstrap";
+const JETSON_DEVICE_GROUP_BOOTSTRAP = "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
+const MAX_JETSON_DEVICE_GROUPS = 16;
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
   "NVIDIA_DRIVER_CAPABILITIES",
@@ -353,6 +356,21 @@ export function buildDockerGpuCloneRunArgs(
   }
   const args: string[] = ["--name", containerName, ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
+  const extraGroupGids = [
+    ...new Set((options.extraGroupGids ?? []).map((gid) => String(gid).trim())),
+  ];
+  if (
+    extraGroupGids.length > MAX_JETSON_DEVICE_GROUPS ||
+    extraGroupGids.some((gid) => {
+      if (!/^[1-9][0-9]*$/u.test(gid)) return true;
+      const parsed = Number(gid);
+      return !Number.isSafeInteger(parsed) || parsed > 2_147_483_647;
+    })
+  ) {
+    throw new Error("Docker clone received invalid or excessive supplementary group IDs.");
+  }
+  const preserveJetsonGroups =
+    options.preserveJetsonDeviceGroupMembership === true && extraGroupGids.length > 0;
 
   // Startup-command recreation must retain OpenShell's native CDI attachment.
   if (!gpuAugment) {
@@ -428,11 +446,10 @@ export function buildDockerGpuCloneRunArgs(
   for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
   const groupAdds = new Set(stringArray(host.GroupAdd));
   for (const group of groupAdds) args.push("--group-add", group);
-  for (const gid of options.extraGroupGids ?? []) {
-    const normalized = String(gid).trim();
-    if (normalized && !groupAdds.has(normalized)) {
-      groupAdds.add(normalized);
-      args.push("--group-add", normalized);
+  for (const gid of extraGroupGids) {
+    if (!groupAdds.has(gid)) {
+      groupAdds.add(gid);
+      args.push("--group-add", gid);
     }
   }
   for (const ulimit of dockerUlimits(inspect, options.requiredUlimits)) {
@@ -466,16 +483,34 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
-  if (replacementEntrypoint) {
+  const managedBootstrapTarget = replacementEntrypoint === MANAGED_BOOTSTRAP_ENTRYPOINT;
+  if (preserveJetsonGroups && (!managedBootstrapTarget || !options.containerCommand?.length)) {
+    throw new Error("Jetson device-group bootstrap requires the managed OpenClaw entrypoint.");
+  }
+  if (preserveJetsonGroups) {
+    args.push("--entrypoint", JETSON_DEVICE_GROUP_BOOTSTRAP);
+  } else if (replacementEntrypoint) {
     args.push("--entrypoint", replacementEntrypoint);
   } else if (entrypoint.length > 0) {
     args.push("--entrypoint", entrypoint[0]);
   }
-  const commandArgs = options.containerCommand
+  const originalCommandArgs = sandboxCommand
+    ? []
+    : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  const targetCommandArgs = options.containerCommand
     ? [...options.containerCommand]
-    : sandboxCommand
-      ? []
-      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+    : originalCommandArgs;
+  const commandArgs = preserveJetsonGroups
+    ? [
+        "--device-group-gids",
+        extraGroupGids.join(","),
+        "--",
+        MANAGED_BOOTSTRAP_ENTRYPOINT,
+        ...targetCommandArgs,
+      ]
+    : options.containerCommand
+      ? [...options.containerCommand]
+      : originalCommandArgs;
   args.push(image, ...commandArgs);
   return args;
 }

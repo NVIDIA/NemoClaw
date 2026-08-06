@@ -2731,10 +2731,21 @@ Automatic GPU onboarding uses the compatibility path directly; it does not make 
 The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates eligible host group IDs for the supported Jetson GPU device nodes.
 <AgentOnly variant="openclaw">
 
-For OpenClaw direct GPU onboarding, the creation-time filesystem policy adds no Jetson entries unless `/dev/nvmap` is an existing, non-symlink character device.
+For OpenClaw, Docker compatibility recreation passes those group IDs with `--group-add`.
+OpenShell 0.0.85 calls `initgroups()` from the container group database before it starts the sandbox account.
+That call replaces the inherited supplementary groups, so `--group-add` alone does not preserve Jetson device access.
+The managed OpenClaw Jetson replacement container runs a bounded, root-owned wrapper from the sandbox image before the OpenShell supervisor starts.
+The wrapper is `root:root` with mode `0500`.
+The wrapper can hand off only to `/usr/local/bin/nemoclaw-managed-bootstrap`.
+That entrypoint resumes the fixed `/opt/openshell/bin/openshell-sandbox` supervisor.
+The wrapper adds only the validated Jetson device GIDs that onboarding detected to the existing sandbox account in `/etc/group`.
+It verifies the resulting membership before handoff.
+Legacy and custom image recreation, generic GPU, CPU-only, Hermes, and Deep Agents paths do not use this wrapper.
+
+The creation-time filesystem policy adds no Jetson entries unless `/dev/nvmap` is an existing, non-symlink character device.
 When that condition is met, the policy adds `/opt/nvidia` as read-only.
 It adds each existing, non-symlink character device on the eligible GPU path list as read-write.
-Generic GPU and CPU-only policies do not receive these Jetson entries.
+Generic GPU, CPU-only, Hermes, and Deep Agents policies do not receive these Jetson entries.
 
 </AgentOnly>
 Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
