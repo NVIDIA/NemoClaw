@@ -185,37 +185,6 @@ function matchesOperator(actual: unknown, operator: SelectionOperator, expected:
   }
 }
 
-function versionAtLeast(actual: unknown, minimum: string): boolean {
-  if (typeof actual !== "string") return false;
-  const versionPattern = /^\d+(?:\.\d+)*$/u;
-  if (!versionPattern.test(actual) || !versionPattern.test(minimum)) return false;
-  const actualParts = actual.split(".").map(Number);
-  const minimumParts = minimum.split(".").map(Number);
-  const width = Math.max(actualParts.length, minimumParts.length);
-  for (let index = 0; index < width; index += 1) {
-    const actualPart = actualParts[index] ?? 0;
-    const minimumPart = minimumParts[index] ?? 0;
-    if (actualPart !== minimumPart) return actualPart > minimumPart;
-  }
-  return true;
-}
-
-function readinessComparisonMatches(
-  actual: unknown,
-  comparison: ServingReadinessComparison,
-): boolean {
-  switch (comparison.operator) {
-    case "equals":
-      return scalarEquals(actual, comparison.value);
-    case "one-of":
-      return comparison.values.some((candidate) => scalarEquals(actual, candidate));
-    case "at-least":
-      return typeof actual === "number" && actual >= comparison.value;
-    case "version-at-least":
-      return versionAtLeast(actual, comparison.value);
-  }
-}
-
 function readinessScopeMatches(
   scope: string,
   reports: readonly ManagedInferenceReadinessSource[],
