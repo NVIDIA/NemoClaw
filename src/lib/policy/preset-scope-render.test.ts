@@ -62,6 +62,27 @@ describe("renderPresetScope (#7179)", () => {
     expect(joined).toMatch(/allow:\s+POST\s+\/\*\*/);
   });
 
+  it("discloses hostless allowed_ips endpoints instead of reporting no endpoints", () => {
+    const preset = `network_policies:
+  personal_open_internet:
+    name: personal_open_internet
+    endpoints:
+      - ports: [80, 443]
+        allowed_ips:
+          - 1.0.0.0/8
+          - 2000::/3
+    binaries:
+      - { path: "/**" }
+`;
+    const joined = renderPresetScope(preset).join("\n");
+
+    expect(joined).toContain("- <any hostname resolving to allowed_ips>:80,443");
+    expect(joined).toContain("allowed_ip: 1.0.0.0/8");
+    expect(joined).toContain("allowed_ip: 2000::/3");
+    expect(joined).toContain("- /**");
+    expect(joined).not.toContain("(no endpoints declared)");
+  });
+
   it("surfaces the narrowly scoped Baileys version-fetch path, not just the host", () => {
     const joined = renderPresetScope(WHATSAPP_LIKE_PRESET).join("\n");
     expect(joined).toContain("raw.githubusercontent.com:443");

@@ -198,7 +198,7 @@ function readinessScopeMatches(
 
 function compareNumericDottedVersions(left: string, right: string): number | undefined {
   const parse = (value: string): number[] | undefined => {
-    if (!/^\d+(?:\.\d+)+$/u.test(value)) return undefined;
+    if (!/^\d+(?:\.\d+)*$/u.test(value)) return undefined;
     const parts = value.split(".").map(Number);
     return parts.every(Number.isSafeInteger) ? parts : undefined;
   };
