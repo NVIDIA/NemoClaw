@@ -1112,6 +1112,7 @@ describe("Hermes sandbox provisioning", () => {
       localLib,
       "patch-hermes-langfuse-credentials.mts",
     );
+    const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
     const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.85.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const stateLockPlanPath = path.join(
@@ -1135,6 +1136,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "patch-hermes-session-list-preview.py"),
       path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
       path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
+      managedPolicyReaderPath,
       langfuseCredentialPatcherPath,
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
@@ -1180,6 +1182,7 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(langfuseCredentialPatcherPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(managedPolicyReaderPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(stateLockPlanPath).mode & 0o777).toString(8)).toBe("444");
