@@ -42,6 +42,10 @@ export interface VllmRuntimeOverride {
   loadTimeoutSec?: number;
   /** Additional `docker run` arguments required by this recipe. */
   dockerRunArgs?: readonly string[];
+  /** Replace, rather than extend, the platform Docker arguments. */
+  dockerRunArgsMode?: "append" | "replace";
+  /** Maximum time allowed for the immutable image pull. */
+  pullTimeoutSec?: number;
 }
 
 export const NEMOTRON_ULTRA_STATION_IMAGE = {
@@ -101,6 +105,10 @@ export interface VllmModelDef {
   runtime?: VllmRuntimeOverride;
   /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
   installFastSafetensors?: boolean;
+  /** Require the host-global managed bearer credential and a loopback-only listener. */
+  managedBearerAuth?: true;
+  /** Reject environment-provided model and serving-argument overrides. */
+  fixedServeCommand?: true;
 }
 
 export const VLLM_MODELS: readonly VllmModelDef[] = [
@@ -494,6 +502,17 @@ const SHARED_VLLM_ARGS: readonly string[] = [
   "--trust-remote-code",
 ] as const;
 
+const FIXED_HOST_LOCAL_VLLM_ARGS: readonly string[] = [
+  "--tensor-parallel-size",
+  "1",
+  "--pipeline-parallel-size",
+  "1",
+  "--data-parallel-size",
+  "1",
+  "--port",
+  "8000",
+] as const;
+
 function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
@@ -675,25 +694,26 @@ export function buildVllmServeCommand(
   model: VllmModelDef,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const envPrefix = model.serveEnv
-    ? `${Object.entries(model.serveEnv)
-        .map(([key, value]) => {
-          if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
-            throw new Error(`Invalid vLLM serving environment variable name: ${key}`);
-          }
-          return `export ${key}=${shellQuote(value)}`;
-        })
-        .join(" && ")} && `
-    : "";
+  const envPrefix =
+    model.serveEnv && Object.keys(model.serveEnv).length > 0
+      ? `${Object.entries(model.serveEnv)
+          .map(([key, value]) => {
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+              throw new Error(`Invalid vLLM serving environment variable name: ${key}`);
+            }
+            return `export ${key}=${shellQuote(value)}`;
+          })
+          .join(" && ")} && `
+      : "";
   const args = [
-    ...SHARED_VLLM_ARGS,
+    ...(model.fixedServeCommand ? FIXED_HOST_LOCAL_VLLM_ARGS : SHARED_VLLM_ARGS),
     "--max-model-len",
     String(model.maxModelLen),
     ...(model.revision ? ["--revision", model.revision] : []),
     ...(model.servedModelId ? ["--served-model-name", model.servedModelId] : []),
     ...model.modelArgs,
   ];
-  const extraArgs = parseVllmExtraServeArgs(env);
+  const extraArgs = model.fixedServeCommand ? [] : parseVllmExtraServeArgs(env);
   const setup =
     model.installFastSafetensors === false ? "" : "pip install vllm[fastsafetensors] && ";
   return `${envPrefix}${setup}vllm serve ${[model.id, ...args, ...extraArgs]

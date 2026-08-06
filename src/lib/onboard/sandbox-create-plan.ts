@@ -39,7 +39,7 @@ export {
 // tests). The list mirrors `nemoclaw-blueprint/policies/tiers.yaml`; adding a
 // tier there requires updating this set so an explicit tier env value reaches
 // the create-time policy decision.
-const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open"]);
+const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open", "personal"]);
 
 export function resolveSandboxCreatePolicyTier(
   authoritativePolicyTier?: string | null,

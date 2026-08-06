@@ -13,6 +13,17 @@ import { type GatewayRestartDeps, restartSandboxGatewayWithDeps } from "./gatewa
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../..");
 const HERMES_GUARD = path.join(REPO_ROOT, "agents/hermes/runtime-config-guard.py");
 const HERMES_TRANSACTION = path.join(REPO_ROOT, "agents/hermes/mcp-config-transaction.py");
+const YAML_STUB_PYTHON = String.raw`
+import json, sys, types
+
+yaml = types.ModuleType("yaml")
+class YAMLError(Exception):
+    pass
+yaml.YAMLError = YAMLError
+yaml.safe_load = json.loads
+yaml.safe_dump = lambda value, **_kwargs: json.dumps(value)
+sys.modules["yaml"] = yaml
+`;
 
 function fixtureSnapshot(paths: readonly string[]): Record<string, string> {
   return Object.fromEntries(
@@ -33,7 +44,8 @@ it("detects real Hermes config/hash drift without mutating the inspected fixture
     [
       "-c",
       String.raw`
-import importlib.util, json, os, sys, yaml
+${YAML_STUB_PYTHON}
+import importlib.util, json, os, sys
 
 def load(name, file_path):
     spec = importlib.util.spec_from_file_location(name, file_path)
@@ -87,6 +99,7 @@ print(json.dumps(payload, sort_keys=True))
       [
         "-c",
         String.raw`
+${YAML_STUB_PYTHON}
 import importlib.util, os, sys
 
 spec = importlib.util.spec_from_file_location("gateway_drift_inspection", sys.argv[1])
