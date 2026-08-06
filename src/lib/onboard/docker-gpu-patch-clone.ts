@@ -242,6 +242,12 @@ function pushNumberFlag(args: string[], flag: string, value: unknown): void {
   }
 }
 
+function pushNonZeroIntegerFlag(args: string[], flag: string, value: unknown): void {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value !== 0) {
+    args.push(flag, String(value));
+  }
+}
+
 function dockerCpusFromNanoCpus(nanoCpus: number): string {
   return (nanoCpus / 1_000_000_000).toFixed(3).replace(/\.?0+$/, "");
 }
@@ -447,6 +453,7 @@ export function buildDockerGpuCloneRunArgs(
   pushNumberFlag(args, "--cpu-quota", host.CpuQuota);
   pushNumberFlag(args, "--cpu-period", host.CpuPeriod);
   pushNumberFlag(args, "--shm-size", host.ShmSize);
+  pushNonZeroIntegerFlag(args, "--pids-limit", host.PidsLimit);
   if (typeof host.NanoCpus === "number" && host.NanoCpus > 0) {
     args.push("--cpus", dockerCpusFromNanoCpus(host.NanoCpus));
   }

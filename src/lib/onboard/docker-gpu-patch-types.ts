@@ -258,6 +258,7 @@ export type DockerContainerInspect = {
     CpuPeriod?: number;
     CpusetCpus?: string;
     CpusetMems?: string;
+    PidsLimit?: number | null;
     ConsoleSize?: number[] | null;
     Privileged?: boolean;
     Init?: boolean;

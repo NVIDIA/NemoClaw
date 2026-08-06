@@ -137,6 +137,15 @@ describe("Docker GPU clone envelope", () => {
     );
   });
 
+  it.each([2048, -1])("preserves the exact Docker PID limit %i", (pidsLimit) => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.PidsLimit = pidsLimit;
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"));
+
+    expect(args).toEqual(expect.arrayContaining(["--pids-limit", String(pidsLimit)]));
+  });
+
   it("uses exact managed-bootstrap container, entrypoint, and command overrides", () => {
     const args = buildDockerGpuCloneRunArgs(
       inspectFixture(),
