@@ -29,6 +29,7 @@ import {
   requirePolicyPresetNumber,
 } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
 import {
   ensureDockerAvailable,
@@ -102,26 +103,6 @@ async function sandboxBash(
     env: baseEnv(),
     timeoutMs: options.timeoutMs ?? SANDBOX_EXEC_TIMEOUT_MS,
   });
-}
-
-async function expectPackageDatabaseReadOnly(sandbox: SandboxClient): Promise<void> {
-  const probe = await sandboxBash(
-    sandbox,
-    String.raw`
-set -euo pipefail
-dpkg-query -W dpkg
-printf 'DPKG_QUERY_OK\n'
-if touch /var/lib/dpkg/nemoclaw-e2e-write-probe 2>/tmp/nemoclaw-dpkg-write-error; then
-  printf 'DPKG_WRITE_UNEXPECTEDLY_SUCCEEDED\n'
-  exit 1
-fi
-printf 'DPKG_WRITE_DENIED\n'
-`,
-    { artifactName: "tc-net-dpkg-package-database-read-only" },
-  );
-  expect(probe.exitCode, text(probe)).toBe(0);
-  expect(text(probe)).toContain("DPKG_QUERY_OK");
-  expect(text(probe)).toContain("DPKG_WRITE_DENIED");
 }
 
 async function applyPreset(host: HostCliClient, preset: string): Promise<ShellProbeResult> {
@@ -687,7 +668,14 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   ).not.toBeNull();
   expect(activePresets?.length, "restricted tier must begin with zero active presets").toBe(0);
 
-  await expectPackageDatabaseReadOnly(sandbox);
+  await expectPackageDatabaseReadOnly({
+    artifactPrefix: "tc-net",
+    env: baseEnv(),
+    host,
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+  });
 
   const denyDefault = await fetchStatus(sandbox, "https://example.com/", "tc-net-01-deny-default");
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
