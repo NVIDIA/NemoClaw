@@ -120,9 +120,10 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     expect(stderr).not.toContain("read only");
   });
 
-  it("advances a writable value and retains it across repeated sourcing", () => {
+  it.each(SHELLS)("advances a writable value across repeated sourcing under %s", (shell) => {
     const { status, stdout, stderr } = runReconcile({
       intended: REAL_TOKEN,
+      shell,
       preset: { value: "WRITABLE-SENTINEL", readonly: false },
       repeatSources: true,
     });
