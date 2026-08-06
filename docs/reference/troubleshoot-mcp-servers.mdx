@@ -168,7 +168,7 @@ The value must be an integer from `1500` through `10000`.
 When the value is unset or blank, NemoClaw adds no override.
 OpenClaw then uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
 The override applies to catalog `tools/list` requests for every MCP server in the sandbox and takes precedence over a server-specific request timeout.
-NemoClaw rejects an invalid value before sandbox creation or rebuild.
+NemoClaw rejects an invalid value before the sandbox create step, including the replacement create step during rebuild.
 
 <Warning>
 Rebuilding interrupts the agent while NemoClaw replaces the sandbox and restores its managed state.
