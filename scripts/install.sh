@@ -3069,6 +3069,9 @@ run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
   local -a onboard_cmd=(onboard)
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]]; then
+    onboard_cmd+=(--experimental-profile portable)
+  fi
   local installer_auto_fresh_receipt_generation=""
   local session_file
   session_file="$(nemoclaw_state_dir)/onboard-session.json"
@@ -3427,6 +3430,37 @@ ensure_docker() {
   if ! docker info >/dev/null 2>&1; then
     error "Docker is installed but not reachable. Try: sudo systemctl start docker"
   fi
+}
+
+# Select the rootless Podman API socket reported for the current user. This
+# must run before ensure_docker and the installer host preflight: both use
+# the Docker CLI, with DOCKER_HOST overriding its daemon to Podman's user
+# socket. The CLI's portable host preparation later applies the networking and
+# local-registry configuration required by the OpenShell Podman driver.
+prepare_portable_experimental_runtime_override() {
+  [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
+  [[ "$(uname -s)" == "Linux" ]] \
+    || error "The portable experimental profile requires Linux."
+  command_exists podman \
+    || error "The portable experimental profile requires rootless Podman on PATH."
+  command_exists docker \
+    || error "The portable experimental profile requires the Docker CLI on PATH."
+  command_exists systemctl \
+    || error "The portable experimental profile requires systemctl --user to manage the rootless Podman socket."
+
+  systemctl --user enable --now podman.socket >/dev/null \
+    || error "Could not start the rootless Podman API socket with 'systemctl --user enable --now podman.socket'."
+
+  local podman_socket=""
+  podman_socket="$(podman info --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null)" \
+    || error "Could not resolve the rootless Podman API socket with 'podman info'."
+  case "$podman_socket" in
+    unix:///*) export DOCKER_HOST="$podman_socket" ;;
+    /*) export DOCKER_HOST="unix://${podman_socket}" ;;
+    *) error "Podman reported an invalid rootless API socket path: ${podman_socket:-empty}" ;;
+  esac
+
+  info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
 }
 
 is_wsl_host() {
@@ -4674,6 +4708,7 @@ prepare_installer_host() {
   # Intentional ordering: Station preparation owns the reboot boundary before
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
+  prepare_portable_experimental_runtime_override
   ensure_docker
   ensure_openshell_build_deps
 }
@@ -4936,7 +4971,14 @@ main() {
   FRESH=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
+  EXPERIMENTAL_PROFILE="${NEMOCLAW_EXPERIMENTAL_PROFILE:-}"
+  local expect_experimental_profile=""
   for arg in "$@"; do
+    if [[ "$expect_experimental_profile" == "1" ]]; then
+      EXPERIMENTAL_PROFILE="$arg"
+      expect_experimental_profile=""
+      continue
+    fi
     case "$arg" in
       --non-interactive)
         NON_INTERACTIVE=1
@@ -4946,6 +4988,8 @@ main() {
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
       --force-station-install) FORCE_STATION_INSTALL=1 ;;
+      --experimental-profile) expect_experimental_profile=1 ;;
+      --experimental-profile=*) EXPERIMENTAL_PROFILE="${arg#*=}" ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"
@@ -4962,6 +5006,13 @@ main() {
         ;;
     esac
   done
+  [[ -z "$expect_experimental_profile" ]] \
+    || error "Missing value for --experimental-profile (expected: portable)."
+  case "$EXPERIMENTAL_PROFILE" in
+    "") unset NEMOCLAW_EXPERIMENTAL_PROFILE ;;
+    portable) export NEMOCLAW_EXPERIMENTAL_PROFILE="$EXPERIMENTAL_PROFILE" ;;
+    *) error "Unknown experimental profile: $EXPERIMENTAL_PROFILE (expected: portable)." ;;
+  esac
   # Also honor env var
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
   if [ "${NON_INTERACTIVE:-}" = "1" ] && [ -z "${NON_INTERACTIVE_SOURCE:-}" ]; then
