@@ -152,12 +152,16 @@ for (const [label, dockerfile] of DOCKERFILES) {
       });
 
       it("succeeds for a valid base64-encoded certificate", () => {
+        const dir = tmpDir();
         const res = runDockerfileCorporateCaDecode(
           dockerfile,
           Buffer.from(CERT_PEM).toString("base64"),
-          tmpDir(),
+          dir,
         );
         expect(res.status).toBe(0);
+        expect(
+          readFileSync(join(dir, "ca-certificates/nemoclaw-corporate-ca-01.crt"), "utf-8"),
+        ).toBe(CERT_PEM);
       });
 
       it("strips trailing non-certificate content and bakes only the certificate", () => {
