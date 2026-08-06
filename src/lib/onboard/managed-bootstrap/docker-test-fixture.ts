@@ -33,7 +33,7 @@ import {
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
-  parseManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
 
@@ -201,26 +201,6 @@ function failFixture(message: string): never {
   throw new Error(message);
 }
 
-function readProtectedEnvelope(source: string): ReturnType<typeof parseManagedBootstrapEnvelope> {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  if (typeof noFollow !== "number") throw new Error("test requires O_NOFOLLOW");
-  const descriptor = fs.openSync(source, fs.constants.O_RDONLY | noFollow);
-  try {
-    const before = fs.fstatSync(descriptor, { bigint: true });
-    expect(Number(before.mode & 0o777n)).toBe(0o400);
-    const parsed = parseManagedBootstrapEnvelope(fs.readFileSync(descriptor, "utf8"));
-    const after = fs.fstatSync(descriptor, { bigint: true });
-    expect(after.dev).toBe(before.dev);
-    expect(after.ino).toBe(before.ino);
-    expect(after.size).toBe(before.size);
-    expect(after.mtimeNs).toBe(before.mtimeNs);
-    expect(after.ctimeNs).toBe(before.ctimeNs);
-    return parsed;
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
-
 export function fixture(options: DockerFixtureOptions = {}) {
   let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
   if (options.dockerCliSerializationDefaults) {
@@ -354,7 +334,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
     }
   });
   const dockerRun: NonNullable<DockerManagedBootstrapDeps["dockerRun"]> = vi.fn(
-    (args: readonly string[]) => {
+    (args: readonly string[], commandOptions?: Record<string, unknown>) => {
       switch (args[0]) {
         case "create": {
           events.push("create:replacement");
@@ -366,6 +346,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const env = args.flatMap((value, index) =>
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
+          const ulimits = args.flatMap((value, index) => {
+            if (value !== "--ulimit") return [];
+            const match = /^([a-z][a-z0-9_]*)=(\d+):(\d+)$/u.exec(String(args[index + 1] ?? ""));
+            return match
+              ? [{ Name: match[1], Soft: Number(match[2]), Hard: Number(match[3]) }]
+              : [];
+          });
           replacement = {
             ...structuredClone(source),
             Id: NEW_ID,
@@ -376,6 +363,10 @@ export function fixture(options: DockerFixtureOptions = {}) {
               Env: [...(options.replacementEnvironment?.(env) ?? env)],
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
+            },
+            HostConfig: {
+              ...structuredClone(source.HostConfig),
+              Ulimits: ulimits,
             },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },
           };
@@ -411,7 +402,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const destination = String(args[sourceIndex + 1] ?? "");
           const copyIntoContainer = () => {
             events.push("stage:envelope");
-            expect(readProtectedEnvelope(source).bootstrapIdentity).toBe(IDENTITY);
+            expect(args).toEqual(["cp", "-", `${NEW_ID}:/`]);
+            expect(commandOptions?.stdio).toEqual(["pipe", "pipe", "pipe"]);
+            expect(commandOptions?.input).toEqual(
+              serializeManagedBootstrapEnvelopeTar({
+                bootstrapIdentity: IDENTITY,
+                rootApplyRequest: agentInputs(options.agent).request,
+              }),
+            );
             return ok();
           };
           const copyFromContainer = () => {

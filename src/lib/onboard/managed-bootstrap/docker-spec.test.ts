@@ -111,6 +111,49 @@ describe("managed bootstrap Docker launch spec", () => {
     expect(normalizeDockerManagedBootstrapLaunchSpec(active).hash).not.toBe(expected.hash);
   });
 
+  it("canonicalizes explicitly reported Docker-default tmpfs options", () => {
+    const explicitDefaults = createDockerGpuInspectFixture();
+    explicitDefaults.HostConfig!.Mounts = [
+      {
+        Type: "tmpfs",
+        Target: "/run/nemoclaw-dcode-mcp",
+        TmpfsOptions: {
+          SizeBytes: 1_048_576,
+          Mode: 0o1777,
+          Options: [["noexec"]],
+        },
+      },
+    ];
+    const omittedDefaults = structuredClone(explicitDefaults);
+    delete omittedDefaults.HostConfig!.Mounts![0]!.TmpfsOptions!.Options;
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(explicitDefaults);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(omittedDefaults);
+
+    expect(expected.spec.inspect.HostConfig?.Mounts?.[0]?.TmpfsOptions).toEqual({
+      SizeBytes: 1_048_576,
+      Mode: 0o1777,
+    });
+    expect(observed.hash).toBe(expected.hash);
+  });
+
+  it("keeps non-default tmpfs options hash-bound", () => {
+    const expected = createDockerGpuInspectFixture();
+    expected.HostConfig!.Mounts = [
+      {
+        Type: "tmpfs",
+        Target: "/run/nemoclaw-dcode-mcp",
+        TmpfsOptions: { Options: [["exec"]] },
+      },
+    ];
+    const observed = structuredClone(expected);
+    delete observed.HostConfig!.Mounts![0]!.TmpfsOptions!.Options;
+
+    expect(normalizeDockerManagedBootstrapLaunchSpec(observed).hash).not.toBe(
+      normalizeDockerManagedBootstrapLaunchSpec(expected).hash,
+    );
+  });
+
   it("canonicalizes Docker API and CLI host-list representations", () => {
     const apiInspect = createDockerGpuInspectFixture();
     Object.assign(apiInspect.HostConfig!, {

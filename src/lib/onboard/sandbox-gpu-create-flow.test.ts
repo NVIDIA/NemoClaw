@@ -353,6 +353,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ stableReadyPolls: 2 }),
+    );
 
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
