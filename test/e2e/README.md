@@ -56,7 +56,8 @@ Each artifact-using job passes that object as the restore action's only `provena
 Each artifact-using job invokes the repository-owned `restore-e2e-cli-artifact` composite action at a full commit SHA.
 The workflow does not load the action implementation from the candidate checkout.
 Before download, the action rejects extra or missing provenance fields.
-It also compares the candidate checkout, repository, workflow SHA, run ID, and attempt with the provenance object.
+The action requires the candidate checkout SHA, repository, workflow SHA, and run ID to match the provenance object.
+The producer attempt must not be newer than the consumer attempt.
 The action downloads the artifact by immutable ID and sets digest mismatch handling to `error`.
 
 Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the workspace, it verifies these conditions:
@@ -454,16 +455,17 @@ workflow's approved runner labels. An ordinary assertion failure, mixed failure
 set, incomplete listing, custom or self-hosted label, changed evidence, or
 ambiguous pagination prevents recovery.
 
-For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to
-rerun failed jobs and their dependent jobs. A successful CLI artifact producer is
-not rerun. Consumers can reuse its immutable, content-addressed artifact from an
-earlier attempt of the same workflow run. Restore validation requires the same
-run, workflow, candidate, immutable artifact ID, and payload digest, and rejects a
-producer attempt newer than the consumer attempt. The controller can request two
-reruns. It does not verify that GitHub schedules a different runner, so do not
-treat a rerun as evidence of a fresh host. It ignores manual runs and source runs
-superseded by a newer `main` push. The controller checks out only trusted
-default-branch code and receives no repository secrets.
+For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
+A successful CLI artifact producer is not rerun.
+The workflow retains its CLI artifact for 3 days.
+During that period, consumers can reuse the immutable, content-addressed artifact from an earlier producer attempt in the same workflow run.
+If the artifact is unavailable when a consumer downloads it, restoration fails because the failed-job rerun does not rerun the successful producer.
+Restore validation requires the recorded run ID, workflow SHA, candidate repository and SHA, immutable artifact ID, and payload digest.
+It rejects a producer attempt newer than the consumer attempt.
+The controller can request two reruns.
+It does not verify that GitHub schedules a different runner, so do not treat a rerun as evidence of a fresh host.
+It ignores manual runs and source runs superseded by a newer `main` push.
+The controller checks out only trusted default-branch code and receives no repository secrets.
 
 The runner-allocation and internal-error failures handled by Hosted Runner
 Recovery originate in GitHub Actions, outside repository-controlled workflow
@@ -730,16 +732,13 @@ These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, remove the recorded Brev
 workspace. Rotate or revoke each credential to remove later access.
 
-When an eligible `E2E main` push workflow concludes with `failure`,
-`E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependents.
-The controller permits two reruns but does not verify that GitHub schedules a
-different runner.
+When an eligible `E2E main` push workflow concludes with `failure`, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
+The controller permits two reruns but does not verify that GitHub schedules a different runner.
 After evaluation succeeds, it uploads an artifact named for the current attempt.
-The artifact contains one `attempts` summary for each source attempt through the
-current attempt. The `totalRunnerMinutes` field contains the cumulative runner
-time for those summaries. A later successful attempt sets `action` to
-`passed-after-retry` and `flaky` to `true`. The controller does not retry manual
-PR runs or a run superseded by a newer `main` push.
+The artifact contains one `attempts` summary for each source attempt through the current attempt.
+The `totalRunnerMinutes` field contains the cumulative runner time for those summaries.
+A later successful attempt sets `action` to `passed-after-retry` and `flaky` to `true`.
+The controller does not retry manual PR runs or a run superseded by a newer `main` push.
 
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 

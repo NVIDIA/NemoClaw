@@ -407,12 +407,12 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("reuses an immutable producer artifact during a later failed-job rerun", () => {
+  it("accepts producer provenance from an earlier attempt of the same workflow run", () => {
     const result = runIdentityValidation({ runAttempt: "1" }, "2");
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("rejects an invalid consumer attempt", () => {
+  it("rejects consumer workflow attempt zero", () => {
     const result = runIdentityValidation({}, "0");
     expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(
