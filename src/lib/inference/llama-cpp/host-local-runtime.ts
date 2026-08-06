@@ -174,15 +174,15 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   }
 }
 
-function validateBindings(
+/** Re-prove executor-only filesystem identity before a container-engine mutation. */
+export function assertLlamaCppVerifiedLocalModelArtifact(
   contract: LlamaCppHostLocalLaunchContract,
-  bindings: LlamaCppHostLocalRuntimeBindings,
+  model: VerifiedLocalModelArtifact,
 ): void {
-  safeHostPath(bindings.model.hostPath, "llama.cpp model path");
-  safeHostPath(bindings.apiKeyHostPath, "llama.cpp API-key path");
+  safeHostPath(model.hostPath, "llama.cpp model path");
   if (
-    bindings.model.digest !== contract.model.file.digest ||
-    bindings.model.sizeBytes !== contract.model.file.sizeBytes
+    model.digest !== contract.model.file.digest ||
+    model.sizeBytes !== contract.model.file.sizeBytes
   ) {
     throw new Error(
       "llama.cpp verified model artifact does not match the declarative GGUF identity",
@@ -191,12 +191,12 @@ function validateBindings(
   let canonicalModelPath: string;
   let modelStatus: BigIntStats;
   try {
-    canonicalModelPath = realpathSync(bindings.model.hostPath);
-    modelStatus = lstatSync(bindings.model.hostPath, { bigint: true });
+    canonicalModelPath = realpathSync(model.hostPath);
+    modelStatus = lstatSync(model.hostPath, { bigint: true });
   } catch {
     throw new Error("llama.cpp verified model artifact is unavailable");
   }
-  const identity = bindings.model.filesystemIdentity;
+  const identity = model.filesystemIdentity;
   if (
     !identity ||
     typeof identity.dev !== "bigint" ||
@@ -204,19 +204,27 @@ function validateBindings(
     typeof identity.size !== "bigint" ||
     typeof identity.mtimeNs !== "bigint" ||
     typeof identity.ctimeNs !== "bigint" ||
-    canonicalModelPath !== bindings.model.hostPath ||
+    canonicalModelPath !== model.hostPath ||
     !modelStatus.isFile() ||
     modelStatus.dev !== identity.dev ||
     modelStatus.ino !== identity.ino ||
     modelStatus.size !== identity.size ||
     modelStatus.mtimeNs !== identity.mtimeNs ||
     modelStatus.ctimeNs !== identity.ctimeNs ||
-    modelStatus.size !== BigInt(bindings.model.sizeBytes)
+    modelStatus.size !== BigInt(model.sizeBytes)
   ) {
     throw new Error(
       "llama.cpp verified model artifact does not match its verified filesystem identity",
     );
   }
+}
+
+function validateBindings(
+  contract: LlamaCppHostLocalLaunchContract,
+  bindings: LlamaCppHostLocalRuntimeBindings,
+): void {
+  assertLlamaCppVerifiedLocalModelArtifact(contract, bindings.model);
+  safeHostPath(bindings.apiKeyHostPath, "llama.cpp API-key path");
   if (
     !SAFE_NAME.test(bindings.containerName) ||
     bindings.network.isolation !== "docker-internal" ||
@@ -286,7 +294,7 @@ export function buildLlamaCppHostLocalDockerArgv(
     "--pids-limit",
     String(resources.pidsLimit),
     "--gpus",
-    "1",
+    "driver=nvidia,count=1",
     "--tmpfs",
     `/tmp:rw,noexec,nosuid,nodev,size=${String(resources.writableStorageBytes)},uid=${String(bindings.runtimeUid)},gid=${String(bindings.runtimeGid)},mode=1777`,
     "--mount",
@@ -294,6 +302,18 @@ export function buildLlamaCppHostLocalDockerArgv(
     "--mount",
     `type=bind,source=${bindings.apiKeyHostPath},target=${LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH},readonly`,
     bindings.imageReference,
+    ...buildLlamaCppHostLocalServerArgv(contract),
+  ];
+}
+
+/** Reconstruct the immutable in-container server command without host filesystem state. */
+export function buildLlamaCppHostLocalServerArgv(
+  contract: LlamaCppHostLocalLaunchContract,
+): readonly string[] {
+  validateContract(contract);
+  const { serve } = contract;
+  const containerModelPath = `/models/${contract.model.file.path}`;
+  return Object.freeze([
     "--model",
     containerModelPath,
     "--alias",
@@ -329,5 +349,5 @@ export function buildLlamaCppHostLocalDockerArgv(
     "--no-slots",
     "--no-mmproj",
     "--no-agent",
-  ];
+  ]);
 }
