@@ -71,24 +71,24 @@ describe("sandbox inference route health", () => {
     expect(result?.detail).toContain("verification result 20");
   });
 
-  it("identifies a stale inherited CA when OpenShell's canonical CA verifies (#8441)", async () => {
+  it("reports when only OpenShell's canonical CA verifies the route (#8441)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
       captureOpenshellImpl: makeCapture(
         "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_tls_verify=0",
       ),
     });
 
-    expect(result?.detail).toContain("inherited CA bundle is stale");
+    expect(result?.detail).toContain("inherited CA bundle did not verify");
   });
 
-  it("identifies an OpenShell proxy and canonical CA mismatch (#8441)", async () => {
+  it("reports when TLS validation also fails with OpenShell's canonical CA (#8441)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
       captureOpenshellImpl: makeCapture(
         "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=60 canonical_tls_verify=19",
       ),
     });
 
-    expect(result?.detail).toContain("canonical runtime CA does not trust");
+    expect(result?.detail).toContain("validation also failed");
     expect(result?.detail).toContain("verification result 19");
   });
 

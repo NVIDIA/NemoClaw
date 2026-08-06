@@ -35,10 +35,10 @@ function describeInferenceTransportFailure(
       return "The inference route probe timed out inside the sandbox.";
     case 60:
       if (canonicalCurlExitCode === 0 && canonicalTlsVerifyResult === 0) {
-        return "The inherited CA bundle is stale; OpenShell's canonical runtime CA verifies the inference route.";
+        return "The inherited CA bundle did not verify the inference route; OpenShell's canonical runtime CA did.";
       }
       if (canonicalCurlExitCode === 60 && canonicalTlsVerifyResult !== null) {
-        return `OpenShell's canonical runtime CA does not trust the inference proxy certificate (verification result ${String(canonicalTlsVerifyResult)}).`;
+        return `TLS certificate validation also failed with OpenShell's canonical runtime CA (verification result ${String(canonicalTlsVerifyResult)}).`;
       }
       return tlsVerifyResult === null
         ? "TLS certificate validation failed for the inference route."
