@@ -4,7 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import { loadServingCatalog } from "./catalog-loader";
-import { listServingProfiles, renderServingProfiles } from "./profile-list";
+import {
+  listServingProfiles,
+  renderServingProfiles,
+  resolveServingProfileSelection,
+} from "./profile-list";
 
 describe("serving profile discovery", () => {
   it("lists every compiled preset with stable selection metadata (#8384)", () => {
@@ -59,5 +63,49 @@ describe("serving profile discovery", () => {
     expect(output).toContain("selection=explicit-only support=experimental");
     expect(output).toContain("image=2.0 GiB model-download=3.0 GiB");
     expect(output).toContain("incompatible: Host requirement is not met.");
+  });
+
+  it("escapes an untrusted profile candidate in diagnostics (#8384)", () => {
+    const candidate = "unknown\n\u001b[31mprofile";
+
+    expect(() => resolveServingProfileSelection(candidate)).toThrowError(
+      'Unknown serving profile "unknown\\n\\u001b[31mprofile".',
+    );
+  });
+
+  it("rejects an ambiguous display name and directs users to stable IDs (#8384)", () => {
+    const catalog = loadServingCatalog();
+    const ambiguousName = "Duplicated profile name";
+    const ambiguousCatalog = {
+      ...catalog,
+      presets: catalog.presets.map((preset, index) =>
+        index < 2
+          ? { ...preset, metadata: { ...preset.metadata, displayName: ambiguousName } }
+          : preset,
+      ),
+    };
+
+    expect(() =>
+      resolveServingProfileSelection(ambiguousName, { catalog: ambiguousCatalog }),
+    ).toThrowError(
+      'Serving profile name "Duplicated profile name" is ambiguous; select a stable profile ID.',
+    );
+  });
+
+  it("rejects a disabled profile before compatibility evaluation (#8384)", () => {
+    const catalog = loadServingCatalog();
+    const selected = catalog.presets[0]!;
+    const disabledCatalog = {
+      ...catalog,
+      presets: catalog.presets.map((preset) =>
+        preset.metadata.id === selected.metadata.id
+          ? { ...preset, spec: { ...preset.spec, selection: "disabled" as const } }
+          : preset,
+      ),
+    };
+
+    expect(() =>
+      resolveServingProfileSelection(selected.metadata.id, { catalog: disabledCatalog }),
+    ).toThrowError(`Serving profile '${selected.metadata.id}' is disabled.`);
   });
 });

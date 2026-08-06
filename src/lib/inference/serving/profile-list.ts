@@ -107,6 +107,10 @@ export interface ResolveServingProfileOptions {
 
 export class ServingProfileSelectionError extends Error {}
 
+function renderSelectionCandidate(candidate: string): string {
+  return JSON.stringify(candidate);
+}
+
 export function resolveServingProfileSelection(
   candidate: string,
   options: ResolveServingProfileOptions = {},
@@ -117,12 +121,12 @@ export function resolveServingProfileSelection(
   );
   if (matches.length === 0) {
     throw new ServingProfileSelectionError(
-      `Unknown serving profile '${candidate}'. Run 'nemoclaw profiles list'.`,
+      `Unknown serving profile ${renderSelectionCandidate(candidate)}. Run 'nemoclaw profiles list'.`,
     );
   }
   if (matches.length > 1) {
     throw new ServingProfileSelectionError(
-      `Serving profile name '${candidate}' is ambiguous; select a stable profile ID.`,
+      `Serving profile name ${renderSelectionCandidate(candidate)} is ambiguous; select a stable profile ID.`,
     );
   }
   const selected = matches[0]!;
