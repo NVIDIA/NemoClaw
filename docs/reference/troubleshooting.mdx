@@ -2738,6 +2738,7 @@ That call replaces the inherited supplementary groups, so `--group-add` alone do
 Before the fixed OpenShell supervisor starts, NemoClaw runs a bounded wrapper from the sandbox image as root.
 The image owns the wrapper as `root:root` with mode `0500`.
 The wrapper can hand off only to `/opt/openshell/bin/openshell-sandbox`.
+The wrapper validates the complete supplied list for count, group-ID format, range, and duplicates before it changes the container account.
 The wrapper adds only the validated Jetson device GIDs that onboarding detected to the existing sandbox account in `/etc/group`.
 It verifies the resulting membership before handoff.
 OpenShell then rebuilds the account's group list from the updated database, preserving access to the detected device nodes.

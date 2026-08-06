@@ -2,6 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Compatibility bridge for #7610. Remove when the minimum supported OpenShell
+# release natively preserves Jetson device groups across the sandbox-user handoff.
+
 set -euo pipefail
 
 fail() {
@@ -32,7 +35,9 @@ for gid in "${gids[@]}"; do
   [ "$gid" -le 2147483647 ] || fail "device group ID is out of range"
   [ -z "${seen[$gid]:-}" ] || fail "device group ID is duplicated"
   seen[$gid]=1
+done
 
+for gid in "${gids[@]}"; do
   group_record="$(/usr/bin/getent group "$gid" || true)"
   if [ -z "$group_record" ]; then
     group_name="nemoclaw_gpu_$gid"
