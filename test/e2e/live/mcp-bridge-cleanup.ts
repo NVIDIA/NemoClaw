@@ -33,3 +33,10 @@ export async function cleanupMcpBridge(
     `cleanup MCP bridge ${server} on sandbox ${sandboxName}`,
   );
 }
+
+const MCP_MUTATION_CONCURRENCY_CONFLICT =
+  /sandbox was modified by another operation\.[\s\S]*Please retry the command\./iu;
+
+export function shouldRetryMcpMutationAfterConcurrencyConflict(output: string): boolean {
+  return MCP_MUTATION_CONCURRENCY_CONFLICT.test(output);
+}

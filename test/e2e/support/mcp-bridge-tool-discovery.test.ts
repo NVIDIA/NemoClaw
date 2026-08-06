@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
   type FakeMcpRequest,
@@ -380,5 +380,23 @@ describe("Hermes deferred MCP tool discovery", () => {
       content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
     });
     expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+});
+
+describe("MCP mutation concurrency retry", () => {
+  it("retries the explicit OpenShell optimistic-concurrency response", () => {
+    expect(
+      shouldRetryMcpMutationAfterConcurrencyConflict(
+        "Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.",
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    "Failed to detach provider: permission denied",
+    "sandbox was modified by another operation.",
+    "Please retry the command.",
+  ])("does not retry another failure: %s", (output) => {
+    expect(shouldRetryMcpMutationAfterConcurrencyConflict(output)).toBe(false);
   });
 });
