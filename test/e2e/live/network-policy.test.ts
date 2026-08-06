@@ -104,6 +104,26 @@ async function sandboxBash(
   });
 }
 
+async function expectPackageDatabaseReadOnly(sandbox: SandboxClient): Promise<void> {
+  const probe = await sandboxBash(
+    sandbox,
+    String.raw`
+set -euo pipefail
+dpkg-query -W dpkg
+printf 'DPKG_QUERY_OK\n'
+if touch /var/lib/dpkg/nemoclaw-e2e-write-probe 2>/tmp/nemoclaw-dpkg-write-error; then
+  printf 'DPKG_WRITE_UNEXPECTEDLY_SUCCEEDED\n'
+  exit 1
+fi
+printf 'DPKG_WRITE_DENIED\n'
+`,
+    { artifactName: "tc-net-dpkg-package-database-read-only" },
+  );
+  expect(probe.exitCode, text(probe)).toBe(0);
+  expect(text(probe)).toContain("DPKG_QUERY_OK");
+  expect(text(probe)).toContain("DPKG_WRITE_DENIED");
+}
+
 async function applyPreset(host: HostCliClient, preset: string): Promise<ShellProbeResult> {
   const result = await runNemoclaw(host, [SANDBOX_NAME, "policy-add", preset, "--yes"], {
     artifactName: `policy-add-${preset}`,
@@ -509,7 +529,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     e2ePhases: [
       "confirm built CLI Docker OpenShell and credential",
       "clear the sandbox and onboard restricted policy",
-      "prove zero active presets, default denial, and the weather allowlist",
+      "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
       "exercise package and SaaS policy presets",
       "prove dry-run and per-binary Jira approval",
       "verify hot reload inference exemption and SSRF guards",
@@ -524,6 +544,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     contracts: [
       "deny-by-default egress",
       "restricted tier begins with zero active presets",
+      "package metadata is readable while package database writes remain denied (#8467)",
       "OpenShell 0.0.85 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
       "read-only preset allowlist behavior",
       "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
@@ -645,7 +666,9 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
 
   // Keep the actual OpenShell boundary in the retained journey: a default
   // restricted onboard must have no active preset before operator mutation.
-  progress.phase("prove zero active presets, default denial, and the weather allowlist");
+  progress.phase(
+    "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
+  );
   const policyListAfterOnboard = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
     artifactName: "tc-net-01-policy-list-after-onboard",
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -663,6 +686,8 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     "policy-list must return one complete, verified preset listing",
   ).not.toBeNull();
   expect(activePresets?.length, "restricted tier must begin with zero active presets").toBe(0);
+
+  await expectPackageDatabaseReadOnly(sandbox);
 
   const denyDefault = await fetchStatus(sandbox, "https://example.com/", "tc-net-01-deny-default");
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
