@@ -1368,6 +1368,16 @@ After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may 
 `$$nemoclaw <name> status` and `$$nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically.
 Run `$$nemoclaw <name> rebuild --yes` when you want NemoClaw to recreate the sandbox from the recorded metadata, or run `$$nemoclaw <name> destroy` when you intentionally want to remove the stale entry.
 
+### A command reports that the registry file is not valid JSON
+
+Registry operations that require complete sandbox records, such as `$$nemoclaw list` and `$$nemoclaw onboard`, stop with `Configuration file is present but is not valid JSON`, followed by the path to `sandboxes.json` and the recovery commands.
+
+These operations stop instead of reading the file as an empty registry, so they cannot replace your sandbox records with empty state.
+Optional messaging health checks omit registry-derived information when they cannot read the registry.
+It does not rename, move, or rewrite the file.
+
+Follow [Malformed Registry File](host-files-and-state#malformed-registry-file) to keep a copy and remove it.
+
 ### Status shows "not running" inside the sandbox
 
 This is expected behavior.
