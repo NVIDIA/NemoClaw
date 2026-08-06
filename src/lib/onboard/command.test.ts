@@ -247,6 +247,8 @@ describe("onboard command options", () => {
       fresh: true,
       autoYes: true,
       noOllamaAutostart: true,
+      noGpu: false,
+      sandboxGpu: null,
     });
   });
 
