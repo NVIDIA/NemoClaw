@@ -39,7 +39,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("recovers the portable lifecycle before the live sandbox lookup (#8441)", async () => {
+  it("runs portable lifecycle recovery before the live sandbox lookup (#8441)", async () => {
     const harness = createConnectHarness();
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();

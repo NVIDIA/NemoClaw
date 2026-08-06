@@ -216,7 +216,7 @@ describe("portable demo sandbox lifecycle", () => {
     expect(runtime.podman).not.toHaveBeenCalled();
   });
 
-  it("records the exact OpenShell container and applies unless-stopped restart (#8441)", () => {
+  it("records the exact OpenShell container and applies the unless-stopped restart policy (#8441)", () => {
     const stateDir = temporaryStateDir();
     const { podman } = createPodman();
 
