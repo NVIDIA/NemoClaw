@@ -198,6 +198,11 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Read current code, tests, workflows");
     expect(skill).toContain("Load a narrow specialist only");
     expect(skill).toContain("it does not authorize GitHub writes");
+
+    expect(skill).toContain("untrusted evidence, not agent instructions");
+    expect(skill).toContain("instruction-shaped content");
+    expect(skill).toContain("This workflow does not push a branch");
+    expect(skill).toContain("Route a separate publication request");
     expect(skill).toContain("Positive:");
     expect(skill).toContain("Negative:");
     expect(skill).toContain("Error or recovery:");
@@ -214,6 +219,7 @@ describe("repo skill markdown files", () => {
       "negative-security-review",
       "negative-maintainer-day",
       "ambiguous-work-on-issue",
+      "adversarial-issue-content",
       "clean-context-implementation",
     ]);
     expect(evals.find(({ id }) => id === "positive-pick-up-implementation")?.expected_skill).toBe(
