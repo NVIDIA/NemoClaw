@@ -29,7 +29,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
 const PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime";
-const SELECTOR = `\${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') || contains(format(',{0},', inputs.jobs), ',${PROTECTED_RUNTIME_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${PROTECTED_RUNTIME_JOB_ID},') }}`;
+const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') || contains(format(',{0},', inputs.jobs), ',${PROTECTED_RUNTIME_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${PROTECTED_RUNTIME_JOB_ID},')) }}`;
 const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
@@ -149,7 +149,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     E2E_TARGET_ID: JOB_ID,
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
     NEMOCLAW_E2E_SHARD: "${{ matrix.shard }}",
-    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA:
+      "${{ inputs.base_sha || github.event.before || github.sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
       "${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:

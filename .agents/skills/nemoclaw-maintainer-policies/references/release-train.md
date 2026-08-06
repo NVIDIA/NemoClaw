@@ -56,8 +56,8 @@ Before asking for the release confirmation phrase, build and show an evidence le
 - Require every declared `RELEASE_E2E_ACTIVATION_PATH` to exist at the candidate SHA. A missing path is a preflight failure.
 - Require the workflow-produced trusted dispatch receipt to bind the accepted run candidate SHA, run ID, attempt, and selector inputs.
 - Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence for the candidate SHA.
-- Require one full workflow run that includes every workflow E2E and a successful `Exact staging Brev Launchable` job.
-- Require the trusted dispatch receipt to bind the run and attempt to empty selectors and `include_staging_brev_launchable=true`.
+- Require one full workflow run that is completed and successful and includes every workflow E2E and a successful `Exact staging Brev Launchable` job.
+- Require the trusted dispatch receipt to bind the workflow run and an attempt no later than the run's latest attempt. The receipt must record empty selectors and `include_staging_brev_launchable=true`.
 - Require the Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
 - Require the cleanup receipt to identify the qualified workspace and report `ABSENT`.
 - Every E2E execution declared by the workflow must have at least one completed, successful execution for the candidate SHA.
@@ -65,10 +65,12 @@ Before asking for the release confirmation phrase, build and show an evidence le
 - Successful evidence may accumulate across rerun attempts of that workflow run. Evidence from another workflow run does not satisfy the ledger. A later failure does not erase an earlier successful execution for the same test and SHA.
 - Skipped, unexecuted, queued, in-progress, cancelled, and failing results do not count as successful evidence.
 - Map each test with successful evidence to its successful run or job URL and attempt number.
-- Each test without a successful execution requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale.
-- Missing or invalid exact Brev Launchable E2E evidence requires a separate itemized maintainer exception. Record the run and job URLs, the current result or missing receipt, and the rationale.
+- Each missing or skipped execution in the accepted successful workflow run requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result, and the rationale.
+- Missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run requires a separate itemized maintainer exception. Record the run and job URLs, the missing or invalid receipt, and the rationale.
 
-Each test and the exact Brev Launchable E2E job must have successful evidence or its own itemized maintainer exception before release confirmation. Immediately before confirmation, compare `origin/main` with the planned SHA. If the candidate SHA changes, discard the ledger and its exceptions, including Launchable E2E evidence. Regenerate the release plan and repeat the review for the new SHA. This does not freeze `main` or prevent merges. No release-note-only delta exception is currently defined.
+The accepted workflow run must be completed and have a `success` conclusion. A failed workflow run cannot supply the release ledger. Rerun its failed jobs until the workflow concludes with `success`. An itemized test exception applies only to a missing or skipped execution in that otherwise successful run.
+
+Each test and the exact Brev Launchable E2E job in the accepted successful workflow run must have successful evidence or its own permitted itemized exception before release confirmation. Immediately before confirmation, compare `origin/main` with the planned SHA. If the candidate SHA changes, discard the ledger and its exceptions, including Launchable E2E evidence. Regenerate the release plan and repeat the review for the new SHA. This does not freeze `main` or prevent merges. No release-note-only delta exception is currently defined.
 
 ## Carry Forward
 

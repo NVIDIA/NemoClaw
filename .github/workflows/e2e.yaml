@@ -1950,7 +1950,7 @@ jobs:
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
     needs: generate-matrix
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
     permissions:
@@ -2292,7 +2292,7 @@ jobs:
   llama-cpp-dgx-spark-plan:
     name: Compile protected llama.cpp DGX Spark plan
     needs: generate-matrix
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2378,7 +2378,7 @@ jobs:
   llama-cpp-dgx-spark-qualification:
     name: Protected llama.cpp on NVIDIA DGX Spark
     needs: [generate-matrix, llama-cpp-dgx-spark-plan]
-    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
     runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
     environment:
       name: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
@@ -2562,7 +2562,7 @@ jobs:
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
     needs: [generate-matrix, managed-image-multiarch-startup]
-    if: ${{ always() && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
     permissions:
@@ -4801,7 +4801,7 @@ jobs:
     # Every main push queues the repository-owned Jetson runner. GitHub starts
     # timeout-minutes only after runner assignment. Maintainers must keep the
     # configured runner label online.
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
     runs-on: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:

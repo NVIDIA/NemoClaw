@@ -181,7 +181,7 @@ gh run download "$RUN_ID" \
 
 Use the latest existing receipt artifact, not the run's latest attempt number. A partial rerun can leave `generate-matrix` successful and therefore reuse its earlier receipt; the ledger permits that earlier receipt only when it binds the same run and its attempt does not exceed the run's latest attempt.
 
-Successful evidence may accumulate across rerun attempts of that workflow run. Evidence from another workflow run does not satisfy the ledger.
+Successful workflow E2E and `Exact staging Brev Launchable` evidence may accumulate across rerun attempts of that workflow run. Evidence from another workflow run does not satisfy the ledger.
 
 Create `manifest.json` in the private evidence directory:
 
@@ -203,16 +203,18 @@ Build the ledger with `npm run release:e2e-evidence -- --manifest "$EVIDENCE_DIR
 The helper derives the denominator from the workflow, preserves matrix rows as separate semantic identifiers, binds every run and its actual dispatch inputs to the candidate SHA, and keeps an earlier successful attempt when a later attempt fails.
 The manifest and helper cover the workflow-derived test execution ledger only. They do not replace exact Brev Launchable E2E acceptance: keep the raw `dispatch.json`, `launchable-e2e.json`, and `cleanup.json` validation in `nemoclaw-maintainer-e2e`, and carry its validated return beside this ledger or record the required Launchable E2E exception.
 
+Reject a failed workflow run before presenting the ledger. Rerun its failed jobs until the same workflow run concludes with `success`. Exceptions apply only to missing or skipped executions in that otherwise successful run.
+
 Before showing the confirmation prompt, present:
 
 - the candidate SHA;
 - the number of tests with successful evidence out of the number required by the workflow;
 - each required test mapped to a successful run or job URL and attempt; and
 - when accepted full-mode exact Brev evidence exists, its workflow URL, `Exact staging Brev Launchable` job URL, attempt, Launchable E2E identity, and cleanup result; and
-- a separate itemized maintainer exception for each test without successful evidence, including its test identifier, run links, current result, and rationale; and
-- a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence, including run and job URLs, the current result or missing receipt, and rationale.
+- a separate itemized maintainer exception for each missing or skipped execution in the accepted successful workflow run, including its test identifier, run links, current result, and rationale; and
+- a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run, including run and job URLs, the missing or invalid receipt, and rationale.
 
-Do not ask for the phrase until each test and the exact Brev Launchable E2E job has successful evidence or its own itemized maintainer exception.
+Do not ask for the phrase until the workflow run concludes with `success` and each test and the exact Brev Launchable E2E job has successful evidence or its own permitted itemized exception.
 Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, discard all prior candidate-bound evidence, regenerate the plan, rerun preflight and the full E2E workflow for the new SHA, capture a new manifest, and rebuild the ledger before requesting confirmation.
 
 Exercise the configured Git signing backend before asking for confirmation:
@@ -356,8 +358,9 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - Plan generation fails: fix the named precondition, then regenerate the plan.
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
 - Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
-- Full-mode E2E ran for another SHA or skipped `Exact staging Brev Launchable`: reject the run and dispatch full mode for the plan candidate SHA.
-- Launchable E2E or cleanup evidence is missing or invalid: reject the run. Do not infer Launchable E2E success from the workflow conclusion.
+- Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
+- `Exact staging Brev Launchable` was skipped in an otherwise successful candidate run: dispatch full mode again or record the required itemized maintainer exception.
+- Launchable E2E or cleanup evidence is missing or invalid in an otherwise successful candidate run: dispatch full mode again or record the separate itemized maintainer exception. Do not infer Launchable E2E success from the workflow conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
 - Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.

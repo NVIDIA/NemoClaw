@@ -173,6 +173,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "jetson-nvmap-gpu",
   "llama-cpp-dgx-spark-qualification",
   "managed-image-multiarch-startup",
   "managed-image-protected-runtime",
@@ -3950,9 +3951,15 @@ function validateAllowJetsonRunnerQueueInput(
 }
 
 function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecord): void {
-  validateFreeStandingJobSelector(errors, jobs, "jetson-nvmap-gpu", "jetson-nvmap-gpu");
-
   const job = asRecord(jobs["jetson-nvmap-gpu"]);
+  if (job.needs !== "generate-matrix") {
+    errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
+  }
+  const trustedSelector =
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
+  if (job.if !== trustedSelector) {
+    errors.push("jetson-nvmap-gpu job must use the trusted-main selector condition");
+  }
   const guardedRunsOn =
     "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
   if (job["runs-on"] !== guardedRunsOn) {

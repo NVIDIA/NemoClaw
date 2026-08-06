@@ -276,7 +276,7 @@ gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=1
   >"$EVIDENCE_DIR/jobs-latest-$RUN_ID.json"
 ```
 
-For release evidence, collect every attempt for the matrix-preserving ledger:
+For full-mode or release evidence, collect every attempt for the matrix-preserving ledger:
 
 ```bash
 gh api --paginate --slurp \
@@ -284,9 +284,7 @@ gh api --paginate --slurp \
   >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
 ```
 
-Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs.
-Do not fetch the same run again.
-`jobs-latest-$RUN_ID.json` is only the validator input for the latest full-mode attempt.
+Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs and as the full-mode validator inputs. Do not fetch the same run again. `jobs-latest-$RUN_ID.json` is only for ordinary and Launchable modes.
 
 For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
 
@@ -307,7 +305,7 @@ node --experimental-strip-types --no-warnings \
   .agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts \
   --candidate-sha "$CANDIDATE_SHA" \
   --run-json "$EVIDENCE_DIR/run-$RUN_ID.json" \
-  --jobs-json "$EVIDENCE_DIR/jobs-latest-$RUN_ID.json" \
+  --jobs-json "$EVIDENCE_DIR/jobs-$RUN_ID.json" \
   --dispatch-json "$EVIDENCE_DIR/dispatch.json" \
   --launchable-e2e-json "$EVIDENCE_DIR/launchable-e2e.json" \
   --cleanup-json "$EVIDENCE_DIR/cleanup.json"
@@ -316,8 +314,8 @@ node --experimental-strip-types --no-warnings \
 The validator requires:
 
 - the workflow run to succeed for the selected SHA;
-- `dispatch.json` to bind the run and attempt to empty selectors and `include_staging_brev_launchable=true`;
-- `Exact staging Brev Launchable` to conclude `success` in the reported attempt;
+- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, and an attempt no later than the workflow run's latest attempt;
+- `Exact staging Brev Launchable` to conclude `success` in the current or an earlier attempt of the same workflow run;
 - `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
 - the booted repository to be unmodified;
 - the in-guest full E2E to pass; and

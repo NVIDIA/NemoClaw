@@ -67,6 +67,8 @@ function runEvidence(
       head_branch: "main",
       id: runId,
       path: ".github/workflows/e2e.yaml",
+      status: "completed",
+      conclusion: "success",
       run_attempt: attempt,
       head_sha: options.sha ?? candidateSha,
       html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
@@ -96,6 +98,26 @@ describe("release E2E evidence", () => {
       }),
     ).toThrow(
       "candidate commit is missing required E2E activation path ci/protected-managed-image-multiarch-activation-v1.json for managed-image-multiarch-startup",
+    );
+  });
+
+  it("rejects an in-progress workflow with successful execution jobs", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    (evidence.run as Record<string, unknown>).status = "in_progress";
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
+      'runs[0].run.status must equal "completed"',
+    );
+  });
+
+  it("rejects a failed workflow with successful execution jobs", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    (evidence.run as Record<string, unknown>).conclusion = "failure";
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
+      'runs[0].run.conclusion must equal "success"',
     );
   });
 

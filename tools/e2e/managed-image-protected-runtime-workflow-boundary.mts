@@ -14,7 +14,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = "managed-image-protected-runtime";
 const SELECTOR =
-  "${{ always() && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}";
+  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}";
 const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
@@ -116,7 +116,8 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     RELEASE_E2E_ACTIVATION_PATH: ACTIVATION_PATH,
     NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
     NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA:
+      "${{ inputs.base_sha || github.event.before || github.sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
       "${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:

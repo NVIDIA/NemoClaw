@@ -397,6 +397,8 @@ export function buildReleaseE2eLedger(
     requireEqual(run.head_branch, "main", `${label}.run.head_branch`);
     requireEqual(run.event, "workflow_dispatch", `${label}.run.event`);
     requireEqual(run.path, ".github/workflows/e2e.yaml", `${label}.run.path`);
+    requireEqual(run.status, "completed", `${label}.run.status`);
+    requireEqual(run.conclusion, "success", `${label}.run.conclusion`);
     const runId = numberField(run, "id", `${label}.run`);
     const runAttempt = numberField(run, "run_attempt", `${label}.run`);
     const runUrl = stringField(run, "html_url", `${label}.run`);

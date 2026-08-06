@@ -40,7 +40,7 @@ const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "74122df5a55416faf96d0b42d9b7f23fceff62293a3805a5efeacadfdcb1a59f";
+  "3cae1755d65b5a491ce24f483c88f9dc08fb3eab1f43be7ba35f0de24d03ea22";
 const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
