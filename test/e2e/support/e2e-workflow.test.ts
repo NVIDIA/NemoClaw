@@ -715,8 +715,26 @@ describe("e2e workflow boundary", () => {
       jobs: Record<string, { env?: Record<string, string>; if?: string }>;
     };
     const workflowJobs = new Set(Object.keys(workflow.jobs));
+    const portableWorkflow = YAML.parse(
+      fs.readFileSync(
+        path.join(process.cwd(), ".github", "workflows", "portable-profile-e2e.yaml"),
+        "utf8",
+      ),
+    ) as {
+      on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } };
+    };
+    const portableProofInputs = [
+      "scripts/install-openshell.sh",
+      "test/e2e/live/portable-profile-gateway-proof.ts",
+      "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "tools/e2e/check-semantic-phases.mts",
+    ];
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
+    expect(portableWorkflow.on?.pull_request?.paths).toEqual(
+      expect.arrayContaining(portableProofInputs),
+    );
+    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
     expect(inventory.allowedJobs).not.toHaveLength(0);
     expect(inventory.targetToJob.size).toBeGreaterThan(0);
     expect(inventory.workflowJobs.every((job) => workflowJobs.has(job))).toBe(true);
