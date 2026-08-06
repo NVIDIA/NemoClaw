@@ -99,6 +99,7 @@ describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
+    mocks.getSandbox.mockReset();
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
       status: 0,
@@ -297,6 +298,84 @@ describe("backupAll", () => {
     expect(mocks.openBackupShieldsWindow).not.toHaveBeenCalled();
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
     expect(mocks.returnSandboxContainerToStopped).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "custom policy",
+      {
+        customPolicyTransition: {
+          version: 1,
+          id: "11111111-1111-4111-8111-111111111111",
+          operation: "apply",
+          name: "private-api",
+          previous: null,
+          desired: {
+            name: "private-api",
+            content: "network_policies:\n  private_api:\n    endpoints: []\n",
+          },
+          startedAt: "2026-08-06T12:00:00.000Z",
+        },
+      },
+      "custom policy apply for 'private-api' needs repair",
+    ],
+    [
+      "baseline policy",
+      {
+        baselineExclusionTransition: {
+          id: "22222222-2222-4222-8222-222222222222",
+          operation: "restore",
+          exclusion: {
+            version: 1,
+            agent: "openclaw",
+            key: "nous_research",
+            digest: "approved-digest",
+          },
+          targetLiveDigest: "release-digest",
+          startedAt: "2026-08-06T12:00:00.000Z",
+        },
+      },
+      "baseline policy restore for 'nous_research' needs repair",
+    ],
+  ] as const)("blocks a pending %s transition before ready or stopped backup effects", async (_transitionKind, transition, expectedFailure) => {
+    for (const ready of [true, false]) {
+      vi.clearAllMocks();
+      mocks.listSandboxes.mockReturnValue({
+        sandboxes: [{ name: "alpha" }],
+        defaultSandbox: "alpha",
+      });
+      mocks.parseReadySandboxNames.mockReturnValue(ready ? new Set(["alpha"]) : new Set());
+      let lockActive = false;
+      mocks.withSandboxMutationLock.mockImplementation(
+        async (_name: string, action: () => unknown) => {
+          lockActive = true;
+          try {
+            return await action();
+          } finally {
+            lockActive = false;
+          }
+        },
+      );
+      mocks.getSandbox.mockImplementation(() => {
+        expect(lockActive).toBe(true);
+        return { name: "alpha", ...transition };
+      });
+      mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+        containerName: "openshell-alpha-abc",
+      });
+
+      await expect(backupAll()).rejects.toThrow(expectedFailure);
+
+      expect(lockActive).toBe(false);
+      expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
+      expect(mocks.getSandbox).toHaveBeenCalledOnce();
+      expect(mocks.startStoppedSandboxContainerForBackup).not.toHaveBeenCalled();
+      expect(mocks.openBackupShieldsWindow).not.toHaveBeenCalled();
+      expect(mocks.backupSandboxState).not.toHaveBeenCalled();
+      expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
+      expect(mocks.relockBackupShieldsWindow).not.toHaveBeenCalled();
+      expect(mocks.returnSandboxContainerToStopped).not.toHaveBeenCalled();
+    }
   });
 
   it("does not back up when gateway preflight exits", async () => {

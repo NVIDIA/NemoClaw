@@ -70,6 +70,27 @@ function backupAllShieldsWindowOptions(sandboxName: string): BackupShieldsWindow
   };
 }
 
+function assertPolicyTransitionsSettledBeforeBackup(sandboxName: string): void {
+  const sandbox = registry.getSandbox(sandboxName);
+  const customTransition = sandbox?.customPolicyTransition;
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `'${CLI_NAME} ${sandboxName} policy remove ${customTransition.name}'`
+        : "policy add with --from-file or --from-dir";
+    throw new Error(
+      `Cannot back up sandbox '${sandboxName}' while custom policy ${customTransition.operation} for '${customTransition.name}' needs repair. Re-run ${retry} to reconcile live and durable policy state.`,
+    );
+  }
+
+  const baselineTransition = sandbox?.baselineExclusionTransition;
+  if (baselineTransition) {
+    throw new Error(
+      `Cannot back up sandbox '${sandboxName}' while baseline policy ${baselineTransition.operation} for '${baselineTransition.exclusion.key}' needs repair. Re-run '${CLI_NAME} ${sandboxName} policy ${baselineTransition.operation} ${baselineTransition.exclusion.key}' to reconcile live and durable policy state.`,
+    );
+  }
+}
+
 interface BackupAllSandboxAttempt {
   result: sandboxState.BackupResult | null;
   orphanManifestMessage: string | null;
@@ -117,6 +138,7 @@ async function backupSandboxWithinShieldsWindow(
   try {
     return await withSandboxMutationLock(sandboxName, async () => {
       enteredTransactionLock = true;
+      assertPolicyTransitionsSettledBeforeBackup(sandboxName);
       const startedForBackup = shouldStartStoppedContainer
         ? startStoppedSandboxContainerForBackup(sandboxName)
         : null;

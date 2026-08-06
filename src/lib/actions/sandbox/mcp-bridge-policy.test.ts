@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import * as policies from "../../policy";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
+import { isShieldsPolicyMutationAuthority } from "../../shields/transition-lock";
+import { resolveNemoclawStateDir } from "../../state/paths";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -40,6 +45,9 @@ function githubBridgeEntry(overrides: Partial<McpBridgeEntry> = {}): McpBridgeEn
 describe("MCP OpenShell policy", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    const stateDir = resolveNemoclawStateDir();
+    fs.rmSync(path.join(stateDir, "shields-alpha.json"), { force: true });
+    fs.rmSync(path.join(stateDir, "shields-timer-alpha.json"), { force: true });
   });
 
   it("refuses to apply a generated policy without exact public address pins", () => {
@@ -235,11 +243,50 @@ describe("MCP OpenShell policy", () => {
 
     const [, , generatedContent, options] = applyPresetContent.mock.calls[0];
     expect(generatedContent).toContain("allowed_ips:");
-    expect(options).toEqual({
+    expect(options).toMatchObject({
       expectedExistingNetworkPolicyContent: null,
       nonFatal: true,
       skipRegistryUpdate: true,
     });
+    expect(isShieldsPolicyMutationAuthority("alpha", options?.shieldsPolicyMutationAuthority)).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    "apply",
+    "remove",
+  ] as const)("blocks generated policy %s before ownership mutation during an incomplete Shields window (#8176)", (operation) => {
+    const stateDir = resolveNemoclawStateDir();
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateDir, "shields-alpha.json"),
+      JSON.stringify({ shieldsDown: true, shieldsPolicySnapshotPath: "/tmp/snapshot.yaml" }),
+      { mode: 0o600 },
+    );
+    // A marker without a valid timer-bound transition is an incomplete
+    // generation. Even internal MCP authority must fail closed.
+    fs.writeFileSync(path.join(stateDir, "shields-timer-alpha.json"), "{}", { mode: 0o600 });
+
+    const getPolicies = vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+    const addPolicy = vi.spyOn(registry, "addCustomPolicy");
+    const removePolicy = vi.spyOn(registry, "removeCustomPolicyByName");
+    const inspectPolicy = vi.spyOn(policies, "getPresetContentGatewayState");
+    const applyPolicy = vi.spyOn(policies, "applyPresetContent");
+    const removeLivePolicy = vi.spyOn(policies, "removePreset");
+    const entry = githubBridgeEntry();
+
+    expect(() =>
+      operation === "apply"
+        ? applyGeneratedPolicy("alpha", entry, { addresses: ["8.8.8.8"] })
+        : removeGeneratedPolicy("alpha", entry),
+    ).toThrow(/incomplete Shields transition/);
+    expect(getPolicies).not.toHaveBeenCalled();
+    expect(addPolicy).not.toHaveBeenCalled();
+    expect(removePolicy).not.toHaveBeenCalled();
+    expect(inspectPolicy).not.toHaveBeenCalled();
+    expect(applyPolicy).not.toHaveBeenCalled();
+    expect(removeLivePolicy).not.toHaveBeenCalled();
   });
 
   it("accepts only the canonical generated policy for the exact bridge and DNS pins", () => {

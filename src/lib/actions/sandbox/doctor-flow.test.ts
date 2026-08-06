@@ -22,6 +22,7 @@ function createDoctorHarness(provider = "ollama-local"): {
   getBaselineExclusionsSpy: MockInstance;
   getBaselineExclusionTransitionSpy: MockInstance;
   getBaselineExclusionRuntimeStatusSpy: MockInstance;
+  getCustomPolicyTransitionSpy: MockInstance;
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
@@ -81,6 +82,9 @@ function createDoctorHarness(provider = "ollama-local"): {
   const getBaselineExclusionsSpy = vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
   const getBaselineExclusionTransitionSpy = vi
     .spyOn(registry, "getBaselineExclusionTransition")
+    .mockReturnValue(null);
+  const getCustomPolicyTransitionSpy = vi
+    .spyOn(registry, "getCustomPolicyTransition")
     .mockReturnValue(null);
   const getBaselineExclusionRuntimeStatusSpy = vi
     .spyOn(policy, "getBaselineExclusionRuntimeStatus")
@@ -218,6 +222,7 @@ function createDoctorHarness(provider = "ollama-local"): {
     getBaselineExclusionsSpy,
     getBaselineExclusionTransitionSpy,
     getBaselineExclusionRuntimeStatusSpy,
+    getCustomPolicyTransitionSpy,
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
@@ -462,6 +467,36 @@ describe("runSandboxDoctor flow", () => {
           status: "warn",
           detail: expect.stringContaining("interrupted"),
           hint: "re-run `nemoclaw alpha policy restore nous_research`",
+        }),
+      ]),
+    );
+  });
+
+  it("flags an interrupted custom policy transaction as a lifecycle-blocking repair (#8176)", async () => {
+    const harness = createDoctorHarness();
+    harness.getCustomPolicyTransitionSpy.mockReturnValue({
+      version: 1,
+      id: "123e4567-e89b-42d3-a456-426614174093",
+      operation: "remove",
+      name: "private-api",
+      previous: {
+        name: "private-api",
+        content: "network_policies:\n  private_api: {}\n",
+      },
+      desired: null,
+      startedAt: "2026-08-06T12:02:00.000Z",
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          group: "Sandbox",
+          label: "Custom policy: private-api",
+          status: "warn",
+          detail: expect.stringContaining("lifecycle operations are blocked"),
+          hint: "re-run `nemoclaw alpha policy remove private-api`",
         }),
       ]),
     );

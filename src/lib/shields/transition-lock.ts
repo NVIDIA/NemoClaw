@@ -13,7 +13,13 @@ import {
   NAME_VALID_PATTERN,
 } from "../name-validation";
 import { resolveNemoclawStateDir } from "../state/paths";
-import { isProcessAlive, readProcessStartIdentity } from "./timer-control";
+import { isSha256Hex } from "./seal";
+import {
+  isProcessAlive,
+  readProcessStartIdentity,
+  readTimerMarker,
+  timerMarkerPath,
+} from "./timer-control";
 
 const LOCK_VERSION = 1;
 const MAX_OWNER_BYTES = 16 * 1024;
@@ -183,6 +189,185 @@ function validateSandboxName(name: string): string {
     );
   }
   return name;
+}
+
+export interface ShieldsState {
+  shieldsDown?: boolean;
+  shieldsDownAt?: string | null;
+  shieldsDownTimeout?: number | null;
+  shieldsDownReason?: string | null;
+  shieldsDownPolicy?: string | null;
+  shieldsPolicySnapshotPath?: string | null;
+  /** Exact generated MCP keys owned when the restrictive snapshot was captured. */
+  shieldsManagedMcpPolicyKeys?: string[];
+  chattrApplied?: boolean;
+  /** SHA-256 seals captured only after Shields-up lock verification succeeds. */
+  fileHashes?: { [path: string]: string };
+  updatedAt?: string;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalNullableString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isOptionalNullableNumber(value: unknown): value is number | null | undefined {
+  return (
+    value === undefined || value === null || (typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+function isOptionalHashMap(value: unknown): value is { [path: string]: string } | undefined {
+  return (
+    value === undefined ||
+    (isObjectRecord(value) &&
+      Object.values(value).every((digest) => typeof digest === "string" && isSha256Hex(digest)))
+  );
+}
+
+function isOptionalManagedMcpPolicyKeys(value: unknown): value is string[] | undefined {
+  return (
+    value === undefined || (Array.isArray(value) && value.every((key) => typeof key === "string"))
+  );
+}
+
+export function isShieldsState(value: unknown): value is ShieldsState {
+  return (
+    isObjectRecord(value) &&
+    isOptionalBoolean(value.shieldsDown) &&
+    isOptionalNullableString(value.shieldsDownAt) &&
+    isOptionalNullableNumber(value.shieldsDownTimeout) &&
+    isOptionalNullableString(value.shieldsDownReason) &&
+    isOptionalNullableString(value.shieldsDownPolicy) &&
+    isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
+    isOptionalManagedMcpPolicyKeys(value.shieldsManagedMcpPolicyKeys) &&
+    isOptionalBoolean(value.chattrApplied) &&
+    isOptionalHashMap(value.fileHashes) &&
+    isOptionalString(value.updatedAt)
+  );
+}
+
+/** Runtime-bound authority for lifecycle-owned policy restoration while Shields are down. */
+export type ShieldsPolicyMutationAuthority = object & {
+  readonly __shieldsPolicyMutationAuthority: unique symbol;
+};
+
+type PolicyMutationAuthorityPurpose = "managed-mcp" | "rebuild";
+
+const policyMutationAuthorityBindings = new WeakMap<
+  object,
+  { purpose: PolicyMutationAuthorityPurpose; sandboxName: string }
+>();
+
+function issuePolicyMutationAuthority(
+  sandboxName: string,
+  purpose: PolicyMutationAuthorityPurpose,
+): ShieldsPolicyMutationAuthority {
+  const authority = Object.freeze({});
+  policyMutationAuthorityBindings.set(authority, { purpose, sandboxName });
+  return authority as ShieldsPolicyMutationAuthority;
+}
+
+export function issueManagedMcpPolicyMutationAuthority(
+  sandboxName: string,
+): ShieldsPolicyMutationAuthority {
+  return issuePolicyMutationAuthority(validateSandboxName(sandboxName), "managed-mcp");
+}
+
+export function issueRebuildPolicyMutationAuthority(
+  sandboxName: string,
+): ShieldsPolicyMutationAuthority {
+  return issuePolicyMutationAuthority(validateSandboxName(sandboxName), "rebuild");
+}
+
+export function isShieldsPolicyMutationAuthority(
+  sandboxName: string,
+  authority: unknown,
+): authority is ShieldsPolicyMutationAuthority {
+  if ((typeof authority !== "object" && typeof authority !== "function") || authority === null) {
+    return false;
+  }
+  const binding = policyMutationAuthorityBindings.get(authority);
+  return (
+    binding?.sandboxName === sandboxName &&
+    (binding.purpose === "managed-mcp" || binding.purpose === "rebuild")
+  );
+}
+
+function loadPolicyMutationShieldsState(sandboxName: string): {
+  corrupt: boolean;
+  state: ShieldsState;
+} {
+  const statePath = path.join(resolveNemoclawStateDir(), `shields-${sandboxName}.json`);
+  if (!fs.existsSync(statePath)) return { corrupt: false, state: {} };
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    return isShieldsState(value) ? { corrupt: false, state: value } : { corrupt: true, state: {} };
+  } catch {
+    return { corrupt: true, state: {} };
+  }
+}
+
+function hasCompleteTimerGeneration(sandboxName: string): boolean {
+  const marker = readTimerMarker(sandboxName);
+  const processToken = marker?.processToken;
+  if (!marker || !processToken || !/^[0-9a-f]{32}$/.test(processToken)) return false;
+  const transitionPath = path.join(
+    resolveNemoclawStateDir(),
+    `shields-transition-${sandboxName}-${processToken}.json`,
+  );
+  try {
+    const transition: unknown = JSON.parse(fs.readFileSync(transitionPath, "utf8"));
+    return (
+      isObjectRecord(transition) &&
+      transition.version === 1 &&
+      transition.phase === "active" &&
+      transition.sandboxName === sandboxName &&
+      transition.processToken === processToken &&
+      transition.snapshotPath === marker.snapshotPath
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Refuse policy changes while Shields own the live policy snapshot. */
+export function assertShieldsPolicyMutationAllowed(
+  sandboxName: string,
+  authority?: ShieldsPolicyMutationAuthority,
+): void {
+  const validName = validateSandboxName(sandboxName);
+  const { corrupt, state } = loadPolicyMutationShieldsState(validName);
+  if (corrupt) {
+    throw new Error(
+      `Cannot change policy for '${validName}' while its Shields state is corrupt. Repair Shields state before retrying.`,
+    );
+  }
+
+  const markerPresent = fs.existsSync(timerMarkerPath(validName));
+  const activeWindow = state.shieldsDown === true;
+  const incompleteWindow =
+    markerPresent && (!activeWindow || !hasCompleteTimerGeneration(validName));
+  if (!activeWindow && !incompleteWindow) return;
+  if (activeWindow && !incompleteWindow && isShieldsPolicyMutationAuthority(validName, authority)) {
+    return;
+  }
+
+  const posture = incompleteWindow ? "an incomplete Shields transition" : "Shields are down";
+  throw new Error(
+    `Cannot change policy for '${validName}' while ${posture}. Raise Shields before retrying the policy change.`,
+  );
 }
 
 function parseOwner(raw: string, sandboxName: string): ShieldsTransitionLockOwner | null {

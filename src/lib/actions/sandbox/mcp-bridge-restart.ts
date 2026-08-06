@@ -28,6 +28,7 @@ import {
 } from "./mcp-bridge-runtime-capabilities";
 import {
   assertMcpDestroyNotPending,
+  assertPolicyTransitionsSettledForMcpMutation,
   bridgeState,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
@@ -74,6 +75,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     console.log(`  No MCP servers for sandbox '${sandboxName}'.`);
     return;
   }
+  assertPolicyTransitionsSettledForMcpMutation(sandbox, "restart an MCP server");
   for (const [name, entry] of targets) {
     if (!entry) {
       throw new McpBridgeError(`MCP server '${name}' not found on sandbox '${sandboxName}'.`);

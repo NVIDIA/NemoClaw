@@ -16,6 +16,61 @@ export type SandboxDestroyPreflight = {
   sandboxConfirmedAbsent: boolean;
 };
 
+function assertPolicyTransitionsSettledBeforeDestroy(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+): void {
+  const customTransition = sandbox?.customPolicyTransition;
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `'policy remove ${customTransition.name}'`
+        : "policy add with --from-file or --from-dir";
+    throw new Error(
+      `Cannot destroy sandbox '${sandboxName}' while custom policy ${customTransition.operation} for '${customTransition.name}' needs repair. Re-run ${retry} to reconcile live and durable policy state.`,
+    );
+  }
+
+  const baselineTransition = sandbox?.baselineExclusionTransition;
+  if (baselineTransition) {
+    throw new Error(
+      `Cannot destroy sandbox '${sandboxName}' while baseline policy ${baselineTransition.operation} for '${baselineTransition.exclusion.key}' needs repair. Re-run 'policy ${baselineTransition.operation} ${baselineTransition.exclusion.key}' to reconcile live and durable policy state.`,
+    );
+  }
+}
+
+function clearAbsentSandboxPolicyTransition(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+): SandboxEntry | null {
+  const customTransition = sandbox?.customPolicyTransition;
+  const baselineTransition = sandbox?.baselineExclusionTransition;
+  if (customTransition && baselineTransition) {
+    throw new Error(
+      `Cannot continue cleanup for absent sandbox '${sandboxName}' because its registry contains conflicting custom and baseline policy repair journals. No journal was cleared; repair the registry before retrying destroy.`,
+    );
+  }
+  if (customTransition && !registry.clearCustomPolicyTransition(sandboxName, customTransition.id)) {
+    throw new Error(
+      `Cannot continue cleanup for absent sandbox '${sandboxName}' because its custom policy repair journal changed or could not be cleared. Local state was preserved; retry destroy.`,
+    );
+  }
+
+  if (
+    baselineTransition &&
+    !registry.clearBaselineExclusionTransition(sandboxName, baselineTransition.id)
+  ) {
+    throw new Error(
+      `Cannot continue cleanup for absent sandbox '${sandboxName}' because its baseline policy repair journal changed or could not be cleared. Local state was preserved; retry destroy.`,
+    );
+  }
+
+  if (!customTransition && !baselineTransition) return sandbox;
+  const refreshedSandbox = registry.getSandbox(sandboxName);
+  assertPolicyTransitionsSettledBeforeDestroy(sandboxName, refreshedSandbox);
+  return refreshedSandbox;
+}
+
 function stopSandboxInferenceResources(sandboxName: string, sandbox: SandboxEntry | null): void {
   const nim = require("../../inference/nim") as {
     stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
@@ -40,7 +95,7 @@ function stopSandboxInferenceResources(sandboxName: string, sandbox: SandboxEntr
 }
 
 export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPreflight {
-  const sandbox = registry.getSandbox(sandboxName);
+  let sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: DestroyRunOpenshell;
@@ -61,6 +116,16 @@ export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPrefli
     }),
   );
   const sandboxConfirmedAbsent = sandboxPresence === "absent";
+  if (sandboxConfirmedAbsent) {
+    // Exact absence makes the live half of a pending policy transaction
+    // irrelevant. Retire only the journal observed above, then continue from
+    // a fresh row so absent-sandbox MCP cleanup can publish its own state.
+    sandbox = clearAbsentSandboxPolicyTransition(sandboxName, sandbox);
+  } else {
+    // A live or unclassified sandbox may still carry either side of the
+    // interrupted policy mutation. Preserve the journal and all owned state.
+    assertPolicyTransitionsSettledBeforeDestroy(sandboxName, sandbox);
+  }
   const mcpEntriesRequiringConfigMutation = Object.values(sandbox?.mcp?.bridges ?? {}).filter(
     (entry) => entry.addState !== "prepared",
   );

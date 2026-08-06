@@ -111,6 +111,16 @@ export function creationFidelity(
 
 /** Snapshot complete exclusion records before a destructive create removes registry state. */
 export function baselineExclusionsForCreate(sandboxName: string): BaselineExclusionEntry[] {
+  const customTransition = registry.getCustomPolicyTransition(sandboxName);
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `policy remove ${customTransition.name}`
+        : "policy add with --from-file or --from-dir";
+    throw new Error(
+      `Custom policy ${customTransition.operation} for '${customTransition.name}' needs repair before sandbox creation. Re-run ${retry} first.`,
+    );
+  }
   const transition = registry.getBaselineExclusionTransition(sandboxName);
   if (transition) {
     const key = transition.exclusion.key;

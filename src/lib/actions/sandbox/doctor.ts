@@ -20,9 +20,9 @@ import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderSelectionError,
   requireRuntimeProviderBundle,
   resolveCurrentRuntimeProviderBundle,
-  RuntimeProviderSelectionError,
 } from "../../onboard/runtime-provider/access";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
@@ -457,6 +457,24 @@ function baselineExclusionDoctorChecks(sandboxName: string): DoctorCheck[] {
   return checks;
 }
 
+function customPolicyTransitionDoctorCheck(sandboxName: string): DoctorCheck[] {
+  const transition = registry.getCustomPolicyTransition(sandboxName);
+  if (!transition) return [];
+  const retry =
+    transition.operation === "remove"
+      ? `${CLI_NAME} ${sandboxName} policy remove ${transition.name}`
+      : "policy add with --from-file or --from-dir";
+  return [
+    {
+      group: "Sandbox",
+      label: `Custom policy: ${transition.name}`,
+      status: "warn",
+      detail: `Custom policy ${transition.operation} for '${transition.name}' was interrupted; lifecycle operations are blocked until live and durable state are reconciled.`,
+      hint: `re-run \`${retry}\``,
+    },
+  ];
+}
+
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -464,7 +482,11 @@ function collectRegisteredSandboxChecks(
   sandboxReachable: boolean,
 ): DoctorCheck[] {
   if (!sb) return [];
-  const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
+  const checks = [
+    agentVersionDoctorCheck(sandboxName),
+    shieldsDoctorCheck(sandboxName),
+    ...customPolicyTransitionDoctorCheck(sandboxName),
+  ];
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));

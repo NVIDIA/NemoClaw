@@ -195,6 +195,20 @@ async function addSandboxPolicyUnlocked(
     process.exit(1);
   }
 
+  const pendingApplyRepair = policies.repairPendingCustomPolicyApply(sandboxName, {
+    dryRun,
+    externalSource: source.kind === "file" || source.kind === "dir",
+  });
+  if (pendingApplyRepair.state === "completed") {
+    syncSessionPolicyPresetsWithRegistry(sandboxName, pendingApplyRepair.presetName, "add");
+    refreshSandboxPolicyContextFile(sandboxName);
+    return;
+  }
+  if (pendingApplyRepair.state === "blocked") {
+    process.exit(1);
+    return;
+  }
+
   if (source.kind === "file") {
     const prepared = await prepareExternalPolicyPresets(
       [source.path],
@@ -232,25 +246,9 @@ async function addSandboxPolicyUnlocked(
       console.error(`  No .yaml/.yml preset files in ${dirPath}`);
       process.exit(1);
     }
-    if (commandTrustedPrivateHosts.length === 0) {
-      for (const file of files) {
-        const prepared = await prepareExternalPolicyPresets([file], trustedPrivateHosts, []);
-        const preset = prepared?.[0];
-        if (
-          !preset ||
-          !(await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm }))
-        ) {
-          console.error(`  Aborting --from-dir: ${file} failed. Remaining presets not applied.`);
-          process.exit(1);
-          return;
-        }
-      }
-      return;
-    }
-
-    // Command-line declarations are strict and must be consumed exactly once
-    // across the whole directory. Prepare that batch before mutating policy so
-    // an unused or duplicate declaration cannot partially apply the directory.
+    // Validate and authorize the entire directory before the first live
+    // mutation. Command-line declarations are consumed exactly once across the
+    // batch; ambient reusable host authority remains available to every file.
     const prepared = await prepareExternalPolicyPresets(files, trustedPrivateHosts, [
       ...commandTrustedPrivateHosts,
     ]);
@@ -502,6 +500,20 @@ export function listSandboxPolicies(sandboxName: string) {
       }),
     );
   });
+
+  const customTransition = registry.getCustomPolicyTransition(sandboxName);
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `${CLI_NAME} ${sandboxName} policy remove ${customTransition.name}`
+        : "policy add with --from-file or --from-dir";
+    console.log("");
+    console.log("  Custom policy repair required:");
+    console.log(
+      `    - ${customTransition.name} (interrupted ${customTransition.operation}; lifecycle blocked)`,
+    );
+    console.log(`      Re-run \`${retry}\` to reconcile live and durable state.`);
+  }
 
   const exclusions = registry.getBaselineExclusions(sandboxName);
   const exclusionTransition = registry.getBaselineExclusionTransition(sandboxName);
@@ -1228,6 +1240,38 @@ function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
   hydrateMessagingChannelConfig(getStoredMessagingChannelConfig(sandboxName, savedSession));
 }
 
+function assertChannelPolicyMutationAllowed(sandboxName: string, operation: string): void {
+  try {
+    policies.assertInternalShieldsPolicyMutationAllowed(sandboxName);
+  } catch (error) {
+    console.error(
+      `  Cannot ${operation}. ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  }
+
+  const sandbox = registry.getSandbox(sandboxName);
+  const customTransition = sandbox?.customPolicyTransition;
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `\`${CLI_NAME} ${sandboxName} policy remove ${customTransition.name}\``
+        : "policy add with --from-file or --from-dir";
+    console.error(
+      `  Cannot ${operation} while custom policy ${customTransition.operation} for '${customTransition.name}' needs repair. Re-run ${retry} first.`,
+    );
+    process.exit(1);
+  }
+
+  const baselineTransition = sandbox?.baselineExclusionTransition;
+  if (baselineTransition) {
+    console.error(
+      `  Cannot ${operation} while baseline policy ${baselineTransition.operation} for '${baselineTransition.exclusion.key}' needs repair. Re-run \`${CLI_NAME} ${sandboxName} policy ${baselineTransition.operation} ${baselineTransition.exclusion.key}\` first.`,
+    );
+    process.exit(1);
+  }
+}
+
 function discloseChannelPresetScope(
   sandboxName: string,
   presetName: string,
@@ -1324,6 +1368,8 @@ async function addSandboxChannelUnlocked(
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
+
+  assertChannelPolicyMutationAllowed(sandboxName, `add channel '${canonical}'`);
 
   const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies);
   const acquired = collectManifestCredentials(manifest);
@@ -1715,6 +1761,8 @@ async function removeSandboxChannelUnlocked(
     return;
   }
 
+  assertChannelPolicyMutationAllowed(sandboxName, `remove channel '${canonical}'`);
+
   const tokenKeys = getChannelTokenKeys(channel);
   const isQrChannel = channelUsesInSandboxQrPairing(channel);
 
@@ -1862,6 +1910,10 @@ async function sandboxChannelsSetEnabled(
   if (dryRun) {
     console.log(`  --dry-run: would ${verb} channel '${canonical}' for '${sandboxName}'.`);
     return;
+  }
+
+  if (!disabled) {
+    assertChannelPolicyMutationAllowed(sandboxName, `start channel '${canonical}'`);
   }
 
   const plan = await persistManifestChannelDisabledPlan(sandboxName, canonical, disabled);

@@ -48,6 +48,7 @@ import {
 import {
   assertMcpDestroyNotPending,
   assertNoDerivedResourceCollision,
+  assertPolicyTransitionsSettledForMcpMutation,
   bridgeState,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
@@ -181,6 +182,7 @@ async function addMcpBridgeUnlocked(
   const matchingTrustedPrivateHosts = allTrustedPrivateHosts.filter((host) => host === urlHost);
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(sandbox);
+  assertPolicyTransitionsSettledForMcpMutation(sandbox, "add an MCP server");
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
   const existingEntry = bridgeState(sandbox)[options.server];

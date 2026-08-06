@@ -115,6 +115,29 @@ export function assertMcpDestroyNotPending(sandbox: SandboxEntry): void {
   );
 }
 
+/** Refuse MCP lifecycle changes while a generic network-policy journal is unresolved. */
+export function assertPolicyTransitionsSettledForMcpMutation(
+  sandbox: SandboxEntry,
+  operation: string,
+): void {
+  const customTransition = sandbox.customPolicyTransition;
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `nemoclaw ${sandbox.name} policy remove ${customTransition.name}`
+        : "policy add with --from-file or --from-dir";
+    throw new McpBridgeError(
+      `Cannot ${operation} while custom policy ${customTransition.operation} for '${customTransition.name}' needs repair. Re-run ${retry} first.`,
+    );
+  }
+  const baselineTransition = sandbox.baselineExclusionTransition;
+  if (baselineTransition) {
+    throw new McpBridgeError(
+      `Cannot ${operation} while baseline policy ${baselineTransition.operation} for '${baselineTransition.exclusion.key}' needs repair. Re-run nemoclaw ${sandbox.name} policy ${baselineTransition.operation} ${baselineTransition.exclusion.key} first.`,
+    );
+  }
+}
+
 /**
  * Non-destructive recovery for a stuck MCP destroy transaction — PHASE-AWARE.
  *

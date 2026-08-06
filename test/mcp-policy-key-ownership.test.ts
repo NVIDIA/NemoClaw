@@ -52,6 +52,7 @@ const result = policies.applyPresetContent(
   {
     custom: { sourcePath: "generated:nemoclaw-mcp-bridge" },
     expectedExistingNetworkPolicyContent: ${JSON.stringify(expectedExistingNetworkPolicyContent)},
+    skipRegistryUpdate: true,
   },
 );
 process.stdout.write("\\n__RESULT__" + JSON.stringify(result));
@@ -143,9 +144,13 @@ const result = ${
     custom: { sourcePath: "generated:nemoclaw-mcp-bridge" },
     expectedExistingNetworkPolicyContent: ${JSON.stringify(PRESET)},
     nonFatal: true,
+    skipRegistryUpdate: true,
   },
 )`
-      : `policies.removePreset("alpha", "mcp-bridge-example", { nonFatal: true })`
+      : `policies.removePreset("alpha", "mcp-bridge-example", {
+  nonFatal: true,
+  skipRegistryUpdate: true,
+})`
   };
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   result,
@@ -169,13 +174,22 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
 function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-remove-success-"));
   const binDir = path.join(home, ".local", "bin");
+  const policyPresentPath = path.join(home, "policy-present");
   fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(policyPresentPath, "yes\n", { mode: 0o600 });
   fs.writeFileSync(
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
-  printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
+  if [ -f ${JSON.stringify(policyPresentPath)} ]; then
+    printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
+  else
+    printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies: {}\n'
+  fi
+fi
+if [ "$1 $2" = "policy set" ]; then
+  rm -f ${JSON.stringify(policyPresentPath)}
 fi
 exit 0
 `,
@@ -270,14 +284,20 @@ describe("MCP-generated network policy ownership", () => {
     expect(result.stderr).toContain("Failed to update policy");
   });
 
-  it.each([
-    [false, []],
-    [true, ["mcp-bridge-example"]],
-  ] as const)("supports ownership-preserving policy removal (skipRegistryUpdate=%s)", (skipRegistryUpdate, expectedPolicies) => {
-    const result = runSuccessfulPolicyRemoval(skipRegistryUpdate);
+  it("refuses generic custom-policy removal of a managed MCP registration", () => {
+    const result = runSuccessfulPolicyRemoval(false);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain(
-      `__RESULT__${JSON.stringify({ result: true, policies: expectedPolicies })}`,
+      `__RESULT__${JSON.stringify({ result: false, policies: ["mcp-bridge-example"] })}`,
+    );
+    expect(result.stderr).toContain("owned by the managed MCP lifecycle");
+  });
+
+  it("supports ownership-preserving managed MCP policy removal", () => {
+    const result = runSuccessfulPolicyRemoval(true);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(
+      `__RESULT__${JSON.stringify({ result: true, policies: ["mcp-bridge-example"] })}`,
     );
   });
 

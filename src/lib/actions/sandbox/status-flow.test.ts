@@ -227,6 +227,32 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("nemoclaw alpha policy restore nous_research");
   });
 
+  it("reports interrupted custom policy repair and blocks lifecycle work (#8176)", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        customPolicyTransition: {
+          version: 1,
+          id: "123e4567-e89b-42d3-a456-426614174092",
+          operation: "remove",
+          name: "private-api",
+          previous: {
+            name: "private-api",
+            content: "network_policies:\n  private_api: {}\n",
+          },
+          desired: null,
+          startedAt: "2026-08-06T12:02:00.000Z",
+        },
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Custom policy repair required: interrupted remove");
+    expect(output).toContain("lifecycle blocked");
+    expect(output).toContain("nemoclaw alpha policy remove private-api");
+  });
+
   it("omits serving-process status when the gateway is unavailable (#7003)", async () => {
     const harness = createStatusFlowHarness({
       lookupState: "missing",

@@ -326,6 +326,12 @@ async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
   policyPath: string;
   cleanup?: () => boolean;
 }> {
+  if (srcEntry.customPolicyTransition) {
+    const transition = srcEntry.customPolicyTransition;
+    throw new Error(
+      `Cannot clone custom policy state while '${transition.operation} ${transition.name}' needs repair. Re-run that policy command on '${srcEntry.name}' first.`,
+    );
+  }
   if (srcEntry.baselineExclusionTransition) {
     const transition = srcEntry.baselineExclusionTransition;
     throw new Error(
@@ -686,6 +692,23 @@ function runSnapshotCreate(
     snapshotExit(1);
   }
   return withTimerBoundShieldsMutationLock(sandboxName, "create sandbox snapshot", () => {
+    const currentEntry = registry.getSandbox(sandboxName);
+    if (currentEntry?.customPolicyTransition) {
+      const transition = currentEntry.customPolicyTransition;
+      console.error(
+        `  Cannot create a snapshot while custom policy '${transition.operation} ${transition.name}' needs repair.`,
+      );
+      console.error(`  Re-run that policy command on '${sandboxName}' first.`);
+      snapshotExit(1);
+    }
+    if (currentEntry?.baselineExclusionTransition) {
+      const transition = currentEntry.baselineExclusionTransition;
+      console.error(
+        `  Cannot create a snapshot while baseline policy '${transition.operation} ${transition.exclusion.key}' needs repair.`,
+      );
+      console.error(`  Re-run that policy command on '${sandboxName}' first.`);
+      snapshotExit(1);
+    }
     // Keep the shields check and backup in one timer-bound interval. At the
     // absolute deadline, auto-restore closes the outer lifecycle gate and waits
     // for this exact owner to finish before changing policy or config.
@@ -1048,7 +1071,33 @@ async function runSnapshotRestoreUnlocked(
   );
   const isCrossSandboxRestore = targetSandbox !== sandboxName;
   let crossSandboxRestoreAgent: string | null = null;
+  const sourceEntry = registry.getSandbox(sandboxName);
+  if (sourceEntry?.customPolicyTransition) {
+    const transition = sourceEntry.customPolicyTransition;
+    console.error(
+      `  Cannot restore a snapshot while source '${sandboxName}' has custom policy '${transition.operation} ${transition.name}' pending.`,
+    );
+    console.error(`  Re-run that policy command on '${sandboxName}' first.`);
+    snapshotExit(1);
+  }
+  if (sourceEntry?.baselineExclusionTransition) {
+    const transition = sourceEntry.baselineExclusionTransition;
+    console.error(
+      `  Cannot restore a snapshot while source '${sandboxName}' has baseline policy '${transition.operation} ${transition.exclusion.key}' pending.`,
+    );
+    console.error(`  Re-run that policy command on '${sandboxName}' first.`);
+    snapshotExit(1);
+  }
   const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
+  const restoreTargetEntry = isCrossSandboxRestore ? targetEntry : sourceEntry;
+  if (restoreTargetEntry?.customPolicyTransition) {
+    const transition = restoreTargetEntry.customPolicyTransition;
+    console.error(
+      `  Cannot replace destination '${targetSandbox}' while custom policy '${transition.operation} ${transition.name}' needs repair.`,
+    );
+    console.error(`  Re-run that policy command on '${targetSandbox}' before restoring into it.`);
+    snapshotExit(1);
+  }
   const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
   if (targetEntry?.baselineExclusionTransition) {
     const transition = targetEntry.baselineExclusionTransition;

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
   runBackup: vi.fn(),
@@ -33,6 +33,7 @@ vi.mock("./rebuild-shields-phase", () => ({
   runRebuildShieldsPhase: phaseMocks.runShields,
 }));
 
+import * as registry from "../../state/registry";
 import { rebuildSandbox } from "./rebuild";
 
 describe("rebuild shields relock guard", () => {
@@ -84,6 +85,10 @@ describe("rebuild shields relock guard", () => {
     });
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("relocks shields when an unexpected rebuild phase exception escapes after auto-unlock (#6245)", async () => {
     await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
       "unexpected backup exception",
@@ -114,23 +119,25 @@ describe("rebuild shields relock guard", () => {
 
   it("blocks a pending baseline transition before shields, backup, or destroy phases begin (#7194)", async () => {
     const bail = vi.fn();
-    phaseMocks.runPreflight.mockResolvedValue({
-      sandboxEntry: {
-        name: "alpha",
-        customPolicies: [],
-        baselineExclusionTransition: {
-          id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
-          operation: "restore",
-          exclusion: {
-            version: 1,
-            agent: "openclaw",
-            key: "agents.openclaw.default",
-            digest: "a".repeat(64),
-          },
-          startedAt: "2026-07-19T00:00:00.000Z",
-          targetLiveDigest: "b".repeat(64),
+    const pendingSandbox = {
+      name: "alpha",
+      customPolicies: [],
+      baselineExclusionTransition: {
+        id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
+        operation: "restore" as const,
+        exclusion: {
+          version: 1 as const,
+          agent: "openclaw",
+          key: "agents.openclaw.default",
+          digest: "a".repeat(64),
         },
+        startedAt: "2026-07-19T00:00:00.000Z",
+        targetLiveDigest: "b".repeat(64),
       },
+    };
+    vi.spyOn(registry, "getSandbox").mockReturnValue(pendingSandbox);
+    phaseMocks.runPreflight.mockResolvedValue({
+      sandboxEntry: pendingSandbox,
       targetConfig: { durableConfig: { webSearchConfig: null } },
       recreateOptions: {
         observabilityEnabled: false,

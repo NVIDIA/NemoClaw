@@ -20,6 +20,112 @@ afterEach(() => {
   }
 });
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
+  const pendingCustomPolicy = {
+    version: 1 as const,
+    id: "123e4567-e89b-42d3-a456-426614174090",
+    operation: "remove" as const,
+    name: "private-api",
+    previous: {
+      name: "private-api",
+      content: "network_policies:\n  private_api: {}\n",
+    },
+    desired: null,
+    startedAt: "2026-08-06T12:02:00.000Z",
+  };
+  const pendingBaselinePolicy = {
+    id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
+    operation: "restore" as const,
+    exclusion: {
+      version: 1 as const,
+      agent: "openclaw",
+      key: "agents.openclaw.default",
+      digest: "a".repeat(64),
+    },
+    startedAt: "2026-08-06T12:02:00.000Z",
+    targetLiveDigest: "b".repeat(64),
+  };
+
+  it("blocks snapshot creation before backup when a custom policy needs repair", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      customPolicyTransition: pendingCustomPolicy,
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks snapshot creation before backup when a baseline policy needs repair", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      baselineExclusionTransition: pendingBaselinePolicy,
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks self-restore before state mutation when a custom policy needs repair", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      customPolicyTransition: pendingCustomPolicy,
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks self-restore before state mutation when a baseline policy needs repair", async () => {
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      baselineExclusionTransition: pendingBaselinePolicy,
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks cross-restore before replacing a destination with pending custom policy state", async () => {
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "beta"
+        ? {
+            name: "beta",
+            agent: "openclaw",
+            customPolicyTransition: pendingCustomPolicy,
+          }
+        : name === "alpha"
+          ? { name: "alpha", agent: "openclaw" }
+          : null,
+    );
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", force: true, yes: true }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
   it("holds the per-sandbox mutation lock across snapshot creation", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-create-lock-"));
     tempHomes.push(tempHome);
@@ -672,9 +778,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         force: true,
         yes: true,
       }),
-    ).rejects.toThrow(
-      "Cannot clone baseline policy while 'restore agents.openclaw.default' needs repair",
-    );
+    ).rejects.toMatchObject({ exitCode: 1 });
 
     expect(f.lifecycleMock.events).not.toContain("delete");
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();

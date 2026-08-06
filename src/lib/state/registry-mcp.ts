@@ -8,6 +8,9 @@ import {
   normalizeTrustedPrivateHost,
 } from "../security/trusted-private-endpoint";
 
+/** Durable source marker reserving generated MCP policy ownership for its lifecycle. */
+export const MCP_BRIDGE_POLICY_SOURCE = "generated:nemoclaw-mcp-bridge";
+
 export interface McpBridgeEntry {
   server: string;
   agent: string;

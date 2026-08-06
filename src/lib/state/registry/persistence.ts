@@ -16,6 +16,7 @@ import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeCustomPolicyTransition,
   parseSandboxRegistryEntries,
   retainedDefaultSandbox,
 } from "../registry-normalization";
@@ -119,6 +120,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     entry.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
+  const customPolicyTransition = normalizeCustomPolicyTransition(entry.customPolicyTransition);
   const {
     messaging: _messaging,
     workload: _workload,
@@ -127,6 +129,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
+    customPolicyTransition: _customPolicyTransition,
     ...rest
   } = entry;
   return {
@@ -138,6 +141,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
+    ...(customPolicyTransition ? { customPolicyTransition } : {}),
   };
 }
 
@@ -173,6 +177,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     durable.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(durable.customPolicies);
+  const customPolicyTransition = normalizeCustomPolicyTransition(durable.customPolicyTransition);
   const {
     messaging: _messaging,
     workload: _workload,
@@ -181,6 +186,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
+    customPolicyTransition: _customPolicyTransition,
     ...rest
   } = durable;
   return {
@@ -193,5 +199,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
+    ...(customPolicyTransition ? { customPolicyTransition } : {}),
   };
 }

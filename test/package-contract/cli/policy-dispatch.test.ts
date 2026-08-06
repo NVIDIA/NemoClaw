@@ -24,6 +24,8 @@ type PolicyCall = {
   sandboxName?: string;
   presetName?: string;
   path?: string;
+  dryRun?: boolean;
+  externalSource?: boolean;
 };
 
 describe("compiled CLI policy contracts", () => {
@@ -135,6 +137,21 @@ const calls = [];
 policies.selectFromList = async () => null;
 policies.listPresets = () => [];
 policies.getAppliedPresets = () => [];
+policies.repairPendingCustomPolicyApply = (sandboxName, options) => {
+  calls.push({
+    type: "repair",
+    sandboxName,
+    dryRun: Boolean(options && options.dryRun),
+    externalSource: Boolean(options && options.externalSource),
+  });
+  const state = process.env.NEMOCLAW_TEST_POLICY_REPAIR || "none";
+  if (state !== "none" && (!options || options.dryRun || !options.externalSource)) {
+    return { state: "blocked" };
+  }
+  return state === "completed"
+    ? { state, presetName: "b-pending" }
+    : { state };
+};
 policies.loadPresetFromFile = (p) => {
   calls.push({ type: "load", path: p });
   if (String(p).includes("bad")) return null;
@@ -142,6 +159,13 @@ policies.loadPresetFromFile = (p) => {
   const name = m ? m[1] : "unknown";
   const content = require("fs").readFileSync(p, "utf-8");
   return { presetName: name, content };
+};
+policies.prepareTrustedPrivatePolicyPresets = async (loaded) => {
+  calls.push({ type: "prepare" });
+  if (process.env.NEMOCLAW_TEST_POLICY_PREPARE_MUST_NOT_RUN === "1") {
+    throw new Error("external policy preparation must not run");
+  }
+  return loaded;
 };
 policies.applyPresetContent = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });
@@ -158,9 +182,10 @@ credentials.prompt = async (message) => {
 registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
-Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
+process.on("exit", () => {
   process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
 });
+require(${CLI_PATH}).mainPromise;
 `;
       fs.writeFileSync(scriptPath, script);
       return spawnSync(process.execPath, [scriptPath], {
@@ -187,6 +212,71 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
         presetName: "custom-rule",
       });
       expect(calls.some((c) => c.type === "prompt")).toBeFalsy();
+    });
+
+    it("repairs a pending apply before reading a moved file or resolving private DNS", () => {
+      const result = runPolicyAddExternal(
+        [
+          "--from-file",
+          "/moved/b-pending.yaml",
+          "--trusted-private-host",
+          "unresolved.internal",
+          "--yes",
+        ],
+        {
+          NEMOCLAW_TEST_POLICY_REPAIR: "completed",
+          NEMOCLAW_TEST_POLICY_PREPARE_MUST_NOT_RUN: "1",
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "repair",
+        sandboxName: "test-sandbox",
+        dryRun: false,
+        externalSource: true,
+      });
+      expect(calls.some((call) => call.type === "load")).toBe(false);
+      expect(calls.some((call) => call.type === "prepare")).toBe(false);
+      expect(calls.some((call) => call.type === "apply")).toBe(false);
+    });
+
+    it("blocks pending apply repair under --dry-run without reading the source file", () => {
+      const result = runPolicyAddExternal(["--from-file", "/moved/b-pending.yaml", "--dry-run"], {
+        NEMOCLAW_TEST_POLICY_REPAIR: "blocked",
+        NEMOCLAW_TEST_POLICY_PREPARE_MUST_NOT_RUN: "1",
+      });
+
+      expect(result.status).not.toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "repair",
+        sandboxName: "test-sandbox",
+        dryRun: true,
+        externalSource: true,
+      });
+      expect(calls.some((call) => call.type === "load")).toBe(false);
+      expect(calls.some((call) => call.type === "prepare")).toBe(false);
+      expect(calls.some((call) => call.type === "apply")).toBe(false);
+    });
+
+    it("does not consume a built-in add while an external apply needs repair", () => {
+      const result = runPolicyAddExternal(["pypi", "--yes"], {
+        NEMOCLAW_TEST_POLICY_REPAIR: "completed",
+      });
+
+      expect(result.status).not.toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "repair",
+        sandboxName: "test-sandbox",
+        dryRun: false,
+        externalSource: false,
+      });
+      expect(calls.some((call) => call.type === "load")).toBe(false);
+      expect(calls.some((call) => call.type === "prepare")).toBe(false);
+      expect(calls.some((call) => call.type === "apply")).toBe(false);
     });
 
     it("exits non-zero when --from-file points to an unreadable preset", () => {
@@ -263,6 +353,8 @@ network_policies:
       const result = runPolicyAddExternal(["--from-file", "a.yaml", "--from-dir", "b"]);
       expect(result.status).not.toBe(0);
       expect(result.stderr).toMatch(/cannot also be provided/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls.some((call) => call.type === "repair")).toBe(false);
     });
 
     it("errors when --from-file is missing its path argument", () => {
@@ -272,7 +364,10 @@ network_policies:
       expect(result.stderr).toMatch(/value|argument|path/);
     });
 
-    it("applies every preset in --from-dir in sorted order and aborts on the first failure", () => {
+    it.each([
+      ["ambient trusted-host pool", []],
+      ["command-scoped trusted host", ["--trusted-private-host", "corp.internal"]],
+    ])("prevalidates every --from-dir file before applying any with %s", (_label, trustArgs) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-"));
       const endpointBlock = [
         "network_policies:",
@@ -295,15 +390,44 @@ network_policies:
         path.join(dir, "c-skipped.yaml"),
         "preset:\n  name: c-skipped\nnetwork_policies: {}\n",
       );
-      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
+      const result = runPolicyAddExternal(["--from-dir", dir, "--yes", ...trustArgs]);
       expect(result.status).not.toBe(0);
-      // a-good succeeded (visible as the [a-good] scope log), b-bad triggered abort,
-      // c-skipped was never loaded because the loop stopped at b-bad.
-      expect(result.stdout).toMatch(/\[a-good\]/);
-      expect(result.stdout).toMatch(/Effective egress that would be opened/);
-      expect(result.stdout).toMatch(/- a-good\.example\.com:443/);
-      expect(result.stdout).not.toMatch(/\[c-skipped\]/);
-      expect(result.stderr).toMatch(/Aborting --from-dir/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls.filter((call) => call.type === "load").map((call) => call.path)).toEqual([
+        path.join(dir, "a-good.yaml"),
+        path.join(dir, "b-bad.yaml"),
+      ]);
+      expect(calls.some((call) => call.type === "apply")).toBe(false);
+      expect(result.stdout).not.toMatch(/\[a-good\]/);
+    });
+
+    it("repairs a pending later directory entry before loading the batch again", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-repair-"));
+      fs.writeFileSync(
+        path.join(dir, "a-applied.yaml"),
+        "preset:\n  name: a-applied\nnetwork_policies: {}\n",
+      );
+      fs.writeFileSync(
+        path.join(dir, "b-pending.yaml"),
+        "preset:\n  name: b-pending\nnetwork_policies: {}\n",
+      );
+
+      const result = runPolicyAddExternal(["--from-dir", dir, "--yes"], {
+        NEMOCLAW_TEST_POLICY_REPAIR: "completed",
+        NEMOCLAW_TEST_POLICY_PREPARE_MUST_NOT_RUN: "1",
+      });
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "repair",
+        sandboxName: "test-sandbox",
+        dryRun: false,
+        externalSource: true,
+      });
+      expect(calls.some((call) => call.type === "load")).toBe(false);
+      expect(calls.some((call) => call.type === "prepare")).toBe(false);
+      expect(calls.some((call) => call.type === "apply")).toBe(false);
     });
 
     it("skips hidden dotfile YAML presets for --from-dir", () => {

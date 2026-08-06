@@ -27,7 +27,7 @@ import {
 } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
-  blockRebuildOnPendingBaselineTransition,
+  blockRebuildOnPendingPolicyTransition,
   revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
@@ -148,7 +148,7 @@ async function rebuildSandboxUnlocked(
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
-    if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
+    if (blockRebuildOnPendingPolicyTransition(sandboxEntry, sandboxName, bail)) return;
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(loadRegistry()))
       : liveState.staleRegistrySnapshot;

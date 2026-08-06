@@ -3,7 +3,7 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 
-export const MCP_BRIDGE_POLICY_SOURCE = "generated:nemoclaw-mcp-bridge";
+export { MCP_BRIDGE_POLICY_SOURCE } from "../../state/registry-mcp";
 export type McpBridgeErrorReasonCode = "rejected" | "unresolved";
 export class McpBridgeError extends Error {
   constructor(

@@ -309,13 +309,33 @@ export function getRebuildSandboxEntryOrBail(
   return sb;
 }
 
-/** Keep the pending baseline-policy transaction guard identical at every rebuild boundary. */
-export function blockRebuildOnPendingBaselineTransition(
+/** Keep pending cross-system policy transaction guards identical at every rebuild boundary. */
+export function blockRebuildOnPendingPolicyTransition(
   sandboxEntry: RebuildSandboxEntry,
   sandboxName: string,
   bail: RebuildBail,
 ): boolean {
-  const transition = sandboxEntry.baselineExclusionTransition;
+  // Re-read the row at every boundary. The delete-edge call runs after awaited
+  // MCP preparation, so its original preflight snapshot is no longer current.
+  const currentEntry =
+    (registry.getSandbox(sandboxName) as RebuildSandboxEntry | null) ?? sandboxEntry;
+  const customTransition = currentEntry.customPolicyTransition;
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `${CLI_NAME} ${sandboxName} policy remove ${customTransition.name}`
+        : "policy add with --from-file or --from-dir";
+    printRebuildPreflightFailure(
+      `custom policy ${customTransition.operation} for '${customTransition.name}' needs repair before rebuild.`,
+      `Re-run: ${retry}`,
+      `Pending custom policy ${customTransition.operation} for '${customTransition.name}' blocks rebuild.`,
+      bail,
+      1,
+    );
+    return true;
+  }
+
+  const transition = currentEntry.baselineExclusionTransition;
   if (!transition) return false;
 
   const key = transition.exclusion.key;

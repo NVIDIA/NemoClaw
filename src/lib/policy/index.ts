@@ -28,6 +28,7 @@ import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import { ROOT, run, runCapture } from "../runner";
+import type { ShieldsPolicyMutationAuthority } from "../shields/transition-lock";
 import * as registry from "../state/registry";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
 import {
@@ -100,6 +101,33 @@ type SetupPolicyPresetSupportOptions = {
   webSearchSupported?: boolean | null;
   agent?: string | null;
 };
+
+type ShieldsPolicyMutationOptions = {
+  /** Internal runtime capability for lifecycle-owned policy restoration. */
+  shieldsPolicyMutationAuthority?: ShieldsPolicyMutationAuthority;
+};
+
+function assertInternalShieldsPolicyMutationAllowed(
+  sandboxName: string,
+  authority?: ShieldsPolicyMutationAuthority,
+): void {
+  const { assertShieldsPolicyMutationAllowed } =
+    require("../shields/transition-lock") as typeof import("../shields/transition-lock");
+  assertShieldsPolicyMutationAllowed(sandboxName, authority);
+}
+
+function shieldsPolicyMutationBlocked(
+  sandboxName: string,
+  authority?: ShieldsPolicyMutationAuthority,
+): boolean {
+  try {
+    assertInternalShieldsPolicyMutationAllowed(sandboxName, authority);
+    return false;
+  } catch (error) {
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    return true;
+  }
+}
 
 /**
  * Enumerate every built-in preset and return `{ file, name, description }`
@@ -778,6 +806,114 @@ function removePresetFromPolicy(
   return YAML.stringify(current);
 }
 
+function removeCustomPreset(
+  sandboxName: string,
+  presetName: string,
+  options: { nonFatal?: boolean },
+): boolean {
+  return withRecordedSandboxGateway(sandboxName, (gatewayName) => {
+    if (registry.getBaselineExclusionTransition(sandboxName)) {
+      console.error(
+        `  Cannot remove custom policy '${presetName}' while a baseline policy transaction needs repair. Re-run that baseline policy command first.`,
+      );
+      return false;
+    }
+    const recovery = reconcileCustomPolicyTransitionForRetry(
+      sandboxName,
+      "remove",
+      presetName,
+      null,
+      gatewayName,
+    );
+    if (!recovery) return false;
+    if (recovery.state === "completed") {
+      console.log(`  Removed preset: ${presetName}`);
+      return true;
+    }
+
+    const previous = registry
+      .getCustomPolicies(sandboxName)
+      .find((entry) => entry.name === presetName);
+    if (!previous) {
+      console.error(`  Custom preset '${presetName}' is not recorded for '${sandboxName}'.`);
+      return false;
+    }
+    if (
+      previous.sourcePath === registry.MCP_BRIDGE_POLICY_SOURCE ||
+      previous.pendingContent !== undefined
+    ) {
+      console.error(
+        `  Generated policy '${presetName}' is owned by the managed MCP lifecycle and cannot be removed as a custom preset.`,
+      );
+      return false;
+    }
+    const transition: registry.CustomPolicyTransition = {
+      version: 1,
+      id: randomUUID(),
+      operation: "remove",
+      name: presetName,
+      previous: recovery.state === "retry" ? recovery.transition.previous : previous,
+      desired: null,
+      startedAt: new Date().toISOString(),
+    };
+    if (!transition.previous) {
+      console.error(`  Pending custom policy removal for '${presetName}' has no durable source.`);
+      return false;
+    }
+    if (!assertCustomPolicyHasExclusiveKeys(sandboxName, transition)) return false;
+
+    const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+    if (!currentPolicy) {
+      console.error(`  Could not read the current policy for sandbox '${sandboxName}'.`);
+      return false;
+    }
+    const live = inspectCustomPolicyTransitionLiveState(currentPolicy, transition);
+    if (!live?.sourceMatches) {
+      console.error(
+        `  Live policy does not exactly match the recorded content owned by '${presetName}'; refusing to remove its network policy keys.`,
+      );
+      return false;
+    }
+    const endpoints = getPresetEndpoints(transition.previous.content);
+    if (endpoints.length > 0) {
+      console.log(`  Narrowing sandbox egress — removing: ${endpoints.join(", ")}`);
+    }
+
+    let updatedPolicy: string;
+    try {
+      updatedPolicy = buildCustomPolicyTargetDocument(currentPolicy, transition.previous, null);
+    } catch (error) {
+      console.error(
+        `  Could not construct the exact removal for '${presetName}': ${error instanceof Error ? error.message : String(error)}.`,
+      );
+      return false;
+    }
+    if (
+      !registryTransitionStep(
+        () => registry.beginCustomPolicyTransition(sandboxName, transition),
+        `Could not record the pending custom policy removal for '${presetName}'; no live policy changes were made.`,
+      )
+    ) {
+      return false;
+    }
+    const policyChanged = !policyDocumentsMatch(currentPolicy, updatedPolicy);
+    const pushSucceeded =
+      !policyChanged ||
+      pushPolicyYaml(sandboxName, updatedPolicy, {
+        nonFatal: true,
+        gatewayName,
+      });
+    const settled = settleCustomPolicyTransitionAfterPush(
+      sandboxName,
+      transition,
+      pushSucceeded,
+      gatewayName,
+    );
+    if (settled) console.log(`  Removed preset: ${presetName}`);
+    return settled;
+  });
+}
+
 /**
  * Remove a previously-applied preset from the running sandbox policy and
  * delete its name from the registry entry. Resolves the preset's content
@@ -789,7 +925,11 @@ function removePresetFromPolicy(
 function removePreset(
   sandboxName: string,
   presetName: string,
-  options: { nonFatal?: boolean; skipRegistryUpdate?: boolean } = {},
+  options: {
+    nonFatal?: boolean;
+    shieldsPolicyMutationAuthority?: ShieldsPolicyMutationAuthority;
+    skipRegistryUpdate?: boolean;
+  } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -799,6 +939,9 @@ function removePreset(
       `Invalid or truncated sandbox name: '${sandboxName}'. ` +
         `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
     );
+  }
+  if (shieldsPolicyMutationBlocked(sandboxName, options.shieldsPolicyMutationAuthority)) {
+    return false;
   }
 
   // Resolve preset content: built-in first, then custom presets persisted
@@ -823,6 +966,13 @@ function removePreset(
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
+    return false;
+  }
+
+  if (isCustom && !options.skipRegistryUpdate) {
+    return removeCustomPreset(sandboxName, presetName, options);
+  }
+  if (customPolicyMutationBlockedByAnotherJournal(sandboxName, `remove '${presetName}'`)) {
     return false;
   }
 
@@ -879,11 +1029,14 @@ function removePreset(
 
   const sandbox = options.skipRegistryUpdate ? undefined : registry.getSandbox(sandboxName);
   if (sandbox) {
-    if (isCustom) {
-      registry.removeCustomPolicyByName(sandboxName, presetName);
-    } else {
+    if (!isCustom) {
       const pols = (sandbox.policies || []).filter((p: string) => p !== presetName);
-      registry.updateSandbox(sandboxName, { policies: pols });
+      if (!registry.updateSandbox(sandboxName, { policies: pols })) {
+        console.error(
+          `  Preset '${presetName}' was removed from the gateway, but its registry attribution could not be updated.`,
+        );
+        return false;
+      }
     }
   }
 
@@ -1035,6 +1188,406 @@ function withRecordedSandboxGateway(
   // Never rewrite process.env here: two sandbox operations may run in the
   // same CLI process. Every live read/write receives this binding explicitly.
   return operation(gatewayName);
+}
+
+type CustomPolicyTransitionRecovery =
+  | { state: "none" }
+  | { state: "completed" | "retry"; transition: registry.CustomPolicyTransition };
+
+type CustomPolicyLiveState = {
+  sourceMatches: boolean;
+  targetMatches: boolean;
+};
+
+function customPolicyEntryNetworkPolicies(entry: registry.CustomPolicyEntry | null): PolicyObject {
+  if (!entry) return {};
+  const policies = parseNetworkPolicies(entry.content);
+  if (!policies || (Object.keys(policies).length > 0 && !isPresetPolicyMap(policies))) {
+    throw new Error(`registered custom policy '${entry.name}' has invalid policy content`);
+  }
+  return policies;
+}
+
+function customPolicyEntryIntentMatches(
+  left: registry.CustomPolicyEntry | null,
+  right: registry.CustomPolicyEntry | null,
+): boolean {
+  if (!left || !right) return left === right;
+  const { appliedAt: _leftAppliedAt, ...leftIntent } = left;
+  const { appliedAt: _rightAppliedAt, ...rightIntent } = right;
+  return isDeepStrictEqual(leftIntent, rightIntent);
+}
+
+function inspectCustomPolicyTransitionLiveState(
+  currentPolicy: string,
+  transition: registry.CustomPolicyTransition,
+): CustomPolicyLiveState | null {
+  try {
+    const document = YAML.parse(currentPolicy);
+    if (!isPolicyDocument(document)) return null;
+    const livePolicies =
+      document.network_policies === undefined || document.network_policies === null
+        ? {}
+        : isPolicyObject(document.network_policies)
+          ? document.network_policies
+          : null;
+    if (!livePolicies) return null;
+    const sourcePolicies = customPolicyEntryNetworkPolicies(transition.previous);
+    const targetPolicies = customPolicyEntryNetworkPolicies(transition.desired);
+    const keys = new Set([...Object.keys(sourcePolicies), ...Object.keys(targetPolicies)]);
+    // Empty receipts change no live egress authority. Both states match so
+    // target-first settlement commits only registry intent without a policy write.
+    if (keys.size === 0) return { sourceMatches: true, targetMatches: true };
+    const matches = (expected: PolicyObject): boolean =>
+      [...keys].every((key) =>
+        Object.prototype.hasOwnProperty.call(expected, key)
+          ? Object.prototype.hasOwnProperty.call(livePolicies, key) &&
+            isDeepStrictEqual(livePolicies[key], expected[key])
+          : !Object.prototype.hasOwnProperty.call(livePolicies, key),
+      );
+    return {
+      sourceMatches: matches(sourcePolicies),
+      targetMatches: matches(targetPolicies),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function customPolicyRetryHint(transition: registry.CustomPolicyTransition): string {
+  return transition.operation === "remove"
+    ? `policy remove ${transition.name}`
+    : "policy add with --from-file or --from-dir";
+}
+
+/**
+ * Repair only the exact custom-policy operation the operator retried. A
+ * different mutation must not use a stale preview to finish or replace an
+ * interrupted transaction.
+ */
+function reconcileCustomPolicyTransitionForRetry(
+  sandboxName: string,
+  operation: registry.CustomPolicyTransitionOperation,
+  presetName: string,
+  requestedDesired: registry.CustomPolicyEntry | null,
+  gatewayName: string,
+): CustomPolicyTransitionRecovery | null {
+  const transition = registry.getCustomPolicyTransition(sandboxName);
+  if (!transition) return { state: "none" };
+  const sameRequest =
+    transition.operation === operation &&
+    transition.name === presetName &&
+    (operation === "remove" ||
+      customPolicyEntryIntentMatches(transition.desired, requestedDesired));
+  if (!sameRequest) {
+    console.error(
+      `  Custom policy repair for '${transition.name}' is still pending. Re-run ${customPolicyRetryHint(transition)} before changing another policy.`,
+    );
+    return null;
+  }
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) {
+    console.error(
+      `  Could not inspect the live policy needed to repair the pending '${transition.operation}' for '${transition.name}'. The journal remains pending and lifecycle operations are blocked.`,
+    );
+    return null;
+  }
+  const live = inspectCustomPolicyTransitionLiveState(currentPolicy, transition);
+  if (!live) {
+    console.error(
+      `  Live custom policy '${transition.name}' could not be classified safely. The journal was preserved; inspect the live policy before retrying lifecycle operations.`,
+    );
+    return null;
+  }
+  if (live.targetMatches) {
+    if (
+      !registryTransitionStep(
+        () => registry.commitCustomPolicyTransition(sandboxName, transition.id),
+        `The live custom policy reached its pending target for '${transition.name}', but the durable journal could not be finalized. Re-run ${customPolicyRetryHint(transition)}; lifecycle operations remain blocked.`,
+      )
+    ) {
+      return null;
+    }
+    return { state: "completed", transition };
+  }
+  if (live.sourceMatches) {
+    if (
+      !registryTransitionStep(
+        () => registry.clearCustomPolicyTransition(sandboxName, transition.id),
+        `The live custom policy remains at the pre-${transition.operation} state for '${transition.name}', but the durable journal could not be rolled back. Re-run ${customPolicyRetryHint(transition)}; lifecycle operations remain blocked.`,
+      )
+    ) {
+      return null;
+    }
+    return { state: "retry", transition };
+  }
+  console.error(
+    `  Live custom policy '${transition.name}' matches neither side of the pending '${transition.operation}' transaction. The journal was preserved; inspect the live policy before retrying lifecycle operations.`,
+  );
+  return null;
+}
+
+function findOtherAppliedPolicyOwnerForKey(
+  sandboxName: string,
+  key: string,
+  ownerName: string,
+): string | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  for (const presetName of sandbox?.policies ?? []) {
+    if (presetName === ownerName) continue;
+    const content = loadPresetForSandbox(sandboxName, presetName);
+    if (content && parsePresetPolicyKeys(content).includes(key)) return presetName;
+  }
+  for (const custom of registry.getCustomPolicies(sandboxName)) {
+    if (custom.name === ownerName) continue;
+    const keys = parsePresetPolicyKeysForOwnership(custom.content);
+    if (keys === null) {
+      throw new Error(`registered custom policy '${custom.name}' has invalid policy content`);
+    }
+    if (keys.includes(key)) return custom.name;
+  }
+  return null;
+}
+
+function assertCustomPolicyHasExclusiveKeys(
+  sandboxName: string,
+  transition: registry.CustomPolicyTransition,
+): boolean {
+  let keys: Set<string>;
+  try {
+    keys = new Set([
+      ...Object.keys(customPolicyEntryNetworkPolicies(transition.previous)),
+      ...Object.keys(customPolicyEntryNetworkPolicies(transition.desired)),
+    ]);
+    for (const key of keys) {
+      const owner = findOtherAppliedPolicyOwnerForKey(sandboxName, key, transition.name);
+      if (owner) {
+        console.error(
+          `  Network policy key '${key}' is also attributed to '${owner}'; refusing to mutate '${transition.name}' until ownership is unambiguous.`,
+        );
+        return false;
+      }
+    }
+  } catch (error) {
+    console.error(
+      `  Could not verify exact network policy ownership for '${transition.name}': ${error instanceof Error ? error.message : String(error)}.`,
+    );
+    return false;
+  }
+  return true;
+}
+
+function buildCustomPolicyTargetDocument(
+  currentPolicy: string,
+  previous: registry.CustomPolicyEntry | null,
+  desired: registry.CustomPolicyEntry | null,
+): string {
+  const previousPolicies = customPolicyEntryNetworkPolicies(previous);
+  const withoutPrevious =
+    previous && Object.keys(previousPolicies).length > 0
+      ? removePresetFromPolicy(currentPolicy, extractPresetEntries(previous.content))
+      : currentPolicy;
+  const desiredPolicies = customPolicyEntryNetworkPolicies(desired);
+  return desired && Object.keys(desiredPolicies).length > 0
+    ? mergePresetIntoPolicy(withoutPrevious, extractPresetEntries(desired.content) ?? "")
+    : withoutPrevious;
+}
+
+function settleCustomPolicyTransitionAfterPush(
+  sandboxName: string,
+  transition: registry.CustomPolicyTransition,
+  pushSucceeded: boolean,
+  gatewayName: string,
+  options: { preserveSourceOnFailedPush?: boolean } = {},
+): boolean {
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) {
+    console.error(
+      `  Could not verify the live '${transition.operation}' result for '${transition.name}'. The durable journal was preserved and lifecycle operations remain blocked.`,
+    );
+    return false;
+  }
+  const live = inspectCustomPolicyTransitionLiveState(currentPolicy, transition);
+  if (!live) {
+    console.error(
+      `  Live custom policy '${transition.name}' could not be classified after the '${transition.operation}' attempt. The durable journal was preserved.`,
+    );
+    return false;
+  }
+  if (live.targetMatches) {
+    return registryTransitionStep(
+      () => registry.commitCustomPolicyTransition(sandboxName, transition.id),
+      `The live custom policy was updated for '${transition.name}', but the durable journal could not be finalized. Re-run ${customPolicyRetryHint(transition)}; lifecycle operations remain blocked.`,
+    );
+  }
+  if (!pushSucceeded && live.sourceMatches) {
+    if (options.preserveSourceOnFailedPush) {
+      console.error(
+        `  The live custom policy remains at the pre-${transition.operation} state for '${transition.name}'. The durable journal was preserved; re-run ${customPolicyRetryHint(transition)}.`,
+      );
+      return false;
+    }
+    registryTransitionStep(
+      () => registry.clearCustomPolicyTransition(sandboxName, transition.id),
+      `Failed to roll back the pending custom policy '${transition.operation}' for '${transition.name}'. The durable journal was preserved; re-run ${customPolicyRetryHint(transition)}.`,
+    );
+    return false;
+  }
+  const state = live.sourceMatches ? "the pre-mutation state" : "an unexpected third state";
+  console.error(
+    `  Live custom policy '${transition.name}' is in ${state} after the '${transition.operation}' attempt. The durable journal was preserved; re-run ${customPolicyRetryHint(transition)} before lifecycle operations.`,
+  );
+  return false;
+}
+
+type PendingCustomPolicyApplyRepairResult =
+  | { state: "none" | "blocked" }
+  | { state: "completed"; presetName: string };
+
+/** Resume a pending custom apply only for a parsed, non-dry external policy add. */
+function repairPendingCustomPolicyApply(
+  sandboxName: string,
+  options: { dryRun: boolean; externalSource: boolean },
+): PendingCustomPolicyApplyRepairResult {
+  const transition = registry.getCustomPolicyTransition(sandboxName);
+  if (!transition) return { state: "none" };
+  if (transition.operation !== "apply") {
+    console.error(
+      `  Custom policy repair for '${transition.name}' is still pending. Re-run ${customPolicyRetryHint(transition)} before adding another policy.`,
+    );
+    return { state: "blocked" };
+  }
+  if (!options.externalSource) {
+    console.error(
+      `  Custom policy repair for '${transition.name}' is still pending. Re-run policy add with --from-file or --from-dir to repair the interrupted external policy add before adding a built-in policy.`,
+    );
+    return { state: "blocked" };
+  }
+  if (options.dryRun) {
+    console.error(
+      `  --dry-run cannot repair the pending custom policy apply for '${transition.name}'. Re-run policy add without --dry-run to reconcile live and durable state.`,
+    );
+    return { state: "blocked" };
+  }
+  if (shieldsPolicyMutationBlocked(sandboxName)) {
+    return { state: "blocked" };
+  }
+  if (registry.getBaselineExclusionTransition(sandboxName)) {
+    console.error(
+      `  Cannot repair custom policy '${transition.name}' while a baseline policy transaction also needs repair. Inspect the sandbox registry before changing live policy.`,
+    );
+    return { state: "blocked" };
+  }
+
+  let result: PendingCustomPolicyApplyRepairResult = { state: "blocked" };
+  withRecordedSandboxGateway(sandboxName, (gatewayName) => {
+    const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+    if (!currentPolicy) {
+      console.error(
+        `  Could not inspect the live policy needed to repair the pending 'apply' for '${transition.name}'. The journal remains pending and lifecycle operations are blocked.`,
+      );
+      return false;
+    }
+    const live = inspectCustomPolicyTransitionLiveState(currentPolicy, transition);
+    if (!live) {
+      console.error(
+        `  Live custom policy '${transition.name}' could not be classified safely. The journal was preserved; inspect the live policy before retrying lifecycle operations.`,
+      );
+      return false;
+    }
+    if (live.targetMatches) {
+      const committed = registryTransitionStep(
+        () => registry.commitCustomPolicyTransition(sandboxName, transition.id),
+        `The live custom policy reached its pending target for '${transition.name}', but the durable journal could not be finalized. Re-run the policy add command; lifecycle operations remain blocked.`,
+      );
+      if (!committed) return false;
+      console.log(`  Applied preset: ${transition.name}`);
+      result = { state: "completed", presetName: transition.name };
+      return true;
+    }
+    if (!live.sourceMatches) {
+      console.error(
+        `  Live custom policy '${transition.name}' matches neither side of the pending 'apply' transaction. The journal was preserved; inspect the live policy before retrying lifecycle operations.`,
+      );
+      return false;
+    }
+    if (!transition.desired) {
+      console.error(
+        `  Pending custom policy apply for '${transition.name}' has no durable target. The journal was preserved.`,
+      );
+      return false;
+    }
+    if (!assertCustomPolicyHasExclusiveKeys(sandboxName, transition)) return false;
+
+    let updatedPolicy: string;
+    try {
+      updatedPolicy = buildCustomPolicyTargetDocument(
+        currentPolicy,
+        transition.previous,
+        transition.desired,
+      );
+    } catch (error) {
+      console.error(
+        `  Could not construct the pending custom policy target for '${transition.name}': ${error instanceof Error ? error.message : String(error)}. The journal was preserved.`,
+      );
+      return false;
+    }
+    const pushSucceeded = pushPolicyYaml(sandboxName, updatedPolicy, {
+      nonFatal: true,
+      gatewayName,
+    });
+    const settled = settleCustomPolicyTransitionAfterPush(
+      sandboxName,
+      transition,
+      pushSucceeded,
+      gatewayName,
+      { preserveSourceOnFailedPush: true },
+    );
+    if (!settled) return false;
+    console.log(`  Applied preset: ${transition.name}`);
+    result = { state: "completed", presetName: transition.name };
+    return true;
+  });
+  return result;
+}
+
+function customPolicyMutationBlockedByAnotherJournal(
+  sandboxName: string,
+  operation: string,
+): boolean {
+  const customTransition = registry.getCustomPolicyTransition(sandboxName);
+  if (customTransition) {
+    console.error(
+      `  Cannot ${operation} while custom policy '${customTransition.operation} ${customTransition.name}' needs repair. Re-run ${customPolicyRetryHint(customTransition)} first.`,
+    );
+    return true;
+  }
+  const baselineTransition = registry.getBaselineExclusionTransition(sandboxName);
+  if (baselineTransition) {
+    console.error(
+      `  Cannot ${operation} while baseline policy '${baselineTransition.operation} ${baselineTransition.exclusion.key}' needs repair. Re-run that baseline policy command first.`,
+    );
+    return true;
+  }
+  return false;
+}
+
+/** Describe the pending policy repair that must finish before Shields can be lowered. */
+function describePendingPolicyTransitionForShieldsDown(sandboxName: string): string | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  const customTransition = sandbox?.customPolicyTransition;
+  if (customTransition) {
+    const retry =
+      customTransition.operation === "remove"
+        ? `\`${CLI_NAME} ${sandboxName} policy remove ${customTransition.name}\``
+        : "policy add with --from-file or --from-dir";
+    return `Custom policy ${customTransition.operation} for '${customTransition.name}' needs repair. Re-run ${retry} before lowering Shields.`;
+  }
+  const baselineTransition = sandbox?.baselineExclusionTransition;
+  if (baselineTransition) {
+    return `Baseline policy ${baselineTransition.operation} for '${baselineTransition.exclusion.key}' needs repair. Re-run \`${CLI_NAME} ${sandboxName} policy ${baselineTransition.operation} ${baselineTransition.exclusion.key}\` before lowering Shields.`;
+  }
+  return null;
 }
 
 type BaselineTransitionReconciliation =
@@ -1299,6 +1852,7 @@ function excludeBaselineEntry(
   digest: string,
   options: { nonFatal?: boolean } = {},
 ): boolean {
+  if (shieldsPolicyMutationBlocked(sandboxName)) return false;
   return withRecordedSandboxGateway(sandboxName, (gatewayName) =>
     excludeBaselineEntryOnGateway(sandboxName, key, digest, options, gatewayName),
   );
@@ -1311,6 +1865,13 @@ function excludeBaselineEntryOnGateway(
   options: { nonFatal?: boolean },
   gatewayName: string,
 ): boolean {
+  const customTransition = registry.getCustomPolicyTransition(sandboxName);
+  if (customTransition) {
+    console.error(
+      `  Custom policy repair for '${customTransition.name}' is still pending. Re-run ${customPolicyRetryHint(customTransition)} before changing a baseline entry.`,
+    );
+    return false;
+  }
   const reconciled = reconcileBaselineExclusionTransition(sandboxName, key, gatewayName);
   if (!reconciled) return false;
   if (reconciled.state === "excluded") return true;
@@ -1404,6 +1965,7 @@ function restoreBaselineEntry(
   key: string,
   options: RestoreBaselineEntryOptions = {},
 ): boolean {
+  if (shieldsPolicyMutationBlocked(sandboxName)) return false;
   return withRecordedSandboxGateway(sandboxName, (gatewayName) =>
     restoreBaselineEntryOnGateway(sandboxName, key, options, gatewayName),
   );
@@ -1415,6 +1977,13 @@ function restoreBaselineEntryOnGateway(
   options: RestoreBaselineEntryOptions,
   gatewayName: string,
 ): boolean {
+  const customTransition = registry.getCustomPolicyTransition(sandboxName);
+  if (customTransition) {
+    console.error(
+      `  Custom policy repair for '${customTransition.name}' is still pending. Re-run ${customPolicyRetryHint(customTransition)} before changing a baseline entry.`,
+    );
+    return false;
+  }
   // Resolve the current agent baseline before changing either durable or live
   // state. A missing non-OpenClaw baseline must not be mistaken for a release
   // that intentionally removed this key.
@@ -1597,6 +2166,159 @@ async function selectForRemoval(
   return item.name;
 }
 
+type CustomPresetApplicationOptions = {
+  custom: {
+    sourcePath?: string;
+    trustedPrivatePinCapability?: TrustedPrivatePolicyPinCapability;
+  };
+  disclosedPresetState?: PresetPolicyState | null;
+  nonFatal?: boolean;
+  suppressDisclosure?: boolean;
+};
+
+function requestedCustomPolicyEntry(
+  presetName: string,
+  presetContent: string,
+  options: CustomPresetApplicationOptions,
+): registry.CustomPolicyEntry {
+  return {
+    name: presetName,
+    content: presetContent,
+    ...(options.custom.sourcePath !== undefined ? { sourcePath: options.custom.sourcePath } : {}),
+    ...(options.custom.trustedPrivatePinCapability
+      ? { trustedPrivatePins: options.custom.trustedPrivatePinCapability.receipt }
+      : {}),
+  };
+}
+
+function applyCustomPresetContent(
+  sandboxName: string,
+  presetName: string,
+  presetContent: string,
+  presetEntries: string,
+  options: CustomPresetApplicationOptions,
+): boolean {
+  if (!registry.getSandbox(sandboxName)) {
+    console.error(
+      `  Custom preset '${presetName}' could not be recorded locally because sandbox '${sandboxName}' is not in the registry, so it will not appear in policy list or status. Recover or re-onboard the sandbox, then re-apply.`,
+    );
+    return false;
+  }
+  const requestedDesired = requestedCustomPolicyEntry(presetName, presetContent, options);
+  return withRecordedSandboxGateway(sandboxName, (gatewayName) => {
+    if (registry.getBaselineExclusionTransition(sandboxName)) {
+      console.error(
+        `  Cannot apply custom policy '${presetName}' while a baseline policy transaction needs repair. Re-run that baseline policy command first.`,
+      );
+      return false;
+    }
+    const recovery = reconcileCustomPolicyTransitionForRetry(
+      sandboxName,
+      "apply",
+      presetName,
+      requestedDesired,
+      gatewayName,
+    );
+    if (!recovery) return false;
+    if (recovery.state === "completed") {
+      console.log(`  Applied preset: ${presetName}`);
+      return true;
+    }
+
+    const previous = registry
+      .getCustomPolicies(sandboxName)
+      .find((entry) => entry.name === presetName);
+    if (
+      previous?.sourcePath === registry.MCP_BRIDGE_POLICY_SOURCE ||
+      previous?.pendingContent !== undefined
+    ) {
+      console.error(
+        `  Generated policy '${presetName}' is owned by the managed MCP lifecycle and cannot be replaced as a custom preset.`,
+      );
+      return false;
+    }
+    const desired =
+      recovery.state === "retry"
+        ? recovery.transition.desired
+        : {
+            ...requestedDesired,
+            appliedAt:
+              previous && customPolicyEntryIntentMatches(previous, requestedDesired)
+                ? previous.appliedAt
+                : new Date().toISOString(),
+          };
+    if (!desired) {
+      console.error(`  Pending custom policy apply for '${presetName}' has no durable target.`);
+      return false;
+    }
+    const transition: registry.CustomPolicyTransition = {
+      version: 1,
+      id: randomUUID(),
+      operation: "apply",
+      name: presetName,
+      previous: previous ?? null,
+      desired,
+      startedAt: new Date().toISOString(),
+    };
+    if (!assertCustomPolicyHasExclusiveKeys(sandboxName, transition)) return false;
+
+    const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+    if (!currentPolicy) {
+      console.error(`  Could not read the current policy for sandbox '${sandboxName}'.`);
+      return false;
+    }
+    const live = inspectCustomPolicyTransitionLiveState(currentPolicy, transition);
+    if (!live?.sourceMatches) {
+      console.error(
+        `  Live policy does not exactly match the recorded source for '${presetName}'; refusing to claim or replace its network policy keys.`,
+      );
+      return false;
+    }
+
+    const presetState = classifyPresetEntries(currentPolicy, presetEntries);
+    const disclosedStateStillCurrent =
+      Object.prototype.hasOwnProperty.call(options, "disclosedPresetState") &&
+      options.disclosedPresetState === presetState;
+    if (!options.suppressDisclosure && !disclosedStateStillCurrent) {
+      logPresetScopeForState(presetName, presetContent, presetState);
+    }
+
+    let updatedPolicy: string;
+    try {
+      updatedPolicy = buildCustomPolicyTargetDocument(currentPolicy, previous ?? null, desired);
+    } catch (error) {
+      console.error(
+        `  Could not construct the exact replacement for '${presetName}': ${error instanceof Error ? error.message : String(error)}.`,
+      );
+      return false;
+    }
+    if (
+      !registryTransitionStep(
+        () => registry.beginCustomPolicyTransition(sandboxName, transition),
+        `Could not record the pending custom policy apply for '${presetName}'; no live policy changes were made.`,
+      )
+    ) {
+      return false;
+    }
+
+    const policyChanged = !policyDocumentsMatch(currentPolicy, updatedPolicy);
+    const pushSucceeded =
+      !policyChanged ||
+      pushPolicyYaml(sandboxName, updatedPolicy, {
+        nonFatal: true,
+        gatewayName,
+      });
+    const settled = settleCustomPolicyTransitionAfterPush(
+      sandboxName,
+      transition,
+      pushSucceeded,
+      gatewayName,
+    );
+    if (settled) console.log(`  Applied preset: ${presetName}`);
+    return settled;
+  });
+}
+
 /**
  * Apply raw preset content (already loaded in memory) to a running sandbox.
  * Validates the sandbox name, extracts the `network_policies` entries, merges
@@ -1609,21 +2331,26 @@ async function selectForRemoval(
  * `customPolicies` in the registry so `removePreset` can later undo a
  * custom preset purely by name.
  */
+type ApplyPresetContentOptions = {
+  custom?: {
+    sourcePath?: string;
+    trustedPrivatePinCapability?: TrustedPrivatePolicyPinCapability;
+  };
+  disclosedPresetState?: PresetPolicyState | null;
+  expectedExistingNetworkPolicyContent?: string | null;
+  nonFatal?: boolean;
+  shieldsPolicyMutationAuthority?: ShieldsPolicyMutationAuthority;
+  skipRegistryUpdate?: boolean;
+  suppressDisclosure?: boolean;
+};
+
+type ApplyPresetOptions = ApplyPresetContentOptions & Record<string, unknown>;
+
 function applyPresetContent(
   sandboxName: string,
   presetName: string,
   presetContent: string,
-  options: {
-    custom?: {
-      sourcePath?: string;
-      trustedPrivatePinCapability?: TrustedPrivatePolicyPinCapability;
-    };
-    expectedExistingNetworkPolicyContent?: string | null;
-    nonFatal?: boolean;
-    skipRegistryUpdate?: boolean;
-    suppressDisclosure?: boolean;
-    disclosedPresetState?: PresetPolicyState | null;
-  } = {},
+  options: ApplyPresetContentOptions = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -1633,6 +2360,9 @@ function applyPresetContent(
       `Invalid or truncated sandbox name: '${sandboxName}'. ` +
         `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
     );
+  }
+  if (shieldsPolicyMutationBlocked(sandboxName, options.shieldsPolicyMutationAuthority)) {
+    return false;
   }
 
   if (options.custom) {
@@ -1682,6 +2412,22 @@ function applyPresetContent(
     console.error(
       `  Network policy key '${excludedCollision}' is reserved by a baseline exclusion. Restore that baseline key before applying '${presetName}'.`,
     );
+    return false;
+  }
+
+  if (options.custom && !options.skipRegistryUpdate) {
+    return applyCustomPresetContent(sandboxName, presetName, presetContent, presetEntries, {
+      custom: options.custom,
+      ...(Object.prototype.hasOwnProperty.call(options, "disclosedPresetState")
+        ? { disclosedPresetState: options.disclosedPresetState }
+        : {}),
+      ...(options.nonFatal !== undefined ? { nonFatal: options.nonFatal } : {}),
+      ...(options.suppressDisclosure !== undefined
+        ? { suppressDisclosure: options.suppressDisclosure }
+        : {}),
+    });
+  }
+  if (customPolicyMutationBlockedByAnotherJournal(sandboxName, `apply '${presetName}'`)) {
     return false;
   }
 
@@ -1780,38 +2526,18 @@ function applyPresetContent(
 
   const sandbox = registry.getSandbox(sandboxName);
   if (sandbox) {
-    if (options.custom) {
-      // Custom preset: persist full content so it can be removed later
-      // without requiring the user to still have the file on disk.
-      registry.addCustomPolicy(sandboxName, {
-        name: presetName,
-        content: presetContent,
-        sourcePath: options.custom.sourcePath,
-        ...(options.custom.trustedPrivatePinCapability
-          ? { trustedPrivatePins: options.custom.trustedPrivatePinCapability.receipt }
-          : {}),
-      });
-    } else {
+    if (!options.custom) {
       const pols = sandbox.policies || [];
       if (!pols.includes(presetName)) {
         pols.push(presetName);
       }
-      registry.updateSandbox(sandboxName, { policies: pols });
+      if (!registry.updateSandbox(sandboxName, { policies: pols })) {
+        console.error(
+          `  Preset '${presetName}' reached the gateway, but its registry attribution could not be recorded.`,
+        );
+        return false;
+      }
     }
-  } else if (options.custom) {
-    // The preset reached the gateway, but sandbox `sandboxName` has no local
-    // registry entry, so it cannot be recorded under `customPolicies`. Custom
-    // presets are surfaced only from the registry (both `listCustomPresets`
-    // and `getGatewayPresets` read `registry.getCustomPolicies`), so an
-    // unrecorded custom preset never appears in `policy-list` or `status`.
-    // Report the gap instead of exiting 0 as if the preset were fully applied. (#4510)
-    console.error(
-      `  Warning: '${presetName}' was applied to the gateway but could not be ` +
-        `recorded locally because sandbox '${sandboxName}' is not in the ` +
-        `registry, so it will not appear in policy list or status. Recover or ` +
-        `re-onboard the sandbox, then re-apply.`,
-    );
-    return false;
   }
 
   return true;
@@ -1826,7 +2552,7 @@ function applyPresetContent(
 function applyPreset(
   sandboxName: string,
   presetName: string,
-  options: Record<string, unknown> = {},
+  options: ApplyPresetOptions = {},
 ): boolean {
   const presetContent = loadPresetForSandbox(sandboxName, presetName);
   if (!presetContent) {
@@ -1842,7 +2568,11 @@ function applyPreset(
  * presets one-by-one, while avoiding one `openshell policy set --wait` per
  * preset during onboarding.
  */
-function applyPresets(sandboxName: string, presetNames: string[]): boolean {
+function applyPresets(
+  sandboxName: string,
+  presetNames: string[],
+  options: ShieldsPolicyMutationOptions = {},
+): boolean {
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
     throw new Error(
@@ -1853,6 +2583,12 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
 
   const uniquePresetNames = [...new Set(presetNames)].filter(Boolean);
   if (uniquePresetNames.length === 0) return true;
+  if (shieldsPolicyMutationBlocked(sandboxName, options.shieldsPolicyMutationAuthority)) {
+    return false;
+  }
+  if (customPolicyMutationBlockedByAnotherJournal(sandboxName, "apply policy presets")) {
+    return false;
+  }
 
   let rawPolicy: string | null = null;
   try {
@@ -2035,9 +2771,13 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     );
     return null;
   }
-  if (typeof presetName !== "string" || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(presetName)) {
+  if (
+    typeof presetName !== "string" ||
+    presetName.length > 63 ||
+    !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(presetName)
+  ) {
     console.error(
-      `  Preset must declare preset.name (lowercase, hyphenated RFC 1123 label): ${filePath}`,
+      `  Preset must declare preset.name (1-63 characters, lowercase RFC 1123 label): ${filePath}`,
     );
     return null;
   }
@@ -2303,13 +3043,22 @@ function resolvePermissivePolicyPath(sandboxName: string): string {
   return PERMISSIVE_POLICY_PATH;
 }
 
-function applyPermissivePolicy(sandboxName: string): void {
+function applyPermissivePolicy(
+  sandboxName: string,
+  options: ShieldsPolicyMutationOptions = {},
+): void {
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
     throw new Error(
       `Invalid or truncated sandbox name: '${sandboxName}'. ` +
         `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
     );
+  }
+  if (shieldsPolicyMutationBlocked(sandboxName, options.shieldsPolicyMutationAuthority)) {
+    throw new Error(`Shields state blocks permissive policy for '${sandboxName}'.`);
+  }
+  if (customPolicyMutationBlockedByAnotherJournal(sandboxName, "apply permissive policy")) {
+    throw new Error(`Pending policy transaction blocks permissive policy for '${sandboxName}'.`);
   }
 
   const policyPath = resolvePermissivePolicyPath(sandboxName);
@@ -2329,12 +3078,14 @@ export {
   applyPreset,
   applyPresetContent,
   applyPresets,
+  assertInternalShieldsPolicyMutationAllowed,
   assertOpenshellResolvable,
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
   clampSetupPolicyPresetNames,
   customPresetOwnsNetworkPolicyKey,
+  describePendingPolicyTransitionForShieldsDown,
   excludeBaselineEntry,
   extractPresetEntries,
   filterSetupPolicyPresets,
@@ -2370,6 +3121,7 @@ export {
   removePreset,
   removePresetFromPolicy,
   renderPresetScope,
+  repairPendingCustomPolicyApply,
   replayTrustedPrivatePolicyPinCapability,
   resolveAgentBaselinePolicy,
   resolvePermissivePolicyPath,

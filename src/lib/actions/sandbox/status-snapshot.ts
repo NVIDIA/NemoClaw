@@ -170,6 +170,11 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  /** Interrupted custom-policy mutation that must be reconciled before lifecycle work. */
+  customPolicyTransition: {
+    operation: registry.CustomPolicyTransitionOperation;
+    name: string;
+  } | null;
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
   /** Observed enforcement state for each recorded baseline exclusion. */
@@ -645,6 +650,12 @@ async function buildSandboxStatusReport(
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
       : [];
+  const customPolicyTransition = sb?.customPolicyTransition
+    ? {
+        operation: sb.customPolicyTransition.operation,
+        name: sb.customPolicyTransition.name,
+      }
+    : null;
   const baselineExclusions = sb?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [];
   const baselineExclusionStates =
     sb?.baselineExclusions?.map((exclusion) => ({
@@ -692,6 +703,7 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
+    customPolicyTransition,
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,

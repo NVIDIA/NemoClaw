@@ -675,8 +675,20 @@ describe("shields timer authorization", () => {
     const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
     const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
     const sandboxMutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    const registryPath = path.join(tmpHome, ".nemoclaw", "sandboxes.json");
+    const registryWithPendingJournals = JSON.stringify({
+      defaultSandbox: sandboxName,
+      sandboxes: {
+        [sandboxName]: {
+          name: sandboxName,
+          customPolicyTransition: { sentinel: "custom-journal" },
+          baselineExclusionTransition: { sentinel: "baseline-journal" },
+        },
+      },
+    });
 
     fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(registryPath, registryWithPendingJournals, { mode: 0o600 });
     fs.writeFileSync(
       markerPath,
       JSON.stringify({
@@ -730,6 +742,7 @@ describe("shields timer authorization", () => {
       PROCESS_TOKEN,
       snapshotPath,
     );
+    expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryWithPendingJournals);
     expect(
       fs
         .readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")

@@ -4,7 +4,12 @@
 import { createRequire } from "node:module";
 
 import { expect, type MockInstance, vi } from "vitest";
-import type { SandboxWorkloadReceipt } from "../../src/lib/state/registry";
+import type {
+  BaselineExclusionTransition,
+  CustomPolicyTransition,
+  SandboxEntry,
+  SandboxWorkloadReceipt,
+} from "../../src/lib/state/registry";
 
 type DestroySandbox = typeof import("../../src/lib/actions/sandbox/destroy")["destroySandbox"];
 
@@ -14,6 +19,8 @@ const requireDist = createRequire(
 const destroyModulePath = "./destroy.js";
 
 export type DestroyHarness = {
+  clearBaselineExclusionTransitionSpy: MockInstance;
+  clearCustomPolicyTransitionSpy: MockInstance;
   cleanupGatewaySpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   destroySandbox: DestroySandbox;
@@ -24,6 +31,7 @@ export type DestroyHarness = {
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
   gatewayPinsAtMcpPrepare: Array<string | undefined>;
   gatewayPinsAtSandboxList: Array<string | undefined>;
+  getSandboxSpy: MockInstance;
   killTimerSpy: MockInstance;
   killStaleProxySpy: MockInstance;
   logSpy: MockInstance;
@@ -40,6 +48,7 @@ export type DestroyHarness = {
   stopAllSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
+  updateSandboxSpy: MockInstance;
   updateSessionSpy: MockInstance;
   warnSpy: MockInstance;
 };
@@ -47,6 +56,10 @@ export type DestroyHarness = {
 type DestroyHarnessOptions = {
   activeTimer?: boolean;
   agent?: "openclaw" | "hermes";
+  baselineExclusionTransition?: BaselineExclusionTransition;
+  baselineTransitionClearResult?: boolean;
+  customPolicyTransition?: CustomPolicyTransition;
+  customTransitionClearResult?: boolean;
   deleteOutput?: string;
   deleteStatus?: number;
   dockerPsOutput?: string;
@@ -63,6 +76,9 @@ type DestroyHarnessOptions = {
   registeredSandboxCount?: number;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
+  sandboxListOutput?: string;
+  sandboxListStatus?: number | null;
+  sandboxListStderr?: string;
   shieldsDown?: boolean;
   shieldsUpError?: Error;
   workload?: SandboxWorkloadReceipt;
@@ -129,7 +145,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const httpsPinRuntimeAdapter = requireDist("../../inference/https-pin-runtime-adapter.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
-  const registry = requireDist("../../state/registry.js");
+  const registry = requireDist(
+    "../../state/registry.js",
+  ) as typeof import("../../src/lib/state/registry.js");
   const sandboxSession = requireDist("../../state/sandbox-session.js");
   const shields = requireDist("../../shields/index.js");
   const timerControl = requireDist("../../shields/timer-control.js");
@@ -145,10 +163,16 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     detected: true,
     sessions: [{ pid: 1 }],
   });
-  vi.spyOn(registry, "getSandbox").mockReturnValue({
+  const currentSandbox: SandboxEntry = {
     ...sandboxEntry,
     imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
     agent: options.agent ?? sandboxEntry.agent,
+    ...(options.baselineExclusionTransition
+      ? { baselineExclusionTransition: options.baselineExclusionTransition }
+      : {}),
+    ...(options.customPolicyTransition
+      ? { customPolicyTransition: options.customPolicyTransition }
+      : {}),
     ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
     ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
     ...(options.workload ? { workload: options.workload } : {}),
@@ -160,6 +184,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
                 server,
                 {
                   server,
+                  agent: options.agent ?? "openclaw",
+                  adapter: options.agent === "hermes" ? "hermes-config" : "mcporter",
+                  url: `https://${server}.example.com/mcp`,
+                  env: [],
+                  policyName: `mcp-bridge-${server}`,
+                  addedAt: "2026-08-06T12:00:00.000Z",
                   ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
                 },
               ]),
@@ -167,9 +197,35 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
           },
         }
       : {}),
-  });
+  };
+  const getSandboxSpy = vi.spyOn(registry, "getSandbox").mockImplementation(() => currentSandbox);
+  const clearCustomPolicyTransitionSpy = vi
+    .spyOn(registry, "clearCustomPolicyTransition")
+    .mockImplementation((_name: string, id: string) => {
+      if (
+        options.customTransitionClearResult === false ||
+        currentSandbox.customPolicyTransition?.id !== id
+      ) {
+        return false;
+      }
+      delete currentSandbox.customPolicyTransition;
+      return true;
+    });
+  const clearBaselineExclusionTransitionSpy = vi
+    .spyOn(registry, "clearBaselineExclusionTransition")
+    .mockImplementation((_name: string, id: string) => {
+      if (
+        options.baselineTransitionClearResult === false ||
+        currentSandbox.baselineExclusionTransition?.id !== id
+      ) {
+        return false;
+      }
+      delete currentSandbox.baselineExclusionTransition;
+      return true;
+    });
   let registeredSandboxCount = options.registeredSandboxCount ?? 0;
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
+    defaultSandbox: null,
     sandboxes: Array.from({ length: registeredSandboxCount }, (_, index) => ({
       name: `sb-${index}`,
     })),
@@ -178,6 +234,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
     return true;
   });
+  const updateSandboxSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
   const revokeHttpsPinRuntimeAdapterRouteSpy = vi
     .spyOn(httpsPinRuntimeAdapter, "revokeHttpsPinRuntimeAdapterRoute")
     .mockResolvedValue(true);
@@ -202,9 +259,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
         return {
-          status: 0,
-          stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
-          stderr: "",
+          status: options.sandboxListStatus ?? 0,
+          stdout: options.sandboxListOutput ?? sandboxListJson(sandboxPresent ? ["alpha"] : []),
+          stderr: options.sandboxListStderr ?? "",
         };
       case "sandbox:delete":
         events.push("delete");
@@ -312,6 +369,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const prepareMcpBridgesForAbsentSandboxDestroySpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForAbsentSandboxDestroy")
     .mockImplementation(async () => {
+      if (currentSandbox.customPolicyTransition || currentSandbox.baselineExclusionTransition) {
+        throw new Error("Absent-sandbox MCP cleanup reached with a pending policy journal");
+      }
       gatewayPinsAtMcpPrepare.push(process.env.OPENSHELL_GATEWAY);
       return mcpPreparation;
     });
@@ -337,6 +397,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   logSpy.mockClear();
 
   return {
+    clearBaselineExclusionTransitionSpy,
+    clearCustomPolicyTransitionSpy,
     cleanupGatewaySpy,
     captureOpenshellSpy,
     dockerCaptureSpy,
@@ -347,6 +409,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,
     gatewayPinsAtSandboxList,
+    getSandboxSpy,
     killTimerSpy,
     killStaleProxySpy,
     logSpy,
@@ -365,6 +428,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     stopAllSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
+    updateSandboxSpy,
     updateSessionSpy,
     warnSpy,
   };

@@ -89,7 +89,11 @@ export async function discardSafeIncompleteMcpAdds(
   for (const entry of providerlessPreflighted) {
     if (options.sandboxAbsent) {
       const ownedRegistration = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
-      if (ownedRegistration) registry.removeCustomPolicyByName(sandboxName, entry.policyName);
+      if (ownedRegistration && !registry.removeCustomPolicyByName(sandboxName, entry.policyName)) {
+        throw new McpBridgeError(
+          `Could not clear ownership for generated MCP policy '${entry.policyName}'.`,
+        );
+      }
     } else {
       removeGeneratedPolicy(sandboxName, entry);
     }

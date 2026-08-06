@@ -23,6 +23,7 @@ import {
 } from "./mcp-bridge-provider";
 import {
   assertMcpDestroyNotPending,
+  assertPolicyTransitionsSettledForMcpMutation,
   bridgeState,
   clearMcpDestroyMarkers,
   ensureSandboxGatewaySelected,
@@ -180,6 +181,7 @@ async function removeMcpBridgeUnlocked(
     console.log(`  No MCP server '${server}' is registered on sandbox '${sandboxName}'.`);
     return "noMatchingEntry";
   }
+  assertPolicyTransitionsSettledForMcpMutation(sandbox, "remove an MCP server");
   if (entry.addState === "prepared") {
     // `prepared` is persisted before gateway selection and is advanced only
     // after adapter/provider/policy absence has been proven. It therefore owns

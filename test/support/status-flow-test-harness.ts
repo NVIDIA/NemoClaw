@@ -13,7 +13,10 @@ import type {
 } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
-import type { BaselineExclusionTransition } from "../../src/lib/state/registry";
+import type {
+  BaselineExclusionTransition,
+  CustomPolicyTransition,
+} from "../../src/lib/state/registry";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
 
@@ -73,6 +76,7 @@ export type StatusFlowHarnessOptions = {
     dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
     baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
     baselineExclusionTransition?: BaselineExclusionTransition;
+    customPolicyTransition?: CustomPolicyTransition;
     preferredInferenceApi?: string | null;
     compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
   };

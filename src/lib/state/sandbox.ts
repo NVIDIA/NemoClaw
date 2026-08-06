@@ -1170,6 +1170,36 @@ function resolveOpenClawBackupMetadata(
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
+  if (sb?.customPolicyTransition) {
+    const transition = sb.customPolicyTransition;
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      error: `Custom policy ${transition.operation} for '${transition.name}' needs repair before snapshot or rebuild backup`,
+    };
+  }
+  if (sb?.baselineExclusionTransition) {
+    const transition = sb.baselineExclusionTransition;
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      error: `Baseline policy ${transition.operation} for '${transition.exclusion.key}' needs repair before snapshot or rebuild backup`,
+    };
+  }
+  return backupSandboxStateWithoutPendingPolicy(sandboxName, options, sb);
+}
+
+function backupSandboxStateWithoutPendingPolicy(
+  sandboxName: string,
+  options: BackupOptions,
+  sb: SandboxEntry | null,
+): BackupResult {
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
   const dir = agent.configPaths.dir;

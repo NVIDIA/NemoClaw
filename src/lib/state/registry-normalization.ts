@@ -7,13 +7,20 @@ import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
   CustomPolicyEntry,
+  CustomPolicyTransition,
   SandboxEntry,
 } from "./registry";
 
-const BASELINE_TRANSITION_ID_PATTERN =
+const REGISTRY_TRANSITION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASELINE_TRANSITION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const CUSTOM_POLICY_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const LEGACY_CUSTOM_POLICY_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+
+export function isRegistryTransitionId(value: unknown): value is string {
+  return typeof value === "string" && REGISTRY_TRANSITION_ID_PATTERN.test(value);
+}
 
 /** Normalize persisted custom policy content and its generated-pin authority. */
 export function normalizeCustomPolicyEntries(value: unknown): CustomPolicyEntry[] | undefined {
@@ -64,6 +71,75 @@ export function normalizeCustomPolicyEntries(value: unknown): CustomPolicyEntry[
 function isCanonicalIsoTimestamp(value: string): boolean {
   const parsed = new Date(value);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function normalizeCustomPolicyTransitionEntry(
+  value: unknown,
+  field: "previous" | "desired",
+): CustomPolicyEntry | null {
+  if (value === null) return null;
+  try {
+    const entry = normalizeCustomPolicyEntries([value])?.[0];
+    if (entry) return entry;
+  } catch {
+    // Replace field-specific parsing details with one durable-state repair
+    // boundary. The entry normalizer still performs the exact pin validation.
+  }
+  throw new Error(
+    `Sandbox registry custom policy transition has an invalid ${field} entry; repair the registry before rebuilding`,
+  );
+}
+
+/** Normalize a crash-recovery journal without granting new policy authority. */
+export function normalizeCustomPolicyTransition(
+  value: unknown,
+): CustomPolicyTransition | undefined {
+  if (value === undefined) return undefined;
+  if (!isObjectRecord(value)) {
+    throw new Error(
+      "Sandbox registry contains a malformed custom policy transition; repair the registry before rebuilding",
+    );
+  }
+  const version = value.version;
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const operation = value.operation;
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const startedAt = typeof value.startedAt === "string" ? value.startedAt.trim() : "";
+  const nameIsValid =
+    operation === "apply"
+      ? CUSTOM_POLICY_NAME_PATTERN.test(name)
+      : operation === "remove"
+        ? LEGACY_CUSTOM_POLICY_NAME_PATTERN.test(name)
+        : false;
+  if (
+    version !== 1 ||
+    !isRegistryTransitionId(id) ||
+    id !== id.toLowerCase() ||
+    (operation !== "apply" && operation !== "remove") ||
+    !nameIsValid ||
+    !isCanonicalIsoTimestamp(startedAt) ||
+    !Object.prototype.hasOwnProperty.call(value, "previous") ||
+    !Object.prototype.hasOwnProperty.call(value, "desired")
+  ) {
+    throw new Error(
+      "Sandbox registry contains an incomplete custom policy transition; repair the registry before rebuilding",
+    );
+  }
+  const previous = normalizeCustomPolicyTransitionEntry(value.previous, "previous");
+  const desired = normalizeCustomPolicyTransitionEntry(value.desired, "desired");
+  if (
+    (previous?.name !== undefined && previous.name !== name) ||
+    (desired?.name !== undefined && desired.name !== name) ||
+    previous?.pendingContent !== undefined ||
+    desired?.pendingContent !== undefined ||
+    (operation === "apply" && desired === null) ||
+    (operation === "remove" && (previous === null || desired !== null))
+  ) {
+    throw new Error(
+      `Sandbox registry custom policy transition '${name}' has inconsistent intent; repair the registry before rebuilding`,
+    );
+  }
+  return { version, id, operation, name, previous, desired, startedAt };
 }
 
 function normalizeBaselineExclusionEntry(item: unknown): BaselineExclusionEntry {
@@ -140,7 +216,7 @@ export function normalizeBaselineExclusionTransition(
   const operation = value.operation;
   const startedAt = typeof value.startedAt === "string" ? value.startedAt.trim() : "";
   if (
-    !BASELINE_TRANSITION_ID_PATTERN.test(id) ||
+    !isRegistryTransitionId(id) ||
     (operation !== "exclude" && operation !== "restore") ||
     !isCanonicalIsoTimestamp(startedAt)
   ) {

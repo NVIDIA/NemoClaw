@@ -7,11 +7,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { MCP_BRIDGE_POLICY_SOURCE } from "./registry-mcp";
 import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeCustomPolicyTransition,
 } from "./registry-normalization";
 
 const originalHome = process.env.HOME;
@@ -235,6 +236,434 @@ describe("custom policy pin receipt normalization (#8176)", () => {
         },
       ]),
     ).toThrow(/invalid trusted-private pin authority.*before rebuilding/i);
+  });
+});
+
+describe("custom policy transition normalization (#8176)", () => {
+  const previous = {
+    name: "private-api",
+    content: "network_policies: {}\n",
+    sourcePath: "/tmp/private-api.yaml",
+    appliedAt: "2026-08-06T12:00:00.000Z",
+  };
+  const desired = {
+    ...previous,
+    content: "network_policies:\n  private_api: {}\n",
+    appliedAt: "2026-08-06T12:01:00.000Z",
+  };
+  const applyTransition = {
+    version: 1 as const,
+    id: "123e4567-e89b-42d3-a456-426614174010",
+    operation: "apply" as const,
+    name: "private-api",
+    previous,
+    desired,
+    startedAt: "2026-08-06T12:02:00.000Z",
+  };
+
+  it("preserves an exact versioned apply or remove journal", () => {
+    expect(normalizeCustomPolicyTransition(applyTransition)).toEqual(applyTransition);
+    expect(
+      normalizeCustomPolicyTransition({
+        ...applyTransition,
+        operation: "remove",
+        desired: null,
+      }),
+    ).toEqual({ ...applyTransition, operation: "remove", desired: null });
+    expect(normalizeCustomPolicyTransition(undefined)).toBeUndefined();
+  });
+
+  it("preserves removal recovery for a legacy custom policy name longer than 63 characters", () => {
+    const legacyName = "a".repeat(64);
+    const transition = {
+      ...applyTransition,
+      operation: "remove" as const,
+      name: legacyName,
+      previous: { ...previous, name: legacyName },
+      desired: null,
+    };
+
+    expect(normalizeCustomPolicyTransition(transition)).toEqual(transition);
+  });
+
+  it.each([
+    ["missing version", { version: undefined }],
+    ["unsupported version", { version: 2 }],
+    ["non-UUID id", { id: "tx-apply" }],
+    ["non-canonical UUID", { id: "123E4567-E89B-42D3-A456-426614174010" }],
+    ["unsupported operation", { operation: "replace" }],
+    ["unsafe name", { name: "private_api" }],
+    ["overlong name", { name: "a".repeat(64) }],
+    ["non-canonical timestamp", { startedAt: "today" }],
+    ["missing previous", { previous: undefined }],
+    ["missing desired", { desired: undefined }],
+  ])("rejects an incomplete journal with %s", (_label, override) => {
+    expect(() => normalizeCustomPolicyTransition({ ...applyTransition, ...override })).toThrow(
+      /custom policy transition.*before rebuilding/i,
+    );
+  });
+
+  it.each([
+    ["an apply without desired state", { desired: null }],
+    ["a remove without previous state", { operation: "remove", previous: null, desired: null }],
+    ["a remove with desired state", { operation: "remove" }],
+    ["a mismatched previous name", { previous: { ...previous, name: "other" } }],
+    ["a mismatched desired name", { desired: { ...desired, name: "other" } }],
+    ["a nested previous transition", { previous: { ...previous, pendingContent: "next" } }],
+    ["a nested desired transition", { desired: { ...desired, pendingContent: "next" } }],
+  ])("rejects inconsistent intent with %s", (_label, override) => {
+    expect(() => normalizeCustomPolicyTransition({ ...applyTransition, ...override })).toThrow(
+      /inconsistent intent.*before rebuilding/i,
+    );
+  });
+
+  it("re-validates exact trusted-private authority in both journal states", () => {
+    expect(() =>
+      normalizeCustomPolicyTransition({
+        ...applyTransition,
+        previous: {
+          ...previous,
+          trustedPrivatePins: { version: 1, contentDigest: "a".repeat(64) },
+        },
+      }),
+    ).toThrow(/invalid previous entry.*before rebuilding/i);
+  });
+});
+
+describe("custom policy transition registry helpers (#8176)", () => {
+  const previous = {
+    name: "private-api",
+    content: "network_policies: {}\n",
+    sourcePath: "/tmp/private-api.yaml",
+    appliedAt: "2026-08-06T12:00:00.000Z",
+  };
+  const desired = {
+    ...previous,
+    content: "network_policies:\n  private_api: {}\n",
+    appliedAt: "2026-08-06T12:01:00.000Z",
+  };
+
+  it("persists and atomically publishes an exact apply journal", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({ name: "alpha" });
+    const transition = {
+      version: 1 as const,
+      id: "123e4567-e89b-42d3-a456-426614174020",
+      operation: "apply" as const,
+      name: desired.name,
+      previous: null,
+      desired: { ...desired },
+      startedAt: "2026-08-06T12:02:00.000Z",
+    };
+
+    expect(registry.beginCustomPolicyTransition("alpha", transition)).toBe(true);
+    transition.desired.content = "mutated after begin";
+    expect(registry.getCustomPolicyTransition("alpha")).toEqual({
+      ...transition,
+      desired,
+    });
+    expect(
+      registry.beginCustomPolicyTransition("alpha", {
+        ...transition,
+        id: "123e4567-e89b-42d3-a456-426614174021",
+        desired,
+      }),
+    ).toBe(false);
+    expect(registry.addCustomPolicy("alpha", { name: "other", content: "allow: []\n" })).toBe(
+      false,
+    );
+    expect(
+      registry.addBaselineExclusion("alpha", {
+        version: 1,
+        agent: "hermes",
+        key: "other",
+        digest: "d".repeat(64),
+      }),
+    ).toBe(false);
+    expect(registry.updateSandbox("alpha", { customPolicies: [] })).toBe(false);
+    expect(registry.updateSandbox("alpha", { baselineExclusions: [] })).toBe(false);
+    expect(registry.updateSandbox("alpha", { model: "still-safe" })).toBe(true);
+    expect(registry.getSandbox("alpha")?.model).toBe("still-safe");
+    expect(registry.commitCustomPolicyTransition("alpha", "not-an-id")).toBe(false);
+    expect(
+      registry.commitCustomPolicyTransition("alpha", "123e4567-e89b-42d3-a456-426614174099"),
+    ).toBe(false);
+    expect(registry.commitCustomPolicyTransition("alpha", transition.id)).toBe(true);
+    expect(registry.getCustomPolicyTransition("alpha")).toBeNull();
+    expect(registry.getCustomPolicies("alpha")).toEqual([desired]);
+  });
+
+  it("reserves policy transaction fields from generic sandbox updates", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({ name: "alpha" });
+    const transition = {
+      version: 1 as const,
+      id: "123e4567-e89b-42d3-a456-426614174025",
+      operation: "apply" as const,
+      name: desired.name,
+      previous: null,
+      desired,
+      startedAt: "2026-08-06T12:02:00.000Z",
+    };
+
+    expect(registry.updateSandbox("alpha", { customPolicies: [desired] })).toBe(false);
+    expect(registry.updateSandbox("alpha", { customPolicyTransition: transition })).toBe(false);
+    expect(registry.updateSandbox("alpha", { baselineExclusions: [] })).toBe(false);
+    expect(
+      registry.updateSandbox("alpha", {
+        baselineExclusionTransition: {
+          id: "123e4567-e89b-42d3-a456-426614174026",
+          operation: "exclude",
+          exclusion: {
+            version: 1,
+            agent: "hermes",
+            key: "private_api",
+            digest: "d".repeat(64),
+          },
+          targetLiveDigest: null,
+          startedAt: "2026-08-06T12:02:00.000Z",
+        },
+      }),
+    ).toBe(false);
+    const sandbox = registry.getSandbox("alpha");
+    expect(sandbox?.name).toBe("alpha");
+    expect(sandbox?.customPolicies).toBeUndefined();
+    expect(sandbox?.customPolicyTransition).toBeUndefined();
+    expect(sandbox?.baselineExclusions).toBeUndefined();
+    expect(sandbox?.baselineExclusionTransition).toBeUndefined();
+  });
+
+  it("retires only exact managed MCP policy ownership through its specialized helper", async () => {
+    const registry = await loadRegistryWith({});
+    const bridge = {
+      server: "github",
+      agent: "openclaw",
+      url: "https://mcp.example.com/",
+      env: ["MCP_GITHUB_TOKEN"],
+      providerName: "mcp-github",
+      providerId: "provider-1",
+      policyName: "mcp-github",
+      addedAt: "2026-08-06T12:00:00.000Z",
+    };
+    registry.registerSandbox({
+      name: "alpha",
+      mcp: { bridges: { github: bridge } },
+    });
+    const generated = {
+      name: "mcp-github",
+      content: "network_policies: {}\n",
+      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+    };
+    const operatorOwned = {
+      name: "operator-policy",
+      content: "network_policies: {}\n",
+      sourcePath: "/tmp/operator-policy.yaml",
+    };
+    expect(registry.addCustomPolicy("alpha", generated)).toBe(true);
+    expect(registry.addCustomPolicy("alpha", operatorOwned)).toBe(true);
+
+    expect(registry.completeMcpDestroy("alpha", [bridge])).toBe(true);
+    expect(registry.getCustomPolicies("alpha")).toEqual([expect.objectContaining(operatorOwned)]);
+  });
+
+  it("requires begin and commit to match the exact previous same-name state", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({ name: "alpha" });
+    expect(registry.addCustomPolicy("alpha", previous)).toBe(true);
+    expect(registry.addCustomPolicy("alpha", { name: "other", content: "allow: []\n" })).toBe(true);
+    const transition = {
+      version: 1 as const,
+      id: "123e4567-e89b-42d3-a456-426614174030",
+      operation: "apply" as const,
+      name: previous.name,
+      previous,
+      desired,
+      startedAt: "2026-08-06T12:02:00.000Z",
+    };
+
+    expect(registry.beginCustomPolicyTransition("alpha", { ...transition, previous: null })).toBe(
+      false,
+    );
+    expect(
+      registry.beginCustomPolicyTransition("alpha", {
+        ...transition,
+        previous: { ...previous, content: "stale\n" },
+      }),
+    ).toBe(false);
+    expect(registry.beginCustomPolicyTransition("alpha", transition)).toBe(true);
+
+    const document = registry.load();
+    document.sandboxes.alpha.customPolicies = (document.sandboxes.alpha.customPolicies ?? []).map(
+      (entry) =>
+        entry.name === previous.name ? { ...entry, content: "concurrent change\n" } : entry,
+    );
+    registry.save(document);
+
+    expect(registry.commitCustomPolicyTransition("alpha", transition.id)).toBe(false);
+    expect(registry.clearCustomPolicyTransition("alpha", transition.id)).toBe(false);
+    expect(registry.getCustomPolicyTransition("alpha")).toEqual(transition);
+    expect(registry.getCustomPolicies("alpha")).toEqual([
+      { ...previous, content: "concurrent change\n" },
+      { name: "other", content: "allow: []\n", appliedAt: expect.any(String) },
+    ]);
+  });
+
+  it("does not let a custom transition claim managed MCP policy ownership", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({ name: "alpha" });
+    registry.registerSandbox({ name: "beta" });
+    const generated = {
+      ...desired,
+      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+    };
+    expect(registry.addCustomPolicy("alpha", generated)).toBe(true);
+
+    expect(
+      registry.beginCustomPolicyTransition("alpha", {
+        version: 1,
+        id: "123e4567-e89b-42d3-a456-426614174035",
+        operation: "remove",
+        name: generated.name,
+        previous: generated,
+        desired: null,
+        startedAt: "2026-08-06T12:02:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      registry.beginCustomPolicyTransition("beta", {
+        version: 1,
+        id: "123e4567-e89b-42d3-a456-426614174036",
+        operation: "apply",
+        name: generated.name,
+        previous: null,
+        desired: generated,
+        startedAt: "2026-08-06T12:02:00.000Z",
+      }),
+    ).toBe(false);
+    expect(registry.getCustomPolicyTransition("alpha")).toBeNull();
+    expect(registry.getCustomPolicyTransition("beta")).toBeNull();
+    expect(registry.getCustomPolicies("alpha")).toEqual([generated]);
+  });
+
+  it("clears or commits an exact remove without changing unrelated policy state", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({ name: "alpha" });
+    const other = {
+      name: "other",
+      content: "allow: []\n",
+      appliedAt: "2026-08-06T11:00:00.000Z",
+    };
+    expect(registry.addCustomPolicy("alpha", previous)).toBe(true);
+    expect(registry.addCustomPolicy("alpha", other)).toBe(true);
+    const transition = {
+      version: 1 as const,
+      id: "123e4567-e89b-42d3-a456-426614174040",
+      operation: "remove" as const,
+      name: previous.name,
+      previous,
+      desired: null,
+      startedAt: "2026-08-06T12:02:00.000Z",
+    };
+
+    expect(registry.beginCustomPolicyTransition("alpha", transition)).toBe(true);
+    expect(registry.removeCustomPolicyByName("alpha", other.name)).toBe(false);
+    expect(registry.clearCustomPolicyTransition("alpha", "bad-id")).toBe(false);
+    expect(
+      registry.clearCustomPolicyTransition("alpha", "123e4567-e89b-42d3-a456-426614174099"),
+    ).toBe(false);
+    expect(registry.clearCustomPolicyTransition("alpha", transition.id)).toBe(true);
+    expect(registry.getCustomPolicies("alpha")).toEqual([previous, other]);
+
+    const retry = {
+      ...transition,
+      id: "123e4567-e89b-42d3-a456-426614174041",
+      startedAt: "2026-08-06T12:03:00.000Z",
+    };
+    expect(registry.beginCustomPolicyTransition("alpha", retry)).toBe(true);
+    expect(registry.commitCustomPolicyTransition("alpha", retry.id)).toBe(true);
+    expect(registry.getCustomPolicyTransition("alpha")).toBeNull();
+    expect(registry.getCustomPolicies("alpha")).toEqual([other]);
+  });
+
+  it("rejects duplicate same-name committed state before journaling", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({ name: "alpha" });
+    const document = registry.load();
+    document.sandboxes.alpha.customPolicies = [previous, { ...previous }];
+    registry.save(document);
+    const transition = {
+      version: 1 as const,
+      id: "123e4567-e89b-42d3-a456-426614174050",
+      operation: "remove" as const,
+      name: previous.name,
+      previous,
+      desired: null,
+      startedAt: "2026-08-06T12:02:00.000Z",
+    };
+
+    expect(registry.beginCustomPolicyTransition("alpha", transition)).toBe(false);
+    expect(registry.getCustomPolicyTransition("alpha")).toBeNull();
+  });
+
+  it("serializes custom and baseline policy journals against each other", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({ name: "alpha" });
+    const baselineTransition = {
+      id: "123e4567-e89b-42d3-a456-426614174055",
+      operation: "exclude" as const,
+      exclusion: {
+        version: 1 as const,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "d".repeat(64),
+      },
+      targetLiveDigest: null,
+      startedAt: "2026-08-06T12:02:00.000Z",
+    };
+    const customTransition = {
+      version: 1 as const,
+      id: "123e4567-e89b-42d3-a456-426614174056",
+      operation: "apply" as const,
+      name: desired.name,
+      previous: null,
+      desired,
+      startedAt: "2026-08-06T12:02:00.000Z",
+    };
+
+    expect(registry.beginBaselineExclusionTransition("alpha", baselineTransition)).toBe(true);
+    expect(registry.beginCustomPolicyTransition("alpha", customTransition)).toBe(false);
+    expect(registry.addCustomPolicy("alpha", desired)).toBe(false);
+    expect(registry.removeCustomPolicyByName("alpha", desired.name)).toBe(false);
+    expect(registry.updateSandbox("alpha", { customPolicyTransition: customTransition })).toBe(
+      false,
+    );
+    expect(registry.updateSandbox("alpha", { agentVersion: "unchanged-boundary" })).toBe(true);
+    expect(registry.clearBaselineExclusionTransition("alpha", baselineTransition.id)).toBe(true);
+
+    expect(registry.beginCustomPolicyTransition("alpha", customTransition)).toBe(true);
+    expect(registry.beginBaselineExclusionTransition("alpha", baselineTransition)).toBe(false);
+    expect(registry.addBaselineExclusion("alpha", baselineTransition.exclusion)).toBe(false);
+    expect(registry.removeBaselineExclusion("alpha", baselineTransition.exclusion.key)).toBe(false);
+  });
+
+  it("fails closed when a persisted journal is malformed", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        customPolicyTransition: {
+          version: 1,
+          id: "123e4567-e89b-42d3-a456-426614174060",
+          operation: "apply",
+          name: "private-api",
+          previous: null,
+          startedAt: "2026-08-06T12:02:00.000Z",
+        },
+      },
+    });
+
+    expect(() => registry.getCustomPolicyTransition("alpha")).toThrow(
+      /incomplete custom policy transition.*before rebuilding/i,
+    );
   });
 });
 

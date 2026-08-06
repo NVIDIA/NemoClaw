@@ -10,6 +10,10 @@ import {
 import * as policies from "../../policy";
 import { replayTrustedPrivatePolicyPinCapability } from "../../policy/trusted-private-endpoints";
 import * as sandboxConfig from "../../sandbox/config";
+import {
+  issueRebuildPolicyMutationAuthority,
+  type ShieldsPolicyMutationAuthority,
+} from "../../shields/transition-lock";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
@@ -72,6 +76,7 @@ function reconcileFinalManagedObservability(
   failedBuiltinPresets: readonly string[],
   successfulCustomObservabilityContents: readonly string[],
   log: RebuildLog,
+  shieldsPolicyMutationAuthority: ShieldsPolicyMutationAuthority,
 ): Pick<
   RebuildRestorePhaseResult,
   | "finalPresets"
@@ -121,7 +126,7 @@ function reconcileFinalManagedObservability(
       policies,
       {
         knownBefore: liveBefore,
-        removeOptions: { nonFatal: true },
+        removeOptions: { nonFatal: true, shieldsPolicyMutationAuthority },
       },
     );
     if (removal.reportedSuccess !== true) {
@@ -190,6 +195,8 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     reconcileManagedDcodeObservability,
     log,
   } = input;
+  const shieldsPolicyMutationAuthority = issueRebuildPolicyMutationAuthority(sandboxName);
+  policies.assertInternalShieldsPolicyMutationAllowed(sandboxName, shieldsPolicyMutationAuthority);
   let restoreSucceeded = true;
   if (backupManifest) {
     console.log("");
@@ -264,7 +271,9 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     for (const presetName of builtinPolicyPresets) {
       try {
         log(`Applying preset: ${presetName}`);
-        const applied = policies.applyPreset(sandboxName, presetName);
+        const applied = policies.applyPreset(sandboxName, presetName, {
+          shieldsPolicyMutationAuthority,
+        });
         if (applied) {
           restoredBuiltinPresets.push(presetName);
         } else {
@@ -289,6 +298,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
             sourcePath: entry.sourcePath,
             ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
           },
+          shieldsPolicyMutationAuthority,
         });
         if (applied) {
           restoredCustomPresets.push(entry.name);
@@ -330,6 +340,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         failedBuiltinPresets,
         successfulCustomObservabilityContents,
         log,
+        shieldsPolicyMutationAuthority,
       )
     : {
         finalBuiltinPresets: uniquePresetNames(restoredBuiltinPresets),

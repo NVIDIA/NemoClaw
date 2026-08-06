@@ -738,16 +738,29 @@ exit 1
     let origHome: string | undefined;
     let resolveSpy: ReturnType<typeof vi.spyOn>;
     let savedGetSandbox: any;
-    let savedAddCustomPolicy: any;
 
     beforeEach(() => {
       tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4510-"));
       const localBin = path.join(tmpHome, ".local", "bin");
+      const livePolicyPath = path.join(tmpHome, "live-policy.yaml");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
       fs.writeFileSync(
         fakeOpenshell,
-        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        `#!/bin/sh
+if [ "$1 $2" = "policy get" ]; then
+  if [ -f ${JSON.stringify(livePolicyPath)} ]; then
+    cat ${JSON.stringify(livePolicyPath)}
+  else
+    printf 'version: 1\\nnetwork_policies: {}\\n'
+  fi
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  cp "$4" ${JSON.stringify(livePolicyPath)}
+fi
+exit 0
+`,
         { mode: 0o755 },
       );
       origHome = process.env.HOME;
@@ -756,7 +769,7 @@ exit 1
         .spyOn(resolveOpenshellModule, "resolveOpenshell")
         .mockReturnValue(fakeOpenshell);
       savedGetSandbox = registryModule.getSandbox;
-      savedAddCustomPolicy = registryModule.addCustomPolicy;
+      registryModule.registerSandbox({ name: "my-assistant", gatewayName: "nemoclaw" });
     });
 
     afterEach(() => {
@@ -764,7 +777,6 @@ exit 1
       else process.env.HOME = origHome;
       resolveSpy.mockRestore();
       registryModule.getSandbox = savedGetSandbox;
-      registryModule.addCustomPolicy = savedAddCustomPolicy;
       fs.rmSync(tmpHome, { recursive: true, force: true });
     });
 
@@ -772,8 +784,6 @@ exit 1
       // Sandbox is Ready on the gateway but missing from the local registry
       // (e.g. after stale-registry pruning), so addCustomPolicy cannot persist.
       registryModule.getSandbox = () => null;
-      const addSpy = vi.fn(() => false);
-      registryModule.addCustomPolicy = addSpy;
       const errors: string[] = [];
       const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
         errors.push(a.map((x) => String(x)).join(" "));
@@ -789,7 +799,6 @@ exit 1
         // Pre-fix this returned true (silent exit 0) while policy-list/status
         // never showed the preset. The command must not claim success.
         expect(result).toBe(false);
-        expect(addSpy).not.toHaveBeenCalled();
         const combined = errors.join("\n");
         expect(combined).toContain("my-assistant");
         expect(combined).toMatch(/could not be\s+recorded locally/);
@@ -801,9 +810,6 @@ exit 1
     });
 
     it("records the custom preset and returns true when the sandbox is registered", () => {
-      registryModule.getSandbox = (name: string) => ({ name });
-      const addSpy = vi.fn(() => true);
-      registryModule.addCustomPolicy = addSpy;
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {
@@ -814,14 +820,13 @@ exit 1
           { custom: { sourcePath: SOURCE_PATH } },
         );
         expect(result).toBe(true);
-        expect(addSpy).toHaveBeenCalledWith(
-          "my-assistant",
+        expect(registryModule.getCustomPolicies("my-assistant")).toEqual([
           expect.objectContaining({
             name: "slack-files-upload",
             content: CUSTOM_CONTENT,
             sourcePath: SOURCE_PATH,
           }),
-        );
+        ]);
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
@@ -1264,6 +1269,30 @@ exit 1
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         expect(policies.loadPresetFromFile(file)).toBe(null);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it("loads a custom preset whose name is the 63-character boundary", () => {
+      const presetName = "a".repeat(63);
+      const body = `preset:\n  name: ${presetName}\nnetwork_policies:\n  r:\n    name: r\n`;
+      const { file } = writeTmp(body);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(policies.loadPresetFromFile(file)).toMatchObject({ presetName });
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it("rejects a custom preset whose name exceeds 63 characters", () => {
+      const body = `preset:\n  name: ${"a".repeat(64)}\nnetwork_policies:\n  r:\n    name: r\n`;
+      const { file } = writeTmp(body);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(policies.loadPresetFromFile(file)).toBe(null);
+        expect(errSpy).toHaveBeenCalledWith(expect.stringMatching(/1-63 characters/));
       } finally {
         errSpy.mockRestore();
       }

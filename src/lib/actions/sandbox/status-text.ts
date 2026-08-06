@@ -335,6 +335,19 @@ function printInferenceRouteDrift(
   );
 }
 
+function printCustomPolicyRepair(sandboxName: string, sb: SandboxEntry): void {
+  const transition = sb.customPolicyTransition;
+  if (!transition) return;
+  const retry =
+    transition.operation === "remove"
+      ? `${CLI_NAME} ${sandboxName} policy remove ${transition.name}`
+      : "policy add with --from-file or --from-dir";
+  console.log(
+    `    Custom policy repair required: interrupted ${transition.operation} for ${transition.name} (lifecycle blocked)`,
+  );
+  console.log(`      Re-run \`${retry}\` to reconcile live and durable state.`);
+}
+
 /** Render registry-backed sandbox details and return any non-fatal degraded outcome. */
 export function printSandboxDetails(context: SandboxStatusTextContext): SandboxStatusTextOutcome {
   const { sb, currentModel, currentProvider, sandboxName } = context;
@@ -361,6 +374,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );
   console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
+  printCustomPolicyRepair(sandboxName, sb);
   printBaselineExclusions(sandboxName, sb);
   if (sb.baselineExclusionTransition) {
     const transition = sb.baselineExclusionTransition;

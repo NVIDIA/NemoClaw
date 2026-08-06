@@ -23,6 +23,23 @@ export interface CustomPolicyEntry {
   trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
 }
 
+export type CustomPolicyTransitionOperation = "apply" | "remove";
+
+/**
+ * Durable journal for one custom-policy mutation spanning the host registry
+ * and the live OpenShell policy. The committed `customPolicies` entry remains
+ * unchanged until the exact desired state is published with this journal.
+ */
+export interface CustomPolicyTransition {
+  version: 1;
+  id: string;
+  operation: CustomPolicyTransitionOperation;
+  name: string;
+  previous: CustomPolicyEntry | null;
+  desired: CustomPolicyEntry | null;
+  startedAt: string;
+}
+
 export interface BaselineExclusionEntry {
   /** Persistence schema version for this reviewed exclusion intent. */
   version: 1;
@@ -92,6 +109,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   openshellVersion?: string | null;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
+  /** Crash-recoverable journal for one custom-policy live mutation. */
+  customPolicyTransition?: CustomPolicyTransition;
   /** Operator exclusions from the agent baseline policy, replayed on rebuild. */
   baselineExclusions?: BaselineExclusionEntry[];
   /** Crash-recoverable journal for an exclusion/restore live-policy mutation. */

@@ -18,6 +18,21 @@ export type OpenshellCaptureResult = {
 export type SandboxRecord = {
   name: string;
   agent?: string | null;
+  customPolicyTransition?: {
+    version: 1;
+    id: string;
+    operation: "apply" | "remove";
+    name: string;
+    previous: {
+      name: string;
+      content: string;
+    } | null;
+    desired: {
+      name: string;
+      content: string;
+    } | null;
+    startedAt: string;
+  };
   baselineExclusionTransition?: {
     id: string;
     operation: "exclude" | "restore";

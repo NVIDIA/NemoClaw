@@ -18,11 +18,17 @@ import {
 import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
-import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
+  MCP_BRIDGE_POLICY_SOURCE,
+  type McpBridgeEntry,
+  normalizeSandboxMcpState,
+} from "./registry-mcp";
+import {
+  isRegistryTransitionId,
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeCustomPolicyTransition,
   retainedDefaultSandbox,
 } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
@@ -39,6 +45,7 @@ import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
   CustomPolicyEntry,
+  CustomPolicyTransition,
   SandboxEntry,
 } from "./registry/types";
 import {
@@ -69,6 +76,8 @@ export type {
   BaselineExclusionTransition,
   BaselineExclusionTransitionOperation,
   CustomPolicyEntry,
+  CustomPolicyTransition,
+  CustomPolicyTransitionOperation,
   SandboxEntry,
   SandboxGpuProofResult,
   SandboxGpuProofStatus,
@@ -76,6 +85,7 @@ export type {
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
+export { MCP_BRIDGE_POLICY_SOURCE } from "./registry-mcp";
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -135,6 +145,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       baselineExclusionTransition: normalizeBaselineExclusionTransition(
         entry.baselineExclusionTransition,
       ),
+      customPolicyTransition: normalizeCustomPolicyTransition(entry.customPolicyTransition),
       policyTier: entry.policyTier || null,
       webSearchEnabled:
         typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
@@ -265,11 +276,52 @@ export function isPendingReservationForSession(
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
-    if (!data.sandboxes[name]) return false;
+    const sandbox = data.sandboxes[name];
+    if (!sandbox) return false;
     if (Object.prototype.hasOwnProperty.call(updates, "name") && updates.name !== name) {
       return false;
     }
-    Object.assign(data.sandboxes[name], updates);
+    if (
+      [
+        "customPolicies",
+        "customPolicyTransition",
+        "baselineExclusions",
+        "baselineExclusionTransition",
+      ].some((field) => Object.prototype.hasOwnProperty.call(updates, field))
+    ) {
+      return false;
+    }
+    Object.assign(sandbox, updates);
+    save(data);
+    return true;
+  });
+}
+
+/** Atomically retire exact generated-policy ownership after managed MCP destroy. */
+export function completeMcpDestroy(
+  name: string,
+  expectedEntries: readonly McpBridgeEntry[],
+): boolean {
+  const expectedBridges = Object.fromEntries(expectedEntries.map((entry) => [entry.server, entry]));
+  if (Object.keys(expectedBridges).length !== expectedEntries.length) return false;
+  const ownedPolicyNames = new Set(expectedEntries.map((entry) => entry.policyName));
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (
+      !sandbox ||
+      sandbox.customPolicyTransition ||
+      sandbox.baselineExclusionTransition ||
+      !isDeepStrictEqual(sandbox.mcp?.bridges ?? {}, expectedBridges)
+    ) {
+      return false;
+    }
+    const remaining = (sandbox.customPolicies ?? []).filter(
+      (policy) =>
+        !(ownedPolicyNames.has(policy.name) && policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE),
+    );
+    sandbox.customPolicies = remaining.length > 0 ? remaining : undefined;
+    sandbox.mcp = undefined;
     save(data);
     return true;
   });
@@ -372,7 +424,9 @@ export function addCustomPolicy(name: string, entry: CustomPolicyEntry): boolean
   return withLock(() => {
     const data = load();
     const sandbox = data.sandboxes[name];
-    if (!sandbox) return false;
+    if (!sandbox || sandbox.customPolicyTransition || sandbox.baselineExclusionTransition) {
+      return false;
+    }
     const list = (sandbox.customPolicies ?? []).filter((p) => p.name !== entry.name);
     list.push({ ...entry, appliedAt: entry.appliedAt ?? new Date().toISOString() });
     sandbox.customPolicies = list;
@@ -386,11 +440,122 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
   return withLock(() => {
     const data = load();
     const sandbox = data.sandboxes[name];
-    if (!sandbox) return false;
+    if (!sandbox || sandbox.customPolicyTransition || sandbox.baselineExclusionTransition) {
+      return false;
+    }
     const list = sandbox.customPolicies ?? [];
     const next = list.filter((p) => p.name !== presetName);
     if (next.length === list.length) return false;
     sandbox.customPolicies = next.length > 0 ? next : undefined;
+    save(data);
+    return true;
+  });
+}
+
+/** Return the one in-flight custom-policy transaction for a sandbox. */
+export function getCustomPolicyTransition(name: string): CustomPolicyTransition | null {
+  const data = load();
+  return data.sandboxes[name]?.customPolicyTransition ?? null;
+}
+
+function getExactCustomPolicyEntry(
+  entries: readonly CustomPolicyEntry[],
+  name: string,
+): CustomPolicyEntry | null | undefined {
+  const matches = entries.filter((entry) => entry.name === name);
+  if (matches.length > 1) return undefined;
+  return matches[0] ?? null;
+}
+
+function customPolicyPreviousMatches(
+  entries: readonly CustomPolicyEntry[],
+  transition: CustomPolicyTransition,
+): boolean {
+  const current = getExactCustomPolicyEntry(entries, transition.name);
+  return current !== undefined && isDeepStrictEqual(current, transition.previous);
+}
+
+function customPolicyTransitionClaimsManagedMcpOwnership(
+  transition: CustomPolicyTransition,
+): boolean {
+  return [transition.previous, transition.desired].some(
+    (entry) => entry?.sourcePath === MCP_BRIDGE_POLICY_SOURCE,
+  );
+}
+
+/** Persist exact pre-mutation state before changing the live policy. */
+export function beginCustomPolicyTransition(
+  name: string,
+  transition: CustomPolicyTransition,
+): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox || sandbox.customPolicyTransition || sandbox.baselineExclusionTransition) {
+      return false;
+    }
+    const normalized = normalizeCustomPolicyTransition(transition);
+    if (
+      !normalized ||
+      customPolicyTransitionClaimsManagedMcpOwnership(normalized) ||
+      !customPolicyPreviousMatches(sandbox.customPolicies ?? [], normalized)
+    ) {
+      return false;
+    }
+    sandbox.customPolicyTransition = normalized;
+    save(data);
+    return true;
+  });
+}
+
+/**
+ * Publish the exact desired custom-policy state and clear its journal in one
+ * registry-file replacement. A stale same-name registry entry is never
+ * overwritten or removed.
+ */
+export function commitCustomPolicyTransition(name: string, id: string): boolean {
+  if (!isRegistryTransitionId(id)) return false;
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    const transition = sandbox?.customPolicyTransition;
+    if (
+      !sandbox ||
+      !transition ||
+      transition.id !== id ||
+      customPolicyTransitionClaimsManagedMcpOwnership(transition) ||
+      !customPolicyPreviousMatches(sandbox.customPolicies ?? [], transition)
+    ) {
+      return false;
+    }
+    const list = (sandbox.customPolicies ?? []).filter((entry) => entry.name !== transition.name);
+    if (transition.operation === "apply") {
+      if (!transition.desired) return false;
+      list.push(transition.desired);
+    }
+    sandbox.customPolicies = list.length > 0 ? list : undefined;
+    sandbox.customPolicyTransition = undefined;
+    save(data);
+    return true;
+  });
+}
+
+/** Roll back only the exact pending journal, preserving committed policies. */
+export function clearCustomPolicyTransition(name: string, id: string): boolean {
+  if (!isRegistryTransitionId(id)) return false;
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    const transition = sandbox?.customPolicyTransition;
+    if (
+      !sandbox ||
+      !transition ||
+      transition.id !== id ||
+      !customPolicyPreviousMatches(sandbox.customPolicies ?? [], transition)
+    ) {
+      return false;
+    }
+    sandbox.customPolicyTransition = undefined;
     save(data);
     return true;
   });
@@ -407,7 +572,9 @@ export function addBaselineExclusion(name: string, entry: BaselineExclusionEntry
   return withLock(() => {
     const data = load();
     const sandbox = data.sandboxes[name];
-    if (!sandbox || sandbox.baselineExclusionTransition) return false;
+    if (!sandbox || sandbox.baselineExclusionTransition || sandbox.customPolicyTransition) {
+      return false;
+    }
     const list = (sandbox.baselineExclusions ?? []).filter((e) => e.key !== entry.key);
     list.push({ ...entry, acknowledgedAt: entry.acknowledgedAt ?? new Date().toISOString() });
     sandbox.baselineExclusions = list;
@@ -421,7 +588,9 @@ export function removeBaselineExclusion(name: string, key: string): boolean {
   return withLock(() => {
     const data = load();
     const sandbox = data.sandboxes[name];
-    if (!sandbox || sandbox.baselineExclusionTransition) return false;
+    if (!sandbox || sandbox.baselineExclusionTransition || sandbox.customPolicyTransition) {
+      return false;
+    }
     const list = sandbox.baselineExclusions ?? [];
     const next = list.filter((e) => e.key !== key);
     if (next.length === list.length) return false;
@@ -448,7 +617,9 @@ export function beginBaselineExclusionTransition(
   return withLock(() => {
     const data = load();
     const sandbox = data.sandboxes[name];
-    if (!sandbox || sandbox.baselineExclusionTransition) return false;
+    if (!sandbox || sandbox.baselineExclusionTransition || sandbox.customPolicyTransition) {
+      return false;
+    }
     sandbox.baselineExclusionTransition = normalizeBaselineExclusionTransition(transition);
     save(data);
     return true;

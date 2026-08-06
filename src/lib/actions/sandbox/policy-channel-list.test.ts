@@ -11,6 +11,7 @@ type PresetInfo = {
 const moduleMocks = vi.hoisted(() => ({
   getSandbox: vi.fn<(sandboxName: string) => Record<string, unknown> | null>(),
   getCustomPolicies: vi.fn<(sandboxName: string) => PresetInfo[]>(),
+  getCustomPolicyTransition: vi.fn(),
   getBaselineExclusions: vi.fn(),
   getBaselineExclusionTransition: vi.fn(),
   listPresets: vi.fn<(options?: { agent?: string | null }) => PresetInfo[]>(),
@@ -26,6 +27,7 @@ vi.mock("../../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/registry")>()),
   getSandbox: moduleMocks.getSandbox,
   getCustomPolicies: moduleMocks.getCustomPolicies,
+  getCustomPolicyTransition: moduleMocks.getCustomPolicyTransition,
   getBaselineExclusions: moduleMocks.getBaselineExclusions,
   getBaselineExclusionTransition: moduleMocks.getBaselineExclusionTransition,
 }));
@@ -90,6 +92,7 @@ beforeEach(() => {
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   moduleMocks.getCustomPolicies.mockReturnValue([]);
+  moduleMocks.getCustomPolicyTransition.mockReturnValue(null);
   moduleMocks.listPresets.mockReturnValue(POLICY_PRESETS);
   moduleMocks.listCustomPresets.mockReturnValue([]);
   moduleMocks.isDockerRuntimeDown.mockReturnValue(false);
@@ -103,6 +106,35 @@ afterEach(() => {
 });
 
 describe("listSandboxPolicies provenance", () => {
+  it("discloses an interrupted custom-policy removal and exact repair command", () => {
+    arrangeListing({
+      appliedNames: [],
+      gatewayNames: [],
+      tier: null,
+      agent: "hermes",
+    });
+    moduleMocks.getCustomPolicyTransition.mockReturnValue({
+      version: 1,
+      id: "00000000-0000-4000-8000-000000000001",
+      operation: "remove",
+      name: "private-api",
+      previous: {
+        name: "private-api",
+        sourcePath: "/tmp/private-api.yaml",
+        content: "network_policies: {}",
+      },
+      desired: null,
+      startedAt: "2026-08-06T00:00:00.000Z",
+    });
+
+    listSandboxPolicies("test-sandbox");
+
+    const output = printedText();
+    expect(output).toContain("Custom policy repair required");
+    expect(output).toContain("private-api (interrupted remove; lifecycle blocked)");
+    expect(output).toContain("nemoclaw test-sandbox policy remove private-api");
+  });
+
   it("discloses an interrupted baseline transaction and exact repair command (#7178)", () => {
     arrangeListing({
       appliedNames: [],

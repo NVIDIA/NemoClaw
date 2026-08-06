@@ -231,11 +231,21 @@ describe("rebuild policy restore fidelity", () => {
       { getSandbox: expect.any(Function) },
     );
     expect(applyPreset).toHaveBeenCalledOnce();
-    expect(applyPreset).toHaveBeenCalledWith("alpha", "npm");
+    expect(applyPreset).toHaveBeenCalledWith(
+      "alpha",
+      "npm",
+      expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+    );
     for (const entry of customPolicies) {
-      expect(applyPresetContent).toHaveBeenCalledWith("alpha", entry.name, entry.content, {
-        custom: { sourcePath: entry.sourcePath },
-      });
+      expect(applyPresetContent).toHaveBeenCalledWith(
+        "alpha",
+        entry.name,
+        entry.content,
+        expect.objectContaining({
+          custom: { sourcePath: entry.sourcePath },
+          shieldsPolicyMutationAuthority: expect.any(Object),
+        }),
+      );
     }
     expect(result.restoredPresets).toEqual(["npm", "brave", "tavily", "nous-web"]);
     expect(result.failedPresets).toEqual([]);
@@ -281,14 +291,15 @@ describe("rebuild policy restore fidelity", () => {
       "alpha",
       "custom-egress",
       customPolicies[0]!.content,
-      {
+      expect.objectContaining({
         custom: {
           sourcePath: "/tmp/custom-egress.yaml",
           trustedPrivatePinCapability: expect.objectContaining({
             receipt: customPolicies[0]!.trustedPrivatePins,
           }),
         },
-      },
+        shieldsPolicyMutationAuthority: expect.any(Object),
+      }),
     );
     expect(result.restoredPresets).toEqual(["custom-egress"]);
     expect(result.finalPresets).toEqual(["custom-egress"]);
@@ -322,7 +333,10 @@ describe("rebuild policy restore fidelity", () => {
       "alpha",
       genuineCustomPolicy.name,
       genuineCustomPolicy.content,
-      { custom: { sourcePath: genuineCustomPolicy.sourcePath } },
+      expect.objectContaining({
+        custom: { sourcePath: genuineCustomPolicy.sourcePath },
+        shieldsPolicyMutationAuthority: expect.any(Object),
+      }),
     );
     expect(result.restoredPresets).toEqual([genuineCustomPolicy.name]);
     expect(result.failedPresets).toEqual([]);
@@ -346,9 +360,14 @@ describe("rebuild policy restore fidelity", () => {
       log: vi.fn(),
     });
 
-    expect(removePreset).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
-      nonFatal: true,
-    });
+    expect(removePreset).toHaveBeenCalledWith(
+      "alpha",
+      "observability-otlp-local",
+      expect.objectContaining({
+        nonFatal: true,
+        shieldsPolicyMutationAuthority: expect.any(Object),
+      }),
+    );
     expect(result.finalPresets).toEqual(["npm"]);
     expect(result.failedPresetRemovals).toEqual([]);
     expect(result.policyPresetReconciliationVerified).toBe(true);
@@ -488,7 +507,10 @@ describe("rebuild policy restore fidelity", () => {
       "alpha",
       customPolicy.name,
       customPolicy.content,
-      { custom: { sourcePath: customPolicy.sourcePath } },
+      expect.objectContaining({
+        custom: { sourcePath: customPolicy.sourcePath },
+        shieldsPolicyMutationAuthority: expect.any(Object),
+      }),
     );
     expect(removePreset).not.toHaveBeenCalled();
     expect(result.finalPresets).toEqual([customPolicy.name]);
@@ -520,7 +542,10 @@ describe("rebuild policy restore fidelity", () => {
       "alpha",
       customPolicy.name,
       customPolicy.content,
-      { custom: { sourcePath: customPolicy.sourcePath } },
+      expect.objectContaining({
+        custom: { sourcePath: customPolicy.sourcePath },
+        shieldsPolicyMutationAuthority: expect.any(Object),
+      }),
     );
     expect(exactState).toHaveBeenCalledWith("alpha", customPolicy.content);
     expect(removePreset).not.toHaveBeenCalled();
@@ -550,9 +575,14 @@ describe("rebuild policy restore fidelity", () => {
       log: vi.fn(),
     });
 
-    expect(removePreset).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
-      nonFatal: true,
-    });
+    expect(removePreset).toHaveBeenCalledWith(
+      "alpha",
+      "observability-otlp-local",
+      expect.objectContaining({
+        nonFatal: true,
+        shieldsPolicyMutationAuthority: expect.any(Object),
+      }),
+    );
     expect(result.finalPresets).toEqual([customPolicy.name]);
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });
@@ -580,9 +610,14 @@ describe("rebuild policy restore fidelity", () => {
     });
 
     expect(result.failedPresets).toEqual([customPolicy.name]);
-    expect(removePreset).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
-      nonFatal: true,
-    });
+    expect(removePreset).toHaveBeenCalledWith(
+      "alpha",
+      "observability-otlp-local",
+      expect.objectContaining({
+        nonFatal: true,
+        shieldsPolicyMutationAuthority: expect.any(Object),
+      }),
+    );
     expect(result.finalPresets).toEqual([]);
     expect(result.policyPresetReconciliationVerified).toBe(true);
   });

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-
 import {
   expectAbsentSandboxMcpFinalize,
   expectActiveTimerDestroyOrder,
@@ -22,8 +21,117 @@ import {
 } from "../../../../test/helpers/destroy-flow-test-assertions";
 import {
   createDestroyHarness,
+  type DestroyHarness,
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
+import type { BaselineExclusionTransition, CustomPolicyTransition } from "../../state/registry";
+
+const customApplyTransition = {
+  version: 1,
+  id: "33333333-3333-4333-8333-333333333333",
+  operation: "apply",
+  name: "private-api",
+  previous: null,
+  desired: {
+    name: "private-api",
+    content: "network_policies:\n  private_api:\n    endpoints: []\n",
+    sourcePath: "/tmp/private-api.yaml",
+  },
+  startedAt: "2026-08-06T12:00:00.000Z",
+} satisfies CustomPolicyTransition;
+
+const customRemoveTransition = {
+  version: 1,
+  id: "11111111-1111-4111-8111-111111111111",
+  operation: "remove",
+  name: "private-api",
+  previous: {
+    name: "private-api",
+    content: "network_policies:\n  private_api:\n    endpoints: []\n",
+  },
+  desired: null,
+  startedAt: "2026-08-06T12:00:00.000Z",
+} satisfies CustomPolicyTransition;
+
+const baselineRestoreTransition = {
+  id: "22222222-2222-4222-8222-222222222222",
+  operation: "restore",
+  exclusion: {
+    version: 1,
+    agent: "openclaw",
+    key: "nous_research",
+    digest: "approved-digest",
+  },
+  targetLiveDigest: "release-digest",
+  startedAt: "2026-08-06T12:00:00.000Z",
+} satisfies BaselineExclusionTransition;
+
+function expectNoDestroyCleanupAfterPresenceProof(harness: DestroyHarness): void {
+  expect(harness.selectGatewaySpy).toHaveBeenCalled();
+  expect(harness.gatewayPinsAtSandboxList.length).toBeGreaterThan(0);
+  expect(harness.gatewayPinsAtSandboxList.every((pin) => pin === "nemoclaw-19080")).toBe(true);
+  expect(harness.runOpenshellSpy).toHaveBeenCalled();
+  expect(
+    harness.runOpenshellSpy.mock.calls.every(
+      ([args]) => Array.isArray(args) && args.join(" ") === "sandbox list -o json",
+    ),
+  ).toBe(true);
+  expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+  expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+  expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
+  expect(harness.unloadOllamaModelsSpy).not.toHaveBeenCalled();
+  expect(harness.stopAllSpy).not.toHaveBeenCalled();
+  expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+  expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).not.toHaveBeenCalled();
+  expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).not.toHaveBeenCalled();
+  expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
+  expect(harness.events).toEqual([]);
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  expect(harness.updateSandboxSpy).not.toHaveBeenCalled();
+  expect(harness.updateSessionSpy).not.toHaveBeenCalled();
+  expect(harness.killTimerSpy).not.toHaveBeenCalled();
+  expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  expect(harness.revokeHttpsPinRuntimeAdapterRouteSpy).not.toHaveBeenCalled();
+  expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+  expect(harness.dockerRunSpy).not.toHaveBeenCalled();
+}
+
+function expectJournalClearBeforeAbsentCleanup(
+  harness: DestroyHarness,
+  clearSpy: MockInstance,
+  transitionId: string,
+): void {
+  expect(clearSpy).toHaveBeenCalledWith("alpha", transitionId);
+  const clearOrder = clearSpy.mock.invocationCallOrder[0];
+  const presenceProofCall = harness.runOpenshellSpy.mock.calls.findIndex(
+    ([args]) => Array.isArray(args) && args.join(" ") === "sandbox list -o json",
+  );
+  expect(presenceProofCall).toBeGreaterThanOrEqual(0);
+  expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080"]);
+  expect(harness.runOpenshellSpy.mock.invocationCallOrder[presenceProofCall]).toBeLessThan(
+    clearOrder,
+  );
+  const refreshedReadOrder = harness.getSandboxSpy.mock.invocationCallOrder.find(
+    (order) => order > clearOrder,
+  );
+  expect(refreshedReadOrder).toBeDefined();
+  expect(clearOrder).toBeLessThan(refreshedReadOrder ?? 0);
+  expect(clearOrder).toBeLessThan(harness.stopNimByNameSpy.mock.invocationCallOrder[0]);
+  expect(clearOrder).toBeLessThan(
+    harness.prepareMcpBridgesForAbsentSandboxDestroySpy.mock.invocationCallOrder[0],
+  );
+  expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+  expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
+    force: false,
+  });
+  expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalled();
+  const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+    ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
+  );
+  expect(deleteCall).toBeGreaterThanOrEqual(0);
+  expect(clearOrder).toBeLessThan(harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]);
+  expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+}
 
 describe("destroySandbox flow", () => {
   let exitSpy: MockInstance;
@@ -57,6 +165,132 @@ describe("destroySandbox flow", () => {
     ).resolves.toBeUndefined();
 
     expectSuccessfulLiveDestroy(harness, exitSpy);
+  });
+
+  it.each([
+    [
+      "a live sandbox with a custom policy application",
+      { customPolicyTransition: customApplyTransition },
+      "custom policy apply for 'private-api' needs repair",
+      "policy add with --from-file or --from-dir",
+    ],
+    [
+      "unknown sandbox presence with a custom policy removal",
+      {
+        customPolicyTransition: customRemoveTransition,
+        sandboxListStatus: 1,
+        sandboxListStderr: "gateway unreachable",
+      },
+      "custom policy remove for 'private-api' needs repair",
+      "policy remove private-api",
+    ],
+    [
+      "a live sandbox with a baseline policy restore",
+      { baselineExclusionTransition: baselineRestoreTransition },
+      "baseline policy restore for 'nous_research' needs repair",
+      "policy restore nous_research",
+    ],
+  ] as const)("blocks %s before destroy can mutate runtime or durable state", async (_scenario, options, expectedFailure, expectedRetry) => {
+    const harness = createDestroyHarness(options);
+
+    await expect(harness.destroySandbox("alpha", { yes: true, force: true })).rejects.toThrow(
+      expectedFailure,
+    );
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(expectedRetry);
+    expect(harness.selectGatewaySpy).toHaveBeenCalledTimes(2);
+    expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080", "nemoclaw-19080"]);
+    expect(harness.clearCustomPolicyTransitionSpy).not.toHaveBeenCalled();
+    expect(harness.clearBaselineExclusionTransitionSpy).not.toHaveBeenCalled();
+    expectNoDestroyCleanupAfterPresenceProof(harness);
+  });
+
+  it("clears the exact custom policy journal before cleaning up a confirmed-absent sandbox", async () => {
+    const harness = createDestroyHarness({
+      customPolicyTransition: customRemoveTransition,
+      mcpServers: ["github"],
+      sandboxPresent: false,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expectJournalClearBeforeAbsentCleanup(
+      harness,
+      harness.clearCustomPolicyTransitionSpy,
+      customRemoveTransition.id,
+    );
+    expect(harness.clearBaselineExclusionTransitionSpy).not.toHaveBeenCalled();
+  });
+
+  it("clears the exact baseline policy journal before cleaning up a confirmed-absent sandbox", async () => {
+    const harness = createDestroyHarness({
+      baselineExclusionTransition: baselineRestoreTransition,
+      mcpServers: ["github"],
+      sandboxPresent: false,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expectJournalClearBeforeAbsentCleanup(
+      harness,
+      harness.clearBaselineExclusionTransitionSpy,
+      baselineRestoreTransition.id,
+    );
+    expect(harness.clearCustomPolicyTransitionSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "custom policy",
+      {
+        customPolicyTransition: customRemoveTransition,
+        customTransitionClearResult: false,
+      },
+      "custom policy repair journal changed or could not be cleared",
+      "clearCustomPolicyTransitionSpy",
+      customRemoveTransition.id,
+    ],
+    [
+      "baseline policy",
+      {
+        baselineExclusionTransition: baselineRestoreTransition,
+        baselineTransitionClearResult: false,
+      },
+      "baseline policy repair journal changed or could not be cleared",
+      "clearBaselineExclusionTransitionSpy",
+      baselineRestoreTransition.id,
+    ],
+  ] as const)("preserves all cleanup state when the absent-sandbox %s journal CAS fails", async (_scenario, transition, expectedFailure, clearSpyName, transitionId) => {
+    const harness = createDestroyHarness({
+      ...transition,
+      mcpServers: ["github"],
+      sandboxPresent: false,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true, force: true })).rejects.toThrow(
+      expectedFailure,
+    );
+
+    expect(harness[clearSpyName]).toHaveBeenCalledWith("alpha", transitionId);
+    expect(harness.getSandboxSpy).toHaveBeenCalledTimes(2);
+    expectNoDestroyCleanupAfterPresenceProof(harness);
+  });
+
+  it("does not partially clear conflicting policy journals from a confirmed-absent sandbox", async () => {
+    const harness = createDestroyHarness({
+      baselineExclusionTransition: baselineRestoreTransition,
+      customPolicyTransition: customRemoveTransition,
+      mcpServers: ["github"],
+      sandboxPresent: false,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "conflicting custom and baseline policy repair journals",
+    );
+
+    expect(harness.clearCustomPolicyTransitionSpy).not.toHaveBeenCalled();
+    expect(harness.clearBaselineExclusionTransitionSpy).not.toHaveBeenCalled();
+    expectNoDestroyCleanupAfterPresenceProof(harness);
   });
 
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {

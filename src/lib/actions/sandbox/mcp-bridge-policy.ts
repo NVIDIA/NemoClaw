@@ -14,6 +14,7 @@ import {
   isTrustedPrivateEndpointCapability,
   replayTrustedPrivateEndpoint,
 } from "../../security/trusted-private-endpoint";
+import { issueManagedMcpPolicyMutationAuthority } from "../../shields/transition-lock";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -553,6 +554,12 @@ function persistGeneratedPolicyRegistration(
   }
 }
 
+function removeGeneratedPolicyRegistration(sandboxName: string, policyName: string): void {
+  if (!registry.removeCustomPolicyByName(sandboxName, policyName)) {
+    throw new McpBridgeError(`Could not clear ownership for generated MCP policy '${policyName}'.`);
+  }
+}
+
 /**
  * Resolve a crash-interrupted generated-policy transition against the effective
  * gateway policy. `content` remains the last confirmed value while
@@ -602,6 +609,8 @@ export function applyGeneratedPolicy(
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
 ): void {
+  const shieldsPolicyMutationAuthority = issueManagedMcpPolicyMutationAuthority(sandboxName);
+  policies.assertInternalShieldsPolicyMutationAllowed(sandboxName, shieldsPolicyMutationAuthority);
   const resolvedAddresses = assertMcpBridgePolicyTarget(entry, target);
   if (resolvedAddresses.length === 0) {
     throw new McpBridgeError(
@@ -675,6 +684,7 @@ export function applyGeneratedPolicy(
     expectedExistingNetworkPolicyContent:
       ownsExistingPolicyKey && previousPolicy ? previousPolicy.content : null,
     nonFatal: true,
+    shieldsPolicyMutationAuthority,
     skipRegistryUpdate: true,
   });
   // `policy set --wait` proves that a submitted revision loaded, but OpenShell
@@ -695,7 +705,7 @@ export function applyGeneratedPolicy(
       persistGeneratedPolicyRegistration(sandboxName, withoutPendingContent(previousPolicy));
     }
   } else if (activeState === "absent") {
-    registry.removeCustomPolicyByName(sandboxName, entry.policyName);
+    removeGeneratedPolicyRegistration(sandboxName, entry.policyName);
   }
   const detail =
     activeState === "match" ? "the update command failed" : `effective state: ${activeState}`;
@@ -875,6 +885,8 @@ export function removeGeneratedPolicy(
   entry: McpBridgeEntry,
   options: { bestEffort?: boolean } = {},
 ): void {
+  const shieldsPolicyMutationAuthority = issueManagedMcpPolicyMutationAuthority(sandboxName);
+  policies.assertInternalShieldsPolicyMutationAllowed(sandboxName, shieldsPolicyMutationAuthority);
   const policyName = entry.policyName;
   const registeredPolicy = registry
     .getCustomPolicies(sandboxName)
@@ -893,7 +905,7 @@ export function removeGeneratedPolicy(
       : getUnownedGeneratedPolicyState(sandboxName, entry));
   if (gatewayState === "absent") {
     if (ownsRegistration) {
-      registry.removeCustomPolicyByName(sandboxName, policyName);
+      removeGeneratedPolicyRegistration(sandboxName, policyName);
     }
     return;
   }
@@ -905,6 +917,7 @@ export function removeGeneratedPolicy(
   }
   const ok = policies.removePreset(sandboxName, policyName, {
     nonFatal: true,
+    shieldsPolicyMutationAuthority,
     // Keep ownership durable across a crash or superseded OpenShell revision.
     // It is cleared only after the exact live key is proven absent below.
     skipRegistryUpdate: true,
@@ -919,7 +932,7 @@ export function removeGeneratedPolicy(
   }
   const activeState = policies.getPresetContentGatewayState(sandboxName, content);
   if (activeState === "absent") {
-    registry.removeCustomPolicyByName(sandboxName, policyName);
+    removeGeneratedPolicyRegistration(sandboxName, policyName);
     return;
   }
   // Keep (or defensively restore) the last reconciled ownership record when

@@ -81,6 +81,40 @@ describe("rebuild baseline transition preflight (#7194)", () => {
   });
 });
 
+describe("rebuild custom policy transition preflight (#8176)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getSandbox.mockReturnValue({
+      name: "alpha",
+      customPolicyTransition: {
+        version: 1,
+        id: "123e4567-e89b-42d3-a456-426614174080",
+        operation: "remove",
+        name: "private-api",
+        previous: {
+          name: "private-api",
+          content: "network_policies:\n  private_api: {}\n",
+        },
+        desired: null,
+        startedAt: "2026-08-06T12:02:00.000Z",
+      },
+    });
+  });
+
+  it("stops before session probes, MCP checks, confirmation, or target preparation", async () => {
+    await expect(runRebuildPreflightPhase("alpha", ["--yes"])).resolves.toBeNull();
+
+    expect(mocks.bail).toHaveBeenCalledWith(
+      "Pending custom policy remove for 'private-api' blocks rebuild.",
+      1,
+    );
+    expect(mocks.countActiveSessions).not.toHaveBeenCalled();
+    expect(mocks.assertMcpDestroyNotPending).not.toHaveBeenCalled();
+    expect(mocks.confirmRebuildIntent).not.toHaveBeenCalled();
+    expect(mocks.prepareTargets).not.toHaveBeenCalled();
+  });
+});
+
 describe("rebuild MCP destroy marker preflight (#7794)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

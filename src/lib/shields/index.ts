@@ -38,6 +38,7 @@ const {
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
+  describePendingPolicyTransitionForShieldsDown,
   parseCurrentPolicy,
   resolvePermissivePolicyPath,
 } = require("../policy");
@@ -73,6 +74,7 @@ const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./ve
 const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   inspectAnyShieldsTransitionLockOwner,
+  isShieldsState,
   isShieldsTransitionLockUnavailable,
   withShieldsTransitionLock,
 }: typeof import("./transition-lock") = require("./transition-lock");
@@ -92,7 +94,6 @@ const {
   DEEP_AGENTS_CONFIG_LOCK_ERROR_PROTOCOL_PREFIX,
   parseSha256Output,
   isHashVerificationIssue,
-  isSha256Hex,
 }: typeof import("./seal") = require("./seal");
 const {
   applyStateDirLockMode,
@@ -729,29 +730,7 @@ function stateFilePath(sandboxName: string): string {
 type ShieldsMode = "mutable_default" | "locked" | "temporarily_unlocked";
 type ShieldsPostureMode = ShieldsMode | "error";
 
-interface ShieldsState {
-  shieldsDown?: boolean;
-  shieldsDownAt?: string | null;
-  shieldsDownTimeout?: number | null;
-  shieldsDownReason?: string | null;
-  shieldsDownPolicy?: string | null;
-  shieldsPolicySnapshotPath?: string | null;
-  /** Exact generated MCP keys owned in the restrictive snapshot. */
-  shieldsManagedMcpPolicyKeys?: string[];
-  chattrApplied?: boolean;
-  // SHA-256 seal of each locked file, captured by `shields up` after the
-  // lock verification passes. `shields status` re-hashes the same files
-  // inside the sandbox and flags drift on any mismatch. This catches the
-  // host-root tamper pattern that defeats perm-only checks: chmod to
-  // mutable -> write -> chmod back to 444 leaves mode/owner identical to
-  // the locked baseline but produces a new content hash. Absent on state
-  // files captured before the seal landed; on those legacy lockdowns
-  // `shields up` refuses to seal an unverified baseline by default and
-  // asks the operator to rebuild the sandbox, or to opt in via
-  // `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`.
-  fileHashes?: { [path: string]: string };
-  updatedAt?: string;
-}
+type ShieldsState = import("./transition-lock").ShieldsState;
 
 type LoadedShieldsState = ShieldsState & {
   _hasStateFile: boolean;
@@ -1311,61 +1290,12 @@ function restoreShieldsStateSnapshot(sandboxName: string, state: LoadedShieldsSt
   fs.writeFileSync(filePath, JSON.stringify(persisted, null, 2), { mode: 0o600 });
 }
 
-function isOptionalBoolean(value: unknown): value is boolean | undefined {
-  return value === undefined || typeof value === "boolean";
-}
-
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
-}
-
-function isOptionalNullableString(value: unknown): value is string | null | undefined {
-  return value === undefined || value === null || typeof value === "string";
-}
-
-function isOptionalNullableNumber(value: unknown): value is number | null | undefined {
-  return (
-    value === undefined || value === null || (typeof value === "number" && Number.isFinite(value))
-  );
-}
-
-// SHA-256 hex strings are 64 lowercase or uppercase hex chars. The seal
-// helper normalises to lowercase before persisting; accept either case
-// here so manually edited state files and legacy uppercase entries still
-// load, and reject anything that cannot be a real digest. Uses the same
-// `isSha256Hex` predicate as the verifier so the persisted-state and
-// runtime contracts stay aligned.
-function isOptionalHashMap(value: unknown): value is { [path: string]: string } | undefined {
-  if (value === undefined) return true;
-  if (!isObjectRecord(value)) return false;
-  for (const v of Object.values(value)) {
-    if (typeof v !== "string" || !isSha256Hex(v)) return false;
-  }
-  return true;
-}
-
 function isOptionalManagedMcpPolicyKeys(value: unknown): value is string[] | undefined {
   if (value === undefined) return true;
   // Preserve string entries exactly so deadline recovery can strip and audit
   // malformed or duplicate ownership without delaying restrictive lockdown.
   // Manual restoration validates the same entries strictly during composition.
   return Array.isArray(value) && value.every((key) => typeof key === "string");
-}
-
-function isShieldsState(value: unknown): value is ShieldsState {
-  return (
-    isObjectRecord(value) &&
-    isOptionalBoolean(value.shieldsDown) &&
-    isOptionalNullableString(value.shieldsDownAt) &&
-    isOptionalNullableNumber(value.shieldsDownTimeout) &&
-    isOptionalNullableString(value.shieldsDownReason) &&
-    isOptionalNullableString(value.shieldsDownPolicy) &&
-    isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
-    isOptionalManagedMcpPolicyKeys(value.shieldsManagedMcpPolicyKeys) &&
-    isOptionalBoolean(value.chattrApplied) &&
-    isOptionalHashMap(value.fileHashes) &&
-    isOptionalString(value.updatedAt)
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -3542,6 +3472,14 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     );
     return failShieldsCommand(`Shields state is corrupt for ${sandboxName}`, opts.throwOnError);
   }
+  const pendingPolicyTransition = describePendingPolicyTransitionForShieldsDown(sandboxName);
+  if (pendingPolicyTransition) {
+    console.error(`  Cannot lower Shields for ${sandboxName}. ${pendingPolicyTransition}`);
+    return failShieldsCommand(
+      `Pending policy transaction blocks Shields down for ${sandboxName}`,
+      opts.throwOnError,
+    );
+  }
   const initialMode = deriveShieldsMode(state, state._hasStateFile);
   if (state.shieldsDown) {
     console.error(
@@ -3952,11 +3890,16 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
     : (opts.processToken ?? randomBytes(16).toString("hex"));
   const effectiveOpts = processToken ? { ...opts, processToken } : opts;
   try {
-    return withShieldsTransitionLock(
+    return withMcpLifecycleLockSync(
       sandboxName,
-      "shields down",
-      () => shieldsDownWithoutHostLock(sandboxName, effectiveOpts),
-      processToken ? { takeoverToken: processToken } : {},
+      () =>
+        withShieldsTransitionLock(
+          sandboxName,
+          "shields down",
+          () => shieldsDownWithoutHostLock(sandboxName, effectiveOpts),
+          processToken ? { takeoverToken: processToken } : {},
+        ),
+      { stateDir: STATE_DIR },
     );
   } catch (error) {
     return completeDeferredShieldsExit(error, opts.throwOnError === true);

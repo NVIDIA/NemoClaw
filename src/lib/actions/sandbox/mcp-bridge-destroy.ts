@@ -7,7 +7,7 @@ import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
 } from "./mcp-bridge-adapter-teardown";
-import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
+import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
   assertMcpDestroySnapshotCurrent,
@@ -332,16 +332,8 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
     }
   }
 
-  const finalSandbox = assertMcpDestroySnapshotCurrent(sandboxName, entries);
-  const ownedPolicyNames = new Set(entries.map((entry) => entry.policyName));
-  const remainingCustomPolicies = (finalSandbox.customPolicies ?? []).filter(
-    (policy) =>
-      !(ownedPolicyNames.has(policy.name) && policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE),
-  );
-  const cleared = registry.updateSandbox(sandboxName, {
-    mcp: undefined,
-    customPolicies: remainingCustomPolicies.length > 0 ? remainingCustomPolicies : undefined,
-  });
+  assertMcpDestroySnapshotCurrent(sandboxName, entries);
+  const cleared = registry.completeMcpDestroy(sandboxName, entries);
   if (!cleared) {
     throw new McpBridgeError(
       `MCP providers were deleted, but cleanup state for sandbox '${sandboxName}' could not be cleared. Re-run destroy; missing providers are accepted while cleanup is pending.`,
