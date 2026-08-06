@@ -464,7 +464,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
 
   it("accepts matching artifact, candidate source, and workflow identities", () => {
     const result = runIdentityValidation();
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, "matching artifact identity validation failed").toBe(0);
   });
 
   it("reuses an immutable producer artifact during a later failed-job rerun", () => {
