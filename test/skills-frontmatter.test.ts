@@ -38,7 +38,11 @@ function listFiles(root: string): string[] {
     .readdirSync(root, { withFileTypes: true })
     .flatMap((entry) => {
       const fullPath = path.join(root, entry.name);
-      return entry.isDirectory() ? listFiles(fullPath) : entry.isFile() ? [fullPath] : [];
+      return entry.isDirectory()
+        ? listFiles(fullPath)
+        : entry.isFile()
+          ? [fullPath]
+          : [];
     })
     .sort();
 }
@@ -61,9 +65,10 @@ function expectValidSkillMarkdown(skillFile: string) {
     name: expect.any(String),
     description: expect.any(String),
   });
-  expect(frontmatter.name.trim().length, `${relPath} is missing frontmatter.name`).toBeGreaterThan(
-    0,
-  );
+  expect(
+    frontmatter.name.trim().length,
+    `${relPath} is missing frontmatter.name`,
+  ).toBeGreaterThan(0);
   expect(
     frontmatter.description.trim().length,
     `${relPath} is missing frontmatter.description`,
@@ -74,7 +79,9 @@ function expectValidSkillMarkdown(skillFile: string) {
 
 describe("repo skill markdown files", () => {
   const markdownFiles = listMarkdownFiles(skillsRoot);
-  const skillFiles = markdownFiles.filter((file: string) => path.basename(file) === "SKILL.md");
+  const skillFiles = markdownFiles.filter(
+    (file: string) => path.basename(file) === "SKILL.md",
+  );
 
   it("finds skill markdown files to validate", () => {
     expect(skillFiles.length).toBeGreaterThan(0);
@@ -96,11 +103,17 @@ describe("repo skill markdown files", () => {
     ];
 
     for (const name of names) {
-      const raw = fs.readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");
-      expect(raw.split("\n").length, `${name} must stay concise`).toBeLessThan(120);
-      expect(raw, `${name} must discover current implementation details`).toContain(
-        "../_shared/implementation-discovery.md",
+      const raw = fs.readFileSync(
+        path.join(skillsRoot, name, "SKILL.md"),
+        "utf8",
       );
+      expect(raw.split("\n").length, `${name} must stay concise`).toBeLessThan(
+        120,
+      );
+      expect(
+        raw,
+        `${name} must discover current implementation details`,
+      ).toContain("../_shared/implementation-discovery.md");
     }
 
     const discovery = fs.readFileSync(
@@ -132,18 +145,28 @@ describe("repo skill markdown files", () => {
 
     expect(skill).toContain("an accepted issue or accepted design decision");
     expect(skill).toContain("Distinguish the requested outcome");
-    expect(skill).toContain("independently valuable user, contributor, or maintainer outcome");
-    expect(skill).toMatch(/Do not\s+divide work into component or layer tasks/u);
+    expect(skill).toContain(
+      "independently valuable user, contributor, or maintainer outcome",
+    );
+    expect(skill).toMatch(
+      /Do not\s+divide work into component or layer tasks/u,
+    );
     expect(skill).toContain("Planning is read-only by default");
-    expect(skill).toContain("Authorization to plan does not authorize GitHub writes");
-    expect(skill).toMatch(/This workflow never authorizes source\s+implementation/u);
+    expect(skill).toContain(
+      "Authorization to plan does not authorize GitHub writes",
+    );
+    expect(skill).toMatch(
+      /This workflow never authorizes source\s+implementation/u,
+    );
     expect(skill).toContain("Current behavior owner");
 
     expect(skill).toContain("Assigned implementation owner");
     expect(skill).toContain("First capability slice");
     expect(skill).toContain("Stop conditions");
     expect(skill).toContain("- Ambiguous: <input or state>");
-    expect(skill).toContain("each authorized write with its resulting URL or failure");
+    expect(skill).toContain(
+      "each authorized write with its resulting URL or failure",
+    );
 
     expect(evals.map(({ id }) => id)).toEqual([
       "positive-explicit-plan",
@@ -156,21 +179,34 @@ describe("repo skill markdown files", () => {
       "authorized-single-github-write",
       "adversarial-untrusted-issue-content",
     ]);
-    expect(evals.find(({ id }) => id === "positive-explicit-plan")?.expected_skill).toBe(
-      "nemoclaw-contributor-plan-issue",
-    );
-    expect(evals.find(({ id }) => id === "clean-context-refinement")?.expected_skill).toBe(
-      "nemoclaw-contributor-plan-issue",
-    );
+    expect(
+      evals.find(({ id }) => id === "positive-explicit-plan")?.expected_skill,
+    ).toBe("nemoclaw-contributor-plan-issue");
+    expect(
+      evals.find(({ id }) => id === "clean-context-refinement")?.expected_skill,
+    ).toBe("nemoclaw-contributor-plan-issue");
+    for (const id of [
+      "unauthorized-github-write",
+      "authorized-single-github-write",
+      "adversarial-untrusted-issue-content",
+    ]) {
+      expect(
+        evals.find((evaluation) => evaluation.id === id)?.expected_skill,
+      ).toBe("nemoclaw-contributor-plan-issue");
+    }
 
-    expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
-    expect(evals.find(({ id }) => id === "negative-implementation")?.expected_skill).toBeNull();
-    expect(evals.find(({ id }) => id === "negative-pr-publication")?.expected_skill).toBe(
-      "nemoclaw-contributor-create-pr",
-    );
-    expect(evals.find(({ id }) => id === "negative-maintainer-loop")?.expected_skill).toBe(
-      "nemoclaw-maintainer-day",
-    );
+    expect(
+      evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill,
+    ).toBeNull();
+    expect(
+      evals.find(({ id }) => id === "negative-implementation")?.expected_skill,
+    ).toBeNull();
+    expect(
+      evals.find(({ id }) => id === "negative-pr-publication")?.expected_skill,
+    ).toBe("nemoclaw-contributor-create-pr");
+    expect(
+      evals.find(({ id }) => id === "negative-maintainer-loop")?.expected_skill,
+    ).toBe("nemoclaw-maintainer-day");
   });
 
   it("links fallback validation to current contributor requirements", () => {
@@ -197,7 +233,11 @@ describe("repo skill markdown files", () => {
   });
 
   it("keeps contributor PR creation anchored to the trusted base template", () => {
-    const skillPath = path.join(skillsRoot, "nemoclaw-contributor-create-pr", "SKILL.md");
+    const skillPath = path.join(
+      skillsRoot,
+      "nemoclaw-contributor-create-pr",
+      "SKILL.md",
+    );
     const skill = fs.readFileSync(skillPath, "utf8");
 
     expect(skill).toContain("trusted base branch");
@@ -212,7 +252,11 @@ describe("repo skill markdown files", () => {
   });
 
   it("keeps contributor onboarding anchored to the setup script", () => {
-    const skillPath = path.join(skillsRoot, "nemoclaw-contributor-onboard", "SKILL.md");
+    const skillPath = path.join(
+      skillsRoot,
+      "nemoclaw-contributor-onboard",
+      "SKILL.md",
+    );
     const skill = fs.readFileSync(skillPath, "utf8");
 
     expect(skill).toContain("./scripts/dev-setup.sh");
@@ -242,12 +286,17 @@ describe("repo skill markdown files", () => {
       skill.indexOf("run `./scripts/dev-setup.sh` from the repository root"),
     );
     expect(
-      skill.indexOf("after explicit approval, run `./scripts/dev-setup.sh --expose-cli`"),
+      skill.indexOf(
+        "after explicit approval, run `./scripts/dev-setup.sh --expose-cli`",
+      ),
     ).toBeGreaterThan(skill.indexOf("Readiness only"));
   });
 
   it("keeps development CLI exposure anchored to the setup script", () => {
-    const contributing = fs.readFileSync(path.join(repoRoot, "CONTRIBUTING.md"), "utf8");
+    const contributing = fs.readFileSync(
+      path.join(repoRoot, "CONTRIBUTING.md"),
+      "utf8",
+    );
     const localTesting = contributing
       .split("### Local Development Testing\n")[1]
       ?.split("\n## Main Tasks")[0];
@@ -258,7 +307,9 @@ describe("repo skill markdown files", () => {
     expect(localTesting).toContain("nemoclaw --version");
     expect(localTesting).toContain("npm unlink -g nemoclaw");
     expect(localTesting).not.toMatch(/^\s*npm link\s*$/m);
-    expect(localTesting).not.toContain('export PATH="$(npm prefix -g)/bin:$PATH"');
+    expect(localTesting).not.toContain(
+      'export PATH="$(npm prefix -g)/bin:$PATH"',
+    );
   });
 
   it("preserves the single NVSkills catalog skill copy", () => {
@@ -267,10 +318,20 @@ describe("repo skill markdown files", () => {
 
     const sourceRoot = path.join(skillsRoot, "nemoclaw-user-guide");
     const catalogRoot = path.join(catalogSkillsRoot, "nemoclaw-user-guide");
-    const sourceFiles = listFiles(sourceRoot).map((file) => path.relative(sourceRoot, file));
-    const catalogFiles = listFiles(catalogRoot).map((file) => path.relative(catalogRoot, file));
-    const signedCatalogArtifacts = ["BENCHMARK.md", "skill-card.md", "skill.oms.sig"];
-    expect(catalogFiles).toEqual([...sourceFiles, ...signedCatalogArtifacts].sort());
+    const sourceFiles = listFiles(sourceRoot).map((file) =>
+      path.relative(sourceRoot, file),
+    );
+    const catalogFiles = listFiles(catalogRoot).map((file) =>
+      path.relative(catalogRoot, file),
+    );
+    const signedCatalogArtifacts = [
+      "BENCHMARK.md",
+      "skill-card.md",
+      "skill.oms.sig",
+    ];
+    expect(catalogFiles).toEqual(
+      [...sourceFiles, ...signedCatalogArtifacts].sort(),
+    );
 
     for (const relativeFile of sourceFiles) {
       const sourceFile = path.join(sourceRoot, relativeFile);
