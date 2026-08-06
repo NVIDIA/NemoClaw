@@ -675,6 +675,33 @@ describe("showSandboxStatus flow", () => {
     expect(output).not.toContain("Recovered NemoClaw gateway runtime");
   });
 
+  it("points SSH operators to dashboard-url for remote-access instructions when the gateway is running (#8465)", async () => {
+    vi.stubEnv("SSH_CONNECTION", "203.0.113.9 51000 198.51.100.2 22");
+    const harness = createStatusFlowHarness({ gatewayRunning: true });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("OpenClaw: ");
+    expect(output).toContain("running");
+    expect(output).toContain(
+      "Remote access: run `nemoclaw alpha dashboard-url` for SSH port-forward instructions.",
+    );
+  });
+
+  it("omits the remote-access pointer when the session is not over SSH (#8465)", async () => {
+    vi.stubEnv("SSH_CONNECTION", "");
+    vi.stubEnv("SSH_CLIENT", "");
+    vi.stubEnv("SSH_TTY", "");
+    const harness = createStatusFlowHarness({ gatewayRunning: true });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("running");
+    expect(output).not.toContain("Remote access: run");
+  });
+
   it("renders gateway-level handshake failures without removing registry state", async () => {
     const harness = createStatusFlowHarness({
       inferenceHealth: null,
