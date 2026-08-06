@@ -178,6 +178,7 @@ function safeErrorDetails(error: unknown): { error_code: string; error_message: 
 async function requestWithHttpRetry(
   name: string,
   request: () => Promise<CurlProbeResult>,
+  retryTransientHttp = true,
 ): Promise<CurlProbeResult> {
   let result = await request();
   let attempt = 1;
@@ -188,7 +189,13 @@ async function requestWithHttpRetry(
     curl_status: result.curlStatus,
   });
   for (const delayMs of RETRY_DELAYS_MS) {
-    if (result.curlStatus !== 0 || !RETRIABLE_HTTP_STATUSES.has(result.httpStatus)) break;
+    if (
+      !retryTransientHttp ||
+      result.curlStatus !== 0 ||
+      !RETRIABLE_HTTP_STATUSES.has(result.httpStatus)
+    ) {
+      break;
+    }
     console.log(
       `  ${name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
     );
@@ -311,15 +318,21 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
       "nemoclaw.inference.validation_probe",
       { probe_name: "Chat Completions API", api: "openai-completions" },
       async () => {
-        const requestChat = (maxTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS) =>
-          requestWithHttpRetry("Chat Completions API", () =>
-            session.request({
-              ...auth,
-              body: requireToolCall
-                ? chatToolPayload(model, maxTokens)
-                : JSON.stringify(deps.getChatPayload(model)),
-              timeoutMs: deps.getChatTimeoutMs(model, options),
-            }),
+        const requestChat = (
+          maxTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS,
+          retryTransientHttp = true,
+        ) =>
+          requestWithHttpRetry(
+            "Chat Completions API",
+            () =>
+              session.request({
+                ...auth,
+                body: requireToolCall
+                  ? chatToolPayload(model, maxTokens)
+                  : JSON.stringify(deps.getChatPayload(model)),
+                timeoutMs: deps.getChatTimeoutMs(model, options),
+              }),
+            retryTransientHttp,
           );
         const initial = await requestChat();
         if (!requireToolCall || !initial.ok || !isReasoningOnlyLengthResponse(initial.body)) {
@@ -331,7 +344,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
           initial_max_tokens: STRICT_TOOL_PROBE_INITIAL_TOKENS,
           retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
         });
-        return requestChat(STRICT_TOOL_PROBE_RETRY_TOKENS);
+        return requestChat(STRICT_TOOL_PROBE_RETRY_TOKENS, false);
       },
     );
     if (chat.curlStatus !== 0) {

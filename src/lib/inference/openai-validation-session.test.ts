@@ -116,6 +116,51 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
+  it("does not retry a transient HTTP failure after the larger-budget retry", async () => {
+    let requestCount = 0;
+    const server = http.createServer((request, response) => {
+      requestCount += 1;
+      request.resume();
+      response.setHeader("content-type", "application/json");
+      if (requestCount === 1) {
+        response.end(
+          '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+        );
+        return;
+      }
+      if (requestCount === 2) {
+        response.statusCode = 503;
+        response.end('{"error":{"message":"temporarily unavailable"}}');
+        return;
+      }
+      response.end(
+        '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
+      );
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+
+    try {
+      const result = await probeOpenAiLikeEndpointWithValidationSession(
+        `http://provider.example.test:${port}/v1`,
+        "qwen3-vl:4b",
+        "test-key",
+        { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+        harness,
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("HTTP 503"),
+      });
+      expect(requestCount).toBe(2);
+      expect(harness.legacyProbe).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("does not use the legacy probe after an unexpected post-retry failure", async () => {
     const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
