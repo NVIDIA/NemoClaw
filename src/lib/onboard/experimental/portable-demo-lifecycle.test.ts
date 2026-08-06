@@ -430,11 +430,14 @@ describe("portable demo sandbox lifecycle", () => {
     expect(fs.readFileSync(receiptPath, "utf-8")).toBe(originalReceipt);
   });
 
-  it("removes a stale receipt when its exact container no longer exists (#8441)", () => {
+  it("removes only the stale receipt when its exact container no longer exists (#8441)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman();
     installReceipt(stateDir, runtime.podman);
     const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    const otherFilePath = portableDemoLifecycleInternals.receiptPath("beta", stateDir);
+    const otherReceipt = '{"sandboxName":"beta"}\n';
+    fs.writeFileSync(otherFilePath, otherReceipt, { mode: 0o600 });
     runtime.podman.mockReturnValue({
       status: 125,
       stdout: `Error: no such container ${CONTAINER_ID}`,
@@ -448,6 +451,7 @@ describe("portable demo sandbox lifecycle", () => {
       ),
     ).toEqual({ kind: "not-installed" });
     expect(fs.existsSync(filePath)).toBe(false);
+    expect(fs.readFileSync(otherFilePath, "utf-8")).toBe(otherReceipt);
   });
 
   it("does not launch a second startup command when the agent gateway responds (#8441)", () => {
