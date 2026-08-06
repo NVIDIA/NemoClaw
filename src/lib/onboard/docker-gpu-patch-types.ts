@@ -204,6 +204,7 @@ export type DockerContainerInspect = {
     AttachStdin?: boolean;
     AttachStdout?: boolean;
     AttachStderr?: boolean;
+    ExposedPorts?: Record<string, Record<string, never>> | null;
     Env?: string[] | null;
     Labels?: Record<string, string> | null;
     Entrypoint?: string[] | string | null;
@@ -259,6 +260,7 @@ export type DockerContainerInspect = {
     CpusetCpus?: string;
     CpusetMems?: string;
     PidsLimit?: number | null;
+    PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null> | null;
     ConsoleSize?: number[] | null;
     Privileged?: boolean;
     Init?: boolean;

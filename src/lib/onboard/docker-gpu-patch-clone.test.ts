@@ -137,6 +137,80 @@ describe("Docker GPU clone envelope", () => {
     );
   });
 
+  it("preserves explicit Docker port bindings and exposed ports", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.ExposedPorts = {
+      "8080/tcp": {},
+      "9090/udp": {},
+      "9443/tcp": {},
+    };
+    inspect.HostConfig!.PortBindings = {
+      "8080/tcp": [
+        { HostIp: "127.0.0.1", HostPort: "" },
+        { HostIp: "::1", HostPort: "18080" },
+      ],
+      "9443/tcp": [{ HostIp: "", HostPort: "19443" }],
+    };
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"));
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--publish",
+        "127.0.0.1::8080/tcp",
+        "--publish",
+        "[::1]:18080:8080/tcp",
+        "--publish",
+        "19443:9443/tcp",
+        "--expose",
+        "9090/udp",
+      ]),
+    );
+  });
+
+  it.each([
+    {
+      name: "container port",
+      port: "65536/tcp",
+      binding: { HostIp: "127.0.0.1", HostPort: "" },
+      error: "Docker container port is invalid.",
+    },
+    {
+      name: "protocol",
+      port: "8080/http",
+      binding: { HostIp: "127.0.0.1", HostPort: "" },
+      error: "Docker exposed port is invalid.",
+    },
+    {
+      name: "host IP address",
+      port: "8080/tcp",
+      binding: { HostIp: "localhost", HostPort: "" },
+      error: "Docker port binding host IP is invalid.",
+    },
+    {
+      name: "host port",
+      port: "8080/tcp",
+      binding: { HostIp: "127.0.0.1", HostPort: "65536" },
+      error: "Docker host port is invalid.",
+    },
+  ])("rejects a Docker port binding with an invalid $name", ({ port, binding, error }) => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.PortBindings = { [port]: [binding] };
+
+    expect(() =>
+      buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command")),
+    ).toThrow(error);
+  });
+
+  it("rejects a Docker port binding without a host binding", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.PortBindings = { "8080/tcp": [] };
+
+    expect(() =>
+      buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command")),
+    ).toThrow("Docker port binding must contain at least one host binding.");
+  });
+
   it.each([2048, -1])("preserves the exact Docker PID limit %i", (pidsLimit) => {
     const inspect = inspectFixture();
     inspect.HostConfig!.PidsLimit = pidsLimit;

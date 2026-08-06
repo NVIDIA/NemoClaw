@@ -78,6 +78,26 @@ describe("managed bootstrap Docker launch spec", () => {
     expect(observed.hash).not.toBe(expected.hash);
   });
 
+  it("canonicalizes detached OpenShell streams to Docker CLI create defaults", () => {
+    const openshellInspect = createDockerGpuInspectFixture();
+    Object.assign(openshellInspect.Config!, {
+      AttachStdin: false,
+      AttachStdout: false,
+      AttachStderr: false,
+    });
+    const dockerCliInspect = structuredClone(openshellInspect);
+    Object.assign(dockerCliInspect.Config!, {
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(openshellInspect);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(dockerCliInspect);
+
+    expect(observed.canonicalJson).toBe(expected.canonicalJson);
+    expect(observed.hash).toBe(expected.hash);
+  });
+
   it("canonicalizes Docker API and CLI host-list representations", () => {
     const apiInspect = createDockerGpuInspectFixture();
     Object.assign(apiInspect.HostConfig!, {
@@ -93,6 +113,7 @@ describe("managed bootstrap Docker launch spec", () => {
       DnsOptions: null,
       DnsSearch: null,
       OomKillDisable: null,
+      PortBindings: null,
       Ulimits: null,
     });
     const cliInspect = structuredClone(apiInspect);
@@ -116,6 +137,7 @@ describe("managed bootstrap Docker launch spec", () => {
       DnsOptions: [],
       DnsSearch: [],
       OomKillDisable: false,
+      PortBindings: {},
       MaskedPaths: ["/sys/firmware", "/proc/kcore"],
       ReadonlyPaths: ["/proc/sysrq-trigger", "/proc/sys"],
       Ulimits: [],
