@@ -4076,7 +4076,7 @@ GUARDENVEOF
       cat <<'GATEWAYTOKENENVEOF'
 case "${OPENCLAW_GATEWAY_URL:-}" in
   *@*)
-    _nemoclaw_intended_gateway_token=
+    _nemoclaw_gateway_token=
     ;;
   '' | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
     wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
@@ -4085,10 +4085,10 @@ case "${OPENCLAW_GATEWAY_URL:-}" in
     "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
     "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*)
 GATEWAYTOKENENVEOF
-      printf "    _nemoclaw_intended_gateway_token='%s'\n" "$_escaped_gateway_token"
+      printf "    _nemoclaw_gateway_token='%s'\n" "$_escaped_gateway_token"
       printf '    ;;\n'
       printf '  *)\n'
-      printf '    _nemoclaw_intended_gateway_token=\n'
+      printf '    _nemoclaw_gateway_token=\n'
       printf '    ;;\n'
       printf 'esac\n'
       cat <<'GATEWAYTOKENRECONCILEEOF'
@@ -4098,16 +4098,16 @@ GATEWAYTOKENENVEOF
 # anchor when writable (also the fresh-source and repeated-source paths), stay
 # silent when it already holds the intended value, and otherwise emit a
 # controlled conflict diagnostic that never echoes the trusted token.
-if ( OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_intended_gateway_token" ) 2>/dev/null; then
-  OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_intended_gateway_token"
-elif [ "${OPENCLAW_GATEWAY_TOKEN-}" = "$_nemoclaw_intended_gateway_token" ]; then
+if ( OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_gateway_token" ) 2>/dev/null; then
+  OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_gateway_token"
+elif [ "${OPENCLAW_GATEWAY_TOKEN-}" = "$_nemoclaw_gateway_token" ]; then
   :
 else
   echo "Error: conflicting trust anchor" >&2
-  unset _nemoclaw_intended_gateway_token
+  unset _nemoclaw_gateway_token
   return 1 2>/dev/null || exit 1
 fi
-unset _nemoclaw_intended_gateway_token
+unset _nemoclaw_gateway_token
 # nemoclaw-gateway-token-reconcile end
 GATEWAYTOKENRECONCILEEOF
     fi

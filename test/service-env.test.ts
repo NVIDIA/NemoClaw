@@ -662,7 +662,7 @@ describe("service environment", () => {
         expect(envFile).toContain("10.200.0.1");
         expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
         expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
-        expect(envFile).toContain("_nemoclaw_intended_gateway_token='test-token-123'");
+        expect(envFile).toContain("_nemoclaw_gateway_token='test-token-123'");
         expect(envFile).toContain("nemoclaw-configure-guard begin");
         expect(envFile).toContain('/usr/bin/env openclaw "$@"');
         // Tool cache redirects should be present (#804)

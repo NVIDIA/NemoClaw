@@ -45,10 +45,10 @@ function runReconcile(scenario: Scenario): {
   const dir = mkdtempSync(join(tmpdir(), "nemoclaw-token-reconcile-"));
   tmpRoots.push(dir);
   const envFile = join(dir, "proxy-env.sh");
-  // The reconcile block reads $_nemoclaw_intended_gateway_token (set by the URL
+  // The reconcile block reads $_nemoclaw_gateway_token (set by the URL
   // case above it in the real file) and prints the resolved value on success.
   const body = [
-    `_nemoclaw_intended_gateway_token='${scenario.intended}'`,
+    `_nemoclaw_gateway_token='${scenario.intended}'`,
     RECONCILE,
     "printf 'FINAL_TOKEN=[%s]\\n' \"${OPENCLAW_GATEWAY_TOKEN-<UNSET>}\"",
     "",
