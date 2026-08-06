@@ -6,7 +6,7 @@ import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
-  parseTrustedPrivateInferenceHosts,
+  parseTrustedPrivateInferenceHostsFromEnv,
 } from "../inference/endpoint-ssrf-preflight";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
@@ -304,9 +304,7 @@ export function createSetupInference(
             {
               trustedPrivateHosts:
                 deps.trustedPrivateEndpointHosts ??
-                parseTrustedPrivateInferenceHosts(
-                  process.env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS,
-                ),
+                parseTrustedPrivateInferenceHostsFromEnv(process.env),
             },
           );
           if (!preflight.ok) {
