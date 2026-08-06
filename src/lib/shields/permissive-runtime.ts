@@ -67,9 +67,9 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  *   path is not already granted `read_write` (either by base or by live).
  *
  * Returns the path to a freshly created temp YAML file when the live
- * policy carries a filesystem section that needs merging. Falls back to
- * the static base path when the live policy is empty / has no filesystem
- * lists, when the base YAML cannot be parsed, or when temp-file I/O
+ * policy carries filesystem paths or a Landlock stanza that must be
+ * preserved. Falls back to the static base path when the live policy has
+ * neither, when the base YAML cannot be parsed, or when temp-file I/O
  * fails — degrading to the existing static apply path rather than
  * aborting shields-down with an I/O error.
  */
@@ -102,10 +102,15 @@ export function buildRuntimePermissivePolicy(
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
 
-  // No live filesystem section to merge — keep the static path so the
-  // caller's apply path is unchanged unless exact managed MCP entries must
-  // survive the complete-policy replacement.
-  if (liveRw.length === 0 && liveRo.length === 0 && managedMcpPolicies.length === 0) {
+  // No live startup-sealed or filesystem state to carry forward — keep the
+  // static path so the caller's apply path is unchanged unless exact managed
+  // MCP entries must survive the complete-policy replacement.
+  if (
+    liveRw.length === 0 &&
+    liveRo.length === 0 &&
+    live?.landlock === undefined &&
+    managedMcpPolicies.length === 0
+  ) {
     return basePermissivePath;
   }
 

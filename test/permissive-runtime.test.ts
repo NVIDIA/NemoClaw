@@ -241,14 +241,18 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(result.landlock).toEqual({ compatibility: "best_effort" });
   });
 
-  it("returns the static base path when live policy has no filesystem_policy section", () => {
-    const basePath = "/path/to/static.yaml";
-    const liveYaml = YAML.stringify({ landlock: { compatibility: "best_effort" } });
+  it("carries Landlock when the live policy has no filesystem paths (#8461)", () => {
+    const basePath = "/unused-base.yaml";
+    const liveYaml = YAML.stringify({ landlock: { compatibility: "strict" } });
     const out = buildRuntimePermissivePolicy(basePath, {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
-    expect(out).toBe(basePath);
+    trackTempForCleanup(out, basePath);
+
+    expect(out).not.toBe(basePath);
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "strict" });
   });
 
   it("returns the static base path when readBasePolicy throws (I/O failure)", () => {
