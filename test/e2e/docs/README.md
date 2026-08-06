@@ -136,10 +136,11 @@ The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
 test files serially. It does not retry a failed test.
 
 After an eligible `E2E main` push workflow fails, `E2E / Main Retry` asks
-GitHub Actions to rerun its failed jobs. It can request two reruns, for three total
-attempts. The controller does not verify that GitHub schedules a different runner,
-so do not treat a retry as evidence of a fresh host. If a later attempt succeeds,
-the source workflow concludes with `success`. The evidence sets `action` to
+GitHub Actions to rerun the full workflow. Each rerun rebuilds the attempt-bound
+candidate CLI artifact. The controller can request two reruns, for three total
+attempts. It does not verify that GitHub schedules a different runner, so do not
+treat a rerun as evidence of a fresh host. If a later attempt succeeds, the
+source workflow concludes with `success`. The evidence sets `action` to
 `passed-after-retry` and `flaky` to `true`.
 
 After the controller evaluates attempt N, it uploads an artifact named for that

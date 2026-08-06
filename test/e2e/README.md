@@ -14,7 +14,7 @@ before those targets run; local runners must provide it themselves.
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
 - `.github/workflows/e2e-main-retry.yaml` evaluates eligible `E2E main` push
-  attempts, requests at most two failed-job reruns, and uploads attempt evidence.
+  attempts, requests at most two full workflow reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
@@ -455,11 +455,12 @@ set, incomplete listing, custom or self-hosted label, changed evidence, or
 ambiguous pagination prevents recovery.
 
 For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to
-rerun failed jobs after a workflow failure. It can request two retries. The
-controller does not verify that GitHub schedules a different runner, so do not
-treat a retry as evidence of a fresh host. It ignores manual runs and source runs
-superseded by a newer `main` push. The controller checks out only trusted
-default-branch code and receives no repository secrets.
+rerun the full workflow after a workflow failure. A full rerun rebuilds the
+attempt-bound candidate CLI artifact before consumer jobs start. The controller
+can request two reruns. It does not verify that GitHub schedules a different
+runner, so do not treat a rerun as evidence of a fresh host. It ignores manual
+runs and source runs superseded by a newer `main` push. The controller checks out
+only trusted default-branch code and receives no repository secrets.
 
 The runner-allocation and internal-error failures handled by Hosted Runner
 Recovery originate in GitHub Actions, outside repository-controlled workflow
@@ -696,8 +697,8 @@ Each push to `main` triggers the default E2E suite.
 The central workflow has no scheduled trigger.
 
 When an eligible `E2E main` push workflow concludes with `failure`,
-`E2E / Main Retry` asks GitHub Actions to rerun the failed jobs. The controller
-permits two retries but does not verify that GitHub schedules a different runner.
+`E2E / Main Retry` asks GitHub Actions to rerun the full workflow. The controller
+permits two reruns but does not verify that GitHub schedules a different runner.
 After evaluation succeeds, it uploads an artifact named for the current attempt.
 The artifact contains one `attempts` summary for each source attempt through the
 current attempt. The `totalRunnerMinutes` field contains the cumulative runner
