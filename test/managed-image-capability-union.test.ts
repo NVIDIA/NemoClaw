@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS,
   MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS,
-} from "../agents/hermes/config/hermes-config.ts";
+} from "../agents/hermes/config/managed-policy.ts";
 import { MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES } from "../scripts/generate-openclaw-config.mts";
 import {
   applyMessagingBuildPhase,

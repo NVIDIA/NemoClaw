@@ -14,8 +14,7 @@ import {
 } from "../../../../tools/e2e/workflow-plan.mts";
 
 type JsonRecord = Record<string, unknown>;
-type RunnerStatus = "false" | "true" | "unknown";
-type ExecutionGroup = "conditional" | "default" | "parallel-explicit";
+type ExecutionGroup = "default";
 
 export type ReleaseE2eExecution = {
   id: string;
@@ -27,20 +26,10 @@ export type ReleaseE2eExecution = {
 export type ReleaseE2ePreflight = {
   candidateSha: string;
   dispatches: {
-    conditional: Array<{
-      allowJetsonRunnerQueue: boolean;
-      jobs: string;
-      reason: string;
-    }>;
-    defaultSuite: {
+    completeRun: {
       includeStagingBrevLaunchable: true;
       jobs: "";
       mode: "full";
-      targets: "";
-    };
-    parallelExplicit: {
-      includeStagingBrevLaunchable: false;
-      jobs: string;
       targets: "";
     };
   };
@@ -64,25 +53,24 @@ export type ReleaseE2eLedgerEntry = ReleaseE2eExecution & {
     jobUrl: string;
     runUrl: string;
   }>;
-  greenEvidence?: {
+  successfulEvidence?: {
     attempt: number;
     jobUrl: string;
     runUrl: string;
   };
-  status: "green" | "missing";
+  status: "missing" | "successful";
 };
 
 export type ReleaseE2eLedger = {
   candidateSha: string;
   entries: ReleaseE2eLedgerEntry[];
-  greenCount: number;
+  successfulCount: number;
   missingCount: number;
   requiredCount: number;
 };
 
 type ReleaseEvidenceManifest = {
   candidateSha: string;
-  jetsonRunnerOnline: RunnerStatus;
   runs: Array<{
     dispatchJson: string;
     jobsJson: string;
@@ -92,7 +80,6 @@ type ReleaseEvidenceManifest = {
 
 type CliOptions = {
   candidateSha?: string;
-  jetsonRunnerOnline: RunnerStatus;
   manifest?: string;
   workflowPath: string;
 };
@@ -100,7 +87,6 @@ type CliOptions = {
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const DEFAULT_WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
-const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const SAFE_REPO_PATH_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+$/u;
 const MATRIX_EXPRESSION_PATTERN = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/gu;
 
@@ -139,11 +125,6 @@ function requireEqual(actual: unknown, expected: unknown, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label} must equal ${JSON.stringify(expected)}`);
   }
-}
-
-function parseRunnerStatus(value: string): RunnerStatus {
-  if (value === "true" || value === "false" || value === "unknown") return value;
-  throw new Error("--jetson-runner-online must be true, false, or unknown");
 }
 
 function matrixRows(rawMatrix: unknown, jobId: string): JsonRecord[] {
@@ -260,10 +241,12 @@ function workflowJobs(workflowPath: string): JsonRecord {
   return record(workflow.jobs, "workflow.jobs");
 }
 
-function isLaunchableE2eJob(job: JsonRecord): boolean {
+function isLaunchableE2eJob(jobId: string, job: JsonRecord): boolean {
   const condition = job.if;
   return (
-    typeof condition === "string" && condition.includes("inputs.include_staging_brev_launchable")
+    jobId === "staging-brev-launchable" &&
+    typeof condition === "string" &&
+    condition.includes("inputs.include_staging_brev_launchable")
   );
 }
 
@@ -292,11 +275,15 @@ function releaseActivationPath(job: JsonRecord, jobId: string): string | undefin
 
 function candidatePathExists(candidateSha: string, candidatePath: string): boolean {
   try {
-    const output = execFileSync("git", ["ls-tree", "--name-only", candidateSha, "--", candidatePath], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const output = execFileSync(
+      "git",
+      ["ls-tree", "--name-only", candidateSha, "--", candidatePath],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     return output.trim() === candidatePath;
   } catch (error) {
     throw new Error(
@@ -309,7 +296,6 @@ function candidatePathExists(candidateSha: string, candidatePath: string): boole
 export function buildReleaseE2ePreflight(input: {
   candidateSha: string;
   candidatePathExists?: (candidateSha: string, candidatePath: string) => boolean;
-  jetsonRunnerOnline?: RunnerStatus;
   plan?: E2eWorkflowPlan;
   workflowPath?: string;
 }): ReleaseE2ePreflight {
@@ -320,36 +306,26 @@ export function buildReleaseE2ePreflight(input: {
   const jobs = workflowJobs(workflowPath);
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const plan = input.plan ?? buildE2eWorkflowPlan();
-  const explicitJobs = new Set(inventory.explicitOnlyJobs);
   const pathExists = input.candidatePathExists ?? candidatePathExists;
-  const releaseExplicitJobs = inventory.explicitOnlyJobs.filter((jobId) => {
+  const defaultJobIds = inventory.workflowJobs.filter((jobId) => jobId !== "shared-e2e");
+  for (const jobId of defaultJobIds) {
     const activationPath = releaseActivationPath(
       record(jobs[jobId], `workflow.jobs.${jobId}`),
       jobId,
     );
-    return activationPath === undefined || pathExists(input.candidateSha, activationPath);
-  });
-  const launchableE2eJobs = releaseExplicitJobs.filter((jobId) =>
-    isLaunchableE2eJob(record(jobs[jobId], `workflow.jobs.${jobId}`)),
+    if (activationPath !== undefined && !pathExists(input.candidateSha, activationPath)) {
+      throw new Error(
+        `candidate commit is missing required E2E activation path ${activationPath} for ${jobId}`,
+      );
+    }
+  }
+  const launchableE2eJobs = defaultJobIds.filter((jobId) =>
+    isLaunchableE2eJob(jobId, record(jobs[jobId], `workflow.jobs.${jobId}`)),
   );
   if (launchableE2eJobs.length !== 1) {
-    throw new Error(
-      `expected exactly one explicit Launchable E2E job, found ${launchableE2eJobs.length}`,
-    );
+    throw new Error(`expected exactly one Launchable E2E job, found ${launchableE2eJobs.length}`);
   }
   const launchableE2eJobId = launchableE2eJobs[0]!;
-  const conditionalJobs = releaseExplicitJobs.filter(
-    (jobId) =>
-      jobId !== launchableE2eJobId &&
-      requiresConfirmedJetsonRunner(record(jobs[jobId], `workflow.jobs.${jobId}`)),
-  );
-  const parallelExplicitJobs = releaseExplicitJobs.filter(
-    (jobId) => jobId !== launchableE2eJobId && !conditionalJobs.includes(jobId),
-  );
-
-  const defaultJobIds = inventory.workflowJobs.filter(
-    (jobId) => jobId !== "shared-e2e" && !explicitJobs.has(jobId),
-  );
   const executions = [
     ...defaultJobIds.flatMap((jobId) =>
       jobExecutions(jobId, record(jobs[jobId], `workflow.jobs.${jobId}`), "default", plan),
@@ -361,17 +337,6 @@ export function buildReleaseE2ePreflight(input: {
       "default",
       plan,
     ),
-    ...parallelExplicitJobs.flatMap((jobId) =>
-      jobExecutions(
-        jobId,
-        record(jobs[jobId], `workflow.jobs.${jobId}`),
-        "parallel-explicit",
-        plan,
-      ),
-    ),
-    ...conditionalJobs.flatMap((jobId) =>
-      jobExecutions(jobId, record(jobs[jobId], `workflow.jobs.${jobId}`), "conditional", plan),
-    ),
   ];
   const duplicateIds = executions
     .map((execution) => execution.id)
@@ -380,30 +345,15 @@ export function buildReleaseE2ePreflight(input: {
     throw new Error(`release E2E execution identifiers are not unique: ${duplicateIds.join(",")}`);
   }
 
-  const runnerStatus = input.jetsonRunnerOnline ?? "unknown";
   const exceptionsRequired: string[] = [];
-  if (runnerStatus !== "true") exceptionsRequired.push(...conditionalJobs);
 
   return {
     candidateSha: input.candidateSha,
     dispatches: {
-      conditional: conditionalJobs.map((jobId) => ({
-        allowJetsonRunnerQueue: runnerStatus === "true",
-        jobs: jobId,
-        reason:
-          runnerStatus === "true"
-            ? "authoritative runner inventory confirmed online"
-            : "do not queue until an administrator confirms the Jetson runner online",
-      })),
-      defaultSuite: {
+      completeRun: {
         includeStagingBrevLaunchable: true,
         jobs: "",
         mode: "full",
-        targets: "",
-      },
-      parallelExplicit: {
-        includeStagingBrevLaunchable: false,
-        jobs: parallelExplicitJobs.join(","),
         targets: "",
       },
     },
@@ -433,7 +383,11 @@ export function buildReleaseE2eLedger(
   preflight: ReleaseE2ePreflight,
   runs: readonly ReleaseE2eRunEvidence[],
 ): ReleaseE2eLedger {
-  const knownJobs = new Set(preflight.executions.map((execution) => execution.jobId));
+  if (runs.length !== 1) {
+    throw new Error(
+      `release E2E evidence requires exactly one workflow run, received ${runs.length}`,
+    );
+  }
   const attempts = new Map<string, ReleaseE2eLedgerEntry["attempts"]>();
 
   for (const [runIndex, evidence] of runs.entries()) {
@@ -443,6 +397,8 @@ export function buildReleaseE2eLedger(
     requireEqual(run.head_branch, "main", `${label}.run.head_branch`);
     requireEqual(run.event, "workflow_dispatch", `${label}.run.event`);
     requireEqual(run.path, ".github/workflows/e2e.yaml", `${label}.run.path`);
+    requireEqual(run.status, "completed", `${label}.run.status`);
+    requireEqual(run.conclusion, "success", `${label}.run.conclusion`);
     const runId = numberField(run, "id", `${label}.run`);
     const runAttempt = numberField(run, "run_attempt", `${label}.run`);
     const runUrl = stringField(run, "html_url", `${label}.run`);
@@ -461,34 +417,20 @@ export function buildReleaseE2eLedger(
     if (typeof jobsInput !== "string" || typeof targetsInput !== "string") {
       throw new Error(`${label}.dispatch jobs and targets must be strings`);
     }
+    requireEqual(jobsInput, "", `${label}.dispatch.jobs`);
     requireEqual(targetsInput, "", `${label}.dispatch.targets`);
-    const defaultSuiteSelected = jobsInput === "" && targetsInput === "";
     requireEqual(
-      booleanField(dispatch, "defaultSuiteSelected", `${label}.dispatch`),
-      defaultSuiteSelected,
-      `${label}.dispatch.defaultSuiteSelected`,
+      booleanField(dispatch, "emptySelectors", `${label}.dispatch`),
+      true,
+      `${label}.dispatch.emptySelectors`,
     );
-    booleanField(dispatch, "includeStagingBrevLaunchable", `${label}.dispatch`);
-    const allowJetsonRunnerQueue = booleanField(
-      dispatch,
-      "allowJetsonRunnerQueue",
-      `${label}.dispatch`,
-    );
-    const selectedJobs = new Set(jobsInput === "" ? [] : jobsInput.split(","));
-    for (const jobId of selectedJobs) {
-      if (!SELECTOR_PATTERN.test(jobId) || !knownJobs.has(jobId)) {
-        throw new Error(`runs[${runIndex}] selects unknown release E2E job ${jobId}`);
-      }
-    }
-    if (selectedJobs.has("jetson-nvmap-gpu") && !allowJetsonRunnerQueue) {
-      throw new Error(`${label}.dispatch must allow the Jetson runner queue for its selector`);
-    }
-    const selectedExecutions = preflight.executions.filter(
-      (execution) =>
-        (defaultSuiteSelected && execution.group === "default") ||
-        selectedJobs.has(execution.jobId),
+    requireEqual(
+      booleanField(dispatch, "includeStagingBrevLaunchable", `${label}.dispatch`),
+      true,
+      `${label}.dispatch.includeStagingBrevLaunchable`,
     );
 
+    const selectedExecutions = preflight.executions;
     for (const job of flattenJobs(evidence.jobs)) {
       const jobRunId = numberField(job, "run_id", `runs[${runIndex}].job`);
       const jobAttempt = numberField(job, "run_attempt", `runs[${runIndex}].job`);
@@ -522,55 +464,47 @@ export function buildReleaseE2eLedger(
     const executionAttempts = [...(attempts.get(execution.id) ?? [])].sort(
       (left, right) => right.attempt - left.attempt || right.jobUrl.localeCompare(left.jobUrl),
     );
-    const green = executionAttempts.find(
+    const successful = executionAttempts.find(
       (attempt) => attempt.status === "completed" && attempt.conclusion === "success",
     );
     return {
       ...execution,
       attempts: executionAttempts,
-      ...(green
+      ...(successful
         ? {
-            greenEvidence: {
-              attempt: green.attempt,
-              jobUrl: green.jobUrl,
-              runUrl: green.runUrl,
+            successfulEvidence: {
+              attempt: successful.attempt,
+              jobUrl: successful.jobUrl,
+              runUrl: successful.runUrl,
             },
           }
         : {}),
-      status: green ? "green" : "missing",
+      status: successful ? "successful" : "missing",
     };
   });
-  const greenCount = entries.filter((entry) => entry.status === "green").length;
+  const successfulCount = entries.filter((entry) => entry.status === "successful").length;
   return {
     candidateSha: preflight.candidateSha,
     entries,
-    greenCount,
-    missingCount: entries.length - greenCount,
+    successfulCount,
+    missingCount: entries.length - successfulCount,
     requiredCount: entries.length,
   };
 }
 
 function parseArgs(argv: readonly string[]): CliOptions {
   const options: CliOptions = {
-    jetsonRunnerOnline: "unknown",
     workflowPath: DEFAULT_WORKFLOW_PATH,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const value = argv[index + 1];
-    if (
-      arg !== "--candidate-sha" &&
-      arg !== "--jetson-runner-online" &&
-      arg !== "--manifest" &&
-      arg !== "--workflow"
-    ) {
+    if (arg !== "--candidate-sha" && arg !== "--manifest" && arg !== "--workflow") {
       throw new Error(`Unknown argument: ${arg}`);
     }
     if (value === undefined) throw new Error(`${arg} requires a value`);
     if (arg === "--candidate-sha") options.candidateSha = value;
-    else if (arg === "--jetson-runner-online") {
-      options.jetsonRunnerOnline = parseRunnerStatus(value);
-    } else if (arg === "--manifest") options.manifest = value;
+    else if (arg === "--manifest") options.manifest = value;
     else options.workflowPath = value;
     index += 1;
   }
@@ -584,11 +518,7 @@ function readManifest(manifestPath: string): {
   const directory = path.dirname(path.resolve(manifestPath));
   const raw = record(JSON.parse(readFileSync(manifestPath, "utf8")), "manifest");
   const manifest = raw as ReleaseEvidenceManifest;
-  if (
-    !SHA_PATTERN.test(manifest.candidateSha) ||
-    !Array.isArray(manifest.runs) ||
-    !["false", "true", "unknown"].includes(manifest.jetsonRunnerOnline)
-  ) {
+  if (!SHA_PATTERN.test(manifest.candidateSha) || !Array.isArray(manifest.runs)) {
     throw new Error("release E2E evidence manifest has an invalid schema");
   }
   const runs = manifest.runs.map((entry, index) => {
@@ -625,7 +555,6 @@ export function runReleaseE2eEvidenceCli(argv = process.argv.slice(2)): void {
     requireCandidateCheckout(manifest.candidateSha);
     const preflight = buildReleaseE2ePreflight({
       candidateSha: manifest.candidateSha,
-      jetsonRunnerOnline: manifest.jetsonRunnerOnline,
       workflowPath: options.workflowPath,
     });
     process.stdout.write(`${JSON.stringify(buildReleaseE2eLedger(preflight, runs), null, 2)}\n`);
@@ -639,7 +568,6 @@ export function runReleaseE2eEvidenceCli(argv = process.argv.slice(2)): void {
     `${JSON.stringify(
       buildReleaseE2ePreflight({
         candidateSha: options.candidateSha,
-        jetsonRunnerOnline: options.jetsonRunnerOnline,
         workflowPath: options.workflowPath,
       }),
       null,
