@@ -282,12 +282,12 @@ const ctx = module.exports;
         cleanupCalls[0].command.includes(expectedPath),
         `expected cleanup to target '${expectedPath}'; got ${cleanupCalls[0].command}`,
       );
-      if (sandboxAgent === "openclaw") {
-        assert.ok(
-          !cleanupCalls[0].command.includes("/sandbox/.openclaw/profiles/dashboard-home"),
-          `OpenClaw cleanup must not receive Hermes Dashboard paths; got ${cleanupCalls[0].command}`,
-        );
-      }
+      const dashboardPath = `/sandbox/.${sandboxAgent}/profiles/dashboard-home`;
+      assert.equal(
+        cleanupCalls[0].command.includes(dashboardPath),
+        sandboxAgent === "hermes",
+        `${sandboxAgent} Dashboard cleanup selection was incorrect; got ${cleanupCalls[0].command}`,
+      );
 
       const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
       const clearIdx = payload.callOrder.indexOf("clearedSandboxState");
