@@ -41,6 +41,11 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  * the bug class this helper exists for is path removal on a live sandbox,
  * not policy shape changes.
  *
+ * The live `landlock` stanza is carried through as well when the live policy
+ * has one (#8461). OpenShell applies landlock at startup and rejects any
+ * later policy that changes it, so the emitted document has to restate the
+ * value the sandbox is already running rather than the static base's.
+ *
  * Background (#3942, #3957, #3168): OpenShell refuses to remove a
  * `filesystem_policy.read_only` or `filesystem_policy.read_write` entry
  * on a live sandbox. The static `openclaw-sandbox-permissive.yaml`
@@ -143,6 +148,17 @@ export function buildRuntimePermissivePolicy(
 
   fsPolicy.read_write = [...baseRw];
   fsPolicy.read_only = [...baseRo];
+
+  // OpenShell seals `landlock` at sandbox startup and rejects a policy whose
+  // stanza differs from the one the sandbox started with. An agent that ships
+  // no permissive policy of its own falls back to the OpenClaw document, whose
+  // `best_effort` then contradicts a baseline such as Deep Agents Code's
+  // `strict`, and the apply is refused (#8461). Carry the live stanza through
+  // so the emitted document proposes no landlock change. This can only ever
+  // restate what the sandbox is already running.
+  if (live?.landlock !== undefined) {
+    base.landlock = live.landlock;
+  }
 
   const yaml = composeManagedMcpPolicies(YAML.stringify(base), managedMcpPolicies);
   if (deps.writeTempPolicy) {
