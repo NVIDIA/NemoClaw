@@ -35,6 +35,7 @@ export interface PortableHostPreparationDeps {
   home?: string;
   uid?: number;
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  podman?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
 }
 
@@ -48,6 +49,16 @@ function commandDetail(result: SpawnResult): string {
 function requireCommand(result: SpawnResult, description: string): void {
   if (result.status === 0) return;
   throw new Error(`${description} failed: ${commandDetail(result)}`);
+}
+
+function resolvePodmanDockerHost(result: SpawnResult): string {
+  requireCommand(result, "Resolving the rootless Podman API socket");
+  const socket = String(result.stdout ?? "").trim();
+  if (socket.startsWith("unix:///")) return socket;
+  if (socket.startsWith("/")) return `unix://${socket}`;
+  throw new Error(
+    `Resolving the rootless Podman API socket failed: invalid socket path '${socket || "empty"}'`,
+  );
 }
 
 function writePrivateConfig(filePath: string, value: string): void {
@@ -144,7 +155,6 @@ export function preparePortableExperimentalHost(
   }
   const home = deps.home ?? env.HOME ?? os.homedir();
   env.NETAVARK_FW = "iptables";
-  env.DOCKER_HOST = `unix:///run/user/${String(uid)}/podman/podman.sock`;
   env.CONTAINERS_CONF = writePortableRuntimeConfig(home, env);
 
   const systemctl =
@@ -176,6 +186,18 @@ export function preparePortableExperimentalHost(
     "Starting the rootless container socket",
   );
 
+  const podman =
+    deps.podman ??
+    ((args, childEnv) =>
+      spawnSync("podman", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
+  env.DOCKER_HOST = resolvePodmanDockerHost(
+    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env),
+  );
+
   const docker =
     deps.docker ??
     ((args, childEnv) =>
@@ -192,4 +214,5 @@ export const portableHostPreparationInternals = {
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
+  resolvePodmanDockerHost,
 };

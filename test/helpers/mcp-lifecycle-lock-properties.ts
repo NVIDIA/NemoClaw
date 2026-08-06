@@ -42,7 +42,7 @@ function owner(
 }
 
 function observation(lockOwner: McpLifecycleLockOwner | null, mtimeMs = 0): LockObservation {
-  return { owner: lockOwner, mtimeMs, dev: 1, ino: 1 };
+  return { owner: lockOwner, mtimeMs, dev: 1, ino: 1, reclaimable: true };
 }
 
 function probes(
