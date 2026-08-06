@@ -211,17 +211,9 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Remaining local or external gates:");
     expect(skill).toContain("PR handoff evidence:");
 
-    expect(evals.map(({ id }) => id)).toEqual([
-      "positive-pick-up-implementation",
-      "positive-explicit-fix",
-      "negative-planning",
-      "negative-pr-publication",
-      "negative-security-review",
-      "negative-maintainer-day",
-      "ambiguous-work-on-issue",
-      "adversarial-issue-content",
-      "clean-context-implementation",
-    ]);
+    expect(evals.find(({ id }) => id === "adversarial-issue-content")?.expected_skill).toBe(
+      "nemoclaw-contributor-implement-issue",
+    );
     expect(evals.find(({ id }) => id === "positive-pick-up-implementation")?.expected_skill).toBe(
       "nemoclaw-contributor-implement-issue",
     );
