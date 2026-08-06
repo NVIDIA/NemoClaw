@@ -123,7 +123,6 @@ const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "BlkioWeight",
   "BlkioWeightDevice",
   "Cgroup",
-  "ConsoleSize",
   "ContainerIDFile",
   "CpuCount",
   "CpuPercent",
@@ -133,13 +132,18 @@ const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "IOMaximumIOps",
   "Isolation",
   "Links",
-  "MaskedPaths",
   "MemorySwappiness",
-  "ReadonlyPaths",
   "StorageOpt",
   "VolumeDriver",
   "VolumesFrom",
 ]);
+
+// Docker derives ConsoleSize, MaskedPaths, and ReadonlyPaths when it creates a
+// container. They have no corresponding create flags, but the adapter inspects
+// the stopped replacement and compares its complete normalized spec before it
+// stops the original. Keep these runtime-derived security fields hash-bound so
+// a daemon-default mismatch fails before cutover instead of rejecting defaults
+// that Docker can reproduce exactly.
 
 export interface DockerManagedBootstrapLaunchSpec {
   readonly schemaVersion: 1;

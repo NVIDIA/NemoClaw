@@ -36,6 +36,27 @@ describe("managed bootstrap Docker launch spec", () => {
     );
   });
 
+  it("hash-binds Docker-derived console and protected-path defaults", () => {
+    const first = createDockerGpuInspectFixture();
+    Object.assign(first.HostConfig!, {
+      ConsoleSize: [0, 0],
+      MaskedPaths: ["/proc/kcore", "/sys/firmware"],
+      ReadonlyPaths: ["/proc/sys", "/proc/sysrq-trigger"],
+    });
+    const second = structuredClone(first);
+    second.HostConfig!.MaskedPaths = ["/proc/kcore"];
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(first);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(second);
+
+    expect(expected.spec.inspect.HostConfig).toMatchObject({
+      ConsoleSize: [0, 0],
+      MaskedPaths: ["/proc/kcore", "/sys/firmware"],
+      ReadonlyPaths: ["/proc/sys", "/proc/sysrq-trigger"],
+    });
+    expect(observed.hash).not.toBe(expected.hash);
+  });
+
   it("orders durable launch keys by code unit across host locale settings", () => {
     const inspect = createDockerGpuInspectFixture();
     inspect.Config!.Labels = {
