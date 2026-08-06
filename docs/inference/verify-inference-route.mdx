@@ -34,6 +34,9 @@ The `Inference` row checks the sandbox's `inference.local` path.
 It reports `reachable` only when the probe completes without a transport error and the route returns HTTP `200` through `499`.
 This includes authentication responses such as HTTP `401` and `403`: they confirm route access, not valid provider credentials or a successful model invocation.
 When the route is unreachable, the status detail distinguishes DNS, connection, timeout, and TLS verification failures without printing certificate material.
+Status and doctor keep the configured sandbox CA authoritative.
+A validated managed recovery can compare the root-owned OpenShell CA after a TLS verification failure, but only that recovery path can accept the result.
+This comparison does not change stored trust or cause an ordinary status check to report the route as reachable.
 Use the status command's upstream provider diagnostic or send a short agent request to verify the configured model.
 The provider, model, and endpoint appear with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
