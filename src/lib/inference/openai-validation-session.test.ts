@@ -118,24 +118,32 @@ describe("OpenAI validation keepalive sequence", () => {
 
   it("does not retry a transient HTTP failure after the larger-budget retry", async () => {
     let requestCount = 0;
+    const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
-      requestCount += 1;
-      request.resume();
-      response.setHeader("content-type", "application/json");
-      if (requestCount === 1) {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        requestCount += 1;
+        response.setHeader("content-type", "application/json");
+        if (requestCount === 1) {
+          response.end(
+            '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+          );
+          return;
+        }
+        if (requestCount === 2) {
+          response.statusCode = 503;
+          response.end('{"error":{"message":"temporarily unavailable"}}');
+          return;
+        }
         response.end(
-          '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+          '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
         );
-        return;
-      }
-      if (requestCount === 2) {
-        response.statusCode = 503;
-        response.end('{"error":{"message":"temporarily unavailable"}}');
-        return;
-      }
-      response.end(
-        '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
-      );
+      });
     });
     const port = await listen(server);
     const harness = createOpenAiValidationTestDeps();
@@ -155,6 +163,7 @@ describe("OpenAI validation keepalive sequence", () => {
         message: expect.stringContaining("HTTP 503"),
       });
       expect(requestCount).toBe(2);
+      expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 1024]);
       expect(harness.legacyProbe).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
