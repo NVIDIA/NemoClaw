@@ -13,6 +13,8 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
+- `.github/workflows/e2e-main-retry.yaml` evaluates eligible `E2E main` push
+  attempts, requests at most two failed-job reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
@@ -443,7 +445,7 @@ environment approval. The job uses the non-cancelling
 `staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
 runs remain queued instead of replacing one another.
 
-### Hosted-runner recovery
+### Hosted-Runner Recovery
 
 Hosted Runner Recovery can request one full rerun for eligible WSL, macOS, and
 platform-watch push runs. It does not handle `E2E main`. The complete non-passing
@@ -693,7 +695,15 @@ Pull requests retain deterministic CI, including the `e2e-support` Vitest projec
 Each push to `main` triggers the default E2E suite.
 The central workflow has no scheduled trigger.
 
-When an `E2E main` job fails, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs. The controller permits two retries but does not verify that GitHub schedules a different runner. After evaluation succeeds, it uploads an artifact named for the current attempt. The artifact contains every source attempt through that attempt and the cumulative runner-minutes. A later successful attempt sets `action` to `passed-after-retry` and `flaky` to `true`. The controller does not retry manual PR runs or a run superseded by a newer `main` push.
+When an eligible `E2E main` push workflow concludes with `failure`,
+`E2E / Main Retry` asks GitHub Actions to rerun the failed jobs. The controller
+permits two retries but does not verify that GitHub schedules a different runner.
+After evaluation succeeds, it uploads an artifact named for the current attempt.
+The artifact contains one `attempts` summary for each source attempt through the
+current attempt. The `totalRunnerMinutes` field contains the cumulative runner
+time for those summaries. A later successful attempt sets `action` to
+`passed-after-retry` and `flaky` to `true`. The controller does not retry manual
+PR runs or a run superseded by a newer `main` push.
 
 A repository maintainer or administrator can manually run the same default suite against the current exact head of an open internal or fork pull request.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
