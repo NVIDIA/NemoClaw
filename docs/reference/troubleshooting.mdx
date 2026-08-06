@@ -2939,6 +2939,24 @@ Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
 
+The portable experimental profile uses the `docker` command to drive rootless Podman.
+Before you run this profile, make sure a Docker-compatible CLI is available on `PATH`.
+On a Podman-only host, install the `podman-docker` shim for your distribution:
+
+```bash
+# Debian or Ubuntu
+sudo apt install podman-docker
+
+# Fedora
+sudo dnf install podman-docker
+```
+
+Then rerun portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
+
 <AgentOnly variant="hermes">
 
 ## Hermes

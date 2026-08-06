@@ -111,8 +111,9 @@ describe("preparePortableExperimentalHost", () => {
     );
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result(1))
-      .mockReturnValueOnce(result());
+      .mockReturnValueOnce(result()) // --version probe: docker-compatible CLI present
+      .mockReturnValueOnce(result(1)) // inspect: registry not present yet
+      .mockReturnValueOnce(result()); // run
     const podman = vi.fn(() => result(0, "/run/user/1001/podman/podman.sock\n"));
 
     preparePortableExperimentalHost(
