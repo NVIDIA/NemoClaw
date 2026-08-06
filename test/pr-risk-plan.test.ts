@@ -86,7 +86,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(15);
+    expect(first.version).toBe(16);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -574,6 +574,35 @@ describe("deterministic PR risk plan", () => {
     );
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentCheck.planHash);
+  });
+
+  it.each([
+    "src/lib/onboard/machine/handlers/sandbox-resume.ts",
+    "src/lib/onboard/machine/handlers/sandbox.ts",
+  ])("selects gateway upgrade and the Deep Agents Code target for journaled recreation changes in %s", (file) => {
+    const result = plan(file);
+
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "openshell-gateway-upgrade",
+        families: ["focused-e2e"],
+        matchedFiles: [file],
+      }),
+    );
+    expect(result.requiredTargets).toContainEqual(
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[0],
+        families: ["focused-e2e"],
+        matchedFiles: [file],
+      }),
+    );
+  });
+
+  it("does not select the journaled recreation lanes for an adjacent sandbox handler", () => {
+    const result = plan("src/lib/onboard/machine/handlers/sandbox-messaging.ts");
+
+    expect(riskPlanRequiredJobIds(result)).not.toContain("openshell-gateway-upgrade");
+    expect(riskPlanRequiredTargetIds(result)).not.toContain(PR_E2E_TYPED_TARGET_IDS[0]);
   });
 
   it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {

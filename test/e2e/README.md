@@ -719,6 +719,16 @@ A repository maintainer or administrator can manually run the same default suite
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 
+PR Review Advisor maps changes to either of these shared journaled-recreation handlers to default-suite coverage:
+
+- `src/lib/onboard/machine/handlers/sandbox-resume.ts`.
+- `src/lib/onboard/machine/handlers/sandbox.ts`.
+
+The risk plan selects the `openshell-gateway-upgrade` job and the
+`ubuntu-repo-cloud-langchain-deepagents-code` typed target. The job covers the
+installer-driven OpenShell gateway upgrade handoff. The target covers the
+LangChain Deep Agents Code sandbox recreation path.
+
 The default suite exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.

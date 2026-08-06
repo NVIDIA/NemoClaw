@@ -18,7 +18,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 15 as const;
+export const RISK_PLAN_VERSION = 16 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -30,6 +30,10 @@ const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
+const JOURNALED_RECREATE_RESUME_RUNTIME_FILES = new Set([
+  "src/lib/onboard/machine/handlers/sandbox-resume.ts",
+  "src/lib/onboard/machine/handlers/sandbox.ts",
+]);
 const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
   "src/lib/onboard/docker-driver-sandbox-recovery.ts",
@@ -226,6 +230,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     changedFiles.filter(
       (file) =>
         file === DEEPAGENTS_HEADLESS_INFERENCE_CHECK ||
+        JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file) ||
         (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
@@ -255,6 +260,9 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
+  const journaledRecreateResumeFiles = stableUnique(
+    changedFiles.filter((file) => JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file)),
+  );
   const managedStartupFiles = stableUnique(
     changedFiles.filter(
       (file) =>
@@ -282,6 +290,14 @@ export function focusedPrE2eJobsForChangedFiles(
     ),
   );
   return [
+    ...(journaledRecreateResumeFiles.length > 0
+      ? [
+          {
+            id: "openshell-gateway-upgrade",
+            matchedFiles: journaledRecreateResumeFiles,
+          },
+        ]
+      : []),
     ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
