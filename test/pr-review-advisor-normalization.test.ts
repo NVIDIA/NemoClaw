@@ -125,7 +125,9 @@ describe("PR review advisor", () => {
 
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
-    expect(comment).toContain("Advisory only. E2E / PR Gate selects and runs jobs independently.");
+    expect(comment).toContain(
+      "Advisory only. A maintainer can dispatch the default E2E suite against this exact revision.",
+    );
     expect(comment).toContain("<code>rebuild-openclaw</code>");
     expect(comment).toContain("**Recommended E2E:**");
     expect(comment.match(/<code>rebuild-openclaw<\/code>/gu)).toHaveLength(1);

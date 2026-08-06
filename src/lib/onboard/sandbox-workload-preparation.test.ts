@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
+import { describe, expect, it, vi } from "vitest";
+import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
 import {
   ManagedImageCatalogError,
   ManagedImageCatalogUnavailableError,
@@ -26,7 +30,6 @@ import {
 } from "./workload/preparation";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
 import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
-import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
 
 const RELEASE = "v0.0.97";
 const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
@@ -102,6 +105,49 @@ describe("sandbox workload preparation", () => {
       release: RELEASE,
       fallbackDiagnostic: null,
     });
+  });
+
+  it("loads an exact local all-agent catalog without using the registry resolver (#7744)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    try {
+      const prepared = await prepareSandboxWorkloadSource(
+        { ...input("hermes"), catalogPath },
+        { resolveCatalog },
+      );
+
+      expect(resolveCatalog).not.toHaveBeenCalled();
+      expect(prepared.source).toMatchObject({
+        kind: "managed-image",
+        reference: contract("hermes", 1).reference,
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a symlinked local managed-image catalog before selection (#7744)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const symlinkPath = path.join(fixtureRoot, "catalog-link.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    fs.symlinkSync(catalogPath, symlinkPath);
+    try {
+      await expect(
+        prepareSandboxWorkloadSource({ ...input("openclaw"), catalogPath: symlinkPath }),
+      ).rejects.toMatchObject({
+        message:
+          "Sandbox workload preparation failed: managed image catalog 'v0.0.97' failed validation",
+        cause: {
+          message:
+            "Sandbox workload preparation failed: managed image catalog file must be a bounded regular file",
+        },
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
   });
 
   it("never resolves a catalog for an explicit custom Dockerfile (#7744)", async () => {

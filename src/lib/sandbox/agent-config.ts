@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+import type { AgentStateLockPlan } from "../agent/definition-types";
+
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+const SANDBOX_CONFIG_ROOT = "/sandbox/";
+
 export interface AgentConfigTarget {
   agentName: string;
   configPath: string;
@@ -8,12 +14,22 @@ export interface AgentConfigTarget {
   format: string;
   configFile: string;
   sensitiveFiles?: string[];
+  stateLockPlan?: AgentStateLockPlan;
+  stateLockPlanInImage: boolean;
 }
 
 export interface AgentConfigDependencies {
   getSandbox: (name: string) => { agent?: string } | null;
   loadAgent: (name: string) => {
-    configPaths: { dir: string; configFile: string; format?: string };
+    configPaths: {
+      dir: string;
+      configFile: string;
+      envFile?: string | null;
+      format?: string;
+      shieldsFiles: readonly string[];
+    };
+    stateLockPlan: AgentStateLockPlan;
+    stateLockPlanInImage: boolean;
   };
 }
 
@@ -24,6 +40,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   format: "json",
   configFile: "openclaw.json",
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  stateLockPlanInImage: true,
 };
 
 function defaultDependencies(): AgentConfigDependencies {
@@ -32,26 +49,95 @@ function defaultDependencies(): AgentConfigDependencies {
   return { getSandbox: registry.getSandbox, loadAgent: agentDefs.loadAgent };
 }
 
+export function resolveAgentStateLockContract(
+  agentName: string,
+  loadAgent: AgentConfigDependencies["loadAgent"] = defaultDependencies().loadAgent,
+): Pick<AgentConfigTarget, "stateLockPlan" | "stateLockPlanInImage"> {
+  const agent = loadAgent(agentName);
+  return {
+    stateLockPlan: agent.stateLockPlan,
+    stateLockPlanInImage: agent.stateLockPlanInImage,
+  };
+}
+
+function requireCanonicalConfigDir(value: string): string {
+  if (
+    !path.posix.isAbsolute(value) ||
+    path.posix.normalize(value) !== value ||
+    CONTROL_CHAR_RE.test(value) ||
+    value.includes("\\") ||
+    value === SANDBOX_CONFIG_ROOT ||
+    !value.startsWith(SANDBOX_CONFIG_ROOT)
+  ) {
+    throw new Error(
+      `Agent config directory ${JSON.stringify(value)} must be a canonical absolute path below ${SANDBOX_CONFIG_ROOT}`,
+    );
+  }
+  return value;
+}
+
+function resolveConfigFile(configDir: string, value: string, field: string): string {
+  const components = value.split("/");
+  if (
+    value.length === 0 ||
+    path.posix.isAbsolute(value) ||
+    CONTROL_CHAR_RE.test(value) ||
+    value.includes("\\") ||
+    components.some((component) => component === "" || component === "." || component === "..")
+  ) {
+    throw new Error(`Agent config field '${field}' must be a canonical relative path`);
+  }
+  const resolved = path.posix.resolve(configDir, value);
+  if (!resolved.startsWith(`${configDir}/`)) {
+    throw new Error(`Agent config field '${field}' must stay below '${configDir}'`);
+  }
+  return resolved;
+}
+
 export function resolveAgentConfig(
   sandboxName: string,
   dependencies: AgentConfigDependencies = defaultDependencies(),
 ): AgentConfigTarget {
   const entry = dependencies.getSandbox(sandboxName);
-  if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
-
-  const agent = dependencies.loadAgent(entry.agent);
+  const agentName = entry?.agent ?? DEFAULT_AGENT_CONFIG.agentName;
+  const agent = dependencies.loadAgent(agentName);
   const cfg = agent.configPaths;
 
-  const dir = cfg.dir;
-  const sensitiveFiles = [`${dir}/.config-hash`];
-  if (entry.agent === "hermes") sensitiveFiles.push(`${dir}/.env`);
+  const dir = requireCanonicalConfigDir(cfg.dir);
+  const configPath = resolveConfigFile(dir, cfg.configFile, "config_file");
+  const sensitiveFiles = [resolveConfigFile(dir, ".config-hash", "config hash")];
+  if (cfg.envFile !== undefined && cfg.envFile !== null) {
+    resolveConfigFile(dir, cfg.envFile, "env_file");
+  }
+  if (
+    !Array.isArray(cfg.shieldsFiles) ||
+    cfg.shieldsFiles.some((entry) => typeof entry !== "string")
+  ) {
+    throw new Error("Agent manifest field 'config.shields_files' must be a string array");
+  }
+  if (agentName !== "hermes" && cfg.shieldsFiles.length > 0) {
+    throw new Error(
+      `Agent '${agentName}' declares config.shields_files, but protected top-level config files are currently supported only for Hermes`,
+    );
+  }
+  for (const [index, shieldsFile] of cfg.shieldsFiles.entries()) {
+    const resolved = resolveConfigFile(dir, shieldsFile, `shields_files[${String(index)}]`);
+    if (resolved === configPath || sensitiveFiles.includes(resolved)) {
+      throw new Error(
+        `Agent config field 'shields_files[${String(index)}]' duplicates a protected config file`,
+      );
+    }
+    sensitiveFiles.push(resolved);
+  }
 
   return {
-    agentName: entry.agent,
-    configPath: `${dir}/${cfg.configFile}`,
+    agentName,
+    configPath,
     configDir: dir,
     format: cfg.format || "json",
     configFile: cfg.configFile,
     sensitiveFiles,
+    stateLockPlan: agent.stateLockPlan,
+    stateLockPlanInImage: agent.stateLockPlanInImage,
   };
 }

@@ -11,7 +11,7 @@ export const whatsappManifest = {
   enrollmentHelp:
     "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term` and then use `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes to display the QR.",
   enrollmentNotes: [
-    "After pairing, run `nemoclaw <sandbox> channels status --channel whatsapp` to confirm the bridge is delivering inbound messages — pairing alone does not guarantee inbound delivery (issue #4386).",
+    "After pairing, run `nemoclaw <sandbox> channels status --channel whatsapp`. OpenClaw reports inbound delivery evidence; Hermes reports gateway and dashboard session-path diagnostics.",
   ],
   supportedAgents: ["openclaw", "hermes"],
   auth: {
@@ -125,7 +125,7 @@ export const whatsappManifest = {
       id: "whatsapp-status-health",
       phase: "status",
       handler: "whatsapp.statusHealth",
-      agents: ["openclaw"],
+      agents: ["openclaw", "hermes"],
       outputs: [
         {
           id: "channelHealth",

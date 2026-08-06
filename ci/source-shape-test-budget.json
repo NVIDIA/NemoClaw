@@ -13,7 +13,12 @@
     },
     {
       "file": "src/lib/agent/base-image-hermes.test.ts",
-      "test": "accepts only the tracked published Hermes base digest",
+      "test": "requires the pinned Hermes base image and checks installed dependency versions after messaging package installation (#8328)",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/agent/state-directory-contract.test.ts",
+      "test": "keeps generated image plans equal to their AgentDefinition projections (#8006)",
       "category": "security"
     },
     {
@@ -50,6 +55,11 @@
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
+    },
+    {
+      "file": "test/code-change-considerations.test.ts",
+      "test": "keeps the stage-neutral questions in one concise owner",
+      "category": "compatibility"
     },
     {
       "file": "test/code-scanning-workflow.test.ts",
@@ -134,6 +144,11 @@
     {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test": "binds the cleanup action and helper content to the pinned commit",
       "category": "security"
     },
     {
@@ -269,6 +284,11 @@
     {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "routes only the measured heavy lanes on trusted main (#7145)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
+      "test": "runs as a credential-free exact-head PR workflow",
       "category": "security"
     },
     {
@@ -492,26 +512,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "limits triggers and job permissions",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "pins both controller checkouts and installs without lifecycle scripts or caches",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "orders the coordinate steps and always finalizes through the controller",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-shards.test.ts",
-      "test": "rejects malformed configured matrix shard selectors",
-      "category": "security"
-    },
-    {
       "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "binds host-prepared GitHub context to the selected repository and pull request",
       "category": "compatibility"
@@ -552,6 +552,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps Docker llama.cpp lifecycle authority dormant (#8395)",
+      "category": "security"
+    },
+    {
       "file": "test/source-architecture.test.ts",
       "test": "keeps removed step mutation APIs out of production source (#7703)",
       "category": "compatibility"
@@ -563,12 +568,12 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
+      "test": "keeps central activation paths disconnected from driver bootstrap adapters",
       "category": "security"
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps registered providers bootstrap-unsupported",
+      "test": "composes Docker bootstrap locally while keeping Kubernetes unsupported",
       "category": "security"
     },
     {
@@ -769,6 +774,31 @@
     {
       "file": "test/wechat-runtime-audit-workflow.test.ts",
       "test": "makes the trusted audit required in PR and main workflows",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "subscribes only to completed E2E workflow runs",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "accepts only trusted main push attempts one through three",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "uses one source-run concurrency identity and least privileges",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "checks out trusted controller code and invokes the bounded helper",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "runs the bounded evidence-upload step after evaluation failure",
       "category": "security"
     }
   ]

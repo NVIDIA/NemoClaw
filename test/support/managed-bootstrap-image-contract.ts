@@ -24,6 +24,9 @@ const COMPILER_FLAGS = [
   "-Wl,-z,noexecstack",
 ] as const;
 
+const MANAGED_BOOTSTRAP_BUILDER_IMAGE =
+  "node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da";
+
 export function expectManagedBootstrapNativeImageContract(dockerfile: string): void {
   const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
   const builders = stages.filter((stage) =>
@@ -33,6 +36,10 @@ export function expectManagedBootstrapNativeImageContract(dockerfile: string): v
   const builder = builders[0] ?? "";
   const logicalBuilder = builder.replace(/\\\r?\n[ \t]*/gu, " ");
 
+  expect(builder).toContain(
+    `FROM ${MANAGED_BOOTSTRAP_BUILDER_IMAGE} AS managed-bootstrap-entrypoint-builder`,
+  );
+  expect(builder).not.toContain("apt-get");
   expect(builder).toContain("ARG TARGETARCH");
   expect(builder).toContain("COPY scripts/managed-bootstrap-entrypoint.c ./");
   expect(builder).toContain("COPY scripts/managed-bootstrap-trampoline.sh ./");
