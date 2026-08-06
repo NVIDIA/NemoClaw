@@ -157,11 +157,14 @@ export class OpenClawVoiceClient implements AgentTurnClient {
     const terminalPromise = new Promise<TurnResult>((resolve) => {
       resolveTerminal = resolve;
     });
+    let settleOpen: (() => void) | null = null;
     const finish = (value: TurnResult) => {
       if (terminal) return;
       terminal = true;
       this.cancelCurrent = null;
       clearPending();
+      settleOpen?.();
+      socket.close();
       resolveTerminal(value);
     };
     this.cancelCurrent = () => finish({ outcome: "failed", reason: "agent_gateway_unavailable" });
@@ -195,7 +198,6 @@ export class OpenClawVoiceClient implements AgentTurnClient {
         const raw = String(event.data);
         if (Buffer.byteLength(raw) > MAX_NATIVE_FRAME_BYTES) {
           finish({ outcome: "failed", reason: "agent_protocol_error" });
-          socket.close();
           return;
         }
         frame = record(JSON.parse(raw));
@@ -218,7 +220,6 @@ export class OpenClawVoiceClient implements AgentTurnClient {
       if (activeRunId === null) {
         if (queuedChatEvents.length >= MAX_QUEUED_CHAT_EVENTS) {
           finish({ outcome: "failed", reason: "agent_protocol_error" });
-          socket.close();
           return;
         }
         queuedChatEvents.push(chat);
@@ -237,6 +238,10 @@ export class OpenClawVoiceClient implements AgentTurnClient {
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("open timeout")), REQUEST_TIMEOUT_MS);
+        settleOpen = () => {
+          clearTimeout(timer);
+          reject(new Error("turn terminal"));
+        };
         rejectOpen = () => {
           clearTimeout(timer);
           reject(new Error("open failed"));
@@ -244,6 +249,7 @@ export class OpenClawVoiceClient implements AgentTurnClient {
         socket.onopen = () => {
           clearTimeout(timer);
           rejectOpen = null;
+          settleOpen = null;
           resolve();
         };
       });
