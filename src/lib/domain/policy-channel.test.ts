@@ -17,6 +17,8 @@ describe("policy channel helpers", () => {
       skipConfirm: true,
       source: { kind: "file", path: "preset.yaml" },
       presetArg: "github",
+      trustedPrivateHosts: [],
+      commandTrustedPrivateHosts: [],
     });
   });
 
@@ -26,12 +28,48 @@ describe("policy channel helpers", () => {
       skipConfirm: false,
       source: { kind: "error", message: "--from-file and --from-dir are mutually exclusive." },
       presetArg: null,
+      trustedPrivateHosts: [],
+      commandTrustedPrivateHosts: [],
     });
     expect(parsePolicyAddOptions({ fromFile: "" }, {})).toEqual({
       dryRun: false,
       skipConfirm: false,
       source: { kind: "error", message: "--from-file requires a path argument." },
       presetArg: null,
+      trustedPrivateHosts: [],
+      commandTrustedPrivateHosts: [],
+    });
+  });
+
+  it("limits trusted private hosts to custom policy input (#8176)", () => {
+    expect(parsePolicyAddOptions({ trustedPrivateHosts: ["api.corp.example"] }, {})).toEqual({
+      dryRun: false,
+      skipConfirm: false,
+      source: {
+        kind: "error",
+        message: "--trusted-private-host requires --from-file or --from-dir.",
+      },
+      presetArg: null,
+      trustedPrivateHosts: ["api.corp.example"],
+      commandTrustedPrivateHosts: ["api.corp.example"],
+    });
+
+    expect(
+      parsePolicyAddOptions(
+        { fromFile: "preset.yaml", trustedPrivateHosts: ["api.corp.example"] },
+        {},
+      ).trustedPrivateHosts,
+    ).toEqual(["api.corp.example"]);
+
+    expect(
+      parsePolicyAddOptions(
+        { fromFile: "preset.yaml" },
+        { NEMOCLAW_TRUSTED_PRIVATE_HOSTS: "api.corp.example,other.corp.example" },
+      ),
+    ).toMatchObject({
+      source: { kind: "file", path: "preset.yaml" },
+      trustedPrivateHosts: ["api.corp.example", "other.corp.example"],
+      commandTrustedPrivateHosts: [],
     });
   });
 

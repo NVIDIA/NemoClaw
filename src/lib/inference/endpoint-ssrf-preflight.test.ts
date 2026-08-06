@@ -11,6 +11,7 @@ import {
   isOpenShellManagedHost,
   isTrustedPrivateEndpointCapability,
   parseTrustedPrivateInferenceHosts,
+  parseTrustedPrivateInferenceHostsFromEnv,
 } from "./endpoint-ssrf-preflight";
 
 const resolverTo = (address: string): EndpointDnsLookupFn =>
@@ -39,7 +40,11 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
   ])("refuses a public hostname that resolves to the private/reserved address %s (#6293)", async (privateAddress) => {
     const lookup = resolverTo(privateAddress);
     const result = await assertEndpointResolvesPublic("https://public-name.example/v1", lookup);
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      reasonCode: "private-answer",
+      offendingAddress: privateAddress,
+    });
     expect(result.reason).toContain(privateAddress);
   });
 
@@ -63,6 +68,24 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
     expect(isTrustedPrivateEndpointCapability(result.trustedPrivateCapability)).toBe(true);
     expect(lookup).toHaveBeenCalledWith("llm.corp.example", { all: true });
+  });
+
+  it("rejects mixed public and trusted-private answers for an exact trusted hostname (#8176)", async () => {
+    const result = await assertEndpointResolvesPublic(
+      "https://llm.corp.example/v1",
+      async () => [
+        { address: "10.0.0.8", family: 4 },
+        { address: "93.184.216.34", family: 4 },
+      ],
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reasonCode: "mixed-answer",
+      offendingAddress: "93.184.216.34",
+    });
+    expect(result.trustedPrivateCapability).toBeUndefined();
   });
 
   it("does not treat a trusted hostname as a suffix or wildcard allowlist (#6861)", async () => {
@@ -167,6 +190,15 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     ).toEqual(["llm.corp.example", "10.0.0.8"]);
   });
 
+  it("unions generic and legacy inference trust sources (#8176)", () => {
+    expect(
+      parseTrustedPrivateInferenceHostsFromEnv({
+        NEMOCLAW_TRUSTED_PRIVATE_HOSTS: "mcp.corp.example,llm.corp.example",
+        NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: "LLM.CORP.EXAMPLE.,10.0.0.8",
+      }),
+    ).toEqual(["mcp.corp.example", "llm.corp.example", "10.0.0.8"]);
+  });
+
   it.each([
     "http://127.0.0.1:8000/v1",
     "http://localhost:8000/v1",
@@ -201,7 +233,7 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
       throw new Error("ENOTFOUND");
     });
     const result = await assertEndpointResolvesPublic("https://unresolvable.example/v1", lookup);
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, reasonCode: "unresolved" });
     expect(result.reason).toContain("cannot resolve");
   });
 
@@ -213,6 +245,7 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(result).toEqual({
       ok: false,
       reason: 'cannot resolve endpoint host "unresolvable.example": EAI_AGAIN',
+      reasonCode: "unresolved",
     });
   });
 
@@ -232,6 +265,15 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
   it("refuses a malformed endpoint URL (#6293)", async () => {
     const result = await assertEndpointResolvesPublic("not a url", resolverTo("93.184.216.34"));
     expect(result.ok).toBe(false);
+  });
+
+  it("returns a rejected result when URL parsing accepts a non-canonical hostname (#8176)", async () => {
+    const lookup = vi.fn<EndpointDnsLookupFn>();
+
+    await expect(
+      assertEndpointResolvesPublic("https://my_host.corp.example/v1", lookup),
+    ).resolves.toMatchObject({ ok: false, reasonCode: "rejected" });
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it.each([
