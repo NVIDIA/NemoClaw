@@ -178,7 +178,6 @@ const CREDENTIAL_SECURITY_FILE =
   /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
 const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/e2e.yaml",
-  ".github/workflows/pr-e2e-gate.yaml",
   ".github/workflows/pr.yaml",
   "package-lock.json",
   "package.json",
