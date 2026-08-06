@@ -257,6 +257,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(troubleshooting).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000");
     expect(troubleshooting).toContain("mcp_tools_list_timeout_override_ms=3000");
     expect(troubleshooting).toContain("Advance from `3000` to `5000`, and then to `10000`");
+    expect(troubleshooting).toContain("McpError: MCP error -32001: Request timed out");
+    expect(troubleshooting).toContain("connection timed out after 30000ms");
   });
 
   it("records the active mcporter advisory remediations", () => {

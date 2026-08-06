@@ -39,7 +39,8 @@ const PATCHED_REQUIRED_PATTERNS = [MARKER, DEFAULT_TIMEOUT_PATTERN, TIMEOUT_RESO
 
 /**
  * Parses one bounded OpenClaw-only runtime override. The default path stays
- * silent and retains OpenClaw's 1,500 ms catalog timeout.
+ * silent and leaves OpenClaw's server-specific or 1,500 ms fallback selection
+ * unchanged.
  */
 export const INJECTED_TOOLS_LIST_TIMEOUT_HELPER = [
   "",

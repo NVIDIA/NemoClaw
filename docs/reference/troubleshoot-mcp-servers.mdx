@@ -196,8 +196,15 @@ $$nemoclaw <sandbox> logs --tail 100
 
 Choose a repeat count before testing, such as 10 runs.
 After each rebuild, run the identical tool-discovery workflow that many times.
-Advance from `3000` to `5000`, and then to `10000`, only when the logs report a `tools/list` timeout.
-Stop at the lowest value that completes every planned run without a `tools/list` timeout.
+Current OpenClaw timeout errors do not identify the JSON-RPC operation, so reproduce through catalog loading rather than a tool call.
+Advance from `3000` to `5000`, and then to `10000`, only when catalog loading fails and the recent logs contain:
+
+```text
+McpError: MCP error -32001: Request timed out
+```
+
+Stop at the lowest value that completes every planned catalog-loading run without that error.
+Do not increase this setting for `MCP server ... connection timed out after 30000ms`; that message reports the separate connection timeout.
 Do not increase the value after an explicit HTTP 503 response or a non-timeout transport failure.
 
 Unset the override and rebuild to restore OpenClaw's normal server-specific or 1,500 ms fallback selection:
