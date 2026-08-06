@@ -364,7 +364,11 @@ function parseInspection(
       privileged: hostConfig.Privileged,
       command: Object.freeze(Array.isArray(config.Cmd) ? config.Cmd.map(String) : []),
       tmpfs: Object.freeze(
-        Object.fromEntries(Object.entries(record(hostConfig.Tmpfs, "Docker llama.cpp tmpfs"))),
+        Object.fromEntries(
+          Object.entries(
+            hostConfig.Tmpfs === null ? {} : record(hostConfig.Tmpfs, "Docker llama.cpp tmpfs"),
+          ),
+        ),
       ) as Readonly<Record<string, string>>,
     }),
   });
@@ -1282,7 +1286,8 @@ export function createDockerLlamaCppManagedLifecycle(
         const receipt = receiptFor(options, authority, journal, started);
         const serialized = serializeHostLocalInferenceReceipt(receipt);
         // Schema-v1 llama.cpp receipt persistence remains rejected by the production registry.
-        // Activation must make this persist/finalize boundary atomically durable first.
+        // Activation must make this persist/finalize boundary atomically durable first; #8414
+        // tracks that commit boundary: https://github.com/NVIDIA/NemoClaw/issues/8414
         persistReceipt(serialized);
         options.journalStore.assertExecution(lease);
         options.journalStore.finalize(transactionId, sha256(JSON.parse(serialized)));

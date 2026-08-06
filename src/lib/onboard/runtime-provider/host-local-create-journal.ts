@@ -284,7 +284,13 @@ function reconcileExclusivePublishOrphan(
     if (!entry.startsWith(prefix) || !entry.endsWith(".tmp")) return false;
     const ownerId = entry.slice(prefix.length, -".tmp".length);
     if (!UUID.test(ownerId)) return false;
-    const status = fs.lstatSync(path.join(root, entry), { bigint: true });
+    let status: BigIntStats;
+    try {
+      status = fs.lstatSync(path.join(root, entry), { bigint: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
     return (
       status.isFile() &&
       !status.isSymbolicLink() &&
@@ -292,8 +298,20 @@ function reconcileExclusivePublishOrphan(
       status.ino === initial.ino
     );
   });
+  const afterScan = fs.fstatSync(descriptor, { bigint: true });
+  if (afterScan.dev !== initial.dev || afterScan.ino !== initial.ino) {
+    fail("exclusive journal publication changed during recovery");
+  }
+  if (afterScan.nlink === 1n) {
+    fsyncDirectory(root);
+    return afterScan;
+  }
   if (candidates.length !== 1) fail("exclusive journal publication is not recoverable");
-  fs.unlinkSync(path.join(root, candidates[0]));
+  try {
+    fs.unlinkSync(path.join(root, candidates[0]));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   fsyncDirectory(root);
   const reconciled = fs.fstatSync(descriptor, { bigint: true });
   if (reconciled.nlink !== 1n || reconciled.dev !== initial.dev || reconciled.ino !== initial.ino) {
@@ -383,6 +401,8 @@ function publish(root: string, target: string, source: string, exclusive: boolea
   if (typeof fs.constants.O_NOFOLLOW !== "number") fail("O_NOFOLLOW is unavailable");
   const temporary = path.join(root, `.${path.basename(target)}.${randomUUID()}.tmp`);
   let descriptor: number | null = null;
+  let operationFailed = false;
+  let operationFailure: unknown;
   try {
     descriptor = fs.openSync(
       temporary,
@@ -414,14 +434,25 @@ function publish(root: string, target: string, source: string, exclusive: boolea
     }
     fs.chmodSync(target, FILE_MODE);
     fsyncDirectory(root);
-  } finally {
+  } catch (error) {
+    operationFailed = true;
+    operationFailure = error;
+  }
+  let cleanupFailure: unknown;
+  try {
     if (descriptor !== null) fs.closeSync(descriptor);
-    try {
-      fs.unlinkSync(temporary);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  } catch (error) {
+    cleanupFailure = error;
+  }
+  try {
+    fs.unlinkSync(temporary);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && cleanupFailure === undefined) {
+      cleanupFailure = error;
     }
   }
+  if (operationFailed) throw operationFailure;
+  if (cleanupFailure !== undefined) throw cleanupFailure;
 }
 
 function publishExclusive(root: string, target: string, source: string): boolean {

@@ -118,7 +118,7 @@ describe("host-local create journal", () => {
     fs.renameSync(journalPath(), outside);
     fs.symlinkSync(outside, journalPath());
 
-    expect(() => store.load(TRANSACTION_ID)).toThrow();
+    expect(() => store.load(TRANSACTION_ID)).toThrow("ELOOP");
   });
 
   it("rejects a non-private journal directory (#8395)", () => {
@@ -262,6 +262,65 @@ describe("host-local create journal", () => {
     expect(fs.existsSync(leaseOrphan)).toBe(false);
     expect(fs.statSync(leasePath).nlink).toBe(1);
     store.releaseExecution(lease);
+  });
+
+  it.each([
+    [
+      "before identity inspection",
+      (orphan: string) => {
+        const lstatSync = fs.lstatSync.bind(fs);
+        vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
+          switch (target === orphan) {
+            case true:
+              fs.unlinkSync(orphan);
+              throw Object.assign(new Error("candidate disappeared"), { code: "ENOENT" });
+            default:
+              return lstatSync(target, options);
+          }
+        }) as typeof fs.lstatSync);
+      },
+    ],
+    [
+      "before unlink",
+      (orphan: string) => {
+        const unlinkSync = fs.unlinkSync.bind(fs);
+        vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
+          switch (target === orphan) {
+            case true:
+              unlinkSync(orphan);
+              throw Object.assign(new Error("candidate disappeared"), { code: "ENOENT" });
+            default:
+              unlinkSync(target);
+          }
+        });
+      },
+    ],
+  ])("accepts the exact orphan disappearing %s (#8395)", (_name, arrangeRace) => {
+    const store = createHostLocalCreateJournalStore(stateDirectory, {
+      createOwnerId: () => OWNER_ONE,
+    });
+    store.create(prepared());
+    const journalOrphan = path.join(
+      path.dirname(journalPath()),
+      `.${path.basename(journalPath())}.${OWNER_ONE}.tmp`,
+    );
+    fs.linkSync(journalPath(), journalOrphan);
+    arrangeRace(journalOrphan);
+
+    expect(store.load(TRANSACTION_ID)).toEqual(prepared());
+    expect(fs.existsSync(journalOrphan)).toBe(false);
+  });
+
+  it("preserves a publication error when temporary cleanup also fails (#8395)", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    vi.spyOn(fs, "writeFileSync").mockImplementationOnce(() => {
+      throw new Error("publication failed");
+    });
+    vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("cleanup failed"), { code: "EIO" });
+    });
+
+    expect(() => store.create(prepared())).toThrow("publication failed");
   });
 
   it("lets a live publisher finish when a concurrent reader reconciles its hard link (#8395)", () => {

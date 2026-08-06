@@ -168,9 +168,14 @@ describe("runtime provider central source boundary", () => {
   it("keeps Docker llama.cpp lifecycle authority dormant (#8395)", () => {
     const docker = read("src/lib/onboard/runtime-provider/docker.ts");
     const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
-    const productionComposition = providerPaths
+    const productionComposition = trackedPaths(".")
       .filter(
-        (path) => path !== "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
+        (path) =>
+          /\.[cm]?ts$/u.test(path) &&
+          !path.endsWith(".test.ts") &&
+          !path.includes("/test/") &&
+          !path.startsWith("test/") &&
+          path !== "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
       )
       .map(read)
       .join("\n");

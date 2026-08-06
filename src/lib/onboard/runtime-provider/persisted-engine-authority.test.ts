@@ -222,6 +222,7 @@ describe("persisted engine authority", () => {
 
     fs.unlinkSync(target);
     fs.writeFileSync(target, serializePersistedEngineAuthority(authority), { mode: 0o644 });
+    fs.chmodSync(target, 0o644);
     expect(() => store.load("sandbox-lifecycle")).toThrow("failed ownership, mode, link, or size");
   });
 });
