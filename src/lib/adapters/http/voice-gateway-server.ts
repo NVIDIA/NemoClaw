@@ -139,7 +139,9 @@ function readJsonBody(request: http.IncomingMessage): Promise<Record<string, unk
       }
       chunks.push(value);
     });
-    request.once("aborted", () => finish(new BodyError(400)));
+    request.once("close", () => {
+      if (!request.readableEnded) finish(new BodyError(400));
+    });
     request.once("error", () => finish(new BodyError(400)));
     request.once("end", () => finish());
   });
