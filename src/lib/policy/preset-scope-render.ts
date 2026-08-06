@@ -170,9 +170,13 @@ function formatEndpoint(endpoint: EndpointScope): string[] {
   }
   const modeSuffix = modeBits.length > 0 ? ` (${modeBits.join(", ")})` : "";
   const header = `      - ${host}:${port}${modeSuffix}`;
-  const allowedIpLines = endpoint.allowedIps.map(
-    (allowedIp) => `          allowed_ip: ${renderTerminalText(allowedIp)}`,
-  );
+  const allowedIpLines = endpoint.host
+    ? endpoint.allowedIps.length > 0
+      ? [`          allowed IPs: ${endpoint.allowedIps.map(renderTerminalText).join(", ")}`]
+      : []
+    : endpoint.allowedIps.map(
+        (allowedIp) => `          allowed_ip: ${renderTerminalText(allowedIp)}`,
+      );
   if (endpoint.rules.length === 0) return [header, ...allowedIpLines];
   const ruleLines = endpoint.rules.map((rule) => {
     const methods = rule.methods.map(renderTerminalText).join(", ");

@@ -13,6 +13,8 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
+- `.github/workflows/e2e-main-retry.yaml` evaluates eligible `E2E main` push
+  attempts, requests at most two failed-job reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
@@ -443,51 +445,30 @@ environment approval. The job uses the non-cancelling
 `staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
 runs remain queued instead of replacing one another.
 
-### Hosted-runner recovery
+### Hosted-Runner Recovery
 
-The trusted recovery workflow can request one full rerun of the latest eligible
-first attempt for these source workflows:
+Hosted Runner Recovery can request one full rerun for eligible WSL, macOS, and
+platform-watch push runs. It does not handle `E2E main`. The complete non-passing
+job listing must contain only authenticated hosted-runner-loss evidence for the
+workflow's approved runner labels. An ordinary assertion failure, mixed failure
+set, incomplete listing, custom or self-hosted label, changed evidence, or
+ambiguous pagination prevents recovery.
 
-- push or manually dispatched `E2E main`;
-- `E2E / WSL` pushes to `main`;
-- `E2E / macOS` pushes to `main`; and
-- `CI / Platform Vitest Main Watch` pushes to `main`.
+For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to
+rerun failed jobs after a workflow failure. It can request two retries. The
+controller does not verify that GitHub schedules a different runner, so do not
+treat a retry as evidence of a fresh host. It ignores manual runs and source runs
+superseded by a newer `main` push. The controller checks out only trusted
+default-branch code and receives no repository secrets.
 
-The controller authenticates the active workflow name and path, repository,
-head repository, branch, run name, event, run URL, and first-attempt failure.
-It ignores E2E PR child runs and an eligible source run that has a newer
-eligible run for the same workflow.
-
-The complete non-passing job listing must contain only exact hosted-runner-loss
-markers for that workflow's approved runner labels.
-The E2E policy accepts only `ubuntu-latest`.
-The WSL and macOS policies accept only `cancelled` jobs with their exact
-platform label and exact GitHub internal-error annotation.
-The platform-watch policy applies those platform contracts to Windows and
-macOS jobs and the authenticated hosted-runner-loss contract to Ubuntu jobs.
-An ordinary assertion failure, mixed failure set, incomplete listing, custom or
-self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
-
-The controller collects and fingerprints the complete source, workflow,
-latest-run, job, check, annotation, and optional log evidence twice.
-It requests the full GitHub Actions rerun only when both snapshots match.
-The rerun executes every job in attempt two, not only the failed jobs.
-Neither a source attempt two nor a recovery-controller rerun can request
-another source rerun.
-
-The recovery job checks out only the trusted default-branch controller and does
-not check out source-run code.
-It receives no repository secrets and holds `actions: write` only for the
-bounded rerun request.
-
-The runner-allocation and internal-error failures originate in the
-GitHub-hosted Actions service, outside repository-controlled workflow code, so
-this controller contains the failure without claiming to repair its source.
-Remove the recovery workflow and controller after the supported source
-workflows record 30 consecutive days with no first-attempt failure accepted by
-the exact recovery classifier, or when those workflows stop using
-GitHub-hosted runners. Any accepted recovery request resets that observation
-window.
+The runner-allocation and internal-error failures handled by Hosted Runner
+Recovery originate in GitHub Actions, outside repository-controlled workflow
+code. Hosted Runner Recovery contains these failures without claiming to repair
+their source. Remove `.github/workflows/hosted-runner-recovery.yaml` and its
+controller only after the three platform workflows record 30 consecutive days
+with no first-attempt failure accepted by the recovery classifier, or after those
+workflows stop using GitHub-hosted runners. Each accepted Hosted Runner Recovery
+request resets that observation window.
 
 ### Runner comparison telemetry
 
@@ -606,10 +587,9 @@ unavailable. Separately, the adjacent progress/stall resource line falls back
 to the portable free-memory value and labels that value as `memory free`.
 
 The comparison time series is diagnostic-only and is not an input to terminal
-classification or retry policy. Low available or free memory never implies an
-OOM. OOM classification or attribution still requires the existing positive
-OOM evidence, and the single retry remains limited to positive runner-loss
-evidence.
+classification or retry policy. Runner-comparison telemetry does not affect
+`E2E / Main Retry` decisions. Hosted Runner Recovery remains limited to
+authenticated runner-loss evidence for its three platform workflows.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
 hard runner loss can prevent finalization or artifact upload. When you compare
@@ -710,10 +690,20 @@ a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
 
-Live E2E does not run automatically for pull requests.
+E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
-Each push to `main` triggers the default live E2E suite.
+Each push to `main` triggers the default E2E suite.
 The central workflow has no scheduled trigger.
+
+When an eligible `E2E main` push workflow concludes with `failure`,
+`E2E / Main Retry` asks GitHub Actions to rerun the failed jobs. The controller
+permits two retries but does not verify that GitHub schedules a different runner.
+After evaluation succeeds, it uploads an artifact named for the current attempt.
+The artifact contains one `attempts` summary for each source attempt through the
+current attempt. The `totalRunnerMinutes` field contains the cumulative runner
+time for those summaries. A later successful attempt sets `action` to
+`passed-after-retry` and `flaky` to `true`. The controller does not retry manual
+PR runs or a run superseded by a newer `main` push.
 
 A repository maintainer or administrator can manually run the same default suite against the current exact head of an open internal or fork pull request.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
