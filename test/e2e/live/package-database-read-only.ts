@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { privilegedSandboxExecArgv } from "../../../src/lib/sandbox/privileged-exec.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 type PackageDatabaseProbeOptions = {
   artifactPrefix: string;
@@ -15,10 +14,6 @@ type PackageDatabaseProbeOptions = {
   sandboxName: string;
   timeoutMs: number;
 };
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function requireCondition(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
