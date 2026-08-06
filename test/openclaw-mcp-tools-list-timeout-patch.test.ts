@@ -35,6 +35,9 @@ function bundleMcpRuntimeFixture(): string {
     "\tif (bundleMcpCatalogListTimeoutMs !== void 0) return bundleMcpCatalogListTimeoutMs;",
     "\treturn hasConfiguredMcpRequestTimeout(rawServer) ? requestTimeoutMs : BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS;",
     "}",
+    "function setBundleMcpCatalogListTimeoutMsForTest(timeoutMs) {",
+    "\tbundleMcpCatalogListTimeoutMs = timeoutMs;",
+    "}",
     "function resolveMcpTransport(serverName, rawServer) {",
     "\tvoid serverName;",
     "\tvoid rawServer;",
@@ -59,6 +62,7 @@ function bundleMcpRuntimeFixture(): string {
     "}",
     "void CLIENT_IDENTITY;",
     "void getCatalogListTimeoutMs;",
+    "void setBundleMcpCatalogListTimeoutMsForTest;",
     "void resolveMcpTransport;",
   ].join("\n");
 }
@@ -77,6 +81,34 @@ function loadOverride(env: Record<string, string>): { stderr: string[]; value: u
   return { stderr, value };
 }
 
+function executePatchedTimeoutResolver(options: {
+  env?: Record<string, string>;
+  rawServer?: Record<string, unknown>;
+  requestTimeoutMs: number;
+  testOnlyTimeoutMs?: number;
+}): unknown {
+  const patched = patchMcpToolsListTimeoutText(bundleMcpRuntimeFixture(), "fixture.js");
+  const executable = patched.text.replace(/^(?:import[^\n]*\n)+/u, "");
+  const context = vm.createContext({
+    Error,
+    Number,
+    process: {
+      env: options.env ?? {},
+      stderr: { write: () => undefined },
+    },
+  });
+  const resolver = vm.runInContext(
+    `${executable}\n({ getCatalogListTimeoutMs, setBundleMcpCatalogListTimeoutMsForTest });`,
+    context,
+  ) as {
+    getCatalogListTimeoutMs: (rawServer: unknown, requestTimeoutMs: number) => unknown;
+    setBundleMcpCatalogListTimeoutMsForTest: (timeoutMs: number | undefined) => void;
+  };
+
+  resolver.setBundleMcpCatalogListTimeoutMsForTest(options.testOnlyTimeoutMs);
+  return resolver.getCatalogListTimeoutMs(options.rawServer, options.requestTimeoutMs);
+}
+
 describe("patchMcpToolsListTimeoutText", () => {
   it("adds a bounded override ahead of OpenClaw's configured and default budgets", () => {
     const result = patchMcpToolsListTimeoutText(bundleMcpRuntimeFixture(), "fixture.js");
@@ -87,6 +119,37 @@ describe("patchMcpToolsListTimeoutText", () => {
       "\tif (NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_OVERRIDE_MS !== void 0) return NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_OVERRIDE_MS;",
     );
     expect(result.text).toContain("const BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS = 1500;");
+  });
+
+  it.each([
+    {
+      env: { OPENSHELL_SANDBOX: "1", [TOOLS_LIST_TIMEOUT_ENV]: "5000" },
+      expected: 9000,
+      name: "test-only setter",
+      rawServer: { requestTimeoutMs: 3000 },
+      requestTimeoutMs: 3000,
+      testOnlyTimeoutMs: 9000,
+    },
+    {
+      env: { OPENSHELL_SANDBOX: "1", [TOOLS_LIST_TIMEOUT_ENV]: "5000" },
+      expected: 5000,
+      name: "NemoClaw override",
+      rawServer: { requestTimeoutMs: 3000 },
+      requestTimeoutMs: 3000,
+    },
+    {
+      expected: 3000,
+      name: "server timeout",
+      rawServer: { requestTimeoutMs: 3000 },
+      requestTimeoutMs: 3000,
+    },
+    {
+      expected: 1500,
+      name: "OpenClaw default",
+      requestTimeoutMs: 3000,
+    },
+  ])("executes the patched resolver with $name precedence", (options) => {
+    expect(executePatchedTimeoutResolver(options)).toBe(options.expected);
   });
 
   it("reports a fully applied timeout patch as already patched", () => {
