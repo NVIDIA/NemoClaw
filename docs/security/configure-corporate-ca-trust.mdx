@@ -30,6 +30,8 @@ Use `$$nemoclaw <name> rebuild` after adding or changing the CA for an existing 
 
 NemoClaw validates the selected bundle and bakes it into the sandbox image as `NEMOCLAW_CORPORATE_CA_B64`.
 The managed Dockerfile decodes it to the root-owned, read-only file `/usr/local/share/nemoclaw/corporate-ca.pem`.
+It also installs each validated certificate as a separate operating-system trust anchor and refreshes the OS trust bundle.
+This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream connection to an HTTPS inference, MCP, or custom-policy endpoint signed by that CA.
 
 <AgentOnly variant="openclaw">
 
@@ -55,7 +57,7 @@ This supports cold builds on hosts where the base image is not cached.
 
 </AgentOnly>
 
-At runtime, NemoClaw appends the corporate CA to the OpenShell trust bundle instead of replacing it.
+For sandbox child processes, NemoClaw also appends the corporate CA to the OpenShell client trust bundle instead of replacing it.
 It points `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, and `NODE_EXTRA_CA_CERTS` at the merged bundle so curl, Python, Git, and Node.js trust both roots.
 
 ## Understand Automatic Source Selection
@@ -87,7 +89,8 @@ If no selection message appears, no source passed validation.
 ## Use a Custom Dockerfile
 
 Managed NemoClaw Dockerfiles implement the corporate CA build contract automatically.
-A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64` and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem` for runtime trust.
+A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64`, validate and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem`, install each certificate as an individual OS trust anchor, and refresh the OS trust bundle.
+Decoding only the application bundle is insufficient for OpenShell-inspected HTTPS because the proxy verifies the upstream TLS connection itself.
 If its build needs network access behind the corporate proxy, establish build-time trust before the dependency operations that require TLS.
 
 Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits that argument.
