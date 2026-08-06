@@ -47,31 +47,34 @@ function createPodman(options: { running?: boolean; sandboxId?: string } = {}) {
   let running = options.running ?? true;
   let sandboxId = options.sandboxId ?? SANDBOX_ID;
   const podman = vi.fn((args: readonly string[]) => {
-    if (args[0] === "ps") return { status: 0, stdout: `${CONTAINER_ID}\n` };
-    if (args[0] === "inspect") {
-      return {
-        status: 0,
-        stdout: JSON.stringify([
-          {
-            Id: CONTAINER_ID,
-            Config: {
-              Labels: {
-                "openshell.managed": "true",
-                "openshell.sandbox-id": sandboxId,
-                "openshell.sandbox-name": "alpha",
+    switch (args[0]) {
+      case "ps":
+        return { status: 0, stdout: `${CONTAINER_ID}\n` };
+      case "inspect":
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              Id: CONTAINER_ID,
+              Config: {
+                Labels: {
+                  "openshell.managed": "true",
+                  "openshell.sandbox-id": sandboxId,
+                  "openshell.sandbox-name": "alpha",
+                },
               },
+              State: { Running: running },
             },
-            State: { Running: running },
-          },
-        ]),
-      };
+          ]),
+        };
+      case "start":
+        running = true;
+        return { status: 0 };
+      case "update":
+        return { status: 0 };
+      default:
+        throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
     }
-    if (args[0] === "start") {
-      running = true;
-      return { status: 0 };
-    }
-    if (args[0] === "update") return { status: 0 };
-    throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
   });
   return {
     podman,
@@ -178,14 +181,19 @@ describe("portable demo sandbox lifecycle", () => {
     const launchOpenshell = vi.fn();
     const log = vi.fn();
     const captureOpenshell = vi.fn((args: readonly string[]) => {
-      if (args.includes("true")) return { status: 0 };
-      if (args.includes("pgrep")) return { status: 1 };
-      if (args.includes("curl")) {
-        return launchOpenshell.mock.calls.length === 0
-          ? { status: 0, stdout: "000" }
-          : { status: 0, stdout: "200" };
+      const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+      switch (command) {
+        case "true":
+          return { status: 0 };
+        case "pgrep":
+          return { status: 1 };
+        case "curl":
+          return launchOpenshell.mock.calls.length === 0
+            ? { status: 0, stdout: "000" }
+            : { status: 0, stdout: "200" };
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
       }
-      throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
     });
 
     const result = recoverPortableDemoSandboxLifecycle(
