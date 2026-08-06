@@ -301,6 +301,37 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
+  it("preserves the gateway process when scoped Linux unit removal fails (#8220)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const calls: string[][] = [];
+    const kill = vi.fn();
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl" || command === "pgrep",
+        kill,
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          if (command === "systemctl" && args.includes("disable")) {
+            return { status: 1, stdout: "", stderr: "service is busy" };
+          }
+          return command === "pgrep" ? ok("123\n") : ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(true);
+    expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
   it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);

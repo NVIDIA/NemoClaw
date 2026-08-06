@@ -1891,7 +1891,7 @@ function executePlan(
       }
       if (scopedToSelectedGateway && !options.keepOpenShell && !externallySupervised) {
         if (!removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)) {
-          ok = false;
+          return { ok: false };
         }
         stopHostGatewayProcessesForUninstall(runtime, {
           gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
