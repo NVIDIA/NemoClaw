@@ -80,12 +80,45 @@ Without both `--enable-auto-tool-choice` and a matching parser, tool calls can a
 NemoClaw displays the **Install vLLM** or **Start vLLM** entry by default on DGX Spark and DGX Station.
 Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
 
+### Discover Serving Profiles
+
+List the serving profiles installed with NemoClaw before you select a managed inference configuration.
+
+```bash
+$$nemoclaw profiles list
+```
+
+The command evaluates the catalog against the current host without downloading a model or changing host, gateway, inference, or sandbox resources.
+Each entry includes a stable ID, display name, backend, model, topology, selection mode, support state, estimated downloads, and an incompatibility reason when applicable.
+Add `--json` when a script needs the same fields as structured output.
+
+### Select a Serving Profile
+
+Pass a compatible profile's stable ID to onboarding.
+
+```bash
+$$nemoclaw onboard --profile <profile-id>
+```
+
+The same profile selector works with interactive and non-interactive onboarding.
+NemoClaw rejects unknown, ambiguous, disabled, incompatible, or conflicting selections before image or model downloads begin.
+Before confirmation, the review screen shows the resolved profile and recipe IDs, model, immutable runtime image, support state, and estimated image and model downloads.
+Do not combine `--profile` with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MANAGED_CLUSTER_PEERS`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` overrides.
+If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable profile ID; a different ID conflicts with `--profile`.
+
+The profile selector is model-independent, so a catalog can add profiles without adding model-specific CLI flags.
+Omitting `--profile` preserves the existing provider and model defaults.
+If onboarding is interrupted, `$$nemoclaw onboard --resume` reuses the recorded catalog, preset, and recipe digests.
+It exits before runtime effects if the installed catalog changed instead of silently switching the recipe; use `$$nemoclaw onboard --fresh --profile <profile-id>` to review and start with the current definition.
+Legacy sessions that predate profile provenance still resume with their original behavior, but you cannot add `--profile` to one of those in-progress sessions.
+
 In an interactive run, the managed path lists the supported model registry for your host profile.
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
 The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container on `localhost:8000`.
 The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
-The container carries a NemoClaw ownership label so later onboarding runs can distinguish it from a bring-your-own server without trusting the container name alone.
+The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.
+NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the exact container ID and API-key fingerprint.
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
 If another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.

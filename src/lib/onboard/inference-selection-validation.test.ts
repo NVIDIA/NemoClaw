@@ -200,7 +200,7 @@ describe("inference selection validation", () => {
   });
 
   it("probes an exactly allowlisted private endpoint with DNS pinning (#6861)", async () => {
-    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_HOSTS", "llm.corp.example");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const capabilityCache = new OnboardInferenceCapabilityCache();

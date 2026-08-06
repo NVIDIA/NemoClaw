@@ -32,6 +32,12 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
   );
 }
 
+export function shouldRetryMcpDiscoveryAfterRestart(
+  requestsSinceAttempt: readonly FakeMcpRequest[],
+): boolean {
+  return requestsSinceAttempt.length === 0;
+}
+
 type McpToolDiscoveryStatusJson = {
   provider: { credentialResolution?: unknown };
   toolDiscovery: {
@@ -132,27 +138,63 @@ export async function assertAuthenticatedMcpDiscovery(
     .toMatchObject({ discovered: true });
 }
 
+type AuthenticatedMcpDiscoveryRestartDeps = {
+  assertDiscovery: typeof assertAuthenticatedMcpDiscovery;
+};
+
+const AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS: AuthenticatedMcpDiscoveryRestartDeps = {
+  assertDiscovery: assertAuthenticatedMcpDiscovery,
+};
+
+export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
+  fakeMcp: FakeMcpHttpsServer,
+  options: {
+    requestOffset: number;
+    expectedSecret: string;
+    label: string;
+    restart: () => Promise<void>;
+  },
+  deps: AuthenticatedMcpDiscoveryRestartDeps = AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS,
+): Promise<void> {
+  try {
+    await deps.assertDiscovery(fakeMcp, options);
+  } catch (error) {
+    if (!shouldRetryMcpDiscoveryAfterRestart(fakeMcp.requests.slice(options.requestOffset))) {
+      throw error;
+    }
+    await options.restart();
+    await deps.assertDiscovery(fakeMcp, {
+      ...options,
+      label: `${options.label} after one bridge restart`,
+    });
+  }
+}
+
 export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,
   options: {
     sandboxName: string;
     artifactPrefix: string;
+    credentialKey?: string;
     hostSecret: string;
     progress: Pick<TestProgress, "event">;
+    serverName?: string;
   },
 ): Promise<void> {
+  const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
+  const serverName = options.serverName ?? "fake";
   const requestOffset = fakeMcp.requests.length;
   let status: Awaited<ReturnType<HostCliClient["nemoclaw"]>> | undefined;
   let statusJson: McpToolDiscoveryStatusJson | undefined;
   for (let attempt = 1; attempt <= MCP_TOOL_DISCOVERY_ATTEMPTS; attempt += 1) {
     status = await host.nemoclaw(
-      [options.sandboxName, "mcp", "status", "fake", "--tools", "--json"],
+      [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
       {
         artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
         env: {
           ...buildAvailabilityProbeEnv(),
-          FAKE_MCP_SECRET: options.hostSecret,
+          [credentialKey]: options.hostSecret,
         },
         redactionValues: [options.hostSecret],
         timeoutMs: 60_000,

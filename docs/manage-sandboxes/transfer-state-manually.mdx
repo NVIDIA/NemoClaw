@@ -53,7 +53,8 @@ openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/p
 
 Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
 Do not copy `.hermes/profiles/dashboard-home/.env` or `.hermes/profiles/dashboard-home/config.yaml`.
-NemoClaw regenerates both files, and `.env` contains dashboard authentication material.
+NemoClaw regenerates both files from the managed policy and current inference route.
+The dashboard process receives its API bearer token through the runtime environment instead of the mirrored `.env` file.
 
 If startup refuses a legacy profile migration, download the preserved user files for inspection:
 

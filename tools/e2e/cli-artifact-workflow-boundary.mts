@@ -19,7 +19,7 @@ export const CLI_ARTIFACT_DOWNLOAD_ACTION =
 export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 export const CLI_ARTIFACT_RESTORE_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d697860bed1040f7dab5a379e1c60310a90e8f9d";
+  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d34b11e8b895760d6505d54e2cfc520332cb2a9c";
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
@@ -33,10 +33,78 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "89d52595cbe63a11c0ba8bb11930474c8ce605b3b3773ce007fcd82775c46683";
+  "f90d4532a64473817b183856e225b401b201d71aaafa75bd7cf8d63a3deeb76f";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
+const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
+  "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
+const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
+  "3cae1755d65b5a491ce24f483c88f9dc08fb3eab1f43be7ba35f0de24d03ea22";
+const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
+  "agent-turn-latency",
+  "bedrock-runtime-compatible-anthropic",
+  "brave-search",
+  "channels-add-remove",
+  "channels-stop-start",
+  "cloud-inference",
+  "cloud-onboard",
+  "common-egress-agent",
+  "concurrent-gateway-ports",
+  "cron-preflight-inference-local",
+  "dashboard-remote-bind",
+  "device-auth-health",
+  "double-onboard",
+  "full-e2e",
+  "gateway-guard-recovery",
+  "gpu-double-onboard",
+  "gpu-e2e",
+  "hermes-discord",
+  "hermes-e2e",
+  "hermes-gpu-startup",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "hermes-slack",
+  "inference-routing",
+  "issue-2478-crash-loop-recovery",
+  "issue-4434-tui-unreachable-inference",
+  "issue-4462-scope-upgrade-approval",
+  "jetson-nvmap-gpu",
+  "kimi-inference-compat",
+  "live",
+  "mcp-bridge",
+  "mcp-bridge-dev",
+  "messaging-compatible-endpoint",
+  "messaging-providers",
+  "model-router-provider-routed-inference",
+  "network-policy",
+  "onboard-repair",
+  "onboard-resume",
+  "openclaw-discord-pairing",
+  "openclaw-inference-switch",
+  "openclaw-plugin-runtime-exdev",
+  "openclaw-plugin-runtime-exdev-release",
+  "openclaw-skill-cli",
+  "openclaw-slack-pairing",
+  "openclaw-tui-chat-correlation",
+  "openshell-credential-generation-window",
+  "openshell-gateway-auth-contract",
+  "openshell-gateway-upgrade",
+  "overlayfs-autofix",
+  "rebuild-hermes",
+  "rebuild-hermes-stale-base",
+  "rebuild-openclaw",
+  "retired-selector-compatibility",
+  "sandbox-operations",
+  "sandbox-survival",
+  "sessions-agents-cli",
+  "shared-e2e",
+  "skill-agent",
+  "state-backup-restore",
+  "telegram-injection",
+  "token-rotation",
+  "tunnel-lifecycle",
+] as const;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -56,6 +124,35 @@ function record(value: unknown): WorkflowRecord {
 
 function steps(value: unknown): WorkflowStep[] {
   return Array.isArray(value) ? (value as WorkflowStep[]) : [];
+}
+
+function workflowContentSha256(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(value) ?? "")
+    .digest("hex");
+}
+
+function isCliArtifactRestoreStep(step: WorkflowStep): boolean {
+  return (
+    step.name === CLI_ARTIFACT_RESTORE_STEP ||
+    (typeof step.uses === "string" &&
+      step.uses.startsWith("NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@"))
+  );
+}
+
+function jobSettingsAndStepsThroughRestore(job: WorkflowRecord): WorkflowRecord {
+  const jobSteps = steps(job.steps);
+  const restoreIndex = jobSteps.findIndex(isCliArtifactRestoreStep);
+  const { steps: _steps, "timeout-minutes": _timeoutMinutes, ...jobSettings } = job;
+  return {
+    jobSettings,
+    stepsThroughRestore: restoreIndex >= 0 ? jobSteps.slice(0, restoreIndex + 1) : jobSteps,
+  };
+}
+
+function workflowSettings(workflow: WorkflowRecord): WorkflowRecord {
+  const { jobs: _jobs, name: _name, "run-name": _runName, ...settings } = workflow;
+  return settings;
 }
 
 function requireFragments(
@@ -164,12 +261,18 @@ export function validateCliArtifactRestoreAction(
     '*) echo "::error::CLI artifact contains an unsafe member',
     "CLI artifact contains a link or special file",
     '[[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]]',
+    '[[ -d "$GITHUB_WORKSPACE/nemoclaw" && ! -L "$GITHUB_WORKSPACE/nemoclaw" ]]',
+
     '[[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]]',
+
     'restore_dir="$(mktemp -d',
     'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
+    '[[ -f "$cli_entrypoint" && ! -L "$cli_entrypoint" && -s "$cli_entrypoint" ]]',
+    '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
+
     ".sourceRevision == $candidateSha",
-    'test -s "$restore_dir/nemoclaw/dist/shared/sandbox-name.cjs"',
     'mv "$restore_dir/nemoclaw/dist" "$GITHUB_WORKSPACE/nemoclaw/dist"',
+
     'mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"',
     'node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version',
   ]);
@@ -225,14 +328,16 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   }
   requireFragments(errors, "CLI artifact package step", packageStep.run, [
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
-    "test -s dist/nemoclaw.js",
-    "test -s dist/build-identity.json",
-    "test -s nemoclaw/dist/shared/sandbox-name.cjs",
+    "for required_file in dist/nemoclaw.js dist/build-identity.json; do",
+    '[[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]]',
+    '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
+
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
     "--sort=name",
     "--mtime=@0",
-    "nemoclaw/dist",
+    "nemoclaw/dist/shared",
+
     "source_tree=\"$(git rev-parse 'HEAD^{tree}')\"",
     'lockfile_sha256="$(sha256sum package-lock.json',
     'artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"',
@@ -309,10 +414,16 @@ function validateConsumer(
   if (job.needs !== CLI_ARTIFACT_PRODUCER_JOB) {
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
-  const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
-  const restoreSteps = jobSteps.filter(
-    (step) => step.name === CLI_ARTIFACT_RESTORE_STEP || step.uses === CLI_ARTIFACT_RESTORE_ACTION,
+  const candidateCheckoutIndexes = jobSteps.flatMap((step, index) =>
+    workflowContentSha256(step) === CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 ? [index] : [],
   );
+  if (candidateCheckoutIndexes.length !== 1) {
+    errors.push(
+      `${jobName} must use one candidate checkout with the required action, repository, ref, and credential settings`,
+    );
+  }
+  const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+  const restoreSteps = jobSteps.filter(isCliArtifactRestoreStep);
   if (restoreSteps.length !== 1) {
     errors.push(`${jobName} must verify and restore the exact CLI artifact exactly once`);
   }
@@ -328,8 +439,15 @@ function validateConsumer(
     errors.push(`${jobName} must use the immutable complete CLI artifact restore contract`);
   }
   const restoreIndex = jobSteps.indexOf(restore);
+  const candidateCheckoutIndex = candidateCheckoutIndexes[0] ?? -1;
+  if (candidateCheckoutIndex >= restoreIndex) {
+    errors.push(`${jobName} must check out the candidate before CLI artifact restore`);
+  }
   if (!(prepareIndex >= 0 && prepareIndex < restoreIndex)) {
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
+  }
+  if (prepareIndex >= 0 && restoreIndex !== prepareIndex + 1) {
+    errors.push(`${jobName} must restore the CLI artifact in the step after workspace preparation`);
   }
 }
 
@@ -346,26 +464,44 @@ export function validateCliArtifactWorkflowBoundary(
   }
   validateProducer(errors, producer);
 
+  const consumerJobNames = new Set<string>();
   for (const [jobName, value] of Object.entries(jobs)) {
     const job = record(value);
     const jobSteps = steps(job.steps);
     const usesPrepare = jobSteps.some((step) => step.uses === PREPARE_E2E_ACTION);
-    const artifactSteps = jobSteps.filter(
-      (step) =>
-        step.name === CLI_ARTIFACT_RESTORE_STEP ||
-        (typeof step.uses === "string" &&
-          step.uses.startsWith("NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@")),
-    );
+    const artifactSteps = jobSteps.filter(isCliArtifactRestoreStep);
     const shouldConsume =
       usesPrepare &&
       jobName !== CLI_ARTIFACT_PRODUCER_JOB &&
       !PREPARE_E2E_NO_BUILD_JOBS.has(jobName) &&
       !PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);
     if (shouldConsume) {
+      consumerJobNames.add(jobName);
       validateConsumer(errors, jobName, job, jobSteps);
     } else if (artifactSteps.length > 0) {
       errors.push(`${jobName} must not consume the shared CLI artifact`);
     }
+  }
+
+  const actualConsumerJobNames = [...consumerJobNames].sort();
+  if (!isDeepStrictEqual(actualConsumerJobNames, CLI_ARTIFACT_CONSUMER_JOB_NAMES)) {
+    errors.push("CLI artifact consumer job names must match the required list");
+  }
+  const consumers = Object.fromEntries(
+    CLI_ARTIFACT_CONSUMER_JOB_NAMES.map((jobName) => [
+      jobName,
+      jobSettingsAndStepsThroughRestore(record(jobs[jobName])),
+    ]),
+  );
+  if (
+    workflowContentSha256({
+      workflowSettings: workflowSettings(workflow),
+      consumers,
+    }) !== CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256
+  ) {
+    errors.push(
+      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract",
+    );
   }
 
   return errors;

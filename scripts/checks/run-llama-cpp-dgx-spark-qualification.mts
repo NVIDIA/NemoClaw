@@ -159,11 +159,13 @@ function requireTrustedEnvironment(
   runAttempt: string,
   workflowSha?: string,
 ): void {
+  const actor = environment.GITHUB_ACTOR ?? "";
   if (
     environment.GITHUB_REPOSITORY !== "NVIDIA/NemoClaw" ||
     environment.GITHUB_REF !== "refs/heads/main" ||
-    environment.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
-    environment.GITHUB_ACTOR !== "github-actions[bot]" ||
+    (environment.GITHUB_EVENT_NAME !== "push" &&
+      environment.GITHUB_EVENT_NAME !== "workflow_dispatch") ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/u.test(actor) ||
     environment.GITHUB_RUN_ID !== runId ||
     environment.GITHUB_RUN_ATTEMPT !== runAttempt ||
     !/^[1-9][0-9]*$/u.test(environment.GITHUB_ACTOR_ID ?? "") ||
@@ -499,7 +501,10 @@ function validateCandidateCheckout(invocation: QualificationInvocation): string 
   return root;
 }
 
-function hashModelFile(modelHostPath: string, plan: QualificationPlan): VerifiedLocalModelArtifact {
+export function hashModelFile(
+  modelHostPath: string,
+  plan: QualificationPlan,
+): VerifiedLocalModelArtifact {
   if (path.basename(modelHostPath) !== plan.recipe.model.file.path) {
     throw new Error("model file name does not match the qualification plan");
   }
@@ -507,35 +512,39 @@ function hashModelFile(modelHostPath: string, plan: QualificationPlan): Verified
   if (realPath !== modelHostPath) throw new Error("model file path must not use symlinks");
   const descriptor = fs.openSync(modelHostPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    const before = fs.fstatSync(descriptor);
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const expectedSize = BigInt(plan.recipe.model.file.sizeBytes);
     if (
       !before.isFile() ||
-      before.size !== plan.recipe.model.file.sizeBytes ||
-      before.size < 1 ||
-      before.size > maximumModelBytes
+      before.size !== expectedSize ||
+      before.size < 1n ||
+      before.size > BigInt(maximumModelBytes)
     ) {
       throw new Error("model file size does not match the bounded qualification plan");
     }
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(8 * 1024 * 1024);
+    const sizeBytes = Number(before.size);
     let position = 0;
-    while (position < before.size) {
+    while (position < sizeBytes) {
       const read = fs.readSync(
         descriptor,
         buffer,
         0,
-        Math.min(buffer.length, before.size - position),
+        Math.min(buffer.length, sizeBytes - position),
         position,
       );
       if (read < 1) throw new Error("model file changed during verification");
       hash.update(buffer.subarray(0, read));
       position += read;
     }
-    const after = fs.fstatSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
     if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
       before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
     ) {
       throw new Error("model file changed during verification");
     }
@@ -543,7 +552,18 @@ function hashModelFile(modelHostPath: string, plan: QualificationPlan): Verified
     if (digest !== plan.recipe.model.file.digest) {
       throw new Error("model file digest does not match the qualification plan");
     }
-    return { digest, hostPath: modelHostPath, sizeBytes: after.size };
+    return {
+      digest,
+      filesystemIdentity: {
+        ctimeNs: after.ctimeNs,
+        dev: after.dev,
+        ino: after.ino,
+        mtimeNs: after.mtimeNs,
+        size: after.size,
+      },
+      hostPath: modelHostPath,
+      sizeBytes,
+    };
   } finally {
     fs.closeSync(descriptor);
   }

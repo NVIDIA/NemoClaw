@@ -15,6 +15,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../src/lib/onboard/managed-startup/profile";
+import { stateDirectoryDiscoverySshSource } from "./helpers/snapshot-state-discovery-fixture";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
@@ -588,7 +589,7 @@ describe("sandbox directory backup semantics", () => {
     expect(fs.existsSync(path.join(BACKUPS_ROOT, "custom-openclaw"))).toBe(false);
   });
 
-  it("treats empty state directories as backed up when tar exits cleanly", () => {
+  it("backs up declared empty and dynamic directories without trusting undeclared discovery output (#8006)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-empty-dirs-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -597,7 +598,17 @@ describe("sandbox directory backup semantics", () => {
       const binDir = path.join(fixture, "bin");
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const stagingRoot = path.join(fixture, "staging");
-      const existingDirs = ["agents", "extensions", "workspace", "skills", "hooks", "cron"];
+      const sshLog = path.join(fixture, "ssh-log.jsonl");
+      const unsafeDiscoveryMarker = path.join(fixture, "unsafe-discovery");
+      const existingDirs = [
+        "agents",
+        "extensions",
+        "workspace",
+        "skills",
+        "hooks",
+        "cron",
+        "workspace-research",
+      ];
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(stagingRoot);
       for (const dirName of existingDirs) {
@@ -608,45 +619,13 @@ describe("sandbox directory backup semantics", () => {
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
         path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const cmd = process.argv[process.argv.length - 1] || "";
-const existingDirs = ${JSON.stringify(existingDirs)};
-if (cmd.includes("[ -d ")) {
-  process.stdout.write(existingDirs.join("\\n") + "\\n");
-  process.exit(0);
-}
-if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
-  process.exit(2);
-}
-if (cmd.includes("find ")) {
-  process.exit(0);
-}
-if (cmd.includes("tar -cf -")) {
-  const stagingDirs = fs.readdirSync(${JSON.stringify(stagingRoot)});
-  const archivePaths = stagingDirs
-    .map((entry) => require("node:path").join(${JSON.stringify(stagingRoot)}, entry, "archive.tar"))
-    .filter((candidate) => fs.existsSync(candidate));
-  const archivePath = archivePaths.length === 1 ? archivePaths[0] : "";
-  if (
-    !fs.fstatSync(1).isFile() ||
-    !archivePath ||
-    !fs.existsSync(archivePath) ||
-    fs.statSync(archivePath).ino !== fs.fstatSync(1).ino
-  ) {
-    process.stderr.write("backup tar stdout must stream to a file\\n");
-    process.exit(64);
-  }
-  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (r.stdout) fs.writeSync(1, r.stdout);
-  if (r.stderr) fs.writeSync(2, r.stderr);
-  process.exit(r.status || 0);
-}
-process.exit(0);
-`,
+        stateDirectoryDiscoverySshSource({
+          existingDirs,
+          openclawDir,
+          sshLog,
+          stagingRoot,
+          unsafeDiscoveryMarker,
+        }),
       );
 
       writeOpenClawRegistry("alpha", {
@@ -662,8 +641,16 @@ process.exit(0);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
+      expect(backup.manifest?.stateDirs.at(-1)).toBe("workspace-research");
       expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
       expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
+      const discoveryCommand = fs
+        .readFileSync(sshLog, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line).cmd as string)
+        .find((command) => command.includes("[ -d "));
+      expect(discoveryCommand).toContain("'/sandbox/.openclaw/workspace-'*/");
       expect(fs.readdirSync(stagingRoot)).toEqual([]);
 
       const rejected = sandboxState.backupSandboxState("alpha", {
@@ -676,6 +663,13 @@ process.exit(0);
         error: expect.stringContaining(
           "Snapshot authority changed during backup: runtime generation changed",
         ),
+      });
+      fs.writeFileSync(unsafeDiscoveryMarker, "hostile newline discovery\n");
+      const unsafeDiscovery = sandboxState.backupSandboxState("alpha");
+      expect(unsafeDiscovery).toMatchObject({
+        success: false,
+        error: "State directory discovery returned undeclared or unsafe entries",
+        backedUpDirs: [],
       });
       const published = fs
         .readdirSync(path.join(BACKUPS_ROOT, "alpha"))

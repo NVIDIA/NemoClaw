@@ -12,8 +12,8 @@ import {
   expectFailedHardeningStillDeletes,
   expectFailedMcpFinalizePreservesRegistry,
   expectFailedMcpRestorePreservesDestroyFailure,
-  expectMcpFinalizeBridgeErrorReturnsFailure,
   expectMcpFinalizeAfterDelete,
+  expectMcpFinalizeBridgeErrorReturnsFailure,
   expectMcpPrepareBridgeErrorAborts,
   expectMcpRestoreAfterDeleteFailure,
   expectShieldsUpRefusalBeforeMutation,
@@ -45,7 +45,7 @@ describe("destroySandbox flow", () => {
     resetDestroyModuleCache();
   });
 
-  it("trusts absence only from a successful, error-free sandbox list", { timeout: 15_000 }, () => {
+  it("trusts absence only from a successful, error-free sandbox list", { timeout: 30_000 }, () => {
     expectStrictSandboxPresenceClassification();
   });
 

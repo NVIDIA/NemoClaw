@@ -44,6 +44,17 @@ The changed-text scope does not apply to the assigned author-maintained sources 
 - Group repeated low-impact language debt into one finding with representative evidence.
 - Report findings without editing the audited text unless the task also authorizes edits.
 
+## Claim Accuracy
+
+- Verify commands, defaults, and behavior against checked-in source, tests, or scripts.
+- Use existing documentation, issues, and PRs to locate claims and rationale, not as behavior
+  authority.
+- Verify support claims against an accepted issue or accepted design decision.
+- For each credential that a procedure handles, name its location, access, lifetime, and removal.
+- For a conditional or best-effort control, state the failure or fallback result.
+- Preserve literal identifiers, commands, output, API fields, quotations, and official third-party
+  names when applying prose rules.
+
 ## Writing Rules
 
 1. Use one term for one concept. Do not use synonyms to add variety.

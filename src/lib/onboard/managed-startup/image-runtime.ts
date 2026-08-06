@@ -60,6 +60,9 @@ const HERMES_MANAGED_CONFIG_FILES = [
   "/sandbox/.hermes/config.yaml",
   "/sandbox/.hermes/.env",
 ] as const;
+const HERMES_GENERATED_MANAGED_POLICY_FILE = "/sandbox/.hermes/managed-policy.json";
+const HERMES_INSTALLED_MANAGED_POLICY_FILE = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
+const MAX_HERMES_MANAGED_POLICY_BYTES = 4 * 1024 * 1024;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
@@ -816,6 +819,20 @@ export function readStableRegularFile(target: string, maxBytes: number): Buffer 
   return readStableRegularFileSnapshot(target, maxBytes).bytes;
 }
 
+/** Promote the generator output to the one root-owned policy artifact used at runtime. */
+export function installHermesManagedPolicy(
+  source = HERMES_GENERATED_MANAGED_POLICY_FILE,
+  target = HERMES_INSTALLED_MANAGED_POLICY_FILE,
+): void {
+  const generated = readStableRegularFileSnapshot(source, MAX_HERMES_MANAGED_POLICY_BYTES);
+  atomicWriteRootFile(target, generated.bytes, 0o444);
+  const current = fs.lstatSync(source, { bigint: true });
+  if (!sameStableFileMetadata(generated.stat, current)) {
+    fail(`Hermes managed policy changed before source cleanup: ${source}`);
+  }
+  fs.unlinkSync(source);
+}
+
 /**
  * Restore the mutable Hermes image contract after its sandbox-side generator
  * atomically replaces config.yaml or .env with mode 0600. The mode transition
@@ -1296,6 +1313,7 @@ function applyAdapter(
       sealOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       break;
     case "hermes":
+      installHermesManagedPolicy();
       sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       // Normalize before the coordinator commits a newly applied profile so
       // the durable transaction never records generator-created 0600 files as
