@@ -83,9 +83,8 @@ export function ghJson(args: string[]): unknown {
 // Required CI checks
 // ---------------------------------------------------------------------------
 
-// Required merge-gate contexts after the staged E2E gate rollout. First-time
-// fork contributors may need a maintainer to click "Approve and run" before
-// pull_request checks execute. If any context is missing from
+// First-time fork contributors may need a maintainer to click "Approve and run" before
+// pull_request checks execute. If any required context is missing from
 // statusCheckRollup, CI cannot be considered green.
 export const REQUIRED_CHECK_NAMES: string[] = [
   "checks", // pr.yaml — lint, typecheck, test
@@ -93,7 +92,6 @@ export const REQUIRED_CHECK_NAMES: string[] = [
   "changes",
   "commit-lint", // commit-lint.yaml
   "dco-check", // dco-check.yaml
-  "E2E / PR Gate",
 ];
 
 // ---------------------------------------------------------------------------

@@ -227,4 +227,23 @@ network_policies:
       }),
     ).toBe(false);
   });
+
+  it("rejects a custom hostless endpoint with broad address ranges", () => {
+    const content = `\
+preset:
+  name: hostless-in-memory
+  description: broad hostless endpoint
+network_policies:
+  broad:
+    endpoints:
+      - ports: [80, 443]
+        allowed_ips:
+          - 1.0.0.0/8
+`;
+    expect(
+      applyPresetContent("test-sandbox", "hostless-in-memory", content, {
+        custom: { sourcePath: "hostless.yaml" },
+      }),
+    ).toBe(false);
+  });
 });

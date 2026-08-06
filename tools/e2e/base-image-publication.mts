@@ -709,6 +709,10 @@ function parseDurationArgument(argv: string[], name: string, defaultSeconds: num
   return seconds;
 }
 
+export function isBaseImagePublicationEvent(eventName: string | undefined): boolean {
+  return eventName === "push" || eventName === "workflow_dispatch";
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   const known = new Set(["--wait-seconds", "--poll-seconds"]);
   for (let index = 0; index < argv.length; index += 2) {
@@ -736,8 +740,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (env.GITHUB_REF !== "refs/heads/main") {
     throw new Error("GITHUB_REF must be refs/heads/main");
   }
-  if (env.GITHUB_EVENT_NAME !== "schedule" && env.GITHUB_EVENT_NAME !== "workflow_dispatch") {
-    throw new Error("GITHUB_EVENT_NAME must be schedule or workflow_dispatch");
+  if (!isBaseImagePublicationEvent(env.GITHUB_EVENT_NAME)) {
+    throw new Error("GITHUB_EVENT_NAME must be push or workflow_dispatch");
   }
   if (env.GITHUB_SHA !== expectedSha) {
     throw new Error("EXPECTED_SHA must match GITHUB_SHA");

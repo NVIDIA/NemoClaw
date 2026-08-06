@@ -916,7 +916,14 @@ it("builds controller target matrices only from trusted runner mappings (#7031)"
 
   const empty = executeTrustedControllerMatrix("");
   expect(empty.result.status, empty.result.stderr || empty.result.stdout).toBe(0);
-  expect(empty.workflowOutput).toBe("matrix=[]\n");
+  expect(parseSimpleOutput(empty.workflowOutput).matrix).toBe(
+    JSON.stringify([
+      { id: "ubuntu-policy-custom-missing-presets-negative", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-cloud-langchain-deepagents-code", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-cloud-openclaw", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-docker-post-reboot-recovery", runner: "ubuntu-latest" },
+    ]),
+  );
 
   const approved = executeTrustedControllerMatrix(target);
   expect(approved.result.status, approved.result.stderr || approved.result.stdout).toBe(0);

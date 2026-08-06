@@ -5,8 +5,8 @@ name: E2E
 run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
-  schedule:
-    - cron: "0 0 * * *"
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       targets:
@@ -39,7 +39,7 @@ on:
         default: false
         type: boolean
       pr_number:
-        description: Optional PR number for selective-dispatch result comments.
+        description: Optional current PR number for manual exact-revision E2E.
         required: false
         type: string
         default: ""
@@ -49,35 +49,31 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: PR SHA selected by the controller.
+        description: Optional lowercase PR head SHA for manual exact-revision E2E.
         required: false
         default: ""
         type: string
       checkout_repository:
-        description: PR head repository selected by the controller.
+        description: Optional PR head repository for manual exact-revision E2E.
         required: false
         default: ""
         type: string
-      controller_check_id:
-        description: Controller-owned check run that authorizes this exact E2E run.
+      review_reason:
+        description: Optional review reason containing 10 to 500 printable characters.
         required: false
         default: ""
         type: string
       base_sha:
-        description: PR base commit selected by the controller.
+        description: Optional lowercase PR base SHA for manual exact-revision E2E.
         required: false
         default: ""
         type: string
       workflow_sha:
-        description: Trusted E2E workflow commit selected by the controller.
+        description: Optional trusted main workflow SHA for manual exact-revision E2E.
         required: false
         default: ""
         type: string
-      plan_hash:
-        description: SHA-256 of the selected E2E plan.
-        required: false
-        default: ""
-        type: string
+
       correlation_id:
         description: Run correlation ID (UUIDv4).
         required: false
@@ -90,12 +86,11 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: ${{ inputs.checkout_sha != '' }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
-  NEMOCLAW_E2E_PLAN_HASH: ${{ inputs.plan_hash }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
   NEMOCLAW_E2E_SHARD: default
 
@@ -118,7 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in
-            NVIDIA/NemoClaw:refs/heads/main:schedule:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
+            NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
               required=1
               ;;
             NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)
@@ -158,7 +153,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
-      matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
@@ -174,7 +169,7 @@ jobs:
           set -euo pipefail
           case "${TARGETS}" in
             "")
-              matrix='[]'
+              matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               ;;
             ubuntu-repo-cloud-langchain-deepagents-code)
               matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
@@ -213,69 +208,80 @@ jobs:
           runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
           printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
-      - name: Authenticate controller dispatch
+      - name: Authenticate manual PR dispatch
         if: ${{ inputs.checkout_sha != '' }}
         env:
           ACTOR: ${{ github.actor }}
           BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          CONTROLLER_CHECK_ID: ${{ inputs.controller_check_id }}
-          CORRELATION_ID: ${{ inputs.correlation_id }}
           GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+
+          INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable }}
           JOBS: ${{ inputs.jobs }}
-          PLAN_HASH: ${{ inputs.plan_hash }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEW_REASON: ${{ inputs.review_reason }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_ID: ${{ github.run_id }}
           TARGETS: ${{ inputs.targets }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_EVENT: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$ACTOR" == "github-actions[bot]" ]] || { echo "::error::PR E2E must be dispatched by the trusted controller"; exit 1; }
-          [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::controller-authorized PR E2E cannot be rerun"; exit 1; }
-          [[ "$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$ ]] || { echo "::error::controller_check_id must be a positive integer"; exit 1; }
-          expected_external_id="nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}"
-          expected_run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
-          jobs_summary="${JOBS//,/, }"
-          targets_summary="${TARGETS//,/, }"
-          expected_summary="Risk plan ${PLAN_HASH} selected jobs: ${jobs_summary:-none}; targets: ${targets_summary:-none}. Child run: ${expected_run_url}."
-          controller_auth_max_attempts=45
-          controller_auth_poll_seconds=2
-          check_json=""
-          for ((_attempt = 1; _attempt <= controller_auth_max_attempts; _attempt++)); do
-            if check_json="$(curl --fail --silent --show-error --proto '=https' \
+
+          require_maintainer() {
+            local maintainer="$1"
+            [[ "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ && "$maintainer" != -* && "$maintainer" != *- ]] || {
+              echo "::error::Manual PR E2E actor is invalid" >&2
+              exit 1
+            }
+            local permission_json
+            permission_json="$(curl --fail --silent --show-error --proto '=https' \
               --header "Authorization: Bearer ${GITHUB_TOKEN}" \
               --header "Accept: application/vnd.github+json" \
-              --header "Cache-Control: no-cache" \
-              --header "Pragma: no-cache" \
               --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}")" &&
-              [[ "$(jq -r '.output.summary // ""' <<< "$check_json")" == "$expected_summary" ]]; then
-              break
-            fi
-            check_json=""
-            if (( _attempt < controller_auth_max_attempts )); then
-              sleep "$controller_auth_poll_seconds"
-            fi
-          done
-          [[ -n "$check_json" ]] || { echo "::error::trusted controller authorization was not published for this run"; exit 1; }
-          jq -e \
-            --argjson check_id "$CONTROLLER_CHECK_ID" \
-            --arg external_id "$expected_external_id" \
-            --arg head_sha "$CHECKOUT_SHA" \
-            --arg summary "$expected_summary" \
-            '
-              .id == $check_id and
-              .name == "E2E / PR Gate" and
-              .app.id == 15368 and
-              .app.slug == "github-actions" and
-              .head_sha == $head_sha and
-              .external_id == $external_id and
-              .status == "in_progress" and
-              .conclusion == null and
-              .output.summary == $summary
-            ' <<< "$check_json" >/dev/null ||
-            { echo "::error::controller check does not authorize this exact E2E run"; exit 1; }
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
+              maintain | admin) ;;
+              *) echo "::error::Manual PR E2E requires a repository maintainer or administrator" >&2; exit 1 ;;
+            esac
+          }
+
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || {
+            echo "::error::Manual PR E2E must be dispatched from main" >&2
+            exit 1
+          }
+          [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
+          [[ -z "$JOBS" && -z "$TARGETS" && "$INCLUDE_LAUNCHABLE" == "false" ]] || {
+            echo "::error::Manual PR E2E runs the default suite and does not accept job, target, or Launchable selectors" >&2
+            exit 1
+          }
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
+          [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name" >&2; exit 1; }
+          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA" >&2; exit 1; }
+          [[ "$REVIEW_REASON" =~ ^[[:print:]]{10,500}$ ]] || { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
+
+
+          require_maintainer "$ACTOR"
+          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+            require_maintainer "$TRIGGERING_ACTOR"
+          fi
+
+          pull_json="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must be open" >&2; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head SHA" >&2; exit 1; }
+          [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
 
       - name: Authorize Launchable E2E maintainer dispatch
         if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
@@ -325,48 +331,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate controller dispatch
+      - name: Validate manual PR checkout
         if: ${{ inputs.checkout_sha != '' }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          JOBS: ${{ inputs.jobs }}
-          PLAN_HASH: ${{ inputs.plan_hash }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          CORRELATION_ID: ${{ inputs.correlation_id }}
-          TARGETS: ${{ inputs.targets }}
-          WORKFLOW_EVENT: ${{ github.event_name }}
-          WORKFLOW_REF: ${{ github.ref }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
         run: |
           set -euo pipefail
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::PR E2E runs must be dispatched from main"; exit 1; }
-          [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name"; exit 1; }
-          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted workflow commit"; exit 1; }
-          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha"; exit 1; }
-          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::plan_hash must be a lowercase SHA-256"; exit 1; }
-          [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
-          [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::PR E2E runs require controller-selected jobs or targets"; exit 1; }
-          case "$TARGETS" in
-            ""|ubuntu-repo-cloud-langchain-deepagents-code|ubuntu-repo-docker-post-reboot-recovery|ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery) ;;
-            *) echo "::error::PR E2E target is not approved by the trusted controller"; exit 1 ;;
-          esac
-
+          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha" >&2; exit 1; }
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
-          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository"; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR SHA"; exit 1; }
-          [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
+          [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open" >&2; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
@@ -770,9 +755,9 @@ jobs:
         name: Authenticate to Docker Hub
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928
         with:
-          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
-          username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_TOKEN || '' }}
+          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
+          username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
+          token: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_TOKEN || '' }}
 
       - name: Configure live E2E trace directory
         env:
@@ -1094,7 +1079,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -1129,10 +1114,10 @@ jobs:
           if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
             fail "workflow must run from NVIDIA/NemoClaw main"
           fi
-          if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
-            fail "workflow event must be schedule or workflow_dispatch"
+          if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            fail "workflow event must be push or workflow_dispatch"
           fi
-          # PR E2E mode: controller-dispatched PR commit.
+          # PR E2E mode: maintainer-dispatched PR commit.
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
             if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
               fail "checkout SHA must be lowercase 40-hex"
@@ -1141,7 +1126,7 @@ jobs:
               fail "workflow source must match the trusted dispatch revision"
             fi
           else
-            # Direct-main mode: schedule or manual trigger on main.
+            # Direct-main mode: push or manual trigger on main.
             if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then
               fail "direct main runs must not request an alternate checkout or workflow revision"
             fi
@@ -1515,7 +1500,7 @@ jobs:
   mcp-bridge-dev:
     needs: generate-matrix
     # Moving OpenShell dev artifacts are compatibility evidence only and must
-    # never enter scheduled or default manual runs without explicit selection.
+    # never enter default main-push or manual runs without explicit selection.
     if: ${{ contains(format(',{0},', inputs.jobs), ',mcp-bridge-dev,') || contains(format(',{0},', inputs.targets), ',mcp-bridge-dev,') }}
     runs-on: ubuntu-latest
     permissions:
@@ -2855,7 +2840,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -3016,7 +3001,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -3525,7 +3510,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))) }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.event_name == 'push' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))) }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -3878,7 +3863,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -4067,7 +4052,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.scenario == 'hermes-open-reference' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.scenario == 'hermes-open-reference' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -4231,7 +4216,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -5102,7 +5087,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -6041,7 +6026,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Scheduled release-baseline coverage for #6108. This runs independently of
+  # Main-push release-baseline coverage for #6108. This runs independently of
   # the current lifecycle lane so the exact v0.0.71 build does not extend that
   # lane's critical path.
   openclaw-plugin-runtime-exdev-release:
@@ -6114,7 +6099,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Scheduled current-lifecycle coverage for #6108 / #3513 / #3127. This
+  # Main-push current-lifecycle coverage for #6108 / #3513 / #3127. This
   # proves restart/rebuild persistence and target-side runtime-dependency
   # replacement across devices without waiting for the release baseline.
   openclaw-plugin-runtime-exdev:
@@ -6458,7 +6443,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -6753,7 +6738,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -7336,12 +7321,12 @@ jobs:
               body: report.body,
             });
 
-  # ── Scheduled/manual scorecard ────────────────────────────────────────────
+  # ── Push/manual scorecard ─────────────────────────────────────────────────
   scorecard:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: *e2e-result-jobs
-    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}
+    if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}
     permissions:
       actions: read
       contents: read
@@ -7421,7 +7406,7 @@ jobs:
             }
             const runtimeHistoryMarkdown = runtimeHistoryRows === null
               ? [
-                  '## E2E Nightly Runtime Trend',
+                  '## E2E Push Runtime Trend',
                   '',
                   'The trend is unavailable because a `test-progress.json` artifact was invalid.',
                   '',
@@ -7435,7 +7420,7 @@ jobs:
                       firstTurnLatency.readCurrentFirstTurnLatencySample(
                         process.env.RUNTIME_ARTIFACTS,
                       ),
-                    loadPriorNightlySummaries: runtimeHistory.loadPriorNightlySummaries,
+                    loadPriorPushSummaries: runtimeHistory.loadPriorPushSummaries,
                   },
                 );
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
@@ -7520,8 +7505,9 @@ jobs:
               core.setFailed(`Slack webhook returned ${response.status}`);
             }
 
+
       - name: Upload E2E runtime summary
-        if: ${{ always() && github.event_name == 'schedule' }}
+        if: ${{ always() && github.event_name == 'push' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-runtime-summary
