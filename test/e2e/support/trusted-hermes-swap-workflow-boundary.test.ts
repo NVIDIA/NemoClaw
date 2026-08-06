@@ -323,7 +323,7 @@ describe("trusted Hermes swap workflow boundary", () => {
   it.each([
     {
       expected: "direct main runs must not request an alternate checkout or workflow revision",
-      name: "a pushd run supplies an alternate checkout",
+      name: "a push run supplies an alternate checkout",
       options: { checkoutSha: "a".repeat(40), eventName: "push" },
     },
     {

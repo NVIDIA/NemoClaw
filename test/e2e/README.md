@@ -719,8 +719,9 @@ A repository maintainer or administrator can manually run the same default suite
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 
-Some default-suite jobs pass provider and messaging credentials from repository secrets to candidate-controlled processes through job environment variables.
-These long-lived credentials can remain valid after the workflow ends, and the workflow does not rotate or revoke them.
+The default suite can expose `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL` from repository secrets to candidate-controlled processes through job environment variables.
+These credentials are long-lived and can remain valid after the workflow ends.
+The workflow does not remove, rotate, or revoke them; rotate or revoke each credential at its provider to remove candidate access.
 Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the workflow artifacts and remove resources that target cleanup did not remove.

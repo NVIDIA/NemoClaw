@@ -17,8 +17,9 @@ Use this mode when the maintainer requests live E2E for a pull request.
 It runs the default suite against the current exact PR head while the workflow definition remains on `main`.
 It is advisory and does not create a required PR check.
 
-Before dispatch, warn the maintainer that some default-suite jobs pass provider and messaging credentials from repository secrets to candidate-controlled processes through job environment variables.
-These long-lived credentials can remain valid after the workflow ends, and the workflow does not rotate or revoke them.
+The default suite can expose `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL` from repository secrets to candidate-controlled processes through job environment variables.
+These credentials are long-lived and can remain valid after the workflow ends.
+The workflow does not remove, rotate, or revoke them; rotate or revoke each credential at its provider to remove candidate access.
 Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
@@ -66,9 +67,33 @@ gh workflow run .github/workflows/e2e.yaml \
 The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and empty selectors.
 A second validation after checkout rejects a changed PR identity before preparation.
 
-Find exactly one first-attempt run titled `E2E PR #${PR_NUMBER} (${CORRELATION_ID})`.
-Require its workflow SHA to equal `WORKFLOW_SHA`, wait for completion, and require a `success` conclusion.
-Re-read the PR and require its head repository, head SHA, and base SHA to match the recorded values before accepting the run.
+Find and verify the correlated run with bounded GitHub reads:
+
+```bash
+RUN_TITLE="E2E PR #${PR_NUMBER} (${CORRELATION_ID})"
+RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
+  --event workflow_dispatch --branch main --limit 50 \
+  --json databaseId,displayTitle)"
+MATCHES="$(jq -c --arg title "$RUN_TITLE" \
+  '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
+test "$(jq 'length' <<<"$MATCHES")" -eq 1
+RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
+gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
+RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
+jq -e --arg sha "$WORKFLOW_SHA" '
+  .run_attempt == 1 and
+  .head_sha == $sha and
+  .status == "completed" and
+  .conclusion == "success"
+' <<<"$RUN_JSON" >/dev/null
+CURRENT_PR="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
+  --json state,headRefOid,baseRefOid,headRepository)"
+test "$(jq -r .state <<<"$CURRENT_PR")" = OPEN
+test "$(jq -r .headRefOid <<<"$CURRENT_PR")" = "$HEAD_SHA"
+test "$(jq -r .baseRefOid <<<"$CURRENT_PR")" = "$BASE_SHA"
+test "$(jq -r .headRepository.nameWithOwner <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
+```
+
 Return the PR number, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
 A changed head or base invalidates the evidence and requires a new run.
 

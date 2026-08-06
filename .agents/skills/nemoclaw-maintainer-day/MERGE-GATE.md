@@ -67,12 +67,13 @@ Fail closed when identity, state, or timing evidence is missing, malformed, stal
 ### Live E2E
 
 Live E2E does not run automatically for pull requests and is not a merge gate.
-Every commit pushed to `main` starts `.github/workflows/e2e.yaml` with the default suite.
+Every push to `main` starts `.github/workflows/e2e.yaml` with the default suite.
 The workflow has no scheduled trigger.
 
 Use the manual PR mode only when a maintainer requests live evidence before merge.
-Some default-suite jobs pass provider and messaging credentials from repository secrets to candidate-controlled processes through job environment variables.
-These long-lived credentials can remain valid after the workflow ends, and the workflow does not rotate or revoke them.
+The default suite can expose `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL` from repository secrets to candidate-controlled processes through job environment variables.
+These credentials are long-lived and can remain valid after the workflow ends.
+The workflow does not remove, rotate, or revoke them; rotate or revoke each credential at its provider to remove candidate access.
 Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
