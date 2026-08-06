@@ -304,6 +304,106 @@ describe("persisted engine lifecycle", () => {
     expect(fs.existsSync(leasePath)).toBe(false);
   });
 
+  it("reclaims a crash-left recovery marker only after its process owner is dead", () => {
+    const transactionId = "c".repeat(64);
+    const runtime = harness({ action: "recovery", transactionId });
+    preparePersistedEngineLifecycle(runtime.input);
+    runtime.lifecycleStore.authorizeMutation(transactionId);
+    runtime.lifecycleStore.acquireMutationExecution(transactionId);
+    const transactionDirectory = path.join(
+      runtime.root,
+      PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
+      transactionId,
+    );
+    const leasePath = path.join(transactionDirectory, "mutation-execution.json");
+    const recoveryPath = path.join(transactionDirectory, ".mutation-execution-recovery");
+    const abandoned = JSON.parse(fs.readFileSync(leasePath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(leasePath, `${JSON.stringify({ ...abandoned, ownerPid: 0x7fffffff })}\n`, {
+      mode: 0o600,
+    });
+    fs.writeFileSync(
+      recoveryPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        transactionId,
+        ownerId: "01234567-89ab-4cde-8fab-0123456789ab",
+        ownerPid: 0x7fffffff,
+      })}\n`,
+      { mode: 0o600 },
+    );
+
+    const restarted = createFilePersistedEngineLifecycleStore(runtime.root);
+    const recovered = restarted.acquireMutationExecution(transactionId);
+
+    expect(recovered.ownerPid).toBe(process.pid);
+    expect(fs.existsSync(recoveryPath)).toBe(false);
+    restarted.releaseMutationExecution(recovered);
+  });
+
+  it("ignores crash-left exclusive-publication temporary files", () => {
+    const runtime = harness({ action: "backup" });
+    const prepared = preparePersistedEngineLifecycle(runtime.input);
+    const ledgerRoot = path.join(runtime.root, PERSISTED_ENGINE_LIFECYCLE_DIRECTORY);
+    const transactionDirectory = path.join(ledgerRoot, TRANSACTION_ID);
+    const temporaryIdentity = "01234567-89ab-4cde-8fab-0123456789ab";
+    fs.writeFileSync(
+      path.join(transactionDirectory, `.prepared.json.${temporaryIdentity}.tmp`),
+      "x",
+      {
+        mode: 0o600,
+      },
+    );
+    fs.writeFileSync(
+      path.join(ledgerRoot, `.${TRANSACTION_ID}.retired.${temporaryIdentity}.tmp`),
+      "x",
+      { mode: 0o600 },
+    );
+
+    expect(runtime.lifecycleStore.load(TRANSACTION_ID)).toEqual(prepared);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([prepared]);
+  });
+
+  it("preserves a mutation failure when execution-lease release also fails", async () => {
+    const runtime = harness();
+    preparePersistedEngineLifecycle(runtime.input);
+    const releaseMutationExecution = vi.fn(runtime.lifecycleStore.releaseMutationExecution);
+    const lifecycleStore = {
+      ...runtime.lifecycleStore,
+      releaseMutationExecution: vi.fn((lease) => {
+        releaseMutationExecution(lease);
+        throw new Error("injected release failure");
+      }),
+    };
+
+    await expect(
+      executePersistedEngineLifecycle({ ...runtime.input, lifecycleStore }, () => {
+        throw new Error("primary mutation failure");
+      }),
+    ).rejects.toThrow("primary mutation failure");
+    expect(releaseMutationExecution).toHaveBeenCalledOnce();
+  });
+
+  it("returns a durable completion when execution-lease release reports a failure", async () => {
+    const runtime = harness({ action: "backup" });
+    preparePersistedEngineLifecycle(runtime.input);
+    const releaseMutationExecution = vi.fn(runtime.lifecycleStore.releaseMutationExecution);
+    const lifecycleStore = {
+      ...runtime.lifecycleStore,
+      releaseMutationExecution: vi.fn((lease) => {
+        releaseMutationExecution(lease);
+        throw new Error("injected release failure");
+      }),
+    };
+
+    await expect(
+      executePersistedEngineLifecycle({ ...runtime.input, lifecycleStore }, () => ({
+        resultSha256: RESULT_SHA256,
+        value: "completed",
+      })),
+    ).resolves.toMatchObject({ value: "completed", record: { phase: "completed" } });
+    expect(releaseMutationExecution).toHaveBeenCalledOnce();
+  });
+
   it.each([
     {
       label: "provider",

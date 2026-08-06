@@ -96,15 +96,62 @@ describe("managed bootstrap Docker launch spec", () => {
     Object.assign(cliInspect.HostConfig!, { PortBindings: {} });
     const active = structuredClone(apiInspect);
     Object.assign(active.HostConfig!, {
-      PortBindings: { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "18080" }] },
+      PortBindings: {
+        "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "18080" }],
+      },
     });
 
     const expected = normalizeDockerManagedBootstrapLaunchSpec(apiInspect);
     const observed = normalizeDockerManagedBootstrapLaunchSpec(cliInspect);
 
-    expect(expected.spec.inspect.HostConfig).toMatchObject({ PortBindings: {} });
+    expect(expected.spec.inspect.HostConfig).toMatchObject({
+      PortBindings: {},
+    });
     expect(observed.hash).toBe(expected.hash);
     expect(normalizeDockerManagedBootstrapLaunchSpec(active).hash).not.toBe(expected.hash);
+  });
+
+  it("canonicalizes explicitly reported Docker-default tmpfs options", () => {
+    const explicitDefaults = createDockerGpuInspectFixture();
+    explicitDefaults.HostConfig!.Mounts = [
+      {
+        Type: "tmpfs",
+        Target: "/run/nemoclaw-dcode-mcp",
+        TmpfsOptions: {
+          SizeBytes: 1_048_576,
+          Mode: 0o1777,
+          Options: [["noexec"]],
+        },
+      },
+    ];
+    const omittedDefaults = structuredClone(explicitDefaults);
+    delete omittedDefaults.HostConfig!.Mounts![0]!.TmpfsOptions!.Options;
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(explicitDefaults);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(omittedDefaults);
+
+    expect(expected.spec.inspect.HostConfig?.Mounts?.[0]?.TmpfsOptions).toEqual({
+      SizeBytes: 1_048_576,
+      Mode: 0o1777,
+    });
+    expect(observed.hash).toBe(expected.hash);
+  });
+
+  it("keeps non-default tmpfs options hash-bound", () => {
+    const expected = createDockerGpuInspectFixture();
+    expected.HostConfig!.Mounts = [
+      {
+        Type: "tmpfs",
+        Target: "/run/nemoclaw-dcode-mcp",
+        TmpfsOptions: { Options: [["exec"]] },
+      },
+    ];
+    const observed = structuredClone(expected);
+    delete observed.HostConfig!.Mounts![0]!.TmpfsOptions!.Options;
+
+    expect(normalizeDockerManagedBootstrapLaunchSpec(observed).hash).not.toBe(
+      normalizeDockerManagedBootstrapLaunchSpec(expected).hash,
+    );
   });
 
   it("canonicalizes Docker API and CLI host-list representations", () => {

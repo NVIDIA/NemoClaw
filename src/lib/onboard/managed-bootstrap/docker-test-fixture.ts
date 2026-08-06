@@ -337,6 +337,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const env = args.flatMap((value, index) =>
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
+          const ulimits = args.flatMap((value, index) => {
+            if (value !== "--ulimit") return [];
+            const match = /^([a-z][a-z0-9_]*)=(\d+):(\d+)$/u.exec(String(args[index + 1] ?? ""));
+            return match
+              ? [{ Name: match[1], Soft: Number(match[2]), Hard: Number(match[3]) }]
+              : [];
+          });
           replacement = {
             ...structuredClone(source),
             Id: NEW_ID,
@@ -347,6 +354,10 @@ export function fixture(options: DockerFixtureOptions = {}) {
               Env: [...(options.replacementEnvironment?.(env) ?? env)],
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
+            },
+            HostConfig: {
+              ...structuredClone(source.HostConfig),
+              Ulimits: ulimits,
             },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },
           };

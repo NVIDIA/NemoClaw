@@ -150,6 +150,11 @@ const PHASES = new Set<PersistedEngineLifecyclePhase>([
 const PHASE_FILES = ["prepared", "mutation-authorized", "completed"] as const;
 const EXECUTION_LEASE_FILE = "mutation-execution.json";
 const EXECUTION_RECOVERY_FILE = ".mutation-execution-recovery";
+const TRANSACTION_PUBLISH_TARGETS = [
+  ...PHASE_FILES.map((phase) => `${phase}.json`),
+  EXECUTION_LEASE_FILE,
+  EXECUTION_RECOVERY_FILE,
+] as const;
 const resourceRoles = (
   ...roles: PersistedEngineLifecycleResourceRole[]
 ): readonly PersistedEngineLifecycleResourceRole[] => Object.freeze(roles);
@@ -480,6 +485,25 @@ function publishExclusive(directory: string, target: string, serialized: string)
   }
 }
 
+function isPublishTemporaryEntry(entry: string, targetBasename: string): boolean {
+  const prefix = `.${targetBasename}.`;
+  const suffix = ".tmp";
+  return (
+    entry.startsWith(prefix) &&
+    entry.endsWith(suffix) &&
+    UUID.test(entry.slice(prefix.length, -suffix.length))
+  );
+}
+
+function isTransactionPublishTemporaryEntry(entry: string): boolean {
+  return TRANSACTION_PUBLISH_TARGETS.some((target) => isPublishTemporaryEntry(entry, target));
+}
+
+function isRootPublishTemporaryEntry(entry: string): boolean {
+  const transactionId = entry.slice(1, 65);
+  return SHA256.test(transactionId) && isPublishTemporaryEntry(entry, `${transactionId}.retired`);
+}
+
 function transactionDirectory(root: string, transactionId: string): string {
   return path.join(root, exactSha256(transactionId, "transaction identity"));
 }
@@ -505,6 +529,11 @@ function loadExecutionLease(directory: string): PersistedEngineLifecycleExecutio
   return serialized === null ? null : parseExecutionLease(serialized);
 }
 
+function loadExecutionRecovery(directory: string): PersistedEngineLifecycleExecutionLease | null {
+  const serialized = readPrivateFile(executionRecoveryPath(directory));
+  return serialized === null ? null : parseExecutionLease(serialized);
+}
+
 function requireExactExecutionLease(
   directory: string,
   expected: PersistedEngineLifecycleExecutionLease,
@@ -522,6 +551,18 @@ function removeExactExecutionLease(
 ): void {
   requireExactExecutionLease(directory, expected);
   fs.unlinkSync(executionLeasePath(directory));
+  fsyncDirectory(directory);
+}
+
+function removeExactExecutionRecovery(
+  directory: string,
+  expected: PersistedEngineLifecycleExecutionLease,
+): void {
+  const current = loadExecutionRecovery(directory);
+  if (!current || serializeExecutionLease(current) !== serializeExecutionLease(expected)) {
+    fail("mutation execution recovery ownership changed");
+  }
+  fs.unlinkSync(executionRecoveryPath(directory));
   fsyncDirectory(directory);
 }
 
@@ -578,6 +619,7 @@ function loadTransaction(
       (entry) =>
         entry !== EXECUTION_LEASE_FILE &&
         entry !== EXECUTION_RECOVERY_FILE &&
+        !isTransactionPublishTemporaryEntry(entry) &&
         !PHASE_FILES.some((phase) => entry === `${phase}.json`),
     )
   ) {
@@ -623,6 +665,7 @@ export function createFilePersistedEngineLifecycleStore(
       requirePrivateDirectory(root);
       const records: PersistedEngineLifecycleRecord[] = [];
       for (const entry of fs.readdirSync(root).sort()) {
+        if (isRootPublishTemporaryEntry(entry)) continue;
         if (entry.endsWith(".retired")) {
           const transactionId = exactSha256(
             entry.slice(0, -".retired".length),
@@ -688,8 +731,15 @@ export function createFilePersistedEngineLifecycleStore(
       });
 
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        if (readPrivateFile(executionRecoveryPath(directory)) !== null) {
-          fail("mutation execution recovery is already in progress");
+        const existingRecovery = loadExecutionRecovery(directory);
+        if (existingRecovery) {
+          if (existingRecovery.transactionId !== transactionId) {
+            fail("mutation execution recovery names another transaction");
+          }
+          if (processIsAlive(existingRecovery.ownerPid)) {
+            fail("mutation execution recovery is already in progress");
+          }
+          removeExactExecutionRecovery(directory, existingRecovery);
         }
         if (
           publishExclusive(directory, executionLeasePath(directory), serializeExecutionLease(lease))
@@ -708,9 +758,20 @@ export function createFilePersistedEngineLifecycleStore(
           fail("mutation execution is already owned by a live process");
         }
 
-        const recoveryToken = `${randomUUID()}\n`;
-        if (!publishExclusive(directory, executionRecoveryPath(directory), recoveryToken)) {
-          fail("mutation execution recovery is already in progress");
+        const recovery = normalizeExecutionLease({
+          schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
+          transactionId,
+          ownerId: randomUUID(),
+          ownerPid: process.pid,
+        });
+        if (
+          !publishExclusive(
+            directory,
+            executionRecoveryPath(directory),
+            serializeExecutionLease(recovery),
+          )
+        ) {
+          continue;
         }
         try {
           const abandoned = loadExecutionLease(directory);
@@ -719,10 +780,9 @@ export function createFilePersistedEngineLifecycleStore(
           }
           if (abandoned) removeExactExecutionLease(directory, abandoned);
         } finally {
-          const marker = readPrivateFile(executionRecoveryPath(directory));
-          if (marker === recoveryToken) {
-            fs.unlinkSync(executionRecoveryPath(directory));
-            fsyncDirectory(directory);
+          const marker = loadExecutionRecovery(directory);
+          if (marker && serializeExecutionLease(marker) === serializeExecutionLease(recovery)) {
+            removeExactExecutionRecovery(directory, recovery);
           }
         }
       }
@@ -1004,6 +1064,11 @@ export async function executePersistedEngineLifecycle<T>(
     const completed = input.lifecycleStore.complete(lease, resultSha256);
     return Object.freeze({ record: completed, value });
   } finally {
-    input.lifecycleStore.releaseMutationExecution(lease);
+    try {
+      input.lifecycleStore.releaseMutationExecution(lease);
+    } catch {
+      // Lease recovery may race cleanup. Preserve the mutation's primary error
+      // or its already-durable completion result.
+    }
   }
 }

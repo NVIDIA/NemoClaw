@@ -191,8 +191,9 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
       : publishCompletion(destination);
   };
   const copy = (args: readonly string[]): ContainerEngineCommandResult => {
-    const source = args[2] as string;
-    const destination = args[3] as string;
+    const archiveModeOffset = args[2] === "--archive=true" ? 1 : 0;
+    const source = args[2 + archiveModeOffset] as string;
+    const destination = args[3 + archiveModeOffset] as string;
     return source.startsWith(`${RUNTIME_ID}:`)
       ? copyCompletion(destination)
       : stageEnvelope(source);
@@ -303,6 +304,13 @@ describe("Podman image-owned bootstrap transaction", () => {
       watcherLeaseId: LEASE_ID,
     });
     expect(fake.commands).toContainEqual(["container", "start", RUNTIME_ID]);
+    expect(fake.commands).toContainEqual([
+      "container",
+      "cp",
+      "--archive=true",
+      expect.any(String),
+      `${RUNTIME_ID}:/var/lib/nemoclaw-managed-bootstrap-request.json`,
+    ]);
     expect(fake.commands).toContainEqual([
       "container",
       "cp",

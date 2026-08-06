@@ -873,9 +873,7 @@ function expectedUlimits(original: unknown, required: readonly DockerUlimit[]): 
       Hard: requiredEntry.hard,
     });
   }
-  return JSON.stringify(
-    [...merged.values()].sort((left, right) => left.Name.localeCompare(right.Name)),
-  );
+  return canonicalUlimits([...merged.values()], "expected ulimits");
 }
 
 function assertExactDeviceRequests(
@@ -1045,11 +1043,12 @@ function assertReplacementMatchesIntent(
     ].filter((value, index, values) => values.indexOf(value) === index),
     "supplementary groups",
   );
-  if (
-    canonicalUlimits(observedHost.Ulimits, "replacement ulimits") !==
-    expectedUlimits(originalHost.Ulimits, plan.requiredUlimits)
-  ) {
-    throw new Error("Managed bootstrap Docker ulimits changed outside declared requirements.");
+  const observedUlimits = canonicalUlimits(observedHost.Ulimits, "replacement ulimits");
+  const intendedUlimits = expectedUlimits(originalHost.Ulimits, plan.requiredUlimits);
+  if (observedUlimits !== intendedUlimits) {
+    throw new Error(
+      `Managed bootstrap Docker ulimits changed outside declared requirements: expected ${intendedUlimits}, observed ${observedUlimits}.`,
+    );
   }
   const expectedPreserved = scrubVerifiedReplacementDeltas(originalCanonicalJson);
   const observedPreserved = scrubVerifiedReplacementDeltas(replacementSpec.canonicalJson);

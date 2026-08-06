@@ -435,6 +435,10 @@ function stageProtectedEnvelope(
       [
         "container",
         "cp",
+        // Podman archive mode explicitly changes destination ownership to the
+        // container's primary UID/GID. The authenticated held-workload contract
+        // already proves that this exact managed replacement uses root.
+        "--archive=true",
         file,
         `${prepared.replacementRuntimeId}:${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
       ],

@@ -93,10 +93,17 @@ describe("E2E risk signal reporter", () => {
     expect(configuredEnvironment({})).toBeNull();
   });
 
+  it("stays disabled for manual exact-revision runs without a risk plan", () => {
+    expect(configuredEnvironment({ NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA })).toBeNull();
+  });
+
   it("fails closed when run metadata is incomplete", () => {
-    expect(() => configuredEnvironment({ NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA })).toThrow(
-      /E2E_ARTIFACT_DIR/u,
-    );
+    expect(() =>
+      configuredEnvironment({
+        NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+        NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
+      }),
+    ).toThrow(/E2E_ARTIFACT_DIR/u);
   });
 
   it("attests the checked-out HEAD instead of echoing only the expected SHA", () => {

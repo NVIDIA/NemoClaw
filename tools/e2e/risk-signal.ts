@@ -57,12 +57,16 @@ export function configuredRiskSignalEnvironment(
   env: NodeJS.ProcessEnv,
   resolveHead: (workspace: string) => string = checkedOutSha,
 ): RiskSignalEnvironment | null {
-  if (!env.NEMOCLAW_E2E_EXPECTED_SHA) return null;
+  // Risk signals belong to the retired risk-plan controller contract. Manual
+  // exact-revision runs still provide EXPECTED_SHA for checkout attestation,
+  // but deliberately have no plan hash and therefore must not emit a signal
+  // that claims membership in a controller-selected plan.
+  if (!env.NEMOCLAW_E2E_PLAN_HASH) return null;
   const values = {
     artifactDir: env.E2E_ARTIFACT_DIR ?? "",
     jobId: env.E2E_TARGET_ID ?? "",
     shardId: env.NEMOCLAW_E2E_SHARD ?? "",
-    expectedSha: env.NEMOCLAW_E2E_EXPECTED_SHA,
+    expectedSha: env.NEMOCLAW_E2E_EXPECTED_SHA ?? "",
     planHash: env.NEMOCLAW_E2E_PLAN_HASH ?? "",
     correlationId: env.NEMOCLAW_E2E_CORRELATION_ID ?? "",
   };

@@ -253,11 +253,20 @@ describe("runtime provider state-mutation plan", () => {
     expect(() =>
       prepareRuntimeProviderStateMutationPlan({
         ...plan(),
-        selectors: [
-          { kind: "path", path: "state-\ud800" },
-          { kind: "path", path: "state-\ufffd" },
-        ],
+        selectors: [{ kind: "path", path: "state-\ud800" }],
       }),
     ).toThrow(/Unicode scalar values/u);
+
+    const replacementCharacter = prepareRuntimeProviderStateMutationPlan({
+      ...plan(),
+      selectors: [{ kind: "path", path: "state-\ufffd" }],
+    });
+    const ascii = prepareRuntimeProviderStateMutationPlan({
+      ...plan(),
+      selectors: [{ kind: "path", path: "state-x" }],
+    });
+
+    expect(replacementCharacter.plan.selectors).toEqual([{ kind: "path", path: "state-\ufffd" }]);
+    expect(replacementCharacter.planSha256).not.toBe(ascii.planSha256);
   });
 });

@@ -317,7 +317,7 @@ describe("runtime provider central source boundary", () => {
     expect(directE2e).toContain(`"--interactive"`);
     expect(directE2e).toContain("cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
     expect(directE2e).toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
-    expect(directE2e).not.toContain(`docker(["cp"`);
+    expect(directE2e).toContain(`docker(["cp", "-"`);
     expect(directE2e).not.toMatch(/const HOLD\s*=/u);
     expect(bootstrapRuntime.match(/require\.main === module/gu)).toHaveLength(1);
     expect(startupRuntime).not.toMatch(/require\.main === module/u);
