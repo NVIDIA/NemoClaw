@@ -315,10 +315,27 @@ describe("first-class CUA contract", () => {
   it("advertises exactly the browser-slice task operations (#7755)", () => {
     const validate = createValidator();
     const readiness = runtimeReadiness();
-    readiness.taskOperations = [...CUA_TASK_OPERATIONS];
 
     expect(validate(readiness), JSON.stringify(validate.errors)).toBe(true);
     expect(getCuaLifecycleSemanticErrors(readiness)).toEqual([]);
+    expect(readiness.taskOperations).toEqual([
+      "task.start",
+      "task.status",
+      "task.result",
+      "task.cancel",
+    ]);
+
+    const extra = runtimeReadiness();
+    extra.taskOperations = [...CUA_TASK_OPERATIONS, "task.shell" as never];
+    expect(getCuaLifecycleSemanticErrors(extra)).toContainEqual(
+      expect.stringContaining("taskOperations"),
+    );
+
+    const missing = runtimeReadiness();
+    missing.taskOperations = CUA_TASK_OPERATIONS.slice(0, -1);
+    expect(getCuaLifecycleSemanticErrors(missing)).toContainEqual(
+      expect.stringContaining("taskOperations"),
+    );
   });
 
   it("accepts namespaced models and rejects coordinate or credential-shaped inference values", () => {
@@ -329,6 +346,8 @@ describe("first-class CUA contract", () => {
     for (const provider of [
       "https://provider.invalid",
       "provider.invalid",
+      "provider.example.xyz",
+      "2001:db8::1",
       "localhost",
       "127.0.0.1",
       "user@host",

@@ -254,6 +254,8 @@ describe("current CUA runtime readiness", () => {
       "ghp_example",
       "sk-test",
       "https://provider.invalid",
+      "provider.example.xyz",
+      "2001:db8::1",
       "user@host",
       "localhost",
       "127.0.0.1",
@@ -273,7 +275,9 @@ describe("current CUA runtime readiness", () => {
       "localhost/model",
       "127.0.0.1/model",
     ]) {
-      expect(() => getCuaInferenceRouteIdentity({ provider: "nvidia", model })).toThrow();
+      expect(() => getCuaInferenceRouteIdentity({ provider: "nvidia", model })).toThrow(
+        /coordinate- and credential-free/,
+      );
     }
     expect(
       getCuaInferenceRouteIdentity({

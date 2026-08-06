@@ -173,6 +173,7 @@ export function createDeps(options: {
   }, {});
   const defaultSandbox =
     options.defaultSandbox === undefined ? (entries[0]?.name ?? null) : options.defaultSandbox;
+  const updateSandbox = vi.fn(options.updateSandbox ?? (() => true));
   const updateSandboxInferenceRoute = vi.fn(
     options.updateSandboxInferenceRoute ?? options.updateSandbox ?? (() => true),
   );
@@ -189,7 +190,7 @@ export function createDeps(options: {
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
-    updateSandbox: updateSandboxInferenceRoute,
+    updateSandbox,
     updateSandboxInferenceRoute,
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {

@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isCredentialShapedName } from "../security/credential-env.js";
-import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE, canonicalJsonSha256 } from "./shared-primitives";
+import {
+  CUA_DOMAIN_COORDINATE,
+  CUA_HOST_COORDINATE,
+  CUA_SENSITIVE_VALUE,
+  canonicalJsonSha256,
+} from "./shared-primitives";
 
 export const CUA_LIFECYCLE_SCHEMA_VERSION = "1.1.0" as const;
 export const SUPPORTED_CUA_LIFECYCLE_SCHEMA_MAJOR = 1;
@@ -485,7 +490,8 @@ function inferenceIdentityErrors(inference: CuaInferenceIdentity): string[] {
   if (
     !CUA_PROVIDER_IDENTITY.test(inference.provider) ||
     CUA_SENSITIVE_VALUE.test(inference.provider) ||
-    CUA_HOST_COORDINATE.test(inference.provider)
+    CUA_HOST_COORDINATE.test(inference.provider) ||
+    CUA_DOMAIN_COORDINATE.test(inference.provider)
   ) {
     errors.push("inference.provider must be a printable credential-free identity");
   }

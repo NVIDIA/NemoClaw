@@ -1118,10 +1118,9 @@ IFS= read -r published_sentinel_first <"$CUA_SENTINEL" \
   || fail "the published CUA readiness authority is incomplete"
 IFS= read -r published_sentinel_second < <("$SED_BINARY" -n '2p' "$CUA_SENTINEL") \
   || fail "the published CUA readiness authority is incomplete"
-if IFS= read -r published_sentinel_extra < <("$SED_BINARY" -n '3p' "$CUA_SENTINEL"); then
-  : "$published_sentinel_extra"
-  fail "the published CUA readiness authority has extra content"
-fi
+IFS= read -r published_sentinel_extra < <("$SED_BINARY" -n '3p' "$CUA_SENTINEL") || true
+[[ -z "$published_sentinel_extra" ]] \
+  || fail "the published CUA readiness authority has extra content"
 [[ "$published_sentinel_first" == "$activation_line" &&
   "$published_sentinel_second" == "profile=sha256:${profile_sha256}" ]] \
   || fail "the published CUA readiness authority is not content-bound"

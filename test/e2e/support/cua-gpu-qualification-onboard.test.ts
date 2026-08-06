@@ -125,6 +125,22 @@ describe("CUA qualification canonical onboarding support", () => {
     ).toEqual({ OPENROUTER_API_KEY: "router-key" });
   });
 
+  it("rejects provider selectors inherited from Object.prototype", () => {
+    expect(() => collectCuaQualificationOnboardSecretEnv({}, "constructor")).toThrow(
+      "has no qualification credential mapping",
+    );
+    expect(() =>
+      buildCuaQualificationOnboardEnv({
+        baseEnv: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" },
+        expectedModel: "provider/model",
+        model: "provider/model",
+        provider: "constructor",
+        runtimeEnv: {},
+        secretEnv: {},
+      }),
+    ).toThrow("has no qualification credential mapping");
+  });
+
   it("rejects missing consent, receipt-model drift, and non-fixed env inputs", () => {
     const base = {
       baseEnv: { HOME: "/tmp/cua-home", PATH: "/usr/bin" },

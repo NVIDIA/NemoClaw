@@ -147,7 +147,7 @@ function invalidateCuaAuthorityBeforeSnapshotRestore(sandboxName: string): void 
   if (registry.requireCuaReconciliationBeforeSandboxMutation(sandboxName, "snapshot-restore")) {
     console.error(`  Cannot restore into '${sandboxName}' while CUA target cleanup is unverified.`);
     console.error(
-      `  Run '${CLI_NAME} ${sandboxName} cua target health', then cancel any observed task and run target reset or target destroy before retrying.`,
+      `  Run '${CLI_NAME} sandbox cua target health ${sandboxName}', then cancel any observed task and run '${CLI_NAME} sandbox cua target destroy ${sandboxName}' before retrying.`,
     );
     snapshotExit(1);
   }

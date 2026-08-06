@@ -32,6 +32,12 @@ import {
   parseCuaTargetManifest,
   parseCuaTaskResult,
 } from "../../src/lib/cua/schema.ts";
+import {
+  canonicalJsonSha256,
+  CUA_DOMAIN_COORDINATE as DOMAIN_COORDINATE,
+  CUA_HOST_COORDINATE as HOST_COORDINATE,
+  CUA_SENSITIVE_VALUE as SENSITIVE_VALUE,
+} from "../../src/lib/cua/shared-primitives.ts";
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const RAW_SHA256 = /^[0-9a-f]{64}$/;
@@ -41,10 +47,6 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_TEXT = /^[A-Za-z0-9][A-Za-z0-9 ._+()-]{0,127}$/;
 const MODEL_SELECTOR =
   /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}){0,7}$/;
-const SENSITIVE_VALUE =
-  /(?:auth|bearer|credential|password|secret|token)|(?:^|[/._-])(?:ghp_|sk-)/i;
-const HOST_COORDINATE =
-  /(?:[a-z][a-z0-9+.-]*:\/\/|@|[?#\\]|\b(?:\d{1,3}\.){3}\d{1,3}\b|\[[0-9a-f:]+\]|\b(?:localhost|ip6-localhost)(?:\.[a-z0-9-]+)*\b|\b[a-z0-9-]+\.(?:com|net|org|io|ai|dev|cloud|internal|local|invalid)\b)/i;
 const IMMUTABLE_IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}$/;
 
 export const CUA_QUALIFICATION_FILE_MAX_BYTES = 64 * 1024;
@@ -174,9 +176,19 @@ function boundedString(value: unknown, label: string): string {
   return value;
 }
 
-function safeValue(value: unknown, label: string, pattern = SAFE_TEXT): string {
+function safeValue(
+  value: unknown,
+  label: string,
+  pattern = SAFE_TEXT,
+  rejectDomain = false,
+): string {
   const parsed = boundedString(value, label);
-  if (!pattern.test(parsed) || SENSITIVE_VALUE.test(parsed) || HOST_COORDINATE.test(parsed)) {
+  if (
+    !pattern.test(parsed) ||
+    SENSITIVE_VALUE.test(parsed) ||
+    HOST_COORDINATE.test(parsed) ||
+    (rejectDomain && DOMAIN_COORDINATE.test(parsed))
+  ) {
     throw new Error(`${label} must be printable and coordinate- and credential-free`);
   }
   return parsed;
@@ -327,7 +339,7 @@ function parseInference(value: unknown, label: string): CuaInferenceIdentity {
   const inference = object(value, label);
   exactKeys(inference, ["provider", "model", "routeDigest"], label);
   return {
-    provider: safeValue(inference.provider, `${label}.provider`, SAFE_ID),
+    provider: safeValue(inference.provider, `${label}.provider`, SAFE_ID, true),
     model: safeValue(inference.model, `${label}.model`, MODEL_SELECTOR),
     routeDigest: digest(inference.routeDigest, `${label}.routeDigest`),
   };
@@ -1079,21 +1091,8 @@ export type CuaQualificationSandboxObservation =
   | "nemoclaw-registry-absent"
   | "openshell-inventory-absent";
 
-function canonicalQualificationValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalQualificationValue);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([key, child]) => [key, canonicalQualificationValue(child)]),
-  );
-}
-
 function qualificationObservationDigest(value: unknown): string {
-  return `sha256:${crypto
-    .createHash("sha256")
-    .update(JSON.stringify(canonicalQualificationValue(value)))
-    .digest("hex")}`;
+  return `sha256:${canonicalJsonSha256(value)}`;
 }
 
 /** Domain-bind one exact public target observation to its live qualification phase. */

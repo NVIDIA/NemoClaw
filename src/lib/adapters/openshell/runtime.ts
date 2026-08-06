@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
+import path from "node:path";
 
 import { ROOT } from "../../runner";
 import {
@@ -83,7 +84,7 @@ export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
 export function captureResolvedOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   const openshell = opts.openshellBinary ?? resolveOpenshellBinaryOrNull();
   if (!openshell) throw new Error("OpenShell is unavailable");
-  if (!openshell.startsWith("/")) throw new Error("OpenShell executable must be absolute");
+  if (!path.isAbsolute(openshell)) throw new Error("OpenShell executable must be absolute");
   return captureOpenshellCommand(openshell, args, {
     cwd: ROOT,
     env: opts.env,

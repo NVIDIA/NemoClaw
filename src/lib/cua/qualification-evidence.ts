@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CuaInferenceIdentity } from "./contract";
-import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE } from "./shared-primitives";
+import {
+  CUA_DOMAIN_COORDINATE,
+  CUA_HOST_COORDINATE,
+  CUA_SENSITIVE_VALUE,
+} from "./shared-primitives";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const RAW_DIGEST = /^[0-9a-f]{64}$/;
@@ -133,12 +137,18 @@ function string(value: unknown, label: string): string {
   return value;
 }
 
-function safeValue(value: unknown, label: string, pattern = SAFE_TEXT): string {
+function safeValue(
+  value: unknown,
+  label: string,
+  pattern = SAFE_TEXT,
+  rejectDomain = false,
+): string {
   const parsed = string(value, label);
   if (
     !pattern.test(parsed) ||
     CUA_SENSITIVE_VALUE.test(parsed) ||
-    CUA_HOST_COORDINATE.test(parsed)
+    CUA_HOST_COORDINATE.test(parsed) ||
+    (rejectDomain && CUA_DOMAIN_COORDINATE.test(parsed))
   ) {
     throw new Error(`${label} must be printable and coordinate- and credential-free`);
   }
@@ -243,7 +253,7 @@ export function parseCuaQualificationInference(value: unknown): CuaInferenceIden
   const record = object(value, "inference");
   exactKeys(record, ["provider", "model", "routeDigest"], "inference");
   return {
-    provider: safeValue(record.provider, "inference.provider", SAFE_ID),
+    provider: safeValue(record.provider, "inference.provider", SAFE_ID, true),
     model: safeValue(record.model, "inference.model", MODEL_SELECTOR),
     routeDigest: digest(record.routeDigest, "inference.routeDigest"),
   };

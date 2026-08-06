@@ -1914,37 +1914,37 @@ Failure output uses the versioned `failure` record and does not include raw adap
 
 Before a side-effecting target, task, or security adapter call, NemoClaw records a durable reconciliation journal.
 If the call times out, fails validation, or loses runtime authority before its result is committed, `status --json` reports `cuaReconciliation` and normal CUA operations remain unavailable across restart.
-Run `cua target health` or `cua task status` to record an independent observation.
-Cancel the exact observed active task first, then run `cua target detach` or `cua target destroy` to prove cleanup.
+Run `sandbox cua target health <name>` or `sandbox cua task status <name>` to record an independent observation.
+Cancel the exact observed active task first, then run `sandbox cua target detach <name>` or `sandbox cua target destroy <name>` to prove cleanup.
 Onboarding, rebuild, snapshot restore, inference changes, and sandbox destruction cannot discard an unreconciled target or task.
 
-### `$$nemoclaw <name> cua target attach`
+### `$$nemoclaw sandbox cua target attach <name>`
 
 Attach one target after its manifest, image, service bundle, and three capability checks match.
 A worker that already has a target returns `target_conflict` without invoking the adapter.
 
 ```bash
-$$nemoclaw my-cua cua target attach \
+$$nemoclaw sandbox cua target attach my-cua \
   --adapter /absolute/path/to/target-adapter \
   --target-manifest ./target-manifest.json \
   --json
 ```
 
-### `$$nemoclaw <name> cua target status`
+### `$$nemoclaw sandbox cua target status <name>`
 
 Read the recorded secret-free attachment projection without invoking the adapter.
 The output includes bounded target identity, capability protocol and health, and active-task state.
 It contains no endpoint or credential material.
 
 ```bash
-$$nemoclaw my-cua cua target status --json
+$$nemoclaw sandbox cua target status my-cua --json
 ```
 
 The same bounded projection appears as `cuaTarget` in `$$nemoclaw <name> status --json`.
 `$$nemoclaw <name> doctor` reports the recorded attachment state and capability health; it does not perform a live target probe.
-Run `$$nemoclaw <name> cua target health --adapter <absolute-path>` for fresh validation.
+Run `$$nemoclaw sandbox cua target health <name> --adapter <absolute-path>` for fresh validation.
 
-### `$$nemoclaw <name> cua target health`
+### `$$nemoclaw sandbox cua target health <name>`
 
 Recover fresh authority through the host adapter.
 The command compares the observed target with the recorded identity and checks all three services.
@@ -1954,42 +1954,42 @@ If the policy changes during the call, NemoClaw rejects the adapter result with 
 The stale attestation and retained results are unavailable; cleanup requires an independent status observation followed by task cancellation and target detach or destroy.
 
 ```bash
-$$nemoclaw my-cua cua target health \
+$$nemoclaw sandbox cua target health my-cua \
   --adapter /absolute/path/to/target-adapter \
   --json
 ```
 
-### `$$nemoclaw <name> cua target reset`
+### `$$nemoclaw sandbox cua target reset <name>`
 
 This is a known compatibility command that this candidate does not advertise.
 It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
 
 ```bash
-$$nemoclaw my-cua cua target reset \
+$$nemoclaw sandbox cua target reset my-cua \
   --adapter /absolute/path/to/target-adapter \
   --json
 ```
 
-### `$$nemoclaw <name> cua target detach`
+### `$$nemoclaw sandbox cua target detach <name>`
 
 Ask the adapter to revoke target reachability.
 NemoClaw clears the attachment projection only after the adapter returns a detached record.
 The command rejects detach while a task is active.
 
 ```bash
-$$nemoclaw my-cua cua target detach \
+$$nemoclaw sandbox cua target detach my-cua \
   --adapter /absolute/path/to/target-adapter \
   --json
 ```
 
-### `$$nemoclaw <name> cua target destroy`
+### `$$nemoclaw sandbox cua target destroy <name>`
 
 Ask the adapter to destroy the disposable target.
 NemoClaw clears the attachment projection only after the adapter confirms that the target is detached.
 The command rejects destroy while a task is active.
 
 ```bash
-$$nemoclaw my-cua cua target destroy \
+$$nemoclaw sandbox cua target destroy my-cua \
   --adapter /absolute/path/to/target-adapter \
   --json
 ```
@@ -2043,29 +2043,29 @@ During reconciliation, only an independent `task.status` observation and the exa
 If the effective policy revision or digest changes, public status hides the attestation and active-task authority without erasing the durable external-task record.
 A subsequent lifecycle or verification attempt records the drift under `cuaReconciliation`.
 Normal lifecycle and repeated verification remain blocked until an independent target or task status observation and explicit cleanup prove that no external work remains.
-Run `$$nemoclaw <name> cua security verify --adapter <absolute-path> --json` again only after reconciliation and after restoring or intentionally changing the policy.
+Run `$$nemoclaw sandbox cua security verify <name> --adapter <absolute-path> --json` again only after reconciliation and after restoring or intentionally changing the policy.
 
 Successful commands exit `0`.
 Validation failures exit `2`, unavailable runtime or lifecycle state exits `4`, and absent, malformed, incomplete, or identity-stale security state exits `5`.
 
-### `$$nemoclaw <name> cua security verify`
+### `$$nemoclaw sandbox cua security verify <name>`
 
 Run the trusted verifier and record its content-free attestation only when every required boundary is enforced.
 
 ```bash
-$$nemoclaw my-cua cua security verify \
+$$nemoclaw sandbox cua security verify my-cua \
   --adapter /absolute/path/to/security-verifier \
   --json
 ```
 
-### `$$nemoclaw <name> cua security status`
+### `$$nemoclaw sandbox cua security status <name>`
 
 Validate the recorded attestation against the current runtime and target identities without invoking the verifier.
 The same content-free projection appears as `cuaSecurity` in `$$nemoclaw <name> status --json`.
 `$$nemoclaw <name> doctor` reports whether the attestation is present and current.
 
 ```bash
-$$nemoclaw my-cua cua security status --json
+$$nemoclaw sandbox cua security status my-cua --json
 ```
 
 ## CUA Task Lifecycle
@@ -2109,14 +2109,14 @@ The host-side boundary keeps private screenshots, page content, browser state, r
 Successful commands exit `0`.
 Validation failures exit `2`, an active-task conflict exits `3`, unavailable lifecycle or runtime operations exit `4`, and execution, compatibility, target, inference, policy, timeout, or cancellation failures exit `5`.
 
-### `$$nemoclaw <name> cua task start`
+### `$$nemoclaw sandbox cua task start <name>`
 
 Start one task with an explicit ID, execution surface, and private input file.
 A target with an active task returns `task_conflict` without invoking the adapter.
 A task ID that remains in the retained result history must not be reused.
 
 ```bash
-$$nemoclaw my-cua cua task start \
+$$nemoclaw sandbox cua task start my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --mode headless \
@@ -2162,26 +2162,26 @@ $$nemoclaw my-cua cua task start \
 }
 ```
 
-### `$$nemoclaw <name> cua task status`
+### `$$nemoclaw sandbox cua task status <name>`
 
 Report an active task and its exact attached target identity.
 After completion, return the retained terminal result without reading runtime-private files.
 
 ```bash
-$$nemoclaw my-cua cua task status \
+$$nemoclaw sandbox cua task status my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --json
 ```
 
-### `$$nemoclaw <name> cua task result`
+### `$$nemoclaw sandbox cua task result <name>`
 
 Retrieve and validate the terminal result.
 The result separates the agent-authored status, independent verification, per-capability receipts, and private evidence references.
 A succeeded result requires a succeeded agent result, passed independent verification, and one completed browser receipt with non-empty evidence.
 
 ```bash
-$$nemoclaw my-cua cua task result \
+$$nemoclaw sandbox cua task result my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --json
@@ -2286,87 +2286,87 @@ $$nemoclaw my-cua cua task result \
 }
 ```
 
-### `$$nemoclaw <name> cua task events`
+### `$$nemoclaw sandbox cua task events <name>`
 
 This is a known compatibility command that this candidate does not advertise.
 It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
 
 ```bash
-$$nemoclaw my-cua cua task events \
+$$nemoclaw sandbox cua task events my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --json
 ```
 
-### `$$nemoclaw <name> cua task logs`
+### `$$nemoclaw sandbox cua task logs <name>`
 
 This is a known compatibility command that this candidate does not advertise.
 It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
 
 ```bash
-$$nemoclaw my-cua cua task logs \
+$$nemoclaw sandbox cua task logs my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --json
 ```
 
-### `$$nemoclaw <name> cua task plans`
+### `$$nemoclaw sandbox cua task plans <name>`
 
 This is a known compatibility command that this candidate does not advertise.
 It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
 
 ```bash
-$$nemoclaw my-cua cua task plans \
+$$nemoclaw sandbox cua task plans my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --json
 ```
 
-### `$$nemoclaw <name> cua task pause`
+### `$$nemoclaw sandbox cua task pause <name>`
 
 This is a known compatibility command that this candidate does not advertise.
 It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
 
 ```bash
-$$nemoclaw my-cua cua task pause \
+$$nemoclaw sandbox cua task pause my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --json
 ```
 
-### `$$nemoclaw <name> cua task cancel`
+### `$$nemoclaw sandbox cua task cancel <name>`
 
 Cancel an active task.
 Only a validated terminal cancelled result clears active-task state.
 An adapter timeout or failure after the cancellation attempt begins leaves the task under reconciliation until an independent status observation and the exact task cancellation prove cleanup.
 
 ```bash
-$$nemoclaw my-cua cua task cancel \
+$$nemoclaw sandbox cua task cancel my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --json
 ```
 
-### `$$nemoclaw <name> cua task guide`
+### `$$nemoclaw sandbox cua task guide <name>`
 
 This is a known compatibility command that this candidate does not advertise.
 It returns `lifecycle_unavailable` before NemoClaw reads `--input-file`, resolves the adapter, or invokes the adapter.
 
 ```bash
-$$nemoclaw my-cua cua task guide \
+$$nemoclaw sandbox cua task guide my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --input-file ./guidance.txt \
   --json
 ```
 
-### `$$nemoclaw <name> cua task respond`
+### `$$nemoclaw sandbox cua task respond <name>`
 
 This is a known compatibility command that this candidate does not advertise.
 It returns `lifecycle_unavailable` before NemoClaw reads `--input-file`, resolves the adapter, or invokes the adapter.
 
 ```bash
-$$nemoclaw my-cua cua task respond \
+$$nemoclaw sandbox cua task respond my-cua \
   --adapter /absolute/path/to/task-adapter \
   --task-id task-001 \
   --input-file ./response.txt \

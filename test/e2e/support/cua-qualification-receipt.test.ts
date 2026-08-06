@@ -549,6 +549,7 @@ function scenarioProtocol(id: (typeof CUA_QUALIFICATION_SCENARIOS)[number]): Ret
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of tempDirectories.splice(0)) {
     if (!fs.existsSync(directory)) continue;
     fs.chmodSync(directory, 0o700);
@@ -1507,9 +1508,7 @@ describe("CUA GPU qualification receipt (#7753)", () => {
       }
       return read;
     }) as typeof fs.readSync);
-    expect(() => readBoundedCuaQualificationJson(tamperedPath)).toThrow(
-      /changed during bounded validation/,
-    );
+    expect(() => readBoundedCuaQualificationJson(tamperedPath)).toThrow(/changed during/);
   });
 
   it("consumes exact qualification bytes only from a private non-writable authority snapshot", () => {

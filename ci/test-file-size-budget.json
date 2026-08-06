@@ -7,7 +7,7 @@
     "src/lib/onboard/preflight.test.ts": 1904,
     "test/brev-launchable-cua-gpu.test.ts": 2099,
     "test/e2e/live/cua-gpu-qualification.test.ts": 1669,
-    "test/e2e/support/cua-qualification-receipt.test.ts": 1758,
+    "test/e2e/support/cua-qualification-receipt.test.ts": 1757,
     "test/generate-openclaw-config.test.ts": 1941,
     "test/install-preflight.test.ts": 3921,
     "test/nemoclaw-start.test.ts": 4791,

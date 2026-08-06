@@ -19,8 +19,8 @@ import {
   CUA_LIFECYCLE_SCHEMA_VERSION,
   CUA_MATERIAL_EXCLUSIONS,
   CUA_PRIVATE_MATERIALS,
-  CUA_TASK_OPERATIONS,
   CUA_TARGET_OPERATIONS,
+  CUA_TASK_OPERATIONS,
   CUA_UNTRUSTED_INPUTS,
   type CuaRuntimeReadiness,
   type CuaSecurityAttestation,
@@ -376,24 +376,28 @@ describe("CUA target lifecycle (#7751)", () => {
 
   it("rejects a symlinked target manifest before parsing it", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-target-manifest-"));
-    const target = path.join(directory, "target.json");
-    const link = path.join(directory, "manifest.json");
-    fs.writeFileSync(target, JSON.stringify(manifest));
-    fs.symlinkSync(target, link);
+    try {
+      const target = path.join(directory, "target.json");
+      const link = path.join(directory, "manifest.json");
+      fs.writeFileSync(target, JSON.stringify(manifest));
+      fs.symlinkSync(target, link);
 
-    expect(() => readCuaTargetManifest(link)).toThrow();
-
-    fs.rmSync(directory, { recursive: true, force: true });
+      expect(() => readCuaTargetManifest(link)).toThrow();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("rejects an oversized target manifest before parsing it", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-target-manifest-"));
-    const oversized = path.join(directory, "manifest.json");
-    fs.writeFileSync(oversized, "x".repeat(64 * 1024 + 1));
+    try {
+      const oversized = path.join(directory, "manifest.json");
+      fs.writeFileSync(oversized, "x".repeat(64 * 1024 + 1));
 
-    expect(() => readCuaTargetManifest(oversized)).toThrow(/regular file/);
-
-    fs.rmSync(directory, { recursive: true, force: true });
+      expect(() => readCuaTargetManifest(oversized)).toThrow(/regular file/);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("attaches only after immutable identity and all capability checks pass", () => {

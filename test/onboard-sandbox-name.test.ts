@@ -10,12 +10,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadAgent } from "../src/lib/agent/defs.js";
-import { formatSandboxAgentName } from "../src/lib/onboard/sandbox-agent.js";
 import {
   getNameValidationGuidance,
   NAME_ALLOWED_FORMAT,
   suggestNameSlug,
 } from "../src/lib/name-validation.js";
+import { formatSandboxAgentName } from "../src/lib/onboard/sandbox-agent.js";
 
 const {
   getDefaultSandboxNameForAgent,
@@ -65,7 +65,7 @@ describe("onboard sandbox naming helpers", () => {
     }
   });
 
-  it("uses canonical NemoCUA naming without creating an inner sandbox", () => {
+  it("uses canonical NemoCUA naming for sandbox selection", () => {
     const nemocua = { name: "nemocua" };
 
     expect(formatSandboxAgentName("nemocua")).toBe("NemoCUA");

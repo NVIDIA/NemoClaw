@@ -168,7 +168,7 @@ export function enforceCuaOnboardReconciliation(
     `  Sandbox '${sandboxName}' has an attached or unverified CUA target and cannot be reused or rebuilt.`,
   );
   deps.error(
-    `  Run '${cliName} ${sandboxName} cua target health', then cancel any observed task and run target reset or target destroy before onboarding again.`,
+    `  Run '${cliName} sandbox cua target health ${sandboxName}', then cancel any observed task and run '${cliName} sandbox cua target destroy ${sandboxName}' before onboarding again.`,
   );
   deps.exit(1);
 }

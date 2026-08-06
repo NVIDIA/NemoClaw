@@ -161,8 +161,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       cuaSecurityAttestation: undefined,
       cuaTaskResults: undefined,
     });
+    expect(f.restoreSandboxStateMock).toHaveBeenCalled();
     expect(f.updateSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.restoreSandboxStateMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+      f.restoreSandboxStateMock.mock.invocationCallOrder[0],
     );
   });
 

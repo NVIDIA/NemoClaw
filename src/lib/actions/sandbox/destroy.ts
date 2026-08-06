@@ -463,7 +463,7 @@ async function destroySandboxUnlocked(
       `  Sandbox '${sandboxName}' has an attached or unverified CUA target and cannot be destroyed yet.`,
     );
     console.error(
-      `  Run '${CLI_NAME} ${sandboxName} cua target health', then cancel any observed task and run target destroy before destroying the sandbox.`,
+      `  Run '${CLI_NAME} sandbox cua target health ${sandboxName}', then cancel any observed task and run '${CLI_NAME} sandbox cua target destroy ${sandboxName}' before destroying the sandbox.`,
     );
     process.exit(1);
   }

@@ -418,6 +418,7 @@ describe("public CUA task commands (#7752)", () => {
       kind: "failure",
       family: "validation_failed",
     });
+    expect(fs.existsSync(path.join(home, ".cua-task-fixture-state.json"))).toBe(false);
   });
 
   it("rejects a symbolic link as private task input before invoking the adapter", () => {
@@ -436,6 +437,7 @@ describe("public CUA task commands (#7752)", () => {
       kind: "failure",
       family: "validation_failed",
     });
+    expect(fs.existsSync(path.join(home, ".cua-task-fixture-state.json"))).toBe(false);
   });
 
   it("rejects oversized private task input before invoking the adapter", () => {
@@ -453,5 +455,6 @@ describe("public CUA task commands (#7752)", () => {
       kind: "failure",
       family: "validation_failed",
     });
+    expect(fs.existsSync(path.join(home, ".cua-task-fixture-state.json"))).toBe(false);
   });
 });

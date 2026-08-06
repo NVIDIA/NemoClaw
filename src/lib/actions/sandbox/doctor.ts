@@ -482,7 +482,7 @@ function buildCuaTargetDoctorCheckFromState(
       label: "CUA target",
       status: "info",
       detail: "no target attached",
-      hint: `run \`${CLI_NAME} ${sandboxName} cua target attach\` with an operator-owned adapter`,
+      hint: `run \`${CLI_NAME} sandbox cua target attach ${sandboxName}\` with an operator-owned adapter`,
     };
   }
   const capabilities = attachment.target.capabilities
@@ -496,7 +496,7 @@ function buildCuaTargetDoctorCheckFromState(
     hint:
       attachment.status === "attached"
         ? undefined
-        : `run \`${CLI_NAME} ${sandboxName} cua target health\` with the operator-owned adapter`,
+        : `run \`${CLI_NAME} sandbox cua target health ${sandboxName}\` with the operator-owned adapter`,
   };
 }
 
@@ -512,7 +512,7 @@ function buildCuaSecurityDoctorCheckFromState(
       label: "CUA security",
       status: "fail",
       detail: "deny-default security boundary is not verified for the current identities",
-      hint: `run \`${CLI_NAME} ${sandboxName} cua security verify\` with the operator-owned verifier`,
+      hint: `run \`${CLI_NAME} sandbox cua security verify ${sandboxName}\` with the operator-owned verifier`,
     };
   }
   return {
@@ -552,7 +552,7 @@ function cuaReconciliationDoctorCheck(sandboxName: string, sb: SandboxEntry): Do
     label: "CUA reconciliation",
     status: "fail",
     detail: `external lifecycle cleanup is required (${reconciliation.trigger}; ${reconciliation.phase})`,
-    hint: `run \`${CLI_NAME} ${sandboxName} cua target health\`, cancel any observed task, then run target reset or target destroy`,
+    hint: `run \`${CLI_NAME} sandbox cua target health ${sandboxName}\`, cancel any observed task, then run \`${CLI_NAME} sandbox cua target destroy ${sandboxName}\``,
   };
 }
 
@@ -612,7 +612,9 @@ function collectEnabledCuaDoctorChecks(
   deps: CuaDoctorProjectionDeps = {},
 ): DoctorCheck[] {
   if (sb?.cuaReconciliation) {
-    return [cuaReconciliationDoctorCheck(sandboxName, sb)!];
+    return [cuaReconciliationDoctorCheck(sandboxName, sb)].filter(
+      (check): check is DoctorCheck => check !== null,
+    );
   }
   const observed = getObservedValidatedCuaState(sb, process.env, {
     observeLiveInference: deps.observeCuaLiveInferenceImpl,

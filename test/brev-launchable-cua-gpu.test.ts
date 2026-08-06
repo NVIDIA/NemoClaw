@@ -1942,7 +1942,7 @@ describe("CUA GPU Brev Launchable (#7753)", { timeout: CUA_LAUNCHABLE_TEST_TIMEO
             .get(fixture.sentinelFile)!
             .replace(`profile=sha256:${profileDigest}`, `profile=sha256:${"0".repeat(64)}`),
         ],
-        [fixture.sentinelFile, `${originals.get(fixture.sentinelFile)!}extra\n`],
+        [fixture.sentinelFile, `${originals.get(fixture.sentinelFile)!}extra`],
       ];
       for (const [file, contents] of mutations) {
         for (const [authority, original] of originals) rewriteAuthority(authority, original);

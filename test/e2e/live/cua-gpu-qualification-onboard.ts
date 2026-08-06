@@ -101,7 +101,9 @@ function normalizedProvider(value: string): string {
     throw new Error("NEMOCLAW_PROVIDER must be one printable credential-free provider coordinate");
   }
   const normalized = provider.toLowerCase();
-  return PROVIDER_ALIASES[normalized] ?? normalized;
+  return Object.prototype.hasOwnProperty.call(PROVIDER_ALIASES, normalized)
+    ? PROVIDER_ALIASES[normalized]
+    : normalized;
 }
 
 export function collectCuaQualificationOnboardSecretEnv(
@@ -109,8 +111,10 @@ export function collectCuaQualificationOnboardSecretEnv(
   provider: string,
 ): NodeJS.ProcessEnv {
   const providerKey = normalizedProvider(provider);
-  const allowedKeys = PROVIDER_SECRET_ENV_KEYS[providerKey];
-  if (!allowedKeys) {
+  const allowedKeys = Object.prototype.hasOwnProperty.call(PROVIDER_SECRET_ENV_KEYS, providerKey)
+    ? PROVIDER_SECRET_ENV_KEYS[providerKey]
+    : undefined;
+  if (!Array.isArray(allowedKeys)) {
     throw new Error(`NEMOCLAW_PROVIDER '${provider}' has no qualification credential mapping`);
   }
   const secretEnv: NodeJS.ProcessEnv = {};
@@ -145,8 +149,13 @@ export function buildCuaQualificationOnboardEnv(options: {
       throw new Error(`CUA qualification runtime env does not allow key '${key}'`);
     }
   }
-  const providerSecretEnvKeys = PROVIDER_SECRET_ENV_KEYS[providerKey];
-  if (!providerSecretEnvKeys) {
+  const providerSecretEnvKeys = Object.prototype.hasOwnProperty.call(
+    PROVIDER_SECRET_ENV_KEYS,
+    providerKey,
+  )
+    ? PROVIDER_SECRET_ENV_KEYS[providerKey]
+    : undefined;
+  if (!Array.isArray(providerSecretEnvKeys)) {
     throw new Error(`NEMOCLAW_PROVIDER '${provider}' has no qualification credential mapping`);
   }
   for (const key of Object.keys(options.secretEnv)) {

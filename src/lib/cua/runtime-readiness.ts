@@ -38,7 +38,12 @@ import {
   verifyCuaRuntimeAuthorityPayload,
 } from "./runtime-manifest";
 import { parseCuaRuntimeReadiness } from "./schema";
-import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE, canonicalJsonSha256 } from "./shared-primitives";
+import {
+  CUA_DOMAIN_COORDINATE,
+  CUA_HOST_COORDINATE,
+  CUA_SENSITIVE_VALUE,
+  canonicalJsonSha256,
+} from "./shared-primitives";
 
 const COMMIT = /^[a-f0-9]{40}$/;
 const SAFE_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -74,11 +79,17 @@ function contentDigest(value: unknown): string {
   return `sha256:${digestJson(value)}`;
 }
 
-function safePublicValue(value: string, pattern: RegExp, label: string): string {
+function safePublicValue(
+  value: string,
+  pattern: RegExp,
+  label: string,
+  rejectDomain = false,
+): string {
   if (
     !pattern.test(value) ||
     CUA_SENSITIVE_VALUE.test(value) ||
     CUA_HOST_COORDINATE.test(value) ||
+    (rejectDomain && CUA_DOMAIN_COORDINATE.test(value)) ||
     /[\x00-\x1f\x7f]/.test(value)
   ) {
     throw new Error(`${label} must be a printable coordinate- and credential-free identity`);
@@ -117,7 +128,7 @@ export function getCuaInferenceRouteIdentity(input: CuaInferenceRouteInput): Cua
   if (!route.provider || !route.model) {
     throw new Error("CUA inference route requires provider and model");
   }
-  const provider = safePublicValue(route.provider, SAFE_PROVIDER, "inference.provider");
+  const provider = safePublicValue(route.provider, SAFE_PROVIDER, "inference.provider", true);
   const model = safePublicValue(route.model, SAFE_MODEL, "inference.model");
   const endpointSource = route.endpointSource;
   const preferredInferenceApi = route.preferredInferenceApi;
