@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -450,6 +450,21 @@ echo "placeholder package"
   it("still fails the install when neither the npm prefix nor the shim has a CLI (#8311)", () => {
     const tree = createStaleNpmPrefixTree();
     fs.rmSync(tree.shimPath);
+
+    const result = runVerifyNemoclaw(tree);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("nemoclaw binary not found");
+  });
+
+  it("rejects an invalid user-local shim when the active npm prefix has no CLI (#8311)", () => {
+    const tree = createStaleNpmPrefixTree();
+    writeExecutable(
+      tree.shimPath,
+      `#!/usr/bin/env bash
+echo "placeholder package"
+`,
+    );
 
     const result = runVerifyNemoclaw(tree);
 
