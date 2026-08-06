@@ -13,6 +13,8 @@ interface SentRequest {
   readonly params: Record<string, unknown>;
 }
 
+type Handler = (request: SentRequest, socket: FakeWebSocket) => void;
+
 class FakeWebSocket {
   onopen: (() => void) | null = null;
   onmessage: ((event: { readonly data: unknown }) => void) | null = null;
@@ -20,58 +22,28 @@ class FakeWebSocket {
   onclose: (() => void) | null = null;
   readonly sent: SentRequest[] = [];
   closed = false;
-  readonly firstReply: string;
-  readonly finalReply: string;
-  readonly oversizedFrameAfterConnect: boolean;
 
-  constructor(firstReply = "hel", finalReply = "hello", oversizedFrameAfterConnect = false) {
-    this.firstReply = firstReply;
-    this.finalReply = finalReply;
-    this.oversizedFrameAfterConnect = oversizedFrameAfterConnect;
+  constructor(private readonly handlers: Record<string, Handler>) {
     queueMicrotask(() => this.onopen?.());
   }
 
   send(data: string): void {
     const request = JSON.parse(data) as SentRequest;
     this.sent.push(request);
-    switch (request.method) {
-      case "connect":
-        queueMicrotask(() => {
-          this.respond(request.id, {});
-          this.oversizedFrameAfterConnect
-            ? this.onmessage?.({ data: `{"padding":"${"x".repeat(3 * 1024 * 1024)}"}` })
-            : undefined;
-        });
-        return;
-      case "chat.send": {
-        const sessionKey = String(request.params.sessionKey);
-        queueMicrotask(() => {
-          this.respond(request.id, { runId: "expected-run" });
-          queueMicrotask(() => {
-            this.event(sessionKey, "other-run", "delta", "discarded run");
-            this.event("other-session", "expected-run", "delta", "discarded session");
-            this.event(sessionKey, "expected-run", "delta", this.firstReply);
-            this.event(sessionKey, "expected-run", "final", this.finalReply);
-          });
-        });
-        return;
-      }
-      default:
-        return;
-    }
+    queueMicrotask(() => this.handlers[request.method]?.(request, this));
   }
 
   close(): void {
     this.closed = true;
   }
 
-  private respond(id: string, payload: Record<string, unknown>): void {
+  respond(id: string, payload: Record<string, unknown>): void {
     this.onmessage?.({
       data: JSON.stringify({ type: "res", id, ok: true, payload }),
     });
   }
 
-  private event(sessionKey: string, runId: string, state: string, text: string): void {
+  event(sessionKey: string, runId: string, state: string, text: string): void {
     this.onmessage?.({
       data: JSON.stringify({
         type: "event",
@@ -88,9 +60,34 @@ class FakeWebSocket {
   }
 }
 
+function orderedReplyHandlers(firstReply = "hel", finalReply = "hello"): Record<string, Handler> {
+  return {
+    connect: (request, socket) => socket.respond(request.id, {}),
+    "chat.send": (request, socket) => {
+      const sessionKey = String(request.params.sessionKey);
+      socket.respond(request.id, { runId: "expected-run" });
+      queueMicrotask(() => {
+        socket.event(sessionKey, "other-run", "delta", "discarded run");
+        socket.event("other-session", "expected-run", "delta", "discarded session");
+        socket.event(sessionKey, "expected-run", "delta", firstReply);
+        socket.event(sessionKey, "expected-run", "final", finalReply);
+      });
+    },
+  };
+}
+
+function oversizedFrameHandlers(): Record<string, Handler> {
+  return {
+    connect: (request, socket) => {
+      socket.respond(request.id, {});
+      socket.onmessage?.({ data: `{\"padding\":\"${"x".repeat(3 * 1024 * 1024)}\"}` });
+    },
+  };
+}
+
 describe("OpenClaw voice gateway client", () => {
   it("uses bounded operator scopes and emits only ordered normalized text for the expected session and run (#8378)", async () => {
-    const socket = new FakeWebSocket();
+    const socket = new FakeWebSocket(orderedReplyHandlers());
     const events: AgentTurnEvent[] = [];
     const client = new OpenClawVoiceClient({
       gatewayUrl: "ws://127.0.0.1:18789/ws",
@@ -130,7 +127,7 @@ describe("OpenClaw voice gateway client", () => {
   });
 
   it("fails closed when ordered response text changes its prior prefix (#8378)", async () => {
-    const socket = new FakeWebSocket("first", "different");
+    const socket = new FakeWebSocket(orderedReplyHandlers("first", "different"));
     const client = new OpenClawVoiceClient({
       gatewayUrl: "ws://127.0.0.1:18789/ws",
       credential: "openclaw-credential-must-not-cross",
@@ -148,7 +145,7 @@ describe("OpenClaw voice gateway client", () => {
   });
 
   it("closes the direct WebSocket connection when the session owner revokes it (#8378)", () => {
-    const socket = new FakeWebSocket();
+    const socket = new FakeWebSocket(orderedReplyHandlers());
     const client = new OpenClawVoiceClient({
       gatewayUrl: "ws://127.0.0.1:18789/ws",
       credential: "openclaw-credential-must-not-cross",
@@ -167,7 +164,7 @@ describe("OpenClaw voice gateway client", () => {
   });
 
   it("rejects an oversized native frame before sending agent work (#8378)", async () => {
-    const socket = new FakeWebSocket("hel", "hello", true);
+    const socket = new FakeWebSocket(oversizedFrameHandlers());
     const client = new OpenClawVoiceClient({
       gatewayUrl: "ws://127.0.0.1:18789/ws",
       credential: "openclaw-credential-must-not-cross",
