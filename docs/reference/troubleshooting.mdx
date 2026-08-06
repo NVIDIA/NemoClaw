@@ -2687,7 +2687,7 @@ nvidia-ctk cdi list
 On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
 
 ```bash
-docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark
+docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
