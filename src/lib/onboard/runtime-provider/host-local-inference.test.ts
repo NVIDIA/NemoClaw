@@ -64,6 +64,11 @@ function receipt(
   };
 }
 
+function containerRuntime(value: HostLocalInferenceReceipt) {
+  expect(value.runtime.kind).toBe("container");
+  return value.runtime as Extract<HostLocalInferenceReceipt["runtime"], { kind: "container" }>;
+}
+
 describe("host-local inference receipt contract", () => {
   it.each([
     "ollama",
@@ -83,24 +88,24 @@ describe("host-local inference receipt contract", () => {
 
   it("requires declarative model authority only for llama.cpp receipts (#8395)", () => {
     const llamaCpp = receipt("llama-cpp");
+    const llamaRuntime = containerRuntime(llamaCpp);
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...llamaCpp,
-        runtime: { ...llamaCpp.runtime, model: undefined },
+        runtime: { ...llamaRuntime, model: undefined },
       }),
     ).toThrow("model authority must be an object");
-    if (llamaCpp.runtime.kind !== "container") throw new Error("test receipt must be managed");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...llamaCpp,
-        runtime: { ...llamaCpp.runtime, gpu: { vendor: "nvidia", count: 2 } },
+        runtime: { ...llamaRuntime, gpu: { vendor: "nvidia", count: 2 } },
       }),
     ).toThrow("exactly one GPU");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...llamaCpp,
         runtime: {
-          ...llamaCpp.runtime,
+          ...llamaRuntime,
           gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
         },
       }),
@@ -128,8 +133,7 @@ describe("host-local inference receipt contract", () => {
 
   it("rejects malformed llama.cpp model identity without exposing executor state (#8395)", () => {
     const llamaCpp = receipt("llama-cpp");
-    if (llamaCpp.runtime.kind !== "container") throw new Error("test receipt must be managed");
-    const llamaRuntime = llamaCpp.runtime;
+    const llamaRuntime = containerRuntime(llamaCpp);
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...llamaCpp,

@@ -49,15 +49,22 @@ let apiKeyRoot = "";
 let apiKeyPath = "";
 
 function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, canonical(nested)]),
-    );
+  return Array.isArray(value)
+    ? value.map(canonical)
+    : value !== null && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => [key, canonical(nested)]),
+        )
+      : value;
+}
+
+function invariant(condition: unknown, message: string): asserts condition {
+  switch (Boolean(condition)) {
+    case false:
+      throw new Error(message);
   }
-  return value;
 }
 
 function digest(value: unknown): string {
@@ -277,7 +284,7 @@ function journalStore(): TestJournalStore {
     mutate: (value: HostLocalCreateJournalRecord) => HostLocalCreateJournalRecord,
   ) => {
     const current = records.get(id);
-    if (!current) throw new Error("missing journal");
+    invariant(current, "missing journal");
     const next = Object.freeze(mutate(current));
     records.set(id, next);
     return next;
@@ -295,9 +302,10 @@ function journalStore(): TestJournalStore {
       update(id, (record) => ({ ...record, phase: "created", runtimeId })),
     recordStarted: (id) => update(id, (record) => ({ ...record, phase: "started" })),
     prepareReceipt: (id, serializedReceipt) => {
-      if (prepareReceiptFails) {
-        prepareReceiptFails = false;
-        throw new Error("prepare receipt failed");
+      switch (prepareReceiptFails) {
+        case true:
+          prepareReceiptFails = false;
+          throw new Error("prepare receipt failed");
       }
       const prepared = update(id, (record) => ({
         ...record,
@@ -305,16 +313,18 @@ function journalStore(): TestJournalStore {
         serializedReceipt,
         receiptSha256: createHash("sha256").update(serializedReceipt).digest("hex"),
       }));
-      if (prepareReceiptFailsAfterCommit) {
-        prepareReceiptFailsAfterCommit = false;
-        throw new Error("prepare receipt outcome unknown");
+      switch (prepareReceiptFailsAfterCommit) {
+        case true:
+          prepareReceiptFailsAfterCommit = false;
+          throw new Error("prepare receipt outcome unknown");
       }
       return prepared;
     },
     finalize: (id) => {
-      if (finalizeFails) {
-        finalizeFails = false;
-        throw new Error("finalize failed");
+      switch (finalizeFails) {
+        case true:
+          finalizeFails = false;
+          throw new Error("finalize failed");
       }
       return update(id, (record) => ({
         ...record,
@@ -323,7 +333,7 @@ function journalStore(): TestJournalStore {
     },
     retire: (id) => void records.delete(id),
     acquireExecution: (transactionId) => {
-      if (activeLease !== null) throw new Error("execution is already owned by a live process");
+      invariant(activeLease === null, "execution is already owned by a live process");
       activeLease = Object.freeze({
         schemaVersion: 1,
         transactionId,
@@ -333,10 +343,10 @@ function journalStore(): TestJournalStore {
       return activeLease;
     },
     assertExecution: (lease) => {
-      if (activeLease !== lease) throw new Error("execution ownership changed");
+      invariant(activeLease === lease, "execution ownership changed");
     },
     releaseExecution: (lease) => {
-      if (activeLease !== lease) throw new Error("execution ownership changed");
+      invariant(activeLease === lease, "execution ownership changed");
       activeLease = null;
     },
     abandonExecution: () => (activeLease = null),
@@ -454,88 +464,98 @@ function dockerFixture(): DockerFixture {
   ];
 
   const capture = vi.fn((args: readonly string[]) => {
-    if (args[0] === "network" && args[1] === "inspect") {
-      if (!networkPresent) {
-        return {
-          status: 1,
-          stdout: "",
-          stderr: `Error response from daemon: No such network: ${String(args[2])}`,
-        };
-      }
-      return {
-        status: 0,
-        stdout: JSON.stringify([{ Id: networkId, Name: args[2], Internal: true }]),
-        stderr: "",
-      };
-    }
-    if (args[0] === "container" && args[1] === "inspect") {
-      if (inspectDaemonError) {
-        return { status: 1, stdout: "", stderr: "daemon unavailable" };
-      }
-      const target = args[2];
-      if (container && (target === RUNTIME_ID || target === "nemoclaw-llama-cpp")) {
-        return { status: 0, stdout: JSON.stringify(inspection()), stderr: "" };
-      }
-      const absent = {
-        status: 1,
-        stdout: "",
-        stderr: `Error response from daemon: No such container: ${String(target)}`,
-      };
-      absentInspectHook?.();
-      return absent;
-    }
-    if (args[0] === "create") {
-      if (createUncertain) {
-        return {
-          status: 1,
-          stdout: "",
-          stderr: "",
-          error: new Error("Docker create capture timed out"),
-        };
-      }
-      const labels: Record<string, string> = {};
-      for (let index = 0; index < args.length; index += 1) {
-        if (args[index] === "--label") {
-          const [name, value] = String(args[index + 1]).split("=");
-          if (name && value) labels[name] = value;
+    const unexpected = `unexpected Docker command: ${args.join(" ")}`;
+    switch (args[0]) {
+      case "network":
+        invariant(args[1] === "inspect", unexpected);
+        return networkPresent
+          ? {
+              status: 0,
+              stdout: JSON.stringify([{ Id: networkId, Name: args[2], Internal: true }]),
+              stderr: "",
+            }
+          : {
+              status: 1,
+              stdout: "",
+              stderr: `Error response from daemon: No such network: ${String(args[2])}`,
+            };
+      case "container": {
+        invariant(args[1] === "inspect", unexpected);
+        switch (inspectDaemonError) {
+          case true:
+            return { status: 1, stdout: "", stderr: "daemon unavailable" };
         }
+        const target = args[2];
+        switch (Boolean(container && (target === RUNTIME_ID || target === "nemoclaw-llama-cpp"))) {
+          case true:
+            return { status: 0, stdout: JSON.stringify(inspection()), stderr: "" };
+        }
+        absentInspectHook?.();
+        return {
+          status: 1,
+          stdout: "",
+          stderr: `Error response from daemon: No such container: ${String(target)}`,
+        };
       }
-      container = {
-        labels,
-        running: false,
-        status: "created",
-        transactionId: labels["io.nvidia.nemoclaw.host-local-inference.transaction-sha256"] ?? "",
-        command: args.slice(args.indexOf(IMAGE) + 1),
-      };
-      createHook?.();
-      return { status: 0, stdout: createStdout, stderr: "" };
-    }
-    if (args[0] === "start") {
-      startHook?.();
-      if (container) {
-        startedOnce = true;
-        container.running = true;
-        container.status = "running";
+      case "create": {
+        switch (createUncertain) {
+          case true:
+            return {
+              status: 1,
+              stdout: "",
+              stderr: "",
+              error: new Error("Docker create capture timed out"),
+            };
+        }
+        const labels = Object.fromEntries(
+          args
+            .flatMap((argument, index) =>
+              argument === "--label" ? [String(args[index + 1]).split("=")] : [],
+            )
+            .filter(([name, value]) => Boolean(name && value)),
+        );
+        container = {
+          labels,
+          running: false,
+          status: "created",
+          transactionId: labels["io.nvidia.nemoclaw.host-local-inference.transaction-sha256"] ?? "",
+          command: args.slice(args.indexOf(IMAGE) + 1),
+        };
+        createHook?.();
+        return { status: 0, stdout: createStdout, stderr: "" };
       }
-      return { status: 0, stdout: `${RUNTIME_ID}\n`, stderr: "" };
+      case "start":
+        startHook?.();
+        switch (container) {
+          case undefined:
+            break;
+          default:
+            startedOnce = true;
+            container.running = true;
+            container.status = "running";
+        }
+        return { status: 0, stdout: `${RUNTIME_ID}\n`, stderr: "" };
+      case "stop":
+        switch (container) {
+          case undefined:
+            break;
+          default:
+            container.running = false;
+            container.status = "exited";
+        }
+        return { status: 0, stdout: RUNTIME_ID, stderr: "" };
+      case "rm":
+        invariant(args[1] === "--force", unexpected);
+        container = undefined;
+        return { status: 0, stdout: RUNTIME_ID, stderr: "" };
+      case "run":
+        invariant(args[1] === "--rm", unexpected);
+        return probeFails
+          ? { status: 1, stdout: "", stderr: "not ready" }
+          : { status: 0, stdout: "ok", stderr: "" };
+      default:
+        throw new Error(unexpected);
     }
-    if (args[0] === "stop") {
-      if (container) {
-        container.running = false;
-        container.status = "exited";
-      }
-      return { status: 0, stdout: RUNTIME_ID, stderr: "" };
-    }
-    if (args[0] === "rm" && args[1] === "--force") {
-      container = undefined;
-      return { status: 0, stdout: RUNTIME_ID, stderr: "" };
-    }
-    if (args[0] === "run" && args[1] === "--rm") {
-      return probeFails
-        ? { status: 1, stdout: "", stderr: "not ready" }
-        : { status: 0, stdout: "ok", stderr: "" };
-    }
-    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
   });
   return {
     engine: {
@@ -558,8 +578,9 @@ function dockerFixture(): DockerFixture {
       gpuCount = count;
     },
     driftExtraDeviceAuthority: (kind) => {
-      if (kind === "cap-add") capAdd = ["SYS_ADMIN"];
-      else legacyDevices = [{ PathOnHost: "/dev/nvidia0" }];
+      kind === "cap-add"
+        ? (capAdd = ["SYS_ADMIN"])
+        : (legacyDevices = [{ PathOnHost: "/dev/nvidia0" }]);
     },
     failInspectWithDaemonError: () => (inspectDaemonError = true),
     onAbsentInspect: (callback) => (absentInspectHook = callback),
@@ -847,11 +868,14 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 
   it("rolls back malformed create output and readiness failure before receipt prepare (#8395)", () => {
+    const arrangeFailure = {
+      stdout: (fixture: DockerFixture) => fixture.setCreateStdout("short-id\n"),
+      probe: (fixture: DockerFixture) => fixture.failProbe(),
+    } as const;
     for (const failure of ["stdout", "probe"] as const) {
       const fixture = dockerFixture();
       const store = journalStore();
-      if (failure === "stdout") fixture.setCreateStdout("short-id\n");
-      if (failure === "probe") fixture.failProbe();
+      arrangeFailure[failure](fixture);
       expect(() => controller(fixture, store).start(receiptWriter())).toThrow();
       expect(store.list()).toEqual([]);
       expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).toContainEqual([
@@ -903,12 +927,14 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const store = journalStore();
     let committed: string | null = null;
     const writer = receiptWriter((serializedReceipt) => {
-      if (committed === null) {
-        committed = serializedReceipt;
-        throw new Error("writer outcome unknown");
+      switch (committed) {
+        case null:
+          committed = serializedReceipt;
+          throw new Error("writer outcome unknown");
+        default:
+          invariant(committed === serializedReceipt, "different receipt");
+          return committed;
       }
-      if (committed !== serializedReceipt) throw new Error("different receipt");
-      return committed;
     });
     const lifecycle = controller(fixture, store);
 
@@ -971,8 +997,10 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         drift === "value" ? "different existing receipt" : "publication authority",
       );
       expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
-      if (drift !== "value") {
-        expect(fixture.capture.mock.calls).toHaveLength(writesBeforeRecovery);
+      switch (drift) {
+        case "transaction":
+        case "target":
+          expect(fixture.capture.mock.calls).toHaveLength(writesBeforeRecovery);
       }
     }
   });
@@ -1023,13 +1051,14 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(insideGrace.failures[0]?.message).toContain("absence grace period");
     expect(store.load(TRANSACTION_ID)).not.toBeNull();
 
-    if (creating === null) throw new Error("expected creating journal");
+    invariant(creating, "expected creating journal");
     now += 31 * 60 * 1_000;
     let appeared = false;
     fixture.onAbsentInspect(() => {
-      if (!appeared) {
-        appeared = true;
-        fixture.seed(creating, false);
+      switch (appeared) {
+        case false:
+          appeared = true;
+          fixture.seed(creating, false);
       }
     });
     expect(lifecycle.recoverUnfinished(writer)).toEqual({
@@ -1045,15 +1074,21 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       const fixture = dockerFixture();
       const store = journalStore();
       const base = preparedJournal();
-      let current = store.create(base);
-      if (phase !== "prepared") {
-        current = store.recordCreating(TRANSACTION_ID, 1_000);
-      }
-      if (phase === "created" || phase === "started") {
-        current = store.recordCreated(TRANSACTION_ID, RUNTIME_ID);
-        if (phase === "started") current = store.recordStarted(TRANSACTION_ID);
-        fixture.seed(current, phase === "started");
-      }
+      store.create(base);
+      const arrangePhase = {
+        prepared: () => undefined,
+        creating: () => void store.recordCreating(TRANSACTION_ID, 1_000),
+        created: () => {
+          store.recordCreating(TRANSACTION_ID, 1_000);
+          fixture.seed(store.recordCreated(TRANSACTION_ID, RUNTIME_ID), false);
+        },
+        started: () => {
+          store.recordCreating(TRANSACTION_ID, 1_000);
+          store.recordCreated(TRANSACTION_ID, RUNTIME_ID);
+          fixture.seed(store.recordStarted(TRANSACTION_ID), true);
+        },
+      } as const;
+      arrangePhase[phase]();
       const persistedAuthority = authorityStore();
       persistedAuthority.record(base.engineAuthority);
       const recovery = createDockerLlamaCppManagedLifecycle(
@@ -1075,12 +1110,15 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       const created = store.recordCreated(base.transactionId, RUNTIME_ID);
       fixture.seed(created, false);
       const persistedAuthority = authorityStore();
-      if (state === "drifted") {
-        persistedAuthority.record({
-          ...base.engineAuthority,
-          bindingSha256: "2".repeat(64),
-        });
-      }
+      const arrangeAuthority = {
+        missing: () => undefined,
+        drifted: () =>
+          persistedAuthority.record({
+            ...base.engineAuthority,
+            bindingSha256: "2".repeat(64),
+          }),
+      } as const;
+      arrangeAuthority[state]();
       const recovery = createDockerLlamaCppManagedLifecycle(
         options(fixture, store, bindings(), persistedAuthority),
       ).recoverUnfinished(receiptWriter());
@@ -1132,7 +1170,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const store = journalStore();
     const lifecycle = controller(fixture, store);
     const receipt = lifecycle.start(receiptWriter());
-    if (receipt.runtime.kind !== "container") throw new Error("expected container receipt");
+    invariant(receipt.runtime.kind === "container", "expected container receipt");
     const crafted = {
       ...receipt,
       runtime: { ...receipt.runtime, runtimeId: "a".repeat(64) },
