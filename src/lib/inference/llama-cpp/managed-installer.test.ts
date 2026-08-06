@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import type { ContainerEngine } from "../../adapters/container-engine";
 import type { RuntimeProviderWorkloadProfile } from "../../onboard/runtime-provider/contract";
 import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
 import type { DockerLlamaCppManagedLifecycle } from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
@@ -22,6 +23,7 @@ import {
   type HostLocalLlamaCppLifecycle,
   serializeHostLocalInferenceReceipt,
 } from "../../onboard/runtime-provider/host-local-inference";
+import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provider/podman";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
@@ -71,6 +73,21 @@ function temporarySymlinkedHome(): { readonly alias: string; readonly canonical:
   fs.mkdirSync(canonical, { mode: 0o700 });
   fs.symlinkSync(canonical, alias, "dir");
   return { alias, canonical: fs.realpathSync(canonical) };
+}
+
+function inertPodmanEngine(
+  operation: "host-doctor" | "sandbox-lifecycle",
+  capture: ContainerEngine["capture"],
+  captureHost: ContainerEngine["captureHost"],
+): ContainerEngine {
+  return {
+    operation,
+    engineId: "podman",
+    displayName: "Podman",
+    authorityId: "test:podman-socket",
+    capture,
+    captureHost,
+  };
 }
 
 function managedOperation(
@@ -422,6 +439,48 @@ describe("managed llama.cpp installer", () => {
       reason: `Runtime provider '${providerId}' does not provide the host-local-inference capability required for llama-cpp: Unsupported by this in-memory contract fixture.`,
     });
 
+    expect(pullImage).not.toHaveBeenCalled();
+    expect(acquireGguf).not.toHaveBeenCalled();
+    expect(verifyGguf).not.toHaveBeenCalled();
+    expect(checkPort).not.toHaveBeenCalled();
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+  });
+
+  it("rejects the real Podman provider before engine, acquisition, or state mutation", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const engineCapture = vi.fn<ContainerEngine["capture"]>();
+    const hostCapture = vi.fn<ContainerEngine["captureHost"]>();
+    const pullImage = vi.fn();
+    const acquireGguf = vi.fn();
+    const verifyGguf = vi.fn();
+    const checkPort = vi.fn();
+    const runtimeProvider = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: inertPodmanEngine("host-doctor", engineCapture, hostCapture),
+        sandboxLifecycle: inertPodmanEngine("sandbox-lifecycle", engineCapture, hostCapture),
+      },
+    });
+
+    await expect(
+      installManagedLlamaCpp(selected, {
+        sandboxName: "spark-agent",
+        homeDir,
+        runtimeProvider,
+        pullImage: pullImage as never,
+        acquireGguf: acquireGguf as never,
+        verifyGguf: verifyGguf as never,
+        checkPort: checkPort as never,
+        log: vi.fn(),
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason:
+        "Runtime provider 'podman' does not provide the host-local-inference capability required for llama-cpp: Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
+    });
+
+    expect(engineCapture).not.toHaveBeenCalled();
+    expect(hostCapture).not.toHaveBeenCalled();
     expect(pullImage).not.toHaveBeenCalled();
     expect(acquireGguf).not.toHaveBeenCalled();
     expect(verifyGguf).not.toHaveBeenCalled();
