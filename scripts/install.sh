@@ -4971,6 +4971,7 @@ main() {
   FRESH=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
+  LOCAL_MODEL_RUNTIME=""
   EXPERIMENTAL_PROFILE="${NEMOCLAW_EXPERIMENTAL_PROFILE:-}"
   local expect_experimental_profile=""
   for arg in "$@"; do
@@ -4988,6 +4989,15 @@ main() {
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
       --force-station-install) FORCE_STATION_INSTALL=1 ;;
+      --local-model-runtime=*)
+        LOCAL_MODEL_RUNTIME="${arg#--local-model-runtime=}"
+        case "$LOCAL_MODEL_RUNTIME" in
+          vllm | llama-cpp) ;;
+          *) error "--local-model-runtime must be vllm or llama-cpp" ;;
+        esac
+        NON_INTERACTIVE=1
+        NON_INTERACTIVE_SOURCE="the --local-model-runtime flag"
+        ;;
       --experimental-profile) expect_experimental_profile=1 ;;
       --experimental-profile=*) EXPERIMENTAL_PROFILE="${arg#*=}" ;;
       --version | -v)
@@ -5020,6 +5030,28 @@ main() {
   fi
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
+  if [ -n "${LOCAL_MODEL_RUNTIME:-}" ]; then
+    export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
+    export NEMOCLAW_LOCAL_MODEL_RUNTIME="$LOCAL_MODEL_RUNTIME"
+    export NEMOCLAW_NO_EXPRESS=1
+  elif [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ]; then
+    case "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" in
+      vllm | llama-cpp) ;;
+      *) error "NEMOCLAW_LOCAL_MODEL_RUNTIME must be vllm or llama-cpp" ;;
+    esac
+    NON_INTERACTIVE=1
+    NON_INTERACTIVE_SOURCE="NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1"
+    export NEMOCLAW_NO_EXPRESS=1
+  fi
+  if [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ] \
+    && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
+    error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
+  fi
+  if [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ] \
+    && [ "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" = "vllm" ] \
+    && [ -n "${NEMOCLAW_VLLM_PORT:-}" ]; then
+    error "The vLLM local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT."
+  fi
 
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice

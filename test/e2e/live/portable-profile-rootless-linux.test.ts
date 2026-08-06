@@ -9,16 +9,24 @@ import os from "node:os";
 import path from "node:path";
 
 import * as importedGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
+import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver-gateway-local-tls.ts";
 import * as importedPortableHostPreparation from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
+import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
 
 const gatewayEnvModule = (
   "default" in importedGatewayEnv && importedGatewayEnv.default
     ? importedGatewayEnv.default
     : importedGatewayEnv
 ) as typeof import("../../../src/lib/onboard/docker-driver-gateway-env.ts");
+const gatewayLocalTlsModule = (
+  "default" in importedGatewayLocalTls && importedGatewayLocalTls.default
+    ? importedGatewayLocalTls.default
+    : importedGatewayLocalTls
+) as typeof import("../../../src/lib/onboard/docker-driver-gateway-local-tls.ts");
 const portableHostPreparationModule = (
   "default" in importedPortableHostPreparation && importedPortableHostPreparation.default
     ? importedPortableHostPreparation.default
@@ -36,6 +44,7 @@ const buildContextModule = (
 ) as typeof import("../../../src/lib/sandbox/build-context.ts");
 
 const { buildDockerDriverGatewayEnv } = gatewayEnvModule;
+const { ensureDockerDriverGatewayLocalTlsBundle } = gatewayLocalTlsModule;
 const { preparePortableExperimentalHost } = portableHostPreparationModule;
 const { prebuildSandboxImageIfEligible } = sandboxPrebuildModule;
 const { SANDBOX_BUILD_CONTEXT_PREFIX } = buildContextModule;
@@ -46,6 +55,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "select the Podman-reported runtime socket",
   "prepare the rootless container runtime",
   "build and publish the sandbox image",
+  "start the pinned Podman gateway",
   "verify the fixed host route",
   "record portable environment completion",
 ] as const;
@@ -141,7 +151,7 @@ function selectInstallerPodmanRuntime(repoRoot: string): string {
   return run("bash", ["-c", script]);
 }
 
-async function main(progress: { phase: (phase: string) => void }): Promise<void> {
+async function main(progress: TestProgress): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
 
@@ -222,21 +232,32 @@ async function main(progress: { phase: (phase: string) => void }): Promise<void>
       "nemoclaw-portable-registry",
     ]);
 
-    progress.phase("verify the fixed host route");
+    const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
+    const sandboxBin = run("bash", ["-lc", "command -v openshell-sandbox"]);
     const gatewayEnv = buildDockerDriverGatewayEnv({
       platform: "linux",
-      gatewayPort: 5000,
+      gatewayPort: 8080,
       stateDir,
       getDockerSupervisorImage: () => "supervisor:e2e-not-launched",
-      resolveSandboxBin: () => null,
+      resolveSandboxBin: () => sandboxBin,
     });
     assert.equal(gatewayEnv.OPENSHELL_DRIVERS, "podman");
     assert.equal(gatewayEnv.OPENSHELL_BIND_ADDRESS, "0.0.0.0");
-    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, "https://169.254.1.2:5000");
+    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, "https://169.254.1.2:8080");
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
       /host_gateway_ip = "169\.254\.1\.2"/,
     );
+    assert.doesNotMatch(
+      fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
+      /supervisor_bin/,
+    );
+
+    progress.phase("start the pinned Podman gateway");
+    ensureDockerDriverGatewayLocalTlsBundle({ gatewayBin, stateDir });
+    await verifyPinnedPodmanGatewayStarts(gatewayBin, gatewayEnv, progress);
+
+    progress.phase("verify the fixed host route");
 
     const routeProof = [
       "exec 3<>/dev/tcp/169.254.1.2/5000",
