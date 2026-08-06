@@ -728,7 +728,7 @@ jobs:
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}
+          name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
             ${{ steps.workspace.outputs.work_dir }}/dispatch.json

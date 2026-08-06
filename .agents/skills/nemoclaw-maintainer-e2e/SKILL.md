@@ -295,27 +295,37 @@ For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
 For Launchable mode, also require `jobs-latest-$RUN_ID.json` to contain one completed, successful
 `Exact staging Brev Launchable` job. Return the workflow and job URLs.
 
-For full mode, download the Launchable E2E evidence:
+For full mode, select and download the Launchable E2E artifact for the latest successful Launchable job attempt:
 
 ```bash
+EVIDENCE_ATTEMPT="$(jq -er '
+  [.[] | .jobs[] |
+   select(.name == "Exact staging Brev Launchable" and
+          .status == "completed" and
+          .conclusion == "success" and
+          (.run_attempt | type) == "number") |
+   .run_attempt] | unique | sort | last // error("no successful Launchable attempt")
+' "$EVIDENCE_DIR/jobs-$RUN_ID.json")"
+FULL_E2E_DIR="$EVIDENCE_DIR/full-$EVIDENCE_ATTEMPT"
+install -d -m 0700 "$FULL_E2E_DIR"
 gh run download "$RUN_ID" --repo NVIDIA/NemoClaw \
-  --name "staging-brev-launchable-${CANDIDATE_SHA}-${RUN_ID}" \
-  --dir "$EVIDENCE_DIR"
+  --name "staging-brev-launchable-${CANDIDATE_SHA}-${RUN_ID}-${EVIDENCE_ATTEMPT}" \
+  --dir "$FULL_E2E_DIR"
 node --experimental-strip-types --no-warnings \
   .agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts \
   --candidate-sha "$CANDIDATE_SHA" \
   --run-json "$EVIDENCE_DIR/run-$RUN_ID.json" \
   --jobs-json "$EVIDENCE_DIR/jobs-$RUN_ID.json" \
-  --dispatch-json "$EVIDENCE_DIR/dispatch.json" \
-  --launchable-e2e-json "$EVIDENCE_DIR/launchable-e2e.json" \
-  --cleanup-json "$EVIDENCE_DIR/cleanup.json"
+  --dispatch-json "$FULL_E2E_DIR/dispatch.json" \
+  --launchable-e2e-json "$FULL_E2E_DIR/launchable-e2e.json" \
+  --cleanup-json "$FULL_E2E_DIR/cleanup.json"
 ```
 
 The validator requires:
 
 - the workflow run to succeed for the selected SHA;
-- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, and an attempt no later than the workflow run's latest attempt;
-- `Exact staging Brev Launchable` to conclude `success` in the current or an earlier attempt of the same workflow run;
+- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, and the selected successful Launchable job attempt;
+- `Exact staging Brev Launchable` to conclude `success` in the selected current or earlier attempt of the same workflow run;
 - `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
 - the booted repository to be unmodified;
 - the in-guest full E2E to pass; and

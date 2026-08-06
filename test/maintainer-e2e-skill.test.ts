@@ -103,6 +103,15 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
     });
   });
 
+  it("rejects a Launchable artifact from a different successful attempt (#7487)", () => {
+    const evidence = validEvidence();
+    evidence.dispatch.workflowRunAttempt = 1;
+
+    expect(() => validateFullE2eEvidence({ ...evidence, jobs: [evidence.jobs] })).toThrow(
+      "jobs response must contain a completed successful Exact staging Brev Launchable job",
+    );
+  });
+
   it.each([
     [
       "a run for another SHA",
