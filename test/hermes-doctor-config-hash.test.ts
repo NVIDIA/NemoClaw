@@ -114,6 +114,7 @@ describe("Hermes doctor and config hash boundary", () => {
       "patch-hermes-discord-recovery-permissions.py",
     );
     const profilePolicyPatcherPath = path.join(libDir, "patch-hermes-profile-policy-defaults.py");
+    const managedPolicyReaderPath = path.join(libDir, "managed_policy.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
       "openshell-child-visible-credentials.v0.0.85.json",
@@ -142,6 +143,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "patch-hermes-session-list-preview.py"),
         discordRecoveryPatcherPath,
         profilePolicyPatcherPath,
+        managedPolicyReaderPath,
         langfuseCredentialPatcherPath,
         path.join(libDir, "seed-hermes-dashboard-config.py"),
         path.join(libDir, "hermes-runtime-config-guard.py"),
@@ -199,6 +201,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(mcpConfigTransactionPath)).toBe("755");
       expect(mode(discordRecoveryPatcherPath)).toBe("755");
       expect(mode(profilePolicyPatcherPath)).toBe("755");
+      expect(mode(managedPolicyReaderPath)).toBe("444");
       expect(mode(langfuseCredentialPatcherPath)).toBe("444");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");

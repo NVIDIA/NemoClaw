@@ -3904,7 +3904,83 @@ For contributor guidance on how these command files are structured, refer to
 These commands do not appear in the command-level parity check, which compares
 `$$nemoclaw --help` against the public command headings in this reference; hidden
 commands are excluded from both. The table above is the canonical reference for
-the family.
+the script-backed family.
+The experimental adapter is documented separately because it has no owning script.
+
+`$$nemoclaw internal voice-gateway serve` is registered for the OpenClaw-only experimental adapter described below.
+Hermes and Deep Agents Code do not have an equivalent adapter.
+
+<AgentOnly variant="openclaw">
+
+#### $$nemoclaw internal voice-gateway serve
+
+<Warning>
+
+This hidden command is an experimental implementation detail, not a supported NemoClaw product surface or public protocol.
+Do not expose its listener through a port forward, proxy, or public ingress.
+
+</Warning>
+
+This foreground command runs a private HTTP adapter that streams newline-delimited JSON (NDJSON) responses.
+It accepts one authenticated runtime deployment and at most one active voice session.
+Each voice session accepts one committed text turn.
+NemoClaw selects the runtime profile, sandbox, and OpenClaw agent from command-line configuration.
+The runtime cannot select an agent, OpenClaw session key, upstream URL, or forwarding destination.
+
+The command requires the exact feature gate `NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY=1`.
+Any other value stops the command before argument parsing, credential reads, or listener creation.
+Other experimental feature gates do not enable this command.
+
+Before you start the adapter, provision these two credential files outside the repository:
+
+- `--deployment-credential-file` authenticates the configured runtime deployment during session admission.
+- `--openclaw-credential-file` authenticates NemoClaw to the configured OpenClaw agent gateway with `operator.read` and `operator.write` scopes.
+
+Both paths must be absolute paths to owner-only regular files.
+The command rejects symbolic links, access by group or other users, malformed values, and oversized values.
+The deployment owns each file location, lifetime, rotation, and removal.
+Stopping the command does not remove either file.
+The command reads both files only at startup and does not reload them.
+To rotate either credential, stop the command, replace the file, and start the command again.
+Removing a file does not revoke the credential in a running process.
+NemoClaw does not send the OpenClaw credential to the runtime.
+
+Start the adapter with trusted operator-selected values:
+
+```bash
+NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY=1 $$nemoclaw internal voice-gateway serve \
+  --deployment-credential-file /absolute/private/path/deployment-bearer \
+  --openclaw-credential-file /absolute/private/path/openclaw-bearer \
+  --gateway-url ws://127.0.0.1:18789/ws \
+  --runtime-identity <deployment-identity> \
+  --runtime-profile <runtime-profile-id> \
+  --sandbox <sandbox-name> \
+  --agent <openclaw-agent-id> \
+  --listen-port 18800
+```
+
+The `--gateway-url` value must use `ws://`, an explicit port, the `/ws` path, and a loopback IP address literal.
+The URL must not contain credentials, a query string, or a fragment.
+The adapter binds only to `127.0.0.1` and uses port `18800` when you omit `--listen-port`.
+The JSON diagnostic with `"event":"voice_gateway"` and `"state":"listening"` confirms that the adapter acquired the configured loopback listener.
+
+The runtime must keep the raw session grant in process memory.
+NemoClaw keeps only the digest needed for constant-time grant validation.
+When the session closes or expires, the runtime must discard the raw grant, and NemoClaw removes its validation digest from active session state.
+The process owns the OpenClaw session binding, turn state, and response correlation.
+It clears that state when the session closes or expires and when the foreground process stops.
+Normal onboarding and managed startup do not start or supervise this command.
+
+The adapter exchanges committed text and normalized response events only.
+It does not implement audio, WebRTC, RTVI, voice activity detection, speech recognition, speech synthesis, playback, or runtime-specific UI behavior.
+It also does not establish VoiceClaw, ElevenLabs, Hermes, or general voice support.
+
+</AgentOnly>
+<AgentOnly variant="hermes,deepagents">
+
+The experimental voice gateway has no Hermes or Deep Agents Code equivalent.
+
+</AgentOnly>
 
 ## Environment Variables
 
