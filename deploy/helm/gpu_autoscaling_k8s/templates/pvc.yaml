@@ -1,5 +1,5 @@
-{{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
-{{/* SPDX-License-Identifier: Apache-2.0 */}}
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 {{- if and .Values.ollama.persistence.enabled (not .Values.ollama.persistence.hostPath) }}
 {{- if ne .Values.ollama.persistence.accessMode "ReadWriteMany" }}
 {{- fail "ollama.persistence.accessMode must be ReadWriteMany when PVC persistence is enabled because every replica mounts the shared claim" }}
