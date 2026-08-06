@@ -210,7 +210,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(result.landlock).toEqual({ compatibility: "strict" });
   });
 
-  it("leaves the landlock stanza alone when the live sandbox already matches (#8461)", () => {
+  it("carries a live landlock stanza that already equals the base (#8461)", () => {
     const liveYaml = YAML.stringify({
       filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
       landlock: { compatibility: "best_effort" },
