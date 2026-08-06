@@ -64,6 +64,8 @@ describe("main E2E retry workflow", () => {
     }
     expect(guard).not.toContain("pull_request");
     expect(guard).not.toContain("workflow_dispatch");
+    expect(guard).not.toContain("||");
+    expect(guard.match(/&&/gu)).toHaveLength(9);
   });
 
   // source-shape-contract: security -- Source-run serialization and least privilege prevent concurrent or broader GitHub mutations

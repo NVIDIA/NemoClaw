@@ -138,8 +138,13 @@ function validateLatestRun(value: unknown, source: SourceRun): boolean {
 
 function validateAttemptEvidence(value: unknown, attempt: number): AttemptEvidence {
   const response = record(value);
-  if (!Array.isArray(response.jobs) || response.jobs.length > 100) {
-    throw new Error("GitHub returned an invalid E2E job list");
+  if (
+    !Array.isArray(response.jobs) ||
+    response.jobs.length > 100 ||
+    !Number.isSafeInteger(response.total_count) ||
+    response.total_count !== response.jobs.length
+  ) {
+    throw new Error("GitHub returned an invalid or truncated E2E job list");
   }
   const jobs = response.jobs.map(record);
   if (jobs.some((job) => job.run_attempt !== attempt)) {

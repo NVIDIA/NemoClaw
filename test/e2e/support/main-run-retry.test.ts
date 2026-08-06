@@ -165,4 +165,21 @@ describe("main E2E retry controller", () => {
       }),
     ).rejects.toThrow("source run is not a completed trusted E2E main push");
   });
+  it("rejects a truncated attempt job listing", async () => {
+    const fixture = setup({ attempt: 1, conclusion: "failure" });
+    const request = async (path: string, init?: { method?: "GET" | "POST" }) =>
+      path.includes("/attempts/1/jobs")
+        ? { total_count: 2, jobs: [job(1, "failure")] }
+        : fixture.request(path, init);
+
+    await expect(
+      evaluateMainRunRetry({
+        repository: REPOSITORY,
+        token: "token",
+        sourceRunId: RUN_ID,
+        controllerAttempt: 1,
+        request,
+      }),
+    ).rejects.toThrow("GitHub returned an invalid or truncated E2E job list");
+  });
 });
