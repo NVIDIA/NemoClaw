@@ -650,7 +650,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
   readonly mode: DockerGpuPatchMode;
   readonly requiredUlimits: readonly DockerUlimit[];
   readonly extraGroupGids: readonly string[];
-  readonly preserveJetsonDeviceGroupMembership: boolean;
 } {
   const allowed = new Set([
     "gpuModeArgs",
@@ -658,7 +657,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
     "gpuModeKind",
     "gpuModeLabel",
     "extraGroupGids",
-    "preserveJetsonDeviceGroupMembership",
     "requiredUlimits",
   ]);
   const unknown = Object.keys(options.values).filter((key) => !allowed.has(key));
@@ -672,11 +670,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
     throw new Error(`Managed bootstrap Docker GPU mode '${kind}' is invalid.`);
   }
   const args = exactStringArray(options.values.gpuModeArgs ?? [], "GPU mode arguments");
-  const preserveJetsonDeviceGroupMembership =
-    options.values.preserveJetsonDeviceGroupMembership ?? false;
-  if (typeof preserveJetsonDeviceGroupMembership !== "boolean") {
-    throw new Error("Managed bootstrap Docker Jetson device-group preservation must be a boolean.");
-  }
   return {
     mode: {
       kind,
@@ -692,7 +685,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
         return value;
       },
     ),
-    preserveJetsonDeviceGroupMembership,
     requiredUlimits: parseRequiredUlimits(options.values.requiredUlimits),
   };
 }
@@ -837,34 +829,20 @@ function canonicalEnvironmentBindings(value: unknown, label: string): string[] {
 function assertExactEnvironmentDelta(
   original: Record<string, unknown>,
   replacement: Record<string, unknown>,
-  plan: {
-    readonly mode: DockerGpuPatchMode;
-    readonly extraGroupGids: readonly string[];
-    readonly preserveJetsonDeviceGroupMembership: boolean;
-  },
+  mode: DockerGpuPatchMode,
   intendedSandboxCommand: string,
 ): void {
-  const { mode } = plan;
   const gpuAugment = mode.kind !== "startup-command";
   const originalEnv = exactStringArray(original.Env ?? [], "original environment");
   const expected = [
     ...modeEnvironment(mode),
     ...originalEnv
-      .filter((entry) => {
-        const key = entry.split("=", 1)[0] ?? "";
-        return (
-          key !== "NEMOCLAW_JETSON_DEVICE_GROUP_GIDS" &&
-          (!gpuAugment || !REPLACED_GPU_ENV_KEYS.has(key))
-        );
-      })
+      .filter((entry) => !gpuAugment || !REPLACED_GPU_ENV_KEYS.has(entry.split("=", 1)[0] ?? ""))
       .map((entry) =>
         entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")
           ? `OPENSHELL_SANDBOX_COMMAND=${intendedSandboxCommand}`
           : entry,
       ),
-    ...(plan.preserveJetsonDeviceGroupMembership && plan.extraGroupGids.length > 0
-      ? [`NEMOCLAW_JETSON_DEVICE_GROUP_GIDS=${plan.extraGroupGids.join(",")}`]
-      : []),
   ];
   const observed = canonicalEnvironmentBindings(replacement.Env ?? [], "replacement environment");
   if (
@@ -988,7 +966,7 @@ function scrubVerifiedReplacementDeltas(canonicalJson: string): string {
   config.Entrypoint = ["<managed-bootstrap-trampoline>"];
   config.Cmd = ["<identity-bound-bootstrap-command>"];
   config.Env = "<verified-environment-delta>";
-  const verifiedHostKeys = [
+  for (const key of [
     "CapAdd",
     "DeviceRequests",
     "Devices",
@@ -996,9 +974,7 @@ function scrubVerifiedReplacementDeltas(canonicalJson: string): string {
     "Runtime",
     "SecurityOpt",
     "Ulimits",
-  ] as const;
-  for (const key of verifiedHostKeys) delete host[key];
-  for (const key of verifiedHostKeys) {
+  ]) {
     host[key] = `<verified-${key}>`;
   }
   return JSON.stringify(root);
@@ -1038,7 +1014,6 @@ function assertReplacementMatchesIntent(
     readonly mode: DockerGpuPatchMode;
     readonly requiredUlimits: readonly DockerUlimit[];
     readonly extraGroupGids: readonly string[];
-    readonly preserveJetsonDeviceGroupMembership: boolean;
   },
   intendedSandboxCommand: string,
 ): string {
@@ -1055,7 +1030,7 @@ function assertReplacementMatchesIntent(
   const observedConfig = objectField(observedInspect, "Config");
   const observedHost = objectField(observedInspect, "HostConfig");
   const gpuAugment = plan.mode.kind !== "startup-command";
-  assertExactEnvironmentDelta(originalConfig, observedConfig, plan, intendedSandboxCommand);
+  assertExactEnvironmentDelta(originalConfig, observedConfig, plan.mode, intendedSandboxCommand);
   const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
   assertExactCapabilitySet(
     observedHost.CapAdd,
@@ -3266,16 +3241,6 @@ export function createDockerManagedBootstrapAdapter(
         );
       }
       const plan = replacementPlan(replacementOptions);
-      if (
-        plan.preserveJetsonDeviceGroupMembership &&
-        (request.agent !== "openclaw" || plan.extraGroupGids.length === 0)
-      ) {
-        throw new Error(
-          request.agent !== "openclaw"
-            ? "Managed bootstrap Docker Jetson device-group preservation requires the OpenClaw agent."
-            : "Managed bootstrap Docker Jetson device-group preservation requires device groups.",
-        );
-      }
       const originalName = dockerContainerName(parsed.inspect);
       const backupContainerName = backupName(originalName, handle.bootstrapIdentity);
       const stagingName = replacementStagingName(originalName, handle.bootstrapIdentity);
@@ -3294,7 +3259,6 @@ export function createDockerManagedBootstrapAdapter(
         openshellSandboxCommand: handle.intendedWorkloadArgv,
         requiredUlimits: plan.requiredUlimits,
         extraGroupGids: plan.extraGroupGids,
-        preserveJetsonDeviceGroupMembership: plan.preserveJetsonDeviceGroupMembership,
         containerEntrypoint: MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
         containerCommand: trampolineCommand,
         containerName: stagingName,

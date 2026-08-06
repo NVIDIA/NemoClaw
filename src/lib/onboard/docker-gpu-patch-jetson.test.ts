@@ -34,43 +34,6 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     expect(args).toEqual(expect.arrayContaining(["--group-add", "110"]));
   });
 
-  it("adds Jetson device groups to the sandbox user before OpenShell calls initgroups (#7610)", () => {
-    const inspect = inspectFixture();
-    inspect.Config!.Env = ["OPENSHELL_SANDBOX_COMMAND=env nemoclaw-start"];
-    const args = buildDockerGpuCloneRunArgs(
-      inspect,
-      buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
-      {
-        extraGroupGids: ["44", "995"],
-        preserveJetsonDeviceGroupMembership: true,
-      },
-    );
-
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "--env",
-        "NEMOCLAW_JETSON_DEVICE_GROUP_GIDS=44,995",
-        "--entrypoint",
-        "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
-        "openshell/sandbox:abc",
-        "/opt/openshell/bin/openshell-sandbox",
-      ]),
-    );
-  });
-
-  it("rejects an invalid Jetson device group before Docker recreation (#7610)", () => {
-    expect(() =>
-      buildDockerGpuCloneRunArgs(
-        inspectFixture(),
-        buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
-        {
-          extraGroupGids: ["44;id"],
-          preserveJetsonDeviceGroupMembership: true,
-        },
-      ),
-    ).toThrow("invalid supplementary group ID");
-  });
-
   it("does not add --group-add when extraGroupGids is absent", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.GroupAdd = [];
@@ -78,7 +41,7 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     expect(args).not.toEqual(expect.arrayContaining(["--group-add"]));
   });
 
-  it("passes all detected Tegra device GIDs into the OpenClaw Jetson bootstrap", () => {
+  it("passes all detected Tegra device GIDs into the Jetson recreate as --group-add", () => {
     const dockerRunDetached = vi.fn(() => ({
       status: 0,
       stdout: "new-container-id\n",
@@ -96,12 +59,7 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     );
 
     recreateOpenShellDockerSandboxWithGpu(
-      {
-        sandboxName: "alpha",
-        timeoutSecs: 1,
-        backend: "jetson",
-        preserveJetsonDeviceGroupMembership: true,
-      },
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "jetson" },
       {
         dockerCapture: dockerCaptureFixture(),
         dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
@@ -119,18 +77,7 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
 
     expect(detectTegraDeviceGroupGidsStub).toHaveBeenCalled();
     expect(dockerRunDetached).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        "--env",
-        "NEMOCLAW_JETSON_DEVICE_GROUP_GIDS=44,104,995",
-        "--group-add",
-        "44",
-        "--group-add",
-        "104",
-        "--group-add",
-        "995",
-        "--entrypoint",
-        "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
-      ]),
+      expect.arrayContaining(["--group-add", "44", "--group-add", "104", "--group-add", "995"]),
       expect.objectContaining({ ignoreError: true }),
     );
   });

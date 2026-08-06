@@ -84,7 +84,6 @@ type DockerGpuSandboxCreatePatchOptions = {
   requiredUlimits?: Parameters<RecreateStartupPatchFn>[0]["requiredUlimits"];
   timeoutSecs: number;
   backend?: DockerGpuPatchBackend;
-  agentName?: string | null;
   /**
    * Whether the host is Docker Desktop WSL. Defaults to the cached
    * `isDockerDesktopWslRuntime()` probe. When true, the GPU patch skips the CDI
@@ -188,8 +187,6 @@ export function createDockerGpuSandboxCreatePatch(
     requiredUlimits: options.requiredUlimits ?? null,
     timeoutSecs: options.timeoutSecs,
     backend: options.backend,
-    preserveJetsonDeviceGroupMembership:
-      options.backend === "jetson" && options.agentName === "openclaw",
     dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
   const recreationEnabled =

@@ -56,18 +56,18 @@ export function resolveSandboxGpuFlagFromOptions(opts: SandboxGpuFlagOptions): S
   return null;
 }
 
-// Jetson/Tegra CUDA failures are usually device-access issues rather than
-// CDI/runtime selection failures. Surface the complete host mode, Landlock,
-// Docker group, and sandbox-account boundary rather than an incomplete manual
-// --group-add workaround or a bare "enabled" status (#4231, #7610).
+// Jetson/Tegra CUDA failures are usually device/group permission issues rather
+// than CDI/runtime misconfiguration: the sandbox sees the GPU but the agent
+// user lacks access to the Tegra device nodes. Surface the concrete devices and
+// groups so the user can fix the recreate rather than seeing a bare "enabled"
+// status that hides an unusable GPU (#4231).
 export function jetsonGpuProofRemediationLines(): string[] {
   return [
     "Jetson/Tegra CUDA proof did not pass. CUDA needs access to the Tegra device",
-    "nodes. NemoClaw must verify host /dev/nvmap owning-group read-write access,",
-    "grant the detected character devices in the OpenShell Landlock policy, propagate",
-    "their GIDs through Docker, and preserve sandbox-account membership. Review the",
-    "onboarding output and saved diagnostics, then retry onboarding;",
-    "or use NEMOCLAW_SANDBOX_GPU=0 for CPU.",
+    "nodes; confirm the sandbox propagates them and the agent user's groups:",
+    "  ls -l /dev/nvmap /dev/nvhost-* (must be readable by the sandbox)",
+    "  add the host video/render groups via --group-add when recreating",
+    "Then recreate the sandbox, or force CPU behavior with NEMOCLAW_SANDBOX_GPU=0.",
   ];
 }
 

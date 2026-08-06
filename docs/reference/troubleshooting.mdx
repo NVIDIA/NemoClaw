@@ -211,13 +211,7 @@ Some R39 images already ship with `br_netfilter` configured and are left untouch
 On affected R39 hosts, the installer prints `loading br_netfilter (required by k3s inside the OpenShell gateway)`.
 Without this fix, sandbox pods fail DNS resolution against the in-cluster service and the onboard `Setting up OpenClaw inside sandbox` step times out.
 
-If the L4T version is not recognized, the installer skips the version-specific iptables, Docker, and `br_netfilter` setup and continues in an untested configuration.
-
-<AgentOnly variant="openclaw">
-
-The OpenClaw installer still configures a real `/dev/nvmap` character device independently of the parsed L4T release.
-
-</AgentOnly>
+If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
 
 ### DNS resolution from inside docker fails (corporate firewall)
 
@@ -813,7 +807,7 @@ NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.
-Onboarding detects those hosts separately and prepares access to selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
+Onboarding detects those hosts separately and propagates eligible host group IDs for selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
 If that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
 
 ### Colima socket not detected (macOS)
@@ -2734,47 +2728,8 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 #### Jetson and Tegra compatibility default
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
-The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags.
-Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses the compatibility patch and CUDA may not initialize.
-
-<AgentOnly variant="openclaw">
-
-The compatibility path keeps eligible Jetson GPU device group memberships when OpenShell starts the nonroot sandbox user.
-Group membership alone does not grant device access when the sandbox filesystem policy omits a required path.
-The route-specific policy grants read-write access only to selected paths that exist as character devices and are not symbolic links.
-It also permits read-only access to the NVIDIA runtime library directory at `/opt/nvidia/l4t-gpu-libs` when that path is present.
-
-Before each OpenClaw Jetson GPU sandbox creation, including `$$nemoclaw onboard --resume`, NemoClaw verifies that `/dev/nvmap` is a real character device whose owning group has read-write access.
-
-<Warning>
-When repair is required, NemoClaw grants write access to every member of the existing `/dev/nvmap` owning group.
-</Warning>
-
-If the initial verification fails, NemoClaw runs the same host permission setup as the installer.
-After setup exits successfully, NemoClaw verifies the device again.
-If setup fails or the device still lacks verified group read-write access, onboarding stops before sandbox creation.
-This device permission setup runs even when the L4T release line is unrecognized, but it does not make that release tested or supported.
-
-Verify the persistent rule and the live device permissions:
-
-```bash
-grep -Fx 'KERNEL=="nvmap", MODE="0660"' /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules
-stat -c '%A %U:%G %n' /dev/nvmap
-```
-
-The rule must match exactly, and the group permission characters must be `rw`, such as the group field in `crw-rw----`.
-The rule reapplies mode `0660` when udev recreates `/dev/nvmap`, including after reboot.
-NemoClaw uninstall does not remove the rule; delete it and reload udev to stop future reapplication, while the live mode remains until device recreation.
-
-After onboarding recreates the sandbox, verify CUDA as the nonroot sandbox user:
-
-```bash
-$$nemoclaw <sandbox-name> exec -- python3 -c 'import ctypes; lib=ctypes.CDLL("libcuda.so.1"); print(f"cuInit(0)={lib.cuInit(0)}")'
-```
-
-The command must print `cuInit(0)=0`.
-
-</AgentOnly>
+The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates eligible host group IDs for the supported Jetson GPU device nodes.
+Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
 
 #### Common compatibility-path recovery
 

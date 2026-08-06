@@ -24,7 +24,6 @@ export type SandboxCreatePolicyRequest = {
   readonly activeMessagingChannels: readonly string[];
   readonly options: {
     readonly directGpu: boolean;
-    readonly jetsonGpu?: boolean;
     readonly hostGpuAvailable?: boolean;
     readonly additionalPresets: readonly string[];
     readonly agentName?: string | null;

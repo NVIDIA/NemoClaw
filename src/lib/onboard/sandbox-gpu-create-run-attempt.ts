@@ -138,7 +138,6 @@ export function createSandboxGpuCreateAttemptRunner(
           input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits),
         externalRecreation: false,
         sandboxName: input.sandboxName,
-        agentName: input.agentName,
         gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
         openshellSandboxCommand: input.sandboxStartupCommand,
         requiredUlimits: input.requiredUlimits,

@@ -10,8 +10,6 @@ import type {
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
-const JETSON_DEVICE_GROUP_GIDS_ENV = "NEMOCLAW_JETSON_DEVICE_GROUP_GIDS";
-const JETSON_DEVICE_GROUP_BOOTSTRAP = "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
   "NVIDIA_DRIVER_CAPABILITIES",
@@ -355,18 +353,6 @@ export function buildDockerGpuCloneRunArgs(
   }
   const args: string[] = ["--name", containerName, ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
-  const extraGroupGids = [...(options.extraGroupGids ?? [])].map((gid) => String(gid).trim());
-  if (
-    extraGroupGids.some((gid) => {
-      if (!/^[1-9][0-9]*$/u.test(gid)) return true;
-      const parsed = Number(gid);
-      return !Number.isSafeInteger(parsed) || parsed > 2_147_483_647;
-    })
-  ) {
-    throw new Error("Docker clone received an invalid supplementary group ID.");
-  }
-  const preserveJetsonGroups =
-    options.preserveJetsonDeviceGroupMembership === true && extraGroupGids.length > 0;
 
   // Startup-command recreation must retain OpenShell's native CDI attachment.
   if (!gpuAugment) {
@@ -394,10 +380,9 @@ export function buildDockerGpuCloneRunArgs(
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
   let sawSandboxCommand = false;
-  for (const env of stringArray(config.Env).filter((entry) => {
-    const key = envKey(entry);
-    return key !== JETSON_DEVICE_GROUP_GIDS_ENV && (!gpuAugment || !GPU_ENV_KEYS.has(key));
-  })) {
+  for (const env of stringArray(config.Env).filter(
+    (entry) => !gpuAugment || !GPU_ENV_KEYS.has(envKey(entry)),
+  )) {
     const key = envKey(env);
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && sandboxCommand) {
       sawSandboxCommand = true;
@@ -408,9 +393,6 @@ export function buildDockerGpuCloneRunArgs(
   }
   if (sandboxCommand && !sawSandboxCommand) {
     args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${sandboxCommand}`);
-  }
-  if (preserveJetsonGroups) {
-    args.push("--env", `${JETSON_DEVICE_GROUP_GIDS_ENV}=${extraGroupGids.join(",")}`);
   }
 
   const labels = config.Labels || {};
@@ -446,10 +428,11 @@ export function buildDockerGpuCloneRunArgs(
   for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
   const groupAdds = new Set(stringArray(host.GroupAdd));
   for (const group of groupAdds) args.push("--group-add", group);
-  for (const gid of extraGroupGids) {
-    if (!groupAdds.has(gid)) {
-      groupAdds.add(gid);
-      args.push("--group-add", gid);
+  for (const gid of options.extraGroupGids ?? []) {
+    const normalized = String(gid).trim();
+    if (normalized && !groupAdds.has(normalized)) {
+      groupAdds.add(normalized);
+      args.push("--group-add", normalized);
     }
   }
   for (const ulimit of dockerUlimits(inspect, options.requiredUlimits)) {
@@ -483,26 +466,16 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
-  const replacementProcess = Boolean(replacementEntrypoint || options.containerCommand);
-  if (preserveJetsonGroups && !replacementProcess && entrypoint.length === 0) {
-    throw new Error("Jetson device-group bootstrap requires the OpenShell supervisor entrypoint.");
-  }
-  if (preserveJetsonGroups && !replacementProcess) {
-    args.push("--entrypoint", JETSON_DEVICE_GROUP_BOOTSTRAP);
-  } else if (replacementEntrypoint) {
+  if (replacementEntrypoint) {
     args.push("--entrypoint", replacementEntrypoint);
   } else if (entrypoint.length > 0) {
     args.push("--entrypoint", entrypoint[0]);
   }
-  const originalCommandArgs = sandboxCommand
-    ? []
-    : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
-  const commandArgs =
-    preserveJetsonGroups && !replacementProcess
-      ? [entrypoint[0], ...originalCommandArgs]
-      : options.containerCommand
-        ? [...options.containerCommand]
-        : originalCommandArgs;
+  const commandArgs = options.containerCommand
+    ? [...options.containerCommand]
+    : sandboxCommand
+      ? []
+      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
   args.push(image, ...commandArgs);
   return args;
 }

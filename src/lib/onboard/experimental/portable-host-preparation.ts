@@ -87,6 +87,14 @@ function writePortableRuntimeConfig(home: string, env: NodeJS.ProcessEnv): strin
     path.join(configHome, "containers", "registries.conf.d", "99-nemoclaw-portable.conf"),
     REGISTRY_FRAGMENT,
   );
+  // Podman reads `containers.conf.d` drop-ins from its own default search path, so this drop-in
+  // keeps `firewall_driver` in effect for a shell that starts without CONTAINERS_CONF. The
+  // `systemctl --user set-environment` values below last only until the user manager restarts.
+  writePrivateConfig(
+    path.join(configHome, "containers", "containers.conf.d", "99-nemoclaw-portable.conf"),
+    PORTABLE_CONTAINERS_CONF,
+  );
+  // The OpenShell gateway service and sandbox prebuild read this file through CONTAINERS_CONF.
   const containersConf = path.join(configHome, "nemoclaw", "portable", "containers.conf");
   writePrivateConfig(containersConf, PORTABLE_CONTAINERS_CONF);
   return containersConf;

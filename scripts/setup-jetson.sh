@@ -6,11 +6,6 @@ set -euo pipefail
 
 SUDO=()
 ((EUID != 0)) && SUDO=(sudo)
-JETSON_HOST_SUDO_READY=0
-
-NVMAP_DEVICE="/dev/nvmap"
-NVMAP_UDEV_RULE="/etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules"
-NVMAP_UDEV_RULE_CONTENT='KERNEL=="nvmap", MODE="0660"'
 
 info() {
   printf "[INFO]  %s\n" "$*"
@@ -23,16 +18,6 @@ warn() {
 error() {
   printf "[ERROR] %s\n" "$*" >&2
   exit 1
-}
-
-ensure_jetson_host_sudo() {
-  if ((EUID == 0)) || [[ "$JETSON_HOST_SUDO_READY" == "1" ]]; then
-    return 0
-  fi
-
-  info "Jetson host configuration requires sudo. You may be prompted for your password."
-  "${SUDO[@]}" true >/dev/null || error "Sudo is required to apply Jetson host configuration."
-  JETSON_HOST_SUDO_READY=1
 }
 
 # Returns 0 only when both the live kernel state AND our persistent
@@ -71,33 +56,6 @@ apply_br_netfilter_setup() {
   echo "net.bridge.bridge-nf-call-iptables=1" | "${SUDO[@]}" tee /etc/sysctl.d/99-nemoclaw.conf >/dev/null
 }
 
-configure_nvmap_group_access() {
-  local device_state device_type verified_state verified_permissions
-
-  if ! device_state="$(LC_ALL=C stat -c '%F|%A' "$NVMAP_DEVICE" 2>/dev/null)"; then
-    warn "Jetson host setup could not find $NVMAP_DEVICE. Non-root sandbox CUDA can fail until this device exists."
-    return 0
-  fi
-
-  device_type="${device_state%%|*}"
-  [[ "$device_type" == "character special file" ]] \
-    || error "$NVMAP_DEVICE must be a character device before NemoClaw changes its group permissions."
-
-  ensure_jetson_host_sudo
-  warn "Jetson host setup grants every member of the existing $NVMAP_DEVICE owning group write access and persists mode 0660 when udev recreates the device."
-  printf '%s\n' "$NVMAP_UDEV_RULE_CONTENT" | "${SUDO[@]}" tee "$NVMAP_UDEV_RULE" >/dev/null
-  "${SUDO[@]}" udevadm control --reload-rules
-  "${SUDO[@]}" chmod g+rw "$NVMAP_DEVICE"
-
-  verified_state="$(LC_ALL=C stat -c '%F|%A' "$NVMAP_DEVICE" 2>/dev/null)" \
-    || error "Could not verify $NVMAP_DEVICE after granting group read-write access."
-  IFS='|' read -r device_type verified_permissions <<<"$verified_state"
-  [[ "$device_type" == "character special file" && "${verified_permissions:4:2}" == "rw" ]] \
-    || error "$NVMAP_DEVICE does not grant its owning group read-write access after host setup."
-
-  info "$NVMAP_DEVICE grants its owning group read-write access. The udev rule $NVMAP_UDEV_RULE preserves this mode after reboot."
-}
-
 warn_host_setup_skipped() {
   warn "Skipped Jetson host setup: iptables legacy mode and the Docker daemon.json adjustment (L4T 36.x only), and br_netfilter with net.bridge.bridge-nf-call-iptables=1 (every release)."
   warn "Without br_netfilter, k3s inside the OpenShell gateway cannot NAT sandbox pod traffic to ClusterIP services, so sandbox pods cannot reach CoreDNS."
@@ -106,7 +64,10 @@ warn_host_setup_skipped() {
 }
 
 get_jetpack_version() {
-  local release_line="$1" release revision l4t_version
+  local release_line release revision l4t_version
+
+  release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
+  [[ -n "$release_line" ]] || return 0
 
   release="$(printf '%s\n' "$release_line" | sed -n 's/^# R\([0-9][0-9]*\) (release).*/\1/p')"
   revision="$(printf '%s\n' "$release_line" | sed -n 's/^.*REVISION: \([0-9][0-9]*\)\..*$/\1/p')"
@@ -164,7 +125,10 @@ get_jetpack_version() {
 configure_jetson_host() {
   local jetpack_version="$1"
 
-  ensure_jetson_host_sudo
+  if ((EUID != 0)); then
+    info "Jetson host configuration requires sudo. You may be prompted for your password."
+    "${SUDO[@]}" true >/dev/null || error "Sudo is required to apply Jetson host configuration."
+  fi
 
   case "$jetpack_version" in
     jp6)
@@ -241,29 +205,8 @@ PYEOF
 }
 
 main() {
-  local jetpack_version release_line mode="${1:-}"
-
-  if [[ "$#" -gt 1 || (-n "$mode" && "$mode" != "--nvmap-only") ]]; then
-    error "Usage: setup-jetson.sh [--nvmap-only]"
-  fi
-
-  if [[ "$mode" == "--nvmap-only" ]]; then
-    [[ "${NEMOCLAW_AGENT:-openclaw}" == "openclaw" ]] \
-      || error "Jetson nvmap-only setup is available only for OpenClaw."
-    configure_nvmap_group_access
-    return 0
-  fi
-
-  release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
-  [[ -n "$release_line" ]] || exit 0
-
-  # nvmap permissions follow the detected device, not the L4T version parser.
-  # Version-specific networking changes remain gated below.
-  if [[ "${NEMOCLAW_AGENT:-openclaw}" == "openclaw" ]]; then
-    configure_nvmap_group_access
-  fi
-
-  jetpack_version="$(get_jetpack_version "$release_line")"
+  local jetpack_version
+  jetpack_version="$(get_jetpack_version)"
   [[ -n "$jetpack_version" ]] || exit 0
 
   info "Jetson detected ($jetpack_version) — applying required host configuration"

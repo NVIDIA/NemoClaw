@@ -2641,7 +2641,6 @@ async function createSandboxWithBaseImageResolution(
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
-      agentName: agent?.name ?? "openclaw",
       provider,
       sandboxGpuConfig: effectiveSandboxGpuConfig,
       gpuRoutePlan,
@@ -2671,6 +2670,7 @@ async function createSandboxWithBaseImageResolution(
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
+
   // Clean up build context regardless of outcome.
   // Use fs.rmSync instead of run() to avoid spawning a shell process.
   // Only deregister the 'exit' safety net when inline cleanup succeeded;

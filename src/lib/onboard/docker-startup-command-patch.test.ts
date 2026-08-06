@@ -137,51 +137,6 @@ describe("Docker startup-command patch", () => {
     );
   });
 
-  it("preserves Jetson device groups during startup-command recreation (#7610)", () => {
-    const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
-      status: 0,
-      stdout: "new-container-id\n",
-    }));
-
-    recreateStartupCommandForTest(
-      {
-        sandboxName: "alpha",
-        timeoutSecs: 1,
-        waitForSupervisor: false,
-        openshellSandboxCommand: ["env", "nemoclaw-start"],
-        backend: "jetson",
-        preserveJetsonDeviceGroupMembership: true,
-      },
-      {
-        dockerCapture: vi.fn((args: readonly string[]) =>
-          args[0] === "ps" ? "old-container-id\n" : JSON.stringify([inspectFixture()]),
-        ),
-        dockerRunDetached,
-        dockerRename: vi.fn(() => ({ status: 0 })),
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        detectTegraDeviceGroupGids: () => ["44", "993"],
-        sleep: vi.fn(),
-        now: () => new Date("2026-07-10T00:00:00Z"),
-      },
-    );
-
-    const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
-    expect(cloneArgs).toEqual(
-      expect.arrayContaining([
-        "--group-add",
-        "44",
-        "--group-add",
-        "993",
-        "--env",
-        "NEMOCLAW_JETSON_DEVICE_GROUP_GIDS=44,993",
-        "--entrypoint",
-        "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
-        `sha256:${"c".repeat(64)}`,
-        "/opt/openshell/bin/openshell-sandbox",
-      ]),
-    );
-  });
-
   it("rejects an empty restart-persistence command before Docker mutation", () => {
     expect(() =>
       recreateStartupCommandForTest({

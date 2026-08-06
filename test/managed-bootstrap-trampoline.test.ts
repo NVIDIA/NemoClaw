@@ -603,7 +603,7 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
 
   it.each(
     MANAGED_STARTUP_AGENTS,
-  )("consumes the protected %s request and applies eligible Jetson groups before exact supervisor exec (#7610)", (agent) => {
+  )("consumes the protected %s request or recovered claim before exact supervisor exec and drops bootstrap variables", (agent) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-trampoline-"));
     try {
       const request = path.join(directory, "request.json");
@@ -615,7 +615,6 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
       const trace = path.join(directory, "trace");
       const script = path.join(directory, "trampoline.sh");
       const supervisor = path.join(directory, "supervisor");
-      const jetsonGroupBootstrap = path.join(directory, "jetson-device-group-bootstrap");
       const injection = path.join(directory, "injection");
       const attackerFunction = path.join(directory, "attacker-function-ran");
       fs.mkdirSync(sandbox);
@@ -642,14 +641,6 @@ esac
       executable(
         path.join(directory, "rm"),
         '#!/bin/sh\ntest ! -e /proc/self/fd/9\nexec /bin/rm "$@"\n',
-      );
-      executable(
-        jetsonGroupBootstrap,
-        `#!/bin/sh
-test ! -e /proc/self/fd/9
-printf 'groups:%s\\n' "$NEMOCLAW_JETSON_DEVICE_GROUP_GIDS" >>${JSON.stringify(trace)}
-exec "$@"
-`,
       );
       executable(
         path.join(directory, "node"),
@@ -688,11 +679,6 @@ test -e ${JSON.stringify(attackerFunction)}
 test -z "\${NEMOCLAW_MANAGED_BOOTSTRAP_ENTRYPOINT+x}"
 test -z "\${NEMOCLAW_MANAGED_BOOTSTRAP_RESUME+x}"
 test -z "\${NEMOCLAW_MANAGED_BOOTSTRAP_RESUME_EXECUTABLE+x}"
-${
-  agent === "openclaw"
-    ? 'test "$NEMOCLAW_JETSON_DEVICE_GROUP_GIDS" = "44,993"'
-    : 'test -z "${NEMOCLAW_JETSON_DEVICE_GROUP_GIDS+x}"'
-}
 printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capability=%s:bash-env=%s\\n' "$1" "$2" "$3" "\${_nemoclaw_bootstrap_identity-unset}" "\${_nemoclaw_request-unset}" "$HOME" "$PATH" "$LANG" "\${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION-unset}" "\${BASH_ENV+x}" >>"$TRACE"
 `,
       );
@@ -707,10 +693,6 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
         )
         .replaceAll("/var/lib/nemoclaw-managed-bootstrap-request.json", request)
         .replaceAll("/sandbox", sandbox)
-        .replaceAll(
-          "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
-          jetsonGroupBootstrap,
-        )
         .replaceAll("/usr/local/bin/node", path.join(directory, "node"));
       fs.writeFileSync(script, source, { mode: 0o644 });
       fs.chmodSync(script, 0o644);
@@ -758,7 +740,6 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
         LD_PRELOAD: loader.library,
         DYLD_INSERT_LIBRARIES: loader.library,
         LD_AUDIT: loader.library,
-        ...(agent === "openclaw" ? { NEMOCLAW_JETSON_DEVICE_GROUP_GIDS: "44,993" } : {}),
       };
 
       execFileSync(entrypoint, argv, { env: environment });
@@ -769,7 +750,6 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       expect(fs.existsSync(loader.earlyTrace)).toBe(false);
       expect(fs.existsSync(loader.afterTrace)).toBe(true);
       expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
-        ...(agent === "openclaw" ? ["groups:44,993"] : []),
         `node:${runtime} --recover-bootstrap-claim --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         `node:${runtime} --apply-bootstrap-file --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         `node:${runtime} --verify-bootstrap-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,

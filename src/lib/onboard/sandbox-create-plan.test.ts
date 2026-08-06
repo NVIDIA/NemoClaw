@@ -193,19 +193,8 @@ describe("resolveSandboxCreateIntent", () => {
 
     const first = resolveSandboxCreateIntent(input);
     const second = resolveSandboxCreateIntent(input);
-    const openclawJetson = resolveSandboxCreateIntent({
-      ...input,
-      agentName: "openclaw",
-      sandboxGpuConfig: { ...sandboxGpuConfig, hostGpuPlatform: "jetson" },
-    });
-    const hermesJetson = resolveSandboxCreateIntent({
-      ...input,
-      sandboxGpuConfig: { ...sandboxGpuConfig, hostGpuPlatform: "jetson" },
-    });
 
     expect(first).toEqual(second);
-    expect(openclawJetson.policy.options.jetsonGpu).toBe(true);
-    expect(hermesJetson.policy.options.jetsonGpu).toBeUndefined();
     expect(first.activeMessagingChannels).toEqual(["telegram", "discord", "whatsapp"]);
     expect(first.messagingProviderRequests.map(({ name }) => name)).toEqual([
       "sandbox-telegram-bridge",

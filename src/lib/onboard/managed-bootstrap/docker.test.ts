@@ -8,10 +8,7 @@ import {
   ManagedBootstrapDurableCommitCleanupPendingError,
   ManagedBootstrapOwnerCleanupRequiredError,
 } from "./adapter";
-import {
-  createDockerManagedBootstrapAdapter,
-  MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
-} from "./docker";
+import { createDockerManagedBootstrapAdapter } from "./docker";
 import {
   normalizeDockerManagedBootstrapLaunchSpec,
   parseDockerManagedBootstrapLaunchSpec,
@@ -35,94 +32,6 @@ function expectEventBefore(events: readonly string[], before: string, after: str
 }
 
 describe("Docker managed bootstrap adapter", () => {
-  it("passes Jetson groups to Docker and the sandbox-account bootstrap without replacing the managed entrypoint (#7610)", async () => {
-    const fake = fixture({ agent: "openclaw" });
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const { handle, request, snapshot } = authority("openclaw");
-
-    await adapter.prepareBootstrapReplacement({
-      handle,
-      snapshot,
-      request,
-      replacementOptions: {
-        values: {
-          gpuModeArgs: [
-            "--runtime",
-            "nvidia",
-            "--env",
-            "NVIDIA_VISIBLE_DEVICES=all",
-            "--env",
-            "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
-          ],
-          gpuModeDevice: "all",
-          gpuModeKind: "nvidia-runtime",
-          gpuModeLabel: "--runtime nvidia (NVIDIA_VISIBLE_DEVICES=all)",
-          extraGroupGids: ["44", "993"],
-          preserveJetsonDeviceGroupMembership: true,
-        },
-      },
-    });
-
-    const createArgs = vi
-      .mocked(fake.deps.dockerRun!)
-      .mock.calls.find(([args]) => args[0] === "create")?.[0];
-    expect(createArgs).toEqual(
-      expect.arrayContaining([
-        "--group-add",
-        "44",
-        "--group-add",
-        "993",
-        "--env",
-        "NEMOCLAW_JETSON_DEVICE_GROUP_GIDS=44,993",
-        "--entrypoint",
-        MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
-      ]),
-    );
-    expect(fake.replacement?.Config?.Entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);
-    expect(fake.replacement?.Config?.Cmd).toEqual(
-      expect.arrayContaining(["--agent", "openclaw", "--bootstrap-identity", IDENTITY]),
-    );
-  });
-
-  it("rejects a non-boolean managed Jetson group-preservation option (#7610)", async () => {
-    const fake = fixture({ agent: "openclaw" });
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const { handle, request, snapshot } = authority("openclaw");
-
-    await expect(
-      adapter.prepareBootstrapReplacement({
-        handle,
-        snapshot,
-        request,
-        replacementOptions: {
-          values: { preserveJetsonDeviceGroupMembership: "true" },
-        },
-      }),
-    ).rejects.toThrow("Jetson device-group preservation must be a boolean");
-    expect(fake.replacement).toBeNull();
-  });
-
-  it("rejects managed Jetson group preservation for a non-OpenClaw agent (#7610)", async () => {
-    const fake = fixture({ agent: "hermes" });
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const { handle, request, snapshot } = authority("hermes");
-
-    await expect(
-      adapter.prepareBootstrapReplacement({
-        handle,
-        snapshot,
-        request,
-        replacementOptions: {
-          values: {
-            extraGroupGids: ["44"],
-            preserveJetsonDeviceGroupMembership: true,
-          },
-        },
-      }),
-    ).rejects.toThrow("Jetson device-group preservation requires the OpenClaw agent");
-    expect(fake.replacement).toBeNull();
-  });
-
   it("captures the live OpenShell idle supervisor with a separately persisted bootstrap identity", async () => {
     const fake = fixture();
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);

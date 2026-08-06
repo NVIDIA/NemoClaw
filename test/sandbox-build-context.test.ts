@@ -116,7 +116,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
     writeFixture(path.join("scripts", "validate-openclaw-tool-search.mts"));
-    writeFixture(path.join("scripts", "jetson-device-group-bootstrap.sh"), "fixture\n", 0o755);
     writeFixture(
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
@@ -665,9 +664,6 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "checks", "node-tar-image-scan.mts")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "jetson-device-group-bootstrap.sh")),
       ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),

@@ -169,59 +169,6 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
-describe("runSandboxGpuCreateFlow Jetson host access", () => {
-  it("repairs OpenClaw nvmap access before starting a sandbox attempt (#7610)", async () => {
-    const input = createInput();
-    input.agentName = "openclaw";
-    input.sandboxGpuConfig.hostGpuPlatform = "jetson";
-    const deps = createDeps();
-    deps.ensureJetsonNvmapGroupAccess = vi.fn();
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
-
-    expect(deps.ensureJetsonNvmapGroupAccess).toHaveBeenCalledOnce();
-    expect(vi.mocked(deps.ensureJetsonNvmapGroupAccess).mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.streamSandboxCreate.mock.invocationCallOrder[0]!,
-    );
-  });
-
-  it("stops before sandbox creation when OpenClaw nvmap access cannot be repaired (#7610)", async () => {
-    const input = createInput();
-    input.agentName = "openclaw";
-    input.sandboxGpuConfig.hostGpuPlatform = "jetson";
-    const deps = createDeps();
-    deps.ensureJetsonNvmapGroupAccess = vi.fn(() => {
-      throw new Error("nvmap host repair failed");
-    });
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("nvmap host repair failed");
-
-    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
-    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { agentName: "hermes", hostGpuPlatform: "jetson", sandboxGpuEnabled: true },
-    { agentName: "openclaw", hostGpuPlatform: null, sandboxGpuEnabled: true },
-    { agentName: "openclaw", hostGpuPlatform: "jetson", sandboxGpuEnabled: false },
-  ] as const)("does not change nvmap access for agent=$agentName platform=$hostGpuPlatform enabled=$sandboxGpuEnabled (#7610)", async ({
-    agentName,
-    hostGpuPlatform,
-    sandboxGpuEnabled,
-  }) => {
-    const input = createInput();
-    input.agentName = agentName;
-    input.sandboxGpuConfig.hostGpuPlatform = hostGpuPlatform;
-    input.sandboxGpuConfig.sandboxGpuEnabled = sandboxGpuEnabled;
-    const deps = createDeps();
-    deps.ensureJetsonNvmapGroupAccess = vi.fn();
-
-    await runSandboxGpuCreateFlow(input, deps);
-
-    expect(deps.ensureJetsonNvmapGroupAccess).not.toHaveBeenCalled();
-  });
-});
-
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
   it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
     const input = createInput();

@@ -5,40 +5,7 @@ import fs from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  detectTegraDeviceGroupGids,
-  detectTegraGpuDevicePaths,
-  ensureJetsonNvmapGroupAccess,
-} from "./docker-gpu-jetson-groups";
-
-const READ_ONLY_NVMAP = {
-  isCharacterDevice: true,
-  isSymbolicLink: false,
-  mode: 0o440,
-};
-const READ_WRITE_NVMAP = { ...READ_ONLY_NVMAP, mode: 0o660 };
-
-describe("detectTegraGpuDevicePaths", () => {
-  it("returns only existing non-symlink character devices for Landlock (#7610)", () => {
-    const pathAccess = new Map([
-      ["/dev/nvmap", { isCharacterDevice: true, isSymbolicLink: false }],
-      ["/dev/nvhost-gpu", { isCharacterDevice: false, isSymbolicLink: false }],
-      ["/dev/dri/renderD128", { isCharacterDevice: true, isSymbolicLink: true }],
-    ]);
-
-    expect(
-      detectTegraGpuDevicePaths({
-        listDevicePaths: () => [
-          "/dev/nvmap",
-          "/dev/nvhost-gpu",
-          "/dev/dri/renderD128",
-          "/dev/missing",
-        ],
-        statDevicePath: (devicePath) => pathAccess.get(devicePath) ?? null,
-      }),
-    ).toEqual(["/dev/nvmap"]);
-  });
-});
+import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 
 describe("detectTegraDeviceGroupGids", () => {
   afterEach(() => {
@@ -68,8 +35,6 @@ describe("detectTegraDeviceGroupGids", () => {
       { gid: 0, mode: 0o660 },
       { gid: 2_147_483_648, mode: 0o660 },
       { gid: 44, mode: 0o600 },
-      { gid: 44, mode: 0o440 },
-      { gid: 44, mode: 0o620 },
       { gid: 104, mode: 0o666 },
     ];
     let index = 0;
@@ -78,15 +43,6 @@ describe("detectTegraDeviceGroupGids", () => {
       detectTegraDeviceGroupGids({
         statDeviceAccess: () => access[index++] ?? null,
         listDevicePaths: () => access.map((_, accessIndex) => `/dev/device${accessIndex}`),
-      }),
-    ).toEqual([]);
-  });
-
-  it("does not treat a read-only nvmap group as CUDA access (#7610)", () => {
-    expect(
-      detectTegraDeviceGroupGids({
-        statDeviceAccess: () => ({ gid: 44, mode: 0o440 }),
-        listDevicePaths: () => ["/dev/nvmap"],
       }),
     ).toEqual([]);
   });
@@ -173,59 +129,5 @@ describe("detectTegraDeviceGroupGids", () => {
       lstat.mockRestore();
       readdir.mockRestore();
     }
-  });
-});
-
-describe("ensureJetsonNvmapGroupAccess", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("keeps verified group read-write access without running host setup (#7610)", () => {
-    const runSetup = vi.fn();
-
-    ensureJetsonNvmapGroupAccess({ statDevice: () => READ_WRITE_NVMAP, runSetup });
-
-    expect(runSetup).not.toHaveBeenCalled();
-  });
-
-  it("repairs group-read-only nvmap access and verifies the result (#7610)", () => {
-    const statDevice = vi
-      .fn()
-      .mockReturnValueOnce(READ_ONLY_NVMAP)
-      .mockReturnValueOnce(READ_WRITE_NVMAP);
-    const runSetup = vi.fn(() => ({ status: 0 }));
-    vi.spyOn(console, "log").mockImplementation(() => {});
-
-    ensureJetsonNvmapGroupAccess({
-      statDevice,
-      runSetup,
-      setupScriptPath: "/package/scripts/setup-jetson.sh",
-    });
-
-    expect(runSetup).toHaveBeenCalledWith("/package/scripts/setup-jetson.sh");
-    expect(statDevice).toHaveBeenCalledTimes(2);
-  });
-
-  it("stops before sandbox creation when host setup fails (#7610)", () => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-
-    expect(() =>
-      ensureJetsonNvmapGroupAccess({
-        statDevice: () => READ_ONLY_NVMAP,
-        runSetup: () => ({ status: 1 }),
-      }),
-    ).toThrow("Jetson /dev/nvmap group setup failed before sandbox creation (exit status 1)");
-  });
-
-  it("rejects an unverified post-setup device state (#7610)", () => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-
-    expect(() =>
-      ensureJetsonNvmapGroupAccess({
-        statDevice: () => READ_ONLY_NVMAP,
-        runSetup: () => ({ status: 0 }),
-      }),
-    ).toThrow("still does not grant its owning group read-write access");
   });
 });

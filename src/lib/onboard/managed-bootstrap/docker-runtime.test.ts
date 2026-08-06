@@ -12,37 +12,12 @@ const adapterMocks = vi.hoisted(() => ({
   finalize: vi.fn<typeof import("./adapter").finalizeManagedBootstrapSequence>(),
   prepare: vi.fn<typeof import("./adapter").prepareManagedBootstrapSequence>(),
 }));
-const jetsonMocks = vi.hoisted(() => ({
-  detectDeviceGroupGids: vi.fn<() => string[]>(),
-}));
 
 vi.mock("./adapter", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./adapter")>()),
   activateManagedBootstrapSequence: adapterMocks.activate,
   finalizeManagedBootstrapSequence: adapterMocks.finalize,
   prepareManagedBootstrapSequence: adapterMocks.prepare,
-}));
-vi.mock("../docker-gpu-jetson-groups", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../docker-gpu-jetson-groups")>()),
-  detectTegraDeviceGroupGids: jetsonMocks.detectDeviceGroupGids,
-}));
-vi.mock("../docker-gpu-patch-mode", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../docker-gpu-patch-mode")>();
-  return {
-    ...original,
-    selectDockerGpuPatchMode: (options: { backend?: "generic" | "jetson" }) => ({
-      mode: original.buildDockerGpuMode(
-        options.backend === "jetson" ? "nvidia-runtime" : "gpus",
-        "all",
-        { backend: options.backend },
-      ),
-      attempts: [],
-    }),
-  };
-});
-vi.mock("../docker-gpu-sandbox-create", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../docker-gpu-sandbox-create")>()),
-  isDockerDesktopWslRuntime: () => false,
 }));
 
 import type {
@@ -54,90 +29,9 @@ import { authority, IDENTITY, NEW_ID, OLD_ID } from "./docker-test-fixture";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  jetsonMocks.detectDeviceGroupGids.mockReturnValue(["44", "993"]);
 });
 
-async function replacementOptionsFor(
-  agent: "openclaw" | "hermes",
-  hostGpuPlatform: "jetson" | "linux",
-) {
-  const seed = authority(agent);
-  const prepared = Object.freeze({}) as ManagedBootstrapPreparedTransaction;
-  const activated = Object.freeze({
-    snapshot: { runtimeId: OLD_ID },
-    replacement: { replacementRuntimeId: NEW_ID },
-  }) as ManagedBootstrapActivatedTransaction;
-  adapterMocks.prepare.mockImplementationOnce(async (_adapter, input) => {
-    await input.create.launch({
-      heldWorkloadArgv: seed.handle.heldWorkloadArgv,
-      bootstrapIdentity: IDENTITY,
-    });
-    return prepared;
-  });
-  adapterMocks.activate.mockResolvedValueOnce(activated);
-  const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
-    providerId: "docker",
-    bootstrapIdentity: IDENTITY,
-    request: seed.request,
-    image: seed.plan.image,
-    agentIdentity: seed.plan.agentIdentity,
-    intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
-    expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
-    launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
-    heldWorkloadArgv: seed.handle.heldWorkloadArgv,
-    authorityStore: { recordPreparedAuthority: vi.fn() },
-    adapterOverride: {} as ManagedBootstrapAdapter,
-    route: "compatibility",
-    persistStartupCommand: true,
-    sandboxName: "alpha",
-    sandboxGpuConfig: {
-      mode: "1",
-      hostGpuDetected: true,
-      hostGpuPlatform,
-      sandboxGpuEnabled: true,
-      sandboxGpuDevice: "all",
-      errors: [],
-    },
-    requiredLimits: [],
-    timeoutSecs: 30,
-    network: {
-      inferenceProvider: "ollama-local",
-      gatewayUsesContainerBridge: false,
-      gatewayPort: 0,
-    },
-    dependencies: {},
-  });
-
-  await lifecycle.runCreate(async () => ({
-    value: "launched",
-    receipt: seed.handle.createReceipt,
-  }));
-  const prepareInput = adapterMocks.prepare.mock.calls.at(-1)?.[1];
-  expect(prepareInput).toBeDefined();
-  return prepareInput!.replacementOptions.values;
-}
-
 describe("Docker managed-bootstrap lifecycle composition", () => {
-  it("preserves detected Jetson groups for OpenClaw compatibility replacement (#7610)", async () => {
-    const values = await replacementOptionsFor("openclaw", "jetson");
-
-    expect(values).toMatchObject({
-      extraGroupGids: ["44", "993"],
-      gpuModeKind: "nvidia-runtime",
-      preserveJetsonDeviceGroupMembership: true,
-    });
-  });
-
-  it.each([
-    ["openclaw", "linux", []],
-    ["hermes", "jetson", ["44", "993"]],
-  ] as const)("does not enable Jetson group preservation for %s on %s (#7610)", async (agent, platform, expectedGroupGids) => {
-    const values = await replacementOptionsFor(agent, platform);
-
-    expect(values.extraGroupGids).toEqual(expectedGroupGids);
-    expect(values.preserveJetsonDeviceGroupMembership).toBe(false);
-  });
-
   it("does not finalize rollback after a claimed commit loses acknowledgement", async () => {
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-"));
     const seed = authority("openclaw");

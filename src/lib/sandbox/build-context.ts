@@ -273,10 +273,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "validate-openclaw-tool-search.mts"),
     path.join(stagedScriptsDir, "validate-openclaw-tool-search.mts"),
   );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "jetson-device-group-bootstrap.sh"),
-    path.join(stagedScriptsDir, "jetson-device-group-bootstrap.sh"),
-  );
   // Shared sandbox initialisation library sourced by the entrypoint (#2277)
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(

@@ -196,7 +196,7 @@ exit "$status"`,
   progress.phase("confirm nvmap and NVIDIA Docker runtime");
   const hostNvmap = await hostShell(
     host,
-    "ls -l /dev/nvmap && stat -c 'gid=%g group=%G mode=%a' /dev/nvmap",
+    "ls -l /dev/nvmap && stat -c 'gid=%g group=%G' /dev/nvmap",
     "phase-0-host-nvmap",
   );
   expect(hostNvmap.exitCode, resultText(hostNvmap)).toBe(0);
@@ -249,8 +249,10 @@ exit "$status"`,
   expect(installedCli.exitCode, resultText(installedCli)).toBe(0);
   expect(installedCli.stdout.trim()).not.toBe("");
 
-  // A4: the Jetson recreate must prepare Tegra device-node groups for the sandbox user.
-  expect(resultText(install)).toContain("Preparing detected Jetson GPU device groups");
+  // A4: the Jetson recreate must grant Tegra device-node groups via --group-add.
+  expect(resultText(install)).toContain(
+    "Granting sandbox user the detected Jetson GPU device groups via --group-add",
+  );
 
   // A5: the sandbox user must be in the host /dev/nvmap owning GID.
   progress.phase("inspect sandbox nvmap access");
@@ -262,7 +264,7 @@ exit "$status"`,
   expect(sandboxId.exitCode, resultText(sandboxId)).toBe(0);
   expectGroupMembership(resultText(sandboxId), hostNvmapGid);
 
-  // A6: /dev/nvmap must be present and read-write for the sandbox user.
+  // A6: /dev/nvmap must be mounted/present inside the sandbox.
   const sandboxNvmap = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript("ls -l /dev/nvmap"),
@@ -270,13 +272,6 @@ exit "$status"`,
   );
   expect(sandboxNvmap.exitCode, resultText(sandboxNvmap)).toBe(0);
   expect(resultText(sandboxNvmap)).toContain("/dev/nvmap");
-
-  const sandboxNvmapAccess = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript("test -r /dev/nvmap && test -w /dev/nvmap"),
-    { artifactName: "phase-3-sandbox-nvmap-access", env: env(), timeoutMs: 60_000 },
-  );
-  expect(sandboxNvmapAccess.exitCode, resultText(sandboxNvmapAccess)).toBe(0);
 
   // A7: authoritative CUDA usability proof must succeed, not reproduce
   // NvRmMemInitNvmap permission denial / cuInit(0)=999 from #4231.

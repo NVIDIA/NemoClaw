@@ -159,7 +159,6 @@ export function recreateOpenShellDockerSandboxContainer(
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
     backend?: "generic" | "jetson";
-    preserveJetsonDeviceGroupMembership?: boolean;
     dockerDesktopWsl?: boolean;
     modeOverride?: DockerGpuPatchMode;
   },
@@ -263,22 +262,18 @@ export function recreateOpenShellDockerSandboxContainer(
         );
       }
     }
-    if (options.backend === "jetson") {
+    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
-        cloneOptions.preserveJetsonDeviceGroupMembership =
-          options.preserveJetsonDeviceGroupMembership === true;
         console.log(
-          `  ✓ Preparing detected Jetson GPU device groups ${tegraGroupGids.join(
+          `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
             ", ",
-          )} for the recreated container${
-            options.preserveJetsonDeviceGroupMembership ? " and the OpenShell sandbox user" : ""
-          }`,
+          )} (so CUDA can initialize as a non-root user)`,
         );
       } else {
         console.warn(
-          "  ⚠ Could not resolve a read-write group for Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and grants its owning group read-write access on the host.",
+          "  ⚠ Could not resolve the group owning Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and is group-readable on the host.",
         );
       }
     }

@@ -118,31 +118,6 @@ describe("Docker startup-command sandbox creation", () => {
     expect(patch.selectedMode()?.kind).toBe("startup-command");
   });
 
-  it("forwards OpenClaw Jetson group preservation to startup-command recreation (#7610)", async () => {
-    const recreateStartupPatch = vi.fn(() => startupResult());
-    const patch = createDockerGpuSandboxCreatePatch({
-      route: "native",
-      persistStartupCommand: true,
-      sandboxName: "alpha",
-      openshellSandboxCommand: ["env", "nemoclaw-start"],
-      timeoutSecs: 60,
-      backend: "jetson",
-      agentName: "openclaw",
-      deps: makeDeps(),
-      overrides: { recreateStartupPatch },
-    });
-
-    await patch.ensureApplied();
-
-    expect(recreateStartupPatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        backend: "jetson",
-        preserveJetsonDeviceGroupMembership: true,
-      }),
-      expect.any(Object),
-    );
-  });
-
   it("rolls back startup-command recreation when the supervisor does not reconnect", () => {
     const deps = makeDeps();
     const result = startupResult();
