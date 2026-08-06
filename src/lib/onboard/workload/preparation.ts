@@ -42,15 +42,11 @@ export interface PrepareSandboxWorkloadSourceInput {
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
   let descriptor: number | null = null;
   try {
-    const pathMetadata = fs.lstatSync(catalogPath);
-    if (pathMetadata.isSymbolicLink()) {
-      throw new SandboxWorkloadPreparationError(
-        "managed image catalog file must be a bounded regular file",
-      );
-    }
     descriptor = fs.openSync(catalogPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const metadata = fs.fstatSync(descriptor);
+    const pathMetadata = fs.lstatSync(catalogPath);
     if (
+      pathMetadata.isSymbolicLink() ||
       !metadata.isFile() ||
       metadata.dev !== pathMetadata.dev ||
       metadata.ino !== pathMetadata.ino ||
@@ -69,6 +65,11 @@ function readExactManagedImageCatalog(catalogPath: string): ManagedImageContract
     }
     return parsed as ManagedImageContractCatalog;
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new SandboxWorkloadPreparationError(
+        "managed image catalog file must be a bounded regular file",
+      );
+    }
     if (error instanceof SandboxWorkloadPreparationError) throw error;
     throw new SandboxWorkloadPreparationError("managed image catalog file could not be read", {
       cause: error,
