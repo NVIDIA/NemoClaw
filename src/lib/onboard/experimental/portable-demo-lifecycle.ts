@@ -290,17 +290,13 @@ function discoverPodmanContainer(
 
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
   const port = String(receipt.dashboardPort);
-  // A raw Podman restart can preserve login-profile exports from the previous
-  // OpenShell supervisor generation. Seed the relaunched process from the
-  // root-owned v0.0.85 runtime paths so nemoclaw-start can rebuild any merged
-  // CA bundle from the current OpenShell CA.
+  // A raw Podman restart can preserve a merged CA bundle from the previous
+  // OpenShell supervisor generation. Seed recovery from the current root-owned
+  // v0.0.85 OpenShell CA paths. The startup-applied marker skips the stale
+  // bundle merge, and the cleared merged marker prevents connect shells from
+  // inheriting stale CA paths. #8058 removes this direct startup contract.
   return [
     "env",
-    // The preserved container filesystem can retain the pre-restart merged
-    // bundle at /tmp/nemoclaw-ca-bundle.pem. The pinned startup script uses
-    // this marker only to skip that merge. Keep the portable recovery on the
-    // current root-owned OpenShell CA instead of repointing the gateway at the
-    // stale merged file; #8058 removes this direct startup contract.
     "NEMOCLAW_MANAGED_STARTUP_APPLIED=1",
     "_NEMOCLAW_CORPORATE_CA_MERGED=0",
     `NODE_EXTRA_CA_CERTS=${OPENSHELL_RUNTIME_CA_CERT}`,
