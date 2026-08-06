@@ -40,6 +40,33 @@ if helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.y
   exit 1
 fi
 
+TLS_RENDERED_FILE="$(mktemp)"
+trap 'rm -f "${TLS_RENDERED_FILE}"' EXIT
+helm template tls-policy-check "${CHART_DIR}" \
+  -f "${CHART_DIR}/values-step2-hpa.yaml" \
+  --set ingress.allowInsecureHttp=false \
+  --set 'ingress.tls[0].secretName=test-tls' \
+  --set 'ingress.tls[0].hosts[0]=nemoclaw.example.com' \
+  --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/ssl-redirect=false' \
+  >"${TLS_RENDERED_FILE}"
+
+python3 - "${TLS_RENDERED_FILE}" <<'PYEOF'
+import sys
+import yaml
+
+with open(sys.argv[1]) as f:
+    ingresses = [doc for doc in yaml.safe_load_all(f) if doc and doc.get("kind") == "Ingress"]
+
+if len(ingresses) != 1:
+    print(f"FAIL: expected exactly one TLS Ingress, found {len(ingresses)}", file=sys.stderr)
+    sys.exit(1)
+
+annotations = ingresses[0].get("metadata", {}).get("annotations", {})
+if annotations.get("nginx.ingress.kubernetes.io/ssl-redirect") != "true":
+    print("FAIL: TLS Ingress does not enforce ssl-redirect=true", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+
 assert_persistence_render_rejected() {
   local expected_message="${1:?expected message}"
   shift
@@ -80,7 +107,7 @@ if ! helm template hostpath-policy-check "${CHART_DIR}" \
 fi
 
 RENDERED_FILE="$(mktemp)"
-trap 'rm -f "${RENDERED_FILE}"' EXIT
+trap 'rm -f "${TLS_RENDERED_FILE}" "${RENDERED_FILE}"' EXIT
 helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.yaml" \
   --set autoscaling.enabled=true \
   --set ollama.persistence.enabled=true \
@@ -179,5 +206,6 @@ print("OK: HPA/Deployment/Service/ServiceMonitor render contract holds")
 PYEOF
 
 echo "OK: chart rejects cleartext Ingress without explicit opt-in"
+echo "OK: chart enforces ssl-redirect=true when TLS is configured"
 echo "OK: chart requires an explicit ReadWriteMany storage class for shared PVC persistence"
 echo "OK: chart preserves the explicit single-node hostPath persistence mode"

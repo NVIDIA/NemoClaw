@@ -590,7 +590,9 @@ enforces two things at the Ingress level:
 
 - **TLS is required by default.** The chart refuses to render the Ingress unless
   `ingress.tls` references a certificate Secret or you explicitly opt in to cleartext HTTP.
-  The scripts do not set `ingress.allowInsecureHttp` during the normal workflow.
+  When TLS is configured and `ingress.allowInsecureHttp` is `false`, the chart explicitly
+  sets `nginx.ingress.kubernetes.io/ssl-redirect: "true"` and overrides a conflicting value
+  in `ingress.annotations`. The scripts do not enable insecure HTTP during the normal workflow.
 
 Cleartext HTTP exposes the reusable Basic auth credential and completion traffic to interception on any network path that can observe the request.
 Use the cleartext exception only after a firewall, VPN, or equivalent access control restricts the cluster nodes to trusted clients:

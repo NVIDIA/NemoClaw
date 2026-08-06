@@ -16,8 +16,15 @@ metadata:
     nginx.ingress.kubernetes.io/auth-secret: {{ .Values.ingress.auth.existingSecret | default (include "nemoclaw-gpu.ingressAuthSecretName" .) }}
     nginx.ingress.kubernetes.io/auth-realm: "NemoClaw GPU agent - authentication required"
     {{- end }}
+    {{- if and .Values.ingress.tls (not .Values.ingress.allowInsecureHttp) }}
+    {{- with omit .Values.ingress.annotations "nginx.ingress.kubernetes.io/ssl-redirect" }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- else }}
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
     {{- end }}
 spec:
   {{- with .Values.ingress.className }}
