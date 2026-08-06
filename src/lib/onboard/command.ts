@@ -371,9 +371,12 @@ function applyPortableEnvironment(
   if (!options.experimentalProfile) return () => {};
   const portableEnvDefaults = {
     [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile ?? undefined,
+    [TOOL_DISCLOSURE_ENV]: "direct",
     NEMOCLAW_PROVIDER: "ollama",
     NEMOCLAW_MODEL: "qwen3-vl:4b",
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+    NEMOCLAW_POLICY_MODE: "suggested",
+    NEMOCLAW_POLICY_TIER: "personal",
   } as const;
   const previousPortableEnv = new Map<string, string | undefined>();
   const restore = () => {
@@ -407,6 +410,15 @@ function applyServingProfileEnvironment(
   };
 }
 
+function toolDisclosureEnvironmentOverride(
+  options: OnboardCommandOptions,
+  flags: OnboardFlags,
+): ToolDisclosure | null {
+  if (!options.toolDisclosure) return null;
+  if (!options.experimentalProfile) return options.toolDisclosure;
+  return flags["tool-disclosure"] !== undefined ? options.toolDisclosure : null;
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   const env = deps.env ?? process.env;
@@ -420,7 +432,8 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
     // Keep direct callers and the legacy monolithic onboard path on the same
     // canonical source. No value is written for the default so resume/rebuild
     // can distinguish an explicit request from an unset environment.
-    if (options.toolDisclosure) env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
+    const toolDisclosure = toolDisclosureEnvironmentOverride(options, deps.flags);
+    if (toolDisclosure) env[TOOL_DISCLOSURE_ENV] = toolDisclosure;
     if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
     await deps.runOnboard(options);
   } catch (error) {
