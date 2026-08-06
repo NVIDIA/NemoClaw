@@ -252,6 +252,75 @@ describe("registry", () => {
     expect(raw.sandboxes.alpha.mcp.managedServerNames).toEqual(["github"]);
   });
 
+  it("persists canonical trusted-private MCP intent and exact pins (#8267)", () => {
+    registry.registerSandbox({
+      name: "private-mcp",
+      agent: "hermes",
+      mcp: {
+        bridges: {
+          local: {
+            server: "local",
+            agent: "hermes",
+            adapter: "hermes-config",
+            url: "https://mcp.corp.example/mcp",
+            env: ["LOCAL_MCP_TOKEN"],
+            trustedPrivateHost: "mcp.corp.example",
+            allowedIps: ["10.20.30.40", "fd00::40"],
+            providerName: "private-mcp-mcp-local",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-local",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    expect(registry.getSandbox("private-mcp").mcp.bridges.local).toMatchObject({
+      trustedPrivateHost: "mcp.corp.example",
+      allowedIps: ["10.20.30.40", "fd00::40"],
+    });
+  });
+
+  it.each([
+    {
+      label: "non-canonical host",
+      trustedPrivateHost: "MCP.CORP.EXAMPLE.",
+      allowedIps: ["10.20.30.40", "fd00::40"],
+    },
+    {
+      label: "non-canonical pin order",
+      trustedPrivateHost: "mcp.corp.example",
+      allowedIps: ["fd00::40", "10.20.30.40"],
+    },
+  ])("rejects $label from durable trusted-private MCP authority (#8267)", ({
+    trustedPrivateHost,
+    allowedIps,
+  }) => {
+    registry.registerSandbox({
+      name: "noncanonical-private-mcp",
+      agent: "hermes",
+      mcp: {
+        bridges: {
+          local: {
+            server: "local",
+            agent: "hermes",
+            adapter: "hermes-config",
+            url: "https://mcp.corp.example/mcp",
+            env: ["LOCAL_MCP_TOKEN"],
+            trustedPrivateHost,
+            allowedIps,
+            providerName: "noncanonical-private-mcp-mcp-local",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-local",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    expect(registry.getSandbox("noncanonical-private-mcp").mcp?.bridges?.local).toBeUndefined();
+  });
+
   it("retains sanitized managed MCP names after the active bridge map is emptied", () => {
     registry.registerSandbox({
       name: "alpha",

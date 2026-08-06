@@ -121,6 +121,54 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
+  it("rejects reusing the protected build-cache upload exception for another step", () => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["managed-image-multiarch-startup"];
+    const cacheUpload = job.steps?.find(
+      (step) => step.name === "Publish exact amd64 protected runtime build cache",
+    );
+    expect(cacheUpload).toBeDefined();
+    cacheUpload!.name = "Publish another direct artifact";
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "managed-image-multiarch-startup must not invoke actions/upload-artifact directly",
+    );
+  });
+
+  it.each([
+    ["name", "another-cache-artifact"],
+    ["path", "another-cache-path/"],
+  ])("rejects protected build-cache upload %s drift", (input, value) => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["managed-image-multiarch-startup"];
+    const cacheUpload = job.steps?.find(
+      (step) => step.name === "Publish exact amd64 protected runtime build cache",
+    );
+    expect(cacheUpload).toBeDefined();
+    cacheUpload!.with![input] = value;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup must define exactly one exact protected build-cache direct upload",
+        "managed-image-multiarch-startup must not invoke actions/upload-artifact directly",
+      ]),
+    );
+  });
+
+  it("rejects duplicate exact protected build-cache upload steps", () => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["managed-image-multiarch-startup"];
+    const cacheUpload = job.steps?.find(
+      (step) => step.name === "Publish exact amd64 protected runtime build cache",
+    );
+    expect(cacheUpload).toBeDefined();
+    job.steps!.push({ ...cacheUpload!, with: { ...cacheUpload!.with } });
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "managed-image-multiarch-startup must define exactly one exact protected build-cache direct upload",
+    );
+  });
+
   it("rejects missing and duplicate shared upload invocations", () => {
     const workflow = mutableWorkflow();
     const missingJob = workflow.jobs["shared-e2e"];

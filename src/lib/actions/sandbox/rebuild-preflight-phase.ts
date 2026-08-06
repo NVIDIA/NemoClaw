@@ -227,6 +227,7 @@ export async function runRebuildPreflightPhase(
     sandboxName,
     entry: expectedSandboxEntry,
     rebuildAgent,
+    managedWorkloadRebuild: expectedSandboxEntry.workload?.kind === "managed-image",
     log,
     bail,
     deps: {
@@ -285,8 +286,11 @@ export async function runRebuildPreflightPhase(
           recoveryRecreate,
           preparedTarget.recreateOptions.targetGatewayPort,
         );
-        if (!imageReady || !dcodePreflight.preparedReplacement) return null;
-        preparedTarget.recreateOptions.preparedDcodeRebuild = dcodePreflight.preparedReplacement;
+        if (!imageReady) return null;
+        if (!preparedTarget.recreateOptions.managedWorkloadRebuild) {
+          if (!dcodePreflight.preparedReplacement) return null;
+          preparedTarget.recreateOptions.preparedDcodeRebuild = dcodePreflight.preparedReplacement;
+        }
       }
       // Keep credential-reuse validation after DCode's live-route/image proofs,
       // but before shields, backup, or any destructive rebuild work begins.

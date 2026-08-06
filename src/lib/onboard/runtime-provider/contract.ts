@@ -276,6 +276,9 @@ export type RuntimeProviderMutationAuthoritySurface =
 
 export type RuntimeProviderBootstrapSurface =
   | RuntimeProviderSupportedSurface<{
+      createAuthorityStore(input: {
+        readonly stateRoot: string;
+      }): import("../managed-bootstrap/adapter").ManagedBootstrapAuthorityStore;
       createLifecycle(
         input: ManagedBootstrapRuntimeCreateLifecycleInput,
       ): ManagedBootstrapRuntimeCreateLifecycle;

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import {
   ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
@@ -34,6 +36,47 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly runtime: SandboxWorkloadRuntimeCapabilities;
   readonly version: string;
   readonly policy?: ManagedImageSelectionPolicy;
+  readonly catalogPath?: string | null;
+}
+
+function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(catalogPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const metadata = fs.fstatSync(descriptor);
+    const pathMetadata = fs.lstatSync(catalogPath);
+    if (
+      pathMetadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      metadata.dev !== pathMetadata.dev ||
+      metadata.ino !== pathMetadata.ino ||
+      metadata.size < 2 ||
+      metadata.size > 64 * 1024
+    ) {
+      throw new SandboxWorkloadPreparationError(
+        "managed image catalog file must be a bounded regular file",
+      );
+    }
+    const parsed: unknown = JSON.parse(fs.readFileSync(descriptor, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new SandboxWorkloadPreparationError(
+        "managed image catalog file must contain an object",
+      );
+    }
+    return parsed as ManagedImageContractCatalog;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new SandboxWorkloadPreparationError(
+        "managed image catalog file must be a bounded regular file",
+      );
+    }
+    if (error instanceof SandboxWorkloadPreparationError) throw error;
+    throw new SandboxWorkloadPreparationError("managed image catalog file could not be read", {
+      cause: error,
+    });
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
 }
 
 export interface PrepareSandboxWorkloadSourceDependencies {
@@ -176,9 +219,11 @@ export async function prepareSandboxWorkloadSource(
     );
   }
   try {
-    catalog = await (
-      dependencies.resolveCatalog ?? ((options) => resolveManagedImageCatalogFromGhcr(options))
-    )({ release, platform });
+    catalog = input.catalogPath
+      ? readExactManagedImageCatalog(input.catalogPath)
+      : await (
+          dependencies.resolveCatalog ?? ((options) => resolveManagedImageCatalogFromGhcr(options))
+        )({ release, platform });
   } catch (error) {
     if (!(error instanceof ManagedImageCatalogUnavailableError)) {
       throw new SandboxWorkloadPreparationError(
