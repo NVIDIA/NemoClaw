@@ -34,26 +34,30 @@ class FakeWebSocket {
   send(data: string): void {
     const request = JSON.parse(data) as SentRequest;
     this.sent.push(request);
-    if (request.method === "connect") {
-      queueMicrotask(() => {
-        this.respond(request.id, {});
-        if (this.oversizedFrameAfterConnect) {
-          this.onmessage?.({ data: `{"padding":"${"x".repeat(3 * 1024 * 1024)}"}` });
-        }
-      });
-      return;
-    }
-    if (request.method === "chat.send") {
-      const sessionKey = String(request.params.sessionKey);
-      queueMicrotask(() => {
-        this.respond(request.id, { runId: "expected-run" });
+    switch (request.method) {
+      case "connect":
         queueMicrotask(() => {
-          this.event(sessionKey, "other-run", "delta", "discarded run");
-          this.event("other-session", "expected-run", "delta", "discarded session");
-          this.event(sessionKey, "expected-run", "delta", this.firstReply);
-          this.event(sessionKey, "expected-run", "final", this.finalReply);
+          this.respond(request.id, {});
+          this.oversizedFrameAfterConnect
+            ? this.onmessage?.({ data: `{"padding":"${"x".repeat(3 * 1024 * 1024)}"}` })
+            : undefined;
         });
-      });
+        return;
+      case "chat.send": {
+        const sessionKey = String(request.params.sessionKey);
+        queueMicrotask(() => {
+          this.respond(request.id, { runId: "expected-run" });
+          queueMicrotask(() => {
+            this.event(sessionKey, "other-run", "delta", "discarded run");
+            this.event("other-session", "expected-run", "delta", "discarded session");
+            this.event(sessionKey, "expected-run", "delta", this.firstReply);
+            this.event(sessionKey, "expected-run", "final", this.finalReply);
+          });
+        });
+        return;
+      }
+      default:
+        return;
     }
   }
 

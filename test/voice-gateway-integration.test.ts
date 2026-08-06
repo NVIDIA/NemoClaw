@@ -58,8 +58,9 @@ async function listen(server: Server): Promise<number> {
     });
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("server did not bind");
-  return address.port;
+  expect(address).toBeTruthy();
+  expect(typeof address).not.toBe("string");
+  return (address as { readonly port: number }).port;
 }
 
 async function requestJson(options: {
@@ -109,8 +110,7 @@ afterEach(async () => {
       (server) =>
         new Promise<void>((resolve) => {
           servers.delete(server);
-          if (server.listening) server.close(() => resolve());
-          else resolve();
+          server.listening ? server.close(() => resolve()) : resolve();
         }),
     ),
   );
