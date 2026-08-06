@@ -195,8 +195,9 @@ function readinessSources(): ManagedInferenceReadinessSource[] {
 
 function storageRemediableReadinessReport(
   extraFindings: SystemReadinessReport["findings"] = [],
+  preset: ManagedInferenceServingPreset = shippedPreset(),
 ): SystemReadinessReport {
-  const report = readinessReport();
+  const report = readinessReport({}, preset);
   return {
     ...report,
     capabilities: [
@@ -829,7 +830,12 @@ describe("managed inference resolver", () => {
     const presetId = catalog.presets[0]!.metadata.id;
     const result = resolveManagedInferenceServing(
       {
-        readinessReports: [{ nodeId: "spark-head", report: storageRemediableReadinessReport() }],
+        readinessReports: [
+          {
+            nodeId: "spark-head",
+            report: storageRemediableReadinessReport([], catalog.presets[0]!),
+          },
+        ],
         topologyQualifications: [],
         intent: { preset: presetId },
         now: NOW,
