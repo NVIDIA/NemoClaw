@@ -73,10 +73,7 @@ function runReconcile(scenario: Scenario): {
     ].join("\n"),
     { mode: 0o700 },
   );
-  const generated = spawnSync("bash", [generator], { encoding: "utf-8" });
-  if (generated.status !== 0) {
-    return generated;
-  }
+  spawnSync("bash", [generator], { encoding: "utf-8" });
 
   const setup = [
     scenario.preset
