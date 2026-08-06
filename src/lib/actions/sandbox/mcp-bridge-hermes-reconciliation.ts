@@ -14,6 +14,8 @@ const HERMES_MCP_INSPECT_TIMEOUT_SECONDS = 45;
 const HERMES_MCP_INSPECT_TIMEOUT_MS = 60_000;
 const HERMES_MCP_RECONCILIATION_FAILURE =
   "Hermes MCP runtime does not match the persisted managed intent";
+const HERMES_MCP_RACED_SNAPSHOT_DETAIL = "refusing raced Hermes MCP integrity snapshot";
+const HERMES_MCP_RACED_SNAPSHOT_ATTEMPTS = 3;
 const ANSI_OR_UNSAFE_CONTROL_RE =
   /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 const DISPLAY_LINE_BREAK_RE = /[\r\n\u2028\u2029]+/g;
@@ -186,7 +188,17 @@ export function assertHermesMcpRuntimeIntent(
   sandboxName: string,
   options: HermesMcpReconciliationOptions = {},
 ): void {
-  const inspection = inspectHermesMcpRuntimeIntent(sandboxName, options);
+  let inspection = inspectHermesMcpRuntimeIntent(sandboxName, options);
+  for (
+    let attempt = 1;
+    !inspection.ok &&
+    inspection.state === "error" &&
+    inspection.detail.includes(HERMES_MCP_RACED_SNAPSHOT_DETAIL) &&
+    attempt < HERMES_MCP_RACED_SNAPSHOT_ATTEMPTS;
+    attempt += 1
+  ) {
+    inspection = inspectHermesMcpRuntimeIntent(sandboxName, options);
+  }
   if (inspection.ok) return;
   throw new McpBridgeError(
     `${sanitizeHermesMcpReconciliationDetail(
