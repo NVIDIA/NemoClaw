@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   check-pr-limit:
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 5
     steps:
       - name: Check open PR count for author

@@ -18,6 +18,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
+import type { HermesBuildSettings } from "../agents/hermes/config/build-env.ts";
+import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy.ts";
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
@@ -36,9 +38,23 @@ const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
 ).join("");
 const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
 
-const REVIEWED_POLICY = {
+const POLICY_SETTINGS: HermesBuildSettings = {
+  model: "nvidia-routed",
+  baseUrl: "https://inference.local/v1",
+  providerKey: "nvidia-router",
+  upstreamProvider: "nvidia-router",
+  inferenceApi: "anthropic-messages",
+  contextWindow: null,
+  toolDisclosure: "progressive",
+  webSearchProvider: "tavily",
+  messagingCredentialPlaceholders: [],
+  managedToolGateways: { brokerEnabled: false, presets: [] },
+  managedImageCapabilityUnion: false,
+};
+const MANAGED_POLICY = buildHermesManagedPolicy(POLICY_SETTINGS, {});
+const EXPECTED_DASHBOARD_POLICY = {
   approvals: { mode: "manual" },
-  browser: { restrict_evaluate: true },
+  browser: { allow_unsafe_evaluate: false, restrict_evaluate: true },
   session_reset: {
     mode: "both",
     at_hour: 4,
@@ -47,24 +63,29 @@ const REVIEWED_POLICY = {
     notify_exclude_platforms: ["api_server", "webhook"],
     bg_process_max_age_hours: 24,
   },
-  display: {
-    show_reasoning: false,
-    show_commentary: false,
-  },
-  updates: {
-    pre_update_backup: false,
-    refresh_cua_driver: false,
-  },
+  display: { show_reasoning: false, show_commentary: false },
+  updates: { pre_update_backup: false, refresh_cua_driver: false },
 };
+const GATEWAY_POLICY = Object.fromEntries(
+  Array.from(
+    new Set(MANAGED_POLICY.managed_paths.map((path) => path.split(".", 1)[0])),
+    (section) => [section, MANAGED_POLICY.config[section]],
+  ),
+);
 
 const GATEWAY_CONFIG = {
   _config_version: 12,
-  _nemoclaw_upstream: { provider: "nvidia-router", model: "nvidia-routed" },
+  _nemoclaw_upstream: {
+    provider: "nvidia-router",
+    provider_key: "nvidia-router",
+    model: "nvidia-routed",
+  },
   model: {
     default: "nvidia-routed",
-    provider: "nvidia-router",
+    provider: "custom",
     base_url: "https://inference.local/v1",
     api_key: "sk-OPENSHELL-PROXY-REWRITE",
+    api_mode: "anthropic_messages",
   },
   providers: {
     "nvidia-router": {
@@ -73,6 +94,7 @@ const GATEWAY_CONFIG = {
       api_key: "sk-OPENSHELL-PROXY-REWRITE",
       default_model: "nvidia-routed",
       discover_models: true,
+      transport: "anthropic_messages",
     },
   },
   custom_providers: [
@@ -81,15 +103,18 @@ const GATEWAY_CONFIG = {
       base_url: "https://inference.local/v1",
       api_key: "sk-OPENSHELL-PROXY-REWRITE",
       discover_models: true,
+      api_mode: "anthropic_messages",
     },
   ],
   // Intentionally present to assert it is NOT mirrored (would collide with the
   // gateway's api_server bind).
   platforms: { api_server: { enabled: true, extra: { port: 18642 } } },
-  ...REVIEWED_POLICY,
+  web: { backend: "tavily" },
+  ...GATEWAY_POLICY,
 };
 
 let tmpDir: string;
+let policyPath: string;
 
 function runSeed(
   srcPath: string,
@@ -103,6 +128,7 @@ function runSeed(
   const args = [
     SCRIPT_PATH,
     ...(mergeLegacy ? ["--merge-legacy"] : []),
+    policyPath,
     srcPath,
     dstPath,
     ...envArgs,
@@ -132,6 +158,8 @@ function readYaml(p: string): Record<string, unknown> {
 describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seed-dash-"));
+    policyPath = path.join(tmpDir, "managed-policy.json");
+    fs.writeFileSync(policyPath, `${JSON.stringify(MANAGED_POLICY)}\n`);
   });
 
   afterEach(() => {
@@ -146,15 +174,15 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(res.status).toBe(0);
 
     const dash = readYaml(dst);
-    expect(dash.model).toEqual(GATEWAY_CONFIG.model);
+    expect(dash.model).toEqual({ ...GATEWAY_CONFIG.model, provider: "nvidia-router" });
     expect(dash.providers).toEqual(GATEWAY_CONFIG.providers);
     expect(dash.custom_providers).toEqual(GATEWAY_CONFIG.custom_providers);
     expect(dash._nemoclaw_upstream).toEqual(GATEWAY_CONFIG._nemoclaw_upstream);
-    expect(dash.approvals).toEqual(REVIEWED_POLICY.approvals);
-    expect(dash.browser).toEqual(REVIEWED_POLICY.browser);
-    expect(dash.session_reset).toEqual(REVIEWED_POLICY.session_reset);
-    expect(dash.display).toEqual(REVIEWED_POLICY.display);
-    expect(dash.updates).toEqual(REVIEWED_POLICY.updates);
+    expect(dash.approvals).toEqual(EXPECTED_DASHBOARD_POLICY.approvals);
+    expect(dash.browser).toEqual(EXPECTED_DASHBOARD_POLICY.browser);
+    expect(dash.session_reset).toEqual(EXPECTED_DASHBOARD_POLICY.session_reset);
+    expect(dash.display).toEqual(EXPECTED_DASHBOARD_POLICY.display);
+    expect(dash.updates).toEqual(EXPECTED_DASHBOARD_POLICY.updates);
   });
 
   it("moves the legacy dashboard home into the Hermes profiles directory (#7200)", () => {
@@ -174,7 +202,10 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(fs.statSync(path.dirname(dashboardHome)).isDirectory()).toBe(true);
     expect(fs.statSync(dashboardHome).mode & 0o777).toBe(0o700);
     expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("keep me\n");
-    expect(readYaml(path.join(dashboardHome, "config.yaml")).model).toEqual(GATEWAY_CONFIG.model);
+    expect(readYaml(path.join(dashboardHome, "config.yaml")).model).toEqual({
+      ...GATEWAY_CONFIG.model,
+      provider: "nvidia-router",
+    });
   });
 
   it("keeps seeding anchored when profiles is swapped after migration (#7200)", () => {
@@ -204,7 +235,11 @@ if not ok or dashboard_fd is None:
 try:
     os.rename(sys.argv[4], sys.argv[5])
     os.symlink(sys.argv[6], sys.argv[4])
-    raise SystemExit(module._seed_dashboard([sys.argv[1], sys.argv[2], sys.argv[3]], dashboard_fd))
+    raise SystemExit(
+        module._seed_dashboard(
+            [sys.argv[1], sys.argv[7], sys.argv[2], sys.argv[3]], dashboard_fd
+        )
+    )
 finally:
     os.close(dashboard_fd)
 `;
@@ -219,6 +254,7 @@ finally:
         profilesDir,
         heldProfiles,
         outsideProfiles,
+        policyPath,
       ],
       {
         encoding: "utf-8",
@@ -230,9 +266,10 @@ finally:
     expect(res.status).toBe(0);
     expect(fs.lstatSync(profilesDir).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(path.join(outsideProfiles, "dashboard-home", "config.yaml"))).toBe(false);
-    expect(readYaml(path.join(heldProfiles, "dashboard-home", "config.yaml")).model).toEqual(
-      GATEWAY_CONFIG.model,
-    );
+    expect(readYaml(path.join(heldProfiles, "dashboard-home", "config.yaml")).model).toEqual({
+      ...GATEWAY_CONFIG.model,
+      provider: "nvidia-router",
+    });
     expect(fs.readFileSync(path.join(heldProfiles, "dashboard-home", "MEMORY.md"), "utf-8")).toBe(
       "keep me\n",
     );
@@ -406,21 +443,19 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(readYaml(dst).web).toEqual({ max_results: 3, backend: "tavily" });
   });
 
-  it("removes the managed Tavily backend after the gateway disables it", () => {
-    const enabledSrc = writeYaml("gw-enabled.yaml", {
-      ...GATEWAY_CONFIG,
-      web: { backend: "tavily" },
-    });
-    const disabledSrc = writeYaml("gw-disabled.yaml", GATEWAY_CONFIG);
-    const dst = writeYaml("dash.yaml", { web: { max_results: 3 } });
+  it("rejects Tavily policy drift without changing the dashboard config", () => {
+    const src = writeYaml("gw.yaml", { ...GATEWAY_CONFIG, web: undefined });
+    const dst = writeYaml("dash.yaml", { web: { max_results: 3, backend: "tavily" } });
+    const before = fs.readFileSync(dst, "utf8");
 
-    expect(runSeed(enabledSrc, dst).status).toBe(0);
-    expect(readYaml(dst).web).toEqual({ max_results: 3, backend: "tavily" });
-    expect(runSeed(disabledSrc, dst).status).toBe(0);
-    expect(readYaml(dst).web).toEqual({ max_results: 3 });
+    const result = runSeed(src, dst);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("gateway policy is invalid");
+    expect(fs.readFileSync(dst, "utf8")).toBe(before);
   });
 
-  it("synthesizes Hermes v16 providers from legacy gateway routing", () => {
+  it("rejects legacy routing that has no canonical provider key", () => {
     const legacy = {
       _config_version: 12,
       _nemoclaw_upstream: { provider: "NVIDIA Router", model: "nvidia-routed" },
@@ -438,30 +473,53 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
           discover_models: true,
         },
       ],
-      ...REVIEWED_POLICY,
+      web: { backend: "tavily" },
+      ...GATEWAY_POLICY,
     };
     const src = writeYaml("gw.yaml", legacy);
     const dst = path.join(tmpDir, "dash.yaml");
 
     const res = runSeed(src, dst);
-    expect(res.status).toBe(0);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("invalid model routing");
+    expect(fs.existsSync(dst)).toBe(false);
+  });
 
-    const dash = readYaml(dst);
-    expect(dash.model).toEqual({
-      default: "nvidia-routed",
-      provider: "nvidia-router",
-      base_url: "https://inference.local/v1",
-      api_key: "sk-OPENSHELL-PROXY-REWRITE",
-    });
-    expect(dash.providers).toEqual({
-      "nvidia-router": {
-        name: "NVIDIA Router",
-        api: "https://inference.local/v1",
-        api_key: "sk-OPENSHELL-PROXY-REWRITE",
-        default_model: "nvidia-routed",
-        discover_models: true,
-      },
-    });
+  it("rejects raw credentials in every mirrored routing shape (#8008)", () => {
+    const cases: Array<[string, (gateway: typeof GATEWAY_CONFIG) => void]> = [
+      [
+        "model",
+        (gateway) => {
+          gateway.model.api_key = "sk-raw-model-credential";
+        },
+      ],
+      [
+        "provider",
+        (gateway) => {
+          gateway.providers["nvidia-router"].api_key = "sk-raw-provider-credential";
+        },
+      ],
+      [
+        "custom provider",
+        (gateway) => {
+          gateway.custom_providers[0].api_key = "sk-raw-custom-provider-credential";
+        },
+      ],
+    ];
+    for (const [location, injectRawCredential] of cases) {
+      const gateway = structuredClone(GATEWAY_CONFIG);
+      injectRawCredential(gateway);
+      const src = writeYaml(`gw-${location}.yaml`, gateway);
+      const dst = writeYaml(`dash-${location}.yaml`, { dashboard_local: true });
+      const before = fs.readFileSync(dst, "utf8");
+
+      const result = runSeed(src, dst);
+
+      expect(result.status, location).toBe(1);
+      expect(result.stderr, location).toContain("[SECURITY]");
+      expect(result.stderr, location).not.toContain("sk-raw-");
+      expect(fs.readFileSync(dst, "utf8"), location).toBe(before);
+    }
   });
 
   it("mirrors only dashboard-needed gateway .env keys for Hermes 0.16 chat setup", () => {
@@ -493,7 +551,6 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
       [
         "API_SERVER_HOST=127.0.0.1",
         "API_SERVER_PORT=18642",
-        `API_SERVER_KEY=${GENERATED_HEX_TOKEN}`,
         `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
         "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
         "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
@@ -504,7 +561,7 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(fs.statSync(envDst).mode & 0o777).toBe(0o600);
   });
 
-  it("mirrors export-prefixed API_SERVER_KEY into the dashboard .env", () => {
+  it("keeps API_SERVER_KEY out of the dashboard .env mirror", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     const dst = path.join(tmpDir, "dash.yaml");
     const envSrc = path.join(tmpDir, "gw.env");
@@ -522,12 +579,10 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     const res = runSeed(src, dst, envSrc, envDst);
     expect(res.status).toBe(0);
 
-    expect(fs.readFileSync(envDst, "utf-8")).toBe(
-      [`export API_SERVER_KEY=${GENERATED_HEX_TOKEN}`, "API_SERVER_HOST=127.0.0.1", ""].join("\n"),
-    );
+    expect(fs.readFileSync(envDst, "utf-8")).toBe("API_SERVER_HOST=127.0.0.1\n");
   });
 
-  it("rejects weak API_SERVER_KEY values instead of mirroring them into the dashboard .env", () => {
+  it("ignores API_SERVER_KEY values instead of parsing or mirroring them", () => {
     const weakLines = [
       "API_SERVER_KEY=server-key",
       "API_SERVER_KEY='server-key'",
@@ -543,10 +598,9 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
 
       const res = runSeed(src, dst, envSrc, envDst);
 
-      expect(res.status, weakLine).toBe(1);
-      expect(res.stderr, weakLine).toContain("API_SERVER_KEY");
+      expect(res.status, weakLine).toBe(0);
       expect(res.stderr, weakLine).not.toContain("server-key");
-      expect(fs.existsSync(envDst), weakLine).toBe(false);
+      expect(fs.readFileSync(envDst, "utf-8"), weakLine).toBe("API_SERVER_HOST=127.0.0.1\n");
     }
   });
 
@@ -648,7 +702,7 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
 
     const dash = readYaml(dst);
     // Routing overwritten...
-    expect(dash.model).toEqual(GATEWAY_CONFIG.model);
+    expect(dash.model).toEqual({ ...GATEWAY_CONFIG.model, provider: "nvidia-router" });
     expect(dash.providers).toEqual(GATEWAY_CONFIG.providers);
     expect(dash.custom_providers).toEqual(GATEWAY_CONFIG.custom_providers);
     // ...dashboard-local keys preserved.
@@ -658,11 +712,12 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
       dashboard_note: "keep",
     });
     expect(dash.browser).toEqual({
+      allow_unsafe_evaluate: false,
       restrict_evaluate: true,
       headed: true,
     });
     expect(dash.session_reset).toEqual({
-      ...REVIEWED_POLICY.session_reset,
+      ...EXPECTED_DASHBOARD_POLICY.session_reset,
       dashboard_scope: "keep",
     });
     expect(dash.display).toEqual({
@@ -685,7 +740,7 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
       "unexpected session policy field",
       {
         session_reset: {
-          ...REVIEWED_POLICY.session_reset,
+          ...EXPECTED_DASHBOARD_POLICY.session_reset,
           dashboard_only: true,
         },
       },
@@ -740,7 +795,7 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
 
     expect(res.status).toBe(0);
     expect(fs.existsSync(dst)).toBe(false);
-    expect(fs.readFileSync(envDst, "utf-8")).toBe(`API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
+    expect(fs.readFileSync(envDst, "utf-8")).toBe("");
   });
 
   it("fails closed without changing stale dashboard config when gateway routing is absent", () => {
@@ -757,7 +812,7 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     const res = runSeed(src, dst);
     expect(res.status).toBe(1);
     expect(res.stderr).toContain("[SECURITY]");
-    expect(res.stderr).toContain("no model routing");
+    expect(res.stderr).toContain("invalid model routing");
     expect(fs.readFileSync(dst, "utf-8")).toBe(before);
   });
 

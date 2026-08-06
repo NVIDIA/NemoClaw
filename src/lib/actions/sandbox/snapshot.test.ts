@@ -5,295 +5,35 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import {
   type DcodeProbeState,
   dcodeProbeOutput,
   framedDcodeProbeOutput,
 } from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
-import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
+import * as f from "./snapshot-restore-test-fixture";
 
-type OpenshellCaptureResult = {
-  status: number | null;
-  output: string;
-  stdout?: string;
-  stderr?: string;
-  error?: Error;
-  signal?: NodeJS.Signals | null;
-};
-type SandboxRecord = { name: string; observabilityEnabled?: boolean } & Record<string, unknown>;
-
-function captureOpenshellStreams(
-  args: string[],
-  result: OpenshellCaptureResult,
-): OpenshellCaptureResult {
-  const command = String(args.at(-1) ?? "");
-  const marker = command.match(/printf '%s\\n' '([^']+)'/)?.[1] ?? SANDBOX_EXEC_STARTED_MARKER;
-  const replaceMarker = (value: string) => value.replaceAll(SANDBOX_EXEC_STARTED_MARKER, marker);
-  const stdout = replaceMarker(result.stdout ?? result.output);
-  const stderr = replaceMarker(result.stderr ?? "");
-  return { ...result, output: stdout, stdout, stderr };
-}
-
-function openshellResponses(
-  args: string[],
-  responses: Record<string, OpenshellCaptureResult>,
-): OpenshellCaptureResult {
-  const result = responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? {
-    status: 0,
-    output: "",
-  };
-  return captureOpenshellStreams(args, result);
-}
-
-function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
-  return openshellResponses(args, {
-    "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
-    "sandbox list": {
-      status: 0,
-      output: "alpha Ready\n",
-    },
-  });
-}
-
-const shieldsMock = vi.hoisted(() => {
-  const isShieldsDownMock = vi.fn(() => true);
-  const repairMutableConfigPermsMock = vi.fn(() => ({
-    applied: true,
-    verified: true,
-    errors: [],
-  }));
-  const shieldsUpMock = vi.fn();
-  let isShieldsDownExport: unknown = isShieldsDownMock;
-  return {
-    isShieldsDownMock,
-    repairMutableConfigPermsMock,
-    shieldsUpMock,
-    getIsShieldsDownExport: () => isShieldsDownExport,
-    setIsShieldsDownExport: (value: unknown) => {
-      isShieldsDownExport = value;
-    },
-  };
-});
-
-const lifecycleMock = vi.hoisted(() => {
-  const events: string[] = [];
-  return {
-    events,
-    cleanupShieldsDestroyArtifactsMock: vi.fn(() => events.push("cleanup-shields")),
-    readTimerMarkerMock: vi.fn(() => null as Record<string, unknown> | null),
-    withTimerBoundMock: vi.fn(
-      (_sandboxName: string, command: string, fn: () => unknown): unknown => {
-        events.push(`lock:${command}`);
-        return fn();
-      },
-    ),
-  };
-});
-
-const backupSandboxStateMock = vi.fn();
-const captureOpenshellMock = vi.fn<
-  (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
->((args) => defaultOpenshellResponses(args));
-const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
-const findBackupMock = vi.fn();
-const getAppliedPresetsMock = vi.fn(() => [] as string[]);
-const getCustomPoliciesMock = vi.fn(
-  () => [] as Array<{ name: string; content: string; sourcePath?: string }>,
-);
-const getLatestBackupMock = vi.fn(() => null as Record<string, unknown> | null);
-const applyPresetMock = vi.fn((_sandbox: string, _preset: string) => true);
-const applyPresetContentMock = vi.fn(
-  (_sandbox: string, _name: string, _content: string, _options?: unknown) => true,
-);
-const removePresetMock = vi.fn((_sandbox: string, _preset: string) => true);
-const getPresetContentGatewayStateMock = vi.fn<
-  (_sandbox: string, _content: string, _policyKey?: string) => "match" | "absent" | "drift" | null
->(() => "absent");
-const builtinObservabilityPolicy =
-  "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: host.openshell.internal\n";
-const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string) =>
-  preset === "observability-otlp-local" ? builtinObservabilityPolicy : null,
-);
-const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() => null);
-const isGatewayHealthyMock = vi.fn(() => true);
-const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
-const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
-const registerSandboxMock = vi.fn();
-const updateSandboxMock = vi.fn();
-const restoreSandboxStateMock = vi.fn();
-const runOpenshellMock = vi.fn((args: string[]) => {
-  args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
-  return { status: 0, output: "" };
-});
-const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
-  status: 0,
-  output: "",
-  sawProgress: false,
-  forcedReady: false,
-}));
 const dcodeSandboxEntry = {
   name: "alpha",
   agent: "langchain-deepagents-code",
 };
-const latestBackupFixture = {
-  timestamp: "2026-06-15T00:00:00.000Z",
-  backupPath: "/tmp/backup-alpha",
-};
 
-vi.mock("../../adapters/docker", () => ({
-  dockerCapture: vi.fn(() => ""),
-  dockerForceRm: vi.fn(),
-  dockerInspect: dockerInspectMock,
-  dockerRunDetached: vi.fn(),
-}));
-vi.mock("../../adapters/openshell/runtime", () => ({
-  captureOpenshell: captureOpenshellMock,
-  getOpenshellBinary: vi.fn(() => "openshell"),
-  runOpenshell: runOpenshellMock,
-}));
-vi.mock("../../credentials/store", () => ({
-  deleteCredential: vi.fn(),
-  getCredential: vi.fn(() => null),
-  prompt: vi.fn(),
-  saveCredential: vi.fn(),
-}));
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
-}));
-
-vi.mock("../../inference/nim", () => ({
-  stopNimContainer: vi.fn(),
-  stopNimContainerByName: vi.fn(),
-}));
-vi.mock("../../policy", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../policy")>()),
-  applyPreset: applyPresetMock,
-  applyPresetContent: applyPresetContentMock,
-  getAppliedPresets: getAppliedPresetsMock,
-  getPresetContentGatewayState: getPresetContentGatewayStateMock,
-  loadPresetForSandbox: loadPresetForSandboxMock,
-  removePreset: removePresetMock,
-  resolveAgentBaselinePolicy: resolveTestAgentBaselinePolicy,
-}));
-vi.mock("../../runner", () => ({
-  ROOT: "/repo",
-  run: vi.fn(() => ({ status: 0 })),
-  shellQuote: (value: string) => `'${value}'`,
-  validateName: vi.fn((value: string) => value),
-}));
-
-vi.mock("../../runtime-recovery", () => ({
-  parseLiveSandboxNames: parseLiveSandboxNamesMock,
-}));
-
-vi.mock("../../shields", () => ({
-  get isShieldsDown() {
-    return shieldsMock.getIsShieldsDownExport();
-  },
-  repairMutableConfigPerms: shieldsMock.repairMutableConfigPermsMock,
-  shieldsUp: shieldsMock.shieldsUpMock,
-}));
-
-vi.mock("../../shields/timer-bound-lock", () => ({
-  withTimerBoundShieldsMutationLock: lifecycleMock.withTimerBoundMock,
-}));
-
-vi.mock("../../shields/timer-control", () => ({
-  readTimerMarker: lifecycleMock.readTimerMarkerMock,
-}));
-
-vi.mock("../../sandbox/create-stream", () => ({
-  streamSandboxCreate: streamSandboxCreateMock,
-}));
-
-vi.mock("../../state/gateway", () => ({
-  isGatewayHealthy: isGatewayHealthyMock,
-  isSandboxReady: vi.fn((output: string, sandboxName: string) =>
-    output.includes(`${sandboxName} Ready`),
-  ),
-}));
-
-vi.mock("../../state/registry", () => ({
-  getBaselineExclusions: vi.fn(() => []),
-  getCustomPolicies: getCustomPoliciesMock,
-  getSandbox: getSandboxMock,
-  listSandboxes: () => ({
-    sandboxes: ["alpha", "beta", "gamma"].map((name) => getSandboxMock(name)).filter(Boolean),
-    defaultSandbox: "alpha",
-  }),
-  registerSandbox: registerSandboxMock,
-  removeSandbox: vi.fn(),
-  updateSandbox: updateSandboxMock,
-}));
-
-vi.mock("../../state/sandbox", () => ({
-  backupSandboxState: backupSandboxStateMock,
-  findBackup: findBackupMock,
-  getLatestBackup: getLatestBackupMock,
-  listBackups: listBackupsMock,
-  restoreSandboxState: restoreSandboxStateMock,
-}));
-vi.mock("./restore-gateway-pairing", () => ({
-  establishRestoredSandboxGatewayPairing: vi.fn(),
-  waitForRestoredSandboxGatewaySupervisor: vi.fn(() => true),
-}));
-
-vi.mock("./destroy", () => ({
-  cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
-  removeSandboxRegistryEntry: vi.fn(),
-  removeSandboxRegistryEntryOutcome: vi.fn(() => ({ status: "complete", removed: true })),
-  requireSandboxDestructiveCleanupAuthority: vi.fn(),
-}));
 describe("runSandboxSnapshot", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
-    shieldsMock.isShieldsDownMock.mockReturnValue(true);
-    shieldsMock.shieldsUpMock.mockImplementation(() => lifecycleMock.events.push("harden"));
-    lifecycleMock.events.length = 0;
-    lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
-    captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
-    dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
-    findBackupMock.mockReturnValue({ match: null });
-    getAppliedPresetsMock.mockReturnValue([]);
-    getCustomPoliciesMock.mockReturnValue([]);
-    getLatestBackupMock.mockReturnValue(null);
-    applyPresetMock.mockReturnValue(true);
-    applyPresetContentMock.mockReturnValue(true);
-    removePresetMock.mockReturnValue(true);
-    getPresetContentGatewayStateMock.mockReturnValue("absent");
-    loadPresetForSandboxMock.mockImplementation((_sandbox, preset) =>
-      preset === "observability-otlp-local" ? builtinObservabilityPolicy : null,
-    );
-    getSandboxMock.mockReturnValue(null);
-    isGatewayHealthyMock.mockReturnValue(true);
-    listBackupsMock.mockReturnValue([]);
-    registerSandboxMock.mockReset();
-    updateSandboxMock.mockReset();
-    restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: [],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.resetSnapshotRestoreMocks();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
+    f.cleanupSnapshotRestoreMocks();
   });
 
   function mockDcodeProbe(state: DcodeProbeState, output = "") {
     mockDcodeProbeResult({ status: 0, output: dcodeProbeOutput(state, output) });
   }
 
-  function mockDcodeProbeResult(result: OpenshellCaptureResult) {
-    captureOpenshellMock.mockImplementation((args: string[]) => {
-      return openshellResponses(args, {
+  function mockDcodeProbeResult(result: f.OpenshellCaptureResult) {
+    f.captureOpenshellMock.mockImplementation((args: string[]) => {
+      return f.openshellResponses(args, {
         "sandbox exec": result,
         "sandbox list": {
           status: 0,
@@ -305,7 +45,7 @@ describe("runSandboxSnapshot", () => {
 
   function capturedDcodeProbeScript(): string {
     const execArgs =
-      captureOpenshellMock.mock.calls
+      f.captureOpenshellMock.mock.calls
         .map(([args]) => args)
         .find((args) => args[0] === "sandbox" && args[1] === "exec") ?? [];
     return String(execArgs.at(-1) ?? "");
@@ -337,7 +77,7 @@ describe("runSandboxSnapshot", () => {
   }
 
   it("refuses snapshot creation before backup when the shields gate helper is unavailable", async () => {
-    shieldsMock.setIsShieldsDownExport(undefined);
+    f.shieldsMock.setIsShieldsDownExport(undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -345,7 +85,7 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify shields state. Refusing to create snapshot.",
     );
@@ -358,7 +98,7 @@ describe("runSandboxSnapshot", () => {
       backupPath: "/tmp/backup-alpha",
       name: "before-upgrade",
     };
-    backupSandboxStateMock.mockReturnValue({
+    f.backupSandboxStateMock.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
       backedUpFiles: ["openclaw.json"],
@@ -366,7 +106,7 @@ describe("runSandboxSnapshot", () => {
       failedFiles: [],
       manifest,
     });
-    findBackupMock.mockReturnValue({
+    f.findBackupMock.mockReturnValue({
       match: { ...manifest, snapshotVersion: 7, name: "before-upgrade" },
     });
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -376,10 +116,10 @@ describe("runSandboxSnapshot", () => {
       name: "before-upgrade",
     });
 
-    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
       name: "before-upgrade",
     });
-    expect(findBackupMock).toHaveBeenCalledWith("alpha", manifest.timestamp);
+    expect(f.findBackupMock).toHaveBeenCalledWith("alpha", manifest.timestamp);
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("Creating snapshot of 'alpha' (--name before-upgrade)");
     expect(output).toContain("Snapshot v7 name=before-upgrade created");
@@ -387,7 +127,7 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("refuses snapshot creation before backup when a dcode task is active", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbe("active", "123 python3 -m deepagents_code -n write a script\n");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -396,9 +136,9 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(
-      captureOpenshellMock.mock.calls.some(
+      f.captureOpenshellMock.mock.calls.some(
         ([args]) =>
           args[0] === "sandbox" &&
           args[1] === "exec" &&
@@ -420,14 +160,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Sandbox is actively running a dcode task. Please retry after the task completes.",
     );
   });
 
   it("allows dcode snapshot creation when the process probe finds no active task", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbe("idle");
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
@@ -435,7 +175,7 @@ describe("runSandboxSnapshot", () => {
       backupPath: "/tmp/backup-alpha",
       name: "idle",
     };
-    backupSandboxStateMock.mockReturnValue({
+    f.backupSandboxStateMock.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
       backedUpFiles: ["config.toml"],
@@ -443,21 +183,21 @@ describe("runSandboxSnapshot", () => {
       failedFiles: [],
       manifest,
     });
-    findBackupMock.mockReturnValue({
+    f.findBackupMock.mockReturnValue({
       match: { ...manifest, snapshotVersion: 8, name: "idle" },
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "create", name: "idle" });
 
-    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
       name: "idle",
     });
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v8 name=idle created");
   });
 
   it("allows dcode snapshot creation when OpenShell frames the probe stdout", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({ status: 0, output: framedDcodeProbeOutput("idle") });
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
@@ -465,7 +205,7 @@ describe("runSandboxSnapshot", () => {
       backupPath: "/tmp/backup-alpha",
       name: "framed-idle",
     };
-    backupSandboxStateMock.mockReturnValue({
+    f.backupSandboxStateMock.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
       backedUpFiles: ["config.toml"],
@@ -473,18 +213,18 @@ describe("runSandboxSnapshot", () => {
       failedFiles: [],
       manifest,
     });
-    findBackupMock.mockReturnValue({
+    f.findBackupMock.mockReturnValue({
       match: { ...manifest, snapshotVersion: 9, name: "framed-idle" },
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "create", name: "framed-idle" });
 
-    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", { name: "framed-idle" });
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", { name: "framed-idle" });
     expect(consoleLog.mock.calls.flat().join("\n")).toContain(
       "Snapshot v9 name=framed-idle created",
     );
-    const execCall = captureOpenshellMock.mock.calls.find(
+    const execCall = f.captureOpenshellMock.mock.calls.find(
       ([args]) => args[0] === "sandbox" && args[1] === "exec",
     );
     expect(execCall?.[1]).toMatchObject({ ignoreError: true, includeStreams: true });
@@ -496,7 +236,7 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("refuses an active dcode task when OpenShell frames the probe stdout", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({ status: 0, output: framedDcodeProbeOutput("active", "[stdout] ") });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -505,14 +245,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Sandbox is actively running a dcode task. Please retry after the task completes.",
     );
   });
 
   it("refuses a probe that repeats its marker after an active state", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({
       status: 0,
       output: [
@@ -529,14 +269,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
     );
   });
 
   it("refuses conflicting probe states after one valid marker", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({
       status: 0,
       output: [
@@ -552,14 +292,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
     );
   });
 
   it("refuses conflicting probe markers split across stdout and stderr", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({
       status: 0,
       output: "",
@@ -573,14 +313,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
     );
   });
 
   it("refuses an idle dcode snapshot when the exec wrapper reports a non-zero status", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({ status: 1, output: dcodeProbeOutput("idle") });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -589,14 +329,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
     );
   });
 
   it("refuses registered dcode snapshots when raw status 1 has no idle sentinel", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({ status: 1, output: "exec failed" });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -605,14 +345,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
     );
   });
 
   it("refuses registered dcode snapshots when the probe times out", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({
       status: null,
       output: "",
@@ -626,14 +366,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
     );
   });
 
   it("refuses dcode snapshot creation before backup when task state cannot be verified", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    f.getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbe("unverifiable", "ps: command failed\n");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -642,7 +382,7 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
     );
@@ -657,21 +397,21 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
     );
   });
 
   it("keeps registered non-dcode snapshots on the existing path when the dcode probe fails", async () => {
-    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
     mockDcodeProbeResult({ status: 1, output: "exec unsupported" });
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     };
-    backupSandboxStateMock.mockReturnValue({
+    f.backupSandboxStateMock.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
       backedUpFiles: ["openclaw.json"],
@@ -679,7 +419,7 @@ describe("runSandboxSnapshot", () => {
       failedFiles: [],
       manifest,
     });
-    findBackupMock.mockReturnValue({
+    f.findBackupMock.mockReturnValue({
       match: { ...manifest, snapshotVersion: 3 },
     });
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -687,9 +427,11 @@ describe("runSandboxSnapshot", () => {
     await runSandboxSnapshot("alpha", { kind: "create" });
 
     expect(
-      captureOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "exec"),
+      f.captureOpenshellMock.mock.calls.some(
+        ([args]) => args[0] === "sandbox" && args[1] === "exec",
+      ),
     ).toBe(false);
-    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
       name: null,
     });
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
@@ -702,7 +444,7 @@ describe("runSandboxSnapshot", () => {
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     };
-    backupSandboxStateMock.mockReturnValue({
+    f.backupSandboxStateMock.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
       backedUpFiles: ["openclaw.json"],
@@ -710,7 +452,7 @@ describe("runSandboxSnapshot", () => {
       failedFiles: [],
       manifest,
     });
-    findBackupMock.mockReturnValue({
+    f.findBackupMock.mockReturnValue({
       match: { ...manifest, snapshotVersion: 3 },
     });
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -753,7 +495,7 @@ describe("runSandboxSnapshot", () => {
 
   it("renders a stable snapshot list with versions, names, timestamps, and paths", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    listBackupsMock.mockReturnValue([
+    f.listBackupsMock.mockReturnValue([
       {
         snapshotVersion: 1,
         name: "initial",
@@ -794,13 +536,13 @@ describe("runSandboxSnapshot", () => {
 
   it("restores the latest snapshot into the source sandbox", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    getLatestBackupMock.mockReturnValue({
+    f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     });
-    restoreSandboxStateMock.mockReturnValue({
+    f.restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: ["workspace"],
       restoredFiles: ["user.md"],
@@ -811,7 +553,7 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
@@ -819,19 +561,19 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("keeps active-timer restore, permission repair, and policy reconciliation serialized", async () => {
-    lifecycleMock.readTimerMarkerMock.mockReturnValue({
+    f.lifecycleMock.readTimerMarkerMock.mockReturnValue({
       pid: 4242,
       sandboxName: "alpha",
       snapshotPath: "/tmp/policy.yaml",
       restoreAt: "2026-06-27T06:00:00.000Z",
       processToken: "a".repeat(32),
     });
-    getLatestBackupMock.mockReturnValue({
+    f.getLatestBackupMock.mockReturnValue({
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
       policyPresets: ["github"],
     });
-    restoreSandboxStateMock.mockReturnValue({
+    f.restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: ["workspace"],
       restoredFiles: ["openclaw.json"],
@@ -842,21 +584,21 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(lifecycleMock.events).toContain("lock:restore sandbox snapshot");
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    expect(shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
+    expect(f.lifecycleMock.events).toContain("lock:restore sandbox snapshot");
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(f.shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
+    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
   });
 
   it("hardens an active timer window before force-deleting a restore destination", async () => {
-    lifecycleMock.readTimerMarkerMock.mockReturnValue({
+    f.lifecycleMock.readTimerMarkerMock.mockReturnValue({
       pid: 4242,
       sandboxName: "beta",
       snapshotPath: "/tmp/policy.yaml",
       restoreAt: "2026-06-27T06:00:00.000Z",
       processToken: "b".repeat(32),
     });
-    getSandboxMock.mockImplementation((name) =>
+    f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
             name: "alpha",
@@ -875,15 +617,15 @@ describe("runSandboxSnapshot", () => {
             model: "nvidia/model-a",
           },
     );
-    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    captureOpenshellMock.mockImplementation((args) =>
-      openshellResponses(args, {
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
         "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
-    restoreSandboxStateMock.mockReturnValue({
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: ["workspace"],
       restoredFiles: ["user.md"],
@@ -899,23 +641,26 @@ describe("runSandboxSnapshot", () => {
       yes: true,
     });
 
-    expect(shieldsMock.shieldsUpMock).toHaveBeenCalledWith("beta", {
+    expect(f.shieldsMock.shieldsUpMock).toHaveBeenCalledWith("beta", {
       throwOnError: true,
       allowLegacyHermesProtocol: true,
     });
-    expect(lifecycleMock.events.indexOf("harden")).toBeLessThan(
-      lifecycleMock.events.indexOf("delete"),
+    expect(f.lifecycleMock.events).toEqual(
+      expect.arrayContaining(["harden", "delete", "cleanup-shields"]),
     );
-    expect(lifecycleMock.events.indexOf("delete")).toBeLessThan(
-      lifecycleMock.events.indexOf("cleanup-shields"),
+    expect(f.lifecycleMock.events.indexOf("harden")).toBeLessThan(
+      f.lifecycleMock.events.indexOf("delete"),
     );
-    expect(streamSandboxCreateMock).toHaveBeenCalled();
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+    expect(f.lifecycleMock.events.indexOf("delete")).toBeLessThan(
+      f.lifecycleMock.events.indexOf("cleanup-shields"),
+    );
+    expect(f.streamSandboxCreateMock).toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
 
   it("blocks auto-create before deleting a destination when a gateway peer conflicts", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    getSandboxMock.mockImplementation((name) => ({
+    f.getSandboxMock.mockImplementation((name) => ({
       name: name ?? "alpha",
       agent: "openclaw",
       gatewayName: "nemoclaw",
@@ -924,14 +669,14 @@ describe("runSandboxSnapshot", () => {
       provider: name === "gamma" ? "anthropic-prod" : "nvidia-nim",
       model: name === "gamma" ? "claude-new" : "nvidia/model-a",
     }));
-    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    captureOpenshellMock.mockImplementation((args) =>
-      openshellResponses(args, {
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
         "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await expect(
@@ -944,9 +689,9 @@ describe("runSandboxSnapshot", () => {
     ).rejects.toMatchObject({ exitCode: 1 });
 
     expect(consoleError.mock.calls.flat().join("\n")).toContain("gamma");
-    expect(lifecycleMock.events).not.toContain("delete");
-    expect(streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -956,10 +701,12 @@ describe("runSandboxSnapshot", () => {
     enabled,
     expectedValue,
   }) => {
-    let registeredClone: SandboxRecord | null = null;
-    registerSandboxMock.mockImplementation((entry) => (registeredClone = entry as SandboxRecord));
+    let registeredClone: f.SandboxRecord | null = null;
+    f.registerSandboxMock.mockImplementation(
+      (entry) => (registeredClone = entry as f.SandboxRecord),
+    );
     vi.stubEnv("NEMOCLAW_OBSERVABILITY", "1");
-    getSandboxMock.mockImplementation((name) =>
+    f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
             name: "alpha",
@@ -972,136 +719,136 @@ describe("runSandboxSnapshot", () => {
           }
         : registeredClone,
     );
-    captureOpenshellMock.mockImplementation((args) =>
-      openshellResponses(args, {
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
         "sandbox exec": { status: 0, output: dcodeProbeOutput("idle") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
-    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    const createCall = streamSandboxCreateMock.mock.calls[0] ?? [];
+    const createCall = f.streamSandboxCreateMock.mock.calls[0] ?? [];
     const createArgs = createCall[1] as readonly string[];
     const createEnv = createCall[2] as NodeJS.ProcessEnv | undefined;
     expect(createCall[0]).toBe("openshell");
     expect(createArgs).toContain(`NEMOCLAW_OBSERVABILITY=${expectedValue}`);
     expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
-    expect(registerSandboxMock).toHaveBeenCalledWith(
+    expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "beta",
         observabilityEnabled: enabled,
       }),
     );
-    expect(applyPresetMock).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    expect(f.applyPresetMock).toHaveBeenCalledTimes(enabled ? 1 : 0);
   });
 
   it.each([
     { label: "recorded", policyPresets: ["npm"] },
     { label: "legacy", policyPresets: undefined },
   ])("adds built-in OTLP egress for a $label snapshot", async ({ policyPresets }) => {
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: true,
       policyTier: "balanced",
     } as never);
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets });
-    getAppliedPresetsMock.mockReturnValue(["npm"]);
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture, policyPresets });
+    f.getAppliedPresetsMock.mockReturnValue(["npm"]);
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
       nonFatal: true,
     });
-    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(f.removePresetMock).not.toHaveBeenCalled();
   });
 
   it("removes historical built-in OTLP egress when observability was disabled after the snapshot", async () => {
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: false,
       policyTier: "balanced",
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      ...latestBackupFixture,
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
       policyPresets: ["npm", "observability-otlp-local"],
     });
-    getAppliedPresetsMock.mockReturnValue(["npm", "observability-otlp-local"]);
-    getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
+    f.getAppliedPresetsMock.mockReturnValue(["npm", "observability-otlp-local"]);
+    f.getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
       nonFatal: true,
     });
-    expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
   });
 
   it("removes an exact unrecorded built-in OTLP policy when observability is disabled", async () => {
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: false,
       policyTier: "balanced",
       policies: [],
     } as never);
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
-    getAppliedPresetsMock.mockReturnValue([]);
-    getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture, policyPresets: [] });
+    f.getAppliedPresetsMock.mockReturnValue([]);
+    f.getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(getPresetContentGatewayStateMock).toHaveBeenCalledWith(
+    expect(f.getPresetContentGatewayStateMock).toHaveBeenCalledWith(
       "alpha",
-      builtinObservabilityPolicy,
+      f.builtinObservabilityPolicy,
     );
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
       nonFatal: true,
     });
-    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(f.updateSandboxMock).not.toHaveBeenCalled();
   });
 
   it.each([
     {
       label: "returns false",
-      configureRemoval: () => removePresetMock.mockReturnValue(false),
+      configureRemoval: () => f.removePresetMock.mockReturnValue(false),
     },
     {
       label: "throws",
       configureRemoval: () =>
-        removePresetMock.mockImplementation(() => {
+        f.removePresetMock.mockImplementation(() => {
           throw new Error("remove exploded");
         }),
     },
     {
       label: "claims success without removing",
-      configureRemoval: () => removePresetMock.mockReturnValue(true),
+      configureRemoval: () => f.removePresetMock.mockReturnValue(true),
     },
   ])("retains built-in OTLP attribution when removal $label", async ({ configureRemoval }) => {
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: false,
       policyTier: "balanced",
       policies: [],
     } as never);
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
-    getAppliedPresetsMock.mockReturnValue([]);
-    getPresetContentGatewayStateMock.mockReturnValue("match");
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture, policyPresets: [] });
+    f.getAppliedPresetsMock.mockReturnValue([]);
+    f.getPresetContentGatewayStateMock.mockReturnValue("match");
     configureRemoval();
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
       nonFatal: true,
     });
-    expect(updateSandboxMock).toHaveBeenCalledWith("alpha", {
+    expect(f.updateSandboxMock).toHaveBeenCalledWith("alpha", {
       policies: ["observability-otlp-local"],
     });
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
@@ -1117,14 +864,14 @@ describe("runSandboxSnapshot", () => {
       policyTier: "balanced",
       policies: ["github", "observability-otlp-local"],
     };
-    getSandboxMock.mockImplementation(() => registryEntry as never);
-    updateSandboxMock.mockImplementation((_sandboxName, update) => {
+    f.getSandboxMock.mockImplementation(() => registryEntry as never);
+    f.updateSandboxMock.mockImplementation((_sandboxName, update) => {
       registryEntry = { ...registryEntry, ...(update as Partial<typeof registryEntry>) };
     });
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
-    getAppliedPresetsMock.mockReturnValue(["github", "observability-otlp-local"]);
-    getPresetContentGatewayStateMock.mockReturnValue("match");
-    removePresetMock
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture, policyPresets: [] });
+    f.getAppliedPresetsMock.mockReturnValue(["github", "observability-otlp-local"]);
+    f.getPresetContentGatewayStateMock.mockReturnValue("match");
+    f.removePresetMock
       .mockImplementationOnce((_sandboxName, presetName) => {
         expect(presetName).toBe("github");
         registryEntry = {
@@ -1139,11 +886,11 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(removePresetMock.mock.calls.map((call) => call[1])).toEqual([
+    expect(f.removePresetMock.mock.calls.map((call) => call[1])).toEqual([
       "github",
       "observability-otlp-local",
     ]);
-    expect(updateSandboxMock).toHaveBeenLastCalledWith("alpha", {
+    expect(f.updateSandboxMock).toHaveBeenLastCalledWith("alpha", {
       policies: ["observability-otlp-local"],
     });
     expect(registryEntry.policies).toEqual(["observability-otlp-local"]);
@@ -1170,26 +917,26 @@ describe("runSandboxSnapshot", () => {
     policies: recordedPolicies,
     expectedPolicies,
   }) => {
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled,
       policyTier: "balanced",
       policies: recordedPolicies,
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      ...latestBackupFixture,
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
       policyPresets: ["npm"],
     });
-    getAppliedPresetsMock.mockReturnValue(recordedPolicies);
-    getPresetContentGatewayStateMock.mockReturnValue(liveState);
+    f.getAppliedPresetsMock.mockReturnValue(recordedPolicies);
+    f.getPresetContentGatewayStateMock.mockReturnValue(liveState);
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(updateSandboxMock).toHaveBeenCalledWith("alpha", { policies: expectedPolicies });
-    expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
-    expect(removePresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.updateSandboxMock).toHaveBeenCalledWith("alpha", { policies: expectedPolicies });
+    expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.removePresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
   });
 
   it("does not let a same-name, different-key custom replay suppress stale built-in OTLP cleanup", async () => {
@@ -1198,36 +945,36 @@ describe("runSandboxSnapshot", () => {
       content: "network_policies:\n  operator-collector: {}\n",
       sourcePath: "/policies/operator-collector.yaml",
     };
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: false,
       policyTier: "balanced",
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      ...latestBackupFixture,
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
       policyPresets: [customPolicy.name],
       customPolicies: [customPolicy],
     });
-    getCustomPoliciesMock.mockReturnValueOnce([]).mockReturnValue([customPolicy]);
-    getAppliedPresetsMock.mockReturnValue(["observability-otlp-local"]);
-    getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
+    f.getCustomPoliciesMock.mockReturnValueOnce([]).mockReturnValue([customPolicy]);
+    f.getAppliedPresetsMock.mockReturnValue(["observability-otlp-local"]);
+    f.getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(applyPresetContentMock).toHaveBeenCalledWith(
+    expect(f.applyPresetContentMock).toHaveBeenCalledWith(
       "alpha",
       customPolicy.name,
       customPolicy.content,
       { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
-    expect(removePresetMock).toHaveBeenCalledTimes(1);
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+    expect(f.removePresetMock).toHaveBeenCalledTimes(1);
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
       nonFatal: true,
     });
-    expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", customPolicy.name);
-    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", customPolicy.name);
+    expect(f.updateSandboxMock).not.toHaveBeenCalled();
   });
 
   it("lets successfully replayed corp-otel content own its exact live OTLP key", async () => {
@@ -1237,39 +984,39 @@ describe("runSandboxSnapshot", () => {
         "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: collector.corp.example\n",
       sourcePath: "/policies/corp-otel.yaml",
     };
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: false,
       policyTier: "balanced",
       policies: ["npm", "observability-otlp-local"],
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      ...latestBackupFixture,
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
       policyPresets: ["npm", "observability-otlp-local"],
       customPolicies: [customPolicy],
     });
-    getCustomPoliciesMock.mockReturnValueOnce([]).mockReturnValue([customPolicy]);
-    getAppliedPresetsMock.mockReturnValue(["npm", "corp-otel", "observability-otlp-local"]);
-    getPresetContentGatewayStateMock.mockImplementation((_sandbox, content) =>
+    f.getCustomPoliciesMock.mockReturnValueOnce([]).mockReturnValue([customPolicy]);
+    f.getAppliedPresetsMock.mockReturnValue(["npm", "corp-otel", "observability-otlp-local"]);
+    f.getPresetContentGatewayStateMock.mockImplementation((_sandbox, content) =>
       content === customPolicy.content ? "match" : "drift",
     );
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(applyPresetContentMock).toHaveBeenCalledWith(
+    expect(f.applyPresetContentMock).toHaveBeenCalledWith(
       "alpha",
       customPolicy.name,
       customPolicy.content,
       { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
-    expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
-    expect(removePresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
-    expect(removePresetMock).not.toHaveBeenCalledWith("alpha", customPolicy.name);
-    expect(updateSandboxMock).toHaveBeenCalledWith("alpha", { policies: ["npm"] });
-    expect(getPresetContentGatewayStateMock).toHaveBeenCalledTimes(1);
-    expect(getPresetContentGatewayStateMock.mock.calls[0]?.[1]).toBe(customPolicy.content);
-    expect(getPresetContentGatewayStateMock.mock.calls[0]?.[2]).toBe("observability-otlp-local");
+    expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.removePresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.removePresetMock).not.toHaveBeenCalledWith("alpha", customPolicy.name);
+    expect(f.updateSandboxMock).toHaveBeenCalledWith("alpha", { policies: ["npm"] });
+    expect(f.getPresetContentGatewayStateMock).toHaveBeenCalledTimes(1);
+    expect(f.getPresetContentGatewayStateMock.mock.calls[0]?.[1]).toBe(customPolicy.content);
+    expect(f.getPresetContentGatewayStateMock.mock.calls[0]?.[2]).toBe("observability-otlp-local");
   });
 
   it("does not let a failed corp-otel replay suppress stale built-in OTLP cleanup", async () => {
@@ -1279,35 +1026,35 @@ describe("runSandboxSnapshot", () => {
         "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: collector.corp.example\n",
       sourcePath: "/policies/corp-otel.yaml",
     };
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: false,
       policyTier: "balanced",
       policies: ["npm", "observability-otlp-local"],
     } as never);
-    getLatestBackupMock.mockReturnValue({
+    f.getLatestBackupMock.mockReturnValue({
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
       policyPresets: ["npm", "observability-otlp-local"],
       customPolicies: [customPolicy],
     });
-    getAppliedPresetsMock.mockReturnValue(["npm", "observability-otlp-local"]);
-    applyPresetContentMock.mockReturnValue(false);
-    getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
+    f.getAppliedPresetsMock.mockReturnValue(["npm", "observability-otlp-local"]);
+    f.applyPresetContentMock.mockReturnValue(false);
+    f.getPresetContentGatewayStateMock.mockReturnValueOnce("match").mockReturnValueOnce("absent");
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain("corp-otel (apply failed)");
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
       nonFatal: true,
     });
-    expect(getPresetContentGatewayStateMock).toHaveBeenCalledTimes(2);
-    expect(getPresetContentGatewayStateMock).toHaveBeenCalledWith(
+    expect(f.getPresetContentGatewayStateMock).toHaveBeenCalledTimes(2);
+    expect(f.getPresetContentGatewayStateMock).toHaveBeenCalledWith(
       "alpha",
-      builtinObservabilityPolicy,
+      f.builtinObservabilityPolicy,
     );
   });
 
@@ -1317,29 +1064,29 @@ describe("runSandboxSnapshot", () => {
       content: "network_policies:\n  observability-otlp-local: {}\n",
       sourcePath: "/policies/old-collector.yaml",
     };
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: true,
       policyTier: "balanced",
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      ...latestBackupFixture,
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
       policyPresets: [],
       customPolicies: [],
     });
-    getCustomPoliciesMock.mockReturnValue([currentCustomPolicy]);
-    removePresetMock.mockReturnValue(false);
-    getPresetContentGatewayStateMock.mockImplementation((_sandbox, content) =>
+    f.getCustomPoliciesMock.mockReturnValue([currentCustomPolicy]);
+    f.removePresetMock.mockReturnValue(false);
+    f.getPresetContentGatewayStateMock.mockImplementation((_sandbox, content) =>
       content === currentCustomPolicy.content ? null : "absent",
     );
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name, {
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name, {
       nonFatal: true,
     });
-    expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
       "leaving live policy presets unchanged",
     );
@@ -1348,46 +1095,46 @@ describe("runSandboxSnapshot", () => {
     "drift",
     null,
   ] as const)("does not remove built-in OTLP when its exact live content state is %s", async (gatewayState) => {
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: false,
       policyTier: "balanced",
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      ...latestBackupFixture,
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
       policyPresets: ["observability-otlp-local"],
     });
-    getAppliedPresetsMock.mockReturnValue(["observability-otlp-local"]);
-    getPresetContentGatewayStateMock.mockReturnValue(gatewayState);
+    f.getAppliedPresetsMock.mockReturnValue(["observability-otlp-local"]);
+    f.getPresetContentGatewayStateMock.mockReturnValue(gatewayState);
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(f.removePresetMock).not.toHaveBeenCalled();
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
       "leaving its live policy content unchanged",
     );
   });
 
   it("normalizes a legacy restricted tier before deciding built-in OTLP egress", async () => {
-    getSandboxMock.mockReturnValue({
+    f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
       observabilityEnabled: true,
       policyTier: " Restricted ",
     } as never);
-    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture, policyPresets: [] });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
   });
 
   it("refuses snapshot creation before backup when the sandbox is not live", async () => {
-    parseLiveSandboxNamesMock.mockReturnValue(new Set(["beta"]));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["beta"]));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -1395,14 +1142,14 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Sandbox 'alpha' is not running. Cannot create snapshot.",
     );
   });
 
   it("prints backup error details when snapshot creation fails with an error", async () => {
-    backupSandboxStateMock.mockReturnValue({
+    f.backupSandboxStateMock.mockReturnValue({
       success: false,
       error: "tar exploded",
       failedDirs: [],
@@ -1415,7 +1162,7 @@ describe("runSandboxSnapshot", () => {
       exitCode: 1,
     });
 
-    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
       name: null,
     });
     expect(consoleError.mock.calls.flat().join("\n")).toContain("tar exploded");
@@ -1424,7 +1171,7 @@ describe("runSandboxSnapshot", () => {
   it("reconciles snapshot policies after restore and warns without failing on repair misses", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    getLatestBackupMock.mockReturnValue({
+    f.getLatestBackupMock.mockReturnValue({
       backupPath: "/tmp/alpha/v2",
       timestamp: "2026-06-02T00:00:00.000Z",
       policyPresets: ["npm", "github"],
@@ -1436,15 +1183,15 @@ describe("runSandboxSnapshot", () => {
         },
       ],
     });
-    restoreSandboxStateMock.mockReturnValue({
+    f.restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: ["workspace"],
       restoredFiles: ["openclaw.json"],
       failedDirs: [],
       failedFiles: [],
     });
-    getAppliedPresetsMock.mockReturnValue(["npm", "team-egress", "old-preset"]);
-    getCustomPoliciesMock.mockReturnValue([
+    f.getAppliedPresetsMock.mockReturnValue(["npm", "team-egress", "old-preset"]);
+    f.getCustomPoliciesMock.mockReturnValue([
       {
         name: "team-egress",
         content: "network_policies:\n  team-egress: {}\n",
@@ -1452,17 +1199,17 @@ describe("runSandboxSnapshot", () => {
       },
       { name: "old-custom", content: "network_policies:\n  old: {}\n", sourcePath: "/old.yaml" },
     ]);
-    removePresetMock.mockImplementation((_sandbox, preset) => preset !== "old-custom");
+    f.removePresetMock.mockImplementation((_sandbox, preset) => preset !== "old-custom");
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-preset", { nonFatal: true });
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-custom", { nonFatal: true });
-    expect(removePresetMock).not.toHaveBeenCalledWith("alpha", "team-egress");
-    expect(applyPresetContentMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "old-preset", { nonFatal: true });
+    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "old-custom", { nonFatal: true });
+    expect(f.removePresetMock).not.toHaveBeenCalledWith("alpha", "team-egress");
+    expect(f.applyPresetContentMock).not.toHaveBeenCalled();
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("✓ Restored 1 directories, 1 files");
     expect(output).toContain(

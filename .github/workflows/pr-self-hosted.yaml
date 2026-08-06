@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   get-pr-info:
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     outputs:
       pr-info: ${{ steps.get-pr-info.outputs.pr-info }}
     steps:

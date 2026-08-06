@@ -559,6 +559,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       "patch-hermes-discord-recovery-permissions.py",
     );
     const profilePolicyPatcher = path.join(localLib, "patch-hermes-profile-policy-defaults.py");
+    const managedPolicyReader = path.join(localLib, "managed_policy.py");
     const langfuseCredentialPatcher = path.join(localLib, "patch-hermes-langfuse-credentials.mts");
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
@@ -594,6 +595,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
       fs.writeFileSync(discordRecoveryPatcher, "# Discord recovery patcher fixture\n");
       fs.writeFileSync(profilePolicyPatcher, "# profile policy patcher fixture\n");
+      fs.writeFileSync(managedPolicyReader, "# managed policy reader fixture\n");
       fs.writeFileSync(langfuseCredentialPatcher, "# Langfuse credential patcher fixture\n");
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
@@ -644,6 +646,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
           profilePolicyPatcher,
         )
+        .replaceAll("/usr/local/lib/nemoclaw/managed_policy.py", managedPolicyReader)
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
           langfuseCredentialPatcher,

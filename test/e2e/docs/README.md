@@ -283,14 +283,25 @@ test/e2e/
   used by PR Review Advisor. It maps changed runtime surfaces to invariant
   families and canonical `e2e.yaml` jobs; it does not dispatch E2E.
 
-- `.github/workflows/e2e.yaml` runs the default suite on every push to `main`.
+- `.github/workflows/e2e.yaml` selects every workflow E2E on each push to `main`.
+  A selected job can remain queued until its configured runner is available.
+  The workflow inventory rejects any job excluded from `main`. Runner, credential, evidence,
+  and cleanup requirements remain job-specific.
   A maintainer can also dispatch the trusted `main` workflow against the exact
   head of an open internal or fork PR. The manual path validates the actor, PR
   number, head repository, head SHA, base SHA, workflow SHA, review reason, and
-  selected mode before candidate checkout. Empty `jobs` and `targets` run the
-  default suite. The only accepted nonempty `jobs` value is
-  `managed-image-protected-runtime`; `targets` must remain empty. Refer to
-  [NemoClaw E2E CI](../README.md).
+  selected mode before candidate checkout. For a PR revision run, leave `jobs` and
+  `targets` empty. The run selects every free-standing workflow E2E except `Exact
+  staging Brev Launchable`. It also selects all shared credential-free tests and
+  these controller-selected registry targets:
+  `ubuntu-policy-custom-missing-presets-negative`,
+  `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
+  `ubuntu-repo-docker-post-reboot-recovery`. If GitHub pauses
+  `llama-cpp-dgx-spark-qualification` for the
+  `approve-dgx-spark-image-qualification` environment, an authorized environment
+  reviewer must approve it before qualification starts. The only accepted nonempty
+  `jobs` value is `managed-image-protected-runtime`; `targets` must remain empty.
+  Refer to [NemoClaw E2E CI](../README.md).
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with

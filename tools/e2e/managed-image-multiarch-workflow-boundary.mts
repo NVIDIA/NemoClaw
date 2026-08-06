@@ -29,7 +29,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
 const PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime";
-const SELECTOR = `\${{ contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') || contains(format(',{0},', inputs.jobs), ',${PROTECTED_RUNTIME_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${PROTECTED_RUNTIME_JOB_ID},') }}`;
+const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') || contains(format(',{0},', inputs.jobs), ',${PROTECTED_RUNTIME_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${PROTECTED_RUNTIME_JOB_ID},')) }}`;
 const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
@@ -108,7 +108,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   }
 
   if (job.needs !== "generate-matrix") errors.push(`${JOB_ID} must depend on generate-matrix`);
-  if (job.if !== SELECTOR) errors.push(`${JOB_ID} must remain explicit-only and selector-bound`);
+  if (job.if !== SELECTOR)
+    errors.push(`${JOB_ID} must run on main pushes and retain manual selectors`);
   if (job["runs-on"] !== "${{ matrix.runner }}") {
     errors.push(`${JOB_ID} must run on the native matrix runner`);
   }
@@ -144,16 +145,16 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireValues(errors, `${JOB_ID} env`, record(job.env), {
     E2E_ARTIFACT_DIR:
       "${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}",
-    E2E_DEFAULT_ENABLED: "0",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
     NEMOCLAW_E2E_SHARD: "${{ matrix.shard }}",
-    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA:
+      "${{ inputs.base_sha || github.event.before || github.sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
       "${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
-      "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}",
+      "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:
       "protected-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT:
@@ -161,7 +162,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE:
       "${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/evidence.json",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: "${{ matrix.platform }}",
-    NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA:
+      "${{ inputs.workflow_sha || github.workflow_sha }}",
     NEMOCLAW_PROTECTED_REGISTRY_NAME:
       "nemoclaw-managed-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
@@ -170,10 +172,10 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   const steps = workflowSteps(job.steps);
   const guard = requireStep(errors, steps, "Validate protected exact-head dispatch");
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
-    BASE_SHA: "${{ inputs.base_sha }}",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     EVENT_NAME: "${{ github.event_name }}",
-    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha || github.workflow_sha }}",
     PLATFORM: "${{ matrix.platform }}",
     REF: "${{ github.ref }}",
     REPOSITORY: "${{ github.repository }}",
@@ -183,6 +185,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireFragments(errors, guard, [
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
+    '"push"',
     '"workflow_dispatch"',
     '[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
