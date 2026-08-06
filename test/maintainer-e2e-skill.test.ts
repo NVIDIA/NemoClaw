@@ -19,7 +19,7 @@ function validEvidence() {
     },
     dispatch: {
       candidateSha,
-      defaultSuiteSelected: true,
+      emptySelectors: true,
       eventName: "workflow_dispatch",
       includeStagingBrevLaunchable: true,
       jobs: "",
@@ -35,6 +35,7 @@ function validEvidence() {
           html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
           name: "Exact staging Brev Launchable",
           run_attempt: 2,
+          run_id: 100,
           status: "completed",
         },
       ],
@@ -76,7 +77,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         workspaceName: "nclaw-e2e-100-2",
       },
       dispatch: {
-        defaultSuiteSelected: true,
+        emptySelectors: true,
         includeStagingBrevLaunchable: true,
       },
       jobUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
@@ -91,6 +92,26 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
     });
   });
 
+  it("accepts successful Launchable evidence from an earlier attempt of the same run (#7487)", () => {
+    const evidence = validEvidence();
+    evidence.dispatch.workflowRunAttempt = 1;
+    evidence.jobs.jobs[0]!.run_attempt = 1;
+
+    expect(validateFullE2eEvidence({ ...evidence, jobs: [evidence.jobs] })).toMatchObject({
+      attempt: 1,
+      jobUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
+    });
+  });
+
+  it("rejects a Launchable artifact from a different successful attempt (#7487)", () => {
+    const evidence = validEvidence();
+    evidence.dispatch.workflowRunAttempt = 1;
+
+    expect(() => validateFullE2eEvidence({ ...evidence, jobs: [evidence.jobs] })).toThrow(
+      "jobs response must contain a completed successful Exact staging Brev Launchable job",
+    );
+  });
+
   it.each([
     [
       "a run for another SHA",
@@ -102,7 +123,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
     [
       "a selective Launchable E2E dispatch",
       (evidence: ReturnType<typeof validEvidence>) => {
-        evidence.dispatch.defaultSuiteSelected = false;
+        evidence.dispatch.emptySelectors = false;
         evidence.dispatch.includeStagingBrevLaunchable = false;
         evidence.dispatch.jobs = "staging-brev-launchable";
       },
@@ -113,7 +134,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       (evidence: ReturnType<typeof validEvidence>) => {
         evidence.jobs.jobs[0]!.conclusion = "skipped";
       },
-      "Exact staging Brev Launchable conclusion",
+      "jobs response must contain a completed successful Exact staging Brev Launchable job",
     ],
     [
       "a Launchable E2E receipt for another SHA",
@@ -130,11 +151,11 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       "cleanup.status",
     ],
     [
-      "a job from another attempt",
+      "a job from another workflow run",
       (evidence: ReturnType<typeof validEvidence>) => {
-        evidence.jobs.jobs[0]!.run_attempt = 1;
+        evidence.jobs.jobs[0]!.run_id = 101;
       },
-      "Exact staging Brev Launchable run_attempt",
+      "jobs response must contain a completed successful Exact staging Brev Launchable job",
     ],
   ])("rejects %s (#7487)", (_name, mutate, message) => {
     const evidence = validEvidence();
@@ -155,9 +176,9 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       "dispatch must be an object",
     ],
     [
-      "a non-object jobs response",
+      "an empty jobs response",
       (evidence: ReturnType<typeof validEvidence>) => ({ ...evidence, jobs: [] }),
-      "jobs response must be an object",
+      "jobs response must contain a completed successful Exact staging Brev Launchable job",
     ],
   ])("rejects %s (#7487)", (_name, malformedEvidence, message) => {
     expect(() => validateFullE2eEvidence(malformedEvidence(validEvidence()))).toThrow(message);
@@ -179,8 +200,9 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("run pre-tag full E2E");
     expect(skill).toContain("run release-candidate E2E");
     expect(skill).toContain("must not authorize the Brev Launchable path");
+    expect(skill).toContain("Pre-tag evidence still requires the full `workflow_dispatch` mode");
     expect(skill).toContain(
-      "Launchable and full runs do not require separate environment approval",
+      "an authorized environment reviewer must approve it before qualification starts",
     );
     expect(skill).toContain(
       "repository `maintain` or `admin` permission before the Launchable path's source",
