@@ -50,7 +50,7 @@ describe("MCP OpenShell policy", () => {
           policyName: "mcp-bridge-github",
           addedAt: "2026-06-01T00:00:00.000Z",
         },
-        [],
+        { addresses: [] },
       ),
     ).toThrow(/without exact public address pins/);
   });
@@ -140,7 +140,7 @@ describe("MCP OpenShell policy", () => {
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
       },
-      ["8.8.8.8"],
+      { addresses: ["8.8.8.8"] },
     );
 
     const [, , generatedContent, options] = applyPresetContent.mock.calls[0];
@@ -166,9 +166,9 @@ describe("MCP OpenShell policy", () => {
       .spyOn(policies, "getPresetContentGatewayState")
       .mockReturnValue("match");
 
-    expect(assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", pins)).toEqual(
-      registration,
-    );
+    expect(
+      assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", { addresses: pins }),
+    ).toEqual(registration);
     expect(gatewayState).toHaveBeenCalledWith("alpha", content);
   });
 
@@ -194,9 +194,9 @@ describe("MCP OpenShell policy", () => {
     );
     const gatewayState = vi.spyOn(policies, "getPresetContentGatewayState");
 
-    expect(() => assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", pins)).toThrow(
-      /ownership is missing or ambiguous/,
-    );
+    expect(() =>
+      assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", { addresses: pins }),
+    ).toThrow(/ownership is missing or ambiguous/);
     expect(gatewayState).not.toHaveBeenCalled();
   });
 
@@ -267,7 +267,10 @@ describe("MCP OpenShell policy", () => {
       const gatewayState = vi.spyOn(policies, "getPresetContentGatewayState");
 
       expect(
-        () => assertGeneratedPolicyExactReadOnly("alpha", candidateEntry, "mcporter", pins),
+        () =>
+          assertGeneratedPolicyExactReadOnly("alpha", candidateEntry, "mcporter", {
+            addresses: pins,
+          }),
         mismatch.label,
       ).toThrow(/not canonical for its recorded bridge definition/);
       expect(gatewayState, mismatch.label).not.toHaveBeenCalled();
@@ -281,7 +284,9 @@ describe("MCP OpenShell policy", () => {
 
     let message = "";
     try {
-      assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", ["8.8.8.8"]);
+      assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", {
+        addresses: ["8.8.8.8"],
+      });
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
