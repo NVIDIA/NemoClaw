@@ -31,7 +31,7 @@ concurrency:
 jobs:
   label-release-target:
     if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Apply release target to merged PRs

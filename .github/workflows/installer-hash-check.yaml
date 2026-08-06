@@ -34,7 +34,7 @@ permissions:
 jobs:
   check-hash:
     if: github.repository == 'NVIDIA/NemoClaw'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 5
     steps:
       - name: Set up trusted installer hash parser runtime

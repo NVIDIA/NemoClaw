@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   assign-linked-issue-author:
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     steps:
       - name: Assign linked issues to PR authors

@@ -18,7 +18,7 @@ permissions:
 jobs:
   codebase-growth-guardrails:
     name: codebase-growth-guardrails
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 5
     steps:
       - name: Block newly added JavaScript files
