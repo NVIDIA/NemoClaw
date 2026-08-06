@@ -46,7 +46,8 @@ export function readPrivateBearerFile(filePath: string, label: string): string {
         fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_NONBLOCK ?? 0),
       );
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ELOOP" || code === "EMLINK") {
         throw new Error(`Refusing to read a symbolic-link ${label} file: ${filePath}`);
       }
       throw error;

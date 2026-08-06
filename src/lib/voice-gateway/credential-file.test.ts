@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { readPrivateBearerFile } from "./credential-file";
 
@@ -30,6 +30,17 @@ describe("voice gateway credential file", () => {
     fs.writeFileSync(file, `${CREDENTIAL}\n`, { mode: 0o600 });
 
     expect(readPrivateBearerFile(file, "Test credential")).toBe(CREDENTIAL);
+  });
+
+  it("treats macOS EMLINK as a rejected symbolic link (#8378)", () => {
+    const error = Object.assign(new Error("symbolic link"), { code: "EMLINK" });
+    vi.spyOn(fs, "openSync").mockImplementationOnce(() => {
+      throw error;
+    });
+
+    expect(() => readPrivateBearerFile("/absolute/credential", "Test credential")).toThrow(
+      "symbolic-link",
+    );
   });
 
   it.each([
