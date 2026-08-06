@@ -112,26 +112,6 @@
       "category": "security"
     },
     {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "execs an explicitly supplied command instead of idling",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "refuses to launch when effective rlimits fail verification (#6545)",
-      "category": "security"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "refuses to launch when the required rlimit helper is missing (#6545)",
-      "category": "security"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "stays alive as a long-running process when invoked with no command",
-      "category": "compatibility"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
