@@ -13,6 +13,7 @@ import {
 } from "../template-resolver-utils";
 
 const DEFAULT_WHATSAPP_MODE = "self-chat";
+const WHATSAPP_MODES = new Set([DEFAULT_WHATSAPP_MODE, "bot"]);
 
 export const resolveWhatsappTemplateReference: BuiltInRenderTemplateResolver = (
   reference,
@@ -37,10 +38,14 @@ export const resolveWhatsappTemplateReference: BuiltInRenderTemplateResolver = (
   }
 };
 
-// The compiler drops a stored value outside the input's validValues, so an
-// unusable mode arrives here as undefined. Render the mode the Hermes adapter
-// already defaults to rather than dropping the line, so the sealed .env states
-// which mode the bridge runs.
+// The compiler applies the input's validValues, but a rebuild renders from the
+// persisted plan, and both persistence paths carry a stored value through
+// unchecked: normalizeFullInputs copies `value` verbatim, and
+// inputReferenceFromManifest copies `persisted.value` onto the manifest spec.
+// Re-check here so a stale or hand-edited registry entry cannot start the bridge
+// in a mode it cannot serve. Render the adapter's own default rather than
+// dropping the line, so the sealed .env states which mode the bridge runs.
 function whatsappMode(context: RenderTemplateContext): string {
-  return nonEmptyString(stateValue(context, "whatsappConfig.mode")) ?? DEFAULT_WHATSAPP_MODE;
+  const value = nonEmptyString(stateValue(context, "whatsappConfig.mode"));
+  return value && WHATSAPP_MODES.has(value) ? value : DEFAULT_WHATSAPP_MODE;
 }

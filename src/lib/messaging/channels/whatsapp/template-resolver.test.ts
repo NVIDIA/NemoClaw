@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SandboxMessagingInputReference } from "../../manifest";
+import { normalizeFullInputs, normalizePersistedInputs } from "../../persistence";
 import { whatsappManifest } from "./manifest";
 import { resolveWhatsappTemplateReference } from "./template-resolver";
 
@@ -36,6 +37,50 @@ describe("WhatsApp template resolver", () => {
     expect(
       resolveWhatsappTemplateReference("whatsappConfig.mode", { inputs: modeInputs(stored) })
         ?.value,
+    ).toBe("self-chat");
+  });
+
+  it.each([
+    [
+      "a full persisted plan",
+      () =>
+        normalizeFullInputs("whatsapp", [
+          {
+            inputId: "mode",
+            kind: "config",
+            required: false,
+            statePath: "whatsappConfig.mode",
+            value: "broadcast",
+          },
+        ]),
+    ],
+    [
+      "a compact persisted plan",
+      () =>
+        normalizePersistedInputs(
+          {
+            channelId: "whatsapp",
+            // The compact path reads only inputId and value; the manifest spec
+            // supplies the rest.
+            inputs: [
+              {
+                channelId: "whatsapp",
+                inputId: "mode",
+                kind: "config",
+                required: false,
+                value: "broadcast",
+              },
+            ],
+          },
+          whatsappManifest,
+        ),
+    ],
+  ])("refuses an unsupported mode carried by %s (#8312)", (_case, buildInputs) => {
+    // A rebuild renders from the persisted plan, and neither persistence path
+    // re-applies the input's validValues, so the registry can hand the resolver
+    // a mode the bundled bridge cannot serve.
+    expect(
+      resolveWhatsappTemplateReference("whatsappConfig.mode", { inputs: buildInputs() })?.value,
     ).toBe("self-chat");
   });
 
