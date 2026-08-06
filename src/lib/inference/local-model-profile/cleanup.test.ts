@@ -280,6 +280,7 @@ describe("host-local model cleanup", () => {
       }),
     ).toMatchObject({ ok: true, removed: [`container:${containerId}`] });
     expect(fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))).toBe(false);
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(false);
   });
 
   it("refuses to remove a profile-labeled vLLM without its ownership receipt", () => {
@@ -306,10 +307,12 @@ describe("host-local model cleanup", () => {
         deleteModels: false,
         homeDir,
         deps: {
-          capture: vi.fn(() =>
-            ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "a".repeat(64), labels, [
-              `VLLM_API_KEY=${apiKey}`,
-            ]),
+          capture: vi.fn((argv: readonly string[]) =>
+            argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+              ? ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "a".repeat(64), labels, [
+                  `VLLM_API_KEY=${apiKey}`,
+                ])
+              : "",
           ) as never,
           forceRm: forceRm as never,
           run: vi.fn(() => ({ status: 0 }) as never),
@@ -317,6 +320,7 @@ describe("host-local model cleanup", () => {
       }),
     ).toMatchObject({ ok: false, reason: expect.stringContaining("ownership receipt") });
     expect(forceRm).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(true);
   });
 
   it("fails closed when the vLLM container name is foreign while local key state remains", () => {
