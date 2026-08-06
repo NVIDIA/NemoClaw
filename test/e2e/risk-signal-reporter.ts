@@ -121,31 +121,6 @@ function readPrevious(file: string): E2eRiskSignal | null {
   return contents === null ? null : (JSON.parse(contents) as E2eRiskSignal);
 }
 
-const EMPTY_COMMAND_ARTIFACT_PATTERN = /[.](?:stdout|stderr)[.]txt$/u;
-
-export function pruneEmptyCommandArtifacts(root: string): number {
-  if (!fs.existsSync(root)) return 0;
-  let removed = 0;
-  const pending = [root];
-  while (pending.length > 0) {
-    const directory = pending.pop();
-    if (!directory) break;
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        pending.push(file);
-        continue;
-      }
-      if (!entry.isFile() || !EMPTY_COMMAND_ARTIFACT_PATTERN.test(entry.name)) continue;
-      const metadata = fs.lstatSync(file);
-      if (metadata.size !== 0 || metadata.nlink !== 1) continue;
-      fs.unlinkSync(file);
-      removed += 1;
-    }
-  }
-  return removed;
-}
-
 export function writeRiskSignal(
   environment: RiskSignalEnvironment,
   testModules: ReadonlyArray<TestModule>,
@@ -208,12 +183,6 @@ export default class E2eRiskSignalReporter implements Reporter {
         this.outcomeFile,
         outcomeForRun(testModules, unhandledErrors, reason, this.processTimedOut),
       );
-    }
-    if (
-      this.environment &&
-      outcomeForRun(testModules, unhandledErrors, reason, this.processTimedOut) === "none"
-    ) {
-      pruneEmptyCommandArtifacts(this.environment.artifactDir);
     }
   }
 }

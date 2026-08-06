@@ -20,7 +20,6 @@ import {
   configuredEnvironment,
   default as E2eRiskSignalReporter,
   outcomeForRun,
-  pruneEmptyCommandArtifacts,
   RISK_SIGNAL_FILE,
   type RiskSignalEnvironment,
   writeRiskSignal,
@@ -92,61 +91,6 @@ describe("E2E risk signal reporter", () => {
 
   it("stays disabled when no expected commit is configured", () => {
     expect(configuredEnvironment({})).toBeNull();
-  });
-
-  it("prunes only empty command transcripts", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-prune-"));
-    const nested = path.join(dir, "shell");
-    const outside = path.join(dir, "outside.txt");
-    const linked = path.join(nested, "linked.stderr.txt");
-    try {
-      fs.mkdirSync(nested);
-      fs.writeFileSync(path.join(nested, "empty.stdout.txt"), "");
-      fs.writeFileSync(path.join(nested, "empty.stderr.txt"), "");
-      fs.writeFileSync(path.join(nested, "nonempty.stdout.txt"), "diagnostic\n");
-      fs.writeFileSync(path.join(nested, "result.json"), "");
-      fs.writeFileSync(outside, "");
-      fs.linkSync(outside, linked);
-
-      expect(pruneEmptyCommandArtifacts(dir)).toBe(2);
-      expect(fs.existsSync(path.join(nested, "empty.stdout.txt"))).toBe(false);
-      expect(fs.existsSync(path.join(nested, "empty.stderr.txt"))).toBe(false);
-      expect(fs.readFileSync(path.join(nested, "nonempty.stdout.txt"), "utf8")).toBe(
-        "diagnostic\n",
-      );
-      expect(fs.existsSync(path.join(nested, "result.json"))).toBe(true);
-      expect(fs.existsSync(linked)).toBe(true);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("prunes empty command transcripts only after a passing run", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-run-prune-"));
-    const shellDir = path.join(dir, "shell");
-    const emptyTranscript = path.join(shellDir, "command.stderr.txt");
-    try {
-      fs.mkdirSync(shellDir);
-      vi.stubEnv("E2E_ARTIFACT_DIR", dir);
-      vi.stubEnv("E2E_TARGET_ID", "onboard-resume");
-      vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", EXPECTED_SHA);
-      vi.stubEnv("NEMOCLAW_E2E_PLAN_HASH", PLAN_HASH);
-      vi.stubEnv("NEMOCLAW_E2E_CORRELATION_ID", CORRELATION_ID);
-      vi.stubEnv("NEMOCLAW_E2E_SHARD", "default");
-
-      fs.writeFileSync(emptyTranscript, "");
-      new E2eRiskSignalReporter().onTestRunEnd(
-        [moduleWithFailedError(new Error("failed"))],
-        [],
-        "failed",
-      );
-      expect(fs.existsSync(emptyTranscript)).toBe(true);
-
-      new E2eRiskSignalReporter().onTestRunEnd([moduleWithStates(["passed"])], [], "passed");
-      expect(fs.existsSync(emptyTranscript)).toBe(false);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
   });
 
   it("fails closed when run metadata is incomplete", () => {
