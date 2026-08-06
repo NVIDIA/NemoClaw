@@ -22,45 +22,54 @@ class FakeSocket extends EventTarget {
         }),
       ),
     );
-    if (method === "chat.send")
-      queueMicrotask(() => {
-        for (const event of [
-          {
-            sessionKey: "other-session",
-            runId: "expected-run",
-            seq: 1,
-            state: "delta",
-            deltaText: "discard-session",
-          },
-          {
-            sessionKey: "agent:main:voice:session",
-            runId: "other-run",
-            seq: 1,
-            state: "delta",
-            deltaText: "discard-run",
-          },
-          {
-            sessionKey: "agent:main:voice:session",
-            runId: "expected-run",
-            seq: 1,
-            state: "delta",
-            deltaText: "ordered ",
-          },
-          {
-            sessionKey: "agent:main:voice:session",
-            runId: "expected-run",
-            seq: 2,
-            state: "delta",
-            deltaText: "result",
-          },
-          { sessionKey: "agent:main:voice:session", runId: "expected-run", seq: 9, state: "final" },
-        ])
-          this.dispatchEvent(
-            new MessageEvent("message", {
-              data: JSON.stringify({ type: "event", event: "chat", payload: event }),
-            }),
-          );
-      });
+    const events =
+      method === "chat.send"
+        ? [
+            {
+              sessionKey: "other-session",
+              runId: "expected-run",
+              seq: 1,
+              state: "delta",
+              deltaText: "discard-session",
+            },
+            {
+              sessionKey: "agent:main:voice:session",
+              runId: "other-run",
+              seq: 1,
+              state: "delta",
+              deltaText: "discard-run",
+            },
+            {
+              sessionKey: "agent:main:voice:session",
+              runId: "expected-run",
+              seq: 1,
+              state: "delta",
+              deltaText: "ordered ",
+            },
+            {
+              sessionKey: "agent:main:voice:session",
+              runId: "expected-run",
+              seq: 2,
+              state: "delta",
+              deltaText: "result",
+            },
+            {
+              sessionKey: "agent:main:voice:session",
+              runId: "expected-run",
+              seq: 9,
+              state: "final",
+            },
+          ]
+        : [];
+    queueMicrotask(() => {
+      for (const event of events) {
+        this.dispatchEvent(
+          new MessageEvent("message", {
+            data: JSON.stringify({ type: "event", event: "chat", payload: event }),
+          }),
+        );
+      }
+    });
   }
 }
 
@@ -125,48 +134,57 @@ describe("OpenClaw voice agent client", () => {
       override send(value: string) {
         const frame = JSON.parse(value) as Record<string, unknown>;
         this.sent.push(frame);
-        if (frame.method === "connect") {
-          queueMicrotask(() =>
-            this.dispatchEvent(
-              new MessageEvent("message", {
-                data: JSON.stringify({
-                  type: "res",
-                  id: frame.id,
-                  ok: true,
-                  payload: { type: "hello-ok" },
+        const handlers: Record<string, () => void> = {
+          connect: () =>
+            queueMicrotask(() =>
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    payload: { type: "hello-ok" },
+                  }),
                 }),
-              }),
+              ),
             ),
-          );
-          return;
-        }
-        for (const payload of [
-          { sessionKey: "agent:main:voice:session", runId: "expected-run", seq: 1, state: "final" },
-          {
-            sessionKey: "agent:main:voice:session",
-            runId: "expected-run",
-            seq: 2,
-            state: "delta",
-            deltaText: "must-not-deliver",
+          "chat.send": () => {
+            for (const payload of [
+              {
+                sessionKey: "agent:main:voice:session",
+                runId: "expected-run",
+                seq: 1,
+                state: "final",
+              },
+              {
+                sessionKey: "agent:main:voice:session",
+                runId: "expected-run",
+                seq: 2,
+                state: "delta",
+                deltaText: "must-not-deliver",
+              },
+            ]) {
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({ type: "event", event: "chat", payload }),
+                }),
+              );
+            }
+            queueMicrotask(() =>
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    payload: { runId: "expected-run" },
+                  }),
+                }),
+              ),
+            );
           },
-        ])
-          this.dispatchEvent(
-            new MessageEvent("message", {
-              data: JSON.stringify({ type: "event", event: "chat", payload }),
-            }),
-          );
-        queueMicrotask(() =>
-          this.dispatchEvent(
-            new MessageEvent("message", {
-              data: JSON.stringify({
-                type: "res",
-                id: frame.id,
-                ok: true,
-                payload: { runId: "expected-run" },
-              }),
-            }),
-          ),
-        );
+        };
+        handlers[String(frame.method)]?.();
       }
     }
     const socket = new TerminalSocket();
@@ -204,52 +222,54 @@ describe("OpenClaw voice agent client", () => {
       override send(value: string) {
         const frame = JSON.parse(value) as Record<string, unknown>;
         this.sent.push(frame);
-        if (frame.method === "connect") {
-          queueMicrotask(() =>
-            this.dispatchEvent(
-              new MessageEvent("message", {
-                data: JSON.stringify({
-                  type: "res",
-                  id: frame.id,
-                  ok: true,
-                  payload: { type: "hello-ok" },
-                }),
-              }),
-            ),
-          );
-          return;
-        }
-        queueMicrotask(() => {
-          this.dispatchEvent(
-            new MessageEvent("message", {
-              data: JSON.stringify({
-                type: "res",
-                id: frame.id,
-                ok: true,
-                payload: { runId: "expected-run" },
-              }),
-            }),
-          );
-          queueMicrotask(() => {
-            for (const seq of [1, 2]) {
+        const handlers: Record<string, () => void> = {
+          connect: () =>
+            queueMicrotask(() =>
               this.dispatchEvent(
                 new MessageEvent("message", {
                   data: JSON.stringify({
-                    type: "event",
-                    event: "chat",
-                    payload: {
-                      sessionKey: "agent:main:voice:session",
-                      runId: "expected-run",
-                      seq,
-                      state: "delta",
-                      deltaText: "x".repeat(1_100_000),
-                    },
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    payload: { type: "hello-ok" },
+                  }),
+                }),
+              ),
+            ),
+          "chat.send": () =>
+            queueMicrotask(() => {
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    payload: { runId: "expected-run" },
                   }),
                 }),
               );
-            }
-          });
-        });
+              queueMicrotask(() => {
+                for (const seq of [1, 2]) {
+                  this.dispatchEvent(
+                    new MessageEvent("message", {
+                      data: JSON.stringify({
+                        type: "event",
+                        event: "chat",
+                        payload: {
+                          sessionKey: "agent:main:voice:session",
+                          runId: "expected-run",
+                          seq,
+                          state: "delta",
+                          deltaText: "x".repeat(1_100_000),
+                        },
+                      }),
+                    }),
+                  );
+                }
+              });
+            }),
+        };
+        handlers[String(frame.method)]?.();
       }
     }
     const socket = new OversizedSocket();

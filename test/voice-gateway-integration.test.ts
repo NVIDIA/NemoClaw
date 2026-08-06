@@ -40,65 +40,70 @@ class FakeOpenClawSocket extends EventTarget {
       params: Record<string, unknown>;
     };
     this.invocations.push(request.params);
-    const payload =
-      request.method === "chat.send" ? { runId: "fixture-run" } : { type: "hello-ok" };
-    queueMicrotask(() => {
-      this.dispatchEvent(
-        new MessageEvent("message", {
-          data: JSON.stringify({ type: "res", id: request.id, ok: true, payload }),
-        }),
-      );
-    });
-    if (request.method !== "chat.send") return;
-    const sessionKey = request.params.sessionKey;
-    queueMicrotask(() => {
-      for (const event of [
-        {
-          sessionKey: "other-session",
-          runId: "fixture-run",
-          seq: 1,
-          state: "delta",
-          deltaText: "discarded session",
-        },
-        {
-          sessionKey,
-          runId: "other-run",
-          seq: 1,
-          state: "delta",
-          deltaText: "discarded run",
-        },
-        {
-          sessionKey,
-          runId: "fixture-run",
-          seq: 1,
-          state: "delta",
-          deltaText: "branch: fixture\n",
-        },
-        {
-          sessionKey,
-          runId: "fixture-run",
-          seq: 4,
-          state: "delta",
-          deltaText: "branch: wrong\nstatus: dirty",
-          replace: true,
-        },
-        {
-          sessionKey,
-          runId: "fixture-run",
-          seq: 7,
-          state: "delta",
-          deltaText: "branch: fixture\nstatus: clean",
-          replace: true,
-        },
-        { sessionKey, runId: "fixture-run", seq: 9, state: "final" },
-      ]) {
+    const respond = (payload: Record<string, unknown>) =>
+      queueMicrotask(() => {
         this.dispatchEvent(
           new MessageEvent("message", {
-            data: JSON.stringify({ type: "event", event: "chat", payload: event }),
+            data: JSON.stringify({ type: "res", id: request.id, ok: true, payload }),
           }),
         );
-      }
-    });
+      });
+    const sessionKey = request.params.sessionKey;
+    const handlers: Record<string, () => void> = {
+      connect: () => respond({ type: "hello-ok" }),
+      "chat.send": () => {
+        respond({ runId: "fixture-run" });
+        queueMicrotask(() => {
+          for (const event of [
+            {
+              sessionKey: "other-session",
+              runId: "fixture-run",
+              seq: 1,
+              state: "delta",
+              deltaText: "discarded session",
+            },
+            {
+              sessionKey,
+              runId: "other-run",
+              seq: 1,
+              state: "delta",
+              deltaText: "discarded run",
+            },
+            {
+              sessionKey,
+              runId: "fixture-run",
+              seq: 1,
+              state: "delta",
+              deltaText: "branch: fixture\n",
+            },
+            {
+              sessionKey,
+              runId: "fixture-run",
+              seq: 4,
+              state: "delta",
+              deltaText: "branch: wrong\nstatus: dirty",
+              replace: true,
+            },
+            {
+              sessionKey,
+              runId: "fixture-run",
+              seq: 7,
+              state: "delta",
+              deltaText: "branch: fixture\nstatus: clean",
+              replace: true,
+            },
+            { sessionKey, runId: "fixture-run", seq: 9, state: "final" },
+          ]) {
+            this.dispatchEvent(
+              new MessageEvent("message", {
+                data: JSON.stringify({ type: "event", event: "chat", payload: event }),
+              }),
+            );
+          }
+        });
+      },
+    };
+    handlers[request.method]?.();
   }
 }
 
@@ -165,10 +170,9 @@ describe("composed experimental voice gateway", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    const runtimeOutput: string[] = [];
-    for (const event of events) {
-      if (event.type === "response.text.delta") runtimeOutput.push(event.text);
-    }
+    const runtimeOutput = events
+      .filter((event) => event.type === "response.text.delta")
+      .map((event) => event.text);
 
     expect(runtimeOutput.join("")).toBe("branch: fixture\nstatus: clean");
     expect(events.filter((event) => event.type === "response.completed")).toHaveLength(1);

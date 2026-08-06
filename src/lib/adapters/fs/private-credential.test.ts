@@ -71,8 +71,13 @@ describe("private voice credential files", () => {
         readPrivateCredentialFile(path.join(linkDirectory, "credential"), "Voice credential"),
       ).toThrow("symlink");
     } finally {
-      if (originalHome === undefined) delete process.env.HOME;
-      else process.env.HOME = originalHome;
+      const restoreHome =
+        originalHome === undefined
+          ? () => delete process.env.HOME
+          : () => {
+              process.env.HOME = originalHome;
+            };
+      restoreHome();
       fs.rmSync(item.directory, { recursive: true, force: true });
     }
   });
