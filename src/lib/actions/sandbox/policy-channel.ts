@@ -1464,16 +1464,17 @@ function getSandboxChannelStatePaths(agent: AgentDefinition, channelName: string
   const configDir = agent.configPaths.dir;
   const stateDirs = new Set(agent.stateDirs);
   const paths: string[] = [];
+  const isHermesWhatsapp = agent.name === "hermes" && channelName === "whatsapp";
   if (stateDirs.has("platforms")) {
     paths.push(`${configDir}/platforms/${channelName}`);
   }
-  if (channelName === "whatsapp" && stateDirs.has("profiles")) {
+  if (isHermesWhatsapp && stateDirs.has("profiles")) {
     paths.push(`${configDir}/profiles/dashboard-home/platforms/whatsapp/session`);
   }
   // Retain cleanup for the pre-profile Dashboard home while Hermes startup
   // still treats it as migration input. This prevents legacy credentials from
   // being migrated back into the canonical profile during a later rebuild.
-  if (channelName === "whatsapp" && stateDirs.has("dashboard-home")) {
+  if (isHermesWhatsapp && stateDirs.has("dashboard-home")) {
     paths.push(`${configDir}/dashboard-home/platforms/whatsapp/session`);
   }
   if (paths.length === 0 && stateDirs.has(channelName)) {
