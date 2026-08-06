@@ -7,19 +7,6 @@ run-name: "Portable profile rootless E2E for ${{ github.sha }}"
 
 on:
   workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - ".github/workflows/portable-profile-e2e.yaml"
-      - "install.sh"
-      - "scripts/install.sh"
-      - "scripts/install-openshell.sh"
-      - "src/lib/onboard/**"
-      - "src/lib/domain/sandbox/image-tag.ts"
-      - "src/lib/sandbox/build-context.ts"
-      - "test/e2e/live/portable-profile-gateway-proof.ts"
-      - "test/e2e/live/portable-profile-rootless-linux.test.ts"
-      - "tools/e2e/check-semantic-phases.mts"
   push:
     branches:
       - main
