@@ -44,6 +44,7 @@ if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
 const OPENCLAW_WORKSPACE_PATH = "/sandbox/.openclaw/workspace";
 const MARKER_FILE = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker.txt`;
 const SECOND_MARKER = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker-2.txt`;
+const PREFIX_MARKER = "/sandbox/.openclaw/workspace-research/snapshot-marker.txt";
 const USER_FILE = `${OPENCLAW_WORKSPACE_PATH}/USER.md`;
 const SOUL_FILE = `${OPENCLAW_WORKSPACE_PATH}/SOUL.md`;
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
@@ -348,6 +349,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "snapshot restore --to returns only after restored gateway pairing is authenticated",
       "post-restore clone verification sends one clone-fixture request, stores its unique session only in the clone, and sends no source-sandbox negative-control request",
       "latest snapshot restore recovers latest workspace state",
+      "snapshot restore recovers state from workspace-* prefix directories",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
       "snapshot help advertises create/list/restore",
@@ -506,8 +508,9 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "-lc",
       `set -eu
 test "$OPENCLAW_WORKSPACE_DIR" = ${JSON.stringify(OPENCLAW_WORKSPACE_PATH)}
-mkdir -p "$OPENCLAW_WORKSPACE_DIR"
+mkdir -p "$OPENCLAW_WORKSPACE_DIR" /sandbox/.openclaw/workspace-research
 printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}
+printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(PREFIX_MARKER)}
 printf '%s' ${JSON.stringify(userContent)} > "$OPENCLAW_WORKSPACE_DIR/USER.md"
 printf '%s' ${JSON.stringify(soulContent)} > "$OPENCLAW_WORKSPACE_DIR/SOUL.md"`,
     ],
@@ -795,7 +798,11 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
 
   const perturb = await sandbox.exec(
     SANDBOX_NAME,
-    ["sh", "-lc", `rm -f ${SECOND_MARKER} && printf '%s' 'BROKEN' > ${MARKER_FILE}`],
+    [
+      "sh",
+      "-lc",
+      `rm -f ${SECOND_MARKER} ${PREFIX_MARKER} && printf '%s' 'BROKEN' > ${MARKER_FILE}`,
+    ],
     {
       artifactName: "phase-5-perturb-workspace",
       env: commandEnv(),
@@ -817,6 +824,13 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     SECOND_MARKER,
     secondContent,
     "phase-6-read-second-marker-after-latest-restore",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    PREFIX_MARKER,
+    markerContent,
+    "phase-6-read-prefix-marker-after-latest-restore",
   );
   const firstGoneAfterLatest = await sandbox.exec(
     SANDBOX_NAME,

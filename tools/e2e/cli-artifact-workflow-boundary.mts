@@ -19,7 +19,7 @@ export const CLI_ARTIFACT_DOWNLOAD_ACTION =
 export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 export const CLI_ARTIFACT_RESTORE_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d697860bed1040f7dab5a379e1c60310a90e8f9d";
+  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d34b11e8b895760d6505d54e2cfc520332cb2a9c";
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
@@ -33,7 +33,7 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "89d52595cbe63a11c0ba8bb11930474c8ce605b3b3773ce007fcd82775c46683";
+  "f90d4532a64473817b183856e225b401b201d71aaafa75bd7cf8d63a3deeb76f";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
@@ -164,12 +164,18 @@ export function validateCliArtifactRestoreAction(
     '*) echo "::error::CLI artifact contains an unsafe member',
     "CLI artifact contains a link or special file",
     '[[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]]',
+    '[[ -d "$GITHUB_WORKSPACE/nemoclaw" && ! -L "$GITHUB_WORKSPACE/nemoclaw" ]]',
+
     '[[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]]',
+
     'restore_dir="$(mktemp -d',
     'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
+    '[[ -f "$cli_entrypoint" && ! -L "$cli_entrypoint" && -s "$cli_entrypoint" ]]',
+    '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
+
     ".sourceRevision == $candidateSha",
-    'test -s "$restore_dir/nemoclaw/dist/shared/sandbox-name.cjs"',
     'mv "$restore_dir/nemoclaw/dist" "$GITHUB_WORKSPACE/nemoclaw/dist"',
+
     'mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"',
     'node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version',
   ]);
@@ -225,14 +231,16 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   }
   requireFragments(errors, "CLI artifact package step", packageStep.run, [
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
-    "test -s dist/nemoclaw.js",
-    "test -s dist/build-identity.json",
-    "test -s nemoclaw/dist/shared/sandbox-name.cjs",
+    "for required_file in dist/nemoclaw.js dist/build-identity.json; do",
+    '[[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]]',
+    '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
+
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
     "--sort=name",
     "--mtime=@0",
-    "nemoclaw/dist",
+    "nemoclaw/dist/shared",
+
     "source_tree=\"$(git rev-parse 'HEAD^{tree}')\"",
     'lockfile_sha256="$(sha256sum package-lock.json',
     'artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"',
