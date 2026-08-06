@@ -195,8 +195,9 @@ function readinessSources(): ManagedInferenceReadinessSource[] {
 
 function storageRemediableReadinessReport(
   extraFindings: SystemReadinessReport["findings"] = [],
+  preset: ManagedInferenceServingPreset = shippedPreset(),
 ): SystemReadinessReport {
-  const report = readinessReport();
+  const report = readinessReport({}, preset);
   return {
     ...report,
     capabilities: [
@@ -826,12 +827,14 @@ describe("managed inference resolver", () => {
 
   it("admits a storage conflict that the public lifecycle can remediate (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
-    const presetId = catalog.presets[0]!.metadata.id;
+    const preset = catalog.presets[0]!;
     const result = resolveManagedInferenceServing(
       {
-        readinessReports: [{ nodeId: "spark-head", report: storageRemediableReadinessReport() }],
+        readinessReports: [
+          { nodeId: "spark-head", report: storageRemediableReadinessReport([], preset) },
+        ],
         topologyQualifications: [],
-        intent: { preset: presetId },
+        intent: { preset: preset.metadata.id },
         now: NOW,
       },
       catalog,
