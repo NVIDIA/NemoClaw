@@ -44,6 +44,28 @@
       ]
     },
     {
+      "live": "test/e2e/live/managed-image-activation-e2e.test.ts",
+      "fast": [
+        "src/lib/onboard/command.test.ts",
+        "src/lib/onboard/sandbox-workload-preparation.test.ts",
+        "test/managed-image-publication-workflow.test.ts",
+        "test/onboard-managed-image-buildless-e2e.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/podman-cpu-lifecycle.test.ts",
+      "fast": [
+        "src/lib/adapters/container-engine.test.ts",
+        "src/lib/adapters/podman/index.test.ts",
+        "src/lib/adapters/podman/socket-authority.test.ts",
+        "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
+        "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
+        "src/lib/onboard/runtime-provider/podman.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
+        "test/runtime-provider-source-shape.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
@@ -168,7 +190,7 @@
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
-        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -182,7 +204,7 @@
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
-        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"

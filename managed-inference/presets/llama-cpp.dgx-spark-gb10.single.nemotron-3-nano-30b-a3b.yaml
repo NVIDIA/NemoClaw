@@ -7,6 +7,7 @@ kind: ServingPreset
 metadata:
   id: llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b
   displayName: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark
+  supportState: experimental
 
 spec:
   selection: explicit-only

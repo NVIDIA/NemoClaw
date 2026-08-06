@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InferenceSelection } from "../../inference/selection";
+import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
@@ -76,6 +77,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
   reservationSessionId?: string;
   createdAt?: string;
+  /** Immutable catalog provenance for an explicitly selected serving profile. */
+  servingProfileProvenance?: ServingProfileProvenance;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
   sandboxGpuEnabled?: boolean;
