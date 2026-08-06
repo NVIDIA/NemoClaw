@@ -44,6 +44,7 @@ import {
   createManagedBootstrapIdentity,
   createManagedBootstrapPlanFingerprint,
   createManagedBootstrapPreparedAuthority,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapAdapter,
   ManagedBootstrapCommitStateIndeterminateError,
@@ -109,6 +110,7 @@ const COMPLETION_TEMP_PREFIX = "nemoclaw-managed-bootstrap-completion";
 const COMPLETION_MAX_BYTES = 4096;
 const DOCKER_DRIVER_ID = "docker";
 const MAX_RECOVERY_FAILURE_DETAIL_BYTES = 8 * 1024;
+const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-bootstrap";
 
@@ -456,34 +458,28 @@ function assertHeldCommand(
   bootstrapIdentity: string,
 ): void {
   assertManagedBootstrapIdentity(bootstrapIdentity);
-  const expected = openshellSandboxCommandEnvValue(heldWorkloadArgv);
-  const observed = envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND");
-  if (!expected || observed !== expected) {
-    throw new Error(
-      "Managed bootstrap Docker workload does not contain the exact identity-bound hold.",
-    );
-  }
   const identityIndexes = heldWorkloadArgv
     .map((value, index) => (value === bootstrapIdentity ? index : -1))
     .filter((index) => index >= 0);
   if (identityIndexes.length !== 1) {
     throw new Error("Managed bootstrap hold does not contain exactly one bootstrap identity.");
   }
+  assertBootstrapIdentityEnvironment(inspect, bootstrapIdentity);
+  if (
+    envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND") !== OPENSHELL_DRIVER_IDLE_COMMAND
+  ) {
+    throw new Error("Managed bootstrap Docker workload left the OpenShell idle hold boundary.");
+  }
 }
 
-function assertBootstrapIdentityInObservedHold(
+function assertBootstrapIdentityEnvironment(
   inspect: DockerContainerInspect,
   bootstrapIdentity: string,
 ): void {
   assertManagedBootstrapIdentity(bootstrapIdentity);
-  const observed = envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND");
-  if (!observed) {
-    throw new Error("Managed bootstrap Docker workload is missing its held command.");
-  }
-  const occurrences = observed.split(bootstrapIdentity).length - 1;
-  if (occurrences !== 1) {
+  if (envValue(inspect.Config?.Env, MANAGED_BOOTSTRAP_IDENTITY_ENV) !== bootstrapIdentity) {
     throw new Error(
-      "Managed bootstrap Docker held command does not contain one exact bootstrap identity.",
+      "Managed bootstrap Docker workload does not contain one exact persisted bootstrap identity.",
     );
   }
 }
@@ -3082,7 +3078,7 @@ export function createDockerManagedBootstrapAdapter(
       assertRootSupervisor(inspect);
       assertImage(inspect, input.expectedImage, deps);
       assertMetadata(inspect, input.sandbox, input.metadata);
-      assertBootstrapIdentityInObservedHold(inspect, input.bootstrapIdentity);
+      assertBootstrapIdentityEnvironment(inspect, input.bootstrapIdentity);
       return Object.freeze({
         sandbox: input.sandbox,
         runtimeId,

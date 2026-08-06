@@ -4,6 +4,7 @@
 import { assert, describe, expect, it, vi } from "vitest";
 
 import {
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   ManagedBootstrapDurableCommitCleanupPendingError,
   ManagedBootstrapOwnerCleanupRequiredError,
 } from "./adapter";
@@ -31,6 +32,45 @@ function expectEventBefore(events: readonly string[], before: string, after: str
 }
 
 describe("Docker managed bootstrap adapter", () => {
+  it("captures the live OpenShell idle supervisor with a separately persisted bootstrap identity", async () => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle } = authority();
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+
+    await expect(adapter.inspectHeldWorkload({ handle, discovered })).resolves.toMatchObject({
+      bootstrapIdentity: handle.bootstrapIdentity,
+      runtimeId: OLD_ID,
+    });
+  });
+
+  it("rejects a live OpenShell workload whose persisted bootstrap identity drifted", async () => {
+    const fake = fixture();
+    const environment = fake.original?.Config?.Env;
+    assert(environment, "fixture environment is required");
+    const index = environment.findIndex((entry) =>
+      entry.startsWith(`${MANAGED_BOOTSTRAP_IDENTITY_ENV}=`),
+    );
+    assert(index >= 0, "fixture bootstrap identity is required");
+    environment[index] = `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${"9".repeat(64)}`;
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle } = authority();
+
+    await expect(
+      adapter.discoverHeldWorkload({
+        sandbox: handle.sandbox,
+        bootstrapIdentity: handle.bootstrapIdentity,
+        expectedImage: handle.plan.image,
+        metadata: handle.plan.metadata,
+      }),
+    ).rejects.toThrow("one exact persisted bootstrap identity");
+  });
+
   it("publishes durable commit authority before deleting the rollback backup after lost acknowledgements", async () => {
     const fake = fixture({
       lostAcknowledgements: [

@@ -11,6 +11,7 @@ import { encodeManagedStartupProfile, type ManagedStartupAgent } from "../manage
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
   createManagedBootstrapPreparedAuthority,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapDurablePreparationReceipt,
@@ -116,10 +117,6 @@ export const sandbox = {
   driverId: "docker",
 };
 
-function shellArgv(argv: readonly string[]): string {
-  return argv.join(" ");
-}
-
 function originalInspect(inputs = agentInputs()): DockerContainerInspect {
   return {
     Id: OLD_ID,
@@ -127,7 +124,11 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
     Name: "/openshell-alpha",
     Config: {
       Image: IMAGE,
-      Env: ["A=1", `OPENSHELL_SANDBOX_COMMAND=${shellArgv(inputs.heldArgv)}`],
+      Env: [
+        "A=1",
+        `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${IDENTITY}`,
+        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+      ],
       Labels: {
         "openshell.ai/managed-by": "openshell",
         "openshell.ai/sandbox-name": "alpha",

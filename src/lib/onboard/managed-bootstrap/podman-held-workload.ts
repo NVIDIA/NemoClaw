@@ -5,7 +5,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
+import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 
 // OpenShell v0.0.85 Podman ownership contract. A later label schema must use a
 // separate adapter so this mutation boundary never guesses container ownership.
@@ -21,6 +21,7 @@ const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_STRING_BYTES = 64 * 1024;
 const MAX_ARGV_BYTES = 128 * 1024;
+const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -174,11 +175,11 @@ function discoverRuntimeId(engine: ContainerEngine, sandboxName: string): string
   return ids[0] as string;
 }
 
-function exactEnvironmentCommand(environment: readonly string[]): string | null {
-  const prefix = "OPENSHELL_SANDBOX_COMMAND=";
+function exactEnvironmentValue(environment: readonly string[], key: string): string {
+  const prefix = `${key}=`;
   const values = environment.filter((entry) => entry.startsWith(prefix));
   if (values.length !== 1) {
-    throw new Error("Podman held workload must contain one exact OpenShell command binding.");
+    throw new Error(`Podman held workload must contain one exact ${key} binding.`);
   }
   return (values[0] as string).slice(prefix.length);
 }
@@ -234,12 +235,16 @@ function parseObservation(
     throw new Error("Podman held workload supervisor argv changed before bootstrap preparation.");
   }
   const environment = stringArray(config.Env, "Podman inspect Config.Env");
-  const expectedCommand = openshellSandboxCommandEnvValue(input.expectedHeldWorkloadArgv);
-  if (!expectedCommand || exactEnvironmentCommand(environment) !== expectedCommand) {
-    throw new Error("Podman held workload command binding changed before bootstrap preparation.");
+  if (
+    exactEnvironmentValue(environment, MANAGED_BOOTSTRAP_IDENTITY_ENV) !== input.bootstrapIdentity
+  ) {
+    throw new Error("Podman held workload bootstrap identity binding changed before preparation.");
   }
-  if (!expectedCommand.includes(input.bootstrapIdentity)) {
-    throw new Error("Podman held workload command is not bound to the bootstrap identity.");
+  if (
+    exactEnvironmentValue(environment, "OPENSHELL_SANDBOX_COMMAND") !==
+    OPENSHELL_DRIVER_IDLE_COMMAND
+  ) {
+    throw new Error("Podman held workload left the OpenShell idle hold boundary.");
   }
   const imageContentId = `sha256:${fullId(inspect.Image, "Podman inspect Image")}`;
   if (
