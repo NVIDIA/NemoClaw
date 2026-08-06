@@ -16,6 +16,7 @@ import {
   validateE2eWorkflowBoundary,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+import { testTimeout } from "../../helpers/timeouts";
 
 const NO_IMAGE_E2E_JOBS = ["staging-brev-launchable", "shared-e2e"] as const;
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
@@ -204,64 +205,68 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     ).toContain("docker-auth-cleanup script content must match the pinned commit");
   });
 
-  it("accepts only the pinned pre-restore cleanup action in the complete workflow", () => {
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
+  it(
+    "accepts only the pinned pre-restore cleanup action in the complete workflow",
+    () => {
+      expect(validateE2eWorkflowBoundary()).toEqual([]);
 
-    const jobNames = [
-      "openclaw-plugin-runtime-exdev",
-      "openclaw-plugin-runtime-exdev-release",
-    ] as const;
-    const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
-      (cleanup) => {
-        cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
-      },
-      (cleanup) => {
-        cleanup.uses = "./.github/actions/docker-auth-cleanup";
-      },
-      (cleanup) => {
-        delete cleanup.uses;
-        cleanup.shell = "bash";
-        cleanup.run = CLEANUP_HELPER_RUN;
-      },
-    ];
-    for (const mutateCleanup of cleanupMutations) {
-      const errors = validateMutation((workflow) => {
+      const jobNames = [
+        "openclaw-plugin-runtime-exdev",
+        "openclaw-plugin-runtime-exdev-release",
+      ] as const;
+      const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
+        (cleanup) => {
+          cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
+        },
+        (cleanup) => {
+          cleanup.uses = "./.github/actions/docker-auth-cleanup";
+        },
+        (cleanup) => {
+          delete cleanup.uses;
+          cleanup.shell = "bash";
+          cleanup.run = CLEANUP_HELPER_RUN;
+        },
+      ];
+      for (const mutateCleanup of cleanupMutations) {
+        const errors = validateMutation((workflow) => {
+          for (const jobName of jobNames) {
+            const cleanup = namedStep(
+              workflow.jobs[jobName],
+              "Remove Docker auth before release-pinned fixture",
+            );
+            expect(cleanup).toBeDefined();
+            mutateCleanup(cleanup!);
+          }
+        });
+
         for (const jobName of jobNames) {
-          const cleanup = namedStep(
-            workflow.jobs[jobName],
-            "Remove Docker auth before release-pinned fixture",
+          expect(errors).toContain(
+            `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
           );
+        }
+      }
+
+      const orderingErrors = validateMutation((workflow) => {
+        for (const jobName of jobNames) {
+          const job = workflow.jobs[jobName];
+          const steps = job.steps!;
+          const cleanup = namedStep(job, "Remove Docker auth before release-pinned fixture");
+          const restore = namedStep(job, "Restore exact-commit CLI artifact");
           expect(cleanup).toBeDefined();
-          mutateCleanup(cleanup!);
+          expect(restore).toBeDefined();
+          steps.splice(steps.indexOf(cleanup!), 1);
+          steps.splice(steps.indexOf(restore!) + 1, 0, cleanup!);
         }
       });
 
       for (const jobName of jobNames) {
-        expect(errors).toContain(
-          `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
+        expect(orderingErrors).toContain(
+          `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
         );
       }
-    }
-
-    const orderingErrors = validateMutation((workflow) => {
-      for (const jobName of jobNames) {
-        const job = workflow.jobs[jobName];
-        const steps = job.steps!;
-        const cleanup = namedStep(job, "Remove Docker auth before release-pinned fixture");
-        const restore = namedStep(job, "Restore exact-commit CLI artifact");
-        expect(cleanup).toBeDefined();
-        expect(restore).toBeDefined();
-        steps.splice(steps.indexOf(cleanup!), 1);
-        steps.splice(steps.indexOf(restore!) + 1, 0, cleanup!);
-      }
-    });
-
-    for (const jobName of jobNames) {
-      expect(orderingErrors).toContain(
-        `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
-      );
-    }
-  });
+    },
+    testTimeout(15_000),
+  );
 
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
     const workflow = loadWorkflow();
