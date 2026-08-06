@@ -12,7 +12,6 @@ const REQUIRED_CHECK_NAMES = [
   "changes",
   "commit-lint",
   "dco-check",
-  "E2E / PR Gate",
 ] as const;
 
 type E2eCheckFixture = [number, number, string, string?, string?, string?, string?];
@@ -178,11 +177,11 @@ function shellSingleQuote(value: string): string {
 }
 
 function successfulRequiredChecksWithoutE2e() {
-  return successfulRequiredChecks().filter((check) => check.name !== "E2E / PR Gate");
+  return successfulRequiredChecks();
 }
 
 function successfulRequiredChecks() {
-  return [...REQUIRED_CHECK_NAMES.map((name) => requiredCheck(name)), initialE2eSeedCheck()];
+  return REQUIRED_CHECK_NAMES.map((name) => requiredCheck(name));
 }
 
 function requiredCheck(name: string, conclusion = "SUCCESS") {
@@ -578,15 +577,6 @@ function runGate(fixture: ComplianceFixture) {
       event: "pull_request",
       path: ".github/workflows/dco-check.yaml",
     },
-    "94": exactDiffGateRun("success", [{ id: 1, name: "E2E / PR Gate" }]),
-    "407": {
-      ...exactDiffGateRun("success", initialE2eSeedJobs()),
-      createdAt: "2026-01-01T00:01:00Z",
-      updatedAt: "2026-01-01T00:01:31Z",
-      headRepository,
-      pullRequests: [],
-    },
-    "9500": e2eCoordinatorRun(),
     ...fixture.actionRunAttempts,
   };
   const actionRunData = (runId: string, value: ActionRunFixture): Record<string, unknown> => ({

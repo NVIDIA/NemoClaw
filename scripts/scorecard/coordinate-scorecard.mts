@@ -70,7 +70,7 @@ function deriveRunMode(
     ? "Selective dispatch"
     : isDispatch
       ? "Manual full run"
-      : "Scheduled E2E";
+      : "Main push";
   return { runMode, isDispatch, isSelectiveDispatch: selective };
 }
 

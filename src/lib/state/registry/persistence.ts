@@ -4,6 +4,7 @@
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
+import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
 import { normalizeSandboxMcpState, serializeSandboxMcpStateForDisk } from "../registry-mcp";
@@ -31,6 +32,17 @@ function cloneSandboxWorkloadReceiptOrThrow(
     throw new Error(`Cannot ${operation} a sandbox entry with an invalid workload receipt`);
   }
   return workload;
+}
+
+function cloneServingProfileProvenanceOrThrow(
+  value: SandboxEntry["servingProfileProvenance"],
+  operation: "load" | "save",
+): SandboxEntry["servingProfileProvenance"] {
+  const provenance = parseServingProfileProvenance(value);
+  if (value !== undefined && !provenance) {
+    throw new Error(`Cannot ${operation} a sandbox entry with invalid serving profile provenance`);
+  }
+  return provenance ?? undefined;
 }
 
 export const REGISTRY_FILE = path.join(
@@ -96,6 +108,10 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
+  const servingProfileProvenance = cloneServingProfileProvenanceOrThrow(
+    entry.servingProfileProvenance,
+    "load",
+  );
   const mcp = normalizeSandboxMcpState(entry.mcp);
   const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
@@ -104,6 +120,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const {
     messaging: _messaging,
     workload: _workload,
+    servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
@@ -112,6 +129,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(workload ? { workload } : {}),
+    ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
@@ -141,6 +159,10 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(durable.workload, "save");
+  const servingProfileProvenance = cloneServingProfileProvenanceOrThrow(
+    durable.servingProfileProvenance,
+    "save",
+  );
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
   const baselineExclusions = normalizeBaselineExclusions(durable.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
@@ -149,6 +171,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const {
     messaging: _messaging,
     workload: _workload,
+    servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
@@ -158,6 +181,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
+    ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),

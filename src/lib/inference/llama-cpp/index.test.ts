@@ -177,12 +177,94 @@ describe("probeLlamaCppAttachment", () => {
     ).toMatchObject({ ok: false, reason: "ambiguous-model" });
   });
 
-  it("rejects an unauthenticated OpenAI-compatible server (#8161)", () => {
-    const result = probeLlamaCppAttachment("secret-token", {
-      runCurlProbeImpl: scriptedProbe([response(200, JSON.stringify({ data: [nativeModel()] }))]),
-    });
+  it("accepts a llama.cpp fingerprint with a public /v1/models endpoint (#8302)", () => {
+    const responses: CurlProbeResult[] = [
+      response(200, '{"data":[]}'),
+      response(401, '{"error":"unauthorized"}'),
+      response(200, JSON.stringify({ data: [nativeModel()] })),
+      response(200, '{"status":"ok"}'),
+      response(
+        200,
+        JSON.stringify({
+          model_alias: "team/model-alias",
+          model_path: "/models/model.gguf",
+          total_slots: 2,
+          default_generation_settings: { params: {} },
+        }),
+      ),
+      response(200, "# TYPE llamacpp:requests_processing gauge\nllamacpp:requests_processing 0\n"),
+    ];
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toEqual({ ok: true, model: "team/model-alias" });
+  });
 
-    expect(result).toMatchObject({ ok: false, reason: "authentication-required" });
+  it("rejects a non-llama.cpp server with public /v1/models (#8302)", () => {
+    const result = probeLlamaCppAttachment("secret-token", {
+      runCurlProbeImpl: scriptedProbe([
+        response(200, '{"data":[]}'),
+        response(401, '{"error":"unauthorized"}'),
+        response(
+          200,
+          JSON.stringify({ data: [{ id: "model", object: "model", owned_by: "vllm" }] }),
+        ),
+      ]),
+    });
+    expect(result).toMatchObject({ ok: false, reason: "not-llama-cpp" });
+  });
+
+  it("rejects a server with public /v1/models that leaves /props unprotected (#8302)", () => {
+    const probe = scriptedProbe([
+      response(200, '{"data":[]}'),
+      response(
+        200,
+        JSON.stringify({
+          model_alias: "team/model-alias",
+          model_path: "/models/model.gguf",
+          total_slots: 2,
+          default_generation_settings: { params: {} },
+        }),
+      ),
+    ]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "authentication-required",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("classifies a missing protected /props endpoint as not llama.cpp (#8302)", () => {
+    const probe = scriptedProbe([
+      response(200, '{"data":[]}'),
+      response(404, '{"error":"not found"}'),
+    ]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "not-llama-cpp",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a timeout when anonymous /props does not respond (#8302)", () => {
+    const probe = scriptedProbe([response(200, '{"data":[]}'), curlFailure(28)]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "probe-timeout",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an oversized anonymous /props response (#8302)", () => {
+    const probe = scriptedProbe([response(200, '{"data":[]}'), curlFailure(63)]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "oversized-response",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a vLLM model catalog (#8161)", () => {

@@ -10,6 +10,15 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 
 const GUARD_PATH = path.resolve("scripts/state-dir-guard.py");
 const fixtures: string[] = [];
+const DEFAULT_PLAN = {
+  version: 1,
+  readOnlyRoots: ["agents", "cron", "extensions", "plugins", "skills"],
+  confidentialRoots: ["credentials"],
+  readOnlyPrefixes: ["workspace-"],
+  confidentialPrefixes: [],
+  writableSubpaths: ["agents/*/sessions"],
+};
+const PLAN_JSON = JSON.stringify(DEFAULT_PLAN);
 const PYTHON_HAS_DESCRIPTOR_XATTR =
   spawnSync("python3", [
     "-c",
@@ -34,7 +43,7 @@ import importlib.util
 import os
 import sys
 
-guard_path, action, config_dir = sys.argv[1:4]
+guard_path, action, config_dir, plan_flag, plan_value = sys.argv[1:6]
 spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard", guard_path)
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -51,6 +60,27 @@ if os.environ.get("NEMOCLAW_TEST_MAX_ENTRIES"):
     module.MAX_ENTRIES_PER_PASS = int(os.environ["NEMOCLAW_TEST_MAX_ENTRIES"])
 if os.environ.get("NEMOCLAW_TEST_MAX_COPY_BYTES"):
     module.MAX_COPIED_BYTES_PER_PASS = int(os.environ["NEMOCLAW_TEST_MAX_COPY_BYTES"])
+raise SystemExit(module.main([
+    action, "--config-dir", config_dir, plan_flag, plan_value,
+]))
+`;
+
+const RUN_BUNDLED_GUARD_AS_CURRENT_USER = String.raw`
+import importlib.util
+import os
+import sys
+
+guard_path, action, config_dir = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("nemoclaw_bundled_state_dir_guard", guard_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = module.Identity(
+    root_uid=os.getuid(), root_gid=os.getgid(),
+    sandbox_uid=os.getuid(), sandbox_gid=os.getgid(),
+)
+module.os.geteuid = lambda: 0
+module._production_identity = lambda: identity
 raise SystemExit(module.main([action, "--config-dir", config_dir]))
 `;
 
@@ -61,7 +91,7 @@ import os
 import struct
 import sys
 
-guard_path, config_dir, file_path = sys.argv[1:4]
+guard_path, config_dir, file_path, plan_json = sys.argv[1:5]
 spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_flags", guard_path)
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -70,6 +100,7 @@ identity = module.Identity(
     root_uid=os.getuid(), root_gid=os.getgid(),
     sandbox_uid=os.getuid(), sandbox_gid=os.getgid(),
 )
+plan = module.parse_agent_state_lock_plan(plan_json)
 flags = {}
 initial = os.stat(file_path)
 flags[(initial.st_dev, initial.st_ino)] = module.FS_IMMUTABLE_FL
@@ -85,10 +116,10 @@ def fake_ioctl(fd, operation, payload):
     raise AssertionError(operation)
 
 module.fcntl.ioctl = fake_ioctl
-locked = module.run_guard("lock", config_dir, identity)
+locked = module.run_guard("lock", config_dir, identity, plan)
 locked_stat = os.stat(file_path)
 locked_flags = flags.get((locked_stat.st_dev, locked_stat.st_ino), 0)
-unlocked = module.run_guard("unlock", config_dir, identity)
+unlocked = module.run_guard("unlock", config_dir, identity, plan)
 unlocked_stat = os.stat(file_path)
 unlocked_flags = flags.get((unlocked_stat.st_dev, unlocked_stat.st_ino), 0)
 print(json.dumps({
@@ -155,7 +186,7 @@ import json
 import os
 import sys
 
-guard_path, config_dir, sandbox_gid = sys.argv[1:4]
+guard_path, config_dir, sandbox_gid, plan_json = sys.argv[1:5]
 spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_gid", guard_path)
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -164,7 +195,8 @@ identity = module.Identity(
     root_uid=os.getuid(), root_gid=os.getgid(),
     sandbox_uid=os.getuid(), sandbox_gid=int(sandbox_gid),
 )
-result = module.run_guard("lock", config_dir, identity)
+plan = module.parse_agent_state_lock_plan(plan_json)
+result = module.run_guard("lock", config_dir, identity, plan)
 
 
 def group_of(path):
@@ -186,7 +218,7 @@ import json
 import os
 import sys
 
-guard_path, config_dir = sys.argv[1:3]
+guard_path, config_dir, plan_json = sys.argv[1:4]
 spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_carveout", guard_path)
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -195,12 +227,13 @@ identity = module.Identity(
     root_uid=os.getuid(), root_gid=os.getgid(),
     sandbox_uid=os.getuid(), sandbox_gid=os.getgid(),
 )
+plan = module.parse_agent_state_lock_plan(plan_json)
 
 def racing_mkdir(*args, **kwargs):
     raise FileExistsError(17, "File exists", "sessions")
 
 module.os.mkdir = racing_mkdir
-result = module.run_guard("lock", config_dir, identity)
+result = module.run_guard("lock", config_dir, identity, plan)
 print(json.dumps({
     "ok": result.ok,
     "issues": [issue.as_json() for issue in result.issues],
@@ -274,14 +307,16 @@ function fixture(configDirName = ".agent"): { root: string; configDir: string } 
   return { root, configDir: fs.realpathSync(configDir) };
 }
 
-function runGuard(
+function runGuardWithPlanSource(
   action: "preflight" | "lock" | "unlock" | "startup",
   configDir: string,
+  planFlag: "--plan-json" | "--plan-file",
+  planValue: string,
   env: Record<string, string> = {},
 ) {
   const result = spawnSync(
     "python3",
-    ["-c", RUN_GUARD_AS_CURRENT_USER, GUARD_PATH, action, configDir],
+    ["-c", RUN_GUARD_AS_CURRENT_USER, GUARD_PATH, action, configDir, planFlag, planValue],
     { encoding: "utf-8", timeout: 15_000, env: { ...process.env, ...env } },
   );
   const lines = result.stdout
@@ -290,6 +325,15 @@ function runGuard(
     .filter(Boolean)
     .map((line) => JSON.parse(line) as GuardLine);
   return { ...result, lines };
+}
+
+function runGuard(
+  action: "preflight" | "lock" | "unlock" | "startup",
+  configDir: string,
+  env: Record<string, string> = {},
+  plan: unknown = DEFAULT_PLAN,
+) {
+  return runGuardWithPlanSource(action, configDir, "--plan-json", JSON.stringify(plan), env);
 }
 
 function mode(filePath: string): number {
@@ -308,6 +352,221 @@ afterEach(() => {
 });
 
 describe("state-dir-guard", () => {
+  it("requires an explicit plan outside the bundled helper layout and rejects multiple sources", () => {
+    const { root, configDir } = fixture();
+    const planFile = path.join(root, "plan.json");
+    fs.writeFileSync(planFile, PLAN_JSON);
+
+    const missing = spawnSync("python3", [GUARD_PATH, "preflight", "--config-dir", configDir], {
+      encoding: "utf-8",
+    });
+    const repeated = spawnSync(
+      "python3",
+      [
+        GUARD_PATH,
+        "preflight",
+        "--config-dir",
+        configDir,
+        "--plan-json",
+        PLAN_JSON,
+        "--plan-file",
+        planFile,
+      ],
+      { encoding: "utf-8" },
+    );
+
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toBe("");
+    expect(missing.stdout).toContain('"code":"invalid-plan"');
+    expect(repeated.status).toBe(2);
+    expect(repeated.stderr).toContain("not allowed with argument");
+  });
+
+  it("supports the previous CLI wire form only from a co-bundled generated plan", () => {
+    const { root, configDir } = fixture();
+    const helperPath = path.join(root, "image", "lib", "nemoclaw", "state-dir-guard.py");
+    const planPath = path.join(root, "image", "share", "nemoclaw", "state-lock-plan.json");
+    const pluginsDir = path.join(configDir, "plugins");
+    fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.mkdirSync(pluginsDir);
+    fs.copyFileSync(GUARD_PATH, helperPath);
+    fs.writeFileSync(planPath, PLAN_JSON);
+    fs.chmodSync(pluginsDir, 0o2770);
+
+    const result = spawnSync(
+      "python3",
+      ["-c", RUN_BUNDLED_GUARD_AS_CURRENT_USER, helperPath, "lock", configDir],
+      { encoding: "utf-8", timeout: 15_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(mode(pluginsDir)).toBe(0o755);
+  });
+
+  it("loads an SPDX-annotated plan file", () => {
+    const { root, configDir } = fixture();
+    const pluginsDir = path.join(configDir, "plugins");
+    const planFile = path.join(root, "state-lock-plan.json");
+    fs.mkdirSync(pluginsDir);
+    fs.writeFileSync(
+      planFile,
+      JSON.stringify({
+        $comment:
+          "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+        ...DEFAULT_PLAN,
+      }),
+    );
+
+    const result = runGuardWithPlanSource("preflight", configDir, "--plan-file", planFile);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.lines.at(-1)).toEqual(
+      expect.objectContaining({ type: "result", status: "ok", roots: 1 }),
+    );
+  });
+
+  it("rejects missing, non-UTF-8, and oversized plan files", () => {
+    const { root, configDir } = fixture();
+    const cases: Array<[string, (planFile: string) => void]> = [
+      ["missing.json", () => undefined],
+      ["non-utf8.json", (planFile) => fs.writeFileSync(planFile, Buffer.from([0xff]))],
+      [
+        "oversized.json",
+        (planFile) => fs.writeFileSync(planFile, Buffer.alloc(1024 * 1024 + 1, 0x20)),
+      ],
+    ];
+
+    for (const [fileName, writePlan] of cases) {
+      const planFile = path.join(root, fileName);
+      writePlan(planFile);
+
+      const result = runGuardWithPlanSource("preflight", configDir, "--plan-file", planFile);
+
+      expect(result.status, fileName).toBe(1);
+      expect(result.lines, fileName).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "issue", code: "invalid-plan" }),
+          expect.objectContaining({ type: "result", status: "failed", issueCount: 1 }),
+        ]),
+      );
+    }
+  });
+
+  it.each([
+    ["malformed JSON", "{"],
+    ["duplicate JSON keys", PLAN_JSON.replace('"version":1', '"version":1,"version":1')],
+    ["missing keys", "{}"],
+    ["unknown keys", JSON.stringify({ ...DEFAULT_PLAN, registry: [] })],
+    ["non-string comment", JSON.stringify({ ...DEFAULT_PLAN, $comment: 1 })],
+    ["null comment", JSON.stringify({ ...DEFAULT_PLAN, $comment: null })],
+    ["wrong version", JSON.stringify({ ...DEFAULT_PLAN, version: true })],
+    ["unsafe top-level root", JSON.stringify({ ...DEFAULT_PLAN, readOnlyRoots: ["../plugins"] })],
+    [
+      "unsafe top-level prefix",
+      JSON.stringify({ ...DEFAULT_PLAN, readOnlyPrefixes: ["workspace/"] }),
+    ],
+    ["duplicate root", JSON.stringify({ ...DEFAULT_PLAN, readOnlyRoots: ["plugins", "plugins"] })],
+    [
+      "conflicting root policy",
+      JSON.stringify({
+        ...DEFAULT_PLAN,
+        confidentialRoots: ["plugins"],
+      }),
+    ],
+    [
+      "overlapping prefixes",
+      JSON.stringify({
+        ...DEFAULT_PLAN,
+        readOnlyPrefixes: ["workspace-", "workspace-dev-"],
+      }),
+    ],
+    [
+      "partial-component wildcard",
+      JSON.stringify({ ...DEFAULT_PLAN, writableSubpaths: ["agents/a*/sessions"] }),
+    ],
+    ["final wildcard", JSON.stringify({ ...DEFAULT_PLAN, writableSubpaths: ["agents/*"] })],
+    [
+      "overlapping writable subpaths",
+      JSON.stringify({
+        ...DEFAULT_PLAN,
+        writableSubpaths: ["agents/*/sessions", "agents/main/sessions"],
+      }),
+    ],
+    [
+      "writable path under a confidential root",
+      JSON.stringify({
+        ...DEFAULT_PLAN,
+        writableSubpaths: ["credentials/runtime"],
+      }),
+    ],
+  ])("rejects a plan with %s", (_case, planJson) => {
+    const { configDir } = fixture();
+
+    const result = runGuardWithPlanSource("preflight", configDir, "--plan-json", planJson);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "issue", code: "invalid-plan" }),
+        expect.objectContaining({ type: "result", status: "failed", issueCount: 1 }),
+      ]),
+    );
+  });
+
+  it("selects exact roots and prefixes only from the supplied plan", () => {
+    const { configDir } = fixture();
+    const selectedRoot = path.join(configDir, "custom");
+    const selectedPrefix = path.join(configDir, "project-blue");
+    const unselectedRoot = path.join(configDir, "plugins");
+    fs.mkdirSync(selectedRoot);
+    fs.mkdirSync(selectedPrefix);
+    fs.mkdirSync(unselectedRoot);
+    fs.chmodSync(selectedRoot, 0o2770);
+    fs.chmodSync(selectedPrefix, 0o2770);
+    fs.chmodSync(unselectedRoot, 0o2770);
+    const plan = {
+      version: 1,
+      readOnlyRoots: ["custom"],
+      confidentialRoots: [],
+      readOnlyPrefixes: ["project-"],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    };
+
+    const result = runGuard("lock", configDir, {}, plan);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(mode(selectedRoot)).toBe(0o755);
+    expect(mode(selectedPrefix)).toBe(0o755);
+    expect(mode(unselectedRoot)).toBe(0o2770);
+  });
+
+  it("creates and preserves a generic wildcard writable subpath", () => {
+    const { configDir } = fixture();
+    const workerDir = path.join(configDir, "workers", "main");
+    const runsDir = path.join(workerDir, "runs");
+    fs.mkdirSync(workerDir, { recursive: true });
+    const plan = {
+      version: 1,
+      readOnlyRoots: ["workers"],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: ["workers/*/runs"],
+    };
+
+    const locked = runGuard("lock", configDir, {}, plan);
+    fs.writeFileSync(path.join(runsDir, "live.log"), "runtime\n", { mode: 0o660 });
+    const relocked = runGuard("lock", configDir, {}, plan);
+
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(relocked.status, relocked.stderr).toBe(0);
+    expect(mode(runsDir)).toBe(0o2770);
+    expect(fs.readFileSync(path.join(runsDir, "live.log"), "utf-8")).toBe("runtime\n");
+  });
+
   it("rejects a config root reached through a symlinked ancestor", () => {
     const rawRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-dir-guard-"));
     fixtures.push(rawRoot);
@@ -855,7 +1114,7 @@ describe("state-dir-guard", () => {
     };
     const unlock = spawn(
       "python3",
-      ["-c", RUN_GUARD_AS_CURRENT_USER, GUARD_PATH, "unlock", configDir],
+      ["-c", RUN_GUARD_AS_CURRENT_USER, GUARD_PATH, "unlock", configDir, "--plan-json", PLAN_JSON],
       {
         env: {
           ...commonEnv,
@@ -876,7 +1135,7 @@ describe("state-dir-guard", () => {
       const startedAt = Date.now();
       const locked = spawnSync(
         "python3",
-        ["-c", RUN_GUARD_AS_CURRENT_USER, GUARD_PATH, "lock", configDir],
+        ["-c", RUN_GUARD_AS_CURRENT_USER, GUARD_PATH, "lock", configDir, "--plan-json", PLAN_JSON],
         { env: commonEnv, encoding: "utf-8", timeout: 10_000 },
       );
 
@@ -915,7 +1174,7 @@ describe("state-dir-guard", () => {
 
     const result = spawnSync(
       "python3",
-      ["-c", RUN_FAKE_IMMUTABLE_TRANSITION, GUARD_PATH, configDir, pluginPath],
+      ["-c", RUN_FAKE_IMMUTABLE_TRANSITION, GUARD_PATH, configDir, pluginPath, PLAN_JSON],
       { encoding: "utf-8", timeout: 15_000 },
     );
 
@@ -986,59 +1245,6 @@ describe("state-dir-guard", () => {
     expect(mode(agentDir)).toBe(0o2770);
   });
 
-  it("keeps the Hermes dashboard profile writable and private while Shields are up (#7200)", () => {
-    const { configDir } = fixture(".hermes");
-    const dashboardHome = path.join(configDir, "profiles", "dashboard-home");
-    const dashboardMemory = path.join(dashboardHome, "MEMORY.md");
-    fs.mkdirSync(dashboardHome, { recursive: true, mode: 0o700 });
-    fs.chmodSync(dashboardHome, 0o700);
-    fs.writeFileSync(dashboardMemory, "dashboard runtime\n", { mode: 0o600 });
-    const dashboardFd = fs.openSync(dashboardMemory, "a+");
-    const oldMemoryInode = fs.fstatSync(dashboardFd).ino;
-
-    try {
-      const locked = runGuard("lock", configDir);
-
-      expect(locked.status, locked.stderr).toBe(0);
-      expect(mode(path.join(configDir, "profiles"))).toBe(0o755);
-      expect(mode(dashboardHome)).toBe(0o700);
-      expect(mode(dashboardMemory)).toBe(0o600);
-      expect(fs.fstatSync(dashboardFd).ino).toBe(oldMemoryInode);
-      fs.writeSync(dashboardFd, "updated\n");
-
-      const relocked = runGuard("lock", configDir);
-
-      expect(relocked.status, relocked.stderr).toBe(0);
-      expect(mode(dashboardHome)).toBe(0o700);
-      expect(fs.fstatSync(dashboardFd).ino).toBe(oldMemoryInode);
-
-      const unlocked = runGuard("unlock", configDir);
-
-      expect(unlocked.status, unlocked.stderr).toBe(0);
-      expect(mode(dashboardHome)).toBe(0o700);
-      const contents = Buffer.alloc(fs.fstatSync(dashboardFd).size);
-      fs.readSync(dashboardFd, contents, 0, contents.length, 0);
-      expect(contents.toString("utf-8")).toBe("dashboard runtime\nupdated\n");
-    } finally {
-      fs.closeSync(dashboardFd);
-    }
-  });
-
-  it("keeps a dashboard-named OpenClaw profile inside the Shields boundary", () => {
-    const { configDir } = fixture(".openclaw");
-    const dashboardHome = path.join(configDir, "profiles", "dashboard-home");
-    const dashboardMemory = path.join(dashboardHome, "MEMORY.md");
-    fs.mkdirSync(dashboardHome, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(dashboardMemory, "protected\n", { mode: 0o600 });
-    const oldMemoryInode = fs.statSync(dashboardMemory).ino;
-
-    const locked = runGuard("lock", configDir);
-
-    expect(locked.status, locked.stderr).toBe(0);
-    expect(mode(dashboardHome)).toBe(0o755);
-    expect(fs.statSync(dashboardMemory).ino).not.toBe(oldMemoryInode);
-  });
-
   it.skipIf(SUPPLEMENTARY_GID < 0)(
     "assigns the sandbox group to the confidentiality root only, while nested entries keep the root group (#7545)",
     () => {
@@ -1055,6 +1261,7 @@ describe("state-dir-guard", () => {
           GUARD_PATH,
           configDir,
           String(SUPPLEMENTARY_GID),
+          PLAN_JSON,
         ],
         { encoding: "utf-8", timeout: 15_000 },
       );
@@ -1087,6 +1294,32 @@ describe("state-dir-guard", () => {
     expect(nonemptyStartup.status, nonemptyStartup.stderr).toBe(0);
     expect(mode(credentialsDir)).toBe(0o710);
     expect(mode(path.join(credentialsDir, "token.json"))).toBe(0o600);
+  });
+
+  it("refuses startup traversal when the plan omits the confidential credentials root (#8006)", () => {
+    const { configDir } = fixture();
+    const credentialsDir = path.join(configDir, "credentials");
+    fs.mkdirSync(credentialsDir);
+    fs.chmodSync(credentialsDir, 0o700);
+
+    const result = runGuard(
+      "startup",
+      configDir,
+      {},
+      {
+        ...DEFAULT_PLAN,
+        confidentialRoots: [],
+      },
+    );
+
+    expect(result.status, JSON.stringify(result.lines)).toBe(1);
+    expect(result.lines).toContainEqual(
+      expect.objectContaining({
+        code: "startup-plan-mismatch",
+        path: credentialsDir,
+      }),
+    );
+    expect(mode(credentialsDir)).toBe(0o700);
   });
 
   it("creates a missing sessions carveout during lock so a first-boot agent can write sessions (#7545)", () => {
@@ -1136,10 +1369,14 @@ describe("state-dir-guard", () => {
     const agentDir = path.join(configDir, "agents", "main");
     fs.mkdirSync(agentDir, { recursive: true });
 
-    const result = spawnSync("python3", ["-c", RUN_CARVEOUT_MKDIR_RACE, GUARD_PATH, configDir], {
-      encoding: "utf-8",
-      timeout: 15_000,
-    });
+    const result = spawnSync(
+      "python3",
+      ["-c", RUN_CARVEOUT_MKDIR_RACE, GUARD_PATH, configDir, PLAN_JSON],
+      {
+        encoding: "utf-8",
+        timeout: 15_000,
+      },
+    );
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout.trim())).toEqual(
