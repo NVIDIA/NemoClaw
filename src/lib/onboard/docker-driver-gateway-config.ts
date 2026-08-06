@@ -81,7 +81,10 @@ export function buildDockerDriverGatewayConfigToml(
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
     ["supervisor_image", gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE],
-    ["supervisor_bin", sandboxBin ?? undefined],
+    // OpenShell 0.0.85 accepts supervisor_bin only for the Docker driver.
+    // The Podman schema rejects the entire driver table when this Docker-only
+    // field is present, so portable onboarding must rely on supervisor_image.
+    ["supervisor_bin", driver === "docker" ? (sandboxBin ?? undefined) : undefined],
     ["guest_tls_ca", localTlsDir ? path.join(localTlsDir, "ca.crt") : undefined],
     ["guest_tls_cert", localTlsDir ? path.join(localTlsDir, "client", "tls.crt") : undefined],
     ["guest_tls_key", localTlsDir ? path.join(localTlsDir, "client", "tls.key") : undefined],

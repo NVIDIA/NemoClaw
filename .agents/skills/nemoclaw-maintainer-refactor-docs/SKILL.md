@@ -18,11 +18,7 @@ Improve findability while preserving every useful fact, one canonical owner per 
 - Work from the NemoClaw repository root.
 - Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
   contract before planning or editing.
-- Treat `docs/` as the user-facing source of truth.
 - Read the full target pages, their navigation entries in `docs/index.yml`, their redirects in `fern/docs.yml`, and their inbound links before editing.
-- Verify behavior claims against checked-in source, tests, or scripts.
-- Verify support claims against an accepted issue or accepted design decision.
-- Use other issues and PRs to locate rationale, not as authority for behavior or support.
 
 ## Choose the Deliverable
 
@@ -142,16 +138,9 @@ Those generated files are ignored build output. Edit the source page and navigat
 5. Add direct redirects in `fern/docs.yml`.
 6. Delete superseded source pages only after their unique content and inbound routes are accounted for.
 
-Follow the documentation style guide and these refactor-specific rules:
+Follow the public-facing documentation rules and these refactor-specific rules:
 
-- Start each page with a concise statement of its purpose.
-- Put one prose sentence per source line where practical.
-- Exempt frontmatter, headings, navigation labels, diagrams, code, output, UI labels, and compact
-  table fragments from the prose sentence rules.
 - Keep consecutive items in a simple Markdown list compact, with no blank lines between items.
-- Add **Related Topics** or **Next Steps** only when the links help readers continue the journey.
-- Use `$$nemoclaw` for shared host CLI examples.
-- Use `<AgentOnly>` only when behavior or guidance differs by agent, not only to change a binary name.
 - Keep shared lists structurally intact after variant rendering. Verify the generated variant output when an `<AgentOnly>` block appears inside or next to a list.
 - Preserve working commands and behavior claims during a structural split. Avoid opportunistic prose rewrites.
 
@@ -207,7 +196,9 @@ Missing anchors can still be real even when the page route exists.
 
 ## Step 8: Run an Independent Docs Review
 
-Follow the shared independent documentation-writer review contract.
+Run the independent documentation-writer review required by the
+[Documentation Writer Review Receipt](../../../CONTRIBUTING.md#documentation-writer-review-receipt)
+procedure.
 In addition to its required inputs, give the reviewer the old-to-new ownership map.
 Ask it to check for content loss, duplicate ownership, variant drift, bad redirects, oversized
 paragraph blocks, generated paragraph joins, and style regressions without telling it the expected
