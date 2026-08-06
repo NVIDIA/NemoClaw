@@ -109,6 +109,12 @@
                 },
                 "additionalProperties": false
               }
+            },
+            "acquisition": {
+              "$ref": "#/$defs/llamaCppModelAcquisition"
+            },
+            "cache": {
+              "$ref": "#/$defs/llamaCppModelCache"
             }
           },
           "additionalProperties": false
@@ -957,6 +963,83 @@
         }
       ]
     },
+    "llamaCppModelAcquisition": {
+      "type": "object",
+      "required": [
+        "ref",
+        "authentication"
+      ],
+      "properties": {
+        "ref": {
+          "const": "hugging-face-exact-file/v1"
+        },
+        "authentication": {
+          "type": "object",
+          "required": [
+            "mode",
+            "environment"
+          ],
+          "properties": {
+            "mode": {
+              "const": "optional"
+            },
+            "environment": {
+              "const": "HF_TOKEN"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "llamaCppModelCache": {
+      "type": "object",
+      "required": [
+        "ref",
+        "receiptRef",
+        "root",
+        "quotaBytes",
+        "stagingHeadroomBytes",
+        "staging",
+        "publication",
+        "reuse",
+        "sharing",
+        "cleanup"
+      ],
+      "properties": {
+        "ref": {
+          "const": "llama-cpp.gguf-content-addressed/v1"
+        },
+        "receiptRef": {
+          "const": "llama-cpp.gguf-cache-entry.receipt/v1"
+        },
+        "root": {
+          "const": "user-cache"
+        },
+        "quotaBytes": {
+          "$ref": "#/$defs/positiveSafeInteger"
+        },
+        "stagingHeadroomBytes": {
+          "$ref": "#/$defs/positiveSafeInteger"
+        },
+        "staging": {
+          "const": "same-filesystem"
+        },
+        "publication": {
+          "const": "atomic-no-clobber"
+        },
+        "reuse": {
+          "const": "verified-only-offline"
+        },
+        "sharing": {
+          "const": "owner-only"
+        },
+        "cleanup": {
+          "const": "receipt-owner-only"
+        }
+      },
+      "additionalProperties": false
+    },
     "llamaCppRecipeSpec": {
       "if": {
         "type": "object",
@@ -1039,7 +1122,9 @@
               "id",
               "revision",
               "servedName",
-              "files"
+              "files",
+              "acquisition",
+              "cache"
             ],
             "properties": {
               "id": {
@@ -1078,6 +1163,12 @@
                     "license": {}
                   }
                 }
+              },
+              "acquisition": {
+                "$ref": "#/$defs/llamaCppModelAcquisition"
+              },
+              "cache": {
+                "$ref": "#/$defs/llamaCppModelCache"
               }
             },
             "propertyNames": {
@@ -1277,6 +1368,35 @@
               },
               "required": [
                 "capabilities"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "object",
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "acquisition": {}
+                      },
+                      "required": [
+                        "acquisition"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "cache": {}
+                      },
+                      "required": [
+                        "cache"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "model"
               ]
             }
           ]

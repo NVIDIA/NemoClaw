@@ -36,7 +36,12 @@ installMock(source("state", "registry.js"), {
 });
 installMock(source("agent", "defs.js"), {
   loadAgent: () => ({
-    configPaths: { dir: "/sandbox/.openclaw", configFile: "openclaw.json", format: "json" },
+    configPaths: {
+      dir: "/sandbox/.openclaw",
+      configFile: "openclaw.json",
+      format: "json",
+      shieldsFiles: [],
+    },
   }),
 });
 installMock(source("adapters", "openshell", "client.js"), {

@@ -111,7 +111,12 @@ const STATION_EXPRESS_RECEIPT_REVISION_PATTERN = /^[0-9a-f]{40}$/;
 const STATION_EXPRESS_RETIREMENT_CLAIM_SUFFIX_PATTERN = /^[A-Za-z0-9]+$/;
 const STATION_EXPRESS_RECEIPT_PORT_PATTERN = /^\d+$/;
 const STATION_EXPRESS_RECEIPT_AGENTS = new Set(["openclaw", "hermes", "langchain-deepagents-code"]);
-const STATION_EXPRESS_RECEIPT_POLICY_TIERS = new Set(["restricted", "balanced", "open"]);
+const STATION_EXPRESS_RECEIPT_POLICY_TIERS = new Set([
+  "restricted",
+  "balanced",
+  "open",
+  "personal",
+]);
 // Mirrors validate_station_install_mode() in scripts/install.sh.
 const STATION_EXPRESS_RECEIPT_MODES = new Set(["express", "provider"]);
 

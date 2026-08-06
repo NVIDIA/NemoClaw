@@ -37,6 +37,21 @@ network_policies:
 `;
 
 describe("renderPresetScope (#7179)", () => {
+  it("discloses generated destination pins in previews (#8176)", () => {
+    const content = `network_policies:
+  private-api:
+    endpoints:
+      - host: api.corp.example
+        port: 443
+        protocol: rest
+        allowed_ips: [10.20.30.40, 2001:db8::20]
+`;
+
+    expect(renderPresetScope(content).join("\n")).toContain(
+      "allowed IPs: 10.20.30.40, 2001:db8::20",
+    );
+  });
+
   it("returns an empty list for content with no network_policies", () => {
     expect(renderPresetScope("preset:\n  name: x\n  description: 'y'\n")).toEqual([]);
     expect(renderPresetScope("")).toEqual([]);
@@ -60,6 +75,27 @@ describe("renderPresetScope (#7179)", () => {
     expect(joined).toContain("- *.whatsapp.net:443 (protocol: rest, enforcement: enforce)");
     expect(joined).toMatch(/allow:\s+GET\s+\/\*\*/);
     expect(joined).toMatch(/allow:\s+POST\s+\/\*\*/);
+  });
+
+  it("discloses hostless allowed_ips endpoints instead of reporting no endpoints", () => {
+    const preset = `network_policies:
+  personal_open_internet:
+    name: personal_open_internet
+    endpoints:
+      - ports: [80, 443]
+        allowed_ips:
+          - 1.0.0.0/8
+          - 2000::/3
+    binaries:
+      - { path: "/**" }
+`;
+    const joined = renderPresetScope(preset).join("\n");
+
+    expect(joined).toContain("- <any hostname resolving to allowed_ips>:80,443");
+    expect(joined).toContain("allowed_ip: 1.0.0.0/8");
+    expect(joined).toContain("allowed_ip: 2000::/3");
+    expect(joined).toContain("- /**");
+    expect(joined).not.toContain("(no endpoints declared)");
   });
 
   it("surfaces the narrowly scoped Baileys version-fetch path, not just the host", () => {

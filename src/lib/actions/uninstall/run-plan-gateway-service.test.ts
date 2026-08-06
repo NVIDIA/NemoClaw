@@ -68,6 +68,20 @@ function writeGatewayEnv(test: Fixture, contents = "OPENSHELL_SERVER_PORT=8080\n
   return envPath;
 }
 
+function writeSelectedSandboxRegistry(test: Fixture, sandboxName: string): void {
+  const registryPath = path.join(test.home, ".nemoclaw", "sandboxes.json");
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  fs.writeFileSync(
+    registryPath,
+    `${JSON.stringify({
+      defaultSandbox: sandboxName,
+      sandboxes: {
+        [sandboxName]: { name: sandboxName, gatewayName: "nemoclaw", gatewayPort: 8080 },
+      },
+    })}\n`,
+  );
+}
+
 function writeGatewayState(test: Fixture): string {
   const configPath = path.join(
     test.home,
@@ -184,6 +198,109 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.existsSync(gatewayStatePath)).toBe(true);
   });
 
+  it("deletes the selected sandbox before it disables the marked Linux unit on scoped uninstall (#8220)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const calls: string[][] = [];
+    const dockerCalls: string[][] = [];
+    let gatewayStopped = false;
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl" || command === "docker",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          gatewayStopped ||= command === "systemctl" && args.includes("disable");
+          // `systemctl disable --now` also stops the OpenShell gateway service,
+          // so every scoped `openshell` call fails once the unit is disabled.
+          return command === "openshell" && gatewayStopped
+            ? { status: 1, stdout: "", stderr: "gateway unreachable" }
+            : ok();
+        },
+        runDocker: (args) => {
+          dockerCalls.push(args);
+          return args[0] === "ps"
+            ? ok("sandbox-id openshell/sandbox openshell-cluster-nemoclaw\n")
+            : ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    const deletedAt = calls.findIndex(
+      (call) => call[0] === "openshell" && call[1] === "sandbox" && call[2] === "delete",
+    );
+    const disabledAt = calls.findIndex(
+      (call) => call[0] === "systemctl" && call.includes("disable"),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(deletedAt).toBeGreaterThanOrEqual(0);
+    expect(disabledAt).toBeGreaterThan(deletedAt);
+    expect(dockerCalls).toContainEqual(["rm", "-f", "sandbox-id"]);
+    expect(fs.existsSync(servicePath)).toBe(false);
+  });
+
+  it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const calls: string[][] = [];
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return command === "openshell" && args[0] === "sandbox"
+            ? { status: 1, stdout: "", stderr: "sandbox unreachable" }
+            : ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    // Sandbox deletion failed, so uninstall returns before it removes the gateway registration.
+    // It preserves the marked Linux unit and the running OpenShell gateway service for a retry.
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+  });
+
+  it("preserves the marked Linux unit when scoped gateway registration removal fails (#8220)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const calls: string[][] = [];
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return command === "openshell" && args[0] === "gateway" && args[1] === "remove"
+            ? { status: 1, stdout: "", stderr: "gateway registration is busy" }
+            : ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    // Sandbox deletion succeeded, so this pins the second cleanup boundary: registration
+    // removal failed, and uninstall still returns before it removes the gateway service.
+    expect(calls).toContainEqual(["openshell", "sandbox", "delete", "my-assistant"]);
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+  });
+
   it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
@@ -211,6 +328,31 @@ describe("uninstall OpenShell gateway user service", () => {
       NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
     ]);
     expect(calls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
+  });
+
+  it("opts full uninstall gateway teardown into missing packaged-service recovery (#8215)", () => {
+    const test = fixture(true);
+    const resolveGatewayTeardownAuthority = vi.fn(({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed" as const,
+      source: "standalone" as const,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }));
+
+    const result = uninstall(test, false, {
+      commandExists: () => true,
+      resolveGatewayTeardownAuthority,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(resolveGatewayTeardownAuthority).toHaveBeenCalledWith(
+      { gatewayName: "nemoclaw", gatewayPort: 8080 },
+      expect.objectContaining({ allowMissingPackagedServiceTeardown: true }),
+    );
   });
 
   it("reports an incomplete uninstall when the marked service cannot be disabled (#6903)", () => {

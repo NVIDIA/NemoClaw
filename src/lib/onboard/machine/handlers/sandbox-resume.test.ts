@@ -135,7 +135,63 @@ describe("decideSandboxResume", () => {
     });
   });
 
-  it("repairs a not-ready sandbox before recreating for DCode auto-approval drift", () => {
+  it.each([
+    "missing",
+    "not_ready",
+  ])("continues an owned recreate when the outer transaction leaves the source %s", (sandboxReuseState) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxStepComplete: false,
+          sandboxReuseState,
+          recreateSandboxRequested: true,
+          recreateJournalHandoff: true,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    });
+  });
+
+  it("does not trust a journal handoff when the sandbox state is unknown", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxStepComplete: false,
+          sandboxReuseState: "unknown",
+          recreateSandboxRequested: true,
+          recreateJournalHandoff: true,
+        }),
+      ),
+    ).toEqual({ kind: "create" });
+  });
+
+  it.each([
+    [
+      "only explicit recreation is requested",
+      { recreateSandboxRequested: true, recreateJournalHandoff: false },
+    ],
+    [
+      "only a journal handoff is present",
+      { recreateSandboxRequested: false, recreateJournalHandoff: true },
+    ],
+  ])("repairs a not-ready sandbox when %s", (_scenario, overrides) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...overrides,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
+  it("repairs a not-ready sandbox with DCode auto-approval drift", () => {
+    // DCode auto-approval guards against not_ready internally (see
+    // runtimeConfigurationResumeDecision); the sandbox falls through to
+    // repair-and-recreate at the bottom.
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -146,7 +202,9 @@ describe("decideSandboxResume", () => {
     ).toEqual({ kind: "repair-and-recreate" });
   });
 
-  it("repairs a not-ready sandbox before recreating for reasoning capability drift (#7570)", () => {
+  it("repairs a not-ready sandbox even with reasoning capability drift (#7570)", () => {
+    // compatibleEndpointReasoningChanged only triggers recreate when the
+    // sandbox is ready; when not_ready, the sandbox falls through to repair.
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -155,6 +213,102 @@ describe("decideSandboxResume", () => {
         }),
       ),
     ).toEqual({ kind: "repair-and-recreate" });
+  });
+
+  it.each([
+    [
+      "live DCode inference selection",
+      { inferenceSelectionChanged: true },
+      "Live DCode model/provider",
+    ],
+    ["agent selection", { resumeAgentChanged: true }, "Agent selection changed"],
+    [
+      "Hermes inference route",
+      { inferenceRouteConfigChanged: true },
+      "Hermes inference route configuration changed",
+    ],
+  ] as const)("uses compatibility recreate for %s drift even when not-ready", (_label, drift, expectedNoteFragment) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...drift,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: expect.stringContaining(expectedNoteFragment),
+      removeRegistryEntry: false,
+    });
+  });
+
+  it.each([
+    [
+      "web search config change",
+      { webSearchConfigChanged: true },
+      "Web Search configuration changed",
+      true,
+    ],
+    [
+      "sandbox GPU config change",
+      { sandboxGpuConfigChanged: true },
+      "Sandbox GPU settings changed",
+      true,
+    ],
+    [
+      "messaging channel config change",
+      { messagingChannelConfigChanged: true },
+      "Messaging channel configuration changed",
+      true,
+    ],
+    [
+      "Hermes tool gateway config change",
+      { hermesToolGatewayConfigChanged: true },
+      "Hermes managed tool gateway selection changed",
+      true,
+    ],
+    [
+      "observability change",
+      { observabilityChanged: true },
+      "Observability configuration changed",
+      false,
+    ],
+  ] as const)("uses runtime-configuration recreate for %s even when not-ready", (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...drift,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: expect.stringContaining(expectedNoteFragment),
+      removeRegistryEntry: expectedRemoveRegistry,
+    });
+  });
+
+  it.each([
+    [
+      "tool disclosure migration",
+      { toolDisclosureMigrationNeeded: true },
+      "metadata is missing",
+      false,
+    ],
+    ["tool disclosure change", { toolDisclosureChanged: true }, "configuration changed", false],
+  ] as const)("uses tool-disclosure recreate for %s even when not-ready", (_label, drift, expectedNoteFragment, expectedRemoveRegistry) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...drift,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: expect.stringContaining(expectedNoteFragment),
+      removeRegistryEntry: expectedRemoveRegistry,
+    });
   });
 
   it("creates without resume-specific cleanup when the step is incomplete", () => {

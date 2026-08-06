@@ -7,7 +7,12 @@
 
 NemoClaw v0.0.102 adds authenticated attachment of operator-managed llama.cpp servers and an Experimental managed vLLM profile for two DGX Spark systems.
 It also improves DGX Station and Windows installation, gateway and sandbox recovery, Shields transactions, inference reliability, multi-port uninstall, and Hermes and LangChain Deep Agents Code workflows.
+It reduces the managed single-node DGX Spark Qwen profile's default memory demand during long-context agent workflows.
 
+- The `nvidia/Qwen3.6-35B-A3B-NVFP4` profile no longer enables multi-token prediction (MTP) speculative decoding by default.
+  It retains async scheduling and all other registered serve arguments.
+  Operators can apply lower context, concurrency, and batch limits for bounded long-context investigation, but the override does not guarantee protection against a host freeze.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
 - Onboarding can now attach an authenticated, operator-managed llama.cpp server on loopback port `8081` as the `llama-cpp-local` provider.
   NemoClaw requires consistent native fingerprint evidence, bounds probe responses, and retains the generic compatible-endpoint path when the server cannot be identified as llama.cpp.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).

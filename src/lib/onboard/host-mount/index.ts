@@ -9,11 +9,18 @@ import {
 } from "../../state/registry/host-mount";
 import type { SandboxHostMount } from "../../state/registry/types";
 import {
+  type ExperimentalOnboardProfile,
+  isPortableExperimentalProfile,
+  PORTABLE_EXPERIMENTAL_PROFILE,
+} from "../docker-driver-platform";
+import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
   requireRuntimeProviderReadOnlyHostMounts,
   resolveCurrentRuntimeProviderBundle,
 } from "../runtime-provider/access";
+import { PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON } from "../runtime-provider/podman";
 
 export {
   normalizePersistedSandboxHostMounts,
@@ -25,6 +32,8 @@ export {
 export interface ReadOnlyHostMountRuntimeSupportDeps {
   readonly platform?: NodeJS.Platform;
   readonly arch?: NodeJS.Architecture;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly experimentalProfile?: ExperimentalOnboardProfile | null;
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
 }
 
@@ -33,6 +42,14 @@ export function requireReadOnlyHostMountRuntimeSupport(
   deps: ReadOnlyHostMountRuntimeSupportDeps = {},
 ): void {
   if (!mounts || mounts.length === 0) return;
+  const portable =
+    deps.experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE ||
+    isPortableExperimentalProfile(deps.env);
+  if (portable) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider 'podman' does not support read-only host mounts: ${PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON}`,
+    );
+  }
   const platform = deps.platform ?? process.platform;
   const provider = resolveCurrentRuntimeProviderBundle(
     platform,

@@ -9,6 +9,7 @@ const LOCAL_OPENCLAW_OTEL_PORT = "4318";
 export const OPENCLAW_OTEL_LOCAL_POLICY_PRESET = "openclaw-diagnostics-otel-local";
 
 export const OPENCLAW_ONLY_POLICY_PRESETS = new Set<string>([
+  "brave",
   "openclaw-pricing",
   OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
 ]);

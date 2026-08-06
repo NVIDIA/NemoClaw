@@ -13,6 +13,15 @@ const INDEX_MODULE = "./index.js";
 
 type ShieldsModule = typeof import("./index");
 
+const STATE_LOCK_PLAN = {
+  version: 1 as const,
+  readOnlyRoots: ["skills"],
+  confidentialRoots: ["credentials"],
+  readOnlyPrefixes: [],
+  confidentialPrefixes: [],
+  writableSubpaths: [],
+};
+
 function openClawTarget() {
   return {
     agentName: "openclaw",
@@ -21,6 +30,8 @@ function openClawTarget() {
     format: "json",
     configFile: "openclaw.json",
     sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    stateLockPlan: STATE_LOCK_PLAN,
+    stateLockPlanInImage: true,
   };
 }
 
@@ -33,6 +44,7 @@ describe("OpenClaw shields top-config transaction", () => {
   let guardSpy: MockInstance;
   let applyStateSpy: MockInstance;
   let restoreStateSpy: MockInstance;
+  let compatibilitySpy: MockInstance;
   let events: string[];
 
   beforeEach(() => {
@@ -87,6 +99,9 @@ describe("OpenClaw shields top-config transaction", () => {
     privilegedExecSpy = vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")
       .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
+    compatibilitySpy = vi
+      .spyOn(stateDirLock, "stateLockPlanCompatibilityIssues")
+      .mockReturnValue([]);
 
     spies.push(
       vi.spyOn(runner, "run").mockReturnValue({ status: 0 }),
@@ -94,6 +109,7 @@ describe("OpenClaw shields top-config transaction", () => {
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => openClawTarget()),
       privilegedExecSpy,
       dockerExecSpy,
+      compatibilitySpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
       applyStateSpy,
       restoreStateSpy,
@@ -118,6 +134,20 @@ describe("OpenClaw shields top-config transaction", () => {
     const commands = dockerExecSpy.mock.calls.map((call) => call[0] as string[]);
     expect(commands.some((cmd) => ["chmod", "chown", "chattr"].includes(cmd[0]))).toBe(false);
     expect(commands.some((cmd) => cmd[0] === "stat" && cmd.at(-1) === "/sandbox")).toBe(true);
+  });
+
+  it("rejects an incompatible runtime plan before mutating the config tree", () => {
+    compatibilitySpy.mockReturnValueOnce([
+      "installed state lock plan differs from the current agent manifest",
+    ]);
+
+    expect(() => shields.lockAgentConfig("openclaw", openClawTarget(), false)).toThrow(
+      /installed state lock plan differs/,
+    );
+
+    expect(events).toEqual([]);
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
   });
 
   it("preserves the sealed top after a partial recursive lock", () => {

@@ -26,6 +26,60 @@ const runtimeFields = {
 };
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("copies matching session profile provenance into the durable registry (#8246)", () => {
+    const provenance = {
+      schemaVersion: 1,
+      catalogDigest: `sha256:${"1".repeat(64)}`,
+      preset: {
+        id: "vllm.dgx-spark-gb10.single.example",
+        digest: `sha256:${"2".repeat(64)}`,
+        displayName: "Example Spark profile",
+        supportState: "experimental",
+      },
+      recipe: {
+        id: "vllm.dgx-spark-gb10.single.example",
+        digest: `sha256:${"3".repeat(64)}`,
+        backend: "vllm",
+      },
+      model: { id: "example/model", revision: "revision-1" },
+      runtimeImage: null,
+      estimatedImageDownloadBytes: null,
+      estimatedModelDownloadBytes: null,
+    } as const;
+    const loadSession = vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "demo",
+      servingProfileProvenance: provenance,
+    });
+
+    const entry = buildCreatedSandboxRegistryEntry({
+      sandboxName: "demo",
+      inferenceSelection: {
+        model: "example/model",
+        provider: "vllm-local",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: null,
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+
+    expect(entry.servingProfileProvenance).toEqual(provenance);
+    loadSession.mockRestore();
+  });
+
   it("blocks create intent while a baseline policy transaction needs repair (#7178)", () => {
     const registry = requireDist("../state/registry.js");
     const transitionSpy = vi.spyOn(registry, "getBaselineExclusionTransition").mockReturnValue({
