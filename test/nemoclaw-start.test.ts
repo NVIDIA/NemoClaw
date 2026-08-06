@@ -8,9 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { openClawBootstrapSnippet } from "./support/entrypoint-script-fixture";
-
 import { extractShellFunctionFromSource } from "./helpers/shell-source";
+import { openClawBootstrapSnippet } from "./support/entrypoint-script-fixture";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -662,7 +661,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.stderr).toContain("Dashboard auth token redacted from startup logs.");
     expect(result.stderr).not.toContain("#token=");
     expect(result.stderr).not.toContain("tok'en");
-    expect(envFile).toContain("_nemoclaw_gateway_token='tok'\\''en'");
+    expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN='tok'\\''en'");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
     expect(envFile).toContain("nemoclaw-configure-guard begin");
     expect(envFile).not.toContain(".bashrc");
@@ -681,7 +680,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
-    expect(envFile).toContain("_nemoclaw_gateway_token='token'");
+    expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN='token'");
   });
   it("writes OpenClaw state env for connect-shell pairing approval (#3730)", () => {
     const { result, envFile } = runGatewayTokenHarness(
@@ -694,7 +693,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("export OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json'");
     expect(envFile).toContain("export OPENCLAW_OAUTH_DIR='/sandbox/.openclaw/credentials'");
     expect(envFile.indexOf("export OPENCLAW_STATE_DIR=")).toBeLessThan(
-      envFile.indexOf("_nemoclaw_gateway_token='"),
+      envFile.indexOf("OPENCLAW_GATEWAY_TOKEN='"),
     );
   });
 
@@ -712,7 +711,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
-    expect(envFile).toContain(`_nemoclaw_gateway_token='${configAfter.gateway.auth.token}'`);
+    expect(envFile).toContain(`OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain("stale-token");
     expect(hashAfter).not.toBe("initial-hash\n");
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
@@ -730,7 +729,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
     expect(configAfter.gateway.auth.token).not.toBe("");
     expect(configAfter.gateway.auth.token).not.toBe(oldToken);
-    expect(envFile).toContain(`_nemoclaw_gateway_token='${configAfter.gateway.auth.token}'`);
+    expect(envFile).toContain(`OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain(oldToken);
     expect(envFile).not.toContain("stale-token");
     expect(hashAfter).not.toBe("initial-hash\n");
@@ -757,7 +756,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(configAfter.gateway.auth.token).not.toBe("");
     expect(configAfter.gateway.auth.token).not.toBe(oldToken);
     expect(configAfter.model).toBe("nvidia/nemotron-3-super-120b-a12b");
-    expect(envFile).toContain(`_nemoclaw_gateway_token='${configAfter.gateway.auth.token}'`);
+    expect(envFile).toContain(`OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain(oldToken);
     expect(envFile).not.toContain("stale-token");
     expect(hashAfter).not.toBe("initial-hash\n");
@@ -4775,7 +4774,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
 
       expect(fs.existsSync(proxyEnvFile)).toBe(true);
       const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
-      expect(proxyEnv).toMatch(/_nemoclaw_gateway_token='[A-Za-z0-9_-]{20,}'/);
+      expect(proxyEnv).toMatch(/OPENCLAW_GATEWAY_TOKEN='[A-Za-z0-9_-]{20,}'/);
       expect(proxyEnv).toContain("export OPENCLAW_GATEWAY_TOKEN");
 
       expect((fs.statSync(bashrcPath).mode & 0o777).toString(8)).toBe("444");
@@ -4783,7 +4782,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
 
       const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       expect(updatedConfig.gateway?.auth?.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-      expect(proxyEnv).toContain(`_nemoclaw_gateway_token='${updatedConfig.gateway.auth.token}'`);
+      expect(proxyEnv).toContain(`OPENCLAW_GATEWAY_TOKEN='${updatedConfig.gateway.auth.token}'`);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

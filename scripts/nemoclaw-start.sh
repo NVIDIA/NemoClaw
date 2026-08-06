@@ -3383,6 +3383,30 @@ _RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL
 
 write_runtime_shell_env() {
   _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+  _emit_gateway_token_reconcile() {
+    local _escaped_intended_gateway_token="$1"
+    cat <<'GATEWAYTOKENRECONCILESTART'
+# nemoclaw-gateway-token-reconcile start
+# The proxy-env file is the trust anchor for OPENCLAW_GATEWAY_TOKEN. Probe
+# writability in a subshell so a readonly pin cannot abort sourcing: advance the
+# anchor when writable (also the fresh-source and repeated-source paths), stay
+# silent when it already holds the intended value, and otherwise emit a
+# controlled conflict diagnostic that never echoes the trusted token.
+GATEWAYTOKENRECONCILESTART
+    printf "if ( OPENCLAW_GATEWAY_TOKEN='%s' ) 2>/dev/null; then\n" \
+      "$_escaped_intended_gateway_token"
+    printf "  OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_intended_gateway_token"
+    printf "elif [ \"\${OPENCLAW_GATEWAY_TOKEN-}\" = '%s' ]; then\n" \
+      "$_escaped_intended_gateway_token"
+    cat <<'GATEWAYTOKENRECONCILEEND'
+  :
+else
+  echo "Error: conflicting trust anchor" >&2
+  return 1 2>/dev/null || exit 1
+fi
+# nemoclaw-gateway-token-reconcile end
+GATEWAYTOKENRECONCILEEND
+  }
   {
     cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
@@ -4068,16 +4092,19 @@ GUARDENVEOF
       # URL, including loopback, while WhatsApp revalidates its local override
       # immediately at the specialized exec boundary.
       printf 'export OPENCLAW_GATEWAY_TOKEN\n'
-      # Resolve the intended token into a temp var per URL case, then reconcile
-      # it against any pre-existing value below. A blind assignment would abort
-      # sourcing with the shell's raw readonly error (exit 2) — and could echo
-      # the failing assignment line — when the sourcing shell already pinned
-      # OPENCLAW_GATEWAY_TOKEN readonly to a conflicting value (#8428).
+      # Bake the intended value into each URL-case arm, then reconcile it against
+      # any pre-existing value. Avoiding a caller-visible temporary variable is
+      # required because the sourcing shell can already have any variable name
+      # pinned readonly. A blind assignment would abort sourcing with the shell's
+      # raw readonly error (exit 2) — and could echo the failing assignment line
+      # — when OPENCLAW_GATEWAY_TOKEN is already readonly and conflicting (#8428).
       cat <<'GATEWAYTOKENENVEOF'
 case "${OPENCLAW_GATEWAY_URL:-}" in
   *@*)
-    _nemoclaw_gateway_token=
-    ;;
+GATEWAYTOKENENVEOF
+      _emit_gateway_token_reconcile ""
+      printf '    ;;\n'
+      cat <<'GATEWAYTOKENENVEOF'
   '' | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
     wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
     ws://localhost | ws://localhost:* | ws://localhost/* | \
@@ -4085,31 +4112,12 @@ case "${OPENCLAW_GATEWAY_URL:-}" in
     "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
     "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*)
 GATEWAYTOKENENVEOF
-      printf "    _nemoclaw_gateway_token='%s'\n" "$_escaped_gateway_token"
+      _emit_gateway_token_reconcile "$_escaped_gateway_token"
       printf '    ;;\n'
       printf '  *)\n'
-      printf '    _nemoclaw_gateway_token=\n'
+      _emit_gateway_token_reconcile ""
       printf '    ;;\n'
       printf 'esac\n'
-      cat <<'GATEWAYTOKENRECONCILEEOF'
-# nemoclaw-gateway-token-reconcile start
-# The proxy-env file is the trust anchor for OPENCLAW_GATEWAY_TOKEN. Probe
-# writability in a subshell so a readonly pin cannot abort sourcing: advance the
-# anchor when writable (also the fresh-source and repeated-source paths), stay
-# silent when it already holds the intended value, and otherwise emit a
-# controlled conflict diagnostic that never echoes the trusted token.
-if ( OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_gateway_token" ) 2>/dev/null; then
-  OPENCLAW_GATEWAY_TOKEN="$_nemoclaw_gateway_token"
-elif [ "${OPENCLAW_GATEWAY_TOKEN-}" = "$_nemoclaw_gateway_token" ]; then
-  :
-else
-  echo "Error: conflicting trust anchor" >&2
-  unset _nemoclaw_gateway_token
-  return 1 2>/dev/null || exit 1
-fi
-unset _nemoclaw_gateway_token
-# nemoclaw-gateway-token-reconcile end
-GATEWAYTOKENRECONCILEEOF
     fi
   } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 }

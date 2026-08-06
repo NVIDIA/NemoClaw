@@ -3,27 +3,26 @@
 //
 // Behavioral contract for the OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile
 // block emitted into /tmp/nemoclaw-proxy-env.sh by scripts/nemoclaw-start.sh.
-// Exercises the actual emitted shell (extracted from the script) under POSIX
-// sh (dash), not a re-implementation. Regression: a blind assignment aborted
-// sourcing with the shell's raw readonly error (exit 2) when the sourcing shell
-// had already pinned OPENCLAW_GATEWAY_TOKEN readonly to a conflicting value
-// (#8428).
+// Exercises the actual generated file under POSIX sh and Bash. Regression: a
+// blind assignment aborted sourcing with the shell's raw readonly error when
+// the sourcing shell had already pinned OPENCLAW_GATEWAY_TOKEN readonly to a
+// conflicting value (#8428).
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { sliceBlock } from "./helpers/corporate-ca-support";
+import { extractShellFunctionFromSource } from "./helpers/shell-source";
 
 const OPENCLAW_START = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-const RECONCILE = sliceBlock(
-  OPENCLAW_START,
-  "# nemoclaw-gateway-token-reconcile start",
-  "# nemoclaw-gateway-token-reconcile end",
+const WRITE_RUNTIME_SHELL_ENV = extractShellFunctionFromSource(
+  readFileSync(OPENCLAW_START, "utf-8"),
+  "write_runtime_shell_env",
 );
 const REAL_TOKEN = "REAL-GATEWAY-TOKEN-abc123";
+const SHELLS = ["sh", "bash"] as const;
 
 const tmpRoots: string[] = [];
 afterEach(() => {
@@ -34,7 +33,15 @@ afterEach(() => {
 
 interface Scenario {
   intended: string;
+  shell?: (typeof SHELLS)[number];
   preset?: { value: string; readonly: boolean };
+  repeatSources?: boolean;
+  readonlyPrivateSentinel?: boolean;
+  sourceUrl?: string;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function runReconcile(scenario: Scenario): {
@@ -45,69 +52,105 @@ function runReconcile(scenario: Scenario): {
   const dir = mkdtempSync(join(tmpdir(), "nemoclaw-token-reconcile-"));
   tmpRoots.push(dir);
   const envFile = join(dir, "proxy-env.sh");
-  // The reconcile block reads $_nemoclaw_gateway_token (set by the URL
-  // case above it in the real file) and prints the resolved value on success.
-  const body = [
-    `_nemoclaw_gateway_token='${scenario.intended}'`,
-    RECONCILE,
-    "printf 'FINAL_TOKEN=[%s]\\n' \"${OPENCLAW_GATEWAY_TOKEN-<UNSET>}\"",
-    "",
-  ].join("\n");
-  writeFileSync(envFile, body, { mode: 0o444 });
-  const presetPrefix = scenario.preset
-    ? `${scenario.preset.readonly ? "readonly " : ""}OPENCLAW_GATEWAY_TOKEN='${scenario.preset.value}'; `
-    : "";
-  // Mirror the reporter's exact invocation shape: `sh -c '<preset>; . <file>'`.
-  const result = spawnSync("sh", ["-c", `${presetPrefix}. '${envFile}'`], {
+  const generator = join(dir, "generate.sh");
+  writeFileSync(
+    generator,
+    [
+      "#!/usr/bin/env bash",
+      "set -e",
+      'emit_sandbox_sourced_file() { cat > "$1"; }',
+      WRITE_RUNTIME_SHELL_ENV.replaceAll("/tmp/nemoclaw-proxy-env.sh", envFile),
+      '_PROXY_URL="http://10.200.0.1:3128"',
+      '_NO_PROXY_VAL="localhost,127.0.0.1,::1,10.200.0.1"',
+      '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
+      '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
+      '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
+      '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
+      "_TOOL_REDIRECTS=()",
+      `OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.intended)}`,
+      "write_runtime_shell_env",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  const generated = spawnSync("bash", [generator], { encoding: "utf-8" });
+  if (generated.status !== 0) {
+    return generated;
+  }
+
+  const setup = [
+    scenario.preset
+      ? `${scenario.preset.readonly ? "readonly " : ""}OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.preset.value)}`
+      : "",
+    scenario.readonlyPrivateSentinel ? "readonly _nemoclaw_gateway_token='CALLER-SENTINEL'" : "",
+    scenario.sourceUrl ? `OPENCLAW_GATEWAY_URL=${shellQuote(scenario.sourceUrl)}` : "",
+  ].filter(Boolean);
+  const sourceAndPrint = [
+    `. ${shellQuote(envFile)} || exit $?`,
+    `printf 'TOKEN=[%s] PRIVATE=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}"`,
+  ];
+  const commands = scenario.repeatSources
+    ? [...setup, ...sourceAndPrint, ...sourceAndPrint]
+    : [...setup, ...sourceAndPrint];
+  return spawnSync(scenario.shell ?? "sh", ["-c", commands.join("; ")], {
     encoding: "utf-8",
   });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () => {
-  it("emits a controlled conflict diagnostic instead of the raw readonly abort", () => {
+  it.each(SHELLS)("emits a controlled conflict diagnostic under %s", (shell) => {
     const { status, stdout, stderr } = runReconcile({
       intended: REAL_TOKEN,
+      shell,
       preset: { value: "SENTINEL_CONFLICT", readonly: true },
     });
     expect(status).toBe(1);
     expect(stderr).toContain("Error: conflicting trust anchor");
-    expect(stderr).not.toContain("is read only");
-    // The trusted token must never be echoed on the conflict path.
+    expect(stderr).not.toContain("read only");
     expect(`${stdout}\n${stderr}`).not.toContain(REAL_TOKEN);
-    expect(stdout).not.toContain("FINAL_TOKEN=");
+    expect(stdout).not.toContain("TOKEN=");
   });
 
-  it("advances the anchor to the intended token on a fresh (unset) source", () => {
-    const { status, stdout, stderr } = runReconcile({ intended: REAL_TOKEN });
-    expect(status).toBe(0);
-    expect(stdout).toContain(`FINAL_TOKEN=[${REAL_TOKEN}]`);
-    expect(stderr).not.toContain("conflicting trust anchor");
-  });
-
-  it("is a no-op when the readonly pin already holds the intended value", () => {
+  it.each(SHELLS)("accepts an identical readonly trust anchor under %s", (shell) => {
     const { status, stdout, stderr } = runReconcile({
       intended: REAL_TOKEN,
+      shell,
       preset: { value: REAL_TOKEN, readonly: true },
     });
     expect(status).toBe(0);
-    expect(stdout).toContain(`FINAL_TOKEN=[${REAL_TOKEN}]`);
+    expect(stdout).toContain(`TOKEN=[${REAL_TOKEN}]`);
     expect(stderr).not.toContain("conflicting trust anchor");
-    expect(stderr).not.toContain("is read only");
+    expect(stderr).not.toContain("read only");
   });
 
-  it("keeps the non-loopback empty-token case exported-empty, not conflicting", () => {
-    const { status, stdout } = runReconcile({ intended: "" });
-    expect(status).toBe(0);
-    expect(stdout).toContain("FINAL_TOKEN=[]");
-  });
-
-  it("advances a writable pre-existing value (repeated non-readonly source)", () => {
-    const { status, stdout } = runReconcile({
+  it("advances a writable value and retains it across repeated sourcing", () => {
+    const { status, stdout, stderr } = runReconcile({
       intended: REAL_TOKEN,
-      preset: { value: REAL_TOKEN, readonly: false },
+      preset: { value: "WRITABLE-SENTINEL", readonly: false },
+      repeatSources: true,
     });
     expect(status).toBe(0);
-    expect(stdout).toContain(`FINAL_TOKEN=[${REAL_TOKEN}]`);
+    expect(stdout.match(new RegExp(`TOKEN=\\[${REAL_TOKEN}\\]`, "g"))).toHaveLength(2);
+    expect(stderr).toBe("");
+  });
+
+  it("does not depend on a caller-controlled readonly temporary variable", () => {
+    const { status, stdout, stderr } = runReconcile({
+      intended: REAL_TOKEN,
+      readonlyPrivateSentinel: true,
+    });
+    expect(status).toBe(0);
+    expect(stdout).toContain(`TOKEN=[${REAL_TOKEN}] PRIVATE=[CALLER-SENTINEL]`);
+    expect(stderr).toBe("");
+  });
+
+  it("keeps the non-loopback case exported empty", () => {
+    const { status, stdout, stderr } = runReconcile({
+      intended: REAL_TOKEN,
+      sourceUrl: "wss://remote.example.test",
+    });
+    expect(status).toBe(0);
+    expect(stdout).toContain("TOKEN=[]");
+    expect(stderr).toBe("");
   });
 });
