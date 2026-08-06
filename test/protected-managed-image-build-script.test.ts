@@ -156,6 +156,20 @@ describe("protected managed-image source-root boundary", () => {
 });
 
 describe("protected managed-image build-cache boundary", () => {
+  it("builds every agent without optional cache arguments", () => {
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    for (const invocation of recordedBuildInvocations()) {
+      expect(invocation).not.toContain("--cache-to");
+      expect(invocation).not.toContain("--cache-from");
+      expect(invocation).not.toContain("--network none");
+    }
+  });
+
   it("passes each agent one empty absolute cache export root", () => {
     const cacheRoot = path.join(testRoot, "export-cache");
     stubBuildInvocation();

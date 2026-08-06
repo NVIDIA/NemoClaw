@@ -110,7 +110,7 @@ describe("MCP tool discovery image contract", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "retries npm's exact internal exit-handler failure once before the review gates",
+    "completes npm's exact internal exit-handler failure from locked cache archives",
     () => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-install-retry-"));
       const script = path.join(fixture, "install-reviewed-runtime.sh");
@@ -121,6 +121,10 @@ describe("MCP tool discovery image contract", () => {
       fs.copyFileSync(
         path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "install-reviewed-runtime.sh"),
         script,
+      );
+      fs.copyFileSync(
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "package-lock.json"),
+        path.join(fixture, "package-lock.json"),
       );
       const retryHelper = path.join(fixture, "npm-ci-locked.sh");
       fs.copyFileSync(
@@ -141,6 +145,11 @@ if [ "$invocation" -eq 1 ]; then
   echo 'npm error Exit handler never called!' >&2
   exit 1
 fi
+if [ "$invocation" -eq 2 ]; then
+  echo 'npm error code ENOTCACHED' >&2
+  echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
+  exit 1
+fi
 exit 0
 `,
         { mode: 0o755 },
@@ -158,10 +167,13 @@ exit 0
         });
 
         expect(result.status).toBe(0);
-        expect(result.stderr).toContain("retrying the locked install once offline from cache");
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("7");
-        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 2)).toEqual([
+        expect(result.stderr).toContain("completing the locked install offline from cache");
+        expect(result.stderr).toContain("fetching one missing lockfile archive for offline retry");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("9");
+        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 4)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
+          "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
         ]);
       } finally {

@@ -16,15 +16,62 @@ else
     exit "$install_status"
   fi
 
-  echo "[nemoclaw] npm hit its internal exit-handler failure; retrying the locked install once offline from cache" >&2
-  rm -rf node_modules
-  if npm ci "$@" --offline >"$install_log" 2>&1; then
-    cat "$install_log"
-  else
+  echo "[nemoclaw] npm hit its internal exit-handler failure; completing the locked install offline from cache" >&2
+  cache_fill_count=0
+  while :; do
+    rm -rf node_modules
+    if npm ci "$@" --offline >"$install_log" 2>&1; then
+      cat "$install_log"
+      break
+    fi
+
     install_status=$?
     cat "$install_log" >&2
-    exit "$install_status"
-  fi
+    if ! grep -Fq 'npm error code ENOTCACHED' "$install_log"; then
+      exit "$install_status"
+    fi
+
+    missing_count=$(
+      sed -n 's|^npm error request to \(https://registry\.npmjs\.org/[^[:space:]]*\.tgz\) failed:.*|\1|p' "$install_log" \
+        | sort -u \
+        | wc -l \
+        | tr -d '[:space:]'
+    )
+    missing_url=$(
+      sed -n 's|^npm error request to \(https://registry\.npmjs\.org/[^[:space:]]*\.tgz\) failed:.*|\1|p' "$install_log" \
+        | sort -u \
+        | head -n 1
+    )
+    if [ "$missing_count" != 1 ] || [ -z "$missing_url" ]; then
+      echo "[nemoclaw] offline npm retry did not identify exactly one registry archive" >&2
+      exit "$install_status"
+    fi
+    if ! node - "$missing_url" <<'NODE'; then
+const fs = require("node:fs");
+const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+const url = process.argv[2];
+const matches = Object.values(lock.packages ?? {}).filter((entry) => entry?.resolved === url);
+const integrities = new Set(matches.map((entry) => entry?.integrity).filter(Boolean));
+if (matches.length === 0 || integrities.size !== 1) process.exit(1);
+NODE
+      echo "[nemoclaw] refusing an npm cache fill not uniquely pinned by package-lock.json" >&2
+      exit "$install_status"
+    fi
+
+    cache_fill_count=$((cache_fill_count + 1))
+    if [ "$cache_fill_count" -gt 8 ]; then
+      echo "[nemoclaw] offline npm retry exceeded the bounded locked-archive cache fill" >&2
+      exit "$install_status"
+    fi
+    echo "[nemoclaw] fetching one missing lockfile archive for offline retry: $missing_url" >&2
+    if npm cache add "$missing_url" >"$install_log" 2>&1; then
+      cat "$install_log"
+    else
+      install_status=$?
+      cat "$install_log" >&2
+      exit "$install_status"
+    fi
+  done
 fi
 
 rm -f "$install_log"

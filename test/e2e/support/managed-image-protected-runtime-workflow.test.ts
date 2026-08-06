@@ -153,6 +153,15 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
+  it("rejects protected runtime permissions beyond same-run artifact access", () => {
+    const value = workflow();
+    runtimeJob(value).permissions = { actions: "read", contents: "read" };
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime permissions must be exactly contents: read",
+    );
+  });
+
   it("rejects removing the exact protected runtime cache download", () => {
     const value = workflow();
     const job = runtimeJob(value);

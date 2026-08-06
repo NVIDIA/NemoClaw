@@ -166,7 +166,7 @@ build_agent() {
     --provenance=false \
     --sbom=false \
     --metadata-file "$metadata" \
-    "${cache_args[@]}" \
+    ${cache_args[@]+"${cache_args[@]}"} \
     --tag "${image_repository}:${revision}" \
     --label "org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw" \
     --label "org.opencontainers.image.revision=${revision}" \

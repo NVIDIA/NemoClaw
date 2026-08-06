@@ -137,6 +137,7 @@ const path = require("node:path");
 const agentName = ${JSON.stringify(agent)};
 const sandboxName = ${JSON.stringify(sandboxName)};
 const catalogTemplate = ${JSON.stringify(catalog)};
+const catalogRelease = ${JSON.stringify(CATALOG_RELEASE)};
 const model = ${JSON.stringify(MODEL)};
 const provider = ${JSON.stringify(PROVIDER)};
 const catalogCalls = [];
@@ -177,21 +178,17 @@ const replace = (target, name, value) => {
 };
 const childProcess = require("node:child_process");
 
+const coreVersion = require(${source("src/lib/core/version.ts")});
+replace(coreVersion, "getVersion", () => catalogRelease);
 const catalogResolver = require(${source("src/lib/onboard/managed-image/catalog.ts")});
 replace(catalogResolver, "resolveManagedImageCatalogFromGhcr", async ({ release }) => {
-  const catalog = Object.fromEntries(
-    Object.entries(catalogTemplate).map(([name, contract]) => [
-      name,
-      { ...contract, source: { ...contract.source, release } },
-    ]),
-  );
   catalogCalls.push({
     release,
     references: Object.fromEntries(
-      Object.entries(catalog).map(([name, contract]) => [name, contract.reference]),
+      Object.entries(catalogTemplate).map(([name, contract]) => [name, contract.reference]),
     ),
   });
-  return catalog;
+  return catalogTemplate;
 });
 const workloadRuntime = require(${source("src/lib/onboard/workload/runtime.ts")});
 const resolveRuntimeCapabilities = workloadRuntime.resolveSandboxWorkloadRuntimeCapabilities;
@@ -632,7 +629,7 @@ function assertManagedLaunch(
     profileFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
   });
   expect(result.payload.catalogCalls).toHaveLength(1);
-  expect(result.payload.catalogCalls[0]?.release).toMatch(/^v[0-9]/u);
+  expect(result.payload.catalogCalls[0]?.release).toBe(CATALOG_RELEASE);
   expect(result.payload.catalogCalls[0]?.references).toEqual(
     Object.fromEntries(
       SHIPPED_MANAGED_IMAGE_AGENTS.map((catalogAgent) => [
@@ -719,7 +716,7 @@ function assertManagedLaunch(
     kind: "managed-image",
     reference: expectedContract.reference,
     platform: expectedContract.platform,
-    release: result.payload.catalogCalls[0]?.release,
+    release: CATALOG_RELEASE,
     sourceRevision: SOURCE_REVISION,
     sourceCohort: expectedContract.source.cohort,
     capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
