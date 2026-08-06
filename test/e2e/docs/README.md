@@ -302,10 +302,9 @@ test/e2e/
   Manual PR E2E authenticates the maintainer and exact PR identity before
   checking out the candidate revision, then validates the identity again before
   preparation. Direct manual dispatches cannot use selectors with PR inputs.
-  Selected runs attach
-  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations and suppress PR
-  reporting and scorecards. The workflow boundary requires every selected job
-  shard to upload its evidence artifact.
+  Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
+  invocations and suppress PR reporting and scorecards. The workflow boundary
+  requires every selected job shard to upload its evidence artifact.
 - `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
   four independent shards on each of macOS and WSL, with `fail-fast` disabled.
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute
