@@ -3,94 +3,110 @@
 
 # NemoClaw Release Train
 
-Daily release labels coordinate release work. They do not classify issues and they do not promise readiness.
+Daily release labels coordinate release work. They do not classify issues, promise readiness, or gate release tags.
 
-## Rules
+## Daily Timeline
+
+Use `America/Los_Angeles` for all boundaries.
+
+| Time | State | Work |
+|---|---|---|
+| 8:00 AM–4:00 PM | Merge window | Merge reviewed PRs. Dispatch an asynchronous agent review for every exact `main` SHA range. |
+| 4:00 PM | Edition closed | Stop merging. Freeze the latest GitHub-recorded `main` push at or before the cutoff. |
+| 4:00 PM–4:00 AM | Frozen | Run consolidated E2E, diagnose failures, selectively rerun, and prepare fix PRs. Do not merge. |
+| 4:00 AM | Edition tagged | Tag the frozen candidate regardless of E2E state. Continue the advisory loop. |
+| 8:00 AM | Handoff | Give tag, review, E2E, failure, and fix state to the next release doula. Reopen merging. |
+
+A merge after the cutoff belongs to the next edition even if the scheduled close workflow starts late. The planner selects the latest `post-merge-agent-review.yaml` push run that GitHub recorded at or before exactly 4:00 PM. It does not select the current tip at workflow execution time.
+
+## Release Labels
 
 - PRs own the release-inclusion meaning of daily version labels.
 - Engineers and agents may add the current `v0.0.x` label to open PRs to activate them for day work.
-- After a PR merges to `main`, the trusted post-merge workflow adds the next patch label only when the merge is ahead of the latest release tag. A merge already contained in a release tag receives no release label.
-- A scheduled and manually dispatchable reconciliation pass repairs missed or failed merge events only across the untagged interval from the latest release tag to `main`.
-- Post-merge assignment and tag-triggered label retirement share one queued GitHub Actions concurrency group. Authorized automation cannot add a released label during the retirement verification-and-delete window.
-- Issues may also carry daily version labels when they need a PR, fix, or regression follow-up for the daily tag.
-- Applying a daily version label is not a readiness claim.
-- Release includes PRs that both carry the daily version label and are merged by cutoff.
-- Issue version labels are tracking signals. An issue label does not include work in the release without a merged, labeled PR.
-- Open PRs and issues that miss a tagged release carry forward automatically by moving from the released version label to the next patch label.
-- After the semver tag and workflow-managed `latest` are verified, post-tag housekeeping moves open stragglers and deletes the released version label. Tags and commit ancestry are the only durable release-membership record.
-- Released version labels must be deleted, never renamed or reused for a later release.
+- A PR is included only when it carries the target label and its merge is in the frozen candidate.
+- Issue labels are tracking signals; they do not include code in an edition.
+- Applying a version label is not a readiness claim.
+- The trusted post-merge workflow labels untagged merges, and reconciliation repairs missed events.
+- Open PRs and issues that miss the edition move to the next patch label after the tag succeeds.
+- Released labels are deleted after carry-forward. Never rename, recreate, or reuse them.
+- Tags and commit ancestry are the durable release-membership record.
+
+Post-merge assignment and release-label retirement share one queued concurrency group so authorized writes cannot race the verification-and-delete window.
 
 ## Release-Prep Docs
 
-Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
-The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx`.
-Use the required `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
-This dated file is the release history for all documentation variants. Ordinary documentation pages and the post-tag Announcement do not replace it.
-Release-prep docs, including that entry, must be merged or explicitly waived before `release:plan` captures the release commit.
-If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
+Run `/nemoclaw-contributor-update-docs for vX.Y.Z` early enough for the PR to merge before 4:00 PM. The PR must create or update `docs/changelog/YYYY-MM-DD.mdx` with the exact `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
 
-## Cutoff
+The frozen non-empty candidate must contain exactly one matching heading in a direct child of `docs/changelog/`. Ordinary documentation and the post-tag Announcement do not replace it. No changelog waiver exists.
 
-The daily cutoff is the maintainer-defined point where the release tag is prepared.
+## Frozen Plan
 
-At cutoff:
+`.github/workflows/release-edition-close.yaml` is scheduled for 4:17 PM to avoid the busiest cron boundary while preserving the exact 4:00 PM cutoff. It creates a schema-v2 release plan containing:
 
-1. List merged PRs carrying the target version label.
-2. Confirm each is intended for the release.
-3. List open PRs and issues still carrying the target label as post-tag stragglers.
-4. Confirm the merged release-note docs PR contains the dated changelog entry for the target version, or record an explicit waiver that names the missing entry.
-5. Generate QA handoff from merged PRs.
-6. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
-7. Review the candidate commit's pre-tag E2E evidence.
-8. Cut the release tag only with explicit maintainer confirmation.
-9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
+- edition date and exact cutoff instant;
+- planning-time `origin/main` and frozen candidate SHAs;
+- candidate source workflow run ID and GitHub-recorded time;
+- previous and next semver tags;
+- untagged commit count and `ready` or `no-changes` status;
+- exact changelog match for a non-empty edition;
+- `latest` and `lkg` observations;
+- scheduled authority and forbidden operations; and
+- a SHA-256 consistency hash over the complete plan.
 
-## Pre-Tag E2E Evidence
+The trusted scheduled run uploads `release-edition-plan-YYYY-MM-DD`. The workflow run and artifact provenance establish scheduled release authority. The hash provides a stable receipt identifier and detects changes that do not update it; it does not authenticate a file from another source.
 
-The release candidate is the full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
+If no commits follow the latest semver tag at cutoff, the edition succeeds as `no-changes` and creates no tag.
 
-Before asking for the release confirmation phrase, build and show an evidence ledger for that SHA:
+## Asynchronous Review and Advisory E2E
 
-- Preflight the candidate workflow, conditional runner readiness, and existing candidate evidence before dispatching new work.
-- Dispatch independent default-suite and unconditional explicit-only work concurrently. Dispatch a conditional hardware lane only after its authoritative runner inventory confirms that it is online; otherwise record its required itemized exception without queueing it.
-- Derive the denominator and dispatch selectors from the candidate workflow. Do not copy them into a second release test list.
-- An explicit-only job that declares `RELEASE_E2E_ACTIVATION_PATH` enters the release denominator only when that exact relative path exists at the candidate SHA. Until then, treat it as a declared dormant lane: do not dispatch it and do not count it as missing evidence.
-- For every accepted run, require the workflow-produced trusted dispatch receipt to bind the candidate SHA, run ID, attempt, and actual selector inputs. Derive default-suite or selective coverage only from that receipt, never from a release manifest claim.
-- Run `nemoclaw-maintainer-e2e` in full mode if no applicable exact Brev Launchable evidence exists for the candidate SHA.
-- For full-mode exact Brev evidence, require one workflow run for the candidate SHA that includes the default-enabled suite and a successful `Exact staging Brev Launchable` job.
-- For that evidence, require the trusted dispatch receipt to bind the run and attempt to empty selectors and `include_staging_brev_launchable=true`.
-- Require its Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
-- Require its cleanup receipt to identify the qualified workspace and report `ABSENT`.
-- Every release-eligible E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection, including activation-gated jobs whose path exists at that SHA, and every expanded matrix execution.
-- Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
-- Green evidence may accumulate across multiple workflow runs, selective runs, reruns, and attempts. A later failure does not erase an earlier successful execution for the same test and SHA.
-- Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence.
-- Map each test with green evidence to its successful run or job URL and attempt number.
-- Each test without a successful execution requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale.
-- Missing or invalid exact Brev Launchable E2E evidence requires a separate itemized maintainer exception. Record the run and job URLs, the current result or missing receipt, and the rationale.
+Every non-initial push to `main` dispatches the existing isolated PR Review Advisor with the exact immutable `before...after` SHA range. Advisor concurrency includes the head SHA, so a later merge does not cancel an earlier review. These post-merge reviews are asynchronous findings for the overnight loop and morning triage; they are not required status checks.
 
-Each test and the exact Brev Launchable E2E job must have successful evidence or its own itemized maintainer exception before release confirmation. Immediately before confirmation, compare `origin/main` with the planned SHA. If the candidate SHA changes, discard the ledger and its exceptions, including Launchable E2E evidence. Regenerate the release plan and repeat the review for the new SHA. This does not freeze `main` or prevent merges. No release-note-only delta exception is currently defined.
+`.github/workflows/e2e.yaml` is scheduled for 4:17 PM. One agent may use its consolidated results, prior exact-SHA runs, and selective reruns to:
 
-## Carry Forward
+1. classify product regressions, flaky tests, infrastructure failures, and stale tests;
+2. consolidate duplicates;
+3. prepare focused fix PRs or test cleanups;
+4. validate those PRs without merging during the freeze; and
+5. preserve unresolved state for the 8:00 AM handoff.
 
-Open PRs and issues that miss the cutoff remain active carry-forward work, but their target changes after the release succeeds. Post-tag housekeeping creates the next patch label if needed, removes the released-version label from every open straggler, adds the next patch label, verifies no open item remains on the released label, and deletes the released label.
+E2E never enters the tag authorization. Do not create an E2E waiver ledger, wait for a run, or advance the candidate in response to E2E results. This trades repeated per-PR E2E for one methodical post-merge validation window while retaining fast deterministic checks and agent review on changes.
 
-The `release-latest-tag` workflow runs automatic carry-forward after moving `latest`. It shares the release-label coordination queue with post-merge assignment and must complete before housekeeping is considered successful. The release confirmation must include the housekeeping plan, so the post-tag label writes remain inside the authorized release operation. Do not run the retirement script directly or manually add a label whose semver tag already exists.
+## Tag and Promotion
 
-Maintainers may:
+`.github/workflows/release-edition-cut.yaml` is scheduled for 4:17 AM and selects the trusted plan artifact for the previous edition date. It must fail closed on:
 
-- Add the current version label when they want the PR visible in the current day queue.
-- Remove a version label without replacement when an item is deferred, superseded, closed, or no longer part of the daily cycle.
-- Rerun post-tag housekeeping after a partial failure. Moved items no longer have the released label, so the operation can resume safely.
+- missing, expired, ambiguous, or wrong-date plan provenance;
+- plan hash or schema mismatch;
+- changelog absence or duplication;
+- candidate or previous-tag ancestry failure;
+- a newer remote semver tag or a tag collision;
+- wrong repository, event, workflow revision, or authorization mode;
+- signing-key or signer-identity failure;
+- remote tag mismatch or GitHub signature-verification failure;
+- `latest` rollback or tag-object mismatch;
+- unexpected `lkg` movement; and
+- carry-forward or released-label retirement failure.
 
-## Label Retirement
+Do not fail, wait, or branch on E2E state.
 
-Release labels are temporary planning state. Retire one only when all conditions are true:
+The `release-tag` environment holds a dedicated SSH private signing key and non-secret signer name/email variables. The signing key signs only; `GITHUB_TOKEN` authenticates the tag push. Because `GITHUB_TOKEN` pushes do not trigger a new push workflow, the cut workflow directly calls the reusable `release-latest-tag.yaml` workflow. Local maintainer tag pushes still use its tag trigger.
 
-1. The semver tag and workflow-managed `latest` both resolve to the confirmed release commit.
-2. Every open PR and issue has moved to the next patch label or explicitly left the daily release cycle.
-3. A final query finds no open item carrying the released label.
-4. The release confirmation explicitly authorizes deletion of that released label.
-5. Retirement runs inside the shared release-label coordination queue.
+## Carry Forward and Label Retirement
 
-Delete the repository label after those checks. Deletion removes it from merged and closed items without preserving a second, mutable release-membership signal. Never rename a released label into a future version, and never recreate a label whose semver tag already exists.
+After GitHub verifies the signed annotated semver tag, `release-latest-tag.yaml` moves `latest` to that exact tag object. Inside the shared release-label queue, it creates the next patch label if needed, moves every open straggler, verifies none remain on the released label, and deletes the released label.
+
+Do not invoke the retirement script directly. Rerun `release-latest-tag.yaml` through manual dispatch after fixing a partial failure; its operations are idempotent.
+
+## 8 AM Handoff
+
+Hand over:
+
+- edition date, tag, candidate SHA, and plan hash;
+- `cut-result.json`, `latest-result.json`, and `notes-data.json` artifact locations;
+- exact-SHA post-merge review runs and actionable findings;
+- E2E classifications, reruns, flaky or broken tests, and unresolved risks;
+- prepared fix PRs ready for the reopened merge window;
+- carry-forward and released-label retirement state; and
+- Announcement draft status.
+
+Keep candidate internals, review diagnostics, E2E classifications, rerun details, and failure rationale out of the public Announcement.

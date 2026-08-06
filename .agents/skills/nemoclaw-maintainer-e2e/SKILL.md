@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers. Use for requests such as run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
+description: Dispatches and verifies trusted advisory GitHub Actions E2E for NemoClaw maintainers. Use for requests such as run the E2E suite, run the Launchable E2E, run the full E2E suite, diagnose the overnight consolidated run, selectively rerun failures, or validate a release candidate without gating its tag.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -18,8 +18,7 @@ Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly
 | “Run the E2E suite” | Ordinary | empty | `false` |
 | “Run the Launchable E2E” | Launchable | `staging-brev-launchable` | `false` |
 | “Run the full E2E suite” | Full | empty | `true` |
-| “deploy pre-release full E2E” | Full | empty | `true` |
-| “run pre-tag full E2E” | Full | empty | `true` |
+| “diagnose the overnight consolidated run” | Scheduled inspection | n/a | n/a |
 | “run release-candidate E2E” | Full | empty | `true` |
 
 A generic E2E request must not authorize the Brev Launchable path.
@@ -29,6 +28,43 @@ Ask for clarification only when the request contains conflicting mode phrases.
 Ordinary mode runs the default-enabled GitHub Actions suite.
 Launchable mode runs only `Exact staging Brev Launchable`.
 Full mode runs the default-enabled suite and `Exact staging Brev Launchable` in the same workflow run.
+
+## Inspect the Scheduled Consolidated Run
+
+For overnight diagnosis, start from the trusted frozen plan. Do not dispatch a fresh full run merely to inspect the scheduled run:
+
+```bash
+export PLAN_PATH=/path/to/downloaded-release-edition-plan/plan.json
+CANDIDATE_SHA="$(node -p "require(process.env.PLAN_PATH).candidateCommit")"
+export EDITION_CUTOFF_AT="$(node -p "require(process.env.PLAN_PATH).authorization.cutoffAt")"
+CUTOFF_SECONDS="$(node -p "Date.parse(process.env.EDITION_CUTOFF_AT) / 1000")"
+WINDOW_END_SECONDS="$((CUTOFF_SECONDS + 12 * 60 * 60))"
+RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
+  --event schedule --branch main --limit 50 \
+  --json databaseId,createdAt,headSha,status,conclusion,url)"
+MATCHES="$(jq -c --argjson start "$CUTOFF_SECONDS" --argjson end "$WINDOW_END_SECONDS" \
+  '[.[] | select((.createdAt | fromdateiso8601) >= $start and
+                 (.createdAt | fromdateiso8601) < $end)] | sort_by(.createdAt)' <<<"$RUNS")"
+test "$(jq 'length' <<<"$MATCHES")" -eq 1
+RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
+RUN_SHA="$(jq -r '.[0].headSha' <<<"$MATCHES")"
+RUN_URL="$(jq -r '.[0].url' <<<"$MATCHES")"
+```
+
+The twelve-hour window starts at the plan's exact 4 PM cutoff and ends before the 4 AM cut. If no scheduled run is recorded yet, report it as pending and poll; do not silently substitute full mode. More than one match is ambiguous and must be reported.
+
+Record whether `RUN_SHA` equals `CANDIDATE_SHA`. If an accidental post-cutoff merge makes them differ, diagnose the scheduled run as next-edition advisory state and do not describe it as frozen-candidate evidence. The tag remains bound to the frozen plan.
+
+Watch and inspect the selected run even when it fails:
+
+```bash
+gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw
+gh run view "$RUN_ID" --repo NVIDIA/NemoClaw \
+  --json status,conclusion,headSha,jobs,url
+gh run view "$RUN_ID" --repo NVIDIA/NemoClaw --log-failed
+```
+
+Classify failures before choosing selective reruns. Dispatch full mode only for an explicit full or release-candidate rerun request.
 
 ## Resolve the Candidate
 
@@ -40,9 +76,7 @@ git fetch --prune origin main
 CANDIDATE_SHA="$(git rev-parse origin/main)"
 ```
 
-For a pre-tag request, use the full candidate SHA from the generated release plan.
-Require that SHA to equal `origin/main` before dispatch.
-Stop and regenerate the release plan when they differ.
+For a frozen-edition request, read `FROZEN_CANDIDATE_SHA` from the generated release plan and compare it with `CANDIDATE_SHA`, which is the current trusted `origin/main` dispatch ref. When they match, the rerun is also bound to the frozen candidate. If `main` advanced after the cutoff, keep the plan frozen and describe new dispatches as current-main or next-edition validation; the current direct-main workflow does not dispatch an older ancestor. Do not use the PR-controller checkout inputs to bypass that boundary.
 
 Record `CANDIDATE_SHA` for every dispatch.
 Do not use a relative revision in the evidence report.
@@ -102,48 +136,6 @@ repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That role check is the authorization.
 Launchable and full runs do not require separate environment approval.
 
-### Release Coverage Dispatch Group
-
-Use this subsection only when `nemoclaw-maintainer-cut-release-tag` supplies a release E2E preflight.
-It coordinates independent workflow runs; it does not change the meaning of ordinary or full mode above.
-
-Read `dispatches` from the preflight.
-Create a different correlation ID for each run.
-Dispatch the `defaultSuite` run first, using ordinary or full mode exactly as reported.
-Without waiting for it, dispatch the non-empty `parallelExplicit.jobs` value:
-
-```bash
-gh workflow run .github/workflows/e2e.yaml \
-  --repo NVIDIA/NemoClaw \
-  --ref main \
-  -f targets= \
-  -f "jobs=${EXPLICIT_JOBS}" \
-  -f inference_mode=mock \
-  -f include_staging_brev_launchable=false \
-  -f "correlation_id=${EXPLICIT_CORRELATION_ID}"
-```
-
-Do not add `staging-brev-launchable` to that selector list.
-Do not dispatch a conditional Jetson lane unless the authoritative repository runner inventory was confirmed online.
-After that confirmation, use a separate run and opt into queueing explicitly:
-
-```bash
-gh workflow run .github/workflows/e2e.yaml \
-  --repo NVIDIA/NemoClaw \
-  --ref main \
-  -f targets= \
-  -f jobs=jetson-nvmap-gpu \
-  -f inference_mode=mock \
-  -f include_staging_brev_launchable=false \
-  -f allow_jetson_runner_queue=true \
-  -f "correlation_id=${JETSON_CORRELATION_ID}"
-```
-
-Find all correlation IDs with one bounded `gh run list` query.
-Require exactly one run per correlation ID and the candidate SHA on every match.
-Dispatch the whole group before watching any member; do not serialize independent runs.
-Watch the group with batched status snapshots and collect results after all members are terminal.
-
 Find the run by its unique title:
 
 ```bash
@@ -192,16 +184,6 @@ gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=1
   >"$EVIDENCE_DIR/jobs-latest-$RUN_ID.json"
 ```
 
-For a release coverage group, also collect every attempt for the matrix-preserving ledger:
-
-```bash
-gh api --paginate --slurp \
-  "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
-  >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
-```
-
-Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs.
-Do not fetch the same run again.
 `jobs-latest-$RUN_ID.json` is only the validator input for the latest full-mode attempt.
 
 For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
@@ -240,12 +222,12 @@ The validator requires:
 - `cleanup.json` to report the same workspace as `ABSENT`.
 
 A skipped, cancelled, queued, or failed Launchable E2E job is not evidence.
-A Launchable-mode run is not full-mode or pre-tag release evidence.
+A Launchable-mode run is not full-mode evidence.
 A missing, mismatched, or failed cleanup receipt is not evidence.
 
-## Bind Release Evidence
+## Bind Advisory Evidence
 
-If no release plan exists, label a successful full run against `origin/main` as provisional release evidence.
+If no release plan exists, label a successful full run against `origin/main` as advisory E2E evidence.
 Return:
 
 - candidate SHA;
@@ -255,13 +237,9 @@ Return:
 - Launchable E2E identity; and
 - cleanup result.
 
-If the release candidate SHA changes, discard the earlier run group and rerun every required release coverage group for the new SHA.
-No release-note-only delta exception is currently defined.
-
-When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
-The trusted `dispatch.json` receipt proves that full mode selected the default suite.
-The release evidence ledger proves the result of each default-suite execution.
-Do not ask for the release confirmation phrase in this skill.
+Bind every result to the tested SHA. For the frozen edition, classify failures and prepare fixes for the next merge window.
+Return the trusted dispatch, test, Launchable, and cleanup receipts needed for diagnosis.
+Never treat success as tag authorization or failure as a reason to delay the 4 AM tag.
 
 ## Access Failures
 

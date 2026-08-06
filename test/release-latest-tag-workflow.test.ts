@@ -10,6 +10,7 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
 ) => (...args: unknown[]) => Promise<unknown>;
 
 type ReleaseLatestWorkflow = {
+  on?: Record<string, any>;
   jobs: Record<string, WorkflowJob>;
 };
 
@@ -67,10 +68,15 @@ afterEach(() => {
 describe("release latest tag workflow", () => {
   // source-shape-contract: security -- Exact verified-object output wiring prevents latest promotion from bypassing GitHub signature verification
   it("binds latest promotion to the exact GitHub-verified tag object", () => {
+    expect(workflow.on?.workflow_call?.inputs?.tag).toMatchObject({
+      required: true,
+      type: "string",
+    });
     expect(verifyStep?.uses).toBe("actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3");
     expect(moveStep?.env?.EXPECTED_RELEASE_TAG_OBJECT).toBe(
       "${{ steps.verify-release-tag.outputs.tag_object_sha }}",
     );
+    expect(moveStep?.env?.RELEASE_TAG).toBe("${{ inputs.tag || github.ref_name }}");
   });
 
   it("accepts a GitHub-verified signed tag and emits its exact object SHA", async () => {

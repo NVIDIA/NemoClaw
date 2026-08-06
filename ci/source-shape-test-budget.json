@@ -692,6 +692,26 @@
       "category": "security"
     },
     {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "closes the edition after the exact Los Angeles cutoff with read-only permissions",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "cuts at 4 AM without E2E input and delegates exact-object promotion",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "dispatches one asynchronous advisor run for the exact main SHA range",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "keeps independent merge reviews from cancelling each other",
+      "category": "security"
+    },
+    {
       "file": "test/release-lkg-brev-image.test.ts",
       "test": "keeps LKG dispatch inside the trusted secret boundary (#6772)",
       "category": "security"

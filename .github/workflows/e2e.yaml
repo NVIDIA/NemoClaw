@@ -6,7 +6,9 @@ run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.p
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    # Start one consolidated advisory run just after the 4 PM edition freeze.
+    - cron: "17 16 * * *"
+      timezone: America/Los_Angeles
   workflow_dispatch:
     inputs:
       targets:

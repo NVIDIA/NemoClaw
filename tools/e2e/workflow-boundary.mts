@@ -1004,11 +1004,12 @@ function requireScheduledRun(errors: string[], triggers: WorkflowRecord): void {
     errors.push("workflow must support the scheduled E2E run");
     return;
   }
-  const cronEntries = schedule
-    .map((entry) => asRecord(entry).cron)
-    .filter((cron): cron is string => typeof cron === "string");
-  if (!cronEntries.includes("0 0 * * *")) {
-    errors.push("workflow schedule must run daily at 00:00 UTC");
+  const hasEditionCloseSchedule = schedule.some((entry) => {
+    const scheduled = asRecord(entry);
+    return scheduled.cron === "17 16 * * *" && scheduled.timezone === "America/Los_Angeles";
+  });
+  if (!hasEditionCloseSchedule) {
+    errors.push("workflow schedule must run daily at 16:17 in the America/Los_Angeles timezone");
   }
 }
 
