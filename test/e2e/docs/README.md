@@ -301,7 +301,9 @@ test/e2e/
   dedicated `cloud-onboard` artifact.
   Manual PR E2E authenticates the maintainer and exact PR identity before
   checking out the candidate revision, then validates the identity again before
-  preparation. Direct manual dispatches cannot use selectors with PR inputs.
+  preparation. Direct manual dispatches accept either the default suite without
+  selectors or only the `managed-image-protected-runtime` job selector with PR
+  inputs.
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
   invocations and suppress PR reporting and scorecards. The workflow boundary
   requires every selected job shard to upload its evidence artifact.

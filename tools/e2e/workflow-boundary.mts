@@ -4338,10 +4338,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("generate-matrix job must keep the 10 minute timeout");
   }
   const generateOutputs = asRecord(generateMatrix.outputs);
-  if (
-    generateOutputs.matrix !==
-    "${{ steps.matrix.outputs.matrix }}"
-  ) {
+  if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
     errors.push("generate-matrix job must expose trusted controller matrix output");
   }
   if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
@@ -4371,10 +4368,13 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("trusted controller matrix step must use bash");
   }
   const controllerMatrixEnv = asRecord(controllerMatrix?.env);
+  if (controllerMatrixEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("trusted controller matrix step must bind jobs through JOBS env");
+  }
   if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("trusted controller matrix step must bind targets through TARGETS env");
   }
-  requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
+  requireRunContains(errors, controllerMatrix, 'case "${JOBS}:${TARGETS}" in');
   const controllerMatrixScript = stringValue(controllerMatrix?.run);
   const policyTarget = "ubuntu-policy-custom-missing-presets-negative";
   const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
@@ -4388,17 +4388,20 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
   const trustedControllerMatrixScript = [
     "set -euo pipefail",
-    'case "${TARGETS}" in',
-    '"")',
+    'case "${JOBS}:${TARGETS}" in',
+    ":)",
     `matrix='[${defaultMappings}]'`,
     ";;",
-    `${deepAgentsTarget})`,
+    "managed-image-protected-runtime:)",
+    "matrix='[]'",
+    ";;",
+    `:${deepAgentsTarget})`,
     `matrix='[${deepAgentsMapping}]'`,
     ";;",
-    `${postRebootTarget})`,
+    `:${postRebootTarget})`,
     `matrix='[${postRebootMapping}]'`,
     ";;",
-    `${deepAgentsTarget},${postRebootTarget})`,
+    `:${deepAgentsTarget},${postRebootTarget})`,
     `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
     ";;",
     "*)",

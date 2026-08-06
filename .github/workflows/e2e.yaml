@@ -163,21 +163,25 @@ jobs:
         name: Build trusted controller target matrix
         if: ${{ inputs.checkout_sha != '' }}
         env:
+          JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         shell: bash
         run: |
           set -euo pipefail
-          case "${TARGETS}" in
-            "")
+          case "${JOBS}:${TARGETS}" in
+            :)
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               ;;
-            ubuntu-repo-cloud-langchain-deepagents-code)
+            managed-image-protected-runtime:)
+              matrix='[]'
+              ;;
+            :ubuntu-repo-cloud-langchain-deepagents-code)
               matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
               ;;
-            ubuntu-repo-docker-post-reboot-recovery)
+            :ubuntu-repo-docker-post-reboot-recovery)
               matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
               ;;
-            ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
+            :ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
               matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
               ;;
             *)
@@ -256,15 +260,20 @@ jobs:
             exit 1
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
-          [[ -z "$JOBS" && -z "$TARGETS" && "$INCLUDE_LAUNCHABLE" == "false" ]] || {
-            echo "::error::Manual PR E2E runs the default suite and does not accept job, target, or Launchable selectors" >&2
-            exit 1
-          }
+          case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}" in
+            ::false | managed-image-protected-runtime::false) ;;
+            *)
+              echo "::error::Manual PR E2E accepts only the default suite or managed-image-protected-runtime without target or Launchable selectors" >&2
+              exit 1
+              ;;
+          esac
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
           [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name" >&2; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA" >&2; exit 1; }
-          [[ "$REVIEW_REASON" =~ ^[[:print:]]{10,500}$ ]] || { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
+          [[ "$REVIEW_REASON" =~ ^[[:print:]]+$ ]] &&
+            (( ${#REVIEW_REASON} >= 10 && ${#REVIEW_REASON} <= 500 )) ||
+            { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
 
 
