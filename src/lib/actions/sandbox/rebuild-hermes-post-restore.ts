@@ -12,6 +12,7 @@ const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
 const BEGIN_TIMEOUT_MS = 70_000;
 const CONTROL_TIMEOUT_MS = 25_000;
 const RECOVERY_TIMEOUT_MS = BEGIN_TIMEOUT_MS + CONTROL_TIMEOUT_MS * 2 + 10_000;
+const HERMES_GATEWAY_RECHECK_ATTEMPTS = 2;
 
 type HermesCronRestoreAction = "begin" | "validate" | "release" | "recover";
 type HermesCronRestoreDisposition =
