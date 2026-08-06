@@ -14,6 +14,10 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { GATEWAY_PORT } from "../core/ports";
+import {
+  parseServingProfileProvenance,
+  type ServingProfileProvenance,
+} from "../inference/serving/profile-provenance";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
@@ -161,6 +165,8 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Exact secret-free serving recipe identity selected before runtime side effects. */
+  servingProfileProvenance: ServingProfileProvenance | null;
   /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
   stationExpressIntent: StationExpressResumeIntent | null;
   /** Receipt generation durably awaiting exact-match retirement after Station completion. */
@@ -249,6 +255,7 @@ export interface SessionUpdates {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | null;
@@ -284,6 +291,7 @@ export interface DebugSessionSummary {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  servingProfileProvenance: ServingProfileProvenance | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
@@ -661,6 +669,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
     stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
     stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
       overrides.stationExpressReceiptRetirement,
@@ -713,6 +722,14 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  const servingProfileProvenance = parseServingProfileProvenance(data.servingProfileProvenance);
+  if (
+    hasOwn(data, "servingProfileProvenance") &&
+    data.servingProfileProvenance !== null &&
+    !servingProfileProvenance
+  ) {
+    return null;
+  }
   const compatibleEndpointReasoningEffort = normalizeReasoningEffort(
     data.compatibleEndpointReasoningEffort,
   );
@@ -752,6 +769,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    servingProfileProvenance,
     stationExpressIntent,
     stationExpressReceiptRetirement,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
@@ -1276,6 +1294,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "sandboxName", updates.sandboxName);
   assignNullableString(safe, "provider", updates.provider);
   assignNullableString(safe, "model", updates.model);
+  if (updates.servingProfileProvenance === null) {
+    safe.servingProfileProvenance = null;
+  } else {
+    const servingProfileProvenance = parseServingProfileProvenance(
+      updates.servingProfileProvenance,
+    );
+    if (servingProfileProvenance) safe.servingProfileProvenance = servingProfileProvenance;
+  }
   assignNullableString(safe, "endpointUrl", updates.endpointUrl, redactUrl);
   assignNullableString(safe, "credentialEnv", updates.credentialEnv);
   if (updates.hermesAuthMethod === "oauth" || updates.hermesAuthMethod === "api_key") {
@@ -1633,6 +1659,7 @@ export function summarizeForDebug(
     sandboxName: session.sandboxName,
     provider: session.provider,
     model: session.model,
+    servingProfileProvenance: session.servingProfileProvenance,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,
     hermesAuthMethod: session.hermesAuthMethod,

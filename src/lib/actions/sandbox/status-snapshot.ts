@@ -26,6 +26,7 @@ import {
   type ProviderHealthStatus,
   probeProviderHealth,
 } from "../../inference/health";
+import type { ServingProfileProvenance } from "../../inference/serving/types";
 import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
@@ -158,6 +159,7 @@ export interface SandboxStatusReport {
   agentLoadError?: string;
   model: string;
   provider: string;
+  servingProfileProvenance: ServingProfileProvenance | null;
   recordedRoute: RecordedInferenceRoute | null;
   liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
@@ -715,6 +717,7 @@ async function buildSandboxStatusReport(
     // gateway-global route without changing those legacy meanings.
     model: liveRoute?.model ?? currentModel,
     provider: liveRoute?.provider ?? currentProvider,
+    servingProfileProvenance: sb?.servingProfileProvenance ?? null,
     recordedRoute,
     liveRoute,
     routeDrift,

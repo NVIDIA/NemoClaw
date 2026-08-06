@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,10 +14,10 @@ import {
   type HostLocalCreateJournalRecord,
   serializeHostLocalCreateJournalRecord,
 } from "./host-local-create-journal";
+import { serializeHostLocalInferenceReceipt } from "./host-local-inference";
 
 const TRANSACTION_ID = "a".repeat(64);
 const RUNTIME_ID = "b".repeat(64);
-const RECEIPT_SHA256 = "c".repeat(64);
 const CREATE_INTENT_UNIX_MS = 1_786_000_000_000;
 const OWNER_ONE = "11111111-1111-4111-8111-111111111111";
 const OWNER_TWO = "22222222-2222-4222-8222-222222222222";
@@ -56,8 +57,37 @@ function prepared(): HostLocalCreateJournalRecord {
       authorityId: "docker:local",
       bindingSha256: "f".repeat(64),
     },
+    receiptTargetSha256: "3".repeat(64),
+    serializedReceipt: null,
     receiptSha256: null,
   };
+}
+
+function serializedReceipt(): string {
+  const authority = prepared();
+  return serializeHostLocalInferenceReceipt({
+    schemaVersion: 1,
+    providerId: authority.providerId,
+    service: "llama-cpp",
+    engineAuthority: authority.engineAuthority,
+    endpoint: { host: "host.openshell.internal", port: 49152, networkName: "internal" },
+    runtime: {
+      kind: "container",
+      runtimeId: RUNTIME_ID,
+      name: authority.containerName,
+      imageRef: `ghcr.io/nvidia/llama-cpp@sha256:${"4".repeat(64)}`,
+      probeImageRef: `quay.io/curl/curl@sha256:${"5".repeat(64)}`,
+      specSha256: authority.specSha256,
+      model: {
+        planDigest: `sha256:${"6".repeat(64)}`,
+        recipeId: "llama-cpp.nemotron.spark.v1",
+        generation: TRANSACTION_ID,
+        digest: `sha256:${"7".repeat(64)}`,
+        sizeBytes: 64,
+      },
+      gpu: { vendor: "nvidia", count: 1 },
+    },
+  });
 }
 
 function journalPath(): string {
@@ -73,7 +103,7 @@ function executionSource(transactionId: string, ownerId: string, ownerPid: numbe
 }
 
 describe("host-local create journal", () => {
-  it("durably resumes every create phase without persisting executor paths or secrets (#8395)", () => {
+  it("durably resumes every create and receipt-publication phase without secrets (#8414)", () => {
     const fsync = vi.spyOn(fs, "fsyncSync");
     const first = createHostLocalCreateJournalStore(stateDirectory);
     expect(first.create(prepared()).phase).toBe("prepared");
@@ -82,8 +112,16 @@ describe("host-local create journal", () => {
 
     const restarted = createHostLocalCreateJournalStore(stateDirectory);
     expect(restarted.recordStarted(TRANSACTION_ID).phase).toBe("started");
-    const finalized = restarted.finalize(TRANSACTION_ID, RECEIPT_SHA256);
+    const receipt = serializedReceipt();
+    const preparedReceipt = restarted.prepareReceipt(TRANSACTION_ID, receipt);
+    expect(preparedReceipt).toMatchObject({
+      phase: "receipt-prepared",
+      serializedReceipt: receipt,
+      receiptSha256: createHash("sha256").update(receipt).digest("hex"),
+    });
+    const finalized = restarted.finalize(TRANSACTION_ID);
     expect(finalized.phase).toBe("finalized");
+    expect(restarted.finalize(TRANSACTION_ID)).toEqual(finalized);
     expect(restarted.list()).toEqual([finalized]);
 
     const serialized = fs.readFileSync(journalPath(), "utf8");
@@ -106,8 +144,52 @@ describe("host-local create journal", () => {
     expect(() => store.recordStarted(TRANSACTION_ID)).toThrow(
       "only a created transaction can record start",
     );
-    expect(() => store.finalize(TRANSACTION_ID, RECEIPT_SHA256)).toThrow(
-      "only a started transaction can finalize",
+    expect(() => store.prepareReceipt(TRANSACTION_ID, serializedReceipt())).toThrow(
+      "only a started transaction can prepare receipt publication",
+    );
+    expect(() => store.finalize(TRANSACTION_ID)).toThrow(
+      "only a receipt-prepared transaction can finalize",
+    );
+  });
+
+  it("rejects noncanonical receipt bytes before publication intent is durable (#8414)", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    store.create(prepared());
+    store.recordCreating(TRANSACTION_ID, CREATE_INTENT_UNIX_MS);
+    store.recordCreated(TRANSACTION_ID, RUNTIME_ID);
+    store.recordStarted(TRANSACTION_ID);
+
+    expect(() => store.prepareReceipt(TRANSACTION_ID, serializedReceipt().trim())).toThrow(
+      "Host-local create journal is invalid: prepared receipt is invalid",
+    );
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("started");
+  });
+
+  it.each([
+    ["receipt without its digest", { serializedReceipt: "hostPath=/secret\n" }],
+    ["digest without its receipt", { receiptSha256: "9".repeat(64) }],
+  ])("rejects partial %s journal state (#8414)", (_name, partial) => {
+    expect(() =>
+      serializeHostLocalCreateJournalRecord({
+        ...prepared(),
+        ...partial,
+      }),
+    ).toThrow("Host-local create journal is invalid: phase and receipt fields disagree");
+  });
+
+  it("rejects receipt or digest tampering after a durable publication prepare (#8414)", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    store.create(prepared());
+    store.recordCreating(TRANSACTION_ID, CREATE_INTENT_UNIX_MS);
+    store.recordCreated(TRANSACTION_ID, RUNTIME_ID);
+    store.recordStarted(TRANSACTION_ID);
+    store.prepareReceipt(TRANSACTION_ID, serializedReceipt());
+
+    const record = JSON.parse(fs.readFileSync(journalPath(), "utf8"));
+    record.receiptSha256 = "8".repeat(64);
+    fs.writeFileSync(journalPath(), `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    expect(() => store.load(TRANSACTION_ID)).toThrow(
+      "Host-local create journal is invalid: prepared receipt digest changed",
     );
   });
 

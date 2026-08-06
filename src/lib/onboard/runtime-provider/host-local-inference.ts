@@ -129,6 +129,19 @@ export interface HostLocalInferenceRouteAuthorityStore {
   ) => HostLocalInferenceRouteAuthority;
 }
 
+/**
+ * Operation-scoped durable writer for one exact receipt target. Implementations
+ * must atomically retain an absent target or the exact same canonical receipt,
+ * reject a different current value, and return the committed canonical bytes.
+ */
+export interface HostLocalInferenceReceiptWriter {
+  /** Exact create transaction this writer may publish. */
+  readonly transactionId: string;
+  /** Path- and value-free identity of the one external state target. */
+  readonly targetSha256: string;
+  readonly writeExact: (serializedReceipt: string) => string;
+}
+
 export interface HostLocalInferenceRuntime {
   readonly providerId: string;
   /** Exact opaque endpoint identity shared with the operation-scoped engine. */
