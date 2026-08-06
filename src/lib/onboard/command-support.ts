@@ -4,6 +4,7 @@
 import { Flags } from "@oclif/core";
 import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../tool-disclosure";
 import { describeAgentFlag } from "./agent-flag-help";
+import { PORTABLE_EXPERIMENTAL_PROFILE } from "./docker-driver-platform";
 import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
 type AgentRegistryReader = () => readonly string[];
@@ -14,7 +15,7 @@ export function setAgentRegistryReaderForTest(reader: AgentRegistryReader | null
   agentRegistryReaderForTest = reader;
 }
 
-function readAgentRegistryNames(): readonly string[] {
+export function readAgentRegistryNames(): readonly string[] {
   if (agentRegistryReaderForTest) return agentRegistryReaderForTest();
   const { listAgents } = require("../agent/defs") as typeof import("../agent/defs");
   return listAgents();
@@ -46,7 +47,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -54,6 +55,7 @@ export const onboardExamples = [
   "<%= config.bin %> onboard --name alpha",
   "<%= config.bin %> onboard --resume",
   "<%= config.bin %> onboard --fresh",
+  "<%= config.bin %> onboard --profile <profile-id>",
   "<%= config.bin %> onboard --from ./Dockerfile --name alpha",
   "<%= config.bin %> onboard --agents ./agents.yaml",
   "<%= config.bin %> onboard --sandbox-gpu --sandbox-gpu-device nvidia.com/gpu=0",
@@ -61,6 +63,8 @@ export const onboardExamples = [
 ];
 
 export type OnboardFlags = {
+  "temp-managed-runtime"?: boolean;
+  "temp-managed-runtime-catalog"?: string;
   "non-interactive"?: boolean;
   resume?: boolean;
   fresh?: boolean;
@@ -80,11 +84,18 @@ export type OnboardFlags = {
   events?: "jsonl";
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
+  "experimental-profile"?: string;
+  profile?: string;
   [NOTICE_ACCEPT_FLAG_NAME]?: boolean;
 };
 
 export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Record<string, any> {
   const flags = {
+    "temp-managed-runtime": Flags.boolean({ hidden: true }),
+    "temp-managed-runtime-catalog": Flags.string({
+      hidden: true,
+      dependsOn: ["temp-managed-runtime"],
+    }),
     "non-interactive": Flags.boolean({ description: "Run without interactive prompts" }),
     resume: Flags.boolean({
       description: "Resume an interrupted onboarding session",
@@ -146,6 +157,15 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     "no-ollama-autostart": Flags.boolean({
       description:
         "Skip the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux/systemd hosts the loopback-override path may still restart the daemon",
+    }),
+    "experimental-profile": Flags.string({
+      hidden: true,
+      options: [PORTABLE_EXPERIMENTAL_PROFILE],
+      exclusive: ["profile"],
+    }),
+    profile: Flags.string({
+      description: "Select a serving profile shown by `nemoclaw profiles list`",
+      exclusive: ["experimental-profile"],
     }),
     [NOTICE_ACCEPT_FLAG_NAME]: Flags.boolean({
       description: "Accept the third-party software notice",

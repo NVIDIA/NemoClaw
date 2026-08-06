@@ -17,6 +17,7 @@ export const OPENCLAW_TARGET: AgentConfigTarget = {
   format: "json",
   configFile: "openclaw.json",
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  stateLockPlanInImage: true,
 };
 
 export const HERMES_TARGET: AgentConfigTarget = {
@@ -26,6 +27,7 @@ export const HERMES_TARGET: AgentConfigTarget = {
   format: "yaml",
   configFile: "config.yaml",
   sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
+  stateLockPlanInImage: true,
 };
 
 export function baseSession(overrides: Partial<Session> = {}): Session {

@@ -149,7 +149,12 @@ export async function runRebuildPreflightPhase(
   try {
     assertMcpDestroyNotPending(sandboxEntry);
   } catch (error) {
-    bail(error instanceof Error ? error.message : String(error));
+    printRebuildPreflightFailure(
+      "a pending MCP destroy transaction blocks rebuild.",
+      "Resolve the pending MCP state before retrying rebuild.",
+      error instanceof Error ? error.message : String(error),
+      bail,
+    );
     return null;
   }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
@@ -222,6 +227,7 @@ export async function runRebuildPreflightPhase(
     sandboxName,
     entry: expectedSandboxEntry,
     rebuildAgent,
+    managedWorkloadRebuild: expectedSandboxEntry.workload?.kind === "managed-image",
     log,
     bail,
     deps: {
@@ -241,6 +247,7 @@ export async function runRebuildPreflightPhase(
   let retainBaseImagePreflight = false;
   try {
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
+    if (!releaseOnboardLock) return null;
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, JSON.stringify(expectedSandboxEntry), bail);
@@ -279,8 +286,11 @@ export async function runRebuildPreflightPhase(
           recoveryRecreate,
           preparedTarget.recreateOptions.targetGatewayPort,
         );
-        if (!imageReady || !dcodePreflight.preparedReplacement) return null;
-        preparedTarget.recreateOptions.preparedDcodeRebuild = dcodePreflight.preparedReplacement;
+        if (!imageReady) return null;
+        if (!preparedTarget.recreateOptions.managedWorkloadRebuild) {
+          if (!dcodePreflight.preparedReplacement) return null;
+          preparedTarget.recreateOptions.preparedDcodeRebuild = dcodePreflight.preparedReplacement;
+        }
       }
       // Keep credential-reuse validation after DCode's live-route/image proofs,
       // but before shields, backup, or any destructive rebuild work begins.

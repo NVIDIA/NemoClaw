@@ -4,7 +4,7 @@
 // Tier management — load tier definitions and resolve preset selections.
 //
 // Tiers are defined in nemoclaw-blueprint/policies/tiers.yaml.
-// Each tier is a named posture (restricted, balanced, open) that maps to
+// Each tier is a named posture (restricted, balanced, open, personal) that maps to
 // a set of policy presets and their default access levels.
 //
 // The base sandbox policy is always applied regardless of tier.
@@ -18,6 +18,7 @@ import { isObjectRecord } from "../core/json-types";
 import { ROOT } from "../runner";
 
 const TIERS_FILE = path.join(ROOT, "nemoclaw-blueprint", "policies", "tiers.yaml");
+export const PERSONAL_POLICY_TIER_NAME = "personal";
 const ALLOWED_ACCESS: ReadonlySet<string> = new Set(["read", "read-write"]);
 type TierAccess = "read" | "read-write";
 

@@ -48,6 +48,7 @@ describe("createSandboxRecreateProtection", () => {
       gatewayPort: 8080,
       sourceRegistryFingerprint: "fingerprint",
       sourceLiveIdentityFingerprint: null,
+      sourceConfirmedAbsent: true,
       targetGeneration: "3c9a1b7e-target",
     };
     const observation = { state: "missing" as const, liveIdentityFingerprint: null };
@@ -102,6 +103,7 @@ describe("createSandboxRecreateProtection", () => {
       gatewayPort: 8080,
       sourceRegistryFingerprint: "fingerprint",
       sourceLiveIdentityFingerprint: null,
+      sourceConfirmedAbsent: true,
       targetGeneration: "3c9a1b7e-target",
     };
 

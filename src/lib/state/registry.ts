@@ -7,6 +7,7 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
+import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
   applyAddExtraProvider,
@@ -21,6 +22,7 @@ import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
+  normalizeCustomPolicyEntries,
   retainedDefaultSandbox,
 } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
@@ -74,7 +76,6 @@ export type {
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -82,6 +83,7 @@ export {
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
+export { normalizeCustomPolicyEntries };
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
@@ -108,12 +110,17 @@ export function getDefault(): string | null {
 export function registerSandbox(entry: SandboxEntry): void {
   withLock(() => {
     const data = load();
+    const servingProfileProvenance = parseServingProfileProvenance(entry.servingProfileProvenance);
+    if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
+      throw new Error("Cannot register a sandbox with invalid serving profile provenance");
+    }
     if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
       data.defaultSandbox = null;
     }
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
+      servingProfileProvenance: servingProfileProvenance ?? undefined,
       ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,

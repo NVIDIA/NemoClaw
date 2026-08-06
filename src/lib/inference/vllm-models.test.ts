@@ -17,6 +17,22 @@ import {
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
+  it("starts directly with setup when the serving environment is empty (#8246)", () => {
+    const command = buildVllmServeCommand({
+      id: "test/model",
+      label: "Test model",
+      envValue: "test-model",
+      downloadSizeBytes: 1,
+      maxModelLen: 4096,
+      modelArgs: [],
+      gated: false,
+      platforms: ["spark"],
+      serveEnv: {},
+    });
+
+    expect(command).toMatch(/^pip install vllm\[fastsafetensors\] && vllm serve/u);
+  });
+
   it("records a finite positive Hugging Face file size for every model", () => {
     for (const model of VLLM_MODELS) {
       expect(Number.isFinite(model.downloadSizeBytes)).toBe(true);
@@ -277,6 +293,31 @@ describe("vllm model registry", () => {
     } as NodeJS.ProcessEnv);
 
     expect(cmd).toContain(`--served-model-name 'operator'"'"'s model'`);
+  });
+
+  it("quotes registry arguments and serving environment values as shell literals (#8246)", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand({
+      ...qwen!,
+      id: "example/model; touch /tmp/model-injection",
+      modelArgs: ["--served-model-name", "$(touch /tmp/argument-injection)"],
+      serveEnv: { SAFE_VALUE: "literal; $(touch /tmp/environment-injection)" },
+    });
+
+    expect(cmd).toContain("export SAFE_VALUE='literal; $(touch /tmp/environment-injection)'");
+    expect(cmd).toContain("vllm serve 'example/model; touch /tmp/model-injection'");
+    expect(cmd).toContain("--served-model-name '$(touch /tmp/argument-injection)'");
+  });
+
+  it("rejects invalid serving environment variable names", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+
+    expect(() =>
+      buildVllmServeCommand({
+        ...qwen!,
+        serveEnv: { "UNSAFE; touch /tmp/environment-name-injection": "1" },
+      }),
+    ).toThrow("Invalid vLLM serving environment variable name");
   });
 
   it("uses model-specific max-model-len when building the command", () => {
