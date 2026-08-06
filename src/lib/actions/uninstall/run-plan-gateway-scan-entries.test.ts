@@ -138,4 +138,22 @@ describe("uninstall gateway-directory scan", () => {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it("keeps the CLI shims for a desktop-metadata symlink (#7905)", () => {
+    const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", []);
+    fs.symlinkSync(
+      "concealed-gateway-state",
+      path.join(home, ".nemoclaw", "gateways", ".DS_Store"),
+    );
+
+    try {
+      const { result, logs, survivors } = uninstall(home, shims);
+
+      expect(result.exitCode).toBe(0);
+      expect(logs).toContain(SCOPED_RETENTION_LOG);
+      expect(survivors).toEqual(shims);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
