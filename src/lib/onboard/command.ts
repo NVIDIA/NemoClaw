@@ -26,6 +26,7 @@ import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
 export interface OnboardCommandOptions {
   tempManagedRuntime: boolean;
+  tempManagedRuntimeCatalog: string | null;
   nonInteractive: boolean;
   resume: boolean;
   fresh: boolean;
@@ -67,7 +68,7 @@ function fail(deps: ResolveOnboardOptionsDeps, message: string): never {
 }
 
 function resolveFileOption(
-  flag: "--from" | "--agents",
+  flag: "--from" | "--agents" | "--temp-managed-runtime-catalog",
   value: string | undefined,
   deps: ResolveOnboardOptionsDeps,
   preserveInput: boolean,
@@ -193,6 +194,12 @@ export function resolveOnboardOptions(
   }
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
+    tempManagedRuntimeCatalog: resolveFileOption(
+      "--temp-managed-runtime-catalog",
+      flags["temp-managed-runtime-catalog"],
+      deps,
+      false,
+    ),
     nonInteractive: withPortableDefault(flags["non-interactive"], experimentalProfile),
     resume: flags.resume === true,
     fresh: withPortableDefault(flags.fresh, experimentalProfile),

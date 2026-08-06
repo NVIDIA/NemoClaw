@@ -74,6 +74,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly computePlan: OpenShellComputePlan;
   readonly managedWorkloadRebuild: ManagedWorkloadRebuildHandoff | null;
   readonly tempManagedRuntime: boolean;
+  readonly tempManagedRuntimeCatalog: string | null;
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
@@ -141,6 +142,7 @@ export function createManagedWorkloadOnboardRuntime(
           customDockerfilePath: input.customDockerfilePath,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
+          catalogPath: input.tempManagedRuntimeCatalog,
         });
     const prepared = await preparedWorkloadPromise;
     if (prepared.fallbackDiagnostic && !fallbackReported) {

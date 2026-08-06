@@ -61,6 +61,8 @@ describe("buildOnboardFlags temporary managed runtime gate", () => {
 
     expect(flags["temp-managed-runtime"].hidden).toBe(true);
     expect(flags["temp-managed-runtime"].description).toBeUndefined();
+    expect(flags["temp-managed-runtime-catalog"].hidden).toBe(true);
+    expect(flags["temp-managed-runtime-catalog"].dependsOn).toEqual(["temp-managed-runtime"]);
     expect(flags.events.hidden).not.toBe(true);
   });
 });
