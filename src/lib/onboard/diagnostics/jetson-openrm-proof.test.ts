@@ -35,18 +35,50 @@ function result(): DockerGpuPatchResult {
   };
 }
 
+function dockerRunForBoundaryProof() {
+  return vi.fn((args: readonly string[]) =>
+    args.includes("0")
+      ? {
+          status: 0,
+          stdout: ["/dev/nvidia-caps/nvidia-cap2", "/dev/nvhost-ctrl-pva0", "/dev/nvmap"].join(
+            "\n",
+          ),
+          stderr: "",
+        }
+      : { status: 0, stdout: "cuInit(0)=0", stderr: "" },
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("Jetson OpenRM policy proof", () => {
-  it("proves the exact one-path A/B and restores the baseline policy", () => {
+  it("isolates missing injected devices from sysfs and restores the baseline policy", () => {
     const appliedPolicies: string[] = [];
     const runOpenshell = vi.fn((args: string[]) => {
       appliedPolicies.push(fs.readFileSync(args[3] ?? "", "utf8"));
       return { status: 0 };
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const verifyDirectSandboxGpu = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: "verified" as const,
+        cudaVerified: true,
+        at: "2026-08-06T00:00:00.000Z",
+      })
+      .mockReturnValueOnce({
+        status: "failed" as const,
+        cudaVerified: false,
+        detail: "cuInit(0)=801",
+        at: "2026-08-06T00:00:00.000Z",
+      })
+      .mockReturnValueOnce({
+        status: "verified" as const,
+        cudaVerified: true,
+        at: "2026-08-06T00:00:00.000Z",
+      });
 
     maybeRunJetsonOpenRmPolicyProof({
       backend: "jetson",
@@ -55,26 +87,26 @@ describe("Jetson OpenRM policy proof", () => {
       preserveJetsonDeviceGroupMembership: true,
       result: result(),
       sandboxName: "alpha",
-      verifyDirectSandboxGpu: vi.fn(() => ({
-        status: "verified" as const,
-        cudaVerified: true,
-        at: "2026-08-06T00:00:00.000Z",
-      })),
+      verifyDirectSandboxGpu,
       deps: {
-        dockerRun: vi.fn(() => ({ status: 0, stdout: "cuInit(0)=0", stderr: "" })),
-        isCharacterDevice: () => true,
+        dockerRun: dockerRunForBoundaryProof(),
         runCaptureOpenshell: vi.fn(() => BASE_POLICY),
         runOpenshell,
       },
     });
 
-    expect(appliedPolicies).toHaveLength(2);
+    expect(appliedPolicies).toHaveLength(4);
     expect(appliedPolicies[0]).toContain("/dev/nvidia-caps/nvidia-cap2");
+    expect(appliedPolicies[0]).toContain("/dev/nvhost-ctrl-pva0");
+    expect(appliedPolicies[0]).not.toContain("- /sys");
+    expect(appliedPolicies[1]).toContain("- /sys");
     expect(appliedPolicies[1]).not.toContain("/dev/nvidia-caps/nvidia-cap2");
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("direct_docker_cuInit=0 baseline_openshell_cuInit=801"),
-    );
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("PROVEN:"));
+    expect(appliedPolicies[2]).toContain("/dev/nvidia-caps/nvidia-cap2");
+    expect(appliedPolicies[2]).toContain("- /sys");
+    expect(appliedPolicies[3]).not.toContain("/dev/nvidia-caps/nvidia-cap2");
+    expect(appliedPolicies[3]).not.toContain("- /sys");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("devices_cuInit=0 sysfs_cuInit=801"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("ISOLATED:"));
   });
 
   it("restores the baseline when the candidate CUDA proof throws", () => {
@@ -96,8 +128,7 @@ describe("Jetson OpenRM policy proof", () => {
           throw new Error("candidate probe failed");
         }),
         deps: {
-          dockerRun: vi.fn(() => ({ status: 0, stdout: "cuInit(0)=0", stderr: "" })),
-          isCharacterDevice: () => true,
+          dockerRun: dockerRunForBoundaryProof(),
           runCaptureOpenshell: vi.fn(() => BASE_POLICY),
           runOpenshell,
         },
@@ -126,13 +157,12 @@ describe("Jetson OpenRM policy proof", () => {
         sandboxName: "alpha",
         verifyDirectSandboxGpu: vi.fn(),
         deps: {
-          dockerRun: vi.fn(() => ({ status: 0, stdout: "cuInit(0)=0", stderr: "" })),
-          isCharacterDevice: () => true,
+          dockerRun: dockerRunForBoundaryProof(),
           runCaptureOpenshell: vi.fn(() => BASE_POLICY),
           runOpenshell,
         },
       }),
-    ).toThrow("candidate.yaml");
+    ).toThrow("devices.yaml");
 
     expect(appliedPolicies).toHaveLength(2);
     expect(appliedPolicies[0]).toContain("/dev/nvidia-caps/nvidia-cap2");

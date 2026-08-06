@@ -14,9 +14,10 @@ import type {
   DockerGpuPatchResult,
 } from "../docker-gpu-patch-types";
 
-const OPENRM_CAPABILITY_DEVICE = "/dev/nvidia-caps/nvidia-cap2";
 const CUDA_RESULT_PATTERN = /cuInit\(0\)=(-?\d+)/u;
 const PROOF_TIMEOUT_MS = 30_000;
+const SYSFS_ROOT = "/sys";
+const MAX_GPU_DEVICE_PATHS = 128;
 const CUDA_PROBE = [
   "import ctypes",
   'lib = ctypes.CDLL("libcuda.so.1")',
@@ -26,13 +27,28 @@ const CUDA_PROBE = [
   'print(f"cuInit(0)={rc}")',
   "raise SystemExit(0 if rc == 0 else 1)",
 ].join("; ");
+const GPU_DEVICE_DISCOVERY_PROBE = [
+  "import os, stat",
+  "prefixes = ('/dev/nvidia', '/dev/nvhost', '/dev/nvgpu', '/dev/tegra')",
+  "for root, dirs, files in os.walk('/dev'):",
+  "    for name in files:",
+  "        device = os.path.join(root, name)",
+  "        relevant = device == '/dev/nvmap' or device.startswith(prefixes) or (device.startswith('/dev/dri/') and (name.startswith('renderD') or name.startswith('card')))",
+  "        if relevant:",
+  "            try:",
+  "                if stat.S_ISCHR(os.lstat(device).st_mode): print(device)",
+  "            except OSError:",
+  "                pass",
+].join("\n");
+const PROCESS_STATUS_PROBE =
+  "grep -E '^(Uid|Gid|Groups|CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs|Seccomp|Seccomp_filters):' /proc/self/status";
+const GPU_DEVICE_PATH_PATTERN =
+  /^\/dev\/(?:nvidia[A-Za-z0-9._/-]*|nvhost[A-Za-z0-9._/-]*|nvgpu(?:\/[A-Za-z0-9._-]+)*|tegra[A-Za-z0-9._/-]*|nvmap|dri\/(?:renderD|card)\d+)$/u;
 
 type OpenRmProofDeps = Pick<
   DockerGpuPatchDeps,
   "dockerRun" | "runCaptureOpenshell" | "runOpenshell"
-> & {
-  isCharacterDevice?: (devicePath: string) => boolean;
-};
+>;
 
 type OpenRmProofOptions = {
   backend?: DockerGpuPatchBackend;
@@ -48,7 +64,14 @@ type OpenRmProofOptions = {
 type PolicyDocument = {
   filesystem_policy?: {
     read_only?: unknown;
+    read_write?: unknown;
   };
+};
+
+type PolicyCandidate = {
+  name: string;
+  readOnly: string[];
+  readWrite: string[];
 };
 
 function cudaResult(value: string): string {
@@ -58,14 +81,6 @@ function cudaResult(value: string): string {
 function proofCudaResult(proof: SandboxGpuProofResult): string {
   if (proof.status === "verified" && proof.cudaVerified) return "0";
   return cudaResult(proof.detail ?? "");
-}
-
-function hasCharacterDevice(devicePath: string): boolean {
-  try {
-    return fs.statSync(devicePath).isCharacterDevice();
-  } catch {
-    return false;
-  }
 }
 
 function setPolicy(
@@ -83,20 +98,69 @@ function setPolicy(
   }
 }
 
-function candidatePolicy(policyYaml: string): string {
+function parseFilesystemPolicy(policyYaml: string): {
+  policy: PolicyDocument;
+  readOnly: string[];
+  readWrite: string[];
+} {
   const policy = YAML.parse(policyYaml) as PolicyDocument | null;
   const filesystemPolicy = policy?.filesystem_policy;
   if (!filesystemPolicy || typeof filesystemPolicy !== "object") {
     throw new Error("OpenShell base policy has no filesystem_policy mapping.");
   }
-  if (!Array.isArray(filesystemPolicy.read_only)) {
-    throw new Error("OpenShell base policy filesystem_policy.read_only is not a list.");
+  if (!Array.isArray(filesystemPolicy.read_only) || !Array.isArray(filesystemPolicy.read_write)) {
+    throw new Error("OpenShell base policy filesystem policy paths are not lists.");
   }
-  if (filesystemPolicy.read_only.includes(OPENRM_CAPABILITY_DEVICE)) {
-    throw new Error(`${OPENRM_CAPABILITY_DEVICE} is already present in the baseline policy.`);
+  return {
+    policy,
+    readOnly: filesystemPolicy.read_only.map(String),
+    readWrite: filesystemPolicy.read_write.map(String),
+  };
+}
+
+function candidatePolicy(policyYaml: string, candidate: PolicyCandidate): string {
+  const { policy, readOnly, readWrite } = parseFilesystemPolicy(policyYaml);
+  const filesystemPolicy = policy.filesystem_policy;
+  if (!filesystemPolicy) throw new Error("OpenShell base policy has no filesystem_policy mapping.");
+  const readWriteSet = new Set(readWrite);
+  for (const devicePath of candidate.readWrite) readWriteSet.add(devicePath);
+  const readOnlySet = new Set(readOnly.filter((policyPath) => !readWriteSet.has(policyPath)));
+  for (const policyPath of candidate.readOnly) {
+    if (!readWriteSet.has(policyPath)) readOnlySet.add(policyPath);
   }
-  filesystemPolicy.read_only.push(OPENRM_CAPABILITY_DEVICE);
+  filesystemPolicy.read_only = [...readOnlySet];
+  filesystemPolicy.read_write = [...readWriteSet];
   return YAML.stringify(policy);
+}
+
+function discoverInjectedGpuDevicePaths(
+  containerId: string,
+  dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
+): string[] {
+  const result = dockerRun(
+    ["exec", "--user", "0", containerId, "python3", "-c", GPU_DEVICE_DISCOVERY_PROBE],
+    { ignoreError: true, suppressOutput: true, timeout: PROOF_TIMEOUT_MS },
+  );
+  if (result.status !== 0) throw new Error("Could not enumerate injected GPU character devices.");
+  const devicePaths = [
+    ...new Set(
+      String(result.stdout ?? "")
+        .split(/\r?\n/u)
+        .map((devicePath) => devicePath.trim())
+        .filter((devicePath) => GPU_DEVICE_PATH_PATTERN.test(devicePath)),
+    ),
+  ].sort();
+  if (devicePaths.length === 0 || devicePaths.length > MAX_GPU_DEVICE_PATHS) {
+    throw new Error("Injected GPU character-device enumeration is empty or excessive.");
+  }
+  return devicePaths;
+}
+
+function compactProcessStatus(value: string | Buffer | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .split(/\r?\n/u)
+    .join("; ");
 }
 
 /**
@@ -122,54 +186,111 @@ export function maybeRunJetsonOpenRmPolicyProof(options: OpenRmProofOptions): vo
     console.error("  OpenRM A/B inconclusive: required OpenShell adapters are unavailable.");
     return;
   }
-  const isCharacterDevice = options.deps.isCharacterDevice ?? hasCharacterDevice;
-  if (!isCharacterDevice(OPENRM_CAPABILITY_DEVICE)) {
-    console.error(
-      `  OpenRM A/B inconclusive: ${OPENRM_CAPABILITY_DEVICE} is not a host character device.`,
-    );
-    return;
-  }
-
   const direct = dockerRun(
     ["exec", "--user", "sandbox", options.result.newContainerId, "python3", "-c", CUDA_PROBE],
     { ignoreError: true, suppressOutput: true, timeout: PROOF_TIMEOUT_MS },
   );
   const directOutput = `${direct.stderr ?? ""}\n${direct.stdout ?? ""}`;
   const directResult = cudaResult(directOutput);
+  const injectedDevicePaths = discoverInjectedGpuDevicePaths(
+    options.result.newContainerId,
+    dockerRun,
+  );
   const rawPolicy = captureOpenshell(["policy", "get", "--base", options.sandboxName], {
     ignoreError: false,
     timeout: PROOF_TIMEOUT_MS,
   });
   const baselinePolicy = parseOpenShellPolicy(rawPolicy).yamlBody;
   if (!baselinePolicy) throw new Error("OpenShell returned no round-trippable base policy.");
-  const candidate = candidatePolicy(baselinePolicy);
+  const baselineFilesystemPolicy = parseFilesystemPolicy(baselinePolicy);
+  const baselineReadWrite = new Set(baselineFilesystemPolicy.readWrite);
+  const missingDevicePaths = injectedDevicePaths.filter(
+    (devicePath) => !baselineReadWrite.has(devicePath),
+  );
+  const sysfsMissing =
+    !baselineFilesystemPolicy.readOnly.includes(SYSFS_ROOT) &&
+    !baselineFilesystemPolicy.readWrite.includes(SYSFS_ROOT);
+  const candidates: PolicyCandidate[] = [];
+  if (missingDevicePaths.length > 0) {
+    candidates.push({ name: "devices", readOnly: [], readWrite: missingDevicePaths });
+  }
+  if (sysfsMissing) {
+    candidates.push({ name: "sysfs", readOnly: [SYSFS_ROOT], readWrite: [] });
+  }
+  if (missingDevicePaths.length > 0 && sysfsMissing) {
+    candidates.push({
+      name: "devices-plus-sysfs",
+      readOnly: [SYSFS_ROOT],
+      readWrite: missingDevicePaths,
+    });
+  }
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openrm-proof-"));
   const baselinePath = path.join(temporaryDirectory, "baseline.yaml");
-  const candidatePath = path.join(temporaryDirectory, "candidate.yaml");
   fs.writeFileSync(baselinePath, baselinePolicy, { encoding: "utf8", mode: 0o600 });
-  fs.writeFileSync(candidatePath, candidate, { encoding: "utf8", mode: 0o600 });
 
-  let candidateResult = "missing";
+  const candidateResults = new Map<string, string>();
   try {
-    setPolicy(options.sandboxName, candidatePath, runOpenshell);
-    candidateResult = proofCudaResult(options.verifyDirectSandboxGpu(options.sandboxName));
+    for (const candidate of candidates) {
+      const candidatePath = path.join(temporaryDirectory, `${candidate.name}.yaml`);
+      fs.writeFileSync(candidatePath, candidatePolicy(baselinePolicy, candidate), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      setPolicy(options.sandboxName, candidatePath, runOpenshell);
+      candidateResults.set(
+        candidate.name,
+        proofCudaResult(options.verifyDirectSandboxGpu(options.sandboxName)),
+      );
+    }
   } finally {
     setPolicy(options.sandboxName, baselinePath, runOpenshell);
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 
+  const deviceResult = candidateResults.get("devices") ?? "not-tested";
+  const sysfsResult = candidateResults.get("sysfs") ?? "not-tested";
+  const combinedResult = candidateResults.get("devices-plus-sysfs") ?? "not-tested";
+
   console.log("");
-  console.log("  === Jetson OpenRM policy A/B ===");
+  console.log("  === Jetson OpenRM policy boundary matrix ===");
+  console.log(`  injected_gpu_devices=${injectedDevicePaths.join(",")}`);
+  console.log(`  policy_missing_gpu_devices=${missingDevicePaths.join(",") || "none"}`);
   console.log(
-    `  direct_docker_cuInit=${directResult} baseline_openshell_cuInit=801 candidate_openshell_cuInit=${candidateResult}`,
+    `  direct_docker_cuInit=${directResult} baseline_openshell_cuInit=801 devices_cuInit=${deviceResult} sysfs_cuInit=${sysfsResult} devices_plus_sysfs_cuInit=${combinedResult}`,
   );
-  if (directResult === "0" && candidateResult === "0") {
+  if (directResult === "0" && deviceResult === "0" && sysfsResult !== "0") {
     console.log(
-      `  PROVEN: granting only ${OPENRM_CAPABILITY_DEVICE} read-only changes OpenShell cuInit from 801 to 0.`,
+      "  ISOLATED: OpenShell policy is missing one or more NVIDIA/Tegra character devices; no sysfs grant is required.",
+    );
+  } else if (directResult === "0" && sysfsResult === "0" && deviceResult !== "0") {
+    console.log(
+      "  ISOLATED: OpenShell policy is missing CUDA-required sysfs visibility; exact sysfs paths still need narrowing.",
+    );
+  } else if (directResult === "0" && combinedResult === "0") {
+    console.log(
+      "  ISOLATED: CUDA requires both the missing GPU devices and sysfs visibility through OpenShell.",
     );
   } else {
     console.error(
-      `  INCONCLUSIVE: the A/B did not isolate ${OPENRM_CAPABILITY_DEVICE}; no production policy change is justified.`,
+      "  INCONCLUSIVE: the filesystem-policy matrix did not restore CUDA; no production policy change is justified.",
     );
+    const directStatus = dockerRun(
+      [
+        "exec",
+        "--user",
+        "sandbox",
+        options.result.newContainerId,
+        "sh",
+        "-lc",
+        PROCESS_STATUS_PROBE,
+      ],
+      { ignoreError: true, suppressOutput: true, timeout: PROOF_TIMEOUT_MS },
+    );
+    const openshellStatus = runOpenshell(
+      ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", PROCESS_STATUS_PROBE],
+      { ignoreError: true, suppressOutput: true, timeout: PROOF_TIMEOUT_MS },
+    );
+    console.log(`  direct_process_status=${compactProcessStatus(directStatus.stdout)}`);
+    console.log(`  openshell_process_status=${compactProcessStatus(openshellStatus.stdout)}`);
   }
 }
