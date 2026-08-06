@@ -13,7 +13,6 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -21,6 +20,12 @@ import { test as e2eTest, expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { type McpBridgeShard, resolveMcpBridgeShard } from "./mcp-bridge-agent-selection.ts";
+import {
+  cleanupMcpBridge,
+  MCP_MUTATION_TIMEOUT_MS,
+  type McpAdapter,
+  removeMcpBridgeWithOneConcurrencyRetry,
+} from "./mcp-bridge-cleanup.ts";
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
@@ -50,6 +55,7 @@ import {
 } from "./mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscovery,
+  assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
 } from "./mcp-bridge-tool-discovery.ts";
@@ -76,31 +82,6 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 }
 const test = mcpBridgeShardTest("openclaw");
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
-type McpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
-const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
-  "deepagents-config": 3 * 60_000,
-  "hermes-config": 12 * 60_000,
-  mcporter: 3 * 60_000,
-};
-const MCP_BRIDGE_ALREADY_ABSENT =
-  /No MCP servers are registered|No MCP server '.+' is registered|MCP server '.+' not found/iu;
-async function cleanupMcpBridge(
-  host: HostCliClient,
-  sandboxName: string,
-  server: string,
-  adapter: McpAdapter,
-): Promise<void> {
-  const result = await host.nemoclaw([sandboxName, "mcp", "remove", server, "--force"], {
-    artifactName: `cleanup-mcp-remove-${server}`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: MCP_MUTATION_TIMEOUT_MS[adapter],
-  });
-  assertCleanupSucceededOrAbsent(
-    result,
-    MCP_BRIDGE_ALREADY_ABSENT,
-    `cleanup MCP bridge ${server} on sandbox ${sandboxName}`,
-  );
-}
 async function onboardAgent(
   host: HostCliClient,
   cleanup: CleanupRegistry,
@@ -410,11 +391,13 @@ async function removeBridgeAndAssertEmpty(
     mcpUrl: string;
   },
 ): Promise<void> {
-  const remove = await host.nemoclaw([options.sandboxName, "mcp", "remove", SERVER_NAME], {
-    artifactName: `${options.artifactPrefix}-mcp-remove-fake-server`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.adapter],
-  });
+  const remove = await removeMcpBridgeWithOneConcurrencyRetry(
+    host,
+    options.sandboxName,
+    SERVER_NAME,
+    options.adapter,
+    options.artifactPrefix,
+  );
   expectExitZero(remove, `${options.artifactPrefix} mcp remove fake server`);
   const list = await host.nemoclaw([options.sandboxName, "mcp", "list", "--json"], {
     artifactName: `${options.artifactPrefix}-mcp-list-after-remove`,
@@ -1053,10 +1036,14 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    await assertAuthenticatedMcpDiscovery(fakeMcp, {
+    await assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
       requestOffset: initialDiscoveryOffset,
       expectedSecret: HOST_SECRET,
       label: "Hermes initial MCP discovery",
+      restart: async () => {
+        progress.event("Hermes MCP discovery did not reach the fixture; restarting once");
+        await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes-discovery-retry");
+      },
     });
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
       sandboxName: HERMES_SANDBOX_NAME,

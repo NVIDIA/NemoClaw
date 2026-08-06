@@ -18,8 +18,8 @@ type WorkflowStep = RecordValue & {
 };
 
 const PLAN_JOB_ID = "llama-cpp-dgx-spark-plan";
-const SELECTOR = `\${{ contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') }}`;
-const QUALIFICATION_SELECTOR = `\${{ (contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) && needs.${PLAN_JOB_ID}.outputs.execution == 'enabled' }}`;
+const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) }}`;
+const QUALIFICATION_SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) && needs.${PLAN_JOB_ID}.outputs.execution == 'enabled' }}`;
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const BUILDX = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const PREPARE =
@@ -100,7 +100,8 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   if (planJob.needs !== "generate-matrix") {
     errors.push(`${PLAN_JOB_ID} must depend on generate-matrix`);
   }
-  if (planJob.if !== SELECTOR) errors.push(`${PLAN_JOB_ID} must remain explicit-only`);
+  if (planJob.if !== SELECTOR)
+    errors.push(`${PLAN_JOB_ID} must run on main pushes and retain manual selectors`);
   if (planJob["runs-on"] !== "ubuntu-24.04") {
     errors.push(`${PLAN_JOB_ID} must run on a standard trusted planner`);
   }
@@ -135,11 +136,16 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   requireFragments(errors, PLAN_JOB_ID, planGuard, [
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
+    '"push"',
     '"workflow_dispatch"',
-    '"github-actions[bot]"',
     '[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
   ]);
+  if (text(planGuard?.run).includes("github-actions[bot]")) {
+    errors.push(
+      `${PLAN_JOB_ID} must not restrict trusted manual dispatches to github-actions[bot]`,
+    );
+  }
   const trustedPlanCheckout = requireStep(
     errors,
     PLAN_JOB_ID,
@@ -149,7 +155,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   if (trustedPlanCheckout?.uses !== CHECKOUT) errors.push(`${PLAN_JOB_ID} must pin checkout`);
   requireValues(errors, `${PLAN_JOB_ID} trusted checkout`, record(trustedPlanCheckout?.with), {
     repository: "${{ github.repository }}",
-    ref: "${{ inputs.workflow_sha }}",
+    ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
     "fetch-depth": 0,
     "persist-credentials": false,
   });
@@ -188,7 +194,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   }
   if (qualificationJob.if !== QUALIFICATION_SELECTOR) {
     errors.push(
-      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must require explicit enabled selection`,
+      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must run on main pushes after the trusted plan is enabled`,
     );
   }
   if (qualificationJob["runs-on"] !== `\${{ needs.${PLAN_JOB_ID}.outputs.runner }}`) {
@@ -214,15 +220,16 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   }
   const jobEnv = record(qualificationJob.env);
   requireValues(errors, `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} env`, jobEnv, {
-    E2E_DEFAULT_ENABLED: "0",
     E2E_JOB: "1",
     E2E_TARGET_ID: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
     RELEASE_E2E_ACTIVATION_PATH: LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
-    NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: "${{ inputs.base_sha }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA:
+      "${{ inputs.base_sha || github.event.before || github.sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN:
       "${{ github.workspace }}/.llama-cpp-qualification/plan.json",
-    NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA:
+      "${{ inputs.workflow_sha || github.workflow_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN_SHA256: `\${{ needs.${PLAN_JOB_ID}.outputs.plan_sha256 }}`,
   });
   for (const secret of [
@@ -249,10 +256,16 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   requireFragments(errors, LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID, guard, [
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
-    '"github-actions[bot]"',
+    '"push"',
+    '"workflow_dispatch"',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
     '"$RUNNER_ARCH_KIND" == "ARM64"',
   ]);
+  if (text(guard?.run).includes("github-actions[bot]")) {
+    errors.push(
+      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must not restrict trusted manual dispatches to github-actions[bot]`,
+    );
+  }
   const trustedCheckout = requireStep(
     errors,
     LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
@@ -264,7 +277,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   }
   requireValues(errors, "trusted llama.cpp qualification checkout", record(trustedCheckout?.with), {
     repository: "${{ github.repository }}",
-    ref: "${{ inputs.workflow_sha }}",
+    ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
     "fetch-depth": 0,
     "persist-credentials": false,
   });
@@ -334,11 +347,11 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     "Build and qualify exact llama.cpp candidate",
   );
   requireValues(errors, "llama.cpp qualification step env", record(qualify?.env), {
-    BASE_SHA: "${{ inputs.base_sha }}",
+    BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
     CANDIDATE_ROOT: "${{ github.workspace }}/.candidate-llama-cpp",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     MODEL_HOST_PATH: `\${{ needs.${PLAN_JOB_ID}.outputs.model_host_path }}`,
-    WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    WORKFLOW_SHA: "${{ inputs.workflow_sha || github.workflow_sha }}",
   });
   requireFragments(errors, LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID, qualify, [
     'git rev-parse --verify HEAD)" == "$WORKFLOW_SHA"',

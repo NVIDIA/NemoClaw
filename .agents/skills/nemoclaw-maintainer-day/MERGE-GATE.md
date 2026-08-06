@@ -67,11 +67,12 @@ Fail closed when identity, state, or timing evidence is missing, malformed, stal
 ### Live E2E
 
 Live E2E does not run automatically for pull requests and is not a merge gate.
-Each push to `main` triggers `.github/workflows/e2e.yaml` for the default suite.
+Each push to `main` selects every workflow E2E in `.github/workflows/e2e.yaml`.
+A selected job can remain queued until its configured runner is available.
 The workflow has no scheduled trigger.
 
 Use the manual PR mode only when a maintainer requests live evidence before merge.
-The default suite exposes these values to candidate-controlled job processes:
+An empty-selector manual run exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
@@ -84,6 +85,7 @@ After a failure, inspect the artifacts and remove resources that target cleanup 
 
 Dispatch the trusted `main` workflow with the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted workflow SHA, and a review reason containing 10 to 500 printable characters.
 Leave job and target selectors empty and keep Launchable disabled.
+If GitHub pauses `llama-cpp-dgx-spark-qualification` for the `approve-dgx-spark-image-qualification` environment, an authorized environment reviewer must approve it before qualification starts.
 The trusted pre-checkout step requires current `maintain` or `admin` access and validates the exact open PR before candidate code runs.
 
 The manual run is advisory.
