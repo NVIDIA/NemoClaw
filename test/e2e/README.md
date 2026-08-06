@@ -88,7 +88,7 @@ This baseline measures only the replaced build step.
 Artifact upload, download, validation, and the dependency on `generate-matrix` add runtime and can affect the workflow critical path.
 Do not use the build-step median to claim savings in runner time or workflow elapsed time.
 
-A trusted PR E2E run tests candidate code but executes `.github/workflows/e2e.yaml` from `main`.
+A manual PR E2E run tests candidate code but executes `.github/workflows/e2e.yaml` from `main`.
 The PR run cannot measure this workflow change before merge.
 After merge, use a passing `main` run and complete these steps:
 
@@ -345,7 +345,7 @@ Candidate-authored workflow definitions and fork-owned runs cannot reach it.
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
 label; changing the PR checkout cannot safely grant itself that capacity.
-Remove the fallback only after trusted main and PR E2E runs use
+Remove the fallback only after trusted `main` and manual PR E2E runs use
 ephemeral GitHub-hosted runners with at least 32 GB RAM without weakening the
 source guards, and five consecutive runs of every protected lane complete
 without runner loss while runner-pressure telemetry reports less than 1 GiB of
@@ -719,10 +719,13 @@ A repository maintainer or administrator can manually run the same default suite
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 
-The default suite can expose `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL` from repository secrets to candidate-controlled processes through job environment variables.
-These credentials are long-lived and can remain valid after the workflow ends.
-The workflow does not remove, rotate, or revoke them; rotate or revoke each credential at its provider to remove candidate access.
-Review the complete candidate diff before dispatch.
+The default suite exposes these values to candidate-controlled job processes:
+
+- Long-lived provider credentials from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
+- The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `checks: read`, `contents: read`, and `pull-requests: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
+- Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
+
+The workflow does not rotate or revoke provider credentials. It cannot erase identifiers copied by candidate code. Rotate or revoke each provider credential at its provider to remove later access. Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the workflow artifacts and remove resources that target cleanup did not remove.
 
