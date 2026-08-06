@@ -78,7 +78,7 @@ describe("sandbox inference route health", () => {
       ),
     });
 
-    expect(result).toMatchObject({ ok: true, httpStatus: 200 });
+    expect(result).toMatchObject({ ok: false, httpStatus: 0 });
     expect(result?.detail).toContain("inherited CA bundle did not verify");
   });
 

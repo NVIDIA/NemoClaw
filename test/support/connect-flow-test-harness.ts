@@ -69,6 +69,7 @@ export type ConnectHarnessOptions = {
     mcpReconciliationRefused?: boolean;
     mcpReconciliationReason?: string;
   };
+  portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
@@ -187,7 +188,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
   const recoverPortableDemoLifecycleSpy = vi
     .spyOn(gatewayState, "recoverPortableDemoSandboxLifecycleForConnect")
-    .mockReturnValue({ kind: "not-installed" });
+    .mockReturnValue(options.portableRecoveryResult ?? { kind: "not-installed" });
   const ensureOllamaAuthProxySpy = vi
     .spyOn(ollamaProxy, "ensureOllamaAuthProxy")
     .mockImplementation(() => undefined);

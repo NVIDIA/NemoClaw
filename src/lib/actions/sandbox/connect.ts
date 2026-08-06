@@ -119,6 +119,7 @@ type SandboxInferenceRouteEnsureResult = {
 type InferenceRouteProbeOptions = {
   attempts?: number;
   delayMs?: number;
+  allowCanonicalCa?: boolean;
 };
 
 export type SandboxInferenceRouteRepairResult = {
@@ -234,11 +235,17 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
-async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
+async function runSandboxConnectProbe(
+  sandboxName: string,
+  { allowCanonicalCa = false }: { allowCanonicalCa?: boolean } = {},
+): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
-    const routeResult = await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    const routeResult = await ensureSandboxInferenceRoute(sandboxName, agent, {
+      quiet: true,
+      allowCanonicalCa,
+    });
     runTerminalAgentConnectProbe({
       agent,
       agentName,
@@ -284,7 +291,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     );
   }
   if (processCheck.wasRunning) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true, allowCanonicalCa });
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
@@ -299,7 +306,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     return;
   }
   if (processCheck.recovered) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true, allowCanonicalCa });
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
     const managedControlCompletion =
@@ -313,7 +320,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     }
     return;
   }
-  await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+  await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true, allowCanonicalCa });
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
@@ -394,7 +401,7 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
 function probeSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
+  { attempts = 1, delayMs = 0, allowCanonicalCa = false }: InferenceRouteProbeOptions = {},
 ): SandboxInferenceRouteProbe {
   let lastProbe: SandboxInferenceRouteProbe | null = null;
   const boundedAttempts = Math.max(1, attempts);
@@ -408,7 +415,9 @@ function probeSandboxInferenceRoute(
       includeStreams: true,
       timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
     });
-    const parsed = parseSandboxInferenceRouteProbeResult(probe);
+    const parsed = parseSandboxInferenceRouteProbeResult(probe, {
+      allowCanonicalCa,
+    });
     lastProbe = {
       healthy: parsed.healthy,
       broken: parsed.broken,
@@ -444,6 +453,7 @@ function reapplyVmInferenceRoute(
   sb: SandboxEntry | null,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
+  allowCanonicalCa: boolean,
 ): SandboxInferenceRouteProbe | null {
   const inference = sb ? registry.getSandboxEntryInference(sb) : null;
   if (inference?.kind !== "configured") return null;
@@ -451,7 +461,7 @@ function reapplyVmInferenceRoute(
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
-  return probeSandboxInferenceRoute(sandboxName, agent);
+  return probeSandboxInferenceRoute(sandboxName, agent, { allowCanonicalCa });
 }
 
 export function repairSandboxInferenceRouteWithDeps(
@@ -579,7 +589,7 @@ function repairSandboxInferenceRouteIfNeeded(
   sb: SandboxEntry | null,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
-  { quiet = false }: { quiet?: boolean } = {},
+  { quiet = false, allowCanonicalCa = false }: { quiet?: boolean; allowCanonicalCa?: boolean } = {},
 ): SandboxInferenceRouteRepairResult {
   return repairSandboxInferenceRouteWithDeps(
     sandboxName,
@@ -587,11 +597,12 @@ function repairSandboxInferenceRouteIfNeeded(
     { quiet },
     {
       isRepairDisabled: () => process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1",
-      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
+      probe: (name, options) =>
+        probeSandboxInferenceRoute(name, agent, { ...options, allowCanonicalCa }),
       shouldApplyVmDnsMonkeypatch,
       applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
       reapplyVmInferenceRoute: (name, sandbox) =>
-        reapplyVmInferenceRoute(name, sandbox, agent, gatewayName),
+        reapplyVmInferenceRoute(name, sandbox, agent, gatewayName, allowCanonicalCa),
       repairLegacyDnsProxy: (name, isQuiet) =>
         runSetupDnsProxy(
           { gatewayName, sandboxName: name },
@@ -713,7 +724,11 @@ function resetManagedInferenceRoute(
   sb: SandboxEntry,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
-  { detail, quiet = false }: { detail: string; quiet?: boolean },
+  {
+    detail,
+    quiet = false,
+    allowCanonicalCa = false,
+  }: { detail: string; quiet?: boolean; allowCanonicalCa?: boolean },
 ): boolean {
   return resetManagedInferenceRouteWithDeps(
     sandboxName,
@@ -726,7 +741,8 @@ function resetManagedInferenceRoute(
           ignoreError: true,
           timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
         }),
-      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
+      probe: (name, options) =>
+        probeSandboxInferenceRoute(name, agent, { ...options, allowCanonicalCa }),
       printUnrecoverableInferenceRoute,
     },
   );
@@ -735,7 +751,7 @@ function resetManagedInferenceRoute(
 function ensureSandboxInferenceRouteUnlocked(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { quiet = false }: { quiet?: boolean } = {},
+  { quiet = false, allowCanonicalCa = false }: { quiet?: boolean; allowCanonicalCa?: boolean } = {},
 ): SandboxInferenceRouteEnsureResult {
   let sb: SandboxEntry | null = null;
   let inference: ReturnType<typeof registry.getSandboxEntryInference> | null = null;
@@ -793,6 +809,7 @@ function ensureSandboxInferenceRouteUnlocked(
     }
     const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, agent, gatewayName, {
       quiet,
+      allowCanonicalCa,
     });
     if (!repairResult.healthy && !repairResult.repairAttempted) {
       // Unavailable or malformed probe output is a permanent fail-closed
@@ -813,6 +830,7 @@ function ensureSandboxInferenceRouteUnlocked(
       const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
         detail: repairResult.detail,
         quiet,
+        allowCanonicalCa,
       });
       return { sandbox: sb, routeHealthy: resetResult };
     }
@@ -844,7 +862,7 @@ function ensureSandboxInferenceRouteUnlocked(
 async function ensureSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { quiet = false }: { quiet?: boolean } = {},
+  { quiet = false, allowCanonicalCa = false }: { quiet?: boolean; allowCanonicalCa?: boolean } = {},
 ): Promise<SandboxInferenceRouteEnsureResult> {
   const snapshot = registry.getSandbox(sandboxName);
   if (!snapshot) return { sandbox: null, routeHealthy: null };
@@ -863,16 +881,22 @@ async function ensureSandboxInferenceRoute(
       );
       process.exit(1);
     }
-    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, {
+      quiet,
+      allowCanonicalCa,
+    });
   });
 }
 
 async function ensureSandboxInferenceRouteOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { quiet = false }: { quiet?: boolean } = {},
+  { quiet = false, allowCanonicalCa = false }: { quiet?: boolean; allowCanonicalCa?: boolean } = {},
 ): Promise<SandboxEntry | null> {
-  const result = await ensureSandboxInferenceRoute(sandboxName, agent, { quiet });
+  const result = await ensureSandboxInferenceRoute(sandboxName, agent, {
+    quiet,
+    allowCanonicalCa,
+  });
   if (result.routeHealthy === false) {
     process.exit(1);
   }
@@ -1067,7 +1091,8 @@ function waitForSandboxReadyOrExit(
 async function runConnectEntryPreflight(
   sandboxName: string,
   { probeOnly }: { probeOnly: boolean },
-): Promise<void> {
+): Promise<{ allowCanonicalCa: boolean }> {
+  let allowCanonicalCa = false;
   try {
     assertNoOpenShellGatewayEndpointOverride();
     const registered = registry.getSandbox(sandboxName);
@@ -1081,7 +1106,12 @@ async function runConnectEntryPreflight(
       if (registry.getSandboxEntryInference(registered).kind === "configured") {
         assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
       }
-      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
+      const portableRecovery = recoverPortableDemoSandboxLifecycleForConnect(
+        sandboxName,
+        registered,
+        gatewayName,
+      );
+      allowCanonicalCa = portableRecovery.kind === "recovered";
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -1113,6 +1143,7 @@ async function runConnectEntryPreflight(
   ) {
     failConnectReadinessDockerRuntimeDown(sandboxName);
   }
+  return { allowCanonicalCa };
 }
 
 /**
@@ -1126,7 +1157,7 @@ async function runConnectEntryPreflight(
 export async function prepareInteractiveSession(
   sandboxName: string,
 ): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
-  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
+  const { allowCanonicalCa } = await runConnectEntryPreflight(sandboxName, { probeOnly: false });
 
   // Version staleness check — warn but don't block
   try {
@@ -1179,7 +1210,7 @@ export async function prepareInteractiveSession(
   // cluster-wide inference.local route may still point at the other provider.
   // After the sandbox is Ready, verify and recover the route before SSH.
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
+  sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent, { allowCanonicalCa });
   maybeEnsureHermesToolGatewayBroker(sb);
 
   // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
@@ -1200,7 +1231,7 @@ export async function connectSandbox(
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
-    await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+    const { allowCanonicalCa } = await runConnectEntryPreflight(sandboxName, { probeOnly: true });
     waitForSandboxReadyOrExit(sandboxName, {
       defaultTimeoutSec: 300,
       retryCommand: "connect --probe-only",
@@ -1209,7 +1240,7 @@ export async function connectSandbox(
     // before any in-sandbox process or host-forward mutation. The readiness
     // polls are already owner-scoped; this also catches registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName);
+    return await runSandboxConnectProbe(sandboxName, { allowCanonicalCa });
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);

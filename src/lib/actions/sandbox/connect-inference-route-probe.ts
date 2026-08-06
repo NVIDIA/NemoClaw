@@ -125,6 +125,7 @@ export function buildSandboxInferenceRouteProbeArgs(
 /** Parse the shared route-probe output used by connect, status, and doctor. */
 export function parseSandboxInferenceRouteProbeResult(
   result: InferenceRouteProbeCommandResult,
+  { allowCanonicalCa = false }: { allowCanonicalCa?: boolean } = {},
 ): ParsedInferenceRouteProbe {
   const stderr = String(result.stderr ?? "").trim();
   if (stderr) {
@@ -165,7 +166,10 @@ export function parseSandboxInferenceRouteProbeResult(
     ? Number.parseInt(canonicalTlsVerifyMatch[1], 10)
     : null;
   const canonicalVerified =
-    canonicalCurlExitCode === 0 && canonicalTlsVerifyResult === 0 && canonicalHttpStatus !== null;
+    allowCanonicalCa &&
+    canonicalCurlExitCode === 0 &&
+    canonicalTlsVerifyResult === 0 &&
+    canonicalHttpStatus !== null;
   const httpStatus = canonicalVerified ? canonicalHttpStatus : primaryHttpStatus;
   const isReachableHttpStatus = httpStatus >= 200 && httpStatus < 500;
   const commandSucceeded = result.status === 0;

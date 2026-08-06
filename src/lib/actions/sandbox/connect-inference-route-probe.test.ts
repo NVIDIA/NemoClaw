@@ -216,11 +216,14 @@ describe("sandbox inference route probe result", () => {
 
   it("accepts a reachable route verified by OpenShell's canonical runtime CA (#8441)", () => {
     expect(
-      parseSandboxInferenceRouteProbeResult({
-        status: 0,
-        output:
-          "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=401 canonical_tls_verify=0",
-      }),
+      parseSandboxInferenceRouteProbeResult(
+        {
+          status: 0,
+          output:
+            "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=401 canonical_tls_verify=0",
+        },
+        { allowCanonicalCa: true },
+      ),
     ).toMatchObject({
       healthy: true,
       broken: false,
@@ -229,13 +232,26 @@ describe("sandbox inference route probe result", () => {
     });
   });
 
-  it("keeps a canonical HTTP 5xx response broken and reachable (#8441)", () => {
+  it("keeps canonical CA success diagnostic outside proven portable recovery (#8441)", () => {
     expect(
       parseSandboxInferenceRouteProbeResult({
         status: 0,
         output:
-          "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=503 canonical_tls_verify=0",
+          "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=401 canonical_tls_verify=0",
       }),
+    ).toMatchObject({ healthy: false, broken: true, httpStatus: 0 });
+  });
+
+  it("keeps a canonical HTTP 5xx response broken and reachable (#8441)", () => {
+    expect(
+      parseSandboxInferenceRouteProbeResult(
+        {
+          status: 0,
+          output:
+            "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=503 canonical_tls_verify=0",
+        },
+        { allowCanonicalCa: true },
+      ),
     ).toMatchObject({ healthy: false, broken: true, httpStatus: 503 });
   });
 

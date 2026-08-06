@@ -55,6 +55,22 @@ describe("connectSandbox probe-only observe mode", () => {
     );
   });
 
+  it("uses canonical CA health only after this command relaunches portable startup (#8441)", async () => {
+    const harness = createConnectHarness({
+      portableRecoveryResult: { kind: "recovered" },
+      registryEntry: { provider: "nvidia-prod", model: "nvidia/test" },
+      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/test\n",
+      inferenceProbeResponses: [
+        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=200 canonical_tls_verify=0",
+      ],
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("uses gatewayRecovery=recover on the full connect path", async () => {
     const harness = createConnectHarness();
 
