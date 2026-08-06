@@ -378,11 +378,9 @@ describe("portable demo sandbox lifecycle", () => {
     const runtime = createPodman();
     installReceipt(stateDir, runtime.podman);
     const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
-    runtime.podman.mockImplementation((args: readonly string[]) => {
-      if (args[0] === "inspect") {
-        return { status: 125, stderr: `Error: no such container ${CONTAINER_ID}` };
-      }
-      throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
+    runtime.podman.mockReturnValue({
+      status: 125,
+      stdout: `Error: no such container ${CONTAINER_ID}`,
     });
 
     expect(
