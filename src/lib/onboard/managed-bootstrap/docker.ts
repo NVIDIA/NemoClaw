@@ -113,8 +113,6 @@ const MAX_RECOVERY_FAILURE_DETAIL_BYTES = 8 * 1024;
 const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-bootstrap";
-const JETSON_DEVICE_GROUP_BOOTSTRAP_EXECUTABLE =
-  "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
 
 function boundedRecoveryFailureDetail(error: unknown): string {
   const raw = (error instanceof Error ? error.message : String(error)).replaceAll("\0", "�");
@@ -719,44 +717,13 @@ function assertReplacementBoundary(
   inspect: DockerContainerInspect,
   handle: ManagedBootstrapHeldWorkloadHandle,
   snapshot: ManagedBootstrapObservedSnapshot,
-  expectedJetsonGroupGids?: readonly string[],
 ): void {
   const entrypoint = exactStringArray(inspect.Config?.Entrypoint, "replacement entrypoint");
   const command = exactStringArray(inspect.Config?.Cmd, "replacement command");
-  const managedCommand = replacementCommand(handle, snapshot);
-  const wrappedCommandPrefix = [
-    "--device-group-gids",
-    command[1] ?? "",
-    "--",
-    MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
-  ];
-  const wrappedGids = String(command[1] ?? "").split(",");
-  const expectedGroupSet = new Set(expectedJetsonGroupGids);
-  const replacementGroupAdds = exactStringArray(
-    inspect.HostConfig?.GroupAdd,
-    "replacement supplementary groups",
-  );
-  const wrappedBoundary =
-    handle.plan.profile.agent === "openclaw" &&
-    exactArrayEqual(entrypoint, [JETSON_DEVICE_GROUP_BOOTSTRAP_EXECUTABLE]) &&
-    wrappedGids.length > 0 &&
-    wrappedGids.length <= 16 &&
-    wrappedGids.every(
-      (gid, index) =>
-        /^[1-9][0-9]*$/u.test(gid) &&
-        Number(gid) <= 2_147_483_647 &&
-        wrappedGids.indexOf(gid) === index &&
-        (expectedJetsonGroupGids === undefined || expectedGroupSet.has(gid)),
-    ) &&
-    (expectedJetsonGroupGids === undefined ||
-      wrappedGids.length === expectedJetsonGroupGids.length) &&
-    wrappedGids.every((gid) => replacementGroupAdds.includes(gid)) &&
-    exactArrayEqual(command, [...wrappedCommandPrefix, ...managedCommand]);
-  const directBoundary =
-    expectedJetsonGroupGids === undefined &&
-    exactArrayEqual(entrypoint, [MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]) &&
-    exactArrayEqual(command, managedCommand);
-  if (!directBoundary && !wrappedBoundary) {
+  if (
+    !exactArrayEqual(entrypoint, [MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]) ||
+    !exactArrayEqual(command, replacementCommand(handle, snapshot))
+  ) {
     throw new Error("Managed bootstrap Docker replacement process boundary changed.");
   }
   const intended = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
@@ -3292,8 +3259,6 @@ export function createDockerManagedBootstrapAdapter(
         openshellSandboxCommand: handle.intendedWorkloadArgv,
         requiredUlimits: plan.requiredUlimits,
         extraGroupGids: plan.extraGroupGids,
-        preserveJetsonDeviceGroupMembership:
-          handle.plan.profile.agent === "openclaw" && plan.extraGroupGids.length > 0,
         containerEntrypoint: MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
         containerCommand: trampolineCommand,
         containerName: stagingName,
@@ -3351,14 +3316,7 @@ export function createDockerManagedBootstrapAdapter(
             "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
           );
         }
-        assertReplacementBoundary(
-          createdInspect,
-          handle,
-          snapshot,
-          handle.plan.profile.agent === "openclaw" && plan.extraGroupGids.length > 0
-            ? plan.extraGroupGids
-            : undefined,
-        );
+        assertReplacementBoundary(createdInspect, handle, snapshot);
         const expectedActivatedSpecHash = assertReplacementMatchesIntent(
           snapshot.specCanonicalJson,
           createdInspect,

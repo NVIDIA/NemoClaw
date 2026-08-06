@@ -68,6 +68,7 @@ type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
+  agentName: string;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;

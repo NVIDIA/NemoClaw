@@ -10,8 +10,9 @@ import type {
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
-const MANAGED_BOOTSTRAP_ENTRYPOINT = "/usr/local/bin/nemoclaw-managed-bootstrap";
-const JETSON_DEVICE_GROUP_BOOTSTRAP = "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
+const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
+export const JETSON_DEVICE_GROUP_BOOTSTRAP =
+  "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
 const MAX_JETSON_DEVICE_GROUPS = 16;
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
@@ -483,9 +484,9 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
-  const managedBootstrapTarget = replacementEntrypoint === MANAGED_BOOTSTRAP_ENTRYPOINT;
-  if (preserveJetsonGroups && (!managedBootstrapTarget || !options.containerCommand?.length)) {
-    throw new Error("Jetson device-group bootstrap requires the managed OpenClaw entrypoint.");
+  const groupBootstrapTarget = replacementEntrypoint || entrypoint[0] || "";
+  if (preserveJetsonGroups && groupBootstrapTarget !== OPENSHELL_SANDBOX_ENTRYPOINT) {
+    throw new Error("Jetson device-group bootstrap requires the OpenShell supervisor entrypoint.");
   }
   if (preserveJetsonGroups) {
     args.push("--entrypoint", JETSON_DEVICE_GROUP_BOOTSTRAP);
@@ -505,7 +506,7 @@ export function buildDockerGpuCloneRunArgs(
         "--device-group-gids",
         extraGroupGids.join(","),
         "--",
-        MANAGED_BOOTSTRAP_ENTRYPOINT,
+        groupBootstrapTarget,
         ...targetCommandArgs,
       ]
     : options.containerCommand

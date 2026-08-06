@@ -32,39 +32,6 @@ function expectEventBefore(events: readonly string[], before: string, after: str
 }
 
 describe("Docker managed bootstrap adapter", () => {
-  it("preserves OpenClaw Jetson groups across the managed bootstrap boundary (#7610)", async () => {
-    const fake = fixture({ agent: "openclaw" });
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const { handle, request, snapshot } = authority("openclaw");
-
-    await expect(
-      adapter.prepareBootstrapReplacement({
-        handle,
-        snapshot,
-        request,
-        replacementOptions: {
-          values: {
-            gpuModeArgs: ["--runtime", "nvidia"],
-            gpuModeKind: "nvidia-runtime",
-            gpuModeLabel: "Jetson NVIDIA runtime",
-            extraGroupGids: ["44", "993"],
-          },
-        },
-      }),
-    ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
-
-    expect(fake.replacement?.HostConfig?.GroupAdd).toEqual(["44", "993"]);
-    expect(fake.replacement?.Config?.Entrypoint).toEqual([
-      "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
-    ]);
-    expect(fake.replacement?.Config?.Cmd?.slice(0, 4)).toEqual([
-      "--device-group-gids",
-      "44,993",
-      "--",
-      "/usr/local/bin/nemoclaw-managed-bootstrap",
-    ]);
-  });
-
   it("captures the live OpenShell idle supervisor with a separately persisted bootstrap identity", async () => {
     const fake = fixture();
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);

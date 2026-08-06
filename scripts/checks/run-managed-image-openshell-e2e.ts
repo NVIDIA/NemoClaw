@@ -786,6 +786,7 @@ async function run(input: Inputs): Promise<void> {
       flow = await runSandboxGpuCreateFlow(
         {
           sandboxName: input.sandbox,
+          agentName: input.agent,
           provider: input.localProvider
             ? resolveManagedImageLocalInferenceRoute(input.localProvider).providerName
             : "nvidia",

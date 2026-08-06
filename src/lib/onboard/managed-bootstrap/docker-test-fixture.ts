@@ -147,17 +147,9 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
       Binds: ["/host/workspace:/sandbox:rw"],
       NetworkMode: "openshell",
       RestartPolicy: { Name: "unless-stopped" },
-      CapAdd: null,
       CapDrop: ["NET_RAW"],
-      DeviceRequests: null,
-      Devices: null,
-      GroupAdd: null,
-      Runtime: null,
       SecurityOpt: ["no-new-privileges"],
       Ulimits: [{ Name: "nofile", Soft: 65_536, Hard: 65_536 }],
-    } as NonNullable<DockerContainerInspect["HostConfig"]> & {
-      Devices?: unknown;
-      Runtime?: string | null;
     },
     NetworkSettings: { Networks: { openshell: { Aliases: ["openshell-alpha"] } } },
   };
@@ -365,16 +357,6 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const env = args.flatMap((value, index) =>
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
-          const valuesAfter = (flag: string) =>
-            args.flatMap((value, index) => (value === flag ? [String(args[index + 1] ?? "")] : []));
-          const runtimeIndex = args.indexOf("--runtime");
-          const sourceRuntime = (
-            source.HostConfig as
-              | (NonNullable<DockerContainerInspect["HostConfig"]> & {
-                  Runtime?: string | null;
-                })
-              | null
-          )?.Runtime;
           replacement = {
             ...structuredClone(source),
             Id: NEW_ID,
@@ -385,15 +367,6 @@ export function fixture(options: DockerFixtureOptions = {}) {
               Env: [...(options.replacementEnvironment?.(env) ?? env)],
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
-            },
-            HostConfig: {
-              ...structuredClone(source.HostConfig),
-              CapAdd: valuesAfter("--cap-add"),
-              GroupAdd: valuesAfter("--group-add"),
-              Runtime: runtimeIndex >= 0 ? String(args[runtimeIndex + 1] ?? "") : sourceRuntime,
-              SecurityOpt: valuesAfter("--security-opt"),
-            } as NonNullable<DockerContainerInspect["HostConfig"]> & {
-              Runtime?: string | null;
             },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },
           };

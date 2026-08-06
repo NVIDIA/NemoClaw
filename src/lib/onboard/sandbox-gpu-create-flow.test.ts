@@ -535,7 +535,24 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     });
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
-      expect.objectContaining({ route: "native", persistStartupCommand: false }),
+      expect.objectContaining({
+        route: "native",
+        persistStartupCommand: false,
+        preserveJetsonDeviceGroupMembership: true,
+      }),
+    );
+  });
+
+  it("does not apply the OpenClaw Jetson group bootstrap to Hermes (#7610)", async () => {
+    const input = createInput();
+    input.agentName = "hermes";
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ preserveJetsonDeviceGroupMembership: false }),
     );
   });
 

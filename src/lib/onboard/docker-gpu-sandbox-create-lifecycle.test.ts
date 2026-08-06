@@ -59,6 +59,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
+      preserveJetsonDeviceGroupMembership: true,
       deps,
       overrides: {
         findContainerIds,
@@ -72,7 +73,10 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     expect(recreatePatch).toHaveBeenCalledWith(
-      expect.objectContaining({ waitForSupervisor: false }),
+      expect.objectContaining({
+        waitForSupervisor: false,
+        preserveJetsonDeviceGroupMembership: true,
+      }),
       expect.objectContaining({
         runCaptureOpenshell: deps.runCaptureOpenshell,
       }),

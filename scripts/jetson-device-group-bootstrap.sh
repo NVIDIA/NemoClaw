@@ -14,8 +14,8 @@ fail() {
 group_gids="${2:-}"
 [ "${3:-}" = "--" ] || fail "supervisor delimiter is missing"
 shift 3
-[ "${1:-}" = "/usr/local/bin/nemoclaw-managed-bootstrap" ] \
-  || fail "managed bootstrap entrypoint is invalid"
+[ "${1:-}" = "/opt/openshell/bin/openshell-sandbox" ] \
+  || fail "OpenShell supervisor entrypoint is invalid"
 /usr/bin/id sandbox >/dev/null 2>&1 || fail "sandbox user is missing"
 [ -f /etc/group ] && [ ! -L /etc/group ] || fail "container group database is invalid"
 
