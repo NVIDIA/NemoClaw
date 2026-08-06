@@ -54,15 +54,16 @@ function managedWrapper(binName: string): string {
 
 /**
  * Builds a home whose gateways directory holds only the named entries, plus a
- * managed wrapper shim for every CLI alias. Returns the shim paths so a test
- * can assert on removal.
+ * managed wrapper shim for every CLI alias. An entry ending in "/" is created
+ * as a directory. Returns the shim paths so a test can assert on removal.
  */
 function makeHome(prefix: string, entries: readonly string[]): { home: string; shims: string[] } {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const gatewaysDir = path.join(home, ".nemoclaw", "gateways");
   fs.mkdirSync(gatewaysDir, { recursive: true });
   for (const entry of entries) {
-    fs.writeFileSync(path.join(gatewaysDir, entry), "");
+    const target = path.join(gatewaysDir, entry.replace(/\/$/, ""));
+    entry.endsWith("/") ? fs.mkdirSync(target) : fs.writeFileSync(target, "");
   }
   const userBin = path.join(home, ".local", "bin");
   fs.mkdirSync(userBin, { recursive: true });
@@ -96,7 +97,7 @@ function uninstall(home: string, shims: readonly string[]) {
 }
 
 describe("uninstall gateway-directory scan", () => {
-  it("removes the CLI shims when the gateways directory holds only Finder metadata (#7905)", () => {
+  it("removes the CLI shims when the gateways directory holds only desktop metadata (#7905)", () => {
     const { home, shims } = makeHome("nemoclaw-uninstall-dsstore-", [".DS_Store"]);
 
     try {
@@ -110,8 +111,22 @@ describe("uninstall gateway-directory scan", () => {
     }
   });
 
-  it("keeps the CLI shims when the gateways directory holds an unrecognized entry (#7905)", () => {
+  it("keeps the CLI shims when the gateways directory holds an unidentified entry (#7905)", () => {
     const { home, shims } = makeHome("nemoclaw-uninstall-unknown-", ["not-a-port"]);
+
+    try {
+      const { result, logs, removed } = uninstall(home, shims);
+
+      expect(result.exitCode).toBe(0);
+      expect(logs).toContain(SCOPED_RETENTION_LOG);
+      expect(removed).not.toEqual(expect.arrayContaining(shims));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the CLI shims when a directory carries a desktop metadata name (#7905)", () => {
+    const { home, shims } = makeHome("nemoclaw-uninstall-dsstore-dir-", [".DS_Store/"]);
 
     try {
       const { result, logs, removed } = uninstall(home, shims);
