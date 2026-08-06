@@ -58,6 +58,11 @@ jobs:
       - name: Build shared policy boundary
         run: npm run build:policy-boundary
 
+      - name: Install pinned OpenShell
+        run: |
+          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Provision restricted rootless Linux runtime
         shell: bash
         run: |
