@@ -450,7 +450,7 @@ Reviewed behavior:
 
 - Failure-only by default.
   A 2xx response returns untouched and emits nothing unless the OpenClaw gateway process has `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`.
-- The opt-in shadow mode attempts to emit timing-only `managed_transport_shadow` events for successful requests without reading their response bodies.
+- The opt-in shadow mode attempts to emit successful-request `managed_transport_shadow` timing events without reading their response bodies.
   It does not change a timeout, retry a request, alter a response, or persist samples across an OpenClaw process restart.
   Identifier generation, serialization, or standard-error output failure can omit an event without blocking the request or changing its response.
   Sandbox creation forwards only the literal value `1`, and only for OpenClaw.
@@ -512,7 +512,7 @@ The two patches compose independently.
 The injected helper in `scripts/patch-openclaw-managed-transport-diagnostics.mts` is the shipped runtime source of truth.
 `test/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
 It pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
-It also covers default failure-only emission, opt-in successful timing events, bounded shadow recommendations, explicit 503 exclusion, no-retry and unchanged-response contracts, safe operation reporting, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
+It also covers default failure-only emission, opt-in successful timing events, bounded shadow recommendations, explicit 503 exclusion, no-retry and unchanged-response contracts, validated operation reporting, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
 A reusable source schema is deferred until a production consumer requires one.
 
 Removal criterion: drop this patch when the reviewed OpenClaw release emits redacted diagnostics classified by transport phase for remote MCP fetch failures.

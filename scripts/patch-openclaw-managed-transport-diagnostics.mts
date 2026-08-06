@@ -38,8 +38,8 @@ const REQUIRED_PATTERNS = [...UNPATCHED_TARGET_PATTERNS];
 const PATCHED_REQUIRED_PATTERNS = [MARKER, STREAMABLE_TRANSPORT_REPLACEMENT];
 
 /**
- * Managed-transport failure diagnostics plus opt-in, timing-only success
- * sampling for the remote Streamable HTTP MCP fetch boundary. The wrapper
+ * Managed-transport failure diagnostics plus opt-in success timing for the
+ * remote Streamable HTTP MCP fetch boundary. The wrapper
  * never retries, never alters the request, and never reads a 2xx body, so
  * streaming responses stay behaviorally unchanged.
  */

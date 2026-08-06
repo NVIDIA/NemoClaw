@@ -197,7 +197,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
     expect(review).toContain("Failure-only by default.");
     expect(review).toContain("`NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`");
-    expect(review).toContain("timing-only `managed_transport_shadow` events");
+    expect(review).toContain("successful-request `managed_transport_shadow` timing events");
     expect(review).toContain("never retries, never alters the request");
     expect(review).toContain("`route=proxy_configured` means that `HTTPS_PROXY`");
     expect(review).toContain("report configuration evidence");

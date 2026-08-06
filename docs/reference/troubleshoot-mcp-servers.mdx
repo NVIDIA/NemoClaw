@@ -180,7 +180,7 @@ $$nemoclaw <sandbox> rebuild
 
 For a new sandbox, export the setting before `$$nemoclaw onboard` creates it.
 
-When enabled, each successful request attempts to emit a `managed_transport_shadow` line group with the same safe operation, transport, timeout, and elapsed-time fields.
+When enabled, each successful request attempts to emit a `managed_transport_shadow` line group with the same validated operation, transport, timeout, and elapsed-time fields.
 The diagnostic does not read the successful response body or change the returned response.
 Identifier generation, serialization, or standard-error output failure can omit the line group without blocking the request or changing its response.
 

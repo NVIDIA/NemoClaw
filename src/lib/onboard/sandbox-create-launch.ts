@@ -38,7 +38,7 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
 ] as const;
 
-// This opt-in emits timing-only MCP success events from the reviewed OpenClaw
+// This opt-in emits MCP success timing events from the reviewed OpenClaw
 // dist patch. Accept only the literal enabled value, and only for OpenClaw, so
 // the broader host environment never becomes sandbox runtime input.
 const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;

@@ -431,7 +431,7 @@ describe("injected managed transport wrapper", () => {
     expect(events[0].diagnostic_id).not.toBe(events[1].diagnostic_id);
   });
 
-  it("logs only the safe RPC method and never tool arguments (#7957)", async () => {
+  it("logs only the validated RPC method and omits tool names and arguments (#7957)", async () => {
     const { wrap, stderr } = loadHelper({
       OPENSHELL_SANDBOX: "1",
       NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
