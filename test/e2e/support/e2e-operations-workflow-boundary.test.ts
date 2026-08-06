@@ -194,25 +194,27 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("requires manual PR runs to use the default suite", () => {
+  it("limits manual PR runs to the default suite or protected managed-runtime qualification", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E runs the default suite",
-      "Manual PR E2E accepts selectors",
+      "Manual PR E2E accepts only the default suite or managed-image-protected-runtime",
+      "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E runs the default suite",
+      "Manual PR authentication must retain Manual PR E2E accepts only the default suite or managed-image-protected-runtime",
     );
   });
 
   it.each([
-    ["maintain", 0, ""],
-    ["write", 1, "requires a repository maintainer or administrator"],
-  ])("requires a maintainer role before manual PR E2E for %s", (role, expectedStatus, expectedStderr) => {
+    ["maintain", "", 0, ""],
+    ["maintain", "managed-image-protected-runtime", 0, ""],
+    ["maintain", "gpu-e2e", 1, "accepts only the default suite or managed-image-protected-runtime"],
+    ["write", "", 1, "requires a repository maintainer or administrator"],
+  ])("requires a maintainer role and bounded selector before manual PR E2E for %s with %s", (role, jobs, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
@@ -244,7 +246,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           GITHUB_TOKEN: "token",
           INCLUDE_LAUNCHABLE: "false",
-          JOBS: "",
+          JOBS: jobs,
           PR_NUMBER: "42",
           REVIEW_REASON: "Reviewed exact PR revision",
           RUN_ATTEMPT: "1",
@@ -259,6 +261,24 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(result.status, result.stderr).toBe(expectedStatus);
     expect(result.stderr).toContain(expectedStderr);
+  });
+
+  it("uses central maintainer authorization for protected managed-image qualification", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const guards = [
+      ["managed-image-multiarch-startup", "Validate protected exact-head dispatch"],
+      ["managed-image-protected-runtime", "Validate protected runtime exact-head dispatch"],
+    ].map(
+      ([jobName, stepName]) =>
+        workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
+    );
+
+    for (const guard of guards) {
+      expect(guard.env).not.toHaveProperty("ACTOR");
+      expect(guard.run).not.toContain("github-actions[bot]");
+      expect(guard.run).toContain('"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"');
+      expect(guard.run).toContain('"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$');
+    }
   });
 
   it("accepts the default target matrix for an exact-revision manual PR run", () => {
@@ -282,7 +302,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", controller.run!],
         {
           encoding: "utf8",
-          env: { ...process.env, GITHUB_OUTPUT: output, TARGETS: "" },
+          env: { ...process.env, GITHUB_OUTPUT: output, JOBS: "", TARGETS: "" },
         },
       );
       expect(controllerResult.status, controllerResult.stderr).toBe(0);
@@ -325,6 +345,63 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       expect(
         (generateMatrix as unknown as { outputs: Record<string, string> }).outputs.matrix,
       ).toBe("${{ steps.matrix.outputs.matrix }}");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("selects no shared targets for protected managed-runtime qualification", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const controller = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Build trusted controller target matrix",
+    )!;
+    const planner = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-protected-matrix-"));
+    const output = join(directory, "output");
+    const summary = join(directory, "summary");
+
+    try {
+      writeFileSync(output, "");
+      writeFileSync(summary, "");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", controller.run!],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            GITHUB_OUTPUT: output,
+            JOBS: "managed-image-protected-runtime",
+            TARGETS: "",
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe("matrix=[]\n");
+
+      writeFileSync(output, "");
+      const plannerResult = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", planner.run!],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CHECKOUT_SHA: "a".repeat(40),
+            CONTROLLER_MATRIX: "[]",
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
+            INFERENCE_MODE: "mock",
+            JOBS: "managed-image-protected-runtime",
+            TARGETS: "",
+          },
+        },
+      );
+      expect(plannerResult.status, plannerResult.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toContain("matrix=[]\n");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

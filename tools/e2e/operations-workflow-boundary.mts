@@ -288,7 +288,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
   for (const [name, value] of Object.entries(authEnvironment)) {
-    if (authentication.env?.[name] !== value) errors.push(`Manual PR authentication must bind ${name}`);
+    if (authentication.env?.[name] !== value)
+      errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
   for (const fragment of [
@@ -299,16 +300,19 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
-    '"$REVIEW_REASON" =~ ^[[:print:]]{10,500}$',
+    '"$REVIEW_REASON" =~ ^[[:print:]]+$',
+    "${#REVIEW_REASON} >= 10",
+    "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "Manual PR E2E requires a repository maintainer or administrator",
-    "Manual PR E2E runs the default suite",
+    "Manual PR E2E accepts only the default suite or managed-image-protected-runtime",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
-    if (!authSource.includes(fragment)) errors.push(`Manual PR authentication must retain ${fragment}`);
+    if (!authSource.includes(fragment))
+      errors.push(`Manual PR authentication must retain ${fragment}`);
   }
 
   const validation = validationIndex >= 0 ? steps[validationIndex] : {};
@@ -773,8 +777,6 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   ) {
     errors.push("scorecard must upload only the bounded push runtime summary");
   }
-
-
 }
 
 function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): void {

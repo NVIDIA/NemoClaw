@@ -163,21 +163,25 @@ jobs:
         name: Build trusted controller target matrix
         if: ${{ inputs.checkout_sha != '' }}
         env:
+          JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         shell: bash
         run: |
           set -euo pipefail
-          case "${TARGETS}" in
-            "")
+          case "${JOBS}:${TARGETS}" in
+            :)
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               ;;
-            ubuntu-repo-cloud-langchain-deepagents-code)
+            managed-image-protected-runtime:)
+              matrix='[]'
+              ;;
+            :ubuntu-repo-cloud-langchain-deepagents-code)
               matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
               ;;
-            ubuntu-repo-docker-post-reboot-recovery)
+            :ubuntu-repo-docker-post-reboot-recovery)
               matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
               ;;
-            ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
+            :ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
               matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
               ;;
             *)
@@ -256,15 +260,20 @@ jobs:
             exit 1
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
-          [[ -z "$JOBS" && -z "$TARGETS" && "$INCLUDE_LAUNCHABLE" == "false" ]] || {
-            echo "::error::Manual PR E2E runs the default suite and does not accept job, target, or Launchable selectors" >&2
-            exit 1
-          }
+          case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}" in
+            ::false | managed-image-protected-runtime::false) ;;
+            *)
+              echo "::error::Manual PR E2E accepts only the default suite or managed-image-protected-runtime without target or Launchable selectors" >&2
+              exit 1
+              ;;
+          esac
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
           [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name" >&2; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA" >&2; exit 1; }
-          [[ "$REVIEW_REASON" =~ ^[[:print:]]{10,500}$ ]] || { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
+          [[ "$REVIEW_REASON" =~ ^[[:print:]]+$ ]] &&
+            (( ${#REVIEW_REASON} >= 10 && ${#REVIEW_REASON} <= 500 )) ||
+            { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
 
 
@@ -1950,7 +1959,7 @@ jobs:
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
     needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') }}
+    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
     permissions:
@@ -1974,6 +1983,8 @@ jobs:
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/evidence.json
@@ -1984,7 +1995,6 @@ jobs:
     steps:
       - name: Validate protected exact-head dispatch
         env:
-          ACTOR: ${{ github.actor }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -1999,10 +2009,6 @@ jobs:
           set -euo pipefail
           [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
             echo "::error::Protected managed-image startup must run from trusted NVIDIA/NemoClaw main" >&2
-            exit 1
-          }
-          [[ "$ACTOR" == "github-actions[bot]" ]] || {
-            echo "::error::Protected managed-image startup requires the trusted controller actor" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
@@ -2161,6 +2167,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cache_args=()
+          if [[ "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM" == "linux/amd64" ]]; then
+            cache_args=(--cache-to "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE")
+          fi
           scripts/checks/build-protected-managed-images.sh \
             --output "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT" \
             --revision "$CHECKOUT_SHA" \
@@ -2168,7 +2178,8 @@ jobs:
             --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
-            --dcode-base "$BASE_DCODE"
+            --dcode-base "$BASE_DCODE" \
+            "${cache_args[@]}"
 
       - name: Run every exact managed-image contract directly
         env:
@@ -2261,6 +2272,17 @@ jobs:
         run: >-
           npx tsx tools/e2e/live-vitest-invocation.mts run
           --test-path test/e2e/live/managed-image-multiarch-startup.test.ts
+
+      - name: Publish exact amd64 protected runtime build cache
+        if: ${{ matrix.platform == 'linux/amd64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}
+          path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
 
       - name: Upload protected managed-image evidence
         if: always()
@@ -2541,11 +2563,29 @@ jobs:
   # This explicit-only lane runs only when the exact candidate includes
   # ci/protected-managed-image-runtime-activation-v1.json. The trusted
   # controller can then qualify that candidate's exact head without executing
-  # PR-controlled workflow code.
+  # PR-controlled workflow code. Its hosted amd64 prerequisite exports the
+  # exact candidate build cache; this GPU lane imports it and rebuilds with
+  # BuildKit networking disabled so a cache miss fails closed.
+  # invalidState: Cold managed-image builds on the protected GPU runner can
+  # stall in npm and terminate with "Exit handler never called!" before any
+  # GPU, Ollama, NIM, or vLLM assertion executes.
+  # sourceBoundary: The hosted amd64 lane builds the same exact candidate and
+  # exports only BuildKit cache records; the GPU lane verifies that complete
+  # all-agent cache and rebuilds with network access disabled.
+  # whyNotSourceFix: The root cause is unverified. Protected run 31012875592
+  # failed twice during npm install before qualification while hosted builds of
+  # the same candidate passed; the protected runner infrastructure is not owned
+  # by this change. Evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/31012875592
+  # regressionTest: The build-script behavior test proves required cache paths
+  # and metadata, symlink rejection, and exact --cache-from/--network none
+  # Docker arguments; workflow boundary tests pin the producer/consumer handoff.
+  # lifecycleDecision: PR #8261 owns removal after three consecutive protected
+  # GPU cold builds of all three images reach GPU, Ollama, NIM, and vLLM
+  # assertions without the hosted cache.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
-    needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}
+    needs: [generate-matrix, managed-image-multiarch-startup]
+    if: ${{ always() && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
     permissions:
@@ -2555,11 +2595,14 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-protected-runtime"
+      E2E_WORKLOAD_SOURCE: "managed-image"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_SHARD: linux-amd64-gpu
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: linux/amd64
@@ -2570,7 +2613,6 @@ jobs:
     steps:
       - name: Validate protected runtime exact-head dispatch
         env:
-          ACTOR: ${{ github.actor }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -2584,10 +2626,6 @@ jobs:
           set -euo pipefail
           [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
             echo "::error::Protected managed-image runtime must run from trusted NVIDIA/NemoClaw main" >&2
-            exit 1
-          }
-          [[ "$ACTOR" == "github-actions[bot]" ]] || {
-            echo "::error::Protected managed-image runtime requires the trusted controller actor" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
@@ -2619,6 +2657,12 @@ jobs:
           path: .candidate-runtime
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Download exact protected runtime build cache
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}
+          path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}
 
       - *dockerhub-auth
 
@@ -2756,6 +2800,7 @@ jobs:
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
+            --offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"
@@ -6063,10 +6108,7 @@ jobs:
 
       - name: Remove Docker auth before release-pinned fixture
         if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash .github/scripts/docker-auth-cleanup.sh
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
@@ -6138,10 +6180,7 @@ jobs:
 
       - name: Remove Docker auth before release-pinned fixture
         if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash .github/scripts/docker-auth-cleanup.sh
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
