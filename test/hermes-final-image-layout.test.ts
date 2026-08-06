@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
-import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween, runDockerShell } from "./helpers/dockerfile-run-shell";
 import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
