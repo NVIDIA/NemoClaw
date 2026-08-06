@@ -52,9 +52,9 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     });
     expect(guardErrors).toEqual(
       expect.arrayContaining([
-        "jetson-nvmap-gpu job must use ubuntu-latest unless allow_jetson_runner_queue is true",
+        "jetson-nvmap-gpu job must queue the configured runner for main and default manual runs",
         "jetson-nvmap-gpu dispatch guard must run before Docker Hub auth",
-        "jetson-nvmap-gpu dispatch guard must run unless allow_jetson_runner_queue is true",
+        "jetson-nvmap-gpu dispatch guard must reject unconfirmed selective queueing",
       ]),
     );
   });
