@@ -781,6 +781,7 @@ class SandboxStateFlow<
     sandboxName: string,
     createIntent: ResolvedSandboxCreateIntent,
   ): void {
+    if (this.options.recreateSandbox(false)) return;
     const recordedFingerprint = state.session?.checkpoint?.effectGroups.sandbox_create?.fingerprint;
     if (!recordedFingerprint) return;
     if (recordedFingerprint !== this.currentSandboxCreateFingerprint(sandboxName, createIntent)) {
