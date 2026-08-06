@@ -29,22 +29,6 @@ Before documenting a new surface, confirm that an accepted issue or design decis
 Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](resources/community-contributions.mdx).
 If the correct destination is unclear, request maintainer direction before drafting the page.
 
-## Update and Refactor Docs with Agent Skills
-
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
-Use it before writing from scratch.
-
-The skill scans recent commits for user-facing changes and drafts doc updates.
-Run it after landing features, before a release, or to find doc gaps.
-For example, ask your agent to "catch up the docs for the changes I made in this PR".
-During release prep, run the skill first, make any doc version bumps, then open the docs refresh PR.
-
-The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
-
-Use the maintainer-owned `nemoclaw-maintainer-refactor-docs` skill when a page or section has grown too large, mixes several user tasks, or needs a nested TOC.
-Use it to inventory the existing content, organize topics around the user journey, keep foldable navigation groups non-clickable, assign one canonical owner per topic, and preserve Fern routes, redirects, and agent variants during the split.
-Find the skill in `.agents/skills/nemoclaw-maintainer-refactor-docs/`.
-
 ## Markdown Docs for AI Agents
 
 The `docs/` directory is the source of truth for user-facing documentation.
@@ -219,11 +203,6 @@ Commit and push normally so the Git hooks run, then run:
 npm run docs
 ```
 
-After the documentation changes and build are complete, follow the root
-[Documentation workflow](../AGENTS.md#documentation) for agent orchestration and the
-[Documentation Writer Review Receipt](../CONTRIBUTING.md#documentation-writer-review-receipt) for
-pull-request evidence.
-
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
 If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run validate:pr` once to reproduce those checks before opening the PR.
 The command uses `origin/main`, so refresh it with `git fetch origin main` first.
@@ -388,12 +367,6 @@ Remove them during review.
 - Do not use colons in titles. Write "Deploy and Manage Gateways" not "Gateways: Deploy and Manage."
 - Use colons to introduce a list or define a term or value.
   Do not use a colon to join independent clauses.
-
-### Controlled Word List
-
-Use the [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md) for product spellings, technical
-terms, lifecycle operations, and engineering evidence.
-Keep shared terms in that list instead of adding a second documentation-only table.
 
 ## Submitting Doc Changes
 

@@ -65,7 +65,6 @@ clear and testable, stop exploring and implement it.
 ### Writing Guide
 
 Follow the [NemoClaw Writing Guide](WRITING.md) when you add or modify explanatory text.
-Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms.
 The Writing Guide defines its scope, rules, examples, and review policy.
 
 ## Before You Open an Issue
@@ -417,7 +416,6 @@ If your change affects user-facing behavior (new commands, changed defaults, new
 
 The [documentation contributor guide](docs/CONTRIBUTING.md) owns public-facing documentation
 procedure and rules.
-The [Documentation Agent Guide](docs/AGENTS.md) owns agent-specific instructions for applying them.
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.

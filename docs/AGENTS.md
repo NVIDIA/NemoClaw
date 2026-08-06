@@ -11,35 +11,43 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 The [documentation contributor guide](CONTRIBUTING.md) owns public-facing documentation
 procedure and rules.
 Read that guide before you write or review documentation.
-This file defines the agent-specific workflow for applying those rules.
+This file owns agent-specific documentation routing and workflow.
 
 - Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
 
-## Writing Style Guide
+## NVIDIA DORI Routing
 
-Apply these writing authorities:
+Select the documentation path from current host capabilities.
+Do not ask the user to classify themselves or store repository-scoped identity state during a
+normal documentation task.
 
-- Use the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
-- Use the [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md)
-  for project terms and evidence claims.
+1. Check whether the current agent exposes `dori_handle` or `dori_route` and `dori_collections`.
+   If the user explicitly asks not to use DORI, continue with the documentation contributor guide.
+2. When those tools are available, list the installed collections.
+   - If a collection source contains `tech-docs/skill-library`, use DORI for task routing.
+   - If the collection is missing, inaccessible, or cannot be verified, continue with the
+     documentation contributor guide.
+3. When the DORI tools are unavailable, continue with the documentation contributor guide.
+   Do not inspect a shell-visible CLI, install software, or configure the host during a normal
+   documentation task.
+4. Use [NVIDIA DORI Setup](DORI_SETUP.md) only when the user explicitly asks to install or configure
+   DORI.
 
-## Use DORI for Complete NVIDIA Doc Tools
+Capability detection does not approve installation or host configuration.
+DORI unavailability must not block documentation work.
 
-Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing).
-Use the following DORI workflow only when current host capabilities include the
-verified NVIDIA documentation Skill Library. Complete the documentation before
-the developer opens the pull or merge request.
+When DORI is available, route the task with the changed source files, user-visible impact, likely
+documentation updates, and required validation.
+Follow the skill or workflow that DORI returns.
 
-1. Route the documentation task through DORI. Include the changed source files,
-   the user-visible impact, the documentation that might need updates, and the
-   required validation.
-2. Follow the skill or workflow that DORI returns.
+## Choose a Repository Skill
 
-If the verified Skill Library is unavailable, inaccessible, or fails, skip DORI.
-Do not attempt routing, prompt for setup, or ask for or persist a user
-classification. Continue using the writing guidance above.
+- Use `nemoclaw-contributor-update-docs` to find documentation impact, update current pages, or
+  prepare pre-tag release documentation.
+- Use `nemoclaw-maintainer-refactor-docs` for maintainer-owned information architecture, page
+  splits, navigation changes, or content ownership changes.
 
 ## Before Editing
 
@@ -51,7 +59,7 @@ classification. Continue using the writing guidance above.
   execute the documented behavior and which guide variants must publish it.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
-## Execute and Review the Change
+## Execute the Change
 
 1. Apply the applicable procedures in the documentation contributor guide, including the
    [changelog](CONTRIBUTING.md#updating-the-changelog),
@@ -60,5 +68,3 @@ classification. Continue using the writing guidance above.
    [writing convention](CONTRIBUTING.md#writing-conventions) rules.
 2. Run the commands required by
    [Doc-Only PR Verification](CONTRIBUTING.md#doc-only-pr-verification) for the changed surface.
-3. Follow the root [Documentation](../AGENTS.md#documentation) workflow for authoring, independent
-   review, reconciliation, validation, and the pull-request receipt.

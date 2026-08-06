@@ -21,7 +21,6 @@ Stop and request maintainer direction, or route an independent solution through 
 This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
-Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
 
 ## Architecture
 
@@ -201,7 +200,6 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
 - Follow the [NemoClaw Writing Guide](WRITING.md) for changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
   The guide defines the review scope and the conditions that make a language finding blocking.
-- Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and exact product names.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
 - Report conclusions and evidence, not an analysis transcript.
@@ -277,8 +275,8 @@ If the command trace contains no reviewer-request write, report the event as an 
 ## Documentation
 
 - Treat `docs/` as the source of truth for public-facing documentation.
-  `docs/CONTRIBUTING.md` owns public-facing documentation procedure and rules.
-  `docs/AGENTS.md` owns agent-specific instructions for applying them.
+  Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow,
+  including DORI routing.
 - Before completing a code change, determine whether it changes a user-visible surface.
   This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
 - When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
@@ -297,31 +295,6 @@ If the command trace contains no reviewer-request write, report the event as an 
   [Documentation Writer Review Receipt](CONTRIBUTING.md#documentation-writer-review-receipt)
   procedure.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
-
-### NVIDIA DORI Routing
-
-Select the documentation path from current host capabilities.
-Do not ask the user to classify themselves or store repository-scoped identity
-state during a normal documentation task.
-
-1. Check whether the current agent exposes `dori_handle` or `dori_route` and
-   `dori_collections`.
-   If the user explicitly asks not to use DORI, use the
-   [Writing Style Guide](docs/AGENTS.md#writing-style-guide) instead.
-2. When those tools are available, list the installed collections.
-   - If a collection source contains `tech-docs/skill-library`, use DORI for
-     task routing.
-   - If the collection is missing, inaccessible, or cannot be verified,
-     continue with the
-     [Writing Style Guide](docs/AGENTS.md#writing-style-guide).
-3. When the DORI tools are unavailable, continue with the Writing Style Guide.
-   Do not inspect a shell-visible CLI, install software, or configure the host
-   during a normal documentation task.
-4. Use [NVIDIA DORI Setup](docs/DORI_SETUP.md) only when the user explicitly
-   asks to install or configure DORI.
-
-Capability detection does not approve installation or host configuration.
-DORI unavailability must not block documentation work.
 
 ## PR Requirements
 
