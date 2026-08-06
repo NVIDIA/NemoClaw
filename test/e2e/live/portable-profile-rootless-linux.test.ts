@@ -16,6 +16,7 @@ import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts
 import { test } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import { stripAnsi } from "./json-envelope.ts";
 
 const gatewayEnvModule = (
   "default" in importedGatewayEnv && importedGatewayEnv.default
@@ -120,7 +121,8 @@ async function verifyPinnedPodmanGatewayStarts(
     const deadline = Date.now() + 15_000;
     let driverSeenAt = 0;
     while (Date.now() < deadline) {
-      if (/configuration error|invalid \[openshell\.drivers\.podman\] table/i.test(output)) {
+      const plainOutput = stripAnsi(output);
+      if (/configuration error|invalid \[openshell\.drivers\.podman\] table/i.test(plainOutput)) {
         assert.fail(`Pinned OpenShell rejected the generated Podman config:\n${output}`);
       }
       if (child.exitCode !== null) {
@@ -128,7 +130,7 @@ async function verifyPinnedPodmanGatewayStarts(
           `Pinned OpenShell Podman gateway exited with ${String(child.exitCode)}:\n${output}`,
         );
       }
-      if (output.includes("Using compute driver driver=podman")) {
+      if (/Using compute driver\s+driver=podman/.test(plainOutput)) {
         if (driverSeenAt === 0) driverSeenAt = Date.now();
         if (Date.now() - driverSeenAt >= 2_000) return;
       }
