@@ -37,6 +37,32 @@ describe("policy mutation oclif commands", () => {
       dryRun: true,
       fromFile: "/tmp/preset.yaml",
       fromDir: undefined,
+      trustedPrivateHosts: undefined,
+    });
+  });
+
+  it("maps repeatable trusted private hosts for custom policy input (#8176)", async () => {
+    await PolicyAddCommand.run(
+      [
+        "alpha",
+        "--from-file",
+        "/tmp/preset.yaml",
+        "--trusted-private-host",
+        "api.corp.example",
+        "--trusted-private-host",
+        "10.20.30.40",
+      ],
+      rootDir,
+    );
+
+    expect(mocks.addSandboxPolicy).toHaveBeenCalledWith("alpha", {
+      preset: undefined,
+      yes: false,
+      force: false,
+      dryRun: false,
+      fromFile: "/tmp/preset.yaml",
+      fromDir: undefined,
+      trustedPrivateHosts: ["api.corp.example", "10.20.30.40"],
     });
   });
 

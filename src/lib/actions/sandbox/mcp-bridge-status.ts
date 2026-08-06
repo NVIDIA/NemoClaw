@@ -33,6 +33,10 @@ import {
 } from "./mcp-bridge-state";
 import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
 import {
+  inspectMcpRecordedTargetPins,
+  type McpBridgeRecordedPinStatus,
+} from "./mcp-bridge-url-validation";
+import {
   assertAuthenticatedBridgeEntry,
   normalizeMcpServerUrl,
   resolvePersistedCredentialEnvForRedaction,
@@ -68,7 +72,9 @@ const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
 
 function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
   try {
-    return normalizeMcpServerUrl(entry.url) === entry.url
+    return normalizeMcpServerUrl(entry.url, {
+      trustedPrivateHosts: entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined,
+    }) === entry.url
       ? undefined
       : UNSUPPORTED_STORED_URL_WARNING;
   } catch {
@@ -201,6 +207,21 @@ export async function statusMcpBridge(
     );
   }
 
+  const privatePinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
+  await Promise.all(
+    entries.map(async ([name, entry]) => {
+      if (!entry?.trustedPrivateHost || !entry.allowedIps) return;
+      privatePinStatusByServer.set(
+        name,
+        await inspectMcpRecordedTargetPins(
+          new URL(entry.url),
+          entry.trustedPrivateHost,
+          entry.allowedIps,
+        ),
+      );
+    }),
+  );
+
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
@@ -237,6 +258,16 @@ export async function statusMcpBridge(
       if (urlWarning) warnings.push(urlWarning);
       credentialWarning = storedCredentialWarning(entry);
       if (credentialWarning) warnings.push(credentialWarning);
+    }
+    const privatePinStatus = privatePinStatusByServer.get(name);
+    if (privatePinStatus?.state === "drift") {
+      warnings.push(
+        "Trusted-private DNS answers differ from the recorded pins. Remove and re-add this server to approve changed pins.",
+      );
+    } else if (privatePinStatus?.state === "unresolved") {
+      warnings.push(
+        "Trusted-private DNS resolution is unavailable. The recorded policy pins were not changed.",
+      );
     }
     const unsafeCredentialMayBeAttached =
       !!credentialWarning && !!entry?.providerName && attached !== false;
@@ -278,6 +309,19 @@ export async function statusMcpBridge(
       warnings,
       support,
       ...(entry ? { url: entry.url } : {}),
+      ...(entry?.trustedPrivateHost && entry.allowedIps && privatePinStatus
+        ? {
+            trustedPrivateTarget: {
+              host: entry.trustedPrivateHost,
+              recordedPins: [...entry.allowedIps],
+              ...(privatePinStatus.currentAddresses
+                ? { currentPins: privatePinStatus.currentAddresses }
+                : {}),
+              state: privatePinStatus.state,
+              ...(privatePinStatus.detail ? { detail: privatePinStatus.detail } : {}),
+            },
+          }
+        : {}),
       ...(entry?.addState ? { addState: entry.addState } : {}),
       env: {
         names: entry?.env ?? [],

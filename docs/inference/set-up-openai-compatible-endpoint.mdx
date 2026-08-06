@@ -123,7 +123,8 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
-| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private inference endpoints. Wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |
 | `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
 
 <AgentOnly variant="openclaw">
@@ -141,7 +142,7 @@ Private and reserved addresses are blocked by default.
 To use an inference gateway on a trusted corporate network, list only its exact host and keep the endpoint URL on that host:
 
 ```bash
-NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS=llm.corp.example \
+NEMOCLAW_TRUSTED_PRIVATE_HOSTS=llm.corp.example \
   NEMOCLAW_PROVIDER=custom \
   NEMOCLAW_ENDPOINT_URL=https://llm.corp.example/v1 \
   NEMOCLAW_MODEL=your-model \
@@ -150,7 +151,7 @@ NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS=llm.corp.example \
 ```
 
 NemoClaw still resolves the host before probing and pins the probe to the resolved address.
-Only RFC1918, CGNAT, and IPv6 ULA destinations can be admitted; link-local metadata and other reserved ranges remain blocked.
+Only RFC1918, carrier-grade network address translation (CGNAT), and IPv6 unique local address (ULA) destinations can be admitted; link-local metadata and other reserved ranges remain blocked.
 An unlisted private host, a hostname suffix match, or a DNS failure also remains blocked.
 
 ## Related Topics
