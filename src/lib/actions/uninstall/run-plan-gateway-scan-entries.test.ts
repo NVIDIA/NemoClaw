@@ -75,65 +75,65 @@ function makeHome(prefix: string, entries: readonly string[]): { home: string; s
   return { home, shims };
 }
 
+/**
+ * Runs the plan and reports which shims are still on disk afterwards. Removal
+ * goes through the real filesystem, restricted to the temporary home, so the
+ * assertions read the outcome rather than the calls a test double recorded.
+ */
 function uninstall(home: string, shims: readonly string[]) {
   const logs: string[] = [];
-  const removed: string[] = [];
   const result = runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell: false },
     {
       commandExists: (command) => command !== "docker" && command !== "lsof" && command !== "pgrep",
       env: { HOME: home } as NodeJS.ProcessEnv,
-      existsSync: (target) => shims.includes(target),
+      existsSync: (target) => shims.includes(target) && fs.existsSync(target),
       isTty: false,
       log: (line) => logs.push(line),
-      rmSync: vi.fn((target: fs.PathLike) => {
-        removed.push(String(target));
+      rmSync: vi.fn((target: fs.PathLike, options?: fs.RmOptions) => {
+        String(target).startsWith(home) ? fs.rmSync(target, options) : undefined;
       }),
       run: vi.fn(okWithKnownGatewayList),
       runDocker: () => ok(""),
     },
   );
-  return { result, logs, removed };
+  return { result, logs, survivors: shims.filter((shim) => fs.existsSync(shim)) };
 }
 
 describe("uninstall gateway-directory scan", () => {
-  it("removes the CLI shims when the gateways directory holds only desktop metadata (#7905)", () => {
-    const { home, shims } = makeHome("nemoclaw-uninstall-dsstore-", [".DS_Store"]);
+  it.each([
+    [".DS_Store"],
+    [".localized"],
+    ["._sandboxes.json"],
+  ])("removes the CLI shims when the gateways directory holds only %s (#7905)", (entry) => {
+    const { home, shims } = makeHome("nemoclaw-uninstall-metadata-", [entry]);
 
     try {
-      const { result, logs, removed } = uninstall(home, shims);
+      const { result, logs, survivors } = uninstall(home, shims);
 
       expect(result.exitCode).toBe(0);
       expect(logs).not.toContain(SCOPED_RETENTION_LOG);
-      expect(removed).toEqual(expect.arrayContaining(shims));
+      expect(survivors).toEqual([]);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it("keeps the CLI shims when the gateways directory holds an unidentified entry (#7905)", () => {
-    const { home, shims } = makeHome("nemoclaw-uninstall-unknown-", ["not-a-port"]);
+  // "._" carries no name, and a directory or symlink is a shape that may hide
+  // live gateway state, so each of these keeps the conservative treatment.
+  it.each([
+    ["not-a-port"],
+    ["._"],
+    [".DS_Store/"],
+  ])("keeps the CLI shims when the gateways directory holds %s (#7905)", (entry) => {
+    const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", [entry]);
 
     try {
-      const { result, logs, removed } = uninstall(home, shims);
+      const { result, logs, survivors } = uninstall(home, shims);
 
       expect(result.exitCode).toBe(0);
       expect(logs).toContain(SCOPED_RETENTION_LOG);
-      expect(removed).not.toEqual(expect.arrayContaining(shims));
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps the CLI shims when a directory carries a desktop metadata name (#7905)", () => {
-    const { home, shims } = makeHome("nemoclaw-uninstall-dsstore-dir-", [".DS_Store/"]);
-
-    try {
-      const { result, logs, removed } = uninstall(home, shims);
-
-      expect(result.exitCode).toBe(0);
-      expect(logs).toContain(SCOPED_RETENTION_LOG);
-      expect(removed).not.toEqual(expect.arrayContaining(shims));
+      expect(survivors).toEqual(shims);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

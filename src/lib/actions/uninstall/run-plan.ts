@@ -1655,7 +1655,10 @@ function inspectOtherGatewayEnvironments(
 // .DS_Store and .localized, and ._<name> to carry a resource fork and extended
 // attributes on a filesystem that lacks them. None of them hold gateway state.
 function isDesktopMetadataEntry(name: string): boolean {
-  return name === ".DS_Store" || name === ".localized" || name.startsWith("._");
+  // "._" alone names no file it could carry, so it stays conservative.
+  return (
+    name === ".DS_Store" || name === ".localized" || (name.startsWith("._") && name.length > 2)
+  );
 }
 
 function discoverOtherGatewayEnvironments(
