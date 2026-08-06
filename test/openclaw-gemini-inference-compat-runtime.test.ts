@@ -84,7 +84,7 @@ const BASE_ENV: Record<string, string> = {
 };
 
 const dockerProbe = dockerSpawnSync(["info"], { stdio: "ignore", timeout: 15_000 });
-const suite = dockerProbe.status === 0 || process.platform === "linux" ? describe : describe.skip;
+const suite = dockerProbe.status === 0 ? describe : describe.skip;
 
 let contextDir: string;
 let imageTag: string;
