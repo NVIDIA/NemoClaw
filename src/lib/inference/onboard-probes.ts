@@ -944,13 +944,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     // stack can cause the initial probe to time out before the TLS handshake
     // completes (#987); hosted providers also occasionally drop connections for
     // tens of seconds during incidents (#3033).
-    // Look across every failure entry rather than only failures[0] so a probe
-    // ordering like /responses (HTTP error) followed by /chat/completions
-    // (curl 28) still triggers the chat-completions retry path.
+    // Look for the Chat Completions failure rather than only failures[0] so a
+    // preceding /responses error cannot suppress or spuriously trigger this
+    // transport retry path.
     let retriedAfterTimeout = false;
     if (
       failures.some(
         (failure) =>
+          failure.name === chatCompletionsProbe.name &&
           failure.reasoningRetryAttempted !== true &&
           isTimeoutOrConnFailureStatus(failure.curlStatus),
       )

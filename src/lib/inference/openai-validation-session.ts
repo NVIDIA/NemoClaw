@@ -344,7 +344,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
         ? failedChatValidation(chat, chat.message)
         : nativeFailureFallback("native_terminal_http_failure");
     }
-    if (options.requireChatCompletionsToolCalling === true) {
+    if (requireToolCall) {
       if (!deps.hasChatCompletionsToolCall(chat.body)) {
         const leaked = deps.hasChatCompletionsToolCallLeak(chat.body);
         if (retriedReasoningTruncation) {
