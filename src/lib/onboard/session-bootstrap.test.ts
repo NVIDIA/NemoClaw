@@ -28,6 +28,26 @@ function completeSandboxStep(): Session["steps"][string] {
   };
 }
 
+const SERVING_PROFILE_PROVENANCE = {
+  schemaVersion: 1,
+  catalogDigest: `sha256:${"1".repeat(64)}`,
+  preset: {
+    id: "vllm.dgx-spark-gb10.single.example",
+    digest: `sha256:${"2".repeat(64)}`,
+    displayName: "Example Spark profile",
+    supportState: "experimental",
+  },
+  recipe: {
+    id: "vllm.dgx-spark-gb10.single.example",
+    digest: `sha256:${"3".repeat(64)}`,
+    backend: "vllm",
+  },
+  model: { id: "example/model", revision: "revision-1" },
+  runtimeImage: null,
+  estimatedImageDownloadBytes: null,
+  estimatedModelDownloadBytes: null,
+} as const;
+
 function createDeps(
   initialSession: Session | null = null,
   overrides: Partial<OnboardSessionBootstrapDeps> = {},
@@ -92,6 +112,24 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
+  });
+
+  it("checkpoints exact serving profile provenance before fresh onboarding effects (#8246)", async () => {
+    const { deps } = createDeps();
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "profile-test",
+        cannotPrompt: true,
+        nonInteractive: true,
+        servingProfileProvenance: SERVING_PROFILE_PROVENANCE,
+      },
+      deps,
+    );
+
+    expect(result.session?.servingProfileProvenance).toEqual(SERVING_PROFILE_PROVENANCE);
   });
 
   it("checkpoints Station Express choices before managed vLLM setup", async () => {
@@ -179,6 +217,28 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
+  });
+
+  it("preserves recorded serving profile provenance during resume (#8246)", async () => {
+    const initial = createSession({
+      sandboxName: "profile-test",
+      servingProfileProvenance: SERVING_PROFILE_PROVENANCE,
+    });
+    const { deps } = createDeps(initial);
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "profile-test",
+        cannotPrompt: true,
+        nonInteractive: true,
+        servingProfileProvenance: SERVING_PROFILE_PROVENANCE,
+      },
+      deps,
+    );
+
+    expect(result.session?.servingProfileProvenance).toEqual(SERVING_PROFILE_PROVENANCE);
   });
 
   it("persists a recovered terminal snapshot receipt (#6227)", async () => {

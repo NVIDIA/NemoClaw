@@ -47,7 +47,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -55,6 +55,7 @@ export const onboardExamples = [
   "<%= config.bin %> onboard --name alpha",
   "<%= config.bin %> onboard --resume",
   "<%= config.bin %> onboard --fresh",
+  "<%= config.bin %> onboard --profile <profile-id>",
   "<%= config.bin %> onboard --from ./Dockerfile --name alpha",
   "<%= config.bin %> onboard --agents ./agents.yaml",
   "<%= config.bin %> onboard --sandbox-gpu --sandbox-gpu-device nvidia.com/gpu=0",
@@ -82,6 +83,7 @@ export type OnboardFlags = {
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
   "experimental-profile"?: string;
+  profile?: string;
   [NOTICE_ACCEPT_FLAG_NAME]?: boolean;
 };
 
@@ -152,6 +154,11 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     "experimental-profile": Flags.string({
       hidden: true,
       options: [PORTABLE_EXPERIMENTAL_PROFILE],
+      exclusive: ["profile"],
+    }),
+    profile: Flags.string({
+      description: "Select a serving profile shown by `nemoclaw profiles list`",
+      exclusive: ["experimental-profile"],
     }),
     [NOTICE_ACCEPT_FLAG_NAME]: Flags.boolean({
       description: "Accept the third-party software notice",
