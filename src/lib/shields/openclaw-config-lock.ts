@@ -19,11 +19,11 @@ export const OPENCLAW_CONFIG_HASH_PATH = `${OPENCLAW_CONFIG_DIR}/.config-hash`;
 const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const HOST_HELPER = path.resolve(__dirname, "../../../scripts/openclaw-config-guard.py");
 const CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "5m"];
-// Must exceed STATE_DIR_GUARD_TIMEOUT_SECONDS (12m) in
+// Must exceed STATE_DIR_GUARD_TIMEOUT_SECONDS (22m) in
 // scripts/openclaw-config-guard.py, which is the guard's whole-action budget
-// for the unseal and its rollback together. A shorter host timeout lands the
-// kill mid-unseal, past the rollback and the JSON contract.
-const RECOVERY_CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "15m"];
+// for the unseal and its rollback together. The outer docker client timeout in
+// shields/index.ts must exceed this timeout plus its termination grace.
+const RECOVERY_CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "25m"];
 const SCHEMA_VALIDATION_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "30s"];
 const MAX_SCHEMA_CANDIDATE_BYTES = 16 * 1024 * 1024;
 // OpenClaw resolves relative includes from the config file's directory.
@@ -80,6 +80,7 @@ type GuardSummary = {
 
 export type OpenClawConfigGuardResult = {
   issues: string[];
+  issueCodes?: string[];
   chattrApplied: boolean;
   configSha256?: string;
   hashSynthesized?: boolean;
@@ -317,6 +318,9 @@ export function parseOpenClawConfigGuardOutput(
       ),
       ...contractIssues,
     ],
+    ...(issues.length > 0
+      ? { issueCodes: issues.map((issue) => printableExcerpt(issue.code, 64)) }
+      : {}),
     chattrApplied: summary?.status === "ok" && summary.chattrApplied === true,
     ...(summary?.status === "ok" && summary.configSha256
       ? { configSha256: summary.configSha256 }
@@ -357,6 +361,12 @@ export function runOpenClawConfigGuard(
   if (action === "write-config" && !options.expectedConfigSha256) {
     return {
       issues: ["OpenClaw config guard write-config requires expectedConfigSha256"],
+      chattrApplied: false,
+    };
+  }
+  if (action === "unlock-failed-startup" && !options.planJson) {
+    return {
+      issues: ["OpenClaw config guard unlock-failed-startup requires planJson"],
       chattrApplied: false,
     };
   }

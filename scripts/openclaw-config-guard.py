@@ -78,11 +78,18 @@ OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NODE_BINARY_PATH = "/usr/local/bin/node"
 JSON5_MODULE_PATH = "/opt/nemoclaw/node_modules/json5"
 JSON5_VALIDATION_TIMEOUT_SECONDS = 5
-# Whole-action budget for `unlock-failed-startup`: the recursive unseal and its
-# relock rollback share it. Keep it below RECOVERY_CONTAINER_TIMEOUT in
-# src/lib/shields/openclaw-config-lock.ts, or the host kills the guard before
-# the rollback can finish.
-STATE_DIR_GUARD_TIMEOUT_SECONDS = 12 * 60
+# Whole-action budget for `unlock-failed-startup`. The recursive state guard
+# caps each transition at ten minutes. Give the forward transition that full
+# allowance, then reserve another full allowance plus two minutes of overhead
+# for the config relock and fail-closed recursive relock.
+# Keep the total below RECOVERY_CONTAINER_TIMEOUT in
+# src/lib/shields/openclaw-config-lock.ts, or the host can kill the guard before
+# the rollback finishes.
+STATE_DIR_GUARD_FORWARD_SECONDS = 10 * 60
+STATE_DIR_GUARD_ROLLBACK_SECONDS = 12 * 60
+STATE_DIR_GUARD_TIMEOUT_SECONDS = (
+    STATE_DIR_GUARD_FORWARD_SECONDS + STATE_DIR_GUARD_ROLLBACK_SECONDS
+)
 INSTALLED_HELPER_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py"
 COPY_BUFFER_BYTES = 1024 * 1024
 STABLE_READ_ATTEMPTS = 3
@@ -1558,14 +1565,17 @@ def _run_failed_startup_unlock(
 ) -> None:
     """Unseal both OpenClaw state layers or restore their locked posture.
 
-    One deadline covers the unseal and its rollback, so a slow unseal cannot
-    leave the relock without budget, and neither can outlast the host.
+    The forward transition cannot consume the rollback reserve. Both deadlines
+    remain within the host's whole-action timeout.
     """
 
-    deadline = time.monotonic() + STATE_DIR_GUARD_TIMEOUT_SECONDS
+    rollback_deadline = time.monotonic() + STATE_DIR_GUARD_TIMEOUT_SECONDS
+    unlock_deadline = rollback_deadline - STATE_DIR_GUARD_ROLLBACK_SECONDS
 
     try:
-        _run_state_dir_guard("unlock", config_dir, plan_json, mutation_lock_fd, deadline)
+        _run_state_dir_guard(
+            "unlock", config_dir, plan_json, mutation_lock_fd, unlock_deadline
+        )
         _transition(
             "unlock",
             opened,
@@ -1584,7 +1594,9 @@ def _run_failed_startup_unlock(
         except (GuardError, OSError) as rollback_exc:
             rollback_errors.append(f"config lock: {rollback_exc}")
         try:
-            _run_state_dir_guard("lock", config_dir, plan_json, mutation_lock_fd, deadline)
+            _run_state_dir_guard(
+                "lock", config_dir, plan_json, mutation_lock_fd, rollback_deadline
+            )
         except (GuardError, OSError) as rollback_exc:
             rollback_errors.append(f"state-dir lock: {rollback_exc}")
 
@@ -4369,7 +4381,7 @@ def main(argv: list[str] | None = None) -> int:
         if action == "unlock-failed-startup" and not startup_failure_recovery:
             # Never let this action inherit the ordinary lease path.
             raise GuardError(
-                "startup-not-ready",
+                "failed-startup-not-proven",
                 STARTUP_READY_PATH,
                 "unlock-failed-startup requires a proven terminal startup failure",
             )

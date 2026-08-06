@@ -34,6 +34,8 @@ $$nemoclaw <sandbox-name> shields down
 
 NemoClaw accepts `shields down` once it confirms, while holding the config mutation lock, that no startup process is running and no readiness lease was published.
 Other locked-config operations still require the lease.
+This failed-startup recovery path requires a sandbox image that includes the in-container OpenClaw config and state guards.
+If NemoClaw reports that the config guard is absent, upgrade the CLI and rebuild the sandbox before retrying recovery.
 Start the sandbox again after shields are down, then re-run `shields up` when it is healthy.
 </AgentOnly>
 

@@ -172,6 +172,7 @@ except guard.GuardError as error:
     assert error.code == "injected-freeze-stop"
 
 events = []
+transaction_deadlines = {}
 def transition(action, _opened, _identity, **kwargs):
     events.append(f"config-{action}-quarantine-{kwargs.get('quarantine_untrusted')}")
     if action == "unlock":
@@ -179,8 +180,9 @@ def transition(action, _opened, _identity, **kwargs):
             "mutable-handoff-incomplete", guard.PRODUCTION_CONFIG_DIR, "handoff failed"
         )
 
-def state_dir(action, _config_dir, _plan_json, lock_fd, _deadline):
+def state_dir(action, _config_dir, _plan_json, lock_fd, deadline):
     assert lock_fd == 91
+    transaction_deadlines[action] = deadline
     events.append(f"state-{action}")
     if action == "lock":
         raise guard.GuardError("state-lock-failed", guard.PRODUCTION_CONFIG_DIR, "lock failed")
@@ -198,16 +200,32 @@ except guard.GuardError as error:
     }
 
 timeout_events = []
+timeout_deadlines = {}
+timeout_rollback_remaining = None
 def timeout_transition(action, _opened, _identity, **kwargs):
     timeout_events.append(f"config-{action}-quarantine-{kwargs.get('quarantine_untrusted')}")
 
-def timeout_state_dir(action, _config_dir, _plan_json, lock_fd, _deadline):
+def timeout_state_dir(action, _config_dir, _plan_json, lock_fd, deadline):
+    global timeout_rollback_remaining
     assert lock_fd == 91
+    if deadline - guard.time.monotonic() <= 0:
+        raise guard.GuardError(
+            "state-dir-transition-timeout", guard.PRODUCTION_CONFIG_DIR,
+            f"no recovery budget left for state-dir {action}",
+        )
+    timeout_deadlines[action] = deadline
     timeout_events.append(f"state-{action}")
     if action == "unlock":
+        # Model the forward transition consuming its entire allowance. A
+        # shared deadline would make the following relock refuse to start.
+        guard.time.monotonic = lambda: deadline
         raise guard.GuardError(
             "state-dir-transition-timeout", guard.PRODUCTION_CONFIG_DIR, "unlock timed out"
         )
+    # Model a relock that consumes nearly the state guard's ten-minute
+    # maximum. The remaining allowance covers config relock overhead.
+    guard.time.monotonic = lambda: deadline - (2 * 60 + 1)
+    timeout_rollback_remaining = deadline - guard.time.monotonic()
 
 guard._transition = timeout_transition
 guard._run_state_dir_guard = timeout_state_dir
@@ -224,8 +242,11 @@ print(json.dumps({
     "pass_fds": run_call["pass_fds"],
     "freeze_flags": freeze_flags,
     "events": events,
+    "rollback_reserve": transaction_deadlines["lock"] - transaction_deadlines["unlock"],
     "transaction_error": transaction_error,
     "timeout_events": timeout_events,
+    "timeout_rollback_reserve": timeout_deadlines["lock"] - timeout_deadlines["unlock"],
+    "timeout_rollback_remaining": timeout_rollback_remaining,
     "timeout_transaction_code": timeout_transaction_code,
 }))
 `;
@@ -239,7 +260,10 @@ import sys
 import tempfile
 
 guard_path = sys.argv[1]
-root = tempfile.mkdtemp()
+# macOS exposes /var as a symlink to /private/var. Resolve the fixture root so
+# descriptor-safe no-follow traversal tests the inherited lock rather than
+# rejecting the host's symlinked temporary-directory prefix.
+root = os.path.realpath(tempfile.mkdtemp())
 config_dir = os.path.join(root, ".openclaw")
 lock_path = os.path.join(root, ".openclaw-config-mutation.lock")
 os.mkdir(config_dir)
@@ -299,6 +323,26 @@ print(json.dumps({
 }))
 `;
 
+const NOT_APPLICABLE_HARNESS = String.raw`
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+guard.os.geteuid = lambda: 0
+guard._production_identity = lambda: object()
+guard._validate_action_readiness = lambda *_args, **_kwargs: False
+status = guard.main([
+    "unlock-failed-startup",
+    "--config-dir", guard.PRODUCTION_CONFIG_DIR,
+    "--plan-json", "{}",
+])
+print(json.dumps({"status": status}))
+`;
+
 describe("OpenClaw failed-startup unlock transaction (#8304)", () => {
   it("relocks both state layers after a config handoff failure", () => {
     const result = spawnSync(PYTHON, ["-c", TRANSACTION_HARNESS, GUARD_PATH], {
@@ -318,13 +362,38 @@ describe("OpenClaw failed-startup unlock transaction (#8304)", () => {
         "config-lock-quarantine-True",
         "state-lock",
       ],
+      rollback_reserve: 720,
       transaction_error: {
         code: "mutable-handoff-incomplete",
         detail: "handoff failed; rollback issues: state-dir lock: lock failed",
       },
       timeout_events: ["state-unlock", "config-lock-quarantine-True", "state-lock"],
+      timeout_rollback_reserve: 720,
+      timeout_rollback_remaining: 121,
       timeout_transaction_code: "state-dir-transition-timeout",
     });
+  });
+});
+
+describe("OpenClaw failed-startup host classification (#8304)", () => {
+  it("emits a distinct machine code when recovery is not applicable", () => {
+    const result = spawnSync(PYTHON, ["-c", NOT_APPLICABLE_HARNESS, GUARD_PATH], {
+      encoding: "utf-8",
+      timeout: 10000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const records = result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        type: "issue",
+        code: "failed-startup-not-proven",
+      }),
+    );
+    expect(records).toContainEqual({ status: 1 });
   });
 });
 
@@ -339,7 +408,7 @@ describe.skipIf(process.platform === "win32")(
 
       expect(result.status, result.stderr).toBe(0);
       const outcome = JSON.parse(result.stdout);
-      expect(outcome.inherited_status).toBe(0);
+      expect(outcome.inherited_status, JSON.stringify(outcome)).toBe(0);
       expect(outcome.inherited_records).toContainEqual(
         expect.objectContaining({ type: "result", action: "unlock", status: "ok" }),
       );

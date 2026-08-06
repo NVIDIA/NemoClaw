@@ -277,7 +277,9 @@ describe("OpenClaw top-config guard host wiring", () => {
       stderr: "",
     };
 
-    expect(parseOpenClawConfigGuardOutput("preflight", result).issues).toEqual(
+    const parsed = parseOpenClawConfigGuardOutput("preflight", result);
+    expect(parsed.issueCodes).toEqual(["hardlinked-config-file"]);
+    expect(parsed.issues).toEqual(
       expect.arrayContaining([
         expect.stringContaining("[hardlinked-config-file]"),
         expect.stringContaining("reported failure with a zero exit"),
@@ -422,10 +424,27 @@ describe("OpenClaw config guard failed-startup recovery wiring (#8304)", () => {
       .map(({ cmd }) => cmd)
       .find((cmd) => cmd.includes("unlock-failed-startup"));
 
-    // The guard allows the state-dir fan-out 12m, so a 5m host timeout would
+    // The guard allows the state-dir fan-out and rollback 22m, so a 5m host timeout would
     // kill it mid-unseal, past its rollback and its JSON error contract.
-    expect(recovery?.slice(0, 4)).toEqual(["timeout", "--signal=TERM", "--kill-after=5s", "15m"]);
-    expect(recovery).toContain("--plan-json");
+    expect(recovery?.slice(0, 4)).toEqual(["timeout", "--signal=TERM", "--kill-after=5s", "25m"]);
+    const planIndex = recovery?.indexOf("--plan-json") ?? -1;
+    expect(planIndex).toBeGreaterThan(-1);
+    expect(recovery?.[planIndex + 1]).toBe('{"version":1}');
+  });
+
+  it("rejects a missing recovery plan before privileged execution", () => {
+    for (const planJson of [undefined, ""]) {
+      const { calls, privileged } = createExec(true);
+      const result = runOpenClawConfigGuard(privileged, "unlock-failed-startup", {
+        planJson,
+      });
+
+      expect(result).toEqual({
+        issues: ["OpenClaw config guard unlock-failed-startup requires planJson"],
+        chattrApplied: false,
+      });
+      expect(calls).toEqual([]);
+    }
   });
 
   it("refuses the recovery action when the sandbox has no installed guard", () => {

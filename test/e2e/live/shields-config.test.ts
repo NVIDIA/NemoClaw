@@ -295,11 +295,11 @@ async function runInstalledFailedStartupUnlock(
   const script = [
     "set -eu",
     `plan_json=$(cat ${STATE_LOCK_PLAN_PATH})`,
-    `exec timeout --signal=TERM --kill-after=5s 15m python3 -I ${CONFIG_GUARD_PATH} unlock-failed-startup --config-dir ${CONFIG_DIR} --plan-json "$plan_json"`,
+    `exec timeout --signal=TERM --kill-after=5s 25m python3 -I ${CONFIG_GUARD_PATH} unlock-failed-startup --config-dir ${CONFIG_DIR} --plan-json "$plan_json"`,
   ].join("\n");
   return docker(host, ["exec", "--user", "0", containerId, "sh", "-c", script], {
     artifactName,
-    timeoutMs: 16 * 60_000,
+    timeoutMs: 26 * 60_000,
   });
 }
 
