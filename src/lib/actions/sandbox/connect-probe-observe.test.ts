@@ -55,9 +55,12 @@ describe("connectSandbox probe-only observe mode", () => {
     );
   });
 
-  it("uses canonical CA health only after this command relaunches portable startup (#8441)", async () => {
+  it.each([
+    "recovered",
+    "already-running",
+  ] as const)("uses canonical CA health for a validated portable lifecycle returning %s (#8441)", async (kind) => {
     const harness = createConnectHarness({
-      portableRecoveryResult: { kind: "recovered" },
+      portableRecoveryResult: { kind },
       registryEntry: { provider: "nvidia-prod", model: "nvidia/test" },
       inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/test\n",
       inferenceProbeResponses: [
@@ -69,6 +72,41 @@ describe("connectSandbox probe-only observe mode", () => {
 
     expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps full connect healthy when a recovered portable gateway is already running (#8441)", async () => {
+    const harness = createConnectHarness({
+      portableRecoveryResult: { kind: "already-running" },
+      registryEntry: { provider: "nvidia-prod", model: "nvidia/test" },
+      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/test\n",
+      inferenceProbeResponses: [
+        "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=200 canonical_tls_verify=0",
+      ],
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "inference.local is still unavailable",
+    );
+  });
+
+  it("keeps canonical CA success diagnostic without a portable lifecycle receipt (#8441)", async () => {
+    const canonicalOnly =
+      "BROKEN 000 curl_exit=60 tls_verify=19 canonical_curl_exit=0 canonical_http=200 canonical_tls_verify=0";
+    const harness = createConnectHarness({
+      portableRecoveryResult: { kind: "not-installed" },
+      registryEntry: { provider: "nvidia-prod", model: "nvidia/test" },
+      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/test\n",
+      inferenceProbeResponses: Array.from({ length: 10 }, () => canonicalOnly),
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "inference.local is still unavailable",
+    );
   });
 
   it("uses gatewayRecovery=recover on the full connect path", async () => {

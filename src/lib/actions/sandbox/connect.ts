@@ -1111,7 +1111,13 @@ async function runConnectEntryPreflight(
         registered,
         gatewayName,
       );
-      allowCanonicalCa = portableRecovery.kind === "recovered";
+      // Both successful receipt-managed outcomes validate the exact container
+      // ID and OpenShell labels before returning. Keep canonical-CA trust tied
+      // to that durable lifecycle boundary instead of whether this particular
+      // CLI invocation happened to launch nemoclaw-start: a failed connect can
+      // leave the recovered gateway running, and its retry is then reported as
+      // already-running.
+      allowCanonicalCa = portableRecovery.kind !== "not-installed";
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
