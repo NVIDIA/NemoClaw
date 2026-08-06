@@ -764,6 +764,7 @@ function _log(msg: string): void {
 
 const VERSION_SELECTOR_RE = /^v(\d+)$/i;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const SAFE_DYNAMIC_STATE_DIR_RE = /^[A-Za-z0-9._-]+$/;
 
 export function validateSnapshotName(name: string): string | null {
   if (!NAME_RE.test(name)) {
@@ -797,6 +798,45 @@ function isSafeStateDirPath(dirPath: string): boolean {
     normalized !== ".." &&
     !normalized.startsWith("../")
   );
+}
+
+function isAllowedDiscoveredStateDir(
+  candidate: string,
+  exactDirectories: readonly string[],
+  directoryPrefixes: readonly string[],
+): boolean {
+  if (exactDirectories.includes(candidate)) return true;
+  return (
+    SAFE_DYNAMIC_STATE_DIR_RE.test(candidate) &&
+    directoryPrefixes.some((prefix) => candidate.startsWith(prefix))
+  );
+}
+
+function hasStateDirectorySources(
+  exactDirectories: readonly string[],
+  directoryPrefixes: readonly string[],
+): boolean {
+  return exactDirectories.length > 0 || directoryPrefixes.length > 0;
+}
+
+function describeStateDirDiscoveryFailure(
+  result: ReturnType<typeof spawnSync>,
+  invalidDirectories: readonly string[],
+): { log: string; unreachable: boolean; error?: string } | null {
+  if (result.status !== 0) {
+    return {
+      log: `FAILED: SSH dir check exited ${String(result.status)} — cannot determine which dirs exist`,
+      unreachable: isSshTransportFailure(result),
+    };
+  }
+  if (invalidDirectories.length > 0) {
+    return {
+      log: `SECURITY: State directory discovery returned undeclared or unsafe entries: ${invalidDirectories.map((entry) => JSON.stringify(entry)).join(", ")}`,
+      unreachable: false,
+      error: "State directory discovery returned undeclared or unsafe entries",
+    };
+  }
+  return null;
 }
 
 function isStateDirArray(value: unknown): value is string[] {
@@ -1138,14 +1178,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
   const dir = agent.configPaths.dir;
-  // Runtime auth state (device identity keypairs, paired-device tokens) is
-  // never captured: sanitizeBackupDirectory scrubs its key/token fields, so a
-  // backup copy could only ever restore as corrupt auth state (#6852).
-  const runtimeAuthStateDirs = new Set(agent.runtimeAuthStateDirs);
-  const stateDirs = agent.stateDirs.filter((d) => !runtimeAuthStateDirs.has(d));
+  const stateDirs = agent.backupStateDirs;
+  const stateDirPrefixes = agent.backupStateDirPrefixes;
+  const hasBackupDirectories = hasStateDirectorySources(stateDirs, stateDirPrefixes);
   const stateFiles = normalizeStateFileSpecs(agent.stateFiles);
   _log(
-    `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
+    `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateDirPrefixes=[${stateDirPrefixes.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
   );
 
   const snapshotAuthority = normalizeSnapshotBackupAuthority(options);
@@ -1272,7 +1310,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const failedFiles: string[] = [];
   let unreachable = false;
 
-  if (stateDirs.length === 0 && stateFiles.length === 0) {
+  if (!hasBackupDirectories && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
     const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
     if (publicationError) {
@@ -1313,18 +1351,29 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
   const configFile = tempSshConfig.file;
   try {
-    if (stateDirs.length > 0) {
+    if (hasBackupDirectories) {
       // Build tar command that only includes existing directories.
       // First, check which declared state dirs actually exist in the sandbox,
-      // then additionally discover per-agent `workspace-*` directories produced
-      // by multi-agent OpenClaw deployments (see issue #1260) so they get
-      // snapshotted alongside the manifest-declared dirs. `awk '!seen[$0]++'`
-      // dedupes while preserving order.
-      const existCheckCmd = stateDirs
-        .map((d) => `[ -d ${shellQuote(`${dir}/${d}`)} ] && printf '%s\\n' ${shellQuote(d)}`)
-        .join("; ");
-      const workspaceGlobCmd = `for d in ${shellQuote(dir)}/workspace-*/; do [ -d "$d" ] && basename "$d"; done 2>/dev/null`;
-      const fullCheckCmd = `{ ${existCheckCmd}; ${workspaceGlobCmd}; } 2>/dev/null | awk '!seen[$0]++'`;
+      // then discover directories matching prefixes declared by the same agent
+      // contract. Quote each literal prefix and leave only the appended `*`
+      // unquoted for expansion. Reject non-canonical basenames in the sandbox
+      // before emitting newline-delimited output, then independently validate
+      // every result on the host.
+      const discoveryCommands = [
+        ...stateDirs.map(
+          (d) => `[ -d ${shellQuote(`${dir}/${d}`)} ] && printf '%s\\n' ${shellQuote(d)}`,
+        ),
+        ...stateDirPrefixes.map(
+          (prefix) =>
+            `for d in ${shellQuote(`${dir}/${prefix}`)}*/; do [ -d "$d" ] || continue; d=\${d%/}; candidate=\${d##*/}; case "$candidate" in *[!A-Za-z0-9._-]*|'') exit 65 ;; esac; printf '%s\\n' "$candidate"; done`,
+        ),
+      ];
+      // Exact directory probes are optional and return 1 when absent. End the
+      // group with a successful no-op so an absent final declaration does not
+      // turn ordinary discovery into a transport failure. An unsafe dynamic
+      // basename still uses `exit 65`, which terminates the remote shell before
+      // this no-op can run.
+      const fullCheckCmd = `{ ${discoveryCommands.join("; ")}; :; } 2>/dev/null`;
       _log(`Checking existing dirs via SSH: ${fullCheckCmd.substring(0, 100)}...`);
       const existResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), fullCheckCmd], {
         encoding: "utf-8",
@@ -1334,28 +1383,34 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       _log(
         `Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`,
       );
-      const existingDirs = (existResult.stdout || "")
-        .trim()
-        .split("\n")
-        .filter((d) => d.length > 0);
-      _log(
-        `Existing dirs in sandbox: [${existingDirs.join(",")}] (${existingDirs.length}/${stateDirs.length})`,
+      const existingDirs = [
+        ...new Set(
+          (existResult.stdout || "")
+            .trim()
+            .split("\n")
+            .filter((d) => d.length > 0),
+        ),
+      ];
+      const invalidExistingDirs = existingDirs.filter(
+        (candidate) => !isAllowedDiscoveredStateDir(candidate, stateDirs, stateDirPrefixes),
       );
-
-      if (existResult.status !== 0) {
-        _log(
-          `FAILED: SSH dir check exited ${existResult.status} — cannot determine which dirs exist`,
-        );
+      const discoveryFailure = describeStateDirDiscoveryFailure(existResult, invalidExistingDirs);
+      if (discoveryFailure) {
+        _log(discoveryFailure.log);
         return {
           success: false,
-          unreachable: isSshTransportFailure(existResult),
+          unreachable: discoveryFailure.unreachable,
           manifest,
           backedUpDirs,
           failedDirs: [...stateDirs],
           backedUpFiles,
           failedFiles: stateFiles.map((f) => f.path),
+          error: discoveryFailure.error,
         };
       }
+      _log(
+        `Existing dirs in sandbox: [${existingDirs.join(",")}] (${existingDirs.length}/${stateDirs.length})`,
+      );
 
       if (existingDirs.length === 0) {
         _log("No state dirs found in sandbox (all empty)");
@@ -1601,19 +1656,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // SECURITY: Strip credentials from the local backup
   sanitizeBackupDirectory(backupPath);
 
-  // Record any discovered per-agent workspace-* directories in the manifest
-  // alongside the manifest-declared state dirs, so restoreSandboxState()
-  // finds them when filtering backupPath contents. Preserve declared order
-  // and append newly-discovered workspace-* names that weren't already in
-  // stateDirs. See issue #1260.
-  const discoveredWorkspaces = backedUpDirs.filter(
-    (d) => d.startsWith("workspace-") && !stateDirs.includes(d),
+  // Record dynamically discovered directories in the manifest alongside the
+  // exact declarations so restoreSandboxState() can find them in backupPath.
+  // Preserve exact declaration order, followed by prefix-discovery order.
+  const discoveredStateDirs = backedUpDirs.filter(
+    (dirName) =>
+      !stateDirs.includes(dirName) && stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
   );
-  if (discoveredWorkspaces.length > 0) {
-    manifest.stateDirs = [...stateDirs, ...discoveredWorkspaces];
-    _log(
-      `Manifest stateDirs extended with multi-agent workspaces: [${discoveredWorkspaces.join(",")}]`,
-    );
+  if (discoveredStateDirs.length > 0) {
+    manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
+    _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
   }
   manifest.backedUpDirs = backedUpDirs;
   manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
@@ -1926,16 +1978,29 @@ function restoreSandboxStateInternal(
       `Backup state directory '${normalizedBackupDir}' does not match target directory '${normalizedTargetDir}'`,
     );
   }
-  // Runtime auth state is never restored: its backup copies are
-  // credential-scrubbed and would replace the sandbox's working device
-  // identity and pairing tokens with corrupt files (#6852). The current
-  // target manifest is authoritative here so legacy backups whose embedded
-  // manifests still list these dirs are also skipped.
-  const targetRuntimeAuthDirs = new Set(targetAgent.runtimeAuthStateDirs);
-  const skippedRuntimeAuthDirs = localDirs.filter((d) => targetRuntimeAuthDirs.has(d));
-  if (skippedRuntimeAuthDirs.length > 0) {
-    _log(`Skipping runtime auth state dirs from restore: [${skippedRuntimeAuthDirs.join(",")}]`);
-    for (const d of skippedRuntimeAuthDirs) {
+  // The current target manifest remains authoritative for non-backup state,
+  // including legacy snapshots whose embedded manifests still list it.
+  const targetNonBackupDirs = targetAgent.nonBackupStateDirs;
+  const targetNonBackupPrefixes = targetAgent.nonBackupStateDirPrefixes;
+  const isTargetNonBackupDir = (dirName: string): boolean =>
+    isAllowedDiscoveredStateDir(dirName, targetNonBackupDirs, targetNonBackupPrefixes);
+  const targetBackupDirs = targetAgent.backupStateDirs;
+  const targetBackupPrefixes = targetAgent.backupStateDirPrefixes;
+  const isTargetBackupDir = (dirName: string): boolean =>
+    !isTargetNonBackupDir(dirName) &&
+    isAllowedDiscoveredStateDir(dirName, targetBackupDirs, targetBackupPrefixes);
+  const undeclaredSnapshotDirs = manifest.stateDirs.filter(
+    (dirName) => !isTargetBackupDir(dirName) && !isTargetNonBackupDir(dirName),
+  );
+  if (undeclaredSnapshotDirs.length > 0) {
+    return failRestoreContract(
+      `Backup state directories are not declared by target agent '${options.targetAgentType}': ${undeclaredSnapshotDirs.join(", ")}`,
+    );
+  }
+  const skippedNonBackupDirs = localDirs.filter(isTargetNonBackupDir);
+  if (skippedNonBackupDirs.length > 0) {
+    _log(`Skipping non-backup state dirs from restore: [${skippedNonBackupDirs.join(",")}]`);
+    for (const d of skippedNonBackupDirs) {
       localDirs.splice(localDirs.indexOf(d), 1);
     }
   }
@@ -1949,7 +2014,8 @@ function restoreSandboxStateInternal(
       ? []
       : manifest.stateDirs.filter(
           (stateDir) =>
-            !targetRuntimeAuthDirs.has(stateDir) &&
+            isTargetBackupDir(stateDir) &&
+            !isTargetNonBackupDir(stateDir) &&
             !localDirSet.has(stateDir) &&
             !failedBackupDirs.has(stateDir),
         );
