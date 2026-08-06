@@ -274,11 +274,23 @@ function canonicalCapabilities(value: unknown, label: string): string[] {
   return normalized.sort();
 }
 
+function canonicalStringSet(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`Managed bootstrap Docker ${label} must be a string array.`);
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate entries.`);
+  }
+  return [...value].sort();
+}
+
 function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
     if (normalized[key] === null) normalized[key] = [];
   }
+  if (normalized.OomKillDisable === null) normalized.OomKillDisable = false;
+  if ("Binds" in normalized) normalized.Binds = canonicalStringSet(normalized.Binds, "Binds");
   for (const key of ["CapAdd", "CapDrop"] as const) {
     if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
   }

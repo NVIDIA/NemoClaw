@@ -741,7 +741,10 @@ Live targets can create external resources.
 After a failure, inspect the workflow artifacts and remove resources that target cleanup did not remove.
 
 For a manual PR run, provide the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
-Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
+Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` for the default suite.
+For the exact protected managed-runtime qualification, set only
+`jobs=managed-image-protected-runtime`; keep `targets` empty and
+`include_staging_brev_launchable=false`.
 The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the exact open PR before candidate code runs.
 A second validation after checkout rejects a changed head, base, or repository before preparation.
 

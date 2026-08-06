@@ -76,6 +76,7 @@ describe("managed bootstrap Docker launch spec", () => {
   it("canonicalizes Docker API and CLI host-list representations", () => {
     const apiInspect = createDockerGpuInspectFixture();
     Object.assign(apiInspect.HostConfig!, {
+      Binds: ["/host/a:/sandbox/a:ro", "/host/b:/sandbox/b:ro"],
       BlkioDeviceReadBps: null,
       BlkioDeviceReadIOps: null,
       BlkioDeviceWriteBps: null,
@@ -86,10 +87,12 @@ describe("managed bootstrap Docker launch spec", () => {
       Devices: null,
       DnsOptions: null,
       DnsSearch: null,
+      OomKillDisable: null,
       Ulimits: null,
     });
     const cliInspect = structuredClone(apiInspect);
     Object.assign(cliInspect.HostConfig!, {
+      Binds: ["/host/b:/sandbox/b:ro", "/host/a:/sandbox/a:ro"],
       BlkioDeviceReadBps: [],
       BlkioDeviceReadIOps: [],
       BlkioDeviceWriteBps: [],
@@ -100,6 +103,7 @@ describe("managed bootstrap Docker launch spec", () => {
       Devices: [],
       DnsOptions: [],
       DnsSearch: [],
+      OomKillDisable: false,
       Ulimits: [],
     });
 
