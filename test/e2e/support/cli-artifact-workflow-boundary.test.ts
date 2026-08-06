@@ -470,7 +470,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
   it("reuses an immutable producer artifact during a later failed-job rerun", () => {
     const fixture = runRestoreValidation({ consumerRunAttempt: "2", producerRunAttempt: "1" });
     try {
-      expect(fixture.result.status, fixture.output).toBe(0);
+      expect(fixture.result.status, "cross-attempt CLI artifact restore failed").toBe(0);
       expect(
         JSON.parse(
           fs.readFileSync(path.join(fixture.workspace, "dist", "build-identity.json"), "utf8"),
