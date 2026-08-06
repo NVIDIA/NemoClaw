@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { writeFileSync } from "node:fs";
+import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { githubApi } from "../advisors/github.mts";
@@ -266,6 +266,24 @@ function integerEnvironment(name: string): number {
   return Number(value);
 }
 
+function writeRetryEvidence(file: string, evidence: MainRunRetryEvidence): void {
+  const descriptor = fs.openSync(
+    file,
+    fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+    0o600,
+  );
+  try {
+    // lgtm[js/network-data-to-file] The controller serializes bounded, validated
+    // GitHub run and job fields to a fixed runner-owned path through an exclusive
+    // 0600 descriptor. The artifact uploader treats the JSON as data and never executes it.
+    // lgtm[js/http-to-file-access]
+    fs.writeFileSync(descriptor, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+
 async function main(): Promise<void> {
   const evidence = await evaluateMainRunRetry({
     repository: requiredEnvironment("GITHUB_REPOSITORY"),
@@ -273,11 +291,7 @@ async function main(): Promise<void> {
     sourceRunId: integerEnvironment("SOURCE_RUN_ID"),
     controllerAttempt: integerEnvironment("GITHUB_RUN_ATTEMPT"),
   });
-  writeFileSync(requiredEnvironment("RETRY_EVIDENCE_PATH"), `${JSON.stringify(evidence, null, 2)}\n`, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
+  writeRetryEvidence(requiredEnvironment("RETRY_EVIDENCE_PATH"), evidence);
   const message = `${evidence.reason}; ${evidence.totalRunnerMinutes} runner-minutes across ${evidence.sourceAttempt} attempt(s)`;
   if (evidence.flaky) console.log(`::warning title=E2E passed after retry::${message}`);
   else console.log(`::notice title=E2E retry decision::${message}`);
