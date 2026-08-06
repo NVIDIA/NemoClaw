@@ -388,7 +388,7 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
   ],
   ["test/e2e/live/ollama-auth-proxy.test.ts#spawnLogged", { kind: "path", path: "progress" }],
   [
-    "test/e2e/live/portable-profile-rootless-linux.test.ts#verifyPinnedPodmanGatewayStarts",
+    "test/e2e/live/portable-profile-gateway-proof.ts#verifyPinnedPodmanGatewayStarts",
     { kind: "path", path: "progress" },
   ],
   [
