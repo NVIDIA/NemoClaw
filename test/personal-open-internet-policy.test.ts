@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { BlockList, isIP } from "node:net";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
@@ -26,8 +27,25 @@ function loadPersonalInternetPolicy(): {
   return document.network_policies.personal_open_internet;
 }
 
+function allowedAddressMatcher(cidrs: readonly string[]): (address: string) => boolean {
+  const allowed = new BlockList();
+  for (const cidr of cidrs) {
+    const [address, prefixText] = cidr.split("/");
+    const family = isIP(address ?? "");
+    const prefix = Number(prefixText);
+    if (family === 0 || !Number.isInteger(prefix)) {
+      throw new Error(`invalid policy CIDR: ${cidr}`);
+    }
+    allowed.addSubnet(address!, prefix, family === 4 ? "ipv4" : "ipv6");
+  }
+  return (address: string): boolean => {
+    const family = isIP(address);
+    return family !== 0 && allowed.check(address, family === 4 ? "ipv4" : "ipv6");
+  };
+}
+
 describe("Personal open internet policy preset", () => {
-  it("uses OpenShell hostless L4 matching for HTTP and HTTPS from every binary", () => {
+  it("uses OpenShell hostless L4 matching on TCP ports 80 and 443 from every binary", () => {
     const policy = loadPersonalInternetPolicy();
 
     expect(policy.binaries).toEqual([{ path: "/**" }]);
@@ -57,6 +75,34 @@ describe("Personal open internet policy preset", () => {
     expect(allowedIps).not.toContain("127.0.0.0/8");
     expect(allowedIps).not.toContain("169.254.0.0/16");
     expect(allowedIps).not.toContain("::/0");
+  });
+
+  it.each([
+    80, 443,
+  ])("excludes normalized hard-blocked address classes at the connection boundary on port %i", (port) => {
+    const endpoint = loadPersonalInternetPolicy().endpoints[0]!;
+    expect(endpoint.ports).toContain(port);
+    const isAllowed = allowedAddressMatcher(endpoint.allowed_ips ?? []);
+
+    for (const address of [
+      "0.0.0.0",
+      "127.0.0.1",
+      "127.1.2.3",
+      "169.254.169.254",
+      "::",
+      "::1",
+      "0:0:0:0:0:0:0:1",
+      "fe80::1",
+      "::ffff:127.0.0.1",
+      "0:0:0:0:0:ffff:7f00:1",
+      "::ffff:169.254.169.254",
+    ]) {
+      expect(isAllowed(address), address).toBe(false);
+    }
+
+    for (const address of ["8.8.8.8", "10.0.0.1", "2001:4860:4860::8888", "fc00::1"]) {
+      expect(isAllowed(address), address).toBe(true);
+    }
   });
 
   it("composes unchanged into the create-time sandbox policy", () => {
