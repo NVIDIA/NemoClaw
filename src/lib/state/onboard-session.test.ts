@@ -185,6 +185,48 @@ describe("onboard session", () => {
     expect(normalized.observabilityRequestedExplicitly).toBe(false);
   });
 
+  it("persists serving profile provenance while accepting legacy sessions (#8246)", () => {
+    const provenance = {
+      schemaVersion: 1,
+      catalogDigest: `sha256:${"1".repeat(64)}`,
+      preset: {
+        id: "vllm.dgx-spark-gb10.single.example",
+        digest: `sha256:${"2".repeat(64)}`,
+        displayName: "Example profile",
+        supportState: "experimental",
+      },
+      recipe: {
+        id: "vllm.dgx-spark-gb10.single.example",
+        digest: `sha256:${"3".repeat(64)}`,
+        backend: "vllm",
+      },
+      model: { id: "example/model", revision: "revision-1" },
+      runtimeImage: `example.invalid/vllm@sha256:${"4".repeat(64)}`,
+      estimatedImageDownloadBytes: 10,
+      estimatedModelDownloadBytes: 20,
+    } as const;
+    session.saveSession(session.createSession({ servingProfileProvenance: provenance }));
+
+    expect(requireLoadedSession(session.loadSession()).servingProfileProvenance).toEqual(
+      provenance,
+    );
+    expect(requireDebugSummary(session.summarizeForDebug()).servingProfileProvenance).toEqual(
+      provenance,
+    );
+
+    const legacy = session.createSession() as unknown as Record<string, unknown>;
+    delete legacy.servingProfileProvenance;
+    expect(
+      requireLoadedSession(session.normalizeSession(legacy as never)).servingProfileProvenance,
+    ).toBeNull();
+  });
+
+  it("fails closed on malformed persisted serving profile provenance (#8246)", () => {
+    const malformed = session.createSession() as unknown as Record<string, unknown>;
+    malformed.servingProfileProvenance = { schemaVersion: 1, catalogDigest: "latest" };
+    expect(session.normalizeSession(malformed as never)).toBeNull();
+  });
+
   it("redacts credential-bearing endpoint URLs before persisting them", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", {

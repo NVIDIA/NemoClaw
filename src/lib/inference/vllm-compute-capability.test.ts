@@ -105,6 +105,10 @@ function mockDockerDaemon(containerName: string, restartCount = "0"): void {
   mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
   mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
     switch (args[0]) {
+      case "container":
+        return mocks.dockerRunDetached.mock.calls.length > 0
+          ? `${"a".repeat(64)}|${containerName}|running|true|||\n`
+          : "";
       case "ps":
         return `${containerName}\n`;
       case "inspect":
