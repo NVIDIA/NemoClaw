@@ -32,6 +32,27 @@ hermes whatsapp
 NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
 If pairing exits with a gateway close such as `1008`, rerun the login command once, then check `$$nemoclaw <sandbox> channels status --channel whatsapp` to diagnose the gateway and session path separately from QR rendering.
 </AgentOnly>
+<AgentOnly variant="hermes">
+Hermes can pair from the Dashboard profile while the gateway reads the default `platforms/whatsapp/session` path.
+After scanning a dashboard QR code, run `$$nemoclaw <sandbox> channels status --channel whatsapp`.
+If the report says `dashboard-home has WhatsApp credentials, but the Hermes gateway session path is empty`, point the gateway at the dashboard session with the supported config command:
+
+```bash
+$$nemoclaw <sandbox> shields down --reason "repair Hermes WhatsApp session path"
+$$nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path
+$$nemoclaw <sandbox> shields up
+```
+
+Keep Shields down until `config set` finishes, then restore the restrictive posture with `shields up`.
+The `--config-accept-new-path` flag lets the command write the `platforms.whatsapp.extra.session_path` configuration key when the generated config does not already contain it.
+Dashboard pairing writes session credentials under `profiles/dashboard-home`; this bounded compatibility repair redirects the gateway to that session path while it still reads the default path otherwise.
+The repair stays documented until Hermes dashboard pairing state and gateway startup converge on one shared session path; NemoClaw can redirect the configured path but does not rewrite Hermes pairing state.
+Before removing the override, run `$$nemoclaw <sandbox> channels status --channel whatsapp` after dashboard pairing and gateway startup and confirm the report no longer shows a dashboard-home session with an empty gateway session path.
+Remove the override only after Hermes uses one shared WhatsApp session path for dashboard pairing and gateway startup.
+Do not edit `/sandbox/.hermes/.env` or `/sandbox/.hermes/config.yaml` by hand.
+Manual edits can cause the Hermes config-integrity guard to reject restart with `hash-mismatch`.
+Supervisor quarantine happens after repeated relaunch failures or other integrity failures.
+</AgentOnly>
 
 ## Protect Paired Session State
 
@@ -39,7 +60,7 @@ If pairing exits with a gateway close such as `1008`, rerun the login command on
 The sandbox stores mutable session credentials in durable `whatsapp` state.
 </AgentOnly>
 <AgentOnly variant="hermes">
-The sandbox stores mutable session credentials in durable `platforms/whatsapp` state.
+The sandbox stores mutable session credentials in durable `platforms/whatsapp` state for the gateway and `profiles/dashboard-home/platforms/whatsapp` state for Dashboard pairing.
 </AgentOnly>
 The credentials survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
@@ -50,6 +71,8 @@ Pair only one sandbox per WhatsApp account at a time.
 For non-interactive onboarding, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list to select WhatsApp for either agent.
 <AgentOnly variant="hermes">
 Hermes also uses these values as its WhatsApp sender allowlist.
+Use digits only, such as `15551234567`.
+Do not include a leading `+`.
 </AgentOnly>
 
 Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).

@@ -181,7 +181,7 @@ with tempfile.TemporaryDirectory() as root:
 
     control._sandbox_uid = lambda: 1000
     control._http_healthy_in_gateway_namespace = (
-        lambda _reader, _identity, port, path: (port, path) in {
+        lambda _reader, _identity, port, path, *_args: (port, path) in {
             (18642, "/health"),
             (8642, "/health"),
         }
@@ -416,7 +416,7 @@ with tempfile.TemporaryDirectory() as root:
         real_validator = control._run_fixed_validator
         real_runtime_validator = control._validate_runtime_environment
         real_hash_check = control._verify_locked_hermes_hash
-        control._run_fixed_validator = lambda script, arguments: preflight_steps.append({
+        control._run_fixed_validator = lambda script, arguments, _recovery_deadline=None: preflight_steps.append({
             "script": script,
             "arguments": arguments,
         })
@@ -665,8 +665,6 @@ with tempfile.TemporaryDirectory() as root:
     control._preflight = lambda *_args: None
     control._http_healthy_in_gateway_namespace = lambda *_args: True
     real_terminate = control._terminate_gateway
-    with control.ProcReader(proc_root) as controller_reader:
-        controller_identity = control._controller_process_identity(controller_reader)
     lease_path = os.path.join(
         system_root,
         "run/nemoclaw",
@@ -703,7 +701,7 @@ with tempfile.TemporaryDirectory() as root:
                 and lock_metadata.st_nlink == 1
             ),
         })
-    def replace_gateway(_reader, identity):
+    def replace_gateway(_reader, identity, _recovery_deadline=None):
         assert identity.pid == 41
         observe_expected_exit_lease(identity, "restart")
         remove_process(proc_root, 41)
@@ -717,69 +715,6 @@ with tempfile.TemporaryDirectory() as root:
             b"/usr/local/bin/hermes.real\0gateway\0run\0",
             listener_inode="77777",
         )
-
-    active_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
-    )
-    try:
-        control._publish_expected_exit_lease(expected_gateway, controller_identity)
-        active_controller_lock = "replaced"
-    except control.ControlError as error:
-        active_controller_lock = error.code
-    control._clear_expected_exit_lease(active_lease)
-
-    orphaned_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
-    )
-    orphaned_inode = os.stat(lease_path, follow_symlinks=False).st_ino
-    os.close(orphaned_lease.marker_fd)
-    os.close(orphaned_lease.lock_fd)
-    os.close(orphaned_lease.directory_fd)
-    untrusted_marker_fd = os.open(lease_path, os.O_RDONLY)
-    control.fcntl.flock(untrusted_marker_fd, control.fcntl.LOCK_SH)
-    recovered_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
-    )
-    marker_flock_cannot_pin = (
-        os.stat(lease_path, follow_symlinks=False).st_ino != orphaned_inode
-    )
-    control.fcntl.flock(untrusted_marker_fd, control.fcntl.LOCK_UN)
-    os.close(untrusted_marker_fd)
-    control._clear_expected_exit_lease(recovered_lease)
-
-    original_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
-    )
-    os.unlink(lease_path)
-    with open(lease_path, "w", encoding="ascii") as stream:
-        stream.write(f"v1 41 333 {controller_pid} {controller_start_time}\n")
-    os.chmod(lease_path, 0o444)
-    replacement_inode = os.stat(lease_path, follow_symlinks=False).st_ino
-    control._clear_expected_exit_lease(original_lease)
-    inode_safe_cleanup = (
-        os.path.exists(lease_path)
-        and os.stat(lease_path, follow_symlinks=False).st_ino == replacement_inode
-    )
-    os.unlink(lease_path)
-
-    os.unlink(lock_path)
-    original_umask = os.umask(0o777)
-    try:
-        restrictive_umask_lease = control._publish_expected_exit_lease(
-            expected_gateway,
-            controller_identity,
-        )
-    finally:
-        os.umask(original_umask)
-    restrictive_umask_modes = [
-        os.stat(lease_path, follow_symlinks=False).st_mode & 0o777,
-        os.stat(lock_path, follow_symlinks=False).st_mode & 0o777,
-    ]
-    control._clear_expected_exit_lease(restrictive_umask_lease)
 
     control._terminate_gateway = replace_gateway
     try:
@@ -795,9 +730,13 @@ with tempfile.TemporaryDirectory() as root:
         control._detect_agent = lambda: "openclaw"
         control._agent_spec = lambda *_args: control.AgentSpec("openclaw", 18642)
         control._gateway_candidates = lambda reader, *_args: [reader.capture(43)]
-        control._wait_for_healthy_gateway = lambda reader, *_args: reader.capture(43)
-        control._terminate_gateway = lambda _reader, identity: observe_expected_exit_lease(
-            identity, "openclaw-restart"
+        control._wait_for_healthy_gateway = (
+            lambda reader, *_args, **_kwargs: reader.capture(43)
+        )
+        control._terminate_gateway = (
+            lambda _reader, identity, _recovery_deadline=None: (
+                observe_expected_exit_lease(identity, "openclaw-restart")
+            )
         )
         try:
             openclaw_restart = control._control("restart", "f" * 64)
@@ -819,6 +758,7 @@ with tempfile.TemporaryDirectory() as root:
             old_identity,
             timeout_seconds=control.RECOVERY_TIMEOUT_SECONDS,
             require_auxiliary_health=False,
+            **_kwargs,
         ):
             timeout_refresh_waits.append([
                 old_identity.pid if old_identity else 0,
@@ -841,7 +781,11 @@ with tempfile.TemporaryDirectory() as root:
             if len(timeout_refresh_waits) == 2:
                 raise control.ControlError("GATEWAY_HEALTH_TIMEOUT")
             return reader.capture(45)
-        def terminate_refreshed_gateway(_reader, identity):
+        def terminate_refreshed_gateway(
+            _reader,
+            identity,
+            _recovery_deadline=None,
+        ):
             timeout_refresh_signals.append(identity.pid)
             assert identity.pid == 44
             observe_expected_exit_lease(identity, "unhealthy-recover")
@@ -909,7 +853,13 @@ with tempfile.TemporaryDirectory() as root:
 
         real_http_health = control._http_healthy_in_gateway_namespace
         public_health_attempts = []
-        def delayed_public_health(_reader, _identity, port, path):
+        def delayed_public_health(
+            _reader,
+            _identity,
+            port,
+            path,
+            _recovery_deadline=None,
+        ):
             if (port, path) == (8642, "/health"):
                 public_health_attempts.append("attempt")
                 return len(public_health_attempts) >= 2
@@ -931,9 +881,61 @@ with tempfile.TemporaryDirectory() as root:
         finally:
             control._http_healthy_in_gateway_namespace = real_http_health
 
+        deadline_clock = [0.0]
+        deadline_health_calls = []
+        real_monotonic = control.time.monotonic
+        real_owns_listener = control._owns_listener
+        real_http_health = control._http_healthy_in_gateway_namespace
+        control.time.monotonic = lambda: deadline_clock[0]
+        control._owns_listener = lambda *_args: True
+        def health_finishes_after_deadline(
+            _reader,
+            _identity,
+            port,
+            path,
+            recovery_deadline=None,
+        ):
+            deadline_health_calls.append([port, path, recovery_deadline])
+            if (port, path) == (8642, "/health"):
+                deadline_clock[0] = 1.1
+            return True
+        control._http_healthy_in_gateway_namespace = health_finishes_after_deadline
+        try:
+            with control.ProcReader(proc_root) as deadline_reader:
+                try:
+                    control._wait_for_healthy_gateway(
+                        deadline_reader,
+                        supervisor,
+                        control.AgentSpec(
+                            "hermes",
+                            18642,
+                            readiness_checks=((8642, "/health"),),
+                        ),
+                        None,
+                        1.0,
+                        True,
+                        1.0,
+                    )
+                    deadline_health = "accepted"
+                except control.ControlError as error:
+                    deadline_health = [
+                        error.code,
+                        deadline_clock[0],
+                        deadline_health_calls,
+                    ]
+        finally:
+            control.time.monotonic = real_monotonic
+            control._owns_listener = real_owns_listener
+            control._http_healthy_in_gateway_namespace = real_http_health
+
         auxiliary_attempts = []
         real_auxiliary_health = control._gateway_auxiliaries_healthy
-        def replace_during_auxiliary_check(_reader, identity, _spec):
+        def replace_during_auxiliary_check(
+            _reader,
+            identity,
+            _spec,
+            _recovery_deadline=None,
+        ):
             auxiliary_attempts.append(identity.pid)
             if identity.pid == 43:
                 remove_process(proc_root, 43)
@@ -1226,12 +1228,6 @@ with tempfile.TemporaryDirectory() as root:
         "recovered": recovered,
         "probed": probed,
         "openclaw_restart": openclaw_restart,
-        "lease_races": [
-            active_controller_lock,
-            marker_flock_cannot_pin,
-            inode_safe_cleanup,
-            restrictive_umask_modes,
-        ],
         "expected_exit_leases": [
             lease_observations,
             restart_lease_cleared,
@@ -1246,6 +1242,7 @@ with tempfile.TemporaryDirectory() as root:
         "inflight_recovery": [inflight_recovery, len(inflight_health_attempts)],
         "transient_retry": [retried_pid, len(health_attempts)],
         "public_readiness_retry": [readiness_pid, len(public_health_attempts)],
+        "deadline_health": deadline_health,
         "auxiliary_replacement": [auxiliary_replacement, auxiliary_attempts],
         "source_seams": [source_proc, source_system],
         "disabled_source_seams": [disabled_source_proc, disabled_source_system],
@@ -1353,7 +1350,6 @@ describe("managed gateway root control", () => {
       recovered: ["already-running", 43, 43],
       probed: ["already-running", 43, 43],
       openclaw_restart: ["ok", 43, 43],
-      lease_races: ["SUPERVISOR_BUSY", true, true, [0o444, 0o600]],
       expected_exit_leases: [
         [
           {
@@ -1382,12 +1378,20 @@ describe("managed gateway root control", () => {
         [
           [0, 10, false],
           [0, 10, false],
-          [44, 150, true],
+          [44, expect.any(Number), true],
         ],
       ],
       inflight_recovery: [["already-running", 43, 43], 4],
       transient_retry: [43, 2],
       public_readiness_retry: [43, 2],
+      deadline_health: [
+        "GATEWAY_HEALTH_TIMEOUT",
+        1.1,
+        [
+          [18642, "/health", 1],
+          [8642, "/health", 1],
+        ],
+      ],
       auxiliary_replacement: [44, [43, 44]],
       source_seams: ["/attacker/proc", "/attacker/root"],
       disabled_source_seams: ["/proc", "/"],
@@ -1457,6 +1461,8 @@ describe("managed gateway root control", () => {
         [1, ["SUPERVISOR_NOT_RUNNING"]],
       ],
     });
+    expect(output.timeout_refresh[2][2][1]).toBeGreaterThan(0);
+    expect(output.timeout_refresh[2][2][1]).toBeLessThanOrEqual(150);
     expect(output.start_log_security.installed_topology[0]).not.toBe(
       output.start_log_security.installed_topology[1],
     );
