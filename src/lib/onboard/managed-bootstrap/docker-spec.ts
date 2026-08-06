@@ -284,13 +284,26 @@ function canonicalStringSet(value: unknown, label: string): string[] {
   return [...value].sort();
 }
 
+function normalizedConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...config };
+  // Docker API clients may omit inactive image-only fields while older Docker
+  // CLIs serialize the same defaults as null, false, or an empty collection.
+  // Active values are rejected above because the clone cannot reproduce them.
+  for (const key of UNSUPPORTED_CONFIG_KEYS) {
+    if (isEmptyDefault(normalized[key])) delete normalized[key];
+  }
+  return normalized;
+}
+
 function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
     if (normalized[key] === null) normalized[key] = [];
   }
   if (normalized.OomKillDisable === null) normalized.OomKillDisable = false;
-  if ("Binds" in normalized) normalized.Binds = canonicalStringSet(normalized.Binds, "Binds");
+  for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
+    if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
+  }
   for (const key of ["CapAdd", "CapDrop"] as const) {
     if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
   }
@@ -358,7 +371,7 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
     schemaVersion: 1,
     inspect: {
       Name: inspect.Name,
-      Config: config as DockerContainerInspect["Config"],
+      Config: normalizedConfig(config) as DockerContainerInspect["Config"],
       HostConfig: normalizedHostConfig(hostConfig) as DockerContainerInspect["HostConfig"],
       NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings),
       ...("Platform" in raw && typeof raw.Platform === "string" ? { Platform: raw.Platform } : {}),
