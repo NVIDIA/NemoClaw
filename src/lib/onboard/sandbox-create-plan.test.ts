@@ -8,6 +8,7 @@ import {
   prepareSandboxCreatePlan,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
+  resolveSandboxCreatePolicyTier,
 } from "./sandbox-create-plan";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
@@ -403,6 +404,13 @@ describe("resolveSandboxCreateIntent", () => {
 });
 
 describe("prepareSandboxCreatePlan", () => {
+  it("recognizes Personal as a create-time policy tier", () => {
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+    vi.stubEnv("NEMOCLAW_POLICY_TIER", "personal");
+
+    expect(resolveSandboxCreatePolicyTier()).toBe("personal");
+  });
+
   it("builds create args, policy, providers, and active channels in onboard order", () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
     vi.stubEnv("NEMOCLAW_POLICY_TIER", "restricted");

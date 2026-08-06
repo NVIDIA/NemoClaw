@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -137,12 +138,14 @@ export function computeSetupPresetSuggestions(
   } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
+  const preservesAllWebSearchPresets = tierName === PERSONAL_POLICY_TIER_NAME;
   const suggestions = deps.tiers
     .resolveTierPresets(tierName)
     .map((preset) => preset.name)
     .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
     .filter(
       (name) =>
+        preservesAllWebSearchPresets ||
         !isStaleBuiltinWebSearchPolicyPreset(name, {
           webSearchConfig,
           customPresetNames: options.customPresetNames,
@@ -368,6 +371,7 @@ async function setupPoliciesWithSelectionInner(
 
   const tierName = recordedTierName ?? (await deps.selectPolicyTier());
   deps.setPolicyTier?.(sandboxName, tierName);
+  const personalTier = tierName === PERSONAL_POLICY_TIER_NAME;
   const suggestions = pruneUnavailablePresets(
     computeSetupPresetSuggestions(deps, tierName, {
       enabledChannels,
@@ -382,6 +386,7 @@ async function setupPoliciesWithSelectionInner(
       hermesToolGateways,
       env: deps.env,
     }),
+    { preserveExplicitWebSearch: personalTier },
   );
   const suppressedNames = emitSuppressedAgentRequiredPresetsNote(tierName, agent, deps.note);
 
@@ -462,7 +467,7 @@ async function setupPoliciesWithSelectionInner(
       customOwnsObservability,
     });
     chosen = pruneUnavailablePresets(chosen, {
-      preserveExplicitWebSearch: isAuthoritative,
+      preserveExplicitWebSearch: isAuthoritative || personalTier,
     });
 
     const invalidPresets = chosen.filter((name) => !knownPresets.has(name));
