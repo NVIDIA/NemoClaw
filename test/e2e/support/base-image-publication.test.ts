@@ -14,6 +14,7 @@ import {
   type FirstParentHistory,
   githubRequest,
   type PublicationRun,
+  isBaseImagePublicationEvent,
   parseBaseImagePushPaths,
   resolveFirstParentHistory,
   selectPublicationRun,
@@ -161,6 +162,18 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 describe("base-image publication evidence", () => {
+  it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
+    expect(isBaseImagePublicationEvent(eventName)).toBe(true);
+  });
+
+  it.each([
+    "schedule",
+    "pull_request",
+    undefined,
+  ])("rejects unsupported %s publication preflight events", (eventName) => {
+    expect(isBaseImagePublicationEvent(eventName)).toBe(false);
+  });
+
   it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
     const source = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),

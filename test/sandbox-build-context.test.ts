@@ -35,6 +35,7 @@ describe("sandbox build context staging", () => {
 
     writeFixture("Dockerfile");
     writeFixture("tsconfig.runtime-preloads.json", "{}\n");
+    writeFixture(path.join("agents", "openclaw", "state-lock-plan.json"), "{}\n");
     writeFixture(
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
@@ -582,6 +583,9 @@ describe("sandbox build context staging", () => {
         true,
       );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "state-dir-guard.py"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "agents", "openclaw", "state-lock-plan.json"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "openclaw-config-guard.py"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(

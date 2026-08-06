@@ -13,7 +13,12 @@
     },
     {
       "file": "src/lib/agent/base-image-hermes.test.ts",
-      "test": "accepts only the tracked published Hermes base digest",
+      "test": "requires the pinned Hermes base image and checks installed dependency versions after messaging package installation (#8328)",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/agent/state-directory-contract.test.ts",
+      "test": "keeps generated image plans equal to their AgentDefinition projections (#8006)",
       "category": "security"
     },
     {
@@ -50,6 +55,11 @@
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
+    },
+    {
+      "file": "test/code-change-considerations.test.ts",
+      "test": "keeps the stage-neutral questions in one concise owner",
+      "category": "compatibility"
     },
     {
       "file": "test/code-scanning-workflow.test.ts",
@@ -492,26 +502,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "limits triggers and job permissions",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "pins both controller checkouts and installs without lifecycle scripts or caches",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-workflow.test.ts",
-      "test": "orders the coordinate steps and always finalizes through the controller",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-shards.test.ts",
-      "test": "rejects malformed configured matrix shard selectors",
-      "category": "security"
-    },
-    {
       "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "binds host-prepared GitHub context to the selected repository and pull request",
       "category": "compatibility"
@@ -550,6 +540,11 @@
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps migrated provider identities and implementations behind the one bundle composition",
       "category": "compatibility"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps Docker llama.cpp lifecycle authority dormant (#8395)",
+      "category": "security"
     },
     {
       "file": "test/source-architecture.test.ts",

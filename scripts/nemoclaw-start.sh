@@ -835,7 +835,8 @@ prepare_openclaw_config_startup() {
     echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
     timeout --signal=TERM --kill-after=5s 12m \
       python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
-      --config-dir /sandbox/.openclaw || return 1
+      --config-dir /sandbox/.openclaw \
+      --plan-file /usr/local/share/nemoclaw/state-lock-plan.json || return 1
   fi
 }
 
@@ -4182,16 +4183,6 @@ ensure_mutable_for_migration() {
   return 1
 }
 
-restore_immutable_if_possible() {
-  command -v chattr >/dev/null 2>&1 || return 0
-  local target
-  for target in "$@"; do
-    [ -e "$target" ] || [ -L "$target" ] || continue
-    [ -L "$target" ] && continue
-    chattr +i "$target" 2>/dev/null || true
-  done
-}
-
 chown_tree_no_symlink_follow() {
   local owner="$1" target="$2"
   [ -d "$target" ] || return 0
@@ -4341,6 +4332,26 @@ migrate_legacy_layout() {
     chown_tree_no_symlink_follow sandbox:sandbox "$entry"
   done
 
+  # Reapply the canonical shields posture before committing the migration.
+  # The config guard verifies that the protected config/hash pair is still
+  # sealed. The state-dir guard derives every recursive permission from the
+  # installed agent manifest plan. Keep the legacy data directory until both
+  # guards succeed so a failed relock remains retryable on the next startup.
+  if [ "$shields_were_active" = "true" ]; then
+    echo "[migration] Reapplying Shields up posture on ${config_dir}" >&2
+    if ! run_openclaw_config_guard recover --startup-owner; then
+      echo "[SECURITY] ${label}: canonical config guard refused the migrated layout" >&2
+      return 1
+    fi
+    if ! timeout --signal=TERM --kill-after=5s 12m \
+      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
+      --config-dir "$config_dir" \
+      --plan-file /usr/local/share/nemoclaw/state-lock-plan.json; then
+      echo "[SECURITY] ${label}: canonical state-dir guard refused the migrated layout" >&2
+      return 1
+    fi
+  fi
+
   rm -rf "$data_dir"
   assert_no_legacy_layout "$config_dir" "$data_dir" "$label" || return 1
 
@@ -4349,33 +4360,6 @@ migrate_legacy_layout() {
   printf 'migrated=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$sentinel"
   chown root:root "$sentinel" 2>/dev/null || true
   chmod 444 "$sentinel" 2>/dev/null || true
-
-  # Reapply shields-up ownership if config dir was previously root-locked.
-  if [ "$shields_were_active" = "true" ]; then
-    echo "[migration] Reapplying shields-up ownership on ${config_dir}" >&2
-    chown root:root "$config_dir" 2>/dev/null || true
-    chmod 755 "$config_dir" 2>/dev/null || true
-    # Re-lock known sensitive files if they exist
-    for f in "$config_dir"/openclaw.json "$config_dir"/.config-hash "$config_dir"/.env; do
-      if [ -f "$f" ]; then
-        chown root:root "$f" 2>/dev/null || true
-        chmod 444 "$f" 2>/dev/null || true
-      fi
-    done
-    for subdir in skills hooks cron agents extensions plugins; do
-      if [ -d "$config_dir/$subdir" ]; then
-        chown_tree_no_symlink_follow root:root "$config_dir/$subdir"
-        chmod 755 "$config_dir/$subdir" 2>/dev/null || true
-        chmod -R go-w "$config_dir/$subdir" 2>/dev/null || true
-        restore_immutable_if_possible "$config_dir/$subdir"
-      fi
-    done
-    restore_immutable_if_possible \
-      "$config_dir"/openclaw.json \
-      "$config_dir"/.config-hash \
-      "$config_dir"/.env \
-      "$config_dir"
-  fi
 
   echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
 }

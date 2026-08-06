@@ -5,6 +5,19 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
+import {
+  resolveServingProfileSelection,
+  type ServingProfileListEntry,
+  ServingProfileSelectionError,
+} from "../inference/serving/profile-list";
+import {
+  assertServingProfileProvenanceCurrent,
+  servingProfileProvenance,
+} from "../inference/serving/profile-provenance";
+import type { CompiledServingCatalog, ServingProfileProvenance } from "../inference/serving/types";
+import { VLLM_EXTRA_ARGS_ENV } from "../inference/vllm-models";
 import {
   resolveToolDisclosureRequest,
   TOOL_DISCLOSURE_ENV,
@@ -12,6 +25,11 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import {
+  EXPERIMENTAL_PROFILE_ENV,
+  type ExperimentalOnboardProfile,
+  PORTABLE_EXPERIMENTAL_PROFILE,
+} from "./docker-driver-platform";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
@@ -38,11 +56,17 @@ export interface OnboardCommandOptions {
   noGpu: boolean;
   autoYes: boolean;
   noOllamaAutostart: boolean;
+  experimentalProfile: ExperimentalOnboardProfile | null;
+  servingProfile: string | null;
+  servingProfileProvenance: ServingProfileProvenance | null;
 }
 
 export interface ResolveOnboardOptionsDeps {
   env: NodeJS.ProcessEnv;
   listAgents?: () => string[];
+  listServingProfiles?: () => ServingProfileListEntry[];
+  loadServingCatalog?: () => CompiledServingCatalog;
+  loadSession?: () => { servingProfileProvenance?: ServingProfileProvenance | null } | null;
   error?: (message?: string) => void;
   exit?: (code: number) => never;
 }
@@ -147,11 +171,124 @@ function validateObservabilityAgent(
   }
 }
 
+function resolveExperimentalProfile(flags: OnboardFlags): ExperimentalOnboardProfile | null {
+  return flags["experimental-profile"] === PORTABLE_EXPERIMENTAL_PROFILE
+    ? PORTABLE_EXPERIMENTAL_PROFILE
+    : null;
+}
+
+const PROFILE_CONFLICT_ENV = [
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_VLLM_MODEL",
+  VLLM_EXTRA_ARGS_ENV,
+  "NEMOCLAW_MANAGED_CLUSTER_PEERS",
+] as const;
+
+function validateServingProfileConflicts(
+  selectedProfileId: string,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  const existingPreset = String(deps.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
+  if (existingPreset && existingPreset !== selectedProfileId) {
+    fail(
+      deps,
+      `  --profile ${selectedProfileId} conflicts with ${NEMOCLAW_SERVING_PRESET_ENV}=${existingPreset}.`,
+    );
+  }
+  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => String(deps.env[name] ?? "").trim());
+  if (conflicts.length > 0) {
+    fail(deps, `  --profile cannot be combined with inference overrides: ${conflicts.join(", ")}.`);
+  }
+}
+
+function resolveServingProfile(
+  requested: string | undefined,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  if (requested === undefined) return null;
+  const catalog = (deps.loadServingCatalog ?? loadServingCatalog)();
+  let selectedProfileId: string;
+  try {
+    selectedProfileId = resolveServingProfileSelection(requested.trim(), {
+      catalog,
+      listProfiles: deps.listServingProfiles ? () => deps.listServingProfiles!() : undefined,
+    });
+  } catch (error) {
+    if (error instanceof ServingProfileSelectionError) fail(deps, `  ${error.message}`);
+    throw error;
+  }
+  validateServingProfileConflicts(selectedProfileId, deps);
+  return servingProfileProvenance(catalog, selectedProfileId);
+}
+
+function resolveServingProfileLifecycle(
+  flags: OnboardFlags,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const requested = resolveServingProfile(flags.profile, deps);
+  if (flags.resume !== true) return requested;
+  return resolveResumedServingProfile(requested, deps);
+}
+
+function resolveResumedServingProfile(
+  requested: ServingProfileProvenance | null,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const recorded = deps.loadSession?.()?.servingProfileProvenance ?? null;
+  if (!recorded) {
+    if (requested) {
+      fail(
+        deps,
+        "  --profile cannot be added while resuming a legacy onboarding session; start fresh instead.",
+      );
+    }
+    return null;
+  }
+  let current: ServingProfileProvenance;
+  try {
+    current = assertServingProfileProvenanceCurrent(
+      recorded,
+      (deps.loadServingCatalog ?? loadServingCatalog)(),
+    );
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (requested && JSON.stringify(requested) !== JSON.stringify(current)) {
+    fail(
+      deps,
+      `  --profile ${requested.preset.id} does not match resumed profile ${current.preset.id}.`,
+    );
+  }
+  validateServingProfileConflicts(current.preset.id, deps);
+  return current;
+}
+
+function validateExperimentalProfileLifecycle(
+  flags: OnboardFlags,
+  profile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (profile && flags.resume === true) {
+    fail(deps, "  --resume cannot be combined with --experimental-profile portable.");
+  }
+}
+
+function withPortableDefault(
+  requested: boolean | undefined,
+  profile: ExperimentalOnboardProfile | null,
+): boolean {
+  return requested === true || profile !== null;
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
 ): OnboardCommandOptions {
+  const experimentalProfile = resolveExperimentalProfile(flags);
+  validateExperimentalProfileLifecycle(flags, experimentalProfile, deps);
   const agent = resolveAgent(flags.agent, deps);
+  const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
   try {
@@ -160,9 +297,9 @@ export function resolveOnboardOptions(
     fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
   return {
-    nonInteractive: flags["non-interactive"] === true,
+    nonInteractive: withPortableDefault(flags["non-interactive"], experimentalProfile),
     resume: flags.resume === true,
-    fresh: flags.fresh === true,
+    fresh: withPortableDefault(flags.fresh, experimentalProfile),
     recreateSandbox: flags["recreate-sandbox"] === true,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
     sandboxName: flags.name ?? null,
@@ -177,8 +314,11 @@ export function resolveOnboardOptions(
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
     noGpu: flags["no-gpu"] === true,
-    autoYes: flags.yes === true,
-    noOllamaAutostart: flags["no-ollama-autostart"] === true,
+    autoYes: withPortableDefault(flags.yes, experimentalProfile),
+    noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
+    experimentalProfile,
+    servingProfile: servingProfileProvenance?.preset.id ?? null,
+    servingProfileProvenance,
   };
 }
 
@@ -224,17 +364,86 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   fail(deps, "  Installation cancelled");
 }
 
+function applyPortableEnvironment(
+  options: OnboardCommandOptions,
+  env: NodeJS.ProcessEnv,
+): () => void {
+  if (!options.experimentalProfile) return () => {};
+  const portableEnvDefaults = {
+    [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile ?? undefined,
+    [TOOL_DISCLOSURE_ENV]: "direct",
+    NEMOCLAW_PROVIDER: "ollama",
+    NEMOCLAW_MODEL: "qwen3-vl:4b",
+    NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+    NEMOCLAW_POLICY_MODE: "suggested",
+    NEMOCLAW_POLICY_TIER: "personal",
+  } as const;
+  const previousPortableEnv = new Map<string, string | undefined>();
+  const restore = () => {
+    for (const [key, value] of previousPortableEnv) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
+  };
+  try {
+    for (const [key, value] of Object.entries(portableEnvDefaults)) {
+      previousPortableEnv.set(key, env[key]);
+      if (value !== undefined) env[key] = value;
+    }
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  return restore;
+}
+
+function applyServingProfileEnvironment(
+  options: OnboardCommandOptions,
+  env: NodeJS.ProcessEnv,
+): () => void {
+  if (!options.servingProfile) return () => {};
+  const previous = env[NEMOCLAW_SERVING_PRESET_ENV];
+  env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
+  return () => {
+    if (previous === undefined) delete env[NEMOCLAW_SERVING_PRESET_ENV];
+    else env[NEMOCLAW_SERVING_PRESET_ENV] = previous;
+  };
+}
+
+function toolDisclosureEnvironmentOverride(
+  options: OnboardCommandOptions,
+  flags: OnboardFlags,
+): ToolDisclosure | null {
+  if (!options.toolDisclosure) return null;
+  if (!options.experimentalProfile) return options.toolDisclosure;
+  return flags["tool-disclosure"] !== undefined ? options.toolDisclosure : null;
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
-  if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
-  // Keep direct callers and the legacy monolithic onboard path on the same
-  // canonical source. No value is written for the default so resume/rebuild
-  // can distinguish an explicit request from an unset environment.
-  if (options.toolDisclosure) process.env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
-  if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest);
+  const env = deps.env ?? process.env;
+  let restorePortableEnvironment = () => {};
+  let restoreServingProfileEnvironment = () => {};
+  const previousAgentsManifest = env.NEMOCLAW_EXTRA_AGENTS_JSON;
   try {
+    restorePortableEnvironment = applyPortableEnvironment(options, env);
+    restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
+    if (options.noOllamaAutostart) env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+    // Keep direct callers and the legacy monolithic onboard path on the same
+    // canonical source. No value is written for the default so resume/rebuild
+    // can distinguish an explicit request from an unset environment.
+    const toolDisclosure = toolDisclosureEnvironmentOverride(options, deps.flags);
+    if (toolDisclosure) env[TOOL_DISCLOSURE_ENV] = toolDisclosure;
+    if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
     await deps.runOnboard(options);
   } catch (error) {
     handleOnboardCommandError(error, deps);
+  } finally {
+    if (options.agentsManifest) {
+      if (previousAgentsManifest === undefined) delete env.NEMOCLAW_EXTRA_AGENTS_JSON;
+      else env.NEMOCLAW_EXTRA_AGENTS_JSON = previousAgentsManifest;
+    }
+    restoreServingProfileEnvironment();
+    restorePortableEnvironment();
   }
 }
