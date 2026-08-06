@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: PR Review / Post-Merge Dispatch
+
+on:
+  push:
+    branches: [main]
+
+# This trusted dispatcher cannot read repository contents or PR secrets. Its
+# only write is an exact-SHA workflow_dispatch to the existing isolated advisor.
+permissions:
+  actions: write
+
+concurrency:
+  group: post-merge-agent-review-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch-exact-main-delta:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.before != '0000000000000000000000000000000000000000' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch exact-SHA agent review
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        with:
+          script: |
+            const base = process.env.BASE_SHA ?? '';
+            const head = process.env.HEAD_SHA ?? '';
+            const sha = /^[0-9a-f]{40}$/;
+            if (!sha.test(base) || !sha.test(head) || base === head) {
+              throw new Error(`Invalid post-merge review range: ${base}...${head}`);
+            }
+            const { owner, repo } = context.repo;
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: 'pr-review-advisor.yaml',
+              ref: context.payload.repository.default_branch,
+              inputs: {
+                base_ref: base,
+                head_ref: head,
+                run_analysis: 'true',
+              },
+            });
+            core.summary
+              .addHeading('Post-merge agent review dispatched')
+              .addRaw(`Exact range: \`${base}...${head}\``)
+              .write();

@@ -1,0 +1,143 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release / Edition Close
+
+on:
+  schedule:
+    # A minute offset avoids GitHub's busiest cron boundary. The plan itself
+    # still freezes the latest server-recorded main push at exactly 4:00 PM.
+    - cron: "17 16 * * *"
+      timezone: America/Los_Angeles
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: release-edition-close
+  cancel-in-progress: false
+
+jobs:
+  freeze-candidate:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out trusted main history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Resolve edition boundary
+        id: edition
+        shell: bash
+        run: |
+          TZ=America/Los_Angeles node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const now = new Date();
+          const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16);
+          if (now < cutoff) cutoff.setDate(cutoff.getDate() - 1);
+          const editionDate = [cutoff.getFullYear(), cutoff.getMonth() + 1, cutoff.getDate()]
+            .map((part, index) => index === 0 ? String(part) : String(part).padStart(2, '0'))
+            .join('-');
+          console.log(`date=${editionDate}`);
+          console.log(`cutoff_at=${cutoff.toISOString()}`);
+          NODE
+
+      - name: Resolve latest server-recorded main push
+        id: candidate
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CUTOFF_AT: ${{ steps.edition.outputs.cutoff_at }}
+        with:
+          script: |
+            const cutoff = Date.parse(process.env.CUTOFF_AT);
+            if (!Number.isFinite(cutoff)) {
+              throw new Error(`Invalid edition cutoff: ${process.env.CUTOFF_AT}`);
+            }
+
+            let selected;
+            for (let page = 1; page <= 10 && !selected; page += 1) {
+              const response = await github.rest.actions.listWorkflowRuns({
+                ...context.repo,
+                workflow_id: 'post-merge-agent-review.yaml',
+                branch: 'main',
+                event: 'push',
+                per_page: 100,
+                page,
+              });
+              const eligible = response.data.workflow_runs
+                .filter((run) =>
+                  run.event === 'push' &&
+                  run.head_branch === 'main' &&
+                  /^[0-9a-f]{40}$/.test(run.head_sha ?? '') &&
+                  Number.isFinite(Date.parse(run.created_at)) &&
+                  Date.parse(run.created_at) <= cutoff)
+                .sort((left, right) =>
+                  Date.parse(right.created_at) - Date.parse(left.created_at) || right.id - left.id);
+              selected = eligible[0];
+              if (response.data.workflow_runs.length < 100) break;
+            }
+            if (!selected) {
+              throw new Error(
+                `No server-recorded main push was found at or before ${process.env.CUTOFF_AT}`,
+              );
+            }
+
+            core.info(`Frozen candidate ${selected.head_sha} from ${selected.html_url}`);
+            core.setOutput('sha', selected.head_sha);
+            core.setOutput('run_id', String(selected.id));
+            core.setOutput('recorded_at', selected.created_at);
+            core.setOutput('run_url', selected.html_url);
+
+      - name: Freeze release candidate
+        env:
+          CANDIDATE_RECORDED_AT: ${{ steps.candidate.outputs.recorded_at }}
+          CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.run_id }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          EDITION_DATE: ${{ steps.edition.outputs.date }}
+          PLAN_PATH: ${{ runner.temp }}/release-edition/plan.json
+        run: >-
+          node --experimental-strip-types --no-warnings scripts/release-plan.mts
+          --bump patch
+          --scheduled-edition "$EDITION_DATE"
+          --candidate-sha "$CANDIDATE_SHA"
+          --candidate-run-id "$CANDIDATE_RUN_ID"
+          --candidate-recorded-at "$CANDIDATE_RECORDED_AT"
+          --output "$PLAN_PATH"
+
+      - name: Summarize frozen edition
+        env:
+          PLAN_PATH: ${{ runner.temp }}/release-edition/plan.json
+        run: |
+          node - <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require('fs');
+          const plan = JSON.parse(fs.readFileSync(process.env.PLAN_PATH, 'utf8'));
+          console.log('## Frozen release edition');
+          console.log('');
+          console.log(`- Edition: \`${plan.authorization.editionDate}\``);
+          console.log(`- Cutoff: \`${plan.authorization.cutoffAt}\``);
+          console.log(`- Candidate: \`${plan.candidateCommit}\``);
+          console.log(`- Candidate recorded: \`${plan.authorization.candidateSource.recordedAt}\``);
+          console.log(`- Candidate source run: \`${plan.authorization.candidateSource.runId}\``);
+          console.log(`- Status: \`${plan.status}\``);
+          console.log(`- Next tag: \`${plan.nextTag}\``);
+          console.log(`- Plan consistency ID: \`${plan.planHash}\``);
+          console.log('- The successful scheduled workflow run and its artifact are the authorization boundary.');
+          console.log('- E2E is advisory and is not part of tag authorization.');
+          NODE
+
+      - name: Upload immutable edition plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-edition-plan-${{ steps.edition.outputs.date }}
+          path: ${{ runner.temp }}/release-edition/plan.json
+          if-no-files-found: error
+          retention-days: 3

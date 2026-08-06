@@ -46,7 +46,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}-${{ github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null }}
+  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}-${{ inputs.head_ref || '' }}-${{ github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null }}
   cancel-in-progress: true
 
 jobs:

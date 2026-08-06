@@ -27,8 +27,9 @@ The daily flow is an outline, not a rigid ceremony.
 | 4 | Recommend | Publish a daily standup slate grouped by priority lane with suggested owners, next actions, and decision gaps. |
 | 5 | Assign | Maintainers convert the recommendation into assignments, deferrals, or follow-up questions. |
 | 6 | Execute | Engineers drive the assigned slate toward merge, fix, unblock, PR creation, or explicit deferral. |
-| 7 | Release | The daily release is cut from merged PRs carrying the daily version label. |
-| 8 | Handoff | Summarize what shipped, what slipped, what QA should focus on, and what should seed the next cycle. |
+| 7 | Close | At 4 PM, freeze the edition and stop merging while asynchronous review and the edition's post-merge E2E runs continue. |
+| 8 | Tag | At 4 AM, tag the frozen candidate regardless of E2E state. |
+| 9 | Handoff | At 8 AM, summarize what shipped, what slipped, review and E2E state, prepared fixes, and next-cycle work. |
 
 ## Priority Order
 
@@ -66,9 +67,11 @@ Agents may recommend labels, assignments, Project field changes, comments, merge
 ## Release Boundary
 
 - A PR daily version label activates daily release work; it is not a readiness claim.
-- Release inclusion requires a PR to be both merged and carrying the relevant daily version label at release cutoff.
+- Release inclusion requires a PR to be both merged and carrying the relevant daily version label in the frozen 4 PM candidate.
 - Issue daily version labels are tracking or coordination signals only.
-- Before tag confirmation, capture the candidate SHA and review every E2E test declared by `.github/workflows/e2e.yaml` at that commit. Merges may continue; a late drift check advances the candidate when needed. Each test needs green evidence for that SHA or an explicit itemized maintainer exception.
+- Stop merges from 4 PM to 8 AM. A merge after cutoff belongs to the next edition and never advances the frozen candidate.
+- Dispatch an asynchronous agent review for each exact `main` SHA range. Consume the E2E run triggered by every `main` push and prepare fixes during the freeze.
+- E2E is advisory: tag the frozen candidate at 4 AM regardless of its state, while keeping changelog, ancestry, signing, collision, `latest`, `lkg`, and housekeeping controls fail-closed.
 - Open PRs and issues that miss a tagged release carry forward by automatically moving from the released version label to the next patch label after the tag and `latest` are verified.
 - After carry-forward leaves no open item on the released label, delete that repository label. Never rename or reuse it.
 - Durable release history belongs in releases, release notes, or manifests, not in long-lived labels.

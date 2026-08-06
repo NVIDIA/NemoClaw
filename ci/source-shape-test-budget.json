@@ -607,6 +607,11 @@
       "category": "security"
     },
     {
+      "file": "test/deterministic-smoke-workflow.test.ts",
+      "test": "keeps the deterministic smoke floor in the required build and typecheck action",
+      "category": "security"
+    },
+    {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "keeps the trusted test-size guard closed around budget policy changes",
       "category": "security"
@@ -684,6 +689,26 @@
     {
       "file": "test/release-latest-tag-workflow.test.ts",
       "test": "binds latest promotion to the exact GitHub-verified tag object",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "closes the edition after the exact Los Angeles cutoff with read-only permissions",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "cuts at 4 AM without E2E input and delegates exact-object promotion",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "dispatches one asynchronous advisor run for the exact main SHA range",
+      "category": "security"
+    },
+    {
+      "file": "test/release-edition-workflow.test.ts",
+      "test": "keeps independent merge reviews from cancelling each other",
       "category": "security"
     },
     {

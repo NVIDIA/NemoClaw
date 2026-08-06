@@ -1,0 +1,250 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release / Edition Cut
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+      timezone: America/Los_Angeles
+  workflow_dispatch:
+    inputs:
+      edition_date:
+        description: Frozen edition date (YYYY-MM-DD); manual runs only preflight signing
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-edition-cut
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release-tag
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      edition_date: ${{ steps.edition.outputs.date }}
+      status: ${{ steps.result.outputs.status }}
+      tag: ${{ steps.result.outputs.tag }}
+    steps:
+      - name: Check out trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve frozen edition
+        id: edition
+        env:
+          DISPATCH_EDITION_DATE: ${{ inputs.edition_date }}
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            edition_date="$(TZ=America/Los_Angeles date --date='yesterday' +%F)"
+          else
+            edition_date="$DISPATCH_EDITION_DATE"
+          fi
+          if ! [[ "$edition_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "::error::Invalid edition date: $edition_date"
+            exit 1
+          fi
+          echo "date=$edition_date" >> "$GITHUB_OUTPUT"
+          echo "artifact=release-edition-plan-$edition_date" >> "$GITHUB_OUTPUT"
+
+      - name: Find successful edition-close artifact
+        id: close-run
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ARTIFACT_NAME: ${{ steps.edition.outputs.artifact }}
+        with:
+          script: |
+            const artifactName = process.env.ARTIFACT_NAME ?? '';
+            const { owner, repo } = context.repo;
+            const response = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: 'release-edition-close.yaml',
+              event: 'schedule',
+              status: 'completed',
+              branch: 'main',
+              per_page: 30,
+            });
+            const successful = response.data.workflow_runs
+              .filter((run) => run.conclusion === 'success' && run.head_branch === 'main')
+              .sort((a, b) => b.id - a.id);
+            const sources = [];
+            for (const run of successful) {
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner,
+                repo,
+                run_id: run.id,
+                per_page: 100,
+              });
+              const matches = artifacts.filter(
+                (artifact) => artifact.name === artifactName && artifact.expired === false,
+              );
+              if (matches.length > 1) {
+                throw new Error(`Run ${run.id} has duplicate ${artifactName} artifacts`);
+              }
+              if (matches.length === 1) {
+                sources.push({ run, artifact: matches[0] });
+              }
+            }
+            if (sources.length !== 1) {
+              throw new Error(
+                `Expected exactly one successful scheduled source for ${artifactName}, found ${sources.length}`,
+              );
+            }
+            const [{ run }] = sources;
+            core.setOutput('run_id', String(run.id));
+            core.info(`Using ${artifactName} from trusted scheduled run ${run.html_url}`);
+
+      - name: Download frozen edition plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.edition.outputs.artifact }}
+          path: ${{ runner.temp }}/release-edition
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ steps.close-run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Bind plan to requested edition
+        env:
+          EDITION_DATE: ${{ steps.edition.outputs.date }}
+          PLAN_PATH: ${{ runner.temp }}/release-edition/plan.json
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const plan = JSON.parse(fs.readFileSync(process.env.PLAN_PATH, 'utf8'));
+          if (plan.authorization?.type !== 'scheduled-workflow') throw new Error('Plan is not scheduled');
+          if (plan.authorization.editionDate !== process.env.EDITION_DATE) {
+            throw new Error(`Plan edition ${plan.authorization.editionDate} does not match ${process.env.EDITION_DATE}`);
+          }
+          NODE
+
+      - name: Configure dedicated release signer
+        id: signer
+        env:
+          SIGNING_KEY: ${{ secrets.NEMOCLAW_RELEASE_TAG_SIGNING_KEY }}
+          SIGNER_EMAIL: ${{ vars.NEMOCLAW_RELEASE_TAG_SIGNER_EMAIL }}
+          SIGNER_NAME: ${{ vars.NEMOCLAW_RELEASE_TAG_SIGNER_NAME }}
+          PLAN_PATH: ${{ runner.temp }}/release-edition/plan.json
+        shell: bash
+        run: |
+          plan_status="$(node -p "require(process.env.PLAN_PATH).status")"
+          if [ "$plan_status" = "no-changes" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$SIGNING_KEY" ] || [ -z "$SIGNER_EMAIL" ] || [ -z "$SIGNER_NAME" ]; then
+            echo "::error::The release-tag environment is missing its signing key or signer identity"
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/nemoclaw-release-tag-signing-key"
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$key_path"
+          git config gpg.format ssh
+          git config user.signingkey "$key_path"
+          git config user.email "$SIGNER_EMAIL"
+          git config user.name "$SIGNER_NAME"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Cut scheduled tag or preflight manual dispatch
+        env:
+          PLAN_PATH: ${{ runner.temp }}/release-edition/plan.json
+          PUSH_REMOTE_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            scripts/release-cut-tag.sh --plan "$PLAN_PATH" --scheduled
+          else
+            scripts/release-cut-tag.sh --plan "$PLAN_PATH" --preflight-only
+          fi
+
+      - name: Remove release signer
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/nemoclaw-release-tag-signing-key"
+
+      - name: Export cut result
+        id: result
+        env:
+          RESULT_PATH: ${{ runner.temp }}/release-edition/cut-result.json
+        run: |
+          status="$(node -p "require(process.env.RESULT_PATH).status")"
+          tag="$(node -p "require(process.env.RESULT_PATH).tag || ''")"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Upload cut evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-edition-cut-${{ steps.edition.outputs.date }}
+          path: ${{ runner.temp }}/release-edition/
+          if-no-files-found: error
+          retention-days: 14
+
+  promote:
+    needs: cut
+    if: ${{ needs.cut.outputs.status == 'tagged' }}
+    uses: ./.github/workflows/release-latest-tag.yaml
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    with:
+      tag: ${{ needs.cut.outputs.tag }}
+
+  verify-and-handoff:
+    needs: [cut, promote]
+    if: ${{ always() && (needs.cut.outputs.status == 'tagged' || needs.cut.outputs.status == 'no-changes') }}
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out release verification tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Download cut evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-edition-cut-*
+          path: ${{ runner.temp }}/release-edition
+          merge-multiple: true
+
+      - name: Verify latest and create handoff data
+        if: ${{ needs.cut.outputs.status == 'tagged' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_PATH: ${{ runner.temp }}/release-edition/plan.json
+        run: |
+          scripts/release-wait-latest.sh --plan "$PLAN_PATH"
+          node --experimental-strip-types --no-warnings scripts/release-notes-data.mts --plan "$PLAN_PATH"
+
+      - name: Upload verified handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-edition-handoff-${{ needs.cut.outputs.tag || format('no-changes-{0}', needs.cut.outputs.edition_date) }}
+          path: ${{ runner.temp }}/release-edition/
+          if-no-files-found: error
+          retention-days: 14

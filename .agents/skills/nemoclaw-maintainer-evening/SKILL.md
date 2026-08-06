@@ -1,95 +1,75 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff, including the pre-tag dated changelog PR, version progress, straggler planning, QA summary, tag cut, and announcement draft. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day, pre-tag release notes.
+description: Closes the 4 PM NemoClaw release edition, verifies pre-cutoff changelog readiness, reports shipped work and stragglers, starts the advisory overnight E2E and fix loop, and prepares the frozen handoff. Use at end of day, edition close, EOD, release freeze, or overnight QA handoff.
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # NemoClaw Maintainer Evening
 
-Wrap up the day: check progress, identify stragglers, summarize for QA, cut the tag, automatically carry stragglers to the next patch, retire the released label, and prepare release notes for posting.
+Close the edition at 4:00 PM `America/Los_Angeles`. Do not cut the tag in this skill; the scheduled 4:00 AM workflow owns the normal cut.
 
-See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily cadence.
+Read [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) and the [release train](../nemoclaw-maintainer-policies/references/release-train.md).
 
-## Step 1: Check Progress
+## 1. Check Progress
 
 ```bash
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
 ```
 
-The first script determines the target version. The second shows shipped vs open. Present the progress summary to the user.
+Present merged labeled PRs as the edition contents. List open labeled PRs and issues as stragglers that post-tag housekeeping will move to the next patch label.
 
-## Step 2: Review Post-Tag Stragglers
+## 2. Finish Pre-Tag Docs
 
-```bash
-gh pr list --repo NVIDIA/NemoClaw --state open --label <version> --limit 100 \
-  --json number,title,url,labels
-gh issue list --repo NVIDIA/NemoClaw --state open --label <version> --limit 100 \
-  --json number,title,url,labels
-```
+Run `/nemoclaw-contributor-update-docs for <version>` early enough for its PR to merge before cutoff. Require one direct `docs/changelog/YYYY-MM-DD.mdx` child containing the exact `## <version>` heading, parser-safe SPDX comment, summary, and detailed bullets. No waiver exists.
 
-List open labeled PRs and issues as the post-tag housekeeping plan. Tell the maintainer that, after the tag and workflow-managed `latest` are verified, `cut-release-tag` will automatically move all of them to the next patch label and delete the released label.
+## 3. Freeze and Stop Merging
 
-If an item should leave the daily release flow instead of moving forward, remove it from the released-version label before asking for the release confirmation phrase.
+At 4:00 PM, announce that the edition is closed and merging remains stopped until 8:00 AM. The scheduled `release-edition-close.yaml` run at 4:17 PM must upload `release-edition-plan-YYYY-MM-DD`.
 
-## Step 3: Generate Handoff Summary
+Inspect its summary and record:
+
+- frozen candidate SHA;
+- `ready` or `no-changes` status;
+- previous and next tags;
+- changelog match; and
+- plan hash.
+
+Do not advance the candidate if `main` moves after cutoff. A late merge belongs to the next edition.
+
+## 4. Start the Advisory Overnight Loop
+
+Run the handoff summary:
 
 ```bash
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary.ts
 ```
 
-This lists commits since the last tag, identifies risky areas touched, and suggests QA test focus areas. Format the output as a concise summary the user can paste into the tag annotation or a handoff channel.
+Assign one agent to remain active through the 8:00 AM handoff. Load `nemoclaw-maintainer-e2e`. Inventory every E2E run triggered by the edition's `main` pushes, including automatic retry evidence and selective reruns, then classify failures, consolidate duplicates, delete stale tests when justified, and prepare focused fix PRs. Include exact-SHA post-merge advisor runs. After each diagnosis, rerun, or prepared fix, immediately select the next actionable failure. Do not merge fixes during the freeze and do not stop the loop when the 4:00 AM tag is cut.
 
-## Pre-Tag Docs
+E2E does not authorize or block the 4:00 AM tag. Do not build a release evidence ledger or request exceptions.
 
-Run `/nemoclaw-contributor-update-docs for <version>` before loading `cut-release-tag`.
-Confirm that the release-prep docs PR creates or updates one direct child of `docs/changelog/` for the planned date and contains the exact `## <version>` heading, a parser-safe MDX SPDX comment, the summary, and the detailed release bullets.
-An ordinary docs refresh or a post-tag Discussion draft does not satisfy this step.
-The release-prep docs PR, including the dated changelog entry, must be merged, or explicitly waived with a reason that names the missing changelog entry, before `release:plan` captures the release commit.
-If a docs PR or any other intended PR merges after `release:plan`, regenerate the plan before cutting the tag.
+## 5. Publish the Overnight Handoff
 
-## Step 4: Cut the Tag and Publish Release Notes
+Provide:
 
-Load `cut-release-tag`.
-The version is already known, so use a patch bump unless the maintainer selects another bump.
-Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
+- target version and frozen SHA;
+- shipped PRs and open stragglers;
+- QA focus areas;
+- exact-SHA agent-review runs and actionable findings;
+- E2E failures, classifications, reruns, and prepared fixes; and
+- carry-forward and released-label retirement state;
+- the expected 4:00 AM cut and 8:00 AM handoff checkpoints.
 
-After the release plan captures the candidate SHA, load `nemoclaw-maintainer-e2e`.
-Run full mode if that SHA has no applicable exact Brev Launchable evidence.
-Review the pre-tag E2E evidence ledger from `.github/workflows/e2e.yaml` at that commit.
-When full mode runs, require a successful `Exact staging Brev Launchable` job, matching Launchable E2E identity, and verified workspace absence.
-Each missing test result requires its own itemized maintainer exception.
-Missing or invalid Launchable E2E evidence requires a separate itemized exception with run and job URLs, the result or missing receipt, and rationale.
-Do not ask for the release confirmation phrase until each required result has successful evidence or its own exception.
+Name the overnight agent owner and the 8:00 AM handoff destination. If the agent cannot continue, transfer the same state to one replacement instead of starting competing loops.
 
-Tag the confirmed release commit with `vX.Y.Z`.
-Let the workflow move `latest`, carry open work forward, and delete the released label.
-Prepare the Announcement draft for the maintainer to post.
-
-## Step 5: Confirm and Share
-
-After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
-
-- **Tag**: `v0.0.8` at commit `abc1234`
-- **Pre-tag E2E evidence**: 12/13 tests and exact Brev Launchable E2E passing for the candidate SHA; 1 itemized maintainer exception
-- **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
-- **Shipped**: 4 items (#1234, #1235, #1236, #1237)
-- **Moved to v0.0.9**: 1 item (#1238 — still needs CI fix)
-- **Retired label**: `v0.0.8`
-- **QA focus areas**: installer changes, new onboard preset
-
-This summary can be shared in the team's handoff channel.
-
-## Step 6: Update State
+Save state:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history "tag-cut" "<version>" "shipped N items, carried M forward"
+node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history "edition-closed" "<version>" "froze <sha>; shipped N; carried M"
 ```
 
-## Notes
-
-- Never cut a tag or hand off release notes without user confirmation.
-- If nothing was labeled or nothing shipped, ask whether to skip the tag today.
-- A PR version label activates release work; it is not a readiness claim.
-- If an open item misses the tag, post-tag housekeeping moves its target to the next patch version.
-- After carry-forward succeeds, post-tag housekeeping deletes the released label; never rename or reuse it.
+Escalate a failed changelog, plan provenance, ancestry, signing, collision, `latest`, `lkg`, or housekeeping invariant. Report E2E failures as advisory work, not release blockers.

@@ -110,6 +110,42 @@ function commit(fixture: Fixture, text: string): string {
   return run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
 }
 
+function commitRelease(fixture: Fixture, text: string): string {
+  const changelogDir = path.join(fixture.work, "docs", "changelog");
+  fs.mkdirSync(changelogDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(changelogDir, "2026-08-05.mdx"),
+    "<!-- SPDX-License-Identifier: Apache-2.0 -->\n\n## v0.0.2\n\nRelease test.\n",
+  );
+  fs.appendFileSync(path.join(fixture.work, "file.txt"), `${text}\n`);
+  run(fixture.work, ["git", "add", "file.txt", "docs/changelog/2026-08-05.mdx"]);
+  run(fixture.work, ["git", "commit", "-m", text]);
+  run(fixture.work, ["git", "push", "origin", "main"]);
+  return run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
+}
+
+function commitAt(fixture: Fixture, text: string, isoDate: string): string {
+  fs.appendFileSync(path.join(fixture.work, "file.txt"), `${text}\n`);
+  run(fixture.work, ["git", "add", "."]);
+  const commitResult = runScript(fixture.work, ["git", "commit", "-m", text], {
+    GIT_AUTHOR_DATE: isoDate,
+    GIT_COMMITTER_DATE: isoDate,
+  });
+  expect(commitResult.status).toBe(0);
+  run(fixture.work, ["git", "push", "origin", "main"]);
+  return run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
+}
+
+function commitReleaseAt(fixture: Fixture, text: string, isoDate: string): string {
+  const changelogDir = path.join(fixture.work, "docs", "changelog");
+  fs.mkdirSync(changelogDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(changelogDir, "2026-08-06.mdx"),
+    "<!-- SPDX-License-Identifier: Apache-2.0 -->\n\n## v0.0.2\n\nFrozen release test.\n",
+  );
+  return commitAt(fixture, text, isoDate);
+}
+
 function pushTag(fixture: Fixture, tag: string, target = "HEAD", annotated = true): void {
   const args = annotated
     ? ["git", "-c", "tag.gpgSign=false", "tag", "-a", tag, target, "-m", tag]
@@ -215,15 +251,18 @@ function createPlan(
     { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
   );
 
-  expect(result.status).toBe(0);
+  expect(result.status, String(result.stderr)).toBe(0);
   const plan = readJson(planPath);
   expect(plan.previousTag).toBe("v0.0.1");
   expect(plan.nextTag).toBe("v0.0.2");
-  expect(plan.originMainCommit).toBe(releaseCommit);
+  expect(plan.schemaVersion).toBe(2);
+  expect(plan.status).toBe("ready");
+  expect(plan.authorization).toEqual({ type: "maintainer-confirmation" });
+  expect(plan.candidateCommit).toBe(releaseCommit);
   expect(plan.operations).toContain(`create signed annotated v0.0.2 tag at ${releaseCommit}`);
-  const carryForward = "have release-latest-tag workflow carry open v0.0.2 items forward to v0.0.3";
+  const carryForward = "have release-latest-tag carry open v0.0.2 items forward to v0.0.3";
   const deleteReleased =
-    "have release-latest-tag workflow delete released v0.0.2 label after carry-forward succeeds";
+    "have release-latest-tag delete released v0.0.2 label after carry-forward succeeds";
   const carryForwardIndex = plan.operations.indexOf(carryForward);
   const deleteReleasedIndex = plan.operations.indexOf(deleteReleased);
   expect(carryForwardIndex).toBeGreaterThanOrEqual(0);
@@ -458,7 +497,7 @@ describe("release-latest-tag.sh", () => {
     const fixture = createFixture();
     pushTag(fixture, "lkg", fixture.firstCommit);
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
+    const releaseCommit = commitRelease(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
 
@@ -511,12 +550,193 @@ describe("release-latest-tag.sh", () => {
       lkgPeeledCommitBefore: fixture.firstCommit,
       lkgPeeledCommitAfter: fixture.firstCommit,
     });
+  }, 30_000);
+
+  it("freezes the GitHub-recorded main push before the Los Angeles cutoff", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const frozenCommit = commitReleaseAt(
+      fixture,
+      "candidate before cutoff",
+      "2026-08-06T15:00:00-07:00",
+    );
+    const lateCommit = commitAt(fixture, "late next-edition merge", "2026-08-06T14:00:00-07:00");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+
+    const planResult = runScript(
+      fixture.work,
+      [
+        tsxPath,
+        planScriptPath,
+        "--scheduled-edition",
+        "2026-08-06",
+        "--candidate-sha",
+        frozenCommit,
+        "--candidate-run-id",
+        "43",
+        "--candidate-recorded-at",
+        "2026-08-06T22:59:59Z",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+
+    expect(planResult.status).toBe(0);
+    const plan = readJson(planPath);
+    expect(plan).toMatchObject({
+      status: "ready",
+      candidateCommit: frozenCommit,
+      originMainAtPlanning: lateCommit,
+      authorization: {
+        type: "scheduled-workflow",
+        editionDate: "2026-08-06",
+        cutoffAt: "2026-08-06T23:00:00.000Z",
+        candidateSource: {
+          type: "github-actions-push-run",
+          workflow: ".github/workflows/post-merge-agent-review.yaml",
+          runId: "43",
+          recordedAt: "2026-08-06T22:59:59.000Z",
+        },
+      },
+    });
+
+    const cutResult = runScript(
+      fixture.work,
+      ["bash", cutScriptPath, "--plan", planPath, "--scheduled"],
+      {
+        GITHUB_ACTIONS: "true",
+        GITHUB_EVENT_NAME: "schedule",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_WORKFLOW_REF:
+          "NVIDIA/NemoClaw/.github/workflows/release-edition-cut.yaml@refs/heads/main",
+      },
+    );
+
+    expect(cutResult.status).toBe(0);
+    expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(frozenCommit);
+    expect(remoteCommit(fixture, "refs/heads/main")).toBe(lateCommit);
+  }, 30_000);
+
+  it("rejects scheduled authority outside the canonical schedule event", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const candidate = commitReleaseAt(
+      fixture,
+      "candidate before cutoff",
+      "2026-08-06T15:00:00-07:00",
+    );
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    expect(
+      runScript(
+        fixture.work,
+        [
+          tsxPath,
+          planScriptPath,
+          "--scheduled-edition",
+          "2026-08-06",
+          "--candidate-sha",
+          candidate,
+          "--candidate-run-id",
+          "43",
+          "--candidate-recorded-at",
+          "2026-08-06T22:59:59Z",
+          "--output",
+          planPath,
+        ],
+        { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+      ).status,
+    ).toBe(0);
+
+    const cutResult = runScript(
+      fixture.work,
+      ["bash", cutScriptPath, "--plan", planPath, "--scheduled"],
+      {
+        GITHUB_ACTIONS: "true",
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_WORKFLOW_REF:
+          "NVIDIA/NemoClaw/.github/workflows/release-edition-cut.yaml@refs/heads/main",
+      },
+    );
+
+    expect(cutResult.status).not.toBe(0);
+    expect(cutResult.stderr).toContain("Scheduled cuts require a schedule event");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("rejects a scheduled candidate that is not reachable from origin main", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    commit(fixture, "current main commit");
+    run(fixture.work, ["git", "switch", "-c", "foreign", fixture.firstCommit]);
+    const foreignCandidate = commitRelease(fixture, "foreign candidate");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+
+    const result = runScript(
+      fixture.work,
+      [
+        tsxPath,
+        planScriptPath,
+        "--scheduled-edition",
+        "2026-08-06",
+        "--candidate-sha",
+        foreignCandidate,
+        "--candidate-run-id",
+        "43",
+        "--candidate-recorded-at",
+        "2026-08-06T22:59:59Z",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("is not reachable from origin/main");
+  });
+
+  it("records a no-change edition without creating a tag", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const planResult = runScript(fixture.work, [tsxPath, planScriptPath, "--output", planPath], {
+      NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
+    });
+    expect(planResult.status).toBe(0);
+    const plan = readJson(planPath);
+    expect(plan).toMatchObject({ status: "no-changes", untaggedCommitCount: 0 });
+
+    const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
+
+    expect(cutResult.status).toBe(0);
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+    expect(readJson(path.join(fixture.root, "release", "cut-result.json"))).toMatchObject({
+      status: "no-changes",
+      tag: null,
+      targetCommit: fixture.firstCommit,
+    });
+  });
+
+  it("fails closed when a non-empty candidate lacks its changelog entry", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    commit(fixture, "release without changelog");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+
+    const planResult = runScript(fixture.work, [tsxPath, planScriptPath, "--output", planPath], {
+      NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
+    });
+
+    expect(planResult.status).not.toBe(0);
+    expect(planResult.stderr).toContain("missing exactly one direct changelog entry for v0.0.2");
+    expect(fs.existsSync(planPath)).toBe(false);
   });
 
   it("rejects signing preflight when the configured signer is unavailable", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
+    const releaseCommit = commitRelease(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     createPlan(fixture, planPath, releaseCommit);
     run(fixture.work, ["git", "config", "gpg.format", "openpgp"]);
@@ -536,12 +756,12 @@ describe("release-latest-tag.sh", () => {
     expect(
       run(fixture.work, ["git", "tag", "--list", "nemoclaw-release-signing-preflight-*"]),
     ).toBe("");
-  });
+  }, 30_000);
 
   it("rejects a distinct latest tag object even when it peels to the release commit", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
+    const releaseCommit = commitRelease(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(0);
@@ -552,12 +772,12 @@ describe("release-latest-tag.sh", () => {
     expect(waitResult.status).not.toBe(0);
     expect(waitResult.stderr).toContain("latest tag object");
     expect(waitResult.stderr).toContain("does not match v0.0.2 object");
-  });
+  }, 30_000);
 
   it("rejects a tampered release plan before cutting the tag", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
+    const releaseCommit = commitRelease(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     const tampered = { ...plan, forbiddenOperations: [] };
@@ -567,13 +787,13 @@ describe("release-latest-tag.sh", () => {
 
     expect(cutResult.status).not.toBe(0);
     expect(cutResult.stderr).toContain("planHash mismatch");
-  });
+  }, 30_000);
 
   it("verifies unchanged lightweight lkg tags", () => {
     const fixture = createFixture();
     pushTag(fixture, "lkg", fixture.firstCommit, false);
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
+    const releaseCommit = commitRelease(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     expect(plan.lkgBefore).toMatchObject({
@@ -593,12 +813,12 @@ describe("release-latest-tag.sh", () => {
       lkgPeeledCommitBefore: fixture.firstCommit,
       lkgPeeledCommitAfter: fixture.firstCommit,
     });
-  });
+  }, 30_000);
 
   it("detects lkg creation after a plan captured lkg as absent", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
+    const releaseCommit = commitRelease(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     expect(plan.lkgBefore).toBeNull();
@@ -610,7 +830,7 @@ describe("release-latest-tag.sh", () => {
 
     expect(waitResult.status).not.toBe(0);
     expect(waitResult.stderr).toContain("lkg was created after the release plan was generated");
-  });
+  }, 30_000);
 
   it("extracts only squash-merge PR numbers from release notes compare commits", () => {
     const fixture = createFixture();
@@ -640,11 +860,12 @@ exit 2
       planPath,
       `${JSON.stringify(
         {
-          schemaVersion: 1,
+          schemaVersion: 2,
           mode: "tag-only",
+          status: "ready",
           previousTag: "v0.0.1",
           nextTag: "v0.0.2",
-          originMainCommit: "0123456789abcdef0123456789abcdef01234567",
+          candidateCommit: "0123456789abcdef0123456789abcdef01234567",
           planHash: "a".repeat(64),
         },
         null,
@@ -711,11 +932,12 @@ exit 2
       planPath,
       `${JSON.stringify(
         {
-          schemaVersion: 1,
+          schemaVersion: 2,
           mode: "tag-only",
+          status: "ready",
           previousTag: "v0.0.1",
           nextTag: "v0.0.2",
-          originMainCommit: "0123456789abcdef0123456789abcdef01234567",
+          candidateCommit: "0123456789abcdef0123456789abcdef01234567",
           planHash: "a".repeat(64),
         },
         null,

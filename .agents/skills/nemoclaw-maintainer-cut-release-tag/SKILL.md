@@ -1,393 +1,139 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main after verifying the pre-tag dated changelog entry, handles release housekeeping, drafts announcement release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
+description: Operates NemoClaw's frozen daily release edition, including the scheduled 4 PM candidate plan, the 4 AM signed semver tag for a non-empty edition regardless of E2E state, workflow-managed latest and release-label housekeeping, manual recovery, release-note data, and Announcement handoff. Use when closing an edition, cutting or recovering a release tag, verifying latest, or explaining the daily release timeline.
 user_invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Cut Release Tag
+# Cut a NemoClaw Release Tag
 
-Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
+Use the canonical repository `NVIDIA/NemoClaw`. Read the maintainer policy
+[release train](../nemoclaw-maintainer-policies/references/release-train.md) before a release operation.
 
-The release is one signed annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow requires that tag to be GitHub-Verified, points `latest` at the exact verified tag object, carries remaining open issues/PRs to the next patch label, and deletes the released label while holding the shared release-label coordination queue; release admins promote `lkg` manually after validation. After the workflow is verified, draft release notes, then verify the maintainer-published Announcement before final handoff.
+## Daily Contract
 
-## LKG Production Image Dispatch
+Use `America/Los_Angeles` for every boundary:
 
-When a release admin creates or moves `lkg` to a commit carrying a `vX.Y.Z` tag, the `Release / LKG Brev Image` workflow dispatches the `Release Production Image` workflow in `brevdev/nemoclaw-image` on its `main` branch.
-The dispatch passes the immutable semver tag instead of the mutable `lkg` tag.
-The source workflow requires the `NEMOCLAW_IMAGE_DISPATCH_TOKEN` Actions secret with Actions read/write access to `brevdev/nemoclaw-image`; a missing secret fails before the API request, and the workflow summary never includes its value.
-The trigger summary records the selected release tag, full commit SHA, target workflow, dispatch result, downstream run ID, and a direct link to the downstream run.
-After `lkg` promotion, find and wait for the source trigger run using the promoted commit:
+| Time | Contract |
+|---|---|
+| 8:00 AM–4:00 PM | Merge reviewed PRs. Each `main` advance asynchronously dispatches an agent review for its exact SHA range. |
+| 4:00 PM | Stop merging. `.github/workflows/release-edition-close.yaml` freezes the latest GitHub-recorded `main` push at or before the cutoff. |
+| 4:00 PM–4:00 AM | Consume the E2E runs already triggered by the edition's `main` pushes; diagnose, rerun selectively, or prepare fix PRs. Do not merge during the freeze. |
+| 4:00 AM | `.github/workflows/release-edition-cut.yaml` tags the frozen candidate regardless of E2E state. |
+| 4:00 AM–8:00 AM | Continue advisory E2E work and prepare next-edition fixes. |
+| 8:00 AM | Hand off state to the next release doula and reopen merging. |
 
-```bash
-gh run list --repo NVIDIA/NemoClaw --workflow release-lkg-brev-image.yaml --commit <lkg-commit> --event push --limit 1 --json databaseId,status,conclusion,url
-gh run watch <source-run-id> --repo NVIDIA/NemoClaw --exit-status
-gh run view <source-run-id> --repo NVIDIA/NemoClaw --log
-```
+A merge after 4:00 PM belongs to the next edition. Never regenerate or advance the frozen candidate merely because `main` moved.
 
-Extract the exact `https://github.com/brevdev/nemoclaw-image/actions/runs/<run-id>` URL printed by the source run, give that link to the maintainer immediately, and tell them to follow it to terminal success.
-Treat dispatch acceptance as an intermediate state, not proof of production image promotion: the downstream run must succeed and its summary must show successful runtime E2E validation and promotion of the `nemoclaw-brev-cpu` image family.
-A rejected dispatch fails the trigger run but does not move or roll back `lkg`.
-Deleting `lkg` does not dispatch an image build.
-The downstream scheduled reconciliation remains available if the event-driven dispatch fails or is delayed.
+## Authority and Invariants
 
-## Hard Rules
+- E2E is advisory. Never inspect E2E state to authorize, delay, cancel, or select the tag.
+- Keep the required deterministic `checks` aggregate, including `npm run test:smoke` and installer integration, as the PR merge floor while live E2E runs asynchronously after merge.
+- Require exactly one direct `docs/changelog/*.mdx` entry with the exact `## vX.Y.Z` heading at a non-empty candidate. No changelog waiver exists.
+- Require the frozen candidate to remain an ancestor of `origin/main` and the planned previous tag to remain the newest remote semver tag.
+- Treat trusted workflow-run and artifact provenance, plan consistency, tag collision checks, signing, GitHub verification, `latest`, `lkg`, carry-forward, and label retirement as fail-closed controls.
+- Skip the edition without creating a tag when the frozen candidate contains no commits after the latest semver tag.
+- Never move `lkg`; only a release admin may do that through a separate operation.
+- Never create or update a GitHub Discussion. A maintainer publishes the Announcement.
 
-- Tag only the commit captured in a generated release plan.
-- Do not generate the release plan until the release-prep docs PR containing `docs/changelog/YYYY-MM-DD.mdx` and the exact planned `## vX.Y.Z` heading is merged or explicitly waived.
-- Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
-- If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
-- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
-- Load `nemoclaw-maintainer-e2e` and run full mode if the candidate has no applicable exact Brev Launchable evidence.
-- Ask the maintainer to paste the confirmation phrase from the plan before cutting the tag.
-- Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
-- Never push `latest` or `lkg` from this skill.
-- Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
-- Delete the released version label only after open work moves forward and a final query finds no open stragglers. Never rename or reuse a released label.
-- Keep label retirement inside the `release-latest-tag` workflow so it cannot overlap the post-merge labeler. Do not run the retirement script directly.
-- Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
-- Do not mark the announcement step complete until the maintainer provides a valid Discussion URL and the published Announcement is verified.
-- Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for SSH, authentication, remote access, authorization, or permission failures.
+## Normal Scheduled Path
 
-## Workflow
+### 1. Prepare Before 4 PM
 
-Copy this checklist and update it as you proceed:
-
-```text
-Release Progress:
-- [ ] Step 1: Preflight and generate release plan
-- [ ] Step 2: Show plan, E2E evidence, and confirmation phrase
-- [ ] Step 3: Cut the semver tag from the confirmed plan
-- [ ] Step 4: Wait for workflow-managed latest
-- [ ] Step 5: Carry open work forward and retire the released label
-- [ ] Step 6: Generate release-note data and draft Markdown
-- [ ] Step 7: Wait for maintainer-published Announcement
-- [ ] Step 8: Verify Announcement and hand off sharing
-```
-
-### Step 1: Preflight and Generate Release Plan
-
-Start with one read-only pass that checks these prerequisites together:
-
-- refresh `origin/main` and resolve its full SHA;
-- check the target changelog heading and release-prep docs state;
-- ask a repository administrator for the authoritative Jetson runner state when that lane is required; and
-- inventory existing E2E runs for the same SHA before deciding what to dispatch.
-
-Do not wait for merges to stop. The plan captures one candidate SHA for evidence; a late drift check advances it when `origin/main` moves.
-Do not dispatch or poll a workflow during this pass.
-
-Before this step, confirm release-prep docs are merged or explicitly waived.
-Return to `nemoclaw-maintainer-evening` if docs are still pending.
-
-For the planned version, inspect `origin/main` before generating the plan:
+Run `/nemoclaw-contributor-update-docs for vX.Y.Z` early enough for its dated changelog PR to merge before cutoff. Confirm the exact heading at the intended candidate:
 
 ```bash
-git grep -n '^## vX\.Y\.Z$' origin/main -- 'docs/changelog/*.mdx'
+git grep -n -E '^## vX\.Y\.Z$' origin/main -- ':(glob)docs/changelog/*.mdx'
 ```
 
-Require exactly one match in a dated file directly under `docs/changelog/`.
-Confirm that a newly created file begins with the parser-safe MDX SPDX comment and that the entry contains its summary and detailed bullets.
-If the entry is missing or malformed, return to `nemoclaw-contributor-update-docs`; do not substitute the post-tag announcement workflow.
-If the maintainer explicitly waives the entry, preserve the reason in the release-plan presentation and confirmation handoff.
+The output must contain exactly one match from a direct child of `docs/changelog/`.
 
-Run one of:
+### 2. Close the Edition at 4 PM
+
+The scheduled close workflow:
+
+1. derives the edition date in `America/Los_Angeles`;
+2. resolves the latest `post-merge-agent-review.yaml` push run that GitHub recorded at or before exactly 4:00 PM;
+3. validates ancestry, version progression, tag absence, and the changelog entry;
+4. writes a schema-v2 plan with a SHA-256 consistency hash; and
+5. uploads `release-edition-plan-YYYY-MM-DD` for three days.
+
+If a merge creates its `main` push run after 4:00 PM, the cutoff selection excludes it even when the close workflow starts late.
+
+### 3. Use the Freeze for Advisory Validation
+
+Assign one agent to the complete 4:00 PM–8:00 AM loop. Load `nemoclaw-maintainer-e2e` to inventory every immutable E2E run triggered by an edition `main` push, its automatic retry evidence, and any selective reruns. Classify failures as product regressions, flaky tests, infrastructure failures, or stale tests. After each result, immediately select the next actionable failure, rerun, or prepared fix. Prepare and validate fix PRs, but do not merge them until 8:00 AM. Keep the loop running after the 4:00 AM tag; stop only at handoff or transfer the same state to a replacement agent.
+
+Keep this state for the morning handoff:
+
+- frozen candidate SHA and next tag;
+- exact-SHA post-merge agent-review runs;
+- E2E failures, classifications, reruns, and prepared fix PRs;
+- unresolved release risks; and
+- cut, `latest`, housekeeping, and release-note artifact URLs.
+
+Do not put internal E2E classifications or rerun details in the public Announcement.
+
+### 4. Cut at 4 AM
+
+The scheduled cut workflow selects the successful scheduled close artifact for the previous edition date. It validates the artifact-to-edition binding and invokes:
 
 ```bash
-npm run release:plan -- --bump patch
-npm run release:plan -- --bump minor
-npm run release:plan -- --bump major
+scripts/release-cut-tag.sh --plan <plan.json> --scheduled
 ```
 
-Patch is the default if the maintainer says "yes", "go", or similar without choosing.
+The script accepts unattended authority only when all of these values match:
 
-The script writes a plan outside the checkout root, for example:
+- `GITHUB_ACTIONS=true`;
+- `GITHUB_REPOSITORY=NVIDIA/NemoClaw`;
+- `GITHUB_EVENT_NAME=schedule`; and
+- `GITHUB_WORKFLOW_REF=NVIDIA/NemoClaw/.github/workflows/release-edition-cut.yaml@refs/heads/main`.
 
-```text
-../nemoclaw-release-v0.0.58/plan.json
-```
+The `release-tag` GitHub environment must provide:
 
-### Step 2: Show Plan, E2E Evidence, and Ask for Confirmation
+- secret `NEMOCLAW_RELEASE_TAG_SIGNING_KEY`, containing only the dedicated SSH private signing key;
+- variable `NEMOCLAW_RELEASE_TAG_SIGNER_NAME`; and
+- variable `NEMOCLAW_RELEASE_TAG_SIGNER_EMAIL`.
 
-Read the generated `plan.json` and show the maintainer:
+Register the corresponding public key as a signing key on the dedicated GitHub release identity. Restrict the environment to `main` and do not add a human approval wait: the schedule is the release authority. `GITHUB_TOKEN` pushes the tag; the signing key never authenticates a network request.
 
-- previous tag,
-- next tag,
-- target `origin/main` commit and headline,
-- plan hash,
-- forbidden operations,
-- confirmation phrase,
-- open issue/PR housekeeping plan for the release label, including deletion of the released label after carry-forward succeeds.
+The workflow writes the private key to a mode-`0600` file under `RUNNER_TEMP` only for the cut job. The always-run step deletes that file during normal and cancellation cleanup; disposal of the ephemeral GitHub-hosted runner is the fallback if abrupt runner loss prevents the step from executing. GitHub supplies `GITHUB_TOKEN` only to the job, limits it to the declared `actions: read` and `contents: write` permissions, and expires it when the job finishes.
 
-Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
-When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
+Because a tag pushed with `GITHUB_TOKEN` does not emit a second workflow run, the cut workflow directly calls `release-latest-tag.yaml`. That reusable workflow verifies the exact signed annotated tag object through GitHub, moves `latest`, carries open items to the next patch label, verifies none remain, and deletes the released label.
 
-For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
+### 5. Verify and Hand Off at 8 AM
 
-From a checkout whose `HEAD` is the plan candidate SHA and whose `git status --short` is empty, generate one release E2E preflight:
+Require the cut workflow's handoff artifact to contain:
+
+- `plan.json` and its plan hash;
+- `cut-result.json` with `tagged` or `no-changes`;
+- `latest-result.json` for a tagged edition; and
+- `notes-data.json` for a tagged edition.
+
+Report failed non-E2E controls immediately. Report E2E state separately as advisory next-edition work. Load `nemoclaw-maintainer-release-notes` to draft Markdown, then ask the maintainer to publish it in the `Announcements` Discussion category and return the URL for read-only verification.
+
+## Manual Preflight and Recovery
+
+A manual dispatch of `release-edition-cut.yaml` accepts an `edition_date` and downloads the trusted close artifact. For a ready edition it performs signing preflight only; for a `no-changes` edition it records that no tag is needed. It cannot publish a tag.
+
+For local recovery of the already frozen edition, download its trusted plan artifact, inspect its SHA, edition date, plan hash, changelog entry, and operations, then run:
 
 ```bash
-CANDIDATE_SHA="<full-plan-sha>"
-JETSON_RUNNER_ONLINE="<true-false-or-unknown>"
-npm run release:e2e-evidence -- \
-  --candidate-sha "$CANDIDATE_SHA" \
-  --jetson-runner-online "$JETSON_RUNNER_ONLINE" \
-  >"$EVIDENCE_DIR/preflight.json"
+scripts/release-cut-tag.sh --plan <plan.json> --preflight-only
+scripts/release-cut-tag.sh \
+  --plan <plan.json> \
+  --confirm 'CONFIRM RELEASE vX.Y.Z <full-frozen-sha>'
 ```
 
-The preflight derives every required execution and these dispatch groups from the candidate workflow:
+Confirmed local recovery may cut a scheduled plan whose candidate is behind current `origin/main`; ancestry must still hold. A newly generated maintainer plan remains bound to the current `origin/main` tip and becomes stale if `main` moves.
 
-- `defaultSuite`: full mode, which includes the default-enabled suite and `Exact staging Brev Launchable`;
-- `parallelExplicit`: explicit-only selectors that require neither the Launchable E2E job nor runner confirmation; and
-- `conditional`: Jetson or another lane that must not queue until its authoritative runner inventory is confirmed online.
-
-An explicit-only job may declare `RELEASE_E2E_ACTIVATION_PATH` in its workflow environment. The preflight includes that job and all of its expanded executions only when the exact relative path exists at the candidate SHA. When the path is absent, the job is a dormant lane: do not dispatch it and do not treat it as missing release evidence.
-
-First feed applicable existing runs for the candidate SHA into the ledger.
-Dispatch only groups that still lack green evidence.
-When no applicable exact Brev evidence exists, load `nemoclaw-maintainer-e2e` and dispatch full mode for that SHA.
-Require that run to include the default-enabled suite and `Exact staging Brev Launchable`.
-Do not substitute a selective `staging-brev-launchable` run for full-mode evidence.
-
-Dispatch `parallelExplicit` immediately alongside the default/full run, with separate correlation IDs.
-Do not wait for either run to finish before dispatching the other.
-
-Dispatch a `conditional` lane only when the preflight reports its runner online.
-For Jetson, pass `allow_jetson_runner_queue=true` only after that confirmation.
-When the runner is false or unknown, do not create a job that can queue indefinitely; reserve its itemized exception.
-
-Monitor all dispatched correlation IDs as one run group.
-Use one bounded status query for the group, then collect evidence when the group reaches terminal state.
-Do not run a separate polling loop for each workflow.
-
-Before accepting full-mode exact Brev evidence, require:
-
-- the workflow `head_sha` to equal the plan candidate SHA;
-- the trusted dispatch receipt to prove empty selectors and `include_staging_brev_launchable=true`;
-- the workflow conclusion to be `success`;
-- the `Exact staging Brev Launchable` job conclusion to be `success`;
-- the job URL and workflow attempt number;
-- Launchable E2E identity for the same SHA; and
-- cleanup evidence that reports the qualified workspace as `ABSENT`.
-
-Treat a skipped job as missing evidence even when the workflow concludes `success`.
-If the plan candidate SHA changes, discard the run and Launchable E2E evidence.
-Run full mode again for the new candidate SHA.
-No release-note-only delta exception is currently defined.
-
-For every accepted default, explicit, and conditional run, reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` returned by `nemoclaw-maintainer-e2e`, and collect the workflow-produced dispatch receipt for that run.
-If those files were not returned, collect them once:
+After a locally authenticated tag push, wait for the tag-triggered `release-latest-tag.yaml` run and verify:
 
 ```bash
-gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID" \
-  >"$EVIDENCE_DIR/run-$RUN_ID.json"
-gh api --paginate --slurp \
-  "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
-  >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
-ARTIFACT_PAGES="$(gh api --paginate --slurp \
-  "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/artifacts?per_page=100")"
-DISPATCH_ARTIFACT_NAME="$(jq -r --arg prefix "e2e-dispatch-$RUN_ID-" \
-  '[.[] | .artifacts[] | select(.expired != true and (.name | startswith($prefix)))]
-   | sort_by(.created_at) | last | .name // empty' <<<"$ARTIFACT_PAGES")"
-test -n "$DISPATCH_ARTIFACT_NAME"
-gh run download "$RUN_ID" \
-  --repo NVIDIA/NemoClaw \
-  --name "$DISPATCH_ARTIFACT_NAME" \
-  --dir "$EVIDENCE_DIR/dispatch-$RUN_ID"
+scripts/release-wait-latest.sh --plan <plan.json>
+node --experimental-strip-types --no-warnings scripts/release-notes-data.mts --plan <plan.json>
 ```
 
-Use the latest existing receipt artifact, not the run's latest attempt number. A partial rerun can leave `generate-matrix` successful and therefore reuse its earlier receipt; the ledger permits that earlier receipt only when it binds the same run and its attempt does not exceed the run's latest attempt.
-
-Create `manifest.json` in the private evidence directory:
-
-```json
-{
-  "candidateSha": "<full-plan-sha>",
-  "jetsonRunnerOnline": "unknown",
-  "runs": [
-    {
-      "runJson": "run-123.json",
-      "jobsJson": "jobs-123.json",
-      "dispatchJson": "dispatch-123/dispatch.json"
-    },
-    {
-      "runJson": "run-124.json",
-      "jobsJson": "jobs-124.json",
-      "dispatchJson": "dispatch-124/dispatch.json"
-    }
-  ]
-}
-```
-
-Do not type default-suite claims or selector lists into the manifest. The helper derives them from the workflow-produced receipt and rejects a receipt whose selector fields disagree with its default-suite flag.
-Build the ledger with `npm run release:e2e-evidence -- --manifest "$EVIDENCE_DIR/manifest.json"`.
-The helper derives the denominator from the workflow, preserves matrix rows as separate semantic identifiers, binds every run and its actual dispatch inputs to the candidate SHA, and keeps an earlier successful attempt green when a later attempt fails.
-The manifest and helper cover the workflow-derived test execution ledger only. They do not replace exact Brev Launchable E2E acceptance: keep the raw `dispatch.json`, `launchable-e2e.json`, and `cleanup.json` validation in `nemoclaw-maintainer-e2e`, and carry its validated return beside this ledger or record the required Launchable E2E exception.
-
-Before showing the confirmation prompt, present:
-
-- the candidate SHA;
-- the number of tests with green evidence out of the number required by the workflow;
-- each required test mapped to a successful run or job URL and attempt; and
-- when accepted full-mode exact Brev evidence exists, its workflow URL, `Exact staging Brev Launchable` job URL, attempt, Launchable E2E identity, and cleanup result; and
-- a separate itemized maintainer exception for each test without successful evidence, including its test identifier, run links, current result, and rationale; and
-- a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence, including run and job URLs, the current result or missing receipt, and rationale.
-
-Do not ask for the phrase until each test and the exact Brev Launchable E2E job has successful evidence or its own itemized maintainer exception.
-Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, discard all prior candidate-bound evidence, regenerate the plan, rerun preflight and every required default, explicit, conditional, and exact Brev Launchable E2E group for the new SHA, capture a new manifest, and rebuild the ledger before requesting confirmation; merges did not need to stop while the earlier evidence ran.
-
-Exercise the configured Git signing backend before asking for confirmation:
-
-```bash
-npm run release:cut -- --plan <plan.json> --preflight-only
-```
-
-Require status 0. This preflight creates and deletes one local temporary tag. It does not push a ref. Git selects the maintainer's configured OpenPGP, SSH, or X.509 signer.
-
-Ask the maintainer to paste this phrase:
-
-```text
-CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>
-```
-
-Do not proceed on a generic "yes" at this step.
-
-### Step 3: Cut the Semver Tag
-
-Run the cut script with the plan and the maintainer's phrase:
-
-```bash
-npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
-```
-
-The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state, then creates and pushes the signed annotated tag using the configured signing key. It writes:
-
-```text
-<release-dir>/cut-result.json
-```
-
-If the script fails because of SSH, authentication, remote access, authorization, or permissions, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). For other precondition failures, report the failed precondition and use the recovery guidance below. Do not improvise git commands.
-
-### Step 4: Wait for Workflow-Managed `latest`
-
-Run:
-
-```bash
-npm run release:wait-latest -- --plan <plan.json>
-```
-
-The script waits until `vX.Y.Z` and `latest` reference the same tag object, verifies both peel to the planned commit, and verifies `lkg` did not change from the plan. It writes:
-
-```text
-<release-dir>/latest-result.json
-```
-
-If it fails, report the failed workflow/status. Do not manually move `latest`.
-
-### Step 5: Verify Carry-Forward and Label Retirement
-
-The `release-latest-tag` workflow continues after moving `latest`: it moves every remaining open issue or PR carrying the released version to the next patch label, verifies none remain, and deletes the released label. The workflow and post-merge labeler share one queued concurrency group, so assignment cannot overlap the verification-and-delete window.
-
-Find the workflow run started by Step 3 and wait for it to finish:
-
-```bash
-RELEASE_SHA="<full-origin-main-sha>"
-mapfile -t RELEASE_RUN_IDS < <(
-  gh run list --repo NVIDIA/NemoClaw --workflow release-latest-tag.yaml --limit 20 \
-    --event push --commit "$RELEASE_SHA" --json databaseId --jq '.[].databaseId'
-)
-if (( ${#RELEASE_RUN_IDS[@]} != 1 )); then
-  echo "Expected exactly one release-latest-tag push run for $RELEASE_SHA" >&2
-  exit 1
-fi
-gh run watch "${RELEASE_RUN_IDS[0]}" --repo NVIDIA/NemoClaw --exit-status
-```
-
-This automatic post-tag housekeeping is covered by the release plan and confirmation in Step 2. Do not run `scripts/retire-release-label.mts` directly; doing so would bypass the coordination boundary.
-
-Then verify the released version label no longer exists:
-
-```bash
-gh label list --repo NVIDIA/NemoClaw --search <released-version> --json name \
-  --jq '.[] | select(.name == "<released-version>")'
-```
-
-The command must return no output. Never rename the released label into a future version; a future target must be a separately created label with its own GitHub identity.
-
-Summarize:
-
-- open issues/PRs moved to `<next-version>`;
-- released label deleted;
-- any items that need manual maintainer attention.
-
-### Step 6: Generate Release-Note Data and Draft Markdown
-
-Collect deterministic release-note input:
-
-```bash
-npm run release:notes-data -- --plan <plan.json>
-```
-
-This writes:
-
-```text
-<release-dir>/notes-data.json
-```
-
-If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report the warnings and ask the maintainer whether to fetch/fill the missing PR metadata before drafting.
-
-Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the draft. Save only Markdown, outside the checkout root:
-
-```text
-<release-dir>/release-note-draft.md
-```
-
-Before continuing to Step 7, verify the draft has three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
-
-Do not create or update a GitHub Discussion.
-Do not edit `docs/changelog/` in this post-tag step; the canonical entry must already be present in the tagged commit.
-
-### Step 7: Wait for Maintainer-Published Announcement
-
-Return:
-
-- release tag,
-- confirmed release commit,
-- plan path and plan hash,
-- `cut-result.json`, `latest-result.json`, and `notes-data.json` paths,
-- Markdown draft path,
-- issue/PR housekeeping summary,
-- suggested discussion title: `NemoClaw <new-version> is out`.
-
-Ask the maintainer to publish the draft in the `Announcements` Discussion category and return the resulting Discussion URL. Do not create or update the Discussion. Keep Step 7 in progress until the maintainer provides the URL.
-
-### Step 8: Verify Announcement and Hand Off Sharing
-
-Before making any network request, reject the maintainer-provided URL unless it matches `https://github.com/NVIDIA/NemoClaw/discussions/<positive-integer>` with no query string or fragment. Only then open it using a read-only GitHub or web capability and verify:
-
-- the title is `NemoClaw <new-version> is out`;
-- the category is `Announcements`;
-- the body preserves the draft's three lead paragraphs, category headings, every included PR link, comparison URL, and external contributor usernames; formatting-only edits are acceptable;
-- the comparison link targets `<previous-version>...<new-version>` and visible PR links target `github.com/NVIDIA/NemoClaw/pull/<number>`.
-
-If the Announcement is valid, return its URL with the release artifacts and mark the release workflow complete. Remind the maintainer to share that Discussion URL in the appropriate external channels. Do not create a duplicate Announcement.
-
-## Recovery
-
-- Plan generation fails: fix the named precondition, then regenerate the plan.
-- Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
-- Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
-- Full-mode E2E ran for another SHA or skipped `Exact staging Brev Launchable`: reject the run and dispatch full mode for the plan candidate SHA.
-- Launchable E2E or cleanup evidence is missing or invalid: reject the run. Do not infer Launchable E2E success from the workflow conclusion.
-- `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
-- Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
-- Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.
-- `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
-- `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
-- `lkg` changed: stop and escalate to a release admin.
-- Post-tag housekeeping fails: report the workflow error and list items still carrying the released label. After the failure is fixed, rerun `release-latest-tag.yaml` with `<released-version>` through `workflow_dispatch`; the promotion and retirement steps are idempotent, already-moved items no longer match the source label, and an already-deleted released label is treated as success. Do not run the retirement script outside the workflow.
-- Announcement is not published yet: keep Step 7 in progress and return the draft path and suggested title; the tag and housekeeping remain complete.
-- Announcement title, category, body, or links are wrong: ask the maintainer to edit the existing Discussion, then verify the same URL again. Do not create a replacement. After three failed verification attempts for the same Discussion, stop and escalate to a release admin.
-- Announcement cannot be inspected: report the read failure and ask the maintainer to confirm access or provide a public URL; do not mark Step 8 complete.
+If tag push, GitHub verification, `latest`, signing, changelog, ancestry, collision, or housekeeping fails, stop and report the exact invariant. Do not retag, move `latest`, retire labels directly, or use E2E state as a workaround.

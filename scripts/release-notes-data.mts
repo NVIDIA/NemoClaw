@@ -12,11 +12,12 @@ type Options = {
 };
 
 type ReleasePlan = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: "tag-only";
+  status: "ready";
   previousTag: string;
   nextTag: string;
-  originMainCommit: string;
+  candidateCommit: string;
   planHash: string;
 };
 
@@ -69,11 +70,14 @@ function validatePlan(value: unknown): ReleasePlan {
   const semver = /^v\d+\.\d+\.\d+$/;
   const sha = /^[0-9a-f]{40}$/;
   const hash = /^[0-9a-f]{64}$/;
-  if (plan.schemaVersion !== 1) {
-    throw new Error("Release plan schemaVersion must be 1");
+  if (plan.schemaVersion !== 2) {
+    throw new Error("Release plan schemaVersion must be 2");
   }
   if (plan.mode !== "tag-only") {
     throw new Error("Release plan mode must be tag-only");
+  }
+  if (plan.status !== "ready") {
+    throw new Error("Release notes require a ready release plan");
   }
   if (typeof plan.previousTag !== "string" || !semver.test(plan.previousTag)) {
     throw new Error("Release plan previousTag must be a semver tag");
@@ -81,8 +85,8 @@ function validatePlan(value: unknown): ReleasePlan {
   if (typeof plan.nextTag !== "string" || !semver.test(plan.nextTag)) {
     throw new Error("Release plan nextTag must be a semver tag");
   }
-  if (typeof plan.originMainCommit !== "string" || !sha.test(plan.originMainCommit)) {
-    throw new Error("Release plan originMainCommit must be a full SHA");
+  if (typeof plan.candidateCommit !== "string" || !sha.test(plan.candidateCommit)) {
+    throw new Error("Release plan candidateCommit must be a full SHA");
   }
   if (typeof plan.planHash !== "string" || !hash.test(plan.planHash)) {
     throw new Error("Release plan planHash must be a sha256 hex string");
@@ -158,7 +162,7 @@ function main(): void {
     planHash: plan.planHash,
     previousTag: plan.previousTag,
     currentTag: plan.nextTag,
-    targetCommit: plan.originMainCommit,
+    targetCommit: plan.candidateCommit,
     compareRange,
     compare,
     prNumbers,

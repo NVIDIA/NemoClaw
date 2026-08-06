@@ -45,14 +45,14 @@ fail() {
 [[ -n "$PLAN_PATH" ]] || fail "--plan is required"
 [[ -f "$PLAN_PATH" ]] || fail "Plan file not found: $PLAN_PATH"
 
-node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const semver=/^v\d+\.\d+\.\d+$/; const sha=/^[0-9a-f]{40}$/; const hash=/^[0-9a-f]{64}$/; if (data.schemaVersion !== 1) throw new Error("schemaVersion must be 1"); if (data.mode !== "tag-only") throw new Error("mode must be tag-only"); if (!semver.test(data.previousTag)) throw new Error("previousTag must be semver"); if (!semver.test(data.nextTag)) throw new Error("nextTag must be semver"); if (!sha.test(data.originMainCommit)) throw new Error("originMainCommit must be a full SHA"); if (!hash.test(data.planHash)) throw new Error("planHash must be a sha256 hex string");' "$PLAN_PATH"
+node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const semver=/^v\d+\.\d+\.\d+$/; const sha=/^[0-9a-f]{40}$/; const hash=/^[0-9a-f]{64}$/; if (data.schemaVersion !== 2) throw new Error("schemaVersion must be 2"); if (data.mode !== "tag-only") throw new Error("mode must be tag-only"); if (data.status !== "ready") throw new Error("latest verification requires a ready plan"); if (!semver.test(data.previousTag)) throw new Error("previousTag must be semver"); if (!semver.test(data.nextTag)) throw new Error("nextTag must be semver"); if (!sha.test(data.candidateCommit)) throw new Error("candidateCommit must be a full SHA"); if (!hash.test(data.planHash)) throw new Error("planHash must be a sha256 hex string");' "$PLAN_PATH"
 
 json_field() {
   node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const path=process.argv[2].split("."); let value=data; for (const key of path) value=value?.[key]; if (value == null) process.exit(1); process.stdout.write(String(value));' "$PLAN_PATH" "$1"
 }
 
 tag="$(json_field nextTag)"
-target="$(json_field originMainCommit)"
+target="$(json_field candidateCommit)"
 plan_hash="$(json_field planHash)"
 lkg_before="$(node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(data.lkgBefore?.peeledSha || data.lkgBefore?.objectSha || "")' "$PLAN_PATH")"
 

@@ -53,15 +53,13 @@ write a suggestion.
 
 The team follows a daily ship cycle. All maintainer skills operate within this rhythm.
 
-1. **Morning** (`/nemoclaw-maintainer-morning`) — triage the backlog, pick items for the day, label them with the target version (e.g., `v0.0.8`).
-2. **During the day** (`/nemoclaw-maintainer-day`) — land PRs using the maintainer loop. Version labels make progress visible on dashboards.
-3. **Evening** (`/nemoclaw-maintainer-evening`) — Check shipped work and the pre-tag changelog PR.
-   Confirm that the pre-tag changelog PR contains `docs/changelog/YYYY-MM-DD.mdx` for the release.
-   Identify open items and prepare the QA summary. Record the release SHA and required E2E evidence.
-   Cut the tag after confirmation. Move open items to the next patch label and delete the released label.
-   Prepare the Announcement.
-4. **Overnight** — A QA team in another time zone validates the tag.
-   Put new issues into the next morning's triage.
+1. **Morning** (`/nemoclaw-maintainer-morning`): Triage the backlog, pick items for the day, and label them with the target version (for example, `v0.0.8`).
+2. **During the day** (`/nemoclaw-maintainer-day`): Land PRs using the maintainer loop. Version labels make progress visible on dashboards.
+3. **4 PM close** (`/nemoclaw-maintainer-evening`): Stop merging, require the dated changelog entry, freeze the exact candidate, identify stragglers, and start the advisory overnight handoff.
+4. **4 PM–4 AM frozen loop**: Use exact-SHA post-merge agent reviews and the E2E runs from every edition `main` push to diagnose regressions, rerun selectively, and prepare fixes without merging.
+5. **4 AM cut** (`/nemoclaw-maintainer-cut-release-tag`): Tag the frozen candidate regardless of E2E state. Keep changelog, ancestry, tag, signing, `latest`, `lkg`, and housekeeping controls fail-closed.
+6. **4 AM–8 AM continuation**: Continue advisory diagnosis and fix preparation.
+7. **8 AM handoff** (`/nemoclaw-maintainer-morning`): Hand state to the next release doula and reopen the merge window.
 
 Version labels activate release work. They do not show readiness.
 If an open item misses the tag, move its label to the next patch after the release.

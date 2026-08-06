@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers, including exact-revision manual PR E2E. Use for requests such as run E2E for PR #123, run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
+description: Dispatches and verifies trusted advisory GitHub Actions E2E for NemoClaw maintainers, including exact-revision manual PR E2E and per-main-push overnight diagnosis. Use for requests such as run E2E for PR #123, run the E2E suite, diagnose post-merge E2E, selectively rerun failures, or validate a release candidate without gating its tag.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -131,8 +131,7 @@ A changed head repository, head SHA, or base SHA invalidates the evidence and re
 | “Run the E2E suite” | Ordinary | empty | `false` |
 | “Run the Launchable E2E” | Launchable | `staging-brev-launchable` | `false` |
 | “Run the full E2E suite” | Full | empty | `true` |
-| “deploy pre-release full E2E” | Full | empty | `true` |
-| “run pre-tag full E2E” | Full | empty | `true` |
+| “diagnose post-merge E2E” | Main-push inspection | n/a | n/a |
 | “run release-candidate E2E” | Full | empty | `true` |
 
 A generic E2E request must not authorize the Brev Launchable path.
@@ -142,6 +141,54 @@ Ask for clarification only when the request contains conflicting mode phrases.
 Ordinary mode runs the default-enabled GitHub Actions suite.
 Launchable mode runs only `Exact staging Brev Launchable`.
 Full mode runs the default-enabled suite and `Exact staging Brev Launchable` in the same workflow run.
+
+## Inspect the Edition's Main-Push Runs
+
+For overnight diagnosis, start from the trusted frozen plan. Every push to `main` already starts its own immutable E2E run, so do not dispatch a duplicate full run merely to begin the overnight loop:
+
+```bash
+export PLAN_PATH=/path/to/downloaded-release-edition-plan/plan.json
+CANDIDATE_SHA="$(node -p "require(process.env.PLAN_PATH).candidateCommit")"
+export EDITION_CUTOFF_AT="$(node -p "require(process.env.PLAN_PATH).authorization.cutoffAt")"
+CUTOFF_SECONDS="$(node -p "Date.parse(process.env.EDITION_CUTOFF_AT) / 1000")"
+WINDOW_START_SECONDS="$((CUTOFF_SECONDS - 8 * 60 * 60))"
+RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
+  --event push --branch main --limit 200 \
+  --json databaseId,createdAt,headSha,status,conclusion,url)"
+MATCHES="$(jq -c --argjson start "$WINDOW_START_SECONDS" --argjson end "$CUTOFF_SECONDS" \
+  '[.[] | select((.createdAt | fromdateiso8601) >= $start and
+                 (.createdAt | fromdateiso8601) <= $end)] | sort_by(.createdAt)' <<<"$RUNS")"
+jq -e 'all(.[]; (.headSha // "") | test("^[0-9a-f]{40}$"))' <<<"$MATCHES" >/dev/null
+```
+
+The inventory covers the 8:00 AM–4:00 PM merge window ending at the plan's exact cutoff. More than one run is expected. Fetch `origin/main` and require every selected `headSha` to be an ancestor of `CANDIDATE_SHA`; exclude and report any unrelated run instead of silently treating it as edition evidence. If a merge's push run is not visible yet, report it as pending and poll. Do not silently substitute full mode.
+
+Each run is keyed to its own `headSha`; a later push does not cancel an earlier main-push run. `.github/workflows/e2e-main-retry.yaml` may rerun failed jobs from a non-superseded main-push run up to two times. Keep the source run ID, attempt, SHA, job conclusion, artifacts, and retry evidence together. The tag remains bound only to the frozen plan.
+
+Watch and inspect each selected run even when it fails:
+
+```bash
+gh run watch "<run-id>" --repo NVIDIA/NemoClaw
+gh run view "<run-id>" --repo NVIDIA/NemoClaw \
+  --json status,conclusion,headSha,jobs,url
+gh run view "<run-id>" --repo NVIDIA/NemoClaw --log-failed
+```
+
+Classify failures before choosing selective reruns. Dispatch full mode only for an explicit full or release-candidate rerun request.
+
+## Operate the Overnight Loop
+
+For the frozen edition, keep one agent session active from 4:00 PM through the 8:00 AM handoff. Do not start competing agents over the same failure set. Repeat this sequence until the handoff boundary:
+
+1. inspect newly completed main-push, automatic-retry, or selective E2E jobs and exact-SHA post-merge advisor findings;
+2. choose the highest-impact unresolved failure that is not already owned by a prepared fix;
+3. classify it as a product regression, flaky test, infrastructure failure, or stale test;
+4. prepare the smallest focused fix or justified test cleanup and run its deterministic checks;
+5. open or update a fix PR without merging it during the freeze;
+6. dispatch only the selective rerun needed to test the diagnosis; and
+7. update the shared handoff state, then immediately choose the next actionable item.
+
+Do not wait idly for an unrelated rerun when another unresolved failure can be diagnosed. Continue across the 4:00 AM tag without changing the frozen candidate or treating the tag as E2E success. At 8:00 AM, stop the loop and hand over every unresolved failure, rerun, and prepared PR. If the active agent cannot continue before then, transfer the same state to one replacement agent.
 
 ## Resolve the Candidate
 
@@ -153,9 +200,7 @@ git fetch --prune origin main
 CANDIDATE_SHA="$(git rev-parse origin/main)"
 ```
 
-For a pre-tag request, use the full candidate SHA from the generated release plan.
-Require that SHA to equal `origin/main` before dispatch.
-Stop and regenerate the release plan when they differ.
+For a frozen-edition request, read `FROZEN_CANDIDATE_SHA` from the generated release plan and compare it with `CANDIDATE_SHA`, which is the current trusted `origin/main` dispatch ref. When they match, the rerun is also bound to the frozen candidate. If `main` advanced after the cutoff, keep the plan frozen and describe new dispatches as current-main or next-edition validation; the current direct-main workflow does not dispatch an older ancestor. Do not use manual PR checkout inputs to bypass that boundary.
 
 Record `CANDIDATE_SHA` for every dispatch.
 Do not use a relative revision in the evidence report.
@@ -215,48 +260,6 @@ repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That role check is the authorization.
 Launchable and full runs do not require separate environment approval.
 
-### Release Coverage Dispatch Group
-
-Use this subsection only when `nemoclaw-maintainer-cut-release-tag` supplies a release E2E preflight.
-It coordinates independent workflow runs; it does not change the meaning of ordinary or full mode above.
-
-Read `dispatches` from the preflight.
-Create a different correlation ID for each run.
-Dispatch the `defaultSuite` run first, using ordinary or full mode exactly as reported.
-Without waiting for it, dispatch the non-empty `parallelExplicit.jobs` value:
-
-```bash
-gh workflow run .github/workflows/e2e.yaml \
-  --repo NVIDIA/NemoClaw \
-  --ref main \
-  -f targets= \
-  -f "jobs=${EXPLICIT_JOBS}" \
-  -f inference_mode=mock \
-  -f include_staging_brev_launchable=false \
-  -f "correlation_id=${EXPLICIT_CORRELATION_ID}"
-```
-
-Do not add `staging-brev-launchable` to that selector list.
-Do not dispatch a conditional Jetson lane unless the authoritative repository runner inventory was confirmed online.
-After that confirmation, use a separate run and opt into queueing explicitly:
-
-```bash
-gh workflow run .github/workflows/e2e.yaml \
-  --repo NVIDIA/NemoClaw \
-  --ref main \
-  -f targets= \
-  -f jobs=jetson-nvmap-gpu \
-  -f inference_mode=mock \
-  -f include_staging_brev_launchable=false \
-  -f allow_jetson_runner_queue=true \
-  -f "correlation_id=${JETSON_CORRELATION_ID}"
-```
-
-Find all correlation IDs with one bounded `gh run list` query.
-Require exactly one run per correlation ID and the candidate SHA on every match.
-Dispatch the whole group before watching any member; do not serialize independent runs.
-Watch the group with batched status snapshots and collect results after all members are terminal.
-
 Find the run by its unique title:
 
 ```bash
@@ -305,16 +308,6 @@ gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=1
   >"$EVIDENCE_DIR/jobs-latest-$RUN_ID.json"
 ```
 
-For a release coverage group, also collect every attempt for the matrix-preserving ledger:
-
-```bash
-gh api --paginate --slurp \
-  "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
-  >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
-```
-
-Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs.
-Do not fetch the same run again.
 `jobs-latest-$RUN_ID.json` is only the validator input for the latest full-mode attempt.
 
 For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
@@ -353,12 +346,12 @@ The validator requires:
 - `cleanup.json` to report the same workspace as `ABSENT`.
 
 A skipped, cancelled, queued, or failed Launchable E2E job is not evidence.
-A Launchable-mode run is not full-mode or pre-tag release evidence.
+A Launchable-mode run is not full-mode evidence.
 A missing, mismatched, or failed cleanup receipt is not evidence.
 
-## Bind Release Evidence
+## Bind Advisory Evidence
 
-If no release plan exists, label a successful full run against `origin/main` as provisional release evidence.
+If no release plan exists, label a successful full run against `origin/main` as advisory E2E evidence.
 Return:
 
 - candidate SHA;
@@ -368,13 +361,9 @@ Return:
 - Launchable E2E identity; and
 - cleanup result.
 
-If the release candidate SHA changes, discard the earlier run group and rerun every required release coverage group for the new SHA.
-No release-note-only delta exception is currently defined.
-
-When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
-The trusted `dispatch.json` receipt proves that full mode selected the default suite.
-The release evidence ledger proves the result of each default-suite execution.
-Do not ask for the release confirmation phrase in this skill.
+Bind every result to the tested SHA. For the frozen edition, classify failures and prepare fixes for the next merge window.
+Return the trusted dispatch, test, Launchable, and cleanup receipts needed for diagnosis.
+Never treat success as tag authorization or failure as a reason to delay the 4 AM tag.
 
 ## Access Failures
 

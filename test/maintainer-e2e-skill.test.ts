@@ -175,8 +175,20 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("include_staging_brev_launchable=false");
     expect(skill).toContain("Run the full E2E suite");
     expect(skill).toContain("include_staging_brev_launchable=true");
-    expect(skill).toContain("deploy pre-release full E2E");
-    expect(skill).toContain("run pre-tag full E2E");
+    expect(skill).toContain("diagnose post-merge E2E");
+    expect(skill).toContain("Main-push inspection");
+    expect(skill).toContain("--event push --branch main");
+    expect(skill).toContain("More than one run is expected");
+    expect(skill).toContain(
+      "may rerun failed jobs from a non-superseded main-push run up to two times",
+    );
+    expect(skill).toContain("Do not silently substitute full mode");
+    expect(skill).toContain("Dispatch full mode only for an explicit full");
+    expect(skill).toContain(
+      "keep one agent session active from 4:00 PM through the 8:00 AM handoff",
+    );
+    expect(skill).toContain("immediately choose the next actionable item");
+    expect(skill).toContain("Continue across the 4:00 AM tag");
     expect(skill).toContain("run release-candidate E2E");
     expect(skill).toContain("must not authorize the Brev Launchable path");
     expect(skill).toContain(
@@ -188,7 +200,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).not.toMatch(/variable (?:set|delete) NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED/u);
   });
 
-  it("binds dispatch, evidence, invalidation, and release handoff to one SHA (#7487)", () => {
+  it("binds dispatch and advisory diagnostic evidence to one SHA (#7487)", () => {
     expect(skill).toContain("git rev-parse origin/main");
     expect(skill).toContain("correlation_id=${CORRELATION_ID}");
     expect(skill).toContain("head_sha");
@@ -197,8 +209,8 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("cleanup.json");
     expect(skill).toContain("dispatch.json");
     expect(skill).toContain("validate-full-e2e-evidence.mts");
-    expect(skill).toContain("provisional release evidence");
-    expect(skill).toContain("If the release candidate SHA changes");
-    expect(skill).toContain("nemoclaw-maintainer-cut-release-tag");
+    expect(skill).toContain("advisory E2E evidence");
+    expect(skill).toContain("Bind every result to the tested SHA");
+    expect(skill).toContain("Never treat success as tag authorization");
   });
 });

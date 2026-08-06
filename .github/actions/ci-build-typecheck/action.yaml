@@ -19,13 +19,9 @@ runs:
         npm install --ignore-scripts
         cd nemoclaw && npm install --ignore-scripts
 
-    - name: Build TypeScript plugin
+    - name: Run deterministic smoke floor
       shell: bash
-      run: cd nemoclaw && npm run build
-
-    - name: Build CLI TypeScript modules
-      shell: bash
-      run: npm run build:cli
+      run: npm run test:smoke
 
     - name: Verify compiled package contracts
       shell: bash
