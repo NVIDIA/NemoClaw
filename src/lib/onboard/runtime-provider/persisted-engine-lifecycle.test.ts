@@ -304,6 +304,33 @@ describe("persisted engine lifecycle", () => {
     expect(fs.existsSync(leasePath)).toBe(false);
   });
 
+  it("recovers a durable execution lease after its live PID is reused", () => {
+    const transactionId = "d".repeat(64);
+    const runtime = harness({ action: "recovery", transactionId });
+    preparePersistedEngineLifecycle(runtime.input);
+    runtime.lifecycleStore.authorizeMutation(transactionId);
+    runtime.lifecycleStore.acquireMutationExecution(transactionId);
+    const leasePath = path.join(
+      runtime.root,
+      PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
+      transactionId,
+      "mutation-execution.json",
+    );
+    const abandoned = JSON.parse(fs.readFileSync(leasePath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(
+      leasePath,
+      `${JSON.stringify({ ...abandoned, ownerStartIdentity: "linux:reused-process:1" })}\n`,
+      { mode: 0o600 },
+    );
+
+    const restarted = createFilePersistedEngineLifecycleStore(runtime.root);
+    const recovered = restarted.acquireMutationExecution(transactionId);
+
+    expect(recovered.ownerPid).toBe(process.pid);
+    expect(recovered.ownerStartIdentity).not.toBe("linux:reused-process:1");
+    restarted.releaseMutationExecution(recovered);
+  });
+
   it("reclaims a crash-left recovery marker only after its process owner is dead", () => {
     const transactionId = "c".repeat(64);
     const runtime = harness({ action: "recovery", transactionId });
@@ -328,6 +355,7 @@ describe("persisted engine lifecycle", () => {
         transactionId,
         ownerId: "01234567-89ab-4cde-8fab-0123456789ab",
         ownerPid: 0x7fffffff,
+        ownerStartIdentity: abandoned.ownerStartIdentity,
       })}\n`,
       { mode: 0o600 },
     );

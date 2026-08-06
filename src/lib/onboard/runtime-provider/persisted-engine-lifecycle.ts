@@ -9,6 +9,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
+import { readMcpLockProcessIdentity } from "../../state/mcp-lifecycle-lock-identity";
 import {
   normalizePersistedEngineAuthority,
   type PersistedEngineAuthority,
@@ -58,7 +59,7 @@ export interface PersistedEngineLifecycleStore {
   readonly authorizeMutation: (transactionId: string) => PersistedEngineLifecycleRecord;
   /**
    * Acquire one process-owned execution lease before invoking a mutation.
-   * A dead process owner may be recovered, but a live owner always wins.
+   * A dead or PID-recycled owner may be recovered, but the exact live owner wins.
    */
   readonly acquireMutationExecution: (
     transactionId: string,
@@ -93,6 +94,7 @@ export interface PersistedEngineLifecycleExecutionLease {
   readonly transactionId: string;
   readonly ownerId: string;
   readonly ownerPid: number;
+  readonly ownerStartIdentity: string;
 }
 
 export interface PersistedEngineLifecycleExactCommand {
@@ -322,13 +324,18 @@ function normalizeExecutionLease(value: unknown): PersistedEngineLifecycleExecut
   }
   const lease = value as Record<string, unknown>;
   if (
-    Object.keys(lease).sort().join(",") !== "ownerId,ownerPid,schemaVersion,transactionId" ||
+    Object.keys(lease).sort().join(",") !==
+      "ownerId,ownerPid,ownerStartIdentity,schemaVersion,transactionId" ||
     lease.schemaVersion !== PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION ||
     typeof lease.ownerId !== "string" ||
     !UUID.test(lease.ownerId) ||
     !Number.isSafeInteger(lease.ownerPid) ||
     (lease.ownerPid as number) <= 0 ||
-    (lease.ownerPid as number) > 0x7fffffff
+    (lease.ownerPid as number) > 0x7fffffff ||
+    typeof lease.ownerStartIdentity !== "string" ||
+    lease.ownerStartIdentity.length === 0 ||
+    lease.ownerStartIdentity.length > 512 ||
+    CONTROL_CHARACTERS.test(lease.ownerStartIdentity)
   ) {
     fail("mutation execution lease schema is unsupported");
   }
@@ -337,6 +344,7 @@ function normalizeExecutionLease(value: unknown): PersistedEngineLifecycleExecut
     transactionId: exactSha256(lease.transactionId, "mutation transaction identity"),
     ownerId: lease.ownerId,
     ownerPid: lease.ownerPid as number,
+    ownerStartIdentity: lease.ownerStartIdentity,
   });
 }
 
@@ -365,6 +373,18 @@ function processIsAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+function requireCurrentProcessStartIdentity(): string {
+  const identity = readMcpLockProcessIdentity(process.pid, true);
+  if (!identity) fail("current process start identity is unavailable");
+  return identity;
+}
+
+function exactExecutionOwnerIsAlive(lease: PersistedEngineLifecycleExecutionLease): boolean {
+  if (!processIsAlive(lease.ownerPid)) return false;
+  const currentIdentity = readMcpLockProcessIdentity(lease.ownerPid, true);
+  return currentIdentity === null || currentIdentity === lease.ownerStartIdentity;
 }
 
 function currentUid(fallback: number | bigint): bigint {
@@ -723,11 +743,13 @@ export function createFilePersistedEngineLifecycleStore(
       }
       const directory = transactionDirectory(root, transactionId);
       requirePrivateDirectory(directory);
+      const ownerStartIdentity = requireCurrentProcessStartIdentity();
       const lease = normalizeExecutionLease({
         schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
         transactionId,
         ownerId: randomUUID(),
         ownerPid: process.pid,
+        ownerStartIdentity,
       });
 
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -736,7 +758,7 @@ export function createFilePersistedEngineLifecycleStore(
           if (existingRecovery.transactionId !== transactionId) {
             fail("mutation execution recovery names another transaction");
           }
-          if (processIsAlive(existingRecovery.ownerPid)) {
+          if (exactExecutionOwnerIsAlive(existingRecovery)) {
             fail("mutation execution recovery is already in progress");
           }
           removeExactExecutionRecovery(directory, existingRecovery);
@@ -754,7 +776,7 @@ export function createFilePersistedEngineLifecycleStore(
         if (existing.transactionId !== transactionId) {
           fail("mutation execution lease names another transaction");
         }
-        if (processIsAlive(existing.ownerPid)) {
+        if (exactExecutionOwnerIsAlive(existing)) {
           fail("mutation execution is already owned by a live process");
         }
 
@@ -763,6 +785,7 @@ export function createFilePersistedEngineLifecycleStore(
           transactionId,
           ownerId: randomUUID(),
           ownerPid: process.pid,
+          ownerStartIdentity,
         });
         if (
           !publishExclusive(
@@ -775,7 +798,7 @@ export function createFilePersistedEngineLifecycleStore(
         }
         try {
           const abandoned = loadExecutionLease(directory);
-          if (abandoned && processIsAlive(abandoned.ownerPid)) {
+          if (abandoned && exactExecutionOwnerIsAlive(abandoned)) {
             fail("mutation execution owner became live during recovery");
           }
           if (abandoned) removeExactExecutionLease(directory, abandoned);

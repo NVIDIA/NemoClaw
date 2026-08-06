@@ -339,6 +339,7 @@ function journalStore(): TestJournalStore {
         transactionId,
         ownerId: "12345678-1234-4123-8123-123456789abc",
         ownerPid: process.pid,
+        ownerStartIdentity: "test-process-start-identity",
       });
       return activeLease;
     },
