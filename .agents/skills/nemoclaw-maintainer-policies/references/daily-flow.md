@@ -70,7 +70,7 @@ Agents may recommend labels, assignments, Project field changes, comments, merge
 - Release inclusion requires a PR to be both merged and carrying the relevant daily version label in the frozen 4 PM candidate.
 - Issue daily version labels are tracking or coordination signals only.
 - Stop merges from 4 PM to 8 AM. A merge after cutoff belongs to the next edition and never advances the frozen candidate.
-- Dispatch an asynchronous agent review for each exact `main` SHA range. Consume the E2E run triggered by every `main` push and prepare fixes during the freeze.
+- Dispatch an asynchronous agent review for each exact `main` SHA range. Every `main` push selects every workflow E2E; consume those runs and prepare fixes during the freeze.
 - E2E is advisory: tag the frozen candidate at 4 AM regardless of its state, while keeping changelog, ancestry, signing, collision, `latest`, `lkg`, and housekeeping controls fail-closed.
 - Open PRs and issues that miss a tagged release carry forward by automatically moving from the released version label to the next patch label after the tag and `latest` are verified.
 - After carry-forward leaves no open item on the released label, delete that repository label. Never rename or reuse it.

@@ -18,7 +18,7 @@ Use `America/Los_Angeles` for every boundary:
 
 | Time | Contract |
 |---|---|
-| 8:00 AM–4:00 PM | Merge reviewed PRs. Each `main` advance asynchronously dispatches an agent review for its exact SHA range. |
+| 8:00 AM–4:00 PM | Merge reviewed PRs. Each `main` advance asynchronously dispatches an agent review for its exact SHA range and selects every workflow E2E. |
 | 4:00 PM | Stop merging. `.github/workflows/release-edition-close.yaml` freezes the latest GitHub-recorded `main` push at or before the cutoff. |
 | 4:00 PM–4:00 AM | Consume the E2E runs already triggered by the edition's `main` pushes; diagnose, rerun selectively, or prepare fix PRs. Do not merge during the freeze. |
 | 4:00 AM | `.github/workflows/release-edition-cut.yaml` tags the frozen candidate regardless of E2E state. |
@@ -64,7 +64,7 @@ If a merge creates its `main` push run after 4:00 PM, the cutoff selection exclu
 
 ### 3. Use the Freeze for Advisory Validation
 
-Assign one agent to the complete 4:00 PM–8:00 AM loop. Load `nemoclaw-maintainer-e2e` to inventory every immutable E2E run triggered by an edition `main` push, its automatic retry evidence, and any selective reruns. Classify failures as product regressions, flaky tests, infrastructure failures, or stale tests. After each result, immediately select the next actionable failure, rerun, or prepared fix. Prepare and validate fix PRs, but do not merge them until 8:00 AM. Keep the loop running after the 4:00 AM tag; stop only at handoff or transfer the same state to a replacement agent.
+Assign one agent to the complete 4:00 PM–8:00 AM loop. Load `nemoclaw-maintainer-e2e` to inventory every immutable E2E run triggered by an edition `main` push, including every selected workflow E2E, its automatic retry evidence, and any selective reruns. Classify failures as product regressions, flaky tests, infrastructure failures, or stale tests. After each result, immediately select the next actionable failure, rerun, or prepared fix. Prepare and validate fix PRs, but do not merge them until 8:00 AM. Keep the loop running after the 4:00 AM tag; stop only at handoff or transfer the same state to a replacement agent.
 
 Keep this state for the morning handoff:
 

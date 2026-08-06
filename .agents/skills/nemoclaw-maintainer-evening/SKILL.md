@@ -48,7 +48,7 @@ Run the handoff summary:
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary.ts
 ```
 
-Assign one agent to remain active through the 8:00 AM handoff. Load `nemoclaw-maintainer-e2e`. Inventory every E2E run triggered by the edition's `main` pushes, including automatic retry evidence and selective reruns, then classify failures, consolidate duplicates, delete stale tests when justified, and prepare focused fix PRs. Include exact-SHA post-merge advisor runs. After each diagnosis, rerun, or prepared fix, immediately select the next actionable failure. Do not merge fixes during the freeze and do not stop the loop when the 4:00 AM tag is cut.
+Assign one agent to remain active through the 8:00 AM handoff. Load `nemoclaw-maintainer-e2e`. Inventory every E2E run triggered by the edition's `main` pushes and every workflow E2E selected in those runs, including automatic retry evidence and selective reruns, then classify failures, consolidate duplicates, delete stale tests when justified, and prepare focused fix PRs. Include exact-SHA post-merge advisor runs. After each diagnosis, rerun, or prepared fix, immediately select the next actionable failure. Do not merge fixes during the freeze and do not stop the loop when the 4:00 AM tag is cut.
 
 E2E does not authorize or block the 4:00 AM tag. Do not build a release evidence ledger or request exceptions.
 

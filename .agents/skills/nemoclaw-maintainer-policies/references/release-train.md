@@ -11,7 +11,7 @@ Use `America/Los_Angeles` for all boundaries.
 
 | Time | State | Work |
 |---|---|---|
-| 8:00 AM–4:00 PM | Merge window | Merge reviewed PRs. Dispatch an asynchronous agent review for every exact `main` SHA range. |
+| 8:00 AM–4:00 PM | Merge window | Merge reviewed PRs. Dispatch an asynchronous agent review for every exact `main` SHA range, and select every workflow E2E for each `main` push. |
 | 4:00 PM | Edition closed | Stop merging. Freeze the latest GitHub-recorded `main` push at or before the cutoff. |
 | 4:00 PM–4:00 AM | Frozen | Consume the E2E runs from every edition `main` push, diagnose failures, selectively rerun, and prepare fix PRs. Do not merge. |
 | 4:00 AM | Edition tagged | Tag the frozen candidate regardless of E2E state. Continue the advisory loop. |
@@ -61,7 +61,7 @@ If no commits follow the latest semver tag at cutoff, the edition succeeds as `n
 
 Every non-initial push to `main` dispatches the existing isolated PR Review Advisor with the exact immutable `before...after` SHA range. Advisor concurrency includes the head SHA, so a later merge does not cancel an earlier review. These post-merge reviews are asynchronous findings for the overnight loop and morning triage; they are not required status checks.
 
-Every push to `main` starts `.github/workflows/e2e.yaml` for that immutable head SHA. Runs are queued rather than cancelled when later pushes arrive. `.github/workflows/e2e-main-retry.yaml` may retry failed jobs from a non-superseded main-push run up to two times. Assign one overnight agent to own the loop continuously from edition close through the 8:00 AM handoff. Keep the shared handoff state with that agent across the 4:00 AM tag boundary. The agent must use all edition main-push results, automatic retry evidence, exact-SHA Advisor artifacts, and selective reruns to:
+Every push to `main` starts `.github/workflows/e2e.yaml` for that immutable head SHA and selects every workflow E2E. A selected protected job may remain queued for its runner or environment approval; it does not require a separate dispatch. Runs are queued rather than cancelled when later pushes arrive. `.github/workflows/e2e-main-retry.yaml` may retry failed jobs from a non-superseded main-push run up to two times. Assign one overnight agent to own the loop continuously from edition close through the 8:00 AM handoff. Keep the shared handoff state with that agent across the 4:00 AM tag boundary. The agent must use all edition main-push results, automatic retry evidence, exact-SHA Advisor artifacts, and selective reruns to:
 
 1. classify product regressions, flaky tests, infrastructure failures, and stale tests;
 2. consolidate duplicates;

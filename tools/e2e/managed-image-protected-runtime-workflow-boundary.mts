@@ -14,7 +14,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = "managed-image-protected-runtime";
 const SELECTOR =
-  "${{ always() && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}";
+  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}";
 const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
@@ -94,7 +94,8 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   if (!isDeepStrictEqual(job.needs, ["generate-matrix", "managed-image-multiarch-startup"])) {
     errors.push(`${JOB_ID} must depend on generate-matrix and managed-image-multiarch-startup`);
   }
-  if (job.if !== SELECTOR) errors.push(`${JOB_ID} must remain explicit-only and selector-bound`);
+  if (job.if !== SELECTOR)
+    errors.push(`${JOB_ID} must run on main pushes and retain manual selectors`);
   if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
     errors.push(`${JOB_ID} must run on the protected amd64 GPU runner`);
   }
@@ -109,24 +110,25 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const jobEnv = record(job.env);
   requireValues(errors, `${JOB_ID} env`, jobEnv, {
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime",
-    E2E_DEFAULT_ENABLED: "0",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
     E2E_WORKLOAD_SOURCE: "managed-image",
     RELEASE_E2E_ACTIVATION_PATH: ACTIVATION_PATH,
     NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
     NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA:
+      "${{ inputs.base_sha || github.event.before || github.sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
       "${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
-      "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}",
+      "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:
       "protected-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT:
       "${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime/contracts.json",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: "linux/amd64",
-    NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA:
+      "${{ inputs.workflow_sha || github.workflow_sha }}",
     NEMOCLAW_PROTECTED_REGISTRY_NAME:
       "nemoclaw-managed-runtime-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
@@ -142,10 +144,10 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Validate protected runtime exact-head dispatch",
   );
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
-    BASE_SHA: "${{ inputs.base_sha }}",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     EVENT_NAME: "${{ github.event_name }}",
-    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha || github.workflow_sha }}",
     REF: "${{ github.ref }}",
     REPOSITORY: "${{ github.repository }}",
     RUNNER_ARCH_KIND: "${{ runner.arch }}",
@@ -154,6 +156,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   requireFragments(errors, guard, [
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
+    '"push"',
     '"workflow_dispatch"',
     '[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
@@ -180,7 +183,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   }
   requireValues(errors, `${JOB_ID} trusted checkout`, record(trustedCheckout?.with), {
     repository: "${{ github.repository }}",
-    ref: "${{ inputs.workflow_sha }}",
+    ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
     "fetch-depth": 0,
     "persist-credentials": false,
   });

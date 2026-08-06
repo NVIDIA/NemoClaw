@@ -191,6 +191,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("8:00 AM–4:00 PM");
     expect(policy).toContain("latest `post-merge-agent-review.yaml` push run");
     expect(policy).toContain("A merge after the cutoff belongs to the next edition");
+    expect(policy).toContain("selects every workflow E2E");
     expect(policy).toContain("Tag the frozen candidate regardless of E2E state");
     expect(policy).toContain("Do not create an E2E waiver ledger");
     expect(policy).toContain("E2E never enters the tag authorization");
