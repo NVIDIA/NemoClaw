@@ -210,7 +210,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).not.toMatch(/variable (?:set|delete) NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED/u);
   });
 
-  it("binds dispatch, evidence, invalidation, and release handoff to one SHA (#7487)", () => {
+  it("binds dispatch and diagnostic evidence to one SHA without gating merges or tags (#7487)", () => {
     expect(skill).toContain("git rev-parse origin/main");
     expect(skill).toContain("correlation_id=${CORRELATION_ID}");
     expect(skill).toContain("head_sha");
@@ -219,8 +219,8 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("cleanup.json");
     expect(skill).toContain("dispatch.json");
     expect(skill).toContain("validate-full-e2e-evidence.mts");
-    expect(skill).toContain("provisional release evidence");
-    expect(skill).toContain("If the release candidate SHA changes");
-    expect(skill).toContain("nemoclaw-maintainer-cut-release-tag");
+    expect(skill).toContain("SHA-bound diagnostic evidence");
+    expect(skill).toContain("When validating another SHA");
+    expect(skill).toContain("does not gate merging or a release tag");
   });
 });

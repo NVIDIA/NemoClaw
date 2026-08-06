@@ -7,6 +7,7 @@ set -euo pipefail
 PLAN_PATH=""
 CONFIRMATION="${RELEASE_CONFIRMATION:-}"
 PREFLIGHT_ONLY=false
+SCHEDULED=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,14 +23,20 @@ while [[ $# -gt 0 ]]; do
       PREFLIGHT_ONLY=true
       shift
       ;;
+    --scheduled)
+      SCHEDULED=true
+      shift
+      ;;
     --help | -h)
       cat <<'USAGE'
 Usage:
   scripts/release-cut-tag.sh --plan PATH --preflight-only
   scripts/release-cut-tag.sh --plan PATH --confirm "CONFIRM RELEASE vX.Y.Z <sha>"
+  scripts/release-cut-tag.sh --plan PATH --scheduled
 
 Preflight mode verifies that Git can create a signed annotated tag with the configured signer.
-Cut mode creates and pushes only the signed annotated semver tag described by a release plan.
+Manual cut mode requires the plan confirmation phrase. Scheduled cut mode is restricted to
+the canonical daily-tag workflow on main. Both create and push only the signed annotated semver tag described by a release plan.
 USAGE
       exit 0
       ;;
@@ -47,7 +54,16 @@ fail() {
 
 [[ -n "$PLAN_PATH" ]] || fail "--plan is required"
 [[ -f "$PLAN_PATH" ]] || fail "Plan file not found: $PLAN_PATH"
-if [[ "$PREFLIGHT_ONLY" != true ]]; then
+if [[ "$PREFLIGHT_ONLY" == true && "$SCHEDULED" == true ]]; then
+  fail "--preflight-only and --scheduled are mutually exclusive"
+fi
+if [[ "$SCHEDULED" == true ]]; then
+  [[ "${GITHUB_ACTIONS:-}" == "true" ]] || fail "--scheduled requires GitHub Actions"
+  [[ "${GITHUB_REPOSITORY:-}" == "NVIDIA/NemoClaw" ]] || fail "--scheduled requires NVIDIA/NemoClaw"
+  [[ "${GITHUB_EVENT_NAME:-}" == "schedule" ]] || fail "--scheduled requires a schedule event"
+  [[ "${GITHUB_WORKFLOW_REF:-}" == "NVIDIA/NemoClaw/.github/workflows/release-daily-tag.yaml@refs/heads/main" ]] \
+    || fail "--scheduled requires the release-daily-tag workflow from main"
+elif [[ "$PREFLIGHT_ONLY" != true ]]; then
   [[ -n "$CONFIRMATION" ]] || fail "--confirm is required"
 fi
 
@@ -67,12 +83,13 @@ schema_version="$(json_field schemaVersion)"
 mode="$(json_field mode)"
 tag="$(json_field nextTag)"
 target="$(json_field originMainCommit)"
+previous_tag="$(json_field previousTag)"
 expected_confirmation="$(json_field confirmationPhrase)"
 plan_hash="$(json_field planHash)"
 
 [[ "$schema_version" == "1" ]] || fail "Unsupported plan schemaVersion: $schema_version"
 [[ "$mode" == "tag-only" ]] || fail "Unsupported plan mode: $mode"
-if [[ "$PREFLIGHT_ONLY" != true ]]; then
+if [[ "$PREFLIGHT_ONLY" != true && "$SCHEDULED" != true ]]; then
   [[ "$CONFIRMATION" == "$expected_confirmation" ]] || fail "Confirmation phrase does not match plan"
 fi
 [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Plan tag is not semver: $tag"
@@ -82,10 +99,19 @@ fi
 git fetch origin main --tags --force
 
 current_origin_main="$(git rev-parse origin/main)"
-[[ "$current_origin_main" == "$target" ]] || fail "origin/main moved from plan target $target to $current_origin_main; regenerate the plan"
+if [[ "$SCHEDULED" != true ]]; then
+  [[ "$current_origin_main" == "$target" ]] || fail "origin/main moved from plan target $target to $current_origin_main; regenerate the plan"
+fi
 
 git cat-file -e "${target}^{commit}" || fail "Target commit does not exist: $target"
 git merge-base --is-ancestor "$target" origin/main || fail "Target commit is not reachable from origin/main: $target"
+
+current_previous_tag="$(
+  git ls-remote --tags origin 'v*' \
+    | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const tags=[...new Set(input.split(/\n/).map(line => (line.trim().split(/\s+/)[1] ?? "").replace(/^refs\/tags\//, "").replace(/\^\{\}$/, "")).filter(tag => /^v\d+\.\d+\.\d+$/.test(tag)))]; tags.sort((a,b) => { const pa=a.slice(1).split(".").map(Number); const pb=b.slice(1).split(".").map(Number); for (let i=0;i<3;i+=1) if (pa[i] !== pb[i]) return pb[i]-pa[i]; return 0; }); process.stdout.write(tags[0] ?? ""); });'
+)"
+[[ "$current_previous_tag" == "$previous_tag" ]] \
+  || fail "Latest remote semver tag changed from $previous_tag to ${current_previous_tag:-none}; regenerate the plan"
 
 if git show-ref --verify --quiet "refs/tags/$tag"; then
   fail "Local tag already exists: $tag"
@@ -115,12 +141,13 @@ if [[ "$PREFLIGHT_ONLY" == true ]]; then
   exit 0
 fi
 
-# Release tags are immutable once pushed. Sign the tag on the release
-# operator's workstation so the private signing key never enters CI.
+# Release tags are immutable once pushed. Sign with the configured manual
+# signer or the protected scheduled-release signer.
 git tag -s "$tag" "$target" -m "$tag"
-git push origin "refs/tags/$tag"
+push_remote="${PUSH_REMOTE_URL:-origin}"
+git push "$push_remote" "refs/tags/$tag"
 
-remote_peeled="$(git ls-remote --tags origin "refs/tags/$tag^{}" | awk '{print $1}')"
+remote_peeled="$(git ls-remote --tags "$push_remote" "refs/tags/$tag^{}" | awk '{print $1}')"
 [[ "$remote_peeled" == "$target" ]] || fail "Remote $tag peeled to $remote_peeled, expected $target"
 
 result_path="$(dirname "$PLAN_PATH")/cut-result.json"

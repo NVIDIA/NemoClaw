@@ -247,6 +247,20 @@ function cutFromPlan(
   ]);
 }
 
+function scheduledCutFromPlan(
+  fixture: Fixture,
+  planPath: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+): ReturnType<typeof spawnSync> {
+  return runScript(fixture.work, ["bash", cutScriptPath, "--plan", planPath, "--scheduled"], {
+    GITHUB_ACTIONS: "true",
+    GITHUB_EVENT_NAME: "schedule",
+    GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+    GITHUB_WORKFLOW_REF: "NVIDIA/NemoClaw/.github/workflows/release-daily-tag.yaml@refs/heads/main",
+    ...extraEnv,
+  });
+}
+
 function preflightFromPlan(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
   return runScript(fixture.work, ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"]);
 }
@@ -511,6 +525,52 @@ describe("release-latest-tag.sh", () => {
       lkgPeeledCommitBefore: fixture.firstCommit,
       lkgPeeledCommitAfter: fixture.firstCommit,
     });
+  }, 30_000);
+
+  it("lets the trusted schedule tag its captured main commit while later merges continue", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "scheduled release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    const laterCommit = commit(fixture, "merge after scheduled plan");
+
+    const cutResult = scheduledCutFromPlan(fixture, planPath);
+
+    expect(cutResult.status).toBe(0);
+    expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
+    expect(remoteCommit(fixture, "refs/heads/main")).toBe(laterCommit);
+  });
+
+  it("rejects scheduled mode outside the canonical main workflow", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "scheduled release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+
+    const cutResult = scheduledCutFromPlan(fixture, planPath, {
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+    });
+
+    expect(cutResult.status).not.toBe(0);
+    expect(cutResult.stderr).toContain("--scheduled requires a schedule event");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("rejects a scheduled plan when another semver tag wins the race", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "scheduled release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    pushTag(fixture, "v0.0.3", releaseCommit);
+
+    const cutResult = scheduledCutFromPlan(fixture, planPath);
+
+    expect(cutResult.status).not.toBe(0);
+    expect(cutResult.stderr).toContain("Latest remote semver tag changed from v0.0.1 to v0.0.3");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
   });
 
   it("rejects signing preflight when the configured signer is unavailable", () => {

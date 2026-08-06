@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release / Daily Tag
+
+on:
+  schedule:
+    # GitHub cron is UTC. The gate below selects the entry matching 4 PM in Los Angeles.
+    - cron: "0 23 * * *"
+    - cron: "0 0 * * *"
+
+permissions: {}
+
+concurrency:
+  group: release-daily-tag
+  queue: max
+
+jobs:
+  schedule-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      active: ${{ steps.gate.outputs.active }}
+    steps:
+      - name: Select the 4 PM Los Angeles schedule
+        id: gate
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          set -euo pipefail
+          offset="$(TZ=America/Los_Angeles date +%z)"
+          expected="0 23 * * *"
+          if [[ "$offset" == "-0800" ]]; then
+            expected="0 0 * * *"
+          fi
+          if [[ "$SCHEDULE" == "$expected" ]]; then
+            echo "active=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "active=false" >>"$GITHUB_OUTPUT"
+          fi
+
+  cut-release:
+    needs: schedule-gate
+    if: needs.schedule-gate.outputs.active == 'true'
+    runs-on: ubuntu-latest
+    environment: release-tag
+    permissions:
+      contents: write
+    outputs:
+      cut: ${{ steps.cut.outputs.cut }}
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Prepare the current main release
+        id: prepare
+        run: |
+          set -euo pipefail
+          plan_dir="$RUNNER_TEMP/release"
+          plan_path="$plan_dir/plan.json"
+          mkdir -p "$plan_dir"
+          node --experimental-strip-types --no-warnings scripts/release-plan.mts \
+            --bump patch --output "$plan_path"
+
+          previous_tag="$(node -p "require('$plan_path').previousTag")"
+          tag="$(node -p "require('$plan_path').nextTag")"
+          target="$(node -p "require('$plan_path').originMainCommit")"
+          echo "plan_path=$plan_path" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+          if [[ "$(git rev-list --count "$previous_tag..$target")" == "0" ]]; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"
+            echo "No commits after $previous_tag; skipping today's tag." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          mapfile -t changelogs < <(
+            git grep -l -x -F "## $tag" "$target" -- 'docs/changelog/*.mdx' || true
+          )
+          if (( ${#changelogs[@]} != 1 )); then
+            echo "Expected exactly one dated changelog with heading ## $tag; found ${#changelogs[@]}" >&2
+            exit 1
+          fi
+          echo "changed=true" >>"$GITHUB_OUTPUT"
+          echo "Prepared $tag at $target from $previous_tag." >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Create and push the signed release tag
+        id: cut
+        if: steps.prepare.outputs.changed == 'true'
+        env:
+          NEMOCLAW_RELEASE_TAG_SIGNING_KEY: ${{ secrets.NEMOCLAW_RELEASE_TAG_SIGNING_KEY }}
+          RELEASE_SIGNER_EMAIL: ${{ vars.NEMOCLAW_RELEASE_TAG_SIGNER_EMAIL }}
+          RELEASE_SIGNER_NAME: ${{ vars.NEMOCLAW_RELEASE_TAG_SIGNER_NAME }}
+          PUSH_REMOTE_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+          test -n "$NEMOCLAW_RELEASE_TAG_SIGNING_KEY"
+          test -n "$RELEASE_SIGNER_EMAIL"
+          test -n "$RELEASE_SIGNER_NAME"
+          signing_key="$RUNNER_TEMP/release-tag-signing-key"
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s\n' "$NEMOCLAW_RELEASE_TAG_SIGNING_KEY" >"$signing_key"
+          chmod 0600 "$signing_key"
+          git config gpg.format ssh
+          git config user.signingkey "$signing_key"
+          git config user.email "$RELEASE_SIGNER_EMAIL"
+          git config user.name "$RELEASE_SIGNER_NAME"
+          scripts/release-cut-tag.sh \
+            --plan "${{ steps.prepare.outputs.plan_path }}" \
+            --scheduled
+          echo "cut=true" >>"$GITHUB_OUTPUT"
+
+      - name: Preserve the release plan and cut receipt
+        if: always() && steps.prepare.outputs.changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: daily-release-${{ steps.prepare.outputs.tag }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+
+  promote-release:
+    needs: cut-release
+    if: needs.cut-release.outputs.cut == 'true'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/release-latest-tag.yaml
+    with:
+      tag: ${{ needs.cut-release.outputs.tag }}

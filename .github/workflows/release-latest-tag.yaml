@@ -4,6 +4,12 @@
 name: Release / Latest Tag
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Semver release tag to promote as latest"
+        required: true
+        type: string
   push:
     tags:
       - "v*.*.*"
@@ -40,7 +46,7 @@ jobs:
         id: verify-release-tag
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         with:
           script: |
             const releaseTag = process.env.RELEASE_TAG ?? '';
@@ -87,7 +93,7 @@ jobs:
       - name: Move latest to the verified release tag object
         env:
           EXPECTED_RELEASE_TAG_OBJECT: ${{ steps.verify-release-tag.outputs.tag_object_sha }}
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           PUSH_REMOTE_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: scripts/release-latest-tag.sh
 
@@ -99,7 +105,7 @@ jobs:
       - name: Retire the released target label
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: >-
           node --experimental-strip-types --no-warnings scripts/retire-release-label.mts
           "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"

@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/release-daily-tag-workflow.test.ts",
+      "test": "cuts at 4 PM Los Angeles without consulting E2E and promotes the exact tag",
+      "category": "security"
+    },
+    {
       "file": "src/lib/actions/sandbox/mcp-bridge-input-validation.test.ts",
       "test": "rejects host subprocess control and allowlist names as MCP credentials",
       "category": "compatibility"

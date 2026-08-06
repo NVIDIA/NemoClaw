@@ -68,6 +68,8 @@ const OPAQUE_INPUTS = [
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
+  ".github/workflows/release-daily-tag.yaml",
+  ".github/workflows/release-latest-tag.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/approve-maintainer-pr-workflow-runs.yaml",
   ".github/workflows/pr-review-advisor.yaml",
