@@ -33,9 +33,8 @@ function allowedAddressMatcher(cidrs: readonly string[]): (address: string) => b
     const [address, prefixText] = cidr.split("/");
     const family = isIP(address ?? "");
     const prefix = Number(prefixText);
-    if (family === 0 || !Number.isInteger(prefix)) {
-      throw new Error(`invalid policy CIDR: ${cidr}`);
-    }
+    expect(family, cidr).not.toBe(0);
+    expect(Number.isInteger(prefix), cidr).toBe(true);
     allowed.addSubnet(address!, prefix, family === 4 ? "ipv4" : "ipv6");
   }
   return (address: string): boolean => {
