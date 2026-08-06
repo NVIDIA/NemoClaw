@@ -245,19 +245,22 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
   });
 
   it("switches a slow gateway to the serving threshold once it serves", () => {
-    // A boot that refuses and then comes up must never be killed, and from its
-    // first serving response it is held to the tighter post-serving threshold.
+    // A boot that refuses and then comes up must not be killed for those early
+    // refusals, and from its first serving response it is held to the tighter
+    // post-serving threshold. The boot grace window is set to 5 so that
+    // recovery on the fourth post-serving probe can only come from the
+    // threshold switch, not from the window it was counting against before.
     const { result, fakeAlive, tmpDir } = runWatchdog({
-      curlPlan: [7, 7, 7, 0, 0],
+      curlPlan: [7, 7, 7, 0, 7, 7, 7, 7],
       env: { NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES: "5" },
-      expectKill: false,
-      settleSeconds: 1.2,
+      expectKill: true,
     });
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
-      expect(fakeAlive).toBe(true);
+      expect(fakeAlive).toBe(false);
       expect(result.stderr).toContain("(3/5 since launch, having never served)");
-      expect(result.stderr).not.toContain("CRITICAL");
+      expect(result.stderr).toContain("(1/4 since the last serving response)");
+      expect(result.stderr).toContain("4 not-serving probes since the last serving response");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
