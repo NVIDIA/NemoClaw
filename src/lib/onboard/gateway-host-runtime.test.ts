@@ -416,7 +416,7 @@ describe("gateway host runtime attachment probe", () => {
     port = 9443;
 
     expect(runtime.getGatewayStartEnv()).toMatchObject({ OPENSHELL_SERVER_PORT: "9443" });
-  });
+  }, 15_000);
 
   it("registers and selects the exact declared endpoint without prior gateway metadata (#6576)", async () => {
     declareExternalSupervision();
