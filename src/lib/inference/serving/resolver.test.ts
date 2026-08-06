@@ -120,20 +120,27 @@ function catalogReadinessEntities(
     "readiness" in requirement ? [requirement.readiness] : [],
   );
   return {
-    observations: readinessRequirements.flatMap((readiness) => {
-      if (readiness.kind !== "observation") return [];
-      if ("state" in readiness) {
-        return [
-          {
-            id: readiness.id,
-            state: readiness.state as SystemReadinessReport["observations"][number]["state"],
-          },
-        ];
-      }
-      const comparison = readiness.comparison;
-      const value = comparison.operator === "one-of" ? comparison.values[0] : comparison.value;
-      return [{ id: readiness.id, state: "present" as const, value }];
-    }),
+    observations: readinessRequirements.flatMap((readiness) =>
+      readiness.kind !== "observation"
+        ? []
+        : "state" in readiness
+          ? [
+              {
+                id: readiness.id,
+                state: readiness.state as SystemReadinessReport["observations"][number]["state"],
+              },
+            ]
+          : [
+              {
+                id: readiness.id,
+                state: "present" as const,
+                value:
+                  readiness.comparison.operator === "one-of"
+                    ? readiness.comparison.values[0]
+                    : readiness.comparison.value,
+              },
+            ],
+    ),
     capabilities: readinessRequirements.flatMap((readiness) =>
       readiness.kind === "capability"
         ? [
