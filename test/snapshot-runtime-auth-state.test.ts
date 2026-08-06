@@ -79,8 +79,9 @@ function readStdin() {
   }
   return Buffer.concat(chunks);
 }
-// Backup: state-dir existence probe (piped through awk '!seen[$0]++').
-if (cmd.includes("!seen[$0]++")) {
+// Backup: state-dir existence probe. Dynamic names are validated remotely and
+// all emitted names are independently checked by the host implementation.
+if (cmd.startsWith("{ ") && cmd.includes("printf")) {
   const probes = [...cmd.matchAll(/\\[ -d '([^']+)' \\] && printf '%s\\\\n' '([^']+)'/g)];
   for (const m of probes) {
     if (fs.existsSync(mapPath(m[1]))) process.stdout.write(m[2] + "\\n");

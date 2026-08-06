@@ -50,6 +50,7 @@ import {
   type RecoveredManagedClusterVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
+import { recoverHostLocalManagedVllmEndpoint } from "./serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey } from "./vllm-api-key";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 import { getDualStationManagedVllmBaseUrl } from "./vllm-station-cluster-lifecycle";
@@ -446,6 +447,10 @@ type ManagedClusterVllmEndpointResolver = (options?: {
   loadApiKey?: () => string | null;
 }) => Pick<RecoveredManagedClusterVllmEndpoint, "baseUrl" | "apiKey"> | null;
 
+type HostLocalManagedVllmEndpointResolver = (options?: {
+  loadApiKey?: () => string | null;
+}) => { baseUrl: string; apiKey: string } | null;
+
 export type ManagedVllmProviderState =
   | { kind: "absent" }
   | { kind: "invalid-auth"; reason: "missing" | "unsafe" | "mismatched" }
@@ -457,6 +462,7 @@ export interface ManagedVllmProviderBindingOptions {
   getManagedBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
   loadApiKeyImpl?: () => string | null;
   recoverManagedClusterVllmEndpointImpl?: ManagedClusterVllmEndpointResolver;
+  recoverHostLocalManagedVllmEndpointImpl?: HostLocalManagedVllmEndpointResolver;
 }
 
 function getManagedStationVllmProviderState(
@@ -539,12 +545,31 @@ export function getManagedVllmProviderState(
   }
 
   const stationState = getManagedStationVllmProviderState(options, loadApiKey);
-  if (!managedClusterEndpoint) return stationState;
-  if (stationState.kind !== "absent") {
+  const hostLocalEndpoint = options.recoverHostLocalManagedVllmEndpointImpl
+    ? options.recoverHostLocalManagedVllmEndpointImpl({ loadApiKey })
+    : options.getManagedBaseUrlImpl
+      ? null
+      : recoverHostLocalManagedVllmEndpoint({ loadApiKey });
+  const presentCount =
+    Number(Boolean(managedClusterEndpoint)) +
+    Number(Boolean(hostLocalEndpoint)) +
+    Number(stationState.kind !== "absent");
+  if (managedClusterEndpoint && stationState.kind !== "absent" && !hostLocalEndpoint) {
     throw new Error(
       "Both managed cluster and Station vLLM state are present; refusing to select either endpoint.",
     );
   }
+  if (presentCount > 1) {
+    throw new Error("Multiple managed vLLM runtimes are present; refusing to select an endpoint.");
+  }
+  if (hostLocalEndpoint) {
+    return {
+      kind: "ready",
+      baseUrl: `${hostLocalEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
+      apiKey: hostLocalEndpoint.apiKey,
+    };
+  }
+  if (!managedClusterEndpoint) return stationState;
   return {
     kind: "ready",
     baseUrl: `${managedClusterEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,

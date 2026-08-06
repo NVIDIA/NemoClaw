@@ -14,10 +14,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadAgent } from "../src/lib/agent/defs";
 import { killTimer } from "../src/lib/shields/timer-control";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
+const OPENCLAW_STATE_LOCK_PLAN = loadAgent("openclaw").stateLockPlan;
 const tmpFixtures: string[] = [];
 
 afterEach(() => {
@@ -234,6 +236,18 @@ function readLockState() {
 function writeLockState(state) {
   fs.writeFileSync(lockStatePath, state);
 }
+function completeStateDirGuard(action, consumeInput) {
+  if (consumeInput) fs.readFileSync(0, "utf8");
+  if (action === "lock") writeLockState("locked");
+  if (action === "unlock") writeLockState("unlocked");
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    action,
+    status: "ok",
+    issueCount: 0,
+  }) + "\\n");
+  process.exit(0);
+}
 if (a[0]==="info") {
   process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
   process.exit(0);
@@ -286,6 +300,9 @@ if (a[0]==="exec") {
   if (pythonIndex >= 0) {
     const helper = cmd[pythonIndex + 2];
     const action = cmd[pythonIndex + 3];
+    if (cmd[pythonIndex + 1] === "-I" && helper === "-" && cmd.includes("--plan-json")) {
+      completeStateDirGuard(action, true);
+    }
     if (helper === "/usr/local/lib/nemoclaw/openclaw-config-guard.py") {
       if (action === "lock") writeLockState("locked");
       if (action === "unlock") writeLockState("unlocked");
@@ -300,16 +317,13 @@ if (a[0]==="exec") {
       process.exit(0);
     }
     if (helper === "/usr/local/lib/nemoclaw/state-dir-guard.py") {
-      if (action === "lock") writeLockState("locked");
-      if (action === "unlock") writeLockState("unlocked");
-      process.stdout.write(JSON.stringify({
-        type: "result",
-        action,
-        status: "ok",
-        issueCount: 0,
-      }) + "\\n");
-      process.exit(0);
+      completeStateDirGuard(action, false);
     }
+  }
+  if (cmd[0]==="test" && cmd[1]==="-r") { process.exit(0); }
+  if (cmd[0]==="cat" && cmd[1]==="/usr/local/share/nemoclaw/state-lock-plan.json") {
+    process.stdout.write(JSON.stringify(${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)}) + "\\n");
+    process.exit(0);
   }
   // Verification reads:
   //   stat -c '%a %U:%G' <path>      → expect "660 sandbox:sandbox" or "2770 sandbox:sandbox"
