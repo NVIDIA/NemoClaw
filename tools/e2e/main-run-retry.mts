@@ -318,8 +318,7 @@ function writeRetryEvidence(file: string, evidence: MainRunRetryEvidence): void 
     // lgtm[js/network-data-to-file] GitHub run and job fields pass type, enum,
     // count, and length limits before the controller writes them to a fixed
     // runner-owned path through an exclusive 0600 descriptor.
-    // lgtm[js/http-to-file-access]
-    fs.writeFileSync(descriptor, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+    fs.writeFileSync(descriptor, `${JSON.stringify(evidence, null, 2)}\n`, "utf8"); // lgtm[js/http-to-file-access]
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = null;
