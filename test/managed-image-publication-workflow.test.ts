@@ -20,6 +20,7 @@ import {
 type Step = {
   env?: Record<string, unknown>;
   id?: string;
+  if?: string;
   name?: string;
   run?: string;
   uses?: string;
@@ -36,12 +37,14 @@ type MatrixEntry = {
   display_name?: string;
   dockerfile?: string;
   image?: string;
+  repository?: string;
   platform?: string;
   required_binary?: string;
   runner?: string;
 };
 
 type Job = {
+  env?: Record<string, unknown>;
   if?: string;
   needs?: string | string[];
   permissions?: Record<string, string>;
@@ -145,6 +148,13 @@ function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
     "managed-image workflow is missing its all-agent PR build and runtime gate",
+  );
+}
+
+function managedPrActivation(workflow: Workflow): Job {
+  return required(
+    workflow.jobs?.["pr-managed-activation"],
+    "managed-image workflow is missing its exact all-agent PR activation gate",
   );
 }
 
@@ -421,12 +431,9 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
-    expect(prBuilder.permissions).toEqual({
-      contents: "read",
-    });
+    expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(JSON.stringify(prBuilder)).not.toContain("secrets.");
-    expect(JSON.stringify(prBuilder)).not.toContain("github.token");
+    expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(matrix.map(({ agent }) => agent)).toEqual([
       "openclaw",
       "hermes",
@@ -454,7 +461,81 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Exercise managed startup root stdin and hold").run).toContain(
       "run-managed-image-direct-e2e.ts",
     );
-    expect(steps.map(({ name }) => name).join("\n")).not.toContain("OpenShell");
+    const login = step(prBuilder, "Log in to GHCR for exact same-repository PR digest");
+    const publish = step(prBuilder, "Publish exact same-repository PR managed image by digest");
+    const logout = step(prBuilder, "Remove PR publication credentials");
+    const exportContract = step(prBuilder, "Export exact published PR managed-image contract");
+    const uploadContract = step(prBuilder, "Upload exact published PR managed-image contract");
+    const sameRepository = "github.event.pull_request.head.repo.full_name == github.repository";
+    expect(login.if).toBe(sameRepository);
+    expect(publish.if).toBe(sameRepository);
+    expect(publish.with).toMatchObject({
+      platforms: "linux/amd64",
+      outputs:
+        "type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true",
+      provenance: false,
+      sbom: false,
+    });
+    expect(publish.with?.tags).toBeUndefined();
+    expect(logout.if).toContain(sameRepository);
+    expect(exportContract.if).toBe(sameRepository);
+    expect(uploadContract.if).toBe(sameRepository);
+    expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
+    expect(exportContract.run).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
+    expect(exportContract.run).toContain("revision: $revision");
+    expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
+    expect(JSON.stringify(prBuilder)).not.toContain("github.token");
+  });
+
+  it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const activation = managedPrActivation(workflow);
+    const steps = activation.steps ?? [];
+
+    expect(workflow.on?.pull_request?.paths).toEqual(
+      expect.arrayContaining([
+        "src/lib/onboard/**",
+        "test/e2e/live/managed-image-activation-e2e*.ts",
+      ]),
+    );
+    expect(activation.needs).toBe("pr-build-and-entrypoint");
+    expect(activation.if).toContain(
+      "github.event.pull_request.head.repo.full_name == github.repository",
+    );
+    expect(activation.permissions).toEqual({ contents: "read" });
+    expect(activation.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
+      "${{ github.workspace }}/managed-pr-catalog.json",
+    );
+    expect(JSON.stringify(activation)).not.toContain("secrets.");
+    expect(JSON.stringify(activation)).not.toContain("github.token");
+    expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
+      "${{ github.event.pull_request.head.sha }}",
+    );
+    expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
+    expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
+    const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
+    expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
+    expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
+    expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
+  });
+
+  it("keeps the activation proof outside mocked runtime boundaries (#7744)", () => {
+    const source = fs.readFileSync(
+      path.join(repoRoot, "test/e2e/live/managed-image-activation-e2e-helpers.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('"--temp-managed-runtime-catalog"');
+    expect(source).toContain("await host.nemoclaw(");
+    expect(source).toContain("await lifecycle.restartGatewayRuntime(");
+    expect(source).toContain("await runAgentTurn(");
+    expect(source).toContain("await host.destroySandbox(");
+    expect(source).toContain("managed activation attempted a forbidden Dockerfile build");
+    expect(source).toContain("startFakeOpenAiCompatibleServer");
+    expect(source).not.toContain("runSandboxGpuCreateFlow");
+    expect(source).not.toContain("createDockerManagedBootstrapAdapter");
+    expect(source).not.toMatch(/\bvi\.(?:fn|mock|spyOn)\b/u);
   });
 
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {

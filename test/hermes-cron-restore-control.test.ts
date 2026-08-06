@@ -378,6 +378,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
       "restore-validated",
       "dispatch-reactivated",
     ]);
+    expect(receipts[0].drain_token).toMatch(/^[A-Za-z0-9_-]{32}$/u);
     expect(receipts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ pid: 41, start_time: 902 }),

@@ -1112,8 +1112,17 @@ describe("Hermes sandbox provisioning", () => {
       localLib,
       "patch-hermes-langfuse-credentials.mts",
     );
+    const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
     const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.85.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
+    const stateLockPlanPath = path.join(
+      tmp,
+      "usr",
+      "local",
+      "share",
+      "nemoclaw",
+      "state-lock-plan.json",
+    );
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const hermesCronRestoreControlPath = path.join(localLib, "hermes-cron-restore-control.py");
     const files = [
@@ -1127,6 +1136,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "patch-hermes-session-list-preview.py"),
       path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
       path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
+      managedPolicyReaderPath,
       langfuseCredentialPatcherPath,
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
@@ -1136,6 +1146,7 @@ describe("Hermes sandbox provisioning", () => {
       mcpManifest,
       gatewaySupervisorPath,
       stateDirGuardPath,
+      stateLockPlanPath,
       managedGatewayControlPath,
       hermesCronRestoreControlPath,
       path.join(localLib, "sandbox-rlimits.sh"),
@@ -1147,11 +1158,13 @@ describe("Hermes sandbox provisioning", () => {
     )
       .replaceAll("/usr/local/bin", localBin)
       .replaceAll("/usr/local/lib/nemoclaw", localLib)
+      .replaceAll("/usr/local/share/nemoclaw/state-lock-plan.json", stateLockPlanPath)
       .replaceAll("/etc/profile.d", profileDir)
       .replaceAll("/etc/bash.bashrc", bashrcPath);
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(path.dirname(stateLockPlanPath), { recursive: true });
       fs.mkdirSync(etcDir, { recursive: true });
       fs.writeFileSync(bashrcPath, "# fixture\n", { mode: 0o600 });
       for (const file of files) fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
@@ -1161,7 +1174,7 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${stateLockPlanPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(hermesCronRestoreControlPath).mode & 0o777).toString(8)).toBe("700");
@@ -1169,8 +1182,10 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(langfuseCredentialPatcherPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(managedPolicyReaderPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(stateLockPlanPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -559,6 +559,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       "patch-hermes-discord-recovery-permissions.py",
     );
     const profilePolicyPatcher = path.join(localLib, "patch-hermes-profile-policy-defaults.py");
+    const managedPolicyReader = path.join(localLib, "managed_policy.py");
     const langfuseCredentialPatcher = path.join(localLib, "patch-hermes-langfuse-credentials.mts");
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
@@ -574,6 +575,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
     const stateDirGuard = path.join(localLib, "state-dir-guard.py");
+    const stateLockPlan = path.join(tmp, "state-lock-plan.json");
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const hermesCronRestoreControl = path.join(localLib, "hermes-cron-restore-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
@@ -593,6 +595,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
       fs.writeFileSync(discordRecoveryPatcher, "# Discord recovery patcher fixture\n");
       fs.writeFileSync(profilePolicyPatcher, "# profile policy patcher fixture\n");
+      fs.writeFileSync(managedPolicyReader, "# managed policy reader fixture\n");
       fs.writeFileSync(langfuseCredentialPatcher, "# Langfuse credential patcher fixture\n");
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
@@ -608,6 +611,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.chmodSync(ciaoGuard, 0o666);
       fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
       fs.writeFileSync(stateDirGuard, "# state-dir guard fixture\n");
+      fs.writeFileSync(stateLockPlan, "{}\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(hermesCronRestoreControl, "# Hermes cron restore control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
@@ -642,6 +646,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
           profilePolicyPatcher,
         )
+        .replaceAll("/usr/local/lib/nemoclaw/managed_policy.py", managedPolicyReader)
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
           langfuseCredentialPatcher,
@@ -659,6 +664,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js", ciaoGuard)
         .replaceAll("/usr/local/lib/nemoclaw/preloads", preloadDir)
         .replaceAll("/usr/local/lib/nemoclaw/state-dir-guard.py", stateDirGuard)
+        .replaceAll("/usr/local/share/nemoclaw/state-lock-plan.json", stateLockPlan)
         .replaceAll("/usr/local/lib/nemoclaw/managed-gateway-control.py", managedGatewayControl)
         .replaceAll(
           "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
@@ -690,6 +696,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(stateLockPlan).mode & 0o777).toBe(0o444);
       expect(fs.statSync(hermesCronRestoreControl).mode & 0o777).toBe(0o700);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);

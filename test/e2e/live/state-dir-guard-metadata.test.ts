@@ -19,8 +19,10 @@ import {
   type TreeMeasurement,
   treeDirectories,
 } from "./state-dir-guard-metadata-helpers.ts";
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
 
 const GUARD_PATH = "/usr/local/lib/nemoclaw/state-dir-guard.py";
+const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
 const ACL_EXTRA_UID = 65_534;
 const MARKER_XATTR = "user.nemoclaw_e2e_marker";
 const TEST_TIMEOUT_MS = 10 * 60_000;
@@ -31,18 +33,30 @@ const AGENTS = [
     id: "openclaw",
     image: process.env.NEMOCLAW_OPENCLAW_TEST_IMAGE ?? "nemoclaw-production",
     configDir: "/sandbox/.openclaw",
+    stateRoots: { readOnly: "extensions", confidential: "credentials" },
   },
   {
     id: "hermes",
     image: process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? "nemoclaw-hermes-production",
     configDir: "/sandbox/.hermes",
+    stateRoots: { readOnly: "plugins", confidential: "pairing" },
   },
 ] as const;
 
 type AgentCase = (typeof AGENTS)[number];
 type GuardAction = "preflight" | "lock" | "unlock";
-type GuardTargets = Record<"plugins" | "credentials", string>;
+type GuardTargets = Record<"readOnly" | "confidential", string>;
 type AccessResult = { read: boolean; write: boolean };
+
+interface InstalledStateLockPlan {
+  $comment?: string;
+  version: number;
+  readOnlyRoots: string[];
+  confidentialRoots: string[];
+  readOnlyPrefixes: string[];
+  confidentialPrefixes: string[];
+  writableSubpaths: string[];
+}
 
 interface ConfidentialityAccessEvidence {
   processUid: number;
@@ -173,27 +187,44 @@ async function installedGuardLimits(host: HostCliClient, agent: AgentCase): Prom
   return JSON.parse(result.stdout.trim()) as GuardLimits;
 }
 
-function seedTree(fixtureRoot: string, marker: string): GuardTargets {
+async function installedStateLockPlan(
+  host: HostCliClient,
+  agent: AgentCase,
+): Promise<InstalledStateLockPlan> {
+  const result = await expectCommand(
+    host,
+    "docker",
+    ["run", "--rm", "--user", "0", "--entrypoint", "cat", agent.image, STATE_LOCK_PLAN_PATH],
+    `${agent.id}-installed-state-lock-plan`,
+  );
+  return JSON.parse(result.stdout) as InstalledStateLockPlan;
+}
+
+function seedTree(agent: AgentCase, fixtureRoot: string, marker: string): GuardTargets {
   const targets = {
-    plugins: path.join(fixtureRoot, "plugins", "nemoclaw-e2e", "state", "index.json"),
-    credentials: path.join(
+    readOnly: path.join(
       fixtureRoot,
-      "credentials",
-      "providers",
-      "nvidia",
-      "profiles",
-      "default.json",
+      agent.stateRoots.readOnly,
+      "nemoclaw-e2e",
+      "state",
+      "index.json",
+    ),
+    confidential: path.join(
+      fixtureRoot,
+      agent.stateRoots.confidential,
+      "nemoclaw-e2e",
+      "state",
+      "index.json",
     ),
   };
-  for (const [rootName, target] of Object.entries(targets)) {
+  for (const [policy, target] of Object.entries(targets)) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, JSON.stringify({ marker, rootName, kind: "metadata-target" }));
+    fs.writeFileSync(target, JSON.stringify({ marker, policy, kind: "metadata-target" }));
     fs.chmodSync(target, 0o666);
     for (let index = 0; index < 24; index += 1) {
       const shard = String(index % 4).padStart(2, "0");
       const file = path.join(
-        fixtureRoot,
-        rootName,
+        path.dirname(path.dirname(target)),
         "production-shaped",
         `shard-${shard}`,
         "cache",
@@ -288,7 +319,14 @@ async function runGuard(
   const result = await command(
     host,
     "docker",
-    [...mountArgs(agent, fixtureRoot, GUARD_PATH), action, "--config-dir", agent.configDir],
+    [
+      ...mountArgs(agent, fixtureRoot, GUARD_PATH),
+      action,
+      "--config-dir",
+      agent.configDir,
+      "--plan-file",
+      STATE_LOCK_PLAN_PATH,
+    ],
     `${agent.id}-guard-${action}`,
   );
   const elapsedMs = performance.now() - started;
@@ -471,7 +509,7 @@ async function probeConfidentialityAccessContract(
   target: string,
   identity: { uid: number; gid: number },
 ): Promise<ConfidentialityAccessEvidence> {
-  const credentialsRoot = path.join(fixtureRoot, "credentials");
+  const credentialsRoot = path.join(fixtureRoot, agent.stateRoots.confidential);
   const containerRoot = containerTargetPath(agent, fixtureRoot, credentialsRoot);
   const containerTarget = containerTargetPath(agent, fixtureRoot, target);
   const script = [
@@ -495,7 +533,7 @@ async function probeConfidentialityAccessContract(
     "    'rootMode': stat.S_IMODE(root.st_mode),",
     "    'missingDirectChildErrno': errno_of(lambda: os.lstat(os.path.join(root_path, 'oauth.json'))),",
     "    'rootListingErrno': errno_of(lambda: os.listdir(root_path)),",
-    "    'nestedTraversalErrno': errno_of(lambda: os.lstat(os.path.join(root_path, 'providers', 'missing.json'))),",
+    "    'nestedTraversalErrno': errno_of(lambda: os.lstat(os.path.join(root_path, 'nemoclaw-e2e', 'missing.json'))),",
     "    'secretReadErrno': errno_of(read_secret),",
     "}))",
   ].join("\n");
@@ -555,17 +593,41 @@ async function runAgentProbe(
   );
   expect(installedMode.stdout.trim()).toBe("root:root 500");
 
+  const installedPlanMode = await expectCommand(
+    host,
+    "docker",
+    [
+      "run",
+      "--rm",
+      "--user",
+      "0",
+      "--entrypoint",
+      "stat",
+      agent.image,
+      "-c",
+      "%U:%G %a",
+      STATE_LOCK_PLAN_PATH,
+    ],
+    `${agent.id}-installed-state-lock-plan-mode`,
+  );
+  expect(installedPlanMode.stdout.trim()).toBe("root:root 444");
+
+  const stateLockPlan = await installedStateLockPlan(host, agent);
+  const { $comment, ...installedPlan } = stateLockPlan;
+  expect(typeof $comment).toBe("string");
+  expect(installedPlan).toEqual(loadAgent(agent.id).stateLockPlan);
+
   const identity = await dockerIdentity(host, agent);
   const limits = await installedGuardLimits(host, agent);
   const marker = `nemoclaw-${agent.id}-${crypto.randomBytes(8).toString("hex")}`;
-  const targets = seedTree(fixtureRoot, marker);
+  const targets = seedTree(agent, fixtureRoot, marker);
   await configureMetadata(host, fixtureRoot, targets, marker, agent.id, skip);
   const bindProbe = await proveExactBindMount(
     host,
     agent,
     fixtureRoot,
-    targets.plugins,
-    `${marker}-plugins`,
+    targets.readOnly,
+    `${marker}-readOnly`,
   );
   requireEnvironment(
     bindProbe.exitCode === 0,
@@ -581,8 +643,8 @@ async function runAgentProbe(
     `${agent.id}-seed-ownership`,
   );
   const seeded = {
-    plugins: await readMetadata(host, targets.plugins, `${agent.id}-seeded-plugins`),
-    credentials: await readMetadata(host, targets.credentials, `${agent.id}-seeded-credentials`),
+    readOnly: await readMetadata(host, targets.readOnly, `${agent.id}-seeded-read-only`),
+    confidential: await readMetadata(host, targets.confidential, `${agent.id}-seeded-confidential`),
   };
   for (const metadata of Object.values(seeded)) {
     expect(metadata).toMatchObject({
@@ -593,19 +655,23 @@ async function runAgentProbe(
     });
   }
   await expectNamedUserAccessState(host, agent, fixtureRoot, targets, "seeded", {
-    plugins: { read: true, write: true },
-    credentials: { read: true, write: true },
+    readOnly: { read: true, write: true },
+    confidential: { read: true, write: true },
   });
 
   const preflight = await runGuard(host, agent, fixtureRoot, "preflight");
   const preflightMetadata = {
-    plugins: await readMetadata(host, targets.plugins, `${agent.id}-preflight-plugins`),
-    credentials: await readMetadata(host, targets.credentials, `${agent.id}-preflight-credentials`),
+    readOnly: await readMetadata(host, targets.readOnly, `${agent.id}-preflight-read-only`),
+    confidential: await readMetadata(
+      host,
+      targets.confidential,
+      `${agent.id}-preflight-confidential`,
+    ),
   };
   expect(preflightMetadata).toEqual(seeded);
   await expectNamedUserAccessState(host, agent, fixtureRoot, targets, "preflight", {
-    plugins: { read: true, write: true },
-    credentials: { read: true, write: true },
+    readOnly: { read: true, write: true },
+    confidential: { read: true, write: true },
   });
 
   const lock = await runGuard(host, agent, fixtureRoot, "lock");
@@ -614,34 +680,34 @@ async function runAgentProbe(
     files: tree.files,
   });
   const locked = {
-    plugins: await readMetadata(host, targets.plugins, `${agent.id}-locked-plugins`),
-    credentials: await readMetadata(host, targets.credentials, `${agent.id}-locked-credentials`),
+    readOnly: await readMetadata(host, targets.readOnly, `${agent.id}-locked-read-only`),
+    confidential: await readMetadata(host, targets.confidential, `${agent.id}-locked-confidential`),
   };
-  expectPreserved(locked.plugins, seeded.plugins, `${marker}-plugins`);
-  expectPreserved(locked.credentials, seeded.credentials, `${marker}-credentials`);
-  expect(locked.plugins).toMatchObject({
+  expectPreserved(locked.readOnly, seeded.readOnly, `${marker}-readOnly`);
+  expectPreserved(locked.confidential, seeded.confidential, `${marker}-confidential`);
+  expect(locked.readOnly).toMatchObject({
     uid: 0,
     gid: identity.gid,
     mode: "0644",
     acl: { rawNamedUser: "rwx", effectiveNamedUser: "r--", mask: "r--" },
   });
-  expect(locked.credentials).toMatchObject({
+  expect(locked.confidential).toMatchObject({
     uid: 0,
     gid: 0,
     mode: "0600",
     acl: { rawNamedUser: "rwx", effectiveNamedUser: "---", mask: "---" },
   });
-  expect(locked.plugins.inode).not.toBe(seeded.plugins.inode);
-  expect(locked.credentials.inode).not.toBe(seeded.credentials.inode);
+  expect(locked.readOnly.inode).not.toBe(seeded.readOnly.inode);
+  expect(locked.confidential.inode).not.toBe(seeded.confidential.inode);
   await expectNamedUserAccessState(host, agent, fixtureRoot, targets, "locked", {
-    plugins: { read: true, write: false },
-    credentials: { read: false, write: false },
+    readOnly: { read: true, write: false },
+    confidential: { read: false, write: false },
   });
   const confidentialityAccess = await probeConfidentialityAccessContract(
     host,
     agent,
     fixtureRoot,
-    targets.credentials,
+    targets.confidential,
     identity,
   );
   expect(confidentialityAccess).toMatchObject({
@@ -663,8 +729,12 @@ async function runAgentProbe(
     files: tree.files,
   });
   const unlocked = {
-    plugins: await readMetadata(host, targets.plugins, `${agent.id}-unlocked-plugins`),
-    credentials: await readMetadata(host, targets.credentials, `${agent.id}-unlocked-credentials`),
+    readOnly: await readMetadata(host, targets.readOnly, `${agent.id}-unlocked-read-only`),
+    confidential: await readMetadata(
+      host,
+      targets.confidential,
+      `${agent.id}-unlocked-confidential`,
+    ),
   };
   for (const [name, metadata] of Object.entries(unlocked)) {
     const original = seeded[name as keyof typeof seeded];
@@ -679,8 +749,8 @@ async function runAgentProbe(
     expect(metadata.inode).toBe(lockedMetadata.inode);
   }
   await expectNamedUserAccessState(host, agent, fixtureRoot, targets, "unlocked", {
-    plugins: { read: true, write: true },
-    credentials: { read: true, write: true },
+    readOnly: { read: true, write: true },
+    confidential: { read: true, write: true },
   });
 
   const elapsed = {
@@ -692,6 +762,11 @@ async function runAgentProbe(
   await artifacts.writeJson(`${agent.id}-budget-evidence.json`, {
     agent: agent.id,
     image: agent.image,
+    stateLockPlan: {
+      path: STATE_LOCK_PLAN_PATH,
+      readOnlyRoot: agent.stateRoots.readOnly,
+      confidentialRoot: agent.stateRoots.confidential,
+    },
     fixture: tree,
     guardLimits: limits,
     estimatedPeakEntriesPerMutationBudget: tree.entries * 2,
@@ -709,7 +784,7 @@ async function runAgentProbe(
 
 // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
-  "installed state-dir guard preserves xattrs and clamps effective ACLs for OpenClaw and Hermes (#6059)",
+  "installed state-dir guard applies each agent's generated plan without losing metadata (#6059)",
   {
     ...testTimeoutOptions(TEST_TIMEOUT_MS),
     meta: {
@@ -726,9 +801,10 @@ test(
       id: "state-dir-guard-metadata",
       boundary: "prebuilt-production-images-exact-bind-mount",
       contracts: [
-        "the installed root-owned guard handles preflight, lock, and unlock for OpenClaw and Hermes",
-        "plugins and credentials preserve content and user xattrs across fresh-inode locking",
-        "numeric ownership, mode, raw ACL, mask, and effective named-user access match each policy",
+        "the installed root-owned guard loads each image's generated AgentDefinition state-lock plan for preflight, lock, and unlock",
+        "one declared read-only root and one declared confidential root exercise each agent's lifecycle",
+        "content and user xattrs survive fresh-inode locking for both declared policies",
+        "numeric ownership, mode, raw ACL, mask, and effective named-user access match each declared policy",
         "a distinct sandbox-group member sees ENOENT for a missing direct child while listing, nested traversal, and secret reads stay denied",
         "representative-tree entry, byte, depth, copy, and wall-time evidence stays within shipped limits",
       ],
@@ -801,6 +877,8 @@ test(
       id: "state-dir-guard-metadata",
       agents: AGENTS.map((agent) => agent.id),
       assertions: {
+        installedGeneratedPlanLoaded: true,
+        agentSpecificPolicyRootsExercised: true,
         exactBindMountCapabilities: true,
         preflightNonMutating: true,
         lockReplacesInodes: true,

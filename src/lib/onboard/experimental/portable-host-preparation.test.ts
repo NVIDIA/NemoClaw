@@ -45,19 +45,23 @@ describe("preparePortableExperimentalHost", () => {
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result(1))
       .mockReturnValueOnce(result());
-    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    const podman = vi.fn(() => result(0, "/run/user/1001/custom/podman.sock\n"));
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    };
 
     preparePortableExperimentalHost(env, {
       platform: "linux",
       home,
       uid: 1001,
       systemctl,
+      podman,
       docker,
     });
 
     expect(env).toMatchObject({
       CONTAINERS_CONF: path.join(home, ".config/nemoclaw/portable/containers.conf"),
-      DOCKER_HOST: "unix:///run/user/1001/podman/podman.sock",
+      DOCKER_HOST: "unix:///run/user/1001/custom/podman.sock",
       NETAVARK_FW: "iptables",
     });
     expect(systemctl.mock.calls.map(([args]) => args)).toEqual([
@@ -70,6 +74,7 @@ describe("preparePortableExperimentalHost", () => {
       ["--user", "try-restart", "podman.service"],
       ["--user", "enable", "--now", "podman.socket"],
     ]);
+    expect(podman).toHaveBeenCalledWith(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
     expect(docker.mock.calls[1]?.[0]).toEqual([
       "run",
       "-d",
@@ -96,10 +101,37 @@ describe("preparePortableExperimentalHost", () => {
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
   });
 
+  it("keeps the portable firewall driver in the Podman default search path (#8441)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const systemctl = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
+      result(),
+    );
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result(1))
+      .mockReturnValueOnce(result());
+    const podman = vi.fn(() => result(0, "/run/user/1001/podman/podman.sock\n"));
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      { platform: "linux", home, uid: 1001, systemctl, podman, docker },
+    );
+
+    const dropIn = path.join(
+      home,
+      ".config/containers/containers.conf.d/99-nemoclaw-portable.conf",
+    );
+    expect(fs.readFileSync(dropIn, "utf-8")).toContain('firewall_driver = "iptables"');
+    expect(fs.statSync(dropIn).mode & 0o777).toBe(0o600);
+  });
+
   it("refuses to replace an unmanaged registry container", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
-    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    };
 
     expect(() =>
       preparePortableExperimentalHost(env, {
@@ -107,6 +139,7 @@ describe("preparePortableExperimentalHost", () => {
         home,
         uid: 1001,
         systemctl: () => result(),
+        podman: () => result(0, "/run/user/1001/podman/podman.sock"),
         docker: () => result(0, "unexpected-owner"),
       }),
     ).toThrow(/unmanaged container/);
@@ -139,10 +172,30 @@ describe("preparePortableExperimentalHost", () => {
           home,
           uid: 1001,
           systemctl: () => result(),
+          podman: () => result(0, "/run/user/1001/podman/podman.sock"),
           docker,
         },
       ),
     ).toThrow(/Inspecting the managed portable registry failed: registry inspection timed out/);
     expect(docker).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when Podman does not report an absolute local socket", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        {
+          platform: "linux",
+          home,
+          uid: 1001,
+          systemctl: () => result(),
+          podman: () => result(0, "tcp://127.0.0.1:1234"),
+          docker: vi.fn(),
+        },
+      ),
+    ).toThrow(/invalid socket path/);
   });
 });

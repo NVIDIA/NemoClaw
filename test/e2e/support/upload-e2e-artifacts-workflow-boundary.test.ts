@@ -121,6 +121,54 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
+  it("rejects reusing the protected build-cache upload exception for another step", () => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["managed-image-multiarch-startup"];
+    const cacheUpload = job.steps?.find(
+      (step) => step.name === "Publish exact amd64 protected runtime build cache",
+    );
+    expect(cacheUpload).toBeDefined();
+    cacheUpload!.name = "Publish another direct artifact";
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "managed-image-multiarch-startup must not invoke actions/upload-artifact directly",
+    );
+  });
+
+  it.each([
+    ["name", "another-cache-artifact"],
+    ["path", "another-cache-path/"],
+  ])("rejects protected build-cache upload %s drift", (input, value) => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["managed-image-multiarch-startup"];
+    const cacheUpload = job.steps?.find(
+      (step) => step.name === "Publish exact amd64 protected runtime build cache",
+    );
+    expect(cacheUpload).toBeDefined();
+    cacheUpload!.with![input] = value;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup must define exactly one exact protected build-cache direct upload",
+        "managed-image-multiarch-startup must not invoke actions/upload-artifact directly",
+      ]),
+    );
+  });
+
+  it("rejects duplicate exact protected build-cache upload steps", () => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["managed-image-multiarch-startup"];
+    const cacheUpload = job.steps?.find(
+      (step) => step.name === "Publish exact amd64 protected runtime build cache",
+    );
+    expect(cacheUpload).toBeDefined();
+    job.steps!.push({ ...cacheUpload!, with: { ...cacheUpload!.with } });
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "managed-image-multiarch-startup must define exactly one exact protected build-cache direct upload",
+    );
+  });
+
   it("rejects missing and duplicate shared upload invocations", () => {
     const workflow = mutableWorkflow();
     const missingJob = workflow.jobs["shared-e2e"];
@@ -138,37 +186,12 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects a scorecard upload outside its scheduled runtime summary contract", () => {
+  it("rejects scorecard push runtime summary drift", () => {
     const workflow = mutableWorkflow();
-    uploadStep(workflow.jobs.scorecard).with!.path = "e2e-artifacts/live/";
+    uploadStep(workflow.jobs.scorecard).with!.path = "runtime-summary.json";
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
-    );
-  });
-
-  it("rejects steps after the scorecard runtime summary upload", () => {
-    const workflow = mutableWorkflow();
-    workflow.jobs.scorecard.steps!.push({ name: "Run after upload", run: "echo too-late" });
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
-    );
-  });
-
-  it("rejects the scorecard runtime summary upload before its producer", () => {
-    const workflow = mutableWorkflow();
-    const scorecard = workflow.jobs.scorecard;
-    const upload = uploadStep(scorecard);
-    scorecard.steps!.splice(scorecard.steps!.indexOf(upload), 1);
-    const producerIndex = scorecard.steps!.findIndex(
-      (step) => step.name === "Generate E2E scorecard",
-    );
-    expect(producerIndex).toBeGreaterThanOrEqual(0);
-    scorecard.steps!.splice(producerIndex, 0, upload);
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+      "scorecard must use upload-e2e-artifacts exactly once with its push runtime summary contract",
     );
   });
 
