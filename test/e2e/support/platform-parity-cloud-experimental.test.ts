@@ -26,6 +26,10 @@ import {
 const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
 const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
+const dcodeApprovalMainEntrypoint = `if [[ "\${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
+`;
 const dcodeFreshReonboardCheck = path.join(cloudChecksDir, "04-deepagents-code-fresh-reonboard.sh");
 const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const tavilyBlocked = "BLOCKED:policy denied";
@@ -51,6 +55,13 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
       result: "result.json",
     },
   };
+}
+
+function writeDcodeApprovalTestDriver(driverPath: string, testEntrypoint: string): void {
+  const checkSource = fs.readFileSync(dcodeApprovalCheck, "utf8");
+  const testDriverSource = checkSource.replace(dcodeApprovalMainEntrypoint, testEntrypoint);
+  expect(testDriverSource).not.toBe(checkSource);
+  fs.writeFileSync(driverPath, testDriverSource, { mode: 0o755 });
 }
 
 describe("P0-E cloud-experimental parity guardrails", () => {
@@ -496,6 +507,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   ] as const)("%s during a named DCode rebuild", (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rebuild-retry-"));
     const mockCli = path.join(tempDir, "nemoclaw");
+    const testDriver = path.join(tempDir, "rebuild-named-sandbox");
     const counterFile = path.join(tempDir, "attempts");
     try {
       fs.writeFileSync(
@@ -534,24 +546,24 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         { mode: 0o755 },
       );
 
-      const result = spawnSync(
-        "/bin/bash",
-        [
-          "-c",
-          'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS=0; rebuild_named_sandbox disabled',
-          "bash",
-          dcodeApprovalCheck,
-          mockCli,
-        ],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            MOCK_REBUILD_COUNTER_FILE: counterFile,
-            MOCK_REBUILD_MODE: mode,
-          },
-        },
+      writeDcodeApprovalTestDriver(
+        testDriver,
+        `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS=0
+rebuild_named_sandbox disabled
+`,
       );
+      const result = spawnSync("/bin/bash", [testDriver, mockCli], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          MOCK_REBUILD_COUNTER_FILE: counterFile,
+          MOCK_REBUILD_MODE: mode,
+        },
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
 
       expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
       expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
@@ -560,6 +572,72 @@ describe("P0-E cloud-experimental parity guardrails", () => {
           /Retrying named sandbox rebuild once after a fail-closed inference timeout/gu,
         ) ?? [],
       ).toHaveLength(expectedRetryMessages);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ["retries a transient status health failure", "failure-then-success", 0, 2, 1],
+    ["fails after the bounded status health retries", "failure-always", 1, 3, 2],
+  ] as const)("%s before checking the DCode capability", (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-retry-"));
+    const mockCli = path.join(tempDir, "nemoclaw");
+    const testDriver = path.join(tempDir, "assert-status-mode");
+    const counterFile = path.join(tempDir, "attempts");
+    try {
+      fs.writeFileSync(
+        mockCli,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          "count=0",
+          'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
+          '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
+          "fi",
+          "count=$((count + 1))",
+          `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
+          `printf '{"name":"deepagents-sandbox","agent":"langchain-deepagents-code","dcodeAutoApprovalMode":"disabled","attempt":%s,"inferenceHealth":{"ok":false,"probed":false}}\\n' "$count"`,
+          'if [ "$MOCK_STATUS_MODE" = "failure-always" ] || { [ "$MOCK_STATUS_MODE" = "failure-then-success" ] && [ "$count" -eq 1 ]; }; then',
+          "  exit 1",
+          "fi",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      writeDcodeApprovalTestDriver(
+        testDriver,
+        `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+NEMOCLAW_E2E_DCODE_STATUS_RETRY_DELAY_SECONDS=0
+assert_status_mode disabled
+`,
+      );
+      const result = spawnSync("/bin/bash", [testDriver, mockCli], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          MOCK_STATUS_COUNTER_FILE: counterFile,
+          MOCK_STATUS_MODE: mode,
+        },
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+      expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+      expect(
+        result.stderr.match(/Retrying NemoClaw status after a non-success health probe/gu) ?? [],
+      ).toHaveLength(expectedRetryMessages);
+      const expectFailureDiagnostics = expectedStatus !== 0;
+      expect(
+        result.stderr.includes("nemoclaw status failed while checking 'disabled' after 3 attempts"),
+      ).toBe(expectFailureDiagnostics);
+      expect(result.stderr.includes('"dcodeAutoApprovalMode":"disabled"')).toBe(
+        expectFailureDiagnostics,
+      );
+      expect(result.stderr.includes('"attempt":3')).toBe(expectFailureDiagnostics);
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
