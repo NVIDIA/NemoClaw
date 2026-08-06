@@ -58,7 +58,7 @@ automated review feedback, drafting documentation updates, and onboarding new me
 | `nemoclaw-maintainer-day` | Run one daytime maintainer pass for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow. Designed for `/loop`. |
 | `nemoclaw-maintainer-evening` | End-of-day handoff: require the pre-tag dated changelog PR, check version progress, identify stragglers, generate a QA handoff summary, cut the release tag, carry stragglers forward, retire the released label, and hand off the Announcement. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify the dated changelog entry, cut an annotated semver tag on a maintainer-confirmed `origin/main` commit, wait for workflow-managed `latest`, carry remaining open items forward, and delete the released label; `lkg` stays manual. |
-| `nemoclaw-maintainer-e2e` | Dispatch ordinary or full trusted GitHub Actions E2E and verify exact-candidate Brev Launchable qualification evidence. |
+| `nemoclaw-maintainer-e2e` | Describe default E2E triggered by pushes to `main`, dispatch exact-revision manual PR E2E, and verify applicable workflow evidence. |
 | `nemoclaw-maintainer-release-notes` | Draft the post-tag Announcement from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
 | `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority. Link each PR to its issue and identify competing PRs. |
 | `nemoclaw-maintainer-pr-comparator` | Compare open PRs for the same issue. Apply gates and score the eligible PRs before you recommend one to merge. |

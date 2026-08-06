@@ -18,7 +18,6 @@ import {
   mcpBridgeCompatibilityRiskSignal,
   recordMcpBridgeRuntimeCompatibility,
 } from "../../../tools/e2e/mcp-bridge-runtime-compatibility.mts";
-import { classifyPrGateEvidence } from "../../../tools/e2e/pr-e2e-gate.mts";
 import { RISK_SIGNAL_FILE } from "../../../tools/e2e/risk-signal.ts";
 
 const EXPECTED_SHA = "a".repeat(40);
@@ -157,18 +156,6 @@ describe("MCP bridge dev runtime compatibility", () => {
         runReason: "passed",
       });
       expect(fs.statSync(path.join(directory, RISK_SIGNAL_FILE)).mode & 0o777).toBe(0o600);
-      expect(
-        classifyPrGateEvidence({
-          workflowConclusion: "success",
-          expectedJobs: ["mcp-bridge-dev"],
-          expectedShards: { "mcp-bridge-dev": ["hermes"] },
-          signals: [riskSignal!],
-        }),
-      ).toEqual({
-        conclusion: "success",
-        title: "All selected E2E checks passed",
-        summary: "Every expected E2E check shard passed with no skips or pending tests.",
-      });
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
