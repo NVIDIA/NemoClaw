@@ -578,9 +578,15 @@ describe("portable demo sandbox lifecycle", () => {
           stateDir,
           podman: runtime.podman,
           captureOpenshell: (args) => {
-            if (args.includes("curl")) return { status: 0, stdout: "200" };
-            if (args.includes("pgrep")) return { status: 1 };
-            return { status: 0 };
+            const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+            switch (command) {
+              case "curl":
+                return { status: 0, stdout: "200" };
+              case "pgrep":
+                return { status: 1 };
+              default:
+                return { status: 0 };
+            }
           },
           launchOpenshell,
         },
