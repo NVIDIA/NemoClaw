@@ -6,6 +6,10 @@ import crypto from "node:crypto";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { diagnosticPreview } from "../../name-validation";
+import {
+  normalizeTrustedPrivateHost,
+  parseTrustedPrivateHosts,
+} from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
@@ -24,7 +28,7 @@ export {
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
   parseMcpUrl,
-  validateMcpServerUrlResolvedTarget,
+  preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-url-validation";
 
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
@@ -227,8 +231,9 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
 
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   const env: ParsedEnvReference[] = [];
+  const trustedPrivateHosts: string[] = [];
   let server = "";
-  let url = "";
+  let rawUrl = "";
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -267,11 +272,29 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     if (token === "--url") {
-      url = normalizeMcpServerUrl(argv[++i] ?? "");
+      rawUrl = argv[++i] ?? "";
       continue;
     }
     if (token?.startsWith("--url=")) {
-      url = normalizeMcpServerUrl(token.slice("--url=".length));
+      rawUrl = token.slice("--url=".length);
+      continue;
+    }
+    if (token === "--trusted-private-host") {
+      try {
+        trustedPrivateHosts.push(normalizeTrustedPrivateHost(argv[++i] ?? ""));
+      } catch (error) {
+        throw new McpBridgeError(error instanceof Error ? error.message : String(error), 2);
+      }
+      continue;
+    }
+    if (token?.startsWith("--trusted-private-host=")) {
+      try {
+        trustedPrivateHosts.push(
+          normalizeTrustedPrivateHost(token.slice("--trusted-private-host=".length)),
+        );
+      } catch (error) {
+        throw new McpBridgeError(error instanceof Error ? error.message : String(error), 2);
+      }
       continue;
     }
     if (token?.startsWith("-")) {
@@ -283,19 +306,44 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
       2,
     );
   }
-  if (!url) {
+  if (!rawUrl) {
     throw new McpBridgeError("MCP server URL is required. Pass --url <https-mcp-url>.", 2);
+  }
+  if (new Set(trustedPrivateHosts).size !== trustedPrivateHosts.length) {
+    throw new McpBridgeError(
+      "Duplicate --trusted-private-host declarations are not accepted after normalization.",
+      2,
+    );
+  }
+  let configuredTrustedPrivateHosts: string[];
+  try {
+    configuredTrustedPrivateHosts = parseTrustedPrivateHosts(
+      process.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS,
+    );
+  } catch (error) {
+    throw new McpBridgeError(error instanceof Error ? error.message : String(error), 2);
+  }
+  const url = normalizeMcpServerUrl(rawUrl, {
+    trustedPrivateHosts: [...new Set([...trustedPrivateHosts, ...configuredTrustedPrivateHosts])],
+  });
+  const urlHost = new URL(url).hostname.toLowerCase();
+  const unrelatedTrustedHost = trustedPrivateHosts.find((host) => host !== urlHost);
+  if (unrelatedTrustedHost) {
+    throw new McpBridgeError(
+      `--trusted-private-host ${unrelatedTrustedHost} does not match MCP server URL host '${urlHost}'.`,
+      2,
+    );
   }
   if (env.length !== 1) {
     throw new McpBridgeError(
@@ -304,7 +352,12 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
     );
   }
 
-  return { server, url, env };
+  return {
+    server,
+    url,
+    env,
+    ...(trustedPrivateHosts.length > 0 ? { trustedPrivateHosts } : {}),
+  };
 }
 
 export function uniqueEnvNames(env: readonly ParsedEnvReference[] | readonly string[]): string[] {
