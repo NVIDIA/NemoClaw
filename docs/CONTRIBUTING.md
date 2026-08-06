@@ -5,7 +5,8 @@
 
 # Contributing to NemoClaw Documentation
 
-This guide covers how to write, edit, and review documentation for NemoClaw. If you change code that affects user-facing behavior, update the relevant docs in the same PR.
+This guide owns the public-facing documentation procedure and rules for NemoClaw.
+If you change code that affects user-facing behavior, update the relevant docs in the same PR.
 
 ## When to Update Docs
 
@@ -27,22 +28,6 @@ Before documenting a new surface, confirm that an accepted issue or design decis
 
 Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](resources/community-contributions.mdx).
 If the correct destination is unclear, request maintainer direction before drafting the page.
-
-## Update and Refactor Docs with Agent Skills
-
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
-Use it before writing from scratch.
-
-The skill scans recent commits for user-facing changes and drafts doc updates.
-Run it after landing features, before a release, or to find doc gaps.
-For example, ask your agent to "catch up the docs for the changes I made in this PR".
-During release prep, run the skill first, make any doc version bumps, then open the docs refresh PR.
-
-The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
-
-Use the maintainer-owned `nemoclaw-maintainer-refactor-docs` skill when a page or section has grown too large, mixes several user tasks, or needs a nested TOC.
-Use it to inventory the existing content, organize topics around the user journey, keep foldable navigation groups non-clickable, assign one canonical owner per topic, and preserve Fern routes, redirects, and agent variants during the split.
-Find the skill in `.agents/skills/nemoclaw-maintainer-refactor-docs/`.
 
 ## Markdown Docs for AI Agents
 
@@ -112,6 +97,9 @@ For each release:
   Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes or Deep Agents route.
 - Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
 - Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
+
+Run `npx vitest run test/changelog-docs.test.ts` and `npm run docs` before opening the pre-tag
+release-note docs PR.
 
 ## Publishing Docs
 
@@ -184,6 +172,7 @@ Use literal command names on those single-variant pages rather than `$$nemoclaw`
 
 Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
 Run `npm run docs` before opening a PR to verify the generated pages, rewritten relative links, and Fern navigation.
+Update `docs/index.yml` when navigation, slugs, or page placement changes.
 If content differs by behavior, setup flow, state layout, or agent-specific wording, keep using `<AgentOnly>` blocks for that content.
 Treat `<AgentOnly>` as a build-time directive rather than a React component, and do not import it from `AgentGuide.tsx`.
 Put each opening and closing tag at the first column on its own line, and do not nest the blocks.
@@ -191,9 +180,6 @@ The generated pages must contain only statically resolved content, with no `Agen
 
 Before review, render every guide variant that uses a changed shared page.
 Confirm that commands, paths, state locations, and capabilities are correct in each variant.
-Use `$$nemoclaw` when only the host CLI binary differs.
-Use an `<AgentOnly>` block when behavior, setup, paths, state locations, capabilities, or
-agent-specific wording differ.
 State when a variant has no equivalent operation.
 
 ## Route-Style Links
@@ -216,16 +202,6 @@ Commit and push normally so the Git hooks run, then run:
 ```bash
 npm run docs
 ```
-
-After the documentation changes and build are complete, run a documentation writer subagent.
-Give it the changed pages, the documentation intent, and the build evidence.
-Ask it to verify the changes against this guide and `WRITING.md`.
-The review must cover terminology, structure, voice, and code-sample presentation.
-Apply any required corrections.
-Rerun the applicable documentation validation.
-Commit the reviewed changes.
-Then complete the pull-request template's Documentation Writer Review receipt with the reviewed head SHA.
-Rerun the review after any later commit because the receipt is tied to the exact pull-request head.
 
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
 If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run validate:pr` once to reproduce those checks before opening the PR.
@@ -291,15 +267,13 @@ Present an operational procedure in this order:
 4. Give the verification command or observation and its acceptance criterion.
 5. Give recovery or rollback instructions when failure can leave state behind or create risk.
 
-Put warnings about security relaxation, data loss, credential exposure, external traffic, and
-public ingress before the action that creates the risk.
+Put warnings about destructive or replacement behavior, security relaxation, data loss, credential
+exposure, external traffic, and public ingress before the action that creates the risk.
 
 ## Style Guide
 
 Write like you are explaining something to a colleague. Be direct, specific, and concise.
 Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
-Use the [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md) for shared terms and exact product
-names.
 The writing guide defines sentence rules, rewrite examples, and review policy.
 The rules below add documentation-specific voice, formatting, and product-name conventions.
 
@@ -309,6 +283,22 @@ The rules below add documentation-specific voice, formatting, and product-name c
 - Use second person ("you") when addressing the reader.
 - Use present tense. "The command returns an error" not "The command will return an error."
 - State facts. Do not hedge with "simply," "just," "easily," or "of course."
+- Avoid contractions. Write "do not," "cannot," and "it is."
+- Spell out an uncommon abbreviation at first use.
+  Spell out LLM, RAG, SLM, VLM, and MoE at first use.
+- Replace Latinisms with plain English.
+  Use "for example," "that is," "and so on," "through," and "compared to."
+- Use "refer to" instead of "see," "can" instead of "may" for capability, and "after" instead of
+  "once" for time.
+- Do not use "please" in technical instructions.
+
+### Product Names and Usage
+
+- Write "NVIDIA" in all caps and use "an NVIDIA," not "a NVIDIA."
+- Use NVIDIA spellings such as data center, dataset, open source, pretrained, startup, webpage,
+  website, and Wi-Fi.
+- Preserve quoted UI labels, API field names, and audience role labels instead of rewriting them to
+  enforce second person.
 
 ### Things to Avoid
 
@@ -327,23 +317,39 @@ Remove them during review.
 ### Formatting Rules
 
 - End prose sentences with a period.
-- Put one prose sentence per source line where practical.
+- Put one prose sentence per source line.
 - Exempt frontmatter, headings, navigation labels, diagrams, code, output, UI labels, and compact
   table fragments from the prose sentence rules.
-- Use `code` formatting for CLI commands, file paths, flags, parameter names, and values.
+- Use `code` formatting for commands, code, filenames, paths, flags, environment variables, API
+  identifiers, and literal values.
+- Use numerals for specific values, parameters, measurements, and values of 10 or more.
+  Spell out zero through nine in general prose.
+- Include a space between a number and its unit.
+  Use a comma in numbers with four or more digits.
+- Use title case for headings.
+  Do not style headings with code, bold, italics, quotation marks, ampersands, or exclamation marks.
+- Use the Oxford comma.
+  Put periods inside quotation marks in U.S. style.
+- Use hyphens only for compound modifiers before nouns.
+  Do not hyphenate an adverb that ends in "ly."
+- Use bold for UI elements and the greater-than sign for UI navigation.
+- Introduce lists, tables, code examples, and images with a complete sentence.
+  Use parallel construction in lists.
+- Use descriptive link text.
+  Do not use raw URLs in running text or generic link text such as "click here" or "read more."
+- Write dates as Month DD, YYYY.
+  Omit the year when it matches the publication year.
+  Write time with a 12-hour clock and include minutes only when needed.
+- Provide useful alt text and preserve a logical heading hierarchy.
 - Use language-specific code blocks for commands that readers should copy.
   Put only the command text in copyable blocks:
 
   ```bash
-  $$nemoclaw onboard
+  npm run docs
   ```
 
-- Use `$$nemoclaw` as a build-time placeholder for NemoClaw host CLI command examples in shared variant pages.
-  The docs build resolves it to `nemoclaw` for OpenClaw pages, `nemohermes` for Hermes pages, and `nemo-deepagents` for Deep Agents pages before Fern renders code blocks.
-  This preserves Fern's native fenced-code UI while keeping one source sample.
-- Do not write duplicate `<AgentOnly>` fenced code blocks when only the host CLI binary differs.
-  Use `<AgentOnly>` blocks when behavior, setup, paths, state locations, capabilities, or
-  agent-specific wording differ between guide variants.
+- Apply the [agent variant generation rules](#agent-variant-generation) to code samples that differ
+  between guide variants.
 
 - Use `powershell` for Windows PowerShell commands.
   Use `bash` or `sh` for Linux, macOS, and WSL shell commands.
@@ -361,12 +367,6 @@ Remove them during review.
 - Do not use colons in titles. Write "Deploy and Manage Gateways" not "Gateways: Deploy and Manage."
 - Use colons to introduce a list or define a term or value.
   Do not use a colon to join independent clauses.
-
-### Controlled Word List
-
-Use the [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md) for product spellings, technical
-terms, lifecycle operations, and engineering evidence.
-Keep shared terms in that list instead of adding a second documentation-only table.
 
 ## Submitting Doc Changes
 
@@ -389,8 +389,8 @@ feat(cli): add policy-add command
 
 When reviewing documentation:
 
-- Follow the
-  [shared documentation writing and review contract](../.agents/skills/_shared/documentation-writing-review.md).
+- Review changed text against the [Style Guide](#style-guide) and its linked writing and
+  terminology authorities.
 - Confirm that the page documents an approved and maintained NemoClaw product surface.
 - Do not approve a new integration or solution solely because its instructions work or its checks pass.
 - Route independent third-party solutions to [Community Solutions](resources/community-contributions.mdx) when no product decision establishes core ownership.
