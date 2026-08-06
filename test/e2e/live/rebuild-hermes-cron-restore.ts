@@ -9,6 +9,10 @@ import { resolveDirectSandboxContainer } from "../../../src/lib/sandbox/privileg
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { hermesOneShotExecutionState } from "./rebuild-hermes-cron-execution.ts";
+import { hermesCronBeginIdentity } from "./rebuild-hermes-cron-receipt.ts";
+import { buildHermesRecoveryCronSchedule } from "./rebuild-hermes-cron-schedule.ts";
+import { hermesCronRuntimeFields } from "./rebuild-hermes-cron-state.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 
 const HERMES_HOME = "/sandbox/.hermes";
@@ -50,7 +54,7 @@ interface GatewayEvidence {
   active_agents: number;
   gateway_state: string;
   pid: number;
-  running_pid: number;
+  running_pid: number | null;
   start_time: number;
 }
 
@@ -152,30 +156,61 @@ export function parseHermesCronBeginReceipt(text: string): CronControlReceipt {
     operator_drain_active: false,
     version: 1,
   });
-  if (!Number.isSafeInteger(payload.pid) || !Number.isSafeInteger(payload.start_time)) {
-    fail("Hermes cron begin receipt identity is invalid");
-  }
+  hermesCronBeginIdentity(payload);
   return payload as unknown as CronControlReceipt;
 }
 
-function assertFutureCronJob(job: JsonObject, seed: SeededCronJob): void {
+function assertPristineCronJob(
+  job: JsonObject,
+  seed: SeededCronJob,
+  expectedRunAtMs?: number,
+): void {
   expect(job).toMatchObject({
     enabled: true,
     id: seed.id,
     name: seed.name,
     no_agent: true,
-    schedule: { kind: "interval" },
+    schedule: { kind: expectedRunAtMs === undefined ? "interval" : "once" },
     script: seed.scriptName,
+    state: "scheduled",
   });
   const runtime = hermesCronJobRuntimeState(job, `cron job ${seed.id}`);
   expect(runtime.state).toBe("scheduled");
   expect(runtime.lastRunAt).toBeNull();
   expect(runtime.lastStatus).toBeNull();
   expect(runtime.completed).toBe(0);
-  expect(
-    normalizeTimestampMs(runtime.nextRunAt, `cron job ${seed.id} next run`),
-    "seeded recurring cron job must remain well in the future during rebuild",
-  ).toBeGreaterThan(Date.now() + 60 * 60_000);
+  const nextRunAtMs = normalizeTimestampMs(runtime.nextRunAt, `cron job ${seed.id} next run`);
+  if (expectedRunAtMs === undefined) {
+    expect(
+      nextRunAtMs,
+      "seeded recurring cron job must remain well in the future during rebuild",
+    ).toBeGreaterThan(Date.now() + 60 * 60_000);
+  } else {
+    expect(
+      requireObject(
+        hermesCronRuntimeFields(job, `cron job ${seed.id}`).repeat,
+        `cron job ${seed.id} repeat state`,
+      ),
+    ).toMatchObject({
+      completed: 0,
+      times: 1,
+    });
+    expect(nextRunAtMs, "seeded recovery cron job must retain its one-shot time").toBe(
+      expectedRunAtMs,
+    );
+  }
+}
+
+export function parseHermesGatewayEvidence(text: string): GatewayEvidence {
+  const payload = parseJsonObject(text, "Hermes gateway status");
+  for (const field of ["active_agents", "pid", "start_time"] as const) {
+    if (!Number.isSafeInteger(payload[field])) fail(`Hermes gateway ${field} is invalid`);
+  }
+  if (payload.running_pid !== null && !Number.isSafeInteger(payload.running_pid)) {
+    fail("Hermes gateway running_pid is invalid");
+  }
+  if (typeof payload.gateway_state !== "string") fail("Hermes gateway state is invalid");
+  return payload as unknown as GatewayEvidence;
 }
 
 export function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
@@ -254,7 +289,11 @@ export function createRebuildHermesCronRestoreFixture({
     return parseCronJob(result.stdout, jobId, artifactName);
   }
 
-  async function seedCronJob(label: string): Promise<SeededCronJob> {
+  async function seedCronJob(
+    label: string,
+    schedule = "every 1d",
+    expectedRunAtMs?: number,
+  ): Promise<SeededCronJob> {
     const pending = uniqueSeed(label);
     const scriptPath = `${CRON_SCRIPTS_ROOT}/${pending.scriptName}`;
     const writeScript = await dockerRoot(
@@ -279,7 +318,7 @@ export function createRebuildHermesCronRestoreFixture({
         "hermes",
         "cron",
         "create",
-        "every 1d",
+        schedule,
         "--no-agent",
         "--script",
         pending.scriptName,
@@ -296,7 +335,7 @@ export function createRebuildHermesCronRestoreFixture({
       evidence: await readCronJob(id, `phase-${label}-read-seeded-hermes-cron-job`),
       id,
     };
-    assertFutureCronJob(seed.evidence, seed);
+    assertPristineCronJob(seed.evidence, seed, expectedRunAtMs);
     await assertExecutionMarkerAbsent(seed, `phase-${label}-verify-cron-not-yet-executed`);
     return seed;
   }
@@ -322,9 +361,20 @@ export function createRebuildHermesCronRestoreFixture({
     return read.stdout.split(/\r?\n/u).filter((line) => line === seed.executionToken).length;
   }
 
-  async function enqueueManualRun(seed: SeededCronJob, artifactName: string): Promise<void> {
+  async function oneShotExecutionState(seed: SeededCronJob, artifactName: string) {
+    const script = [
+      "import json, sys",
+      "from cron.executions import list_executions",
+      "print(json.dumps(list_executions(job_id=sys.argv[1], limit=2), sort_keys=True))",
+    ].join("\n");
+    const read = await dockerRoot([HERMES_PYTHON, "-I", "-c", script, seed.id], artifactName);
+    expectExitZero(read, `read execution history for ${seed.name}`);
+    return hermesOneShotExecutionState(JSON.parse(read.stdout), seed.id);
+  }
+
+  async function runCronNow(seed: SeededCronJob, artifactName: string): Promise<void> {
     const run = await dockerSandbox(["hermes", "cron", "run", seed.id], artifactName);
-    expectExitZero(run, `enqueue manual Hermes cron run ${seed.id}`);
+    expectExitZero(run, `run Hermes cron job ${seed.id} now`);
   }
 
   async function waitForOneExecution(seed: SeededCronJob, artifactPrefix: string): Promise<void> {
@@ -344,6 +394,27 @@ export function createRebuildHermesCronRestoreFixture({
     fail(`Hermes cron job ${seed.id} did not complete exactly once: ${lastEvidence}`);
   }
 
+  async function waitForOneShotExecution(
+    seed: SeededCronJob,
+    artifactPrefix: string,
+  ): Promise<void> {
+    let lastEvidence = "no scheduler evidence";
+    for (let attempt = 1; attempt <= EXECUTION_POLL_ATTEMPTS; attempt += 1) {
+      const state = await oneShotExecutionState(
+        seed,
+        `${artifactPrefix}-history-attempt-${attempt}`,
+      );
+      const count = await executionCount(seed, `${artifactPrefix}-marker-attempt-${attempt}`);
+      lastEvidence = JSON.stringify({ count, state });
+      if (count > 1) {
+        fail(`Hermes cron job ${seed.id} executed more than once: ${lastEvidence}`);
+      }
+      if (state === "completed" && count === 1) return;
+      await sleep(POLL_INTERVAL_MS);
+    }
+    fail(`Hermes cron job ${seed.id} did not complete exactly once: ${lastEvidence}`);
+  }
+
   async function assertControlMarker(present: boolean, artifactName: string): Promise<void> {
     const command = present
       ? ["stat", "-c", "%u:%g %a %s", CRON_CONTROL_MARKER]
@@ -351,15 +422,6 @@ export function createRebuildHermesCronRestoreFixture({
     const result = await dockerRoot(command, artifactName);
     expectExitZero(result, `verify cron restore marker is ${present ? "present" : "absent"}`);
     if (present) expect(result.stdout.trim()).toMatch(/^0:0 400 [1-9]\d*$/u);
-  }
-
-  function parseGatewayEvidence(text: string): GatewayEvidence {
-    const payload = parseJsonObject(text, "Hermes gateway status");
-    for (const field of ["active_agents", "pid", "running_pid", "start_time"] as const) {
-      if (!Number.isSafeInteger(payload[field])) fail(`Hermes gateway ${field} is invalid`);
-    }
-    if (typeof payload.gateway_state !== "string") fail("Hermes gateway state is invalid");
-    return payload as unknown as GatewayEvidence;
   }
 
   async function gatewayEvidence(artifactName: string): Promise<GatewayEvidence | null> {
@@ -381,7 +443,7 @@ export function createRebuildHermesCronRestoreFixture({
     ].join("\n");
     const result = await dockerRoot([HERMES_PYTHON, "-I", "-c", script], artifactName);
     if (result.exitCode !== 0) return null;
-    return parseGatewayEvidence(result.stdout.trim());
+    return parseHermesGatewayEvidence(result.stdout.trim());
   }
 
   async function waitForGatewayState(
@@ -531,7 +593,7 @@ export function createRebuildHermesCronRestoreFixture({
       await waitForGatewayState("running", "phase-7-verify-gateway-running-after-cron-restore");
       await assertExecutionMarkerAbsent(seed, "phase-7-verify-restored-cron-not-auto-executed");
 
-      await enqueueManualRun(seed, "phase-7-run-restored-hermes-cron-job");
+      await runCronNow(seed, "phase-7-run-restored-hermes-cron-job");
       await waitForOneExecution(seed, "phase-7-wait-restored-hermes-cron-execution");
     },
 
@@ -544,9 +606,17 @@ export function createRebuildHermesCronRestoreFixture({
       const receipt = parseHermesCronBeginReceipt(begin.stdout);
       await assertControlMarker(true, "phase-8-verify-cron-restore-marker-before-restart");
 
-      const recoverySeed = await seedCronJob("recovery");
-      await enqueueManualRun(recoverySeed, "phase-8-queue-due-hermes-cron-during-drain");
-      await sleep(POLL_INTERVAL_MS);
+      const recoverySchedule = buildHermesRecoveryCronSchedule();
+      const recoverySeed = await seedCronJob(
+        "recovery",
+        recoverySchedule.runAt,
+        recoverySchedule.runAtMs,
+      );
+      await sleep(Math.max(0, recoverySchedule.runAtMs - Date.now() + 1));
+      expect(
+        Date.now(),
+        "recovery cron job must be due before the stranded-gate restart",
+      ).toBeGreaterThan(recoverySchedule.runAtMs);
       await assertExecutionMarkerAbsent(
         recoverySeed,
         "phase-8-verify-due-cron-blocked-before-restart",
@@ -589,7 +659,7 @@ export function createRebuildHermesCronRestoreFixture({
       );
       await assertControlMarker(false, "phase-8-verify-recovered-cron-restore-marker-released");
       await waitForGatewayState("running", "phase-8-verify-gateway-running-after-recovery");
-      await waitForOneExecution(recoverySeed, "phase-8-wait-recovered-hermes-cron-execution");
+      await waitForOneShotExecution(recoverySeed, "phase-8-wait-recovered-hermes-cron-execution");
     },
   };
 }
