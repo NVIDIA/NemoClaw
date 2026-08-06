@@ -86,6 +86,7 @@ export interface SandboxGpuCreateFlowInput {
   persistStartupCommand?: boolean;
   managedBootstrap?: {
     readonly bootstrapIdentity: string;
+    readonly stateRoot: string;
     readonly runtimeProvider: RuntimeProviderBundle & {
       readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
     };

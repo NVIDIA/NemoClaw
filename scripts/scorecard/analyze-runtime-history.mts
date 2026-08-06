@@ -52,7 +52,7 @@ export interface RuntimeSummaryArtifact {
 
 type RuntimeHistoryServices = {
   currentFirstTurnLatency?: FirstTurnLatencySample | null;
-  loadPriorNightlySummaries: (deps: GitHubDeps) => Promise<RuntimeSummaryArtifact[]>;
+  loadPriorPushSummaries: (deps: GitHubDeps) => Promise<RuntimeSummaryArtifact[]>;
 };
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
@@ -225,7 +225,7 @@ async function readRuntimeSummaryFromRun(
   return summary?.runId === runId ? summary : null;
 }
 
-export async function loadPriorNightlySummaries(
+export async function loadPriorPushSummaries(
   deps: GitHubDeps,
 ): Promise<RuntimeSummaryArtifact[]> {
   const { github, context, core } = deps;
@@ -233,7 +233,7 @@ export async function loadPriorNightlySummaries(
     owner: context.repo.owner,
     repo: context.repo.repo,
     workflow_id: WORKFLOW_FILE,
-    event: "schedule",
+    event: "push",
     status: "completed",
     per_page: HISTORY_QUERY_LIMIT,
   });
@@ -246,7 +246,7 @@ export async function loadPriorNightlySummaries(
       if (summary !== null) summaries.push(summary);
     } catch {
       core?.warning?.(
-        "One prior nightly runtime summary was unavailable; continuing with less history.",
+        "One prior push runtime summary was unavailable; continuing with less history.",
       );
     }
     if (summaries.length === HISTORY_RUN_LIMIT) break;
@@ -385,13 +385,13 @@ function formatFlakeWatch(
 
   const lines = [
     "",
-    "### Nightly flake watch",
+    "### Push flake watch",
     "",
-    "Tests that both passed and failed across the current run and available nightly history. Ranked by pass/fail flips, then failures; skips do not affect the failure rate or flip count.",
+    "Tests that both passed and failed across the current run and available push history. Ranked by pass/fail flips, then failures; skips do not affect the failure rate or flip count.",
     "",
   ];
   if (rows.length === 0) {
-    lines.push("No tests both passed and failed in the available nightly window.");
+    lines.push("No tests both passed and failed in the available push window.");
     return lines;
   }
   lines.push(
@@ -449,9 +449,9 @@ export function formatRuntimeHistory(
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
     .slice(0, RUNTIME_TREND_LIMIT);
   const lines = [
-    "## E2E Nightly Runtime Trend",
+    "## E2E Push Runtime Trend",
     "",
-    `Current timing compared with up to ${RUNTIME_TREND_LIMIT} prior completed scheduled runs; manual runs are excluded from history.`,
+    `Current timing compared with up to ${RUNTIME_TREND_LIMIT} prior completed push runs; manual runs are excluded from history.`,
     `Regression warnings require both +${seconds(RUNTIME_REGRESSION_MIN_DELTA_MS)} and +${RUNTIME_REGRESSION_MIN_PERCENT}%.`,
     "",
   ];
@@ -461,13 +461,13 @@ export function formatRuntimeHistory(
   }
   if (sortedPrior.length === 0) {
     lines.push(
-      "No prior nightly runtime summaries are available yet; this run starts the history.",
+      "No prior push runtime summaries are available yet; this run starts the history.",
     );
     return `${lines.join("\n")}\n`;
   }
 
   lines.push(
-    "| Target | Scenario | Prior nights | Current | Prior median | Prior p95 | Delta | Current outcome | Prior P/F/S | Failure streak | Common failed phase | Significant regressions |",
+    "| Target | Scenario | Prior pushes | Current | Prior median | Prior p95 | Delta | Current outcome | Prior P/F/S | Failure streak | Common failed phase | Significant regressions |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- |",
   );
   for (const current of [...currentRows]
@@ -497,7 +497,7 @@ export async function buildRuntimeHistory(
   deps: GitHubDeps,
   currentRows: readonly RuntimeHistorySample[],
   outputPath: string,
-  services: RuntimeHistoryServices = { loadPriorNightlySummaries },
+  services: RuntimeHistoryServices = { loadPriorPushSummaries },
   now = new Date(),
 ): Promise<string> {
   const hasFirstTurnLatency = Object.hasOwn(services, "currentFirstTurnLatency");
@@ -517,12 +517,12 @@ export async function buildRuntimeHistory(
     fs.writeFileSync(outputPath, serialized, { encoding: "utf8", flag: "wx", mode: 0o600 });
   } catch {
     deps.core?.warning?.(
-      "Current E2E runtime summary was invalid or could not be saved; nightly history is unavailable.",
+      "Current E2E runtime summary was invalid or could not be saved; push history is unavailable.",
     );
     return formatRuntimeHistory([], []);
   }
   try {
-    const prior = await services.loadPriorNightlySummaries(deps);
+    const prior = await services.loadPriorPushSummaries(deps);
     const runtimeHistory = formatRuntimeHistory(current.rows, prior);
     if (!hasFirstTurnLatency) return runtimeHistory;
     const recurrence = evaluateFirstTurnLatencyRecurrence(current.firstTurnLatency, prior);
@@ -530,7 +530,7 @@ export async function buildRuntimeHistory(
     return `${runtimeHistory}\n${formatFirstTurnLatencyRecurrence(recurrence)}`;
   } catch {
     deps.core?.warning?.(
-      "Nightly E2E runtime history unavailable; current summary was still saved.",
+      "Push E2E runtime history unavailable; current summary was still saved.",
     );
     const runtimeHistory = formatRuntimeHistory(current.rows, []);
     if (!hasFirstTurnLatency) return runtimeHistory;

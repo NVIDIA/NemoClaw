@@ -6,11 +6,13 @@ import { expect, it, vi } from "vitest";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import { createSession, type Session } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
 import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
   recordSandboxRecreateTargetCreated,
+  type SandboxRecreateObservation,
 } from "../../sandbox-recreate-transaction";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-fixtures";
@@ -156,6 +158,113 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     "completed",
     null,
   ]);
+  expect(session.checkpoint?.sandboxRecreate).toBeNull();
+});
+
+it("continues an outer rebuild journal after the outer rebuild deletes the source sandbox", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const sourceEntry: SandboxEntry = {
+    name: "saved",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions" as const,
+    webSearchEnabled: false,
+    toolDisclosure: "progressive" as const,
+    fromDockerfile: null,
+    hermesAuthMethod: null,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+  };
+  const targetIntentFingerprint = fingerprintSandboxRecreateValue({
+    sandboxName: "saved",
+    agent: "openclaw",
+  });
+  const transaction = beginSandboxRecreateTransaction(session, {
+    sandboxName: "saved",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    sourceEntry,
+    observation: {
+      state: "ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
+    },
+    targetIntentFingerprint,
+  });
+  advanceSandboxRecreateTransaction(session, transaction.id, "deleting");
+  advanceSandboxRecreateTransaction(session, transaction.id, "deleted");
+  // The outer rebuild replaces the retired onboarding session before it starts
+  // the inner onboarding run. The replacement session's sandbox step is
+  // incomplete even though the preserved recreate journal owns the deleted source.
+  session.steps.sandbox.status = "pending";
+  session.machine.state = "sandbox";
+
+  let currentEntry = sourceEntry;
+  let observation: SandboxRecreateObservation = {
+    state: "missing" as const,
+    liveIdentityFingerprint: null,
+  };
+  const createSandbox = vi.fn(async (...args: unknown[]) => {
+    const createIntent = args.at(-1);
+    expect(createIntent).toMatchObject({
+      recreate: true,
+      recreateTransaction: {
+        id: transaction.id,
+        targetGeneration: transaction.targetGeneration,
+        targetIntentFingerprint,
+      },
+    });
+    advanceSandboxRecreateTransaction(session, transaction.id, "creating");
+    const targetLiveIdentityFingerprint = fingerprintSandboxRecreateValue("openshell-target-id");
+    observation = {
+      state: "ready",
+      liveIdentityFingerprint: targetLiveIdentityFingerprint,
+    };
+    recordSandboxRecreateTargetCreated(session, transaction.id, observation);
+    currentEntry = {
+      ...sourceEntry,
+      lifecycleGeneration: transaction.targetGeneration,
+      lifecycleLiveIdentityFingerprint: targetLiveIdentityFingerprint,
+    };
+    return "saved";
+  });
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => observation.state,
+      getSandboxRecreateObservation: () => observation,
+      getSandboxRegistryEntry: () => currentEntry,
+      createSandbox,
+    },
+    session,
+  );
+
+  await handleSandboxState({
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "saved",
+    recreateSandbox: () => true,
+    recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
+  });
+
+  expect(createSandbox).toHaveBeenCalledOnce();
+  expect(calls.note).toHaveBeenCalledWith("  [resume] Continuing journaled sandbox recreation.");
+  expect(calls.repairEvent).not.toHaveBeenCalled();
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
