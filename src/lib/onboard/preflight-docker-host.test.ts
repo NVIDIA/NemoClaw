@@ -32,7 +32,9 @@ describe("assessHost invalid DOCKER_HOST (#7731)", () => {
 
       expect(output).toContain("Fix the DOCKER_HOST endpoint (invalid_docker_host):");
       expect(output).toContain("unset DOCKER_HOST");
+      expect(output).toContain("unix:///var/run/docker.sock");
       expect(output).not.toContain("docker_group_permission");
+      expect(output).not.toContain("start_docker");
     });
   });
 
