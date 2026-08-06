@@ -1008,6 +1008,22 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     }
   });
 
+  it("rejects a malformed receipt writer before engine or journal mutation (#8414)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const lifecycle = controller(fixture, store);
+    const malformedWriter = {
+      ...receiptWriter(),
+      targetSha256: "not-a-digest",
+    };
+
+    expect(() => lifecycle.start(malformedWriter)).toThrow(
+      "Docker llama.cpp receipt writer authority is malformed.",
+    );
+    expect(fixture.capture).not.toHaveBeenCalled();
+    expect(store.list()).toEqual([]);
+  });
+
   it("re-proves the verified model before replaying a prepared receipt (#8414)", () => {
     const fixture = dockerFixture();
     const store = journalStore();

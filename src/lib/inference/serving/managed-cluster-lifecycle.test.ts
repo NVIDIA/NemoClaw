@@ -3,7 +3,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fixtureManagedClusterPlan } from "./managed-cluster-fixture.test-support.js";
+import {
+  fixtureManagedClusterPlan,
+  STOPPED_FOREIGN_CONTAINER_FIXTURES,
+} from "./managed-cluster-fixture.test-support.js";
 import {
   classifyManagedClusterExistingState,
   cleanupManagedClusterManagedVllm,
@@ -16,7 +19,6 @@ import {
 } from "./managed-cluster-lifecycle.js";
 import {
   MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
-  MANAGED_CLUSTER_MANAGED_LABEL,
   MANAGED_CLUSTER_TRANSACTION_LABEL,
   type ManagedClusterVllmPlan,
   type ManagedClusterVllmRole,
@@ -27,34 +29,6 @@ const API_KEY = "a".repeat(64);
 const TRANSACTION_ID = "b".repeat(32);
 const HEAD_ID = "1".repeat(64);
 const WORKER_ID = "2".repeat(64);
-
-type StoppedForeignContainerFixture = {
-  readonly signal: string;
-  readonly name: string;
-  readonly image: string;
-  readonly labels: Readonly<Record<string, string>>;
-};
-
-const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixture[] = [
-  {
-    signal: "name",
-    name: "foreign-vllm-server",
-    image: "example.invalid/inference:latest",
-    labels: {},
-  },
-  {
-    signal: "image",
-    name: "foreign-inference",
-    image: "vllm/vllm-openai:latest",
-    labels: {},
-  },
-  {
-    signal: "managed label",
-    name: "foreign-inference",
-    image: "example.invalid/inference:latest",
-    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
-  },
-];
 
 type Harness = ReturnType<typeof createHarness>;
 
