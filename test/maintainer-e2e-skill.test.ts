@@ -19,7 +19,7 @@ function validEvidence() {
     },
     dispatch: {
       candidateSha,
-      defaultSuiteSelected: true,
+      emptySelectors: true,
       eventName: "workflow_dispatch",
       includeStagingBrevLaunchable: true,
       jobs: "",
@@ -76,7 +76,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         workspaceName: "nclaw-e2e-100-2",
       },
       dispatch: {
-        defaultSuiteSelected: true,
+        emptySelectors: true,
         includeStagingBrevLaunchable: true,
       },
       jobUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
@@ -102,7 +102,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
     [
       "a selective Launchable E2E dispatch",
       (evidence: ReturnType<typeof validEvidence>) => {
-        evidence.dispatch.defaultSuiteSelected = false;
+        evidence.dispatch.emptySelectors = false;
         evidence.dispatch.includeStagingBrevLaunchable = false;
         evidence.dispatch.jobs = "staging-brev-launchable";
       },
@@ -180,7 +180,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("run release-candidate E2E");
     expect(skill).toContain("must not authorize the Brev Launchable path");
     expect(skill).toContain(
-      "Launchable and full runs do not require separate environment approval",
+      "an authorized environment reviewer must approve it before qualification starts",
     );
     expect(skill).toContain(
       "repository `maintain` or `admin` permission before the Launchable path's source",

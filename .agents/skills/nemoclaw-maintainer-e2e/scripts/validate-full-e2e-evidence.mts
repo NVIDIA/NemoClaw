@@ -26,7 +26,7 @@ export interface FullE2eEvidenceSummary {
     workspaceName: string;
   };
   dispatch: {
-    defaultSuiteSelected: true;
+    emptySelectors: true;
     includeStagingBrevLaunchable: true;
   };
   jobUrl: string;
@@ -105,7 +105,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
     true,
     "dispatch.includeStagingBrevLaunchable",
   );
-  requireEqual(dispatch.defaultSuiteSelected, true, "dispatch.defaultSuiteSelected");
+  requireEqual(dispatch.emptySelectors, true, "dispatch.emptySelectors");
 
   const jobsPayload = record(input.jobs, "jobs response");
   if (!Array.isArray(jobsPayload.jobs)) {
@@ -160,7 +160,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
       workspaceName,
     },
     dispatch: {
-      defaultSuiteSelected: true,
+      emptySelectors: true,
       includeStagingBrevLaunchable: true,
     },
     jobUrl,
