@@ -147,7 +147,11 @@ try {
         {
           cwd: repoRoot,
           encoding: "utf-8",
-          env: { HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+          env: {
+            HOME: tmpDir,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
+          },
           timeout: 30_000,
         },
       );

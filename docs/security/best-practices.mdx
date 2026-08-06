@@ -89,7 +89,8 @@ flowchart TB
 ## Network Controls
 
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets you approve or deny requests in real time.
-Network policy allowlists do not disable OpenShell's SSRF guard, so internal-address blocking remains active even when an endpoint matches an egress rule.
+OpenShell hard-blocks unspecified, loopback, and link-local destinations, including the common cloud metadata range.
+An endpoint with `allowed_ips` can explicitly permit other private ranges, so treat that field as a server-side request forgery (SSRF) boundary change.
 
 OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
 Refer to the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices.
@@ -222,6 +223,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `local-inference` | Local Ollama and vLLM through the host gateway. | Allows sandbox access to host-side local inference ports covered by the preset. |
 | `npm` | npm and Yarn registries via L4 pass-through. | Allows installing arbitrary npm packages, which may contain malicious code. OpenShell still gates by host, port, and binary, but does not inspect HTTP method, path, or body for this preset. |
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
+| `personal-open-internet` | TCP connections to public and private address ranges on destination ports `80` and `443` from every sandbox binary. | Removes hostname, binary, application protocol, HTTP method, path, and request-body restrictions for matching connections. An agent can send sandbox-visible data to an arbitrary reachable service on either port without another approval prompt. |
 | `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
 | `tavily` | Tavily Search API. | Agent can submit search queries and extraction targets to Tavily. The preset allows only `POST /search` and `POST /extract` from the maintained agent runtimes and enables request-body credential rewriting when the agent sends the placeholder in JSON. |
@@ -229,6 +231,16 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 
 Apply presets only when the agent's task requires the integration.
 Review the preset's YAML file before applying to understand the endpoints, methods, and binary restrictions it adds.
+
+<Warning title="Personal Tier">
+The Personal tier selects `personal-open-internet` and every maintained preset supported by the active agent.
+The open-internet preset allows every sandbox binary to reach public and private address ranges on destination ports `80` and `443` through L4 passthrough.
+Traffic on those ports is not limited to HTTP or HTTPS.
+OpenShell does not inspect the hostname, application protocol, HTTP method, path, or body for those connections.
+The preset excludes unspecified, loopback, and link-local ranges, and other ports remain denied unless another entry permits them.
+Use it only for trusted personal workloads with trusted prompts and data.
+The sandbox's filesystem, process, gateway authentication, and managed credential controls remain active.
+</Warning>
 
 ### Web Search Credential Rewriting
 
@@ -897,6 +909,15 @@ Use when the agent needs package registries, Docker Hub, or broader GitHub acces
 - Keep binary restrictions on all presets.
 - Review the agent's network activity periodically with `openshell term`.
 - Use operator approval for any endpoint not covered by a preset.
+
+### Personal
+
+Use only for a trusted single-user sandbox that needs arbitrary TCP egress on destination ports `80` and `443`.
+
+- Select the Personal tier during onboarding.
+- Treat every prompt, downloaded package, webpage, and workspace file as able to trigger external TCP traffic on destination ports `80` and `443`.
+- Do not place raw credentials or sensitive data in the sandbox unless the agent must use them.
+- Return to Balanced or Restricted and recreate the sandbox when this broad egress is no longer required.
 
 ### Integration Testing
 
