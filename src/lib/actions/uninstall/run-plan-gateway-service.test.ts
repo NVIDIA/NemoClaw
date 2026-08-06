@@ -316,10 +316,11 @@ describe("uninstall OpenShell gateway user service", () => {
         kill,
         run: (command, args) => {
           calls.push([command, ...args]);
-          if (command === "systemctl" && args.includes("disable")) {
-            return { status: 1, stdout: "", stderr: "service is busy" };
-          }
-          return command === "pgrep" ? ok("123\n") : ok();
+          return command === "systemctl" && args.includes("disable")
+            ? { status: 1, stdout: "", stderr: "service is busy" }
+            : command === "pgrep"
+              ? ok("123\n")
+              : ok();
         },
       },
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
