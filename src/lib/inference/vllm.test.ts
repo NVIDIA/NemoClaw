@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   dockerRunDetached: vi.fn(),
   dockerSpawn: vi.fn(),
   dockerStop: vi.fn(),
+  ensureDualStationVllmApiKey: vi.fn(() => "b".repeat(64)),
   findUnwritableModelCachePath: vi.fn(),
   getGpuIndicesByName: vi.fn<(_pattern: RegExp) => number[]>(() => []),
   measureDirectorySizeBytes: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./serving/vllm-managed-support")>();
   return {
     ...actual,
+    ensureDualStationVllmApiKey: mocks.ensureDualStationVllmApiKey,
     persistHostLocalVllmRuntimeReceipt: mocks.persistHostLocalVllmRuntimeReceipt,
     resolveHostLocalVllmSelection: mocks.resolveHostLocalVllmSelection,
     tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
@@ -102,6 +104,7 @@ import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 
 beforeEach(() => {
   applyVllmInstallProbeDefaults(mocks);
+  mocks.ensureDualStationVllmApiKey.mockReturnValue("b".repeat(64));
   mocks.getGpuIndicesByName.mockReturnValue([]);
   mocks.persistHostLocalVllmRuntimeReceipt.mockReset();
   mocks.runCurlProbe.mockReturnValue({
