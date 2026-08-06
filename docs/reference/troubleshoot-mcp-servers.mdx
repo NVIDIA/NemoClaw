@@ -166,8 +166,8 @@ NemoClaw accepts only the literal value `1` and forwards it only to OpenClaw san
 The setting is disabled by default and affects only remote Streamable HTTP MCP requests inside an OpenShell sandbox.
 
 <Warning>
-Enabling shadow diagnostics records one timing event for every successful remote Streamable HTTP MCP request and increases log volume.
-Each event includes the endpoint, configured server name, operation, and timeout metadata, but excludes tool arguments and successful response bodies.
+Enabling shadow diagnostics attempts to record one timing event for every successful remote Streamable HTTP MCP request and increases log volume.
+Each event includes the target host and port, configured server name, operation, and timeout metadata, but excludes URL paths, tool arguments, and successful response bodies.
 Rebuilding also interrupts the agent while NemoClaw replaces the sandbox and restores its managed state.
 </Warning>
 
@@ -180,10 +180,12 @@ $$nemoclaw <sandbox> rebuild
 
 For a new sandbox, export the setting before `$$nemoclaw onboard` creates it.
 
-When enabled, each successful request emits a `managed_transport_shadow` line group with the same safe operation, transport, timeout, and elapsed-time fields.
+When enabled, each successful request attempts to emit a `managed_transport_shadow` line group with the same safe operation, transport, timeout, and elapsed-time fields.
 The diagnostic does not read the successful response body or change the returned response.
+Identifier generation, serialization, or standard-error output failure can omit the line group without blocking the request or changing its response.
 
-For `tools/list`, NemoClaw retains up to 64 successful elapsed-time samples per endpoint in the OpenClaw process.
+For `tools/list`, NemoClaw retains up to 64 successful elapsed-time samples per target host and port in the OpenClaw process.
+Different MCP URL paths on the same target host and port share this sample set because the diagnostic does not retain URL paths.
 After five samples, the event reports `shadow_p95_ms` and `shadow_recommended_timeout_ms`.
 The proposed value is 1.5 times the observed p95 and is rounded up to 100 ms.
 It cannot be less than the active catalog-list budget or 1,500 ms, and it cannot exceed 10,000 ms.
@@ -211,8 +213,8 @@ $$nemoclaw <sandbox> logs --tail 200
 
 Match on `target` and the timestamp.
 If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing from the output.
-`diagnostic_id` is a local identifier created for one line group.
-NemoClaw creates it before the request starts, but does not add it to the request.
+`diagnostic_id` is a local identifier created for one line group when identifier generation succeeds.
+NemoClaw attempts to create it before the request starts, but does not add it to the request.
 It is not a distributed trace identifier and does not appear in OpenShell audit events.
 Correlate with OpenShell by endpoint and time until OpenShell records a shared identifier.
 </AgentOnly>

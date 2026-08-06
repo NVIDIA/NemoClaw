@@ -5,7 +5,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-08-03
+Last updated: 2026-08-06
 
 ## Decision
 
@@ -450,8 +450,9 @@ Reviewed behavior:
 
 - Failure-only by default.
   A 2xx response returns untouched and emits nothing unless the OpenClaw gateway process has `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`.
-- The opt-in shadow mode emits timing-only `managed_transport_shadow` events for successful requests without reading their response bodies.
+- The opt-in shadow mode attempts to emit timing-only `managed_transport_shadow` events for successful requests without reading their response bodies.
   It does not change a timeout, retry a request, alter a response, or persist samples across an OpenClaw process restart.
+  Identifier generation, serialization, or standard-error output failure can omit an event without blocking the request or changing its response.
   Sandbox creation forwards only the literal value `1`, and only for OpenClaw.
 - The wrapper never retries, never alters the request, never changes proxy selection, and never weakens TLS verification.
   It rethrows a transport error unchanged.
@@ -487,13 +488,15 @@ Reviewed behavior:
 - Each event reports the configured server name as `mcp_server` when validation and redaction retain it.
   It also reports the transport generation, the request sequence, and the resolved connection, request, catalog-list, and effective timeout budgets.
 - Shadow recommendations apply only to `tools/list`.
-  The wrapper retains up to 64 successful elapsed-time samples per endpoint and reports p95 after five samples.
+  The wrapper retains up to 64 successful elapsed-time samples per target host and port and reports p95 after five samples.
+  Different MCP URL paths on the same target host and port share this sample set because the wrapper does not retain URL paths.
   It proposes p95 times 1.5, rounded up to 100 ms, with a 1,500 ms floor and a 10,000 ms ceiling.
   A proposal cannot be less than the active catalog-list budget.
   The wrapper emits no recommendation when that active budget already exceeds 10,000 ms.
   A near-budget abort proposes twice the effective budget under the same constraints.
   An explicit HTTP 503 produces no timeout recommendation.
-- Each request receives a local 32-character hexadecimal `diagnostic_id` before `fetch` starts.
+- The wrapper attempts to create a local 32-character hexadecimal `diagnostic_id` for each request before `fetch` starts.
+  If identifier generation fails, the wrapper omits the field and continues the request.
   The wrapper does not add that identifier to the request.
 - The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
 

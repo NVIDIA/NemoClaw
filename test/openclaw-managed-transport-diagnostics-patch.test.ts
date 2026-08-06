@@ -67,6 +67,10 @@ interface HelperHarness {
 function loadHelper(
   env: Record<string, string> = { OPENSHELL_SANDBOX: "1" },
   now: () => number = () => Date.now(),
+  runtime: {
+    crypto?: Pick<Crypto, "randomUUID">;
+    writeStderr?: (chunk: string) => void;
+  } = {},
 ): HelperHarness {
   const stderr: string[] = [];
   const context = vm.createContext({
@@ -82,8 +86,11 @@ function loadHelper(
     String,
     Set,
     clearTimeout,
-    crypto: webcrypto,
-    process: { env, stderr: { write: (chunk: string) => stderr.push(chunk) } },
+    crypto: runtime.crypto ?? webcrypto,
+    process: {
+      env,
+      stderr: { write: runtime.writeStderr ?? ((chunk: string) => stderr.push(chunk)) },
+    },
     setTimeout,
   });
   const injectedWrap = vm.runInContext(
@@ -197,6 +204,62 @@ describe("injected managed transport wrapper", () => {
 
     expect(response.status).toBe(200);
     expect(stderr).toEqual([]);
+  });
+
+  it("sends the request when diagnostic identifier generation fails (#7957)", async () => {
+    let innerCalls = 0;
+    const { wrap, stderr } = loadHelper({ OPENSHELL_SANDBOX: "1" }, () => Date.now(), {
+      crypto: {
+        randomUUID: () => {
+          throw new Error("entropy unavailable");
+        },
+      },
+    });
+    const inner = async () => {
+      innerCalls += 1;
+      return new Response("ok", { status: 200 });
+    };
+
+    const response = await wrap(
+      inner as unknown as typeof fetch,
+      "https://mcp.test/rpc",
+    )("https://mcp.test/rpc");
+
+    expect(response.status).toBe(200);
+    expect(innerCalls).toBe(1);
+    expect(stderr).toEqual([]);
+  });
+
+  it("returns a successful response when shadow diagnostic emission fails (#7957)", async () => {
+    let innerCalls = 0;
+    const { wrap } = loadHelper(
+      {
+        OPENSHELL_SANDBOX: "1",
+        NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+      },
+      () => Date.now(),
+      {
+        writeStderr: () => {
+          throw new Error("stderr unavailable");
+        },
+      },
+    );
+    const expected = new Response("ok", { status: 200 });
+    const inner = async () => {
+      innerCalls += 1;
+      return expected;
+    };
+
+    const response = await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")(
+      "https://mcp.test/rpc",
+      {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      },
+    );
+
+    expect(response).toBe(expected);
+    expect(innerCalls).toBe(1);
   });
 
   it("emits opt-in operation timing and a bounded shadow recommendation without changing responses (#7957)", async () => {
