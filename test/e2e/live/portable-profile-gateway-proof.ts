@@ -7,7 +7,7 @@ import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
-/** Prove the pinned gateway accepts the generated rootless Podman configuration. */
+/** Verify that the pinned gateway accepts the generated rootless Podman configuration. */
 export async function verifyPinnedPodmanGatewayStarts(
   gatewayBin: string,
   gatewayEnv: Record<string, string>,
@@ -34,7 +34,7 @@ export async function verifyPinnedPodmanGatewayStarts(
     while (Date.now() < deadline) {
       const plainOutput = stripAnsi(output);
       if (/configuration error|invalid \[openshell\.drivers\.podman\] table/i.test(plainOutput)) {
-        assert.fail(`Pinned OpenShell rejected the generated Podman config:\n${output}`);
+        assert.fail(`Pinned OpenShell rejected the generated Podman configuration:\n${output}`);
       }
       if (child.exitCode !== null) {
         assert.fail(
@@ -47,7 +47,9 @@ export async function verifyPinnedPodmanGatewayStarts(
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.fail(`Pinned OpenShell did not keep the Podman driver healthy:\n${output}`);
+    assert.fail(
+      `Pinned OpenShell did not report driver=podman and remain running for two seconds:\n${output}`,
+    );
   } finally {
     child.kill("SIGTERM");
   }

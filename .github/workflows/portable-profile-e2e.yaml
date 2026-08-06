@@ -16,6 +16,7 @@ on:
       - "src/lib/onboard/**"
       - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/sandbox/build-context.ts"
+      - "test/e2e/live/portable-profile-gateway-proof.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
   push:
     branches:
@@ -27,6 +28,7 @@ on:
       - "src/lib/onboard/**"
       - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/sandbox/build-context.ts"
+      - "test/e2e/live/portable-profile-gateway-proof.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
 
 permissions:
