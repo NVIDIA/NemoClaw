@@ -740,9 +740,15 @@ The workflow does not rotate or revoke these API keys or messaging credentials. 
 Live targets can create external resources.
 After a failure, inspect the workflow artifacts and remove resources that target cleanup did not remove.
 
+For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. The live fixture attempts to stop and remove `nemoclaw-managed-image-nim-e2e`, but Docker stop or removal errors do not fail the test. A surviving container can retain the API key until runner teardown. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Rotate or revoke it in the issuing NVIDIA service to remove later access.
+
 For a manual PR run, provide the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
-Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
-The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the exact open PR before candidate code runs.
+Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` for the default suite.
+To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
+Leave `targets` empty.
+Keep `include_staging_brev_launchable=false`.
+The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the exact open PR and selected mode before candidate code runs.
 A second validation after checkout rejects a changed head, base, or repository before preparation.
 
 The Actions run is advisory for the pull request and is not a required merge context.

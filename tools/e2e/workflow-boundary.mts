@@ -81,6 +81,19 @@ const DEFAULT_DOCKER_HUB_AUTH_SCRIPT_PATH = join(
   "scripts",
   "docker-auth-setup.sh",
 );
+const DEFAULT_DOCKER_HUB_CLEANUP_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "docker-auth-cleanup",
+  "action.yaml",
+);
+const DEFAULT_DOCKER_HUB_CLEANUP_SCRIPT_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "scripts",
+  "docker-auth-cleanup.sh",
+);
 const DEFAULT_HOST_DEPENDENCY_ACTION_PATH = join(
   REPO_ROOT,
   ".github",
@@ -162,6 +175,8 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
   "llama-cpp-dgx-spark-qualification",
+  "managed-image-multiarch-startup",
+  "managed-image-protected-runtime",
   "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
@@ -179,6 +194,12 @@ const DOCKER_HUB_AUTH_PROVENANCE = {
     "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928",
   actionSha256: "cf93dcbd19589a56d1d58225fd6b3f8ad2180705662ff79a3407f340b5dba4c0",
   scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
+} as const;
+const DOCKER_HUB_CLEANUP_PROVENANCE = {
+  reference:
+    "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3",
+  actionSha256: "8b7bf4bdb793ddd27aa9bab2e38157e91f0401148f6ba684acb516fc75e8d367",
+  scriptSha256: "4e5ce850c28f309b97695d61e11bcf1f154eae2b1d58c9697a3f49631c76abb4",
 } as const;
 const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
 const HOST_DEPENDENCY_ACTION_PROVENANCE = {
@@ -335,6 +356,48 @@ export function validateDockerHubAuthAction(
     errors.push(
       "docker-auth-setup action must preserve its exact three-input environment mapping and pinned helper invocation",
     );
+  }
+
+  return errors;
+}
+
+export function validateDockerHubCleanupAction(
+  actionPath = DEFAULT_DOCKER_HUB_CLEANUP_ACTION_PATH,
+  scriptPath = DEFAULT_DOCKER_HUB_CLEANUP_SCRIPT_PATH,
+): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const scriptSource = readFileSync(scriptPath, "utf8");
+  const errors: string[] = [];
+
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    DOCKER_HUB_CLEANUP_PROVENANCE.actionSha256
+  ) {
+    errors.push("docker-auth-cleanup action content must match the pinned commit");
+  }
+  if (
+    createHash("sha256").update(scriptSource).digest("hex") !==
+    DOCKER_HUB_CLEANUP_PROVENANCE.scriptSha256
+  ) {
+    errors.push("docker-auth-cleanup script content must match the pinned commit");
+  }
+
+  const expectedAction = {
+    name: "docker-auth-cleanup",
+    description: "Remove isolated Docker Hub credentials with validated path checks.",
+    runs: {
+      using: "composite",
+      steps: [
+        {
+          name: "Clean up Docker auth",
+          shell: "bash",
+          run: 'bash "${{ github.action_path }}/../../scripts/docker-auth-cleanup.sh"',
+        },
+      ],
+    },
+  };
+  if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
+    errors.push("docker-auth-cleanup action must invoke the helper through github.action_path");
   }
 
   return errors;
@@ -2507,6 +2570,10 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       }
       return stringValue(step.uses).startsWith("actions/checkout@");
     });
+    const protectedCacheDownloadIndex =
+      jobName === "managed-image-protected-runtime"
+        ? steps.findIndex((step) => step.name === "Download exact protected runtime build cache")
+        : -1;
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
@@ -2514,12 +2581,20 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         ? checkoutIndex + 2
         : jobName === "hermes-gpu-startup"
           ? checkoutIndex + 3
-          : checkoutIndex + 1;
-    if (checkoutIndex < 0 || authIndex !== expectedAuthIndex) {
+          : jobName === "managed-image-protected-runtime"
+            ? protectedCacheDownloadIndex + 1
+            : checkoutIndex + 1;
+    if (
+      checkoutIndex < 0 ||
+      (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
+      authIndex !== expectedAuthIndex
+    ) {
       errors.push(
         jobName === "jetson-nvmap-gpu"
           ? `${jobName} Docker Hub auth must run immediately after the Jetson dispatch guard`
-          : `${jobName} Docker Hub auth must run immediately after checkout`,
+          : jobName === "managed-image-protected-runtime"
+            ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
+            : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {
@@ -4324,10 +4399,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("generate-matrix job must keep the 10 minute timeout");
   }
   const generateOutputs = asRecord(generateMatrix.outputs);
-  if (
-    generateOutputs.matrix !==
-    "${{ steps.matrix.outputs.matrix }}"
-  ) {
+  if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
     errors.push("generate-matrix job must expose trusted controller matrix output");
   }
   if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
@@ -4357,10 +4429,13 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("trusted controller matrix step must use bash");
   }
   const controllerMatrixEnv = asRecord(controllerMatrix?.env);
+  if (controllerMatrixEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("trusted controller matrix step must bind jobs through JOBS env");
+  }
   if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("trusted controller matrix step must bind targets through TARGETS env");
   }
-  requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
+  requireRunContains(errors, controllerMatrix, 'case "${JOBS}:${TARGETS}" in');
   const controllerMatrixScript = stringValue(controllerMatrix?.run);
   const policyTarget = "ubuntu-policy-custom-missing-presets-negative";
   const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
@@ -4374,17 +4449,20 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
   const trustedControllerMatrixScript = [
     "set -euo pipefail",
-    'case "${TARGETS}" in',
-    '"")',
+    'case "${JOBS}:${TARGETS}" in',
+    ":)",
     `matrix='[${defaultMappings}]'`,
     ";;",
-    `${deepAgentsTarget})`,
+    "managed-image-protected-runtime:)",
+    "matrix='[]'",
+    ";;",
+    `:${deepAgentsTarget})`,
     `matrix='[${deepAgentsMapping}]'`,
     ";;",
-    `${postRebootTarget})`,
+    `:${postRebootTarget})`,
     `matrix='[${postRebootMapping}]'`,
     ";;",
-    `${deepAgentsTarget},${postRebootTarget})`,
+    `:${deepAgentsTarget},${postRebootTarget})`,
     `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
     ";;",
     "*)",
@@ -4995,6 +5073,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   return [
     ...validateDockerHubAuthAction(),
+    ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
     ...validateE2eWorkflow(readWorkflowRecord(workflowPath)),
     ...validateTrustedHermesSwapHelperSource(

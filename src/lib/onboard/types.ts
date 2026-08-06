@@ -85,6 +85,10 @@ export interface SandboxCreateIntent {
 }
 
 export type OnboardOptions = {
+  /** Hidden temporary opt-in for new managed-image runtime activation. */
+  tempManagedRuntime?: boolean;
+  /** Hidden exact-catalog input for managed-runtime qualification. */
+  tempManagedRuntimeCatalog?: string | null;
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
   /** Internal CLI composition for host-only Google Chat tunnel effects. */
@@ -113,6 +117,8 @@ export type OnboardOptions = {
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
+  /** Internal immutable managed-image/profile handoff validated before rebuild deletion. */
+  managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
   /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
   rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */

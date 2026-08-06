@@ -14,7 +14,7 @@ Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly
 ## Manual PR E2E
 
 Use this mode when the maintainer requests live E2E for a pull request.
-It runs the default suite against the current exact PR head while the workflow definition remains on `main`.
+It runs either the default suite or the protected managed-image runtime qualification against the current exact PR head while the workflow definition remains on `main`.
 It is advisory and does not create a required PR check.
 
 The default suite exposes these values to candidate-controlled job processes:
@@ -27,6 +27,8 @@ The default suite exposes these values to candidate-controlled job processes:
 The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
+
+For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. The live fixture attempts to stop and remove `nemoclaw-managed-image-nim-e2e`, but Docker stop or removal errors do not fail the test. A surviving container can retain the API key until runner teardown. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Rotate or revoke it in the issuing NVIDIA service to remove later access.
 
 Resolve the current PR and trusted workflow identities:
 
@@ -47,16 +49,27 @@ HEAD_REPOSITORY="$(jq -r .headRepository.nameWithOwner <<<"$PR_JSON")"
 ```
 
 Require a review reason containing 10 to 500 printable characters.
-Leave `jobs` and `targets` empty and keep Launchable disabled:
+
+Choose exactly one mode:
+
+- For the default suite, leave `E2E_JOBS` empty.
+- For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+
+Leave `targets` empty and keep Launchable disabled:
 
 ```bash
+E2E_JOBS="${E2E_JOBS:-}"
+case "$E2E_JOBS" in
+  "" | managed-image-protected-runtime) ;;
+  *) echo "Unsupported manual PR E2E job selector" >&2; exit 1 ;;
+esac
 REVIEW_REASON='Reviewed the exact PR revision for credentialed live E2E.'
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
   -f targets= \
-  -f jobs= \
+  -f "jobs=${E2E_JOBS}" \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=false \
   -f "pr_number=${PR_NUMBER}" \
@@ -68,7 +81,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
-The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and empty selectors.
+The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and selected mode.
 A second validation after checkout rejects a changed PR identity before preparation.
 
 Find and verify the correlated run with bounded GitHub reads:
