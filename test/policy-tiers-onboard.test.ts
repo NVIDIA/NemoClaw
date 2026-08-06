@@ -469,15 +469,16 @@ describe("policy tier setup", () => {
     );
   });
 
-  it("keeps Hermes web search and Hermes-only presets in Personal", async () => {
+  it("keeps supported Hermes web search and Hermes-only presets in Personal", async () => {
     const result = await runPolicySetup(
       { tierName: "personal" },
       { agent: "hermes", webSearchConfig: null, webSearchSupported: true },
     );
 
-    for (const name of ["personal-open-internet", "brave", "tavily", "nous-web", "nous-browser"]) {
+    for (const name of ["personal-open-internet", "tavily", "nous-web", "nous-browser"]) {
       assert.ok(result.applied.includes(name), `${name} should be applied`);
     }
+    assert.ok(!result.applied.includes("brave"), "unsupported Brave must remain filtered");
     assert.ok(
       !result.applied.includes("openclaw-pricing"),
       "OpenClaw-only presets must remain filtered",
@@ -491,6 +492,8 @@ describe("policy tier setup", () => {
     );
 
     assert.ok(result.applied.includes("personal-open-internet"));
+    assert.ok(result.applied.includes("tavily"));
+    assert.ok(!result.applied.includes("brave"));
   });
 
   it("omits Brave from policy preset selection when web search is unsupported", async () => {
