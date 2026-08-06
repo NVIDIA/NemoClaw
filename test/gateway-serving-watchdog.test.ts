@@ -40,6 +40,7 @@ function watchdogFunctions(gatewayLog: string): string {
     extractShellFunction(src, "gateway_watchdog_positive_int_ok"),
     extractShellFunction(src, "gateway_watchdog_curl_reason"),
     extractShellFunction(src, "gateway_watchdog_probe_gateway"),
+    extractShellFunction(src, "gateway_watchdog_pid_is_tracked_gateway"),
     extractShellFunction(src, "start_gateway_serving_watchdog"),
   ].join("\n");
 }
@@ -62,6 +63,9 @@ function runWatchdog(opts: {
   // How long to let the watchdog run when no kill is expected (seconds).
   settleSeconds?: number;
   curlUnavailable?: boolean;
+  // Claim a parent PID other than this shell, standing in for a gateway
+  // that outlived its supervisor and was reparented.
+  orphaned?: boolean;
   expectKill: boolean;
 }): {
   result: ReturnType<typeof spawnSync>;
@@ -119,7 +123,7 @@ function runWatchdog(opts: {
     "FAKE_GATEWAY_START=1001",
     `mkdir -p ${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID`,
     `printf '%s' ${JSON.stringify(opts.cmdline ?? "openclaw-gateway")} >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/cmdline`,
-    `write_proc_stat "$FAKE_GATEWAY_PID" "$$" "$FAKE_GATEWAY_START" >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/stat`,
+    `write_proc_stat "$FAKE_GATEWAY_PID" ${opts.orphaned ? "1" : '"$$"'} "$FAKE_GATEWAY_START" >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/stat`,
     watchdogFunctions(gatewayLogFile),
     'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
     'record_gateway_pid "$FAKE_GATEWAY_PID" "$FAKE_GATEWAY_START"',
@@ -446,6 +450,28 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     }
   });
 
+  it("reports an orphaned gateway once and never signals it (#7377)", () => {
+    // A gateway that outlived its supervisor keeps its recorded identity but
+    // is reparented, so the respawn loop recovery depends on is gone. The
+    // watchdog must say so rather than loop silently, must say it once rather
+    // than every probe, and must not signal a process it cannot get relaunched.
+    const { result, fakeAlive, tmpDir } = runWatchdog({
+      curlPlan: [7],
+      orphaned: true,
+      expectKill: false,
+      settleSeconds: 1.2,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fakeAlive).toBe(true);
+      expect(result.stderr).toContain("this supervisor is no longer its parent");
+      expect(result.stderr).not.toContain("killing it so the respawn loop can relaunch");
+      expect(String(result.stderr).match(/no longer its parent/g)).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("honors the refused-threshold environment variable", () => {
     const { result, fakeAlive, tmpDir } = runWatchdog({
       curlPlan: [0, 7, 7],
@@ -515,8 +541,11 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(path.join(tmpDir, "gateway.log"))}`,
         writeProcStatFunction,
         // A low threshold makes an inherited armed state lethal within a few
-        // cycles, so survival proves the per-PID reset.
+        // cycles, so survival proves the per-PID reset. The boot grace window
+        // is pinned out of reach so this case isolates the armed-state reset
+        // rather than the never-served bound, which has its own coverage.
         "export NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD=2",
+        "export NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES=100000",
         "sleep() { command sleep 0.01; }",
         `_CURL_PLAN=${JSON.stringify(planFile)}`,
         "curl() {",
@@ -568,8 +597,10 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(stdout).toContain("B_ALIVE=1");
       const bPid = stdout.match(/^B_PID=(\d+)$/m)?.[1];
       expect(bPid).toBeDefined();
+      // B may report not-serving probes against the boot grace window, but it
+      // must never be counted against A's serving history.
       expect(result.stderr).not.toContain(
-        `gateway pid ${bPid} is alive but not serving port 18789`,
+        `gateway pid ${bPid} is alive but not serving port 18789: connection refused (1/2 since the last serving response)`,
       );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
