@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
+
 // Import source directly so tests cannot pass against a stale build.
 import { registerTunnelOrigin } from "./allowed-origins";
 import { resolveDefaultSandboxName } from "./service-command";
@@ -507,23 +509,29 @@ describe("stopAll", () => {
     return { control, signals };
   }
 
-  it("does not signal a live PID recycled to a non-cloudflared process", () => {
-    const { control, signals } = scriptedControl({
-      alive: [true],
-      cmdlines: ["/usr/bin/node vitest"],
-    });
-    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+  // The first stopAll call instruments the lazily loaded Ollama proxy dependency
+  // graph. Loaded coverage shards can exceed the unit-test default here.
+  it(
+    "does not signal a live PID recycled to a non-cloudflared process",
+    testTimeoutOptions(15_000),
+    () => {
+      const { control, signals } = scriptedControl({
+        alive: [true],
+        cmdlines: ["/usr/bin/node vitest"],
+      });
+      writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      stopAll({ pidDir, processControl: control });
-    } finally {
-      logSpy.mockRestore();
-    }
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        stopAll({ pidDir, processControl: control });
+      } finally {
+        logSpy.mockRestore();
+      }
 
-    expect(signals).toEqual([]);
-    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
-  });
+      expect(signals).toEqual([]);
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    },
+  );
 
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({

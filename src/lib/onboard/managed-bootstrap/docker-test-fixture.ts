@@ -11,6 +11,7 @@ import { encodeManagedStartupProfile, type ManagedStartupAgent } from "../manage
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
   createManagedBootstrapPreparedAuthority,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapDurablePreparationReceipt,
@@ -80,6 +81,7 @@ export type DockerFixtureOptions = {
   >;
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
+  readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
   readonly sharedReceiptClearFailures?: readonly Error[];
@@ -116,10 +118,6 @@ export const sandbox = {
   driverId: "docker",
 };
 
-function shellArgv(argv: readonly string[]): string {
-  return argv.join(" ");
-}
-
 function originalInspect(inputs = agentInputs()): DockerContainerInspect {
   return {
     Id: OLD_ID,
@@ -127,7 +125,11 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
     Name: "/openshell-alpha",
     Config: {
       Image: IMAGE,
-      Env: ["A=1", `OPENSHELL_SANDBOX_COMMAND=${shellArgv(inputs.heldArgv)}`],
+      Env: [
+        "A=1",
+        `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${IDENTITY}`,
+        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+      ],
       Labels: {
         "openshell.ai/managed-by": "openshell",
         "openshell.ai/sandbox-name": "alpha",
@@ -238,6 +240,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
   const copyJournal = () => (journal ? structuredClone(journal) : null);
   const store: DockerManagedBootstrapJournalStore = {
     create(value) {
+      void (journal === null ? journal : failFixture("managed bootstrap journal already exists"));
       journal = structuredClone(value);
       events.push("journal:staged");
       const injectedFailure = journalCreateFailures.shift();
@@ -361,7 +364,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
             Config: {
               ...structuredClone(source.Config),
               Image: IMAGE,
-              Env: env,
+              Env: [...(options.replacementEnvironment?.(env) ?? env)],
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
             },

@@ -77,7 +77,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
   const processEvents = deps.processEvents ?? process;
 
   /**
-   * Prompt the user to select a policy tier (restricted / balanced / open).
+   * Prompt the user to select a policy tier (restricted / balanced / open / personal).
    * Uses the same radio-style TUI as presetsCheckboxSelector (single-select).
    * In non-interactive mode reads NEMOCLAW_POLICY_TIER (default: balanced).
    * Returns the tier name string.

@@ -56,6 +56,15 @@ describe("shields policy transition", () => {
       configFile: "config.json",
       configPath: "/sandbox/.deepagents/config.json",
       format: "json",
+      stateLockPlan: {
+        version: 1,
+        readOnlyRoots: ["skills"],
+        confidentialRoots: [],
+        readOnlyPrefixes: [],
+        confidentialPrefixes: [],
+        writableSubpaths: [],
+      },
+      stateLockPlanInImage: false,
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -199,10 +208,14 @@ describe("shields down policy rejection", () => {
     harness.errorSpy.mockClear();
     harness.shieldsStatus("openclaw", true, {
       verifyLockState: () => ({ ok: true, issues: [] }),
+      verifyStateLockPlan: () => [],
       resolveConfig: () => ({
         agentName: "openclaw",
         configPath: "/sandbox/.openclaw/openclaw.json",
         configDir: "/sandbox/.openclaw",
+        configFile: "openclaw.json",
+        format: "json",
+        stateLockPlanInImage: true,
       }),
     });
 
@@ -269,6 +282,9 @@ describe("shields down policy rejection", () => {
           agentName: "openclaw",
           configPath: "/sandbox/.openclaw/openclaw.json",
           configDir: "/sandbox/.openclaw",
+          configFile: "openclaw.json",
+          format: "json",
+          stateLockPlanInImage: true,
         }),
       }),
     ).toThrow("process exit 1");
@@ -310,6 +326,15 @@ describe("shields config lock without a shipped config hash", () => {
       configPath: CONFIG_PATH,
       format: "toml",
       sensitiveFiles: [HASH_PATH],
+      stateLockPlan: {
+        version: 1 as const,
+        readOnlyRoots: ["skills"],
+        confidentialRoots: [],
+        readOnlyPrefixes: [],
+        confidentialPrefixes: [],
+        writableSubpaths: [],
+      },
+      stateLockPlanInImage: false,
     };
   }
 
@@ -697,7 +722,13 @@ describe("shields config lock without a shipped config hash", () => {
 
     expect(lockCalls[0].slice(4)).toEqual([CONFIG_DIR, CONFIG_PATH]);
     expect(unlockCalls).toHaveLength(0);
-    expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(expect.anything(), CONFIG_DIR, true);
+    expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      CONFIG_DIR,
+      true,
+      target().stateLockPlan,
+      false,
+    );
     expect(stateDirGuardActions).toEqual(["preflight", "lock"]);
     expect(entries.get(CONFIG_DIR)).toEqual({ mode: "755", owner: "root:root" });
     expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });

@@ -96,6 +96,7 @@ export function createSandboxGpuCreateAttemptRunner(
     const managedLifecycle = managedBootstrap
       ? managedBootstrap.runtimeProvider.bootstrap.createLifecycle({
           providerId: managedBootstrap.runtimeProvider.identity.id,
+          stateRoot: managedBootstrap.stateRoot,
           bootstrapIdentity: managedBootstrap.bootstrapIdentity,
           request: managedBootstrap.request,
           image: managedBootstrap.image,

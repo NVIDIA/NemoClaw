@@ -5,9 +5,9 @@
 
 # NemoClaw Controlled Word List
 
-This list defines approved NemoClaw technical terms for explanatory text in the scope of the
-[NemoClaw Writing Guide](../../../WRITING.md). It gives each term one project meaning and identifies
-alternatives that can make that meaning unclear.
+This list defines approved NemoClaw technical terms for explanatory text.
+It gives each term one project meaning and identifies alternatives that can make that meaning
+unclear.
 
 This list is not a general English dictionary. It does not copy the ASD-STE100 dictionary, and its
 use does not establish ASD-STE100 compliance.
@@ -417,7 +417,6 @@ For each entry:
 3. Define one meaning. Add another row when the same word has a different controlled meaning.
 4. List only alternatives that writers use for that same meaning.
 5. Keep entries alphabetical within their section.
-6. Add a rewrite example to `WRITING.md` only when the distinction needs sentence context.
 
 Do not add every acceptable English word. Do not use this list to rename a command, identifier,
 schema field, UI label, or third-party product. Such a rename needs its own behavior or interface

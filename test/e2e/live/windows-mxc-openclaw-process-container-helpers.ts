@@ -425,6 +425,16 @@ export function allowlistedWindowsProcessEnvironment(
   return allowed;
 }
 
+export function withoutOpenShellGatewaySelection(
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const isolated: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (name.toLowerCase() !== "openshell_gateway") isolated[name] = value;
+  }
+  return isolated;
+}
+
 function tomlString(value: string): string {
   return JSON.stringify(value.replaceAll("\\", "/"));
 }
@@ -831,7 +841,8 @@ export function normalizeReportedVersion(output: string): string | null {
   const normalized = output
     .trim()
     .replace(/^openclaw(?:\s+version)?\s+/iu, "")
-    .replace(/^v(?=[0-9])/u, "");
+    .replace(/^v(?=[0-9])/u, "")
+    .replace(/\s+\([0-9a-f]{7,40}\)$/iu, "");
   return VERSION_PATTERN.test(normalized) ? normalized : null;
 }
 
@@ -1019,7 +1030,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     mode: 0o600,
   });
 
-  const gatewayEnvironment: NodeJS.ProcessEnv = {
+  const gatewayEnvironment: NodeJS.ProcessEnv = withoutOpenShellGatewaySelection({
     ...allowlistedWindowsProcessEnvironment(environment),
     NEMOCLAW_MXC_E2E_DENY_PATH: denyPath,
     NEMOCLAW_MXC_E2E_ENTRY: inputs.openClaw.entryPath,
@@ -1034,11 +1045,10 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     NEMOCLAW_MXC_E2E_STOP_PATH: stopPath,
     NEMOCLAW_MXC_E2E_TOKEN: token,
     OPENSHELL_DRIVERS: "mxc",
-    OPENSHELL_GATEWAY: "",
     OPENSHELL_GATEWAY_CONFIG: gatewayConfigPath,
     XDG_CONFIG_HOME: configDirectory,
     XDG_STATE_HOME: stateDirectory,
-  };
+  });
   const controlEnvironment: NodeJS.ProcessEnv = {
     ...gatewayEnvironment,
     NEMOCLAW_MXC_E2E_TOKEN: undefined,
@@ -1154,17 +1164,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     assertExactArtifactIdentities(inputs);
     sandboxCreateStarted = true;
     const create = await runOpenShellCommand(
-      [
-        "sandbox",
-        "create",
-        "--name",
-        sandboxName,
-        "--policy",
-        policyPath,
-        "--no-tty",
-        "--",
-        "exit",
-      ],
+      ["sandbox", "create", "--name", sandboxName, "--policy", policyPath, "--no-tty"],
       "command: windows-mxc-sandbox-create",
       READY_TIMEOUT_MS,
     );

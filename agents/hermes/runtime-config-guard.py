@@ -54,6 +54,9 @@ MCP_HASH_STATE_RE = re.compile(
 )
 NEMOCLAW_START_ARGV = (b"nemoclaw-start", b"/usr/local/bin/nemoclaw-start")
 OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
+# Keep this in exact parity with manifest config_file + config.shields_files +
+# .config-hash. The host manifest remains authoritative for host transitions;
+# the integration test protects this separate in-image recovery boundary.
 SEALED_FILE_NAMES = ("config.yaml", ".env", ".config-hash")
 RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
 SHIELDS_TRANSITION_LEASE_SECONDS = 300
@@ -4411,7 +4414,11 @@ def abort_shields_transition(hermes_dir: str, state_file: str, lock_token: str) 
 
 
 def run_state_dir_transition(
-    hermes_dir: str, state_file: str, lock_token: str, action: str
+    hermes_dir: str,
+    state_file: str,
+    lock_token: str,
+    action: str,
+    state_lock_plan_json: str,
 ) -> None:
     if action not in ("lock", "unlock"):
         raise UnsafePathError("refusing unsupported Hermes state-dir action")
@@ -4433,6 +4440,13 @@ def run_state_dir_transition(
     helper = installed if os.path.isfile(installed) else checkout
     if not os.path.isfile(helper):
         raise UnsafePathError("Hermes state-dir guard is unavailable")
+    if state_lock_plan_json:
+        plan_args = ["--plan-json", state_lock_plan_json]
+    else:
+        plan_file = "/usr/local/share/nemoclaw/state-lock-plan.json"
+        if not os.path.isfile(plan_file):
+            raise UnsafePathError("Hermes state lock plan is unavailable")
+        plan_args = ["--plan-file", plan_file]
     # Preserve this exact PID/start identity as GNU timeout while it owns and
     # waits for the recursive worker. Cancel the Python alarm before exec so
     # timeout alone owns TERM/KILL tree cleanup and no orphan child survives.
@@ -4449,6 +4463,7 @@ def run_state_dir_transition(
             action,
             "--config-dir",
             hermes_dir,
+            *plan_args,
         ],
     )
 
@@ -5004,6 +5019,7 @@ def main() -> int:
     parser.add_argument("--expected-config-sha256", default="")
     parser.add_argument("--lock-token", default="")
     parser.add_argument("--state-action", choices=("lock", "unlock"), default="")
+    parser.add_argument("--state-lock-plan-json", default="")
     parser.add_argument("--shields-mode", choices=("locked", "mutable"), default="")
     parser.add_argument(
         "--rollback-shields-mode", choices=("locked", "mutable"), default=""
@@ -5186,6 +5202,7 @@ def main() -> int:
                 args.state_file,
                 args.lock_token,
                 args.state_action,
+                args.state_lock_plan_json,
             )
     except UnsafePathError as exc:
         _die(str(exc))

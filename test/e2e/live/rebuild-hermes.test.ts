@@ -95,7 +95,7 @@ SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
   );
 const KANBAN_FILE = "/sandbox/.hermes/kanban.db";
 const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
-const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
+const EXCLUDED_HOOKS_FILE = "/sandbox/.hermes/hooks/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
 const PRE_REBUILD_API_SERVER_KEY = REBUILD_HERMES_STATE.apiServerKey;
@@ -1072,7 +1072,7 @@ test(STALE_BASE_REBUILD
     },
   );
   expectExitZero(writeMarker, "write Hermes marker");
-  const writeExcludedKanbanMarker = await host.command(
+  const writeExcludedHooksMarker = await host.command(
     activeOpenshellBin,
     [
       "sandbox",
@@ -1083,18 +1083,18 @@ test(STALE_BASE_REBUILD
       "sh",
       "-c",
       [
-        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_KANBAN_FILE))}`,
-        `printf '%s' ${shellQuote(REBUILD_HERMES_STATE.markerContent)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
+        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_HOOKS_FILE))}`,
+        `printf '%s' ${shellQuote(REBUILD_HERMES_STATE.markerContent)} > ${shellQuote(EXCLUDED_HOOKS_FILE)}`,
       ].join(" && "),
     ],
     {
-      artifactName: "phase-4-write-excluded-kanban-marker",
+      artifactName: "phase-4-write-excluded-hermes-hooks-marker",
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
-  expectExitZero(writeExcludedKanbanMarker, "write excluded Hermes kanban marker");
+  expectExitZero(writeExcludedHooksMarker, "write backup:false Hermes hooks marker");
   await cronRestore.seed();
   const seededKanbanDb = await host.command("docker", inspectKanbanTaskArgs(SANDBOX_NAME), {
     artifactName: "phase-4-inspect-seeded-kanban-db",
@@ -1337,17 +1337,17 @@ test(STALE_BASE_REBUILD
   expectExitZero(restoredKanban, "list Hermes kanban tasks after rebuild");
   expect(resultText(restoredKanban)).toContain(KANBAN_TASK_TITLE);
 
-  const excludedKanbanState = await host.command(
+  const excludedHooksState = await host.command(
     activeOpenshellBin,
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_KANBAN_FILE],
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_HOOKS_FILE],
     {
-      artifactName: "phase-7-verify-excluded-kanban-state",
+      artifactName: "phase-7-verify-excluded-hermes-hooks-state",
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
-  expectExitZero(excludedKanbanState, "verify excluded Hermes kanban state was not restored");
+  expectExitZero(excludedHooksState, "verify backup:false Hermes hooks state was not restored");
 
   const restoredEnv = await host.command(
     activeOpenshellBin,

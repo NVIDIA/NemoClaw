@@ -222,7 +222,9 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
       '    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \\',
       "        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \\",
       "            --agent hermes --phase managed-image-capability-union; \\",
-      "    fi",
+      "    fi \\",
+      "    && /opt/hermes/.venv/bin/python -I -c \\",
+      "        \"from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual\"",
       "",
     ].join("\n");
     const npmCommandIndexes = [...finalStage.matchAll(/^\s*npm\s+(?:ci|run)\b/gmu)].map(

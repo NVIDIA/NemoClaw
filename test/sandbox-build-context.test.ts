@@ -35,6 +35,7 @@ describe("sandbox build context staging", () => {
 
     writeFixture("Dockerfile");
     writeFixture("tsconfig.runtime-preloads.json", "{}\n");
+    writeFixture(path.join("agents", "openclaw", "state-lock-plan.json"), "{}\n");
     writeFixture(
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
@@ -52,6 +53,7 @@ describe("sandbox build context staging", () => {
       "package-lock.json",
       "tsconfig.json",
       "install-reviewed-runtime.sh",
+      "npm-ci-locked.sh",
       "build-runtime.ts",
       "mcp-tool-discovery.ts",
       "streamable-http-client.test.ts",
@@ -60,7 +62,7 @@ describe("sandbox build context staging", () => {
       writeFixture(
         path.join("tools", "mcp-tool-discovery-runtime", fileName),
         "fixture\n",
-        fileName === "install-reviewed-runtime.sh" ? 0o755 : 0o644,
+        ["install-reviewed-runtime.sh", "npm-ci-locked.sh"].includes(fileName) ? 0o755 : 0o644,
       );
     }
     for (const fileName of [
@@ -251,6 +253,7 @@ describe("sandbox build context staging", () => {
       "build-runtime.ts",
       "install-reviewed-runtime.sh",
       "mcp-tool-discovery.ts",
+      "npm-ci-locked.sh",
       "package-lock.json",
       "package.json",
       "streamable-http-client.test.ts",
@@ -265,7 +268,7 @@ describe("sandbox build context staging", () => {
         ),
       );
       expect((fs.statSync(path.join(runtimeDir, fileName)).mode & 0o777).toString(8)).toBe(
-        fileName === "install-reviewed-runtime.sh" ? "755" : "644",
+        ["install-reviewed-runtime.sh", "npm-ci-locked.sh"].includes(fileName) ? "755" : "644",
       );
     }
   }
@@ -582,6 +585,9 @@ describe("sandbox build context staging", () => {
         true,
       );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "state-dir-guard.py"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "agents", "openclaw", "state-lock-plan.json"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "openclaw-config-guard.py"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(

@@ -11,6 +11,7 @@ import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import {
   createManagedBootstrapIdentity,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   renderManagedBootstrapHeldCommand,
 } from "./managed-bootstrap/adapter";
 import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
@@ -106,6 +107,29 @@ export function renderSandboxCreateCommand(
     "--",
     ...sandboxStartupCommand,
   ])} 2>&1`;
+}
+
+function managedBootstrapCreateArgs(
+  createArgs: readonly string[],
+  bootstrapIdentity: string | null,
+): string[] {
+  if (!bootstrapIdentity) return [...createArgs];
+  // OpenShell runs the command after `--` as an exec session while its OCI
+  // supervisor retains `sleep infinity`. Persist the transaction identity on
+  // the sandbox spec so each runtime provider can bind the idle workload to
+  // the exact authorized bootstrap without depending on driver internals.
+  const assignmentPrefix = `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=`;
+  if (
+    createArgs.some(
+      (argument) =>
+        argument.startsWith(assignmentPrefix) || argument.startsWith(`--env=${assignmentPrefix}`),
+    )
+  ) {
+    throw new Error(
+      `OpenShell create arguments must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}.`,
+    );
+  }
+  return [...createArgs, "--env", `${assignmentPrefix}${bootstrapIdentity}`];
 }
 
 export interface SandboxRuntimeEnvArgsInput {
@@ -235,9 +259,10 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
           ),
         ]
       : intendedSandboxStartupCommand;
-  const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
+  const createArgs = managedBootstrapCreateArgs(input.createArgs, managedBootstrapIdentity);
+  const openshellArgs = ["sandbox", "create", ...createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
-    input.createArgs,
+    createArgs,
     sandboxStartupCommand,
     input.openshellShellCommand,
   );
