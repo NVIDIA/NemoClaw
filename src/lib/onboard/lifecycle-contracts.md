@@ -148,10 +148,9 @@ Rebuild and non-resumed re-onboard now open the same journal.
 ## Journal-bound pre-upgrade backup selection
 
 Pre-upgrade backup selection consumes the journal rather than registry and gateway booleans.
-`selectPreUpgradeBackupForCreate` requires a source proof carrying the transaction identifier, sandbox name, gateway name and port, source registry fingerprint, source OpenShell ID fingerprint, and target generation.
-It rejects an absent transaction, a transaction for another sandbox or gateway, an absent or changed source registry row, and a live sandbox that is not the recorded source.
-A same-name sandbox that OpenShell reports without an ID is unknown state, not an absent sandbox, so it is rejected rather than compared with the recorded source.
-Each rejection happens before backup lookup, deletion, creation, or registry mutation, and never degrades to selecting no backup.
+`selectPreUpgradeBackupForCreate` requires a source proof with the transaction identifier, sandbox name, gateway name and port, source registry fingerprint, source OpenShell ID fingerprint, deletion confirmation, and target generation.
+When OpenShell reports the source sandbox as missing, selection continues only after the journal confirms source deletion.
+It rejects all source-proof mismatches before backup lookup, deletion, creation, or registry mutation.
 
 The installer upgrade path, where the registry row survives but OpenShell reports no sandbox, opens the journal before selection and abandons it if the custom-image plugin-provenance check blocks recreation.
 A journal is abandoned only while its revision is still zero, so no recorded lifecycle effect can be discarded.
