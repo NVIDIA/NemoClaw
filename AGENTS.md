@@ -276,7 +276,9 @@ If the command trace contains no reviewer-request write, report the event as an 
 
 ## Documentation
 
-- Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
+- Treat `docs/` as the source of truth for public-facing documentation.
+  Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow,
+  including DORI routing.
 - Before completing a code change, determine whether it changes a user-visible surface.
   This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
 - When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
@@ -291,34 +293,10 @@ If the command trace contains no reviewer-request write, report the event as an 
   For a documentation-only change, require review of the writing rules and documentation style.
 - If the current host cannot run this reviewer, hand the completed diff and validation evidence to a capable host.
   If no capable host is available, record the review as `blocked` and do not complete final handoff.
-- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, and agent surface. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
-- If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
+- After the review, follow the
+  [Documentation Writer Review Receipt](CONTRIBUTING.md#documentation-writer-review-receipt)
+  procedure.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
-
-### NVIDIA DORI Routing
-
-Select the documentation path from current host capabilities.
-Do not ask the user to classify themselves or store repository-scoped identity
-state during a normal documentation task.
-
-1. Check whether the current agent exposes `dori_handle` or `dori_route` and
-   `dori_collections`.
-   If the user explicitly asks not to use DORI, use the
-   [Writing Style Guide](docs/AGENTS.md#writing-style-guide) instead.
-2. When those tools are available, list the installed collections.
-   - If a collection source contains `tech-docs/skill-library`, use DORI for
-     task routing.
-   - If the collection is missing, inaccessible, or cannot be verified,
-     continue with the
-     [Writing Style Guide](docs/AGENTS.md#writing-style-guide).
-3. When the DORI tools are unavailable, continue with the Writing Style Guide.
-   Do not inspect a shell-visible CLI, install software, or configure the host
-   during a normal documentation task.
-4. Use [NVIDIA DORI Setup](docs/DORI_SETUP.md) only when the user explicitly
-   asks to install or configure DORI.
-
-Capability detection does not approve installation or host configuration.
-DORI unavailability must not block documentation work.
 
 ## PR Requirements
 

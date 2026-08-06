@@ -154,7 +154,7 @@ function runSanitizer(source: string, output: string) {
 function scorecardData(overrides: Partial<ScorecardData> = {}): ScorecardData {
   return {
     today: "Jun 29",
-    runMode: "Scheduled E2E",
+    runMode: "Main push",
     actor: "",
     isSelectiveDispatch: false,
     requestedJobs: [],

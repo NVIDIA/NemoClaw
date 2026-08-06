@@ -69,6 +69,7 @@ describe("shields timer authorization", () => {
                   ? [`${marker.configDir.replace(/\/+$/, "")}/.env`]
                   : []),
               ],
+              stateLockPlanInImage: false,
             }
           : undefined,
     );
@@ -1184,6 +1185,7 @@ describe("shields timer authorization", () => {
       configPath,
       configDir,
       sensitiveFiles: [sensitiveHashPath],
+      stateLockPlanInImage: false,
     };
 
     expect(shieldsIndexMock.resolvePersistedAutoRestoreTarget).toHaveBeenCalledWith(

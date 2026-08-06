@@ -7,9 +7,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it } from "vitest";
+import { beforeEach, describe, it, vi } from "vitest";
 import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "./helpers/onboard-split-context";
+
+beforeEach(() => {
+  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
+});
 
 describe("onboard helpers", () => {
   it("non-interactive exits with error when existing sandbox is not ready", {
