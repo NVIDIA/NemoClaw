@@ -46,7 +46,7 @@ describe("E2E workflow plan", () => {
       hermesSelected: true,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     });
-    expect(plan.explicitOnlyJobs).toContain("hermes-gpu-startup");
+    expect(plan.explicitOnlyJobs).toEqual([]);
   });
 
   it("validates jobs and selects only matching credential-free tests", () => {
