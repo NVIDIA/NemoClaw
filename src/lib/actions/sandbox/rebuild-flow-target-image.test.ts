@@ -156,7 +156,7 @@ describe("rebuildSandbox flow: target image", () => {
       stateUpdates: [],
       healthChecks: [],
     };
-    const finalizePreparedImage = vi.fn((prepared, plan, capturedEnv) => ({
+    const finalizePreparedImage = vi.fn((prepared, _plan, _capturedEnv) => ({
       ok: true as const,
       imageTag: "nemoclaw-rebuild-finalize:test",
       prepared: { ...prepared, buildId: "backup-finalized" },

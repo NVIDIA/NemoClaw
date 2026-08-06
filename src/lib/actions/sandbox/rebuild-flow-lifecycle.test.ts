@@ -218,11 +218,7 @@ network_policies:
     expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(
-      harness.runOpenshellSpy.mock.calls.some(
-        ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
-      ),
-    ).toBe(false);
+    expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
   it("keeps baseline-exclusion retry metadata when inner replacement creation fails (#7194)", async () => {
