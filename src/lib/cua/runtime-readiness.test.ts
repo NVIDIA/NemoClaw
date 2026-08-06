@@ -335,6 +335,36 @@ describe("current CUA runtime readiness", () => {
     expect(validateCurrentCuaRuntimeReadiness(readiness, context)).toEqual(readiness);
   });
 
+  it("accepts semantically identical final authority with reordered object keys (#7755)", () => {
+    const route = getCuaInferenceRouteIdentity(inference);
+    const runtime = fixture({ qualified: true, routeDigest: route.routeDigest });
+    const context = {
+      agentName: "nemocua",
+      recordedInference: inference,
+      liveInference: inference,
+      liveProviderAuthorityDigest: providerAuthorityDigest,
+      acceptance: "final" as const,
+      env: runtime.env,
+      buildIdentity: {
+        schemaVersion: 1 as const,
+        sourceRevision: runtime.finalCommit,
+        sourceClean: true,
+      },
+    };
+    const readiness = buildCurrentCuaRuntimeReadiness(context);
+    const reordered = {
+      ...readiness,
+      inference: {
+        routeDigest: readiness.inference.routeDigest,
+        model: readiness.inference.model,
+        provider: readiness.inference.provider,
+      },
+      components: Object.fromEntries(Object.entries(readiness.components).reverse()),
+    };
+
+    expect(validateCurrentCuaRuntimeReadiness(reordered, context)).toEqual(reordered);
+  });
+
   it("rejects syntax-valid final evidence whose component tuple was promoted by hand (#7755)", () => {
     const route = getCuaInferenceRouteIdentity(inference);
     const runtime = fixture({ qualified: true, routeDigest: route.routeDigest });

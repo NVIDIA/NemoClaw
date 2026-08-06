@@ -14,8 +14,8 @@ import {
   CUA_LIFECYCLE_SCHEMA_VERSION,
   CUA_MATERIAL_EXCLUSIONS,
   CUA_PRIVATE_MATERIALS,
-  CUA_TASK_OPERATIONS,
   CUA_TARGET_OPERATIONS,
+  CUA_TASK_OPERATIONS,
   CUA_UNTRUSTED_INPUTS,
   type CuaAppliedPolicyIdentity,
   type CuaComponentIdentity,
@@ -303,6 +303,25 @@ describe("CUA security lifecycle (#7754)", () => {
     expect(JSON.stringify(outcome.record)).not.toMatch(
       /"(endpoint|hostname|url|path|cookie|password|token|credential|ssh|vnc)"\s*:/i,
     );
+  });
+
+  it("does not let the verifier mutate durable runtime or target authority", () => {
+    const { registry, deps } = harness();
+    const adapter = fakeAdapter((request) => {
+      request.runtime.components.openshell.name = "mutated-runtime";
+      request.target.status = "detached";
+      request.target.target = null;
+      return attestation();
+    });
+
+    const outcome = executeCuaSecurityLifecycle(
+      { operation: "security.verify", sandboxName: "alpha", adapter },
+      deps,
+    );
+
+    expect(outcome.exitCode).toBe(0);
+    expect(registry.sandboxes.alpha?.cuaRuntimeReadiness).toEqual(runtime);
+    expect(registry.sandboxes.alpha?.cuaTarget).toEqual(target);
   });
 
   it("quarantines an uncertain security verification until target reconciliation", () => {

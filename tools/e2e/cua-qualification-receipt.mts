@@ -7,9 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { createCuaBuildIdentityStamp } from "../../src/lib/cua/build-identity.ts";
 import {
-  CUA_TASK_OPERATIONS,
   CUA_SECURITY_OPERATIONS,
   CUA_TARGET_OPERATIONS,
+  CUA_TASK_OPERATIONS,
   type CuaComponentIdentity,
   type CuaFailure,
   type CuaInferenceIdentity,
@@ -1084,7 +1084,7 @@ function canonicalQualificationValue(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
     Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, child]) => [key, canonicalQualificationValue(child)]),
   );
 }

@@ -13,8 +13,8 @@ import {
   CUA_LIFECYCLE_SCHEMA_VERSION,
   CUA_MATERIAL_EXCLUSIONS,
   CUA_PRIVATE_MATERIALS,
-  CUA_TASK_OPERATIONS,
   CUA_TARGET_OPERATIONS,
+  CUA_TASK_OPERATIONS,
   CUA_UNTRUSTED_INPUTS,
   type CuaComponentIdentity,
   type CuaLifecycleRecord,
@@ -371,6 +371,7 @@ describe("first-class CUA contract", () => {
       ["version", "https://artifacts.invalid/release"],
       ["owner", "operator@private.invalid"],
       ["owner", "localhost"],
+      ["owner", "ip6-localhost"],
       ["owner", "127.0.0.1"],
     ] as const) {
       const record = runtimeReadiness();

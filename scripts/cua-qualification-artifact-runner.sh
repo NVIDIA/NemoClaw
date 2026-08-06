@@ -197,6 +197,8 @@ if [[ "${1:-}" == "--root-caller" ]]; then
   shift
   [[ "$#" -ge 5 && "$1" =~ ^[1-9][0-9]*$ && "$2" =~ ^[1-9][0-9]*$ && "$3" == "--" ]] \
     || fail "root caller identity is invalid"
+  [[ "${SUDO_UID:-}" == "$1" && "${SUDO_GID:-}" == "$2" ]] \
+    || fail "root caller identity does not match sudo authority"
   caller_uid="$1"
   caller_gid="$2"
   shift 3

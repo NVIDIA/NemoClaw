@@ -79,6 +79,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
+import { requiredAbsoluteFile, requiredEnv } from "./cua-gpu-qualification-inputs.ts";
 import {
   assertCuaQualificationInventoryTransition,
   assertCuaQualificationLocalRegistryAbsent,
@@ -103,22 +104,6 @@ type QualificationNemoclaw = (
   args: string[],
   options?: ShellProbeRunOptions,
 ) => Promise<ShellProbeResult>;
-
-function requiredEnv(name: string, pattern: RegExp): string {
-  const value = process.env[name];
-  if (!value || value.length > 4096 || !pattern.test(value)) {
-    throw new Error(`${name} is required and invalid`);
-  }
-  return value;
-}
-
-function requiredAbsoluteFile(name: string): string {
-  const value = process.env[name];
-  if (!value || value.length > 4096 || !path.isAbsolute(value) || value.includes("\0")) {
-    throw new Error(`${name} must name one absolute file`);
-  }
-  return value;
-}
 
 function qualificationHostToolPath(name: string, fallback: string, basename: string): string {
   const value = process.env[name] ?? fallback;
@@ -913,6 +898,8 @@ test("CUA GPU qualification binds one exact candidate and completes the browser 
     const runLifecycle = (operation: string, args: string[]) =>
       runCuaLifecycle(nemoclaw, operation, args, runtimeEnv, redactionValues, exercisedOperations);
     let candidateReady = false;
+    let qualificationFailure: unknown;
+    let cleanupFailure: Error | undefined;
     try {
       progress.phase(
         "verify exact clean candidate source and one immutable qualification identity",
@@ -1640,6 +1627,8 @@ test("CUA GPU qualification binds one exact candidate and completes the browser 
       expect(hashBoundedCuaQualificationFile(openshellBinaryPath, MAX_COMPONENT_BYTES).sha256).toBe(
         receipt.components.openshell,
       );
+    } catch (error) {
+      qualificationFailure = error;
     } finally {
       if (candidateReady) {
         const result = await nemoclaw(
@@ -1662,9 +1651,19 @@ test("CUA GPU qualification binds one exact candidate and completes the browser 
           },
         );
         if (result.exitCode !== 0) {
-          throw new Error(`CUA qualification target cleanup failed: ${result.stderr}`);
+          cleanupFailure = new Error(`CUA qualification target cleanup failed: ${result.stderr}`);
         }
       }
     }
+    if (qualificationFailure !== undefined) {
+      if (cleanupFailure) {
+        throw new AggregateError(
+          [qualificationFailure, cleanupFailure],
+          "CUA qualification and target cleanup both failed",
+        );
+      }
+      throw qualificationFailure;
+    }
+    if (cleanupFailure) throw cleanupFailure;
   });
 });

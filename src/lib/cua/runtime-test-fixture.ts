@@ -11,6 +11,7 @@ import type {
   CuaQualificationReceipt,
 } from "./qualification-evidence";
 import type { CuaPayloadFileIdentity, CuaRuntimeManifest } from "./runtime-manifest";
+import { canonicalJsonSha256 } from "./shared-primitives";
 
 const CANDIDATE_COMMIT = "a".repeat(40);
 const FINAL_COMMIT = "b".repeat(40);
@@ -18,22 +19,7 @@ const BUNDLE_SHA256 = "c".repeat(64);
 const SANDBOX_IMAGE_DIGEST = `sha256:${"d".repeat(64)}`;
 const TARGET_IMAGE_DIGEST = `sha256:${"e".repeat(64)}`;
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalize(child)]),
-  );
-}
-
-export function canonicalJsonSha256(value: unknown): string {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(canonicalize(value)))
-    .digest("hex");
-}
+export { canonicalJsonSha256 } from "./shared-primitives";
 
 function digest(bytes: Buffer | string): string {
   return crypto.createHash("sha256").update(bytes).digest("hex");

@@ -11,9 +11,9 @@ import { type CuaBuildIdentity, resolveCurrentCuaBuildIdentity } from "./build-i
 import {
   CUA_CAPABILITIES,
   CUA_LIFECYCLE_SCHEMA_VERSION,
-  CUA_TASK_OPERATIONS,
   CUA_SECURITY_OPERATIONS,
   CUA_TARGET_OPERATIONS,
+  CUA_TASK_OPERATIONS,
   type CuaComponentIdentity,
   type CuaInferenceIdentity,
   type CuaRuntimeReadiness,
@@ -38,15 +38,13 @@ import {
   verifyCuaRuntimeAuthorityPayload,
 } from "./runtime-manifest";
 import { parseCuaRuntimeReadiness } from "./schema";
+import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE, canonicalJsonSha256 } from "./shared-primitives";
 
 const COMMIT = /^[a-f0-9]{40}$/;
 const SAFE_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}){0,7}$/;
 const SAFE_ROUTE_VALUE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_CREDENTIAL_ENV = /^[A-Z][A-Z0-9_]{0,127}$/;
-const SENSITIVE = /(?:auth|bearer|credential|password|secret|token)|(?:^|[/._-])(?:ghp_|sk-)/i;
-const HOST_COORDINATE =
-  /(?:[a-z][a-z0-9+.-]*:\/\/|@|[?#\\]|\b(?:localhost|[a-z0-9-]+\.localhost)\b|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[a-z0-9-]+\.(?:com|net|org|io|ai|dev|cloud|internal|local|invalid)\b)/i;
 const MAX_QUALIFICATION_ENVIRONMENT_BYTES = 64 * 1024;
 
 export type CuaReadinessAcceptance = "final" | "candidate-qualification";
@@ -68,21 +66,8 @@ export interface CuaRuntimeReadinessContext {
   expectedOpenshellDigest?: string;
 }
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalize(child)]),
-  );
-}
-
 function digestJson(value: unknown): string {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(canonicalize(value)))
-    .digest("hex");
+  return canonicalJsonSha256(value);
 }
 
 function contentDigest(value: unknown): string {
@@ -92,8 +77,8 @@ function contentDigest(value: unknown): string {
 function safePublicValue(value: string, pattern: RegExp, label: string): string {
   if (
     !pattern.test(value) ||
-    SENSITIVE.test(value) ||
-    HOST_COORDINATE.test(value) ||
+    CUA_SENSITIVE_VALUE.test(value) ||
+    CUA_HOST_COORDINATE.test(value) ||
     /[\x00-\x1f\x7f]/.test(value)
   ) {
     throw new Error(`${label} must be a printable coordinate- and credential-free identity`);
@@ -340,7 +325,7 @@ function assertQualifiedManifestBindings(
     receiptSha256 !== manifest.compatibility.receiptSha256 ||
     environment.nemoclawCommit !== manifest.compatibility.candidateSourceRevision ||
     receipt.bundleReceiptSha256 !== manifest.bundleReceipt.sha256 ||
-    JSON.stringify(receipt.inference) !== JSON.stringify(readiness.inference) ||
+    digestJson(receipt.inference) !== digestJson(readiness.inference) ||
     readiness.qualification?.state !== "qualified" ||
     readiness.qualification.candidateSourceRevision !==
       manifest.compatibility.candidateSourceRevision ||
@@ -418,9 +403,8 @@ export function validateCurrentCuaRuntimeReadiness(
     readiness.sourceClean !== true ||
     readiness.runtimeManifestDigest !== `sha256:${loaded.sha256}` ||
     readiness.providerAuthorityDigest !== providerAuthorityDigest ||
-    JSON.stringify(readiness.inference) !== JSON.stringify(inference) ||
-    JSON.stringify(readiness.components) !==
-      JSON.stringify(expectedComponents(loaded.manifest, openshell))
+    digestJson(readiness.inference) !== digestJson(inference) ||
+    digestJson(readiness.components) !== digestJson(expectedComponents(loaded.manifest, openshell))
   ) {
     throw new Error("stored CUA readiness does not match the current runtime identity");
   }

@@ -5,12 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { executeCuaLifecycleRegistryTransaction } from "./lifecycle-registry-transaction";
-import { beginCuaSideEffectReconciliation } from "./reconciliation";
 
 const originalHome = process.env.HOME;
 const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-registry-cas-"));
 process.env.HOME = testHome;
+const { executeCuaLifecycleRegistryTransaction } = await import("./lifecycle-registry-transaction");
+const { beginCuaSideEffectReconciliation } = await import("./reconciliation");
 const persistence = await import("../state/registry/persistence");
 const registryLock = await import("../state/registry/lock");
 

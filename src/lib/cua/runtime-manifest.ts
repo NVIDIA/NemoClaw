@@ -19,6 +19,7 @@ import {
   parseCuaQualificationEnvironment,
   parseCuaQualificationReceipt,
 } from "./qualification-evidence";
+import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE } from "./shared-primitives";
 
 const yaml: { load(input: string): unknown } = require("js-yaml");
 
@@ -33,10 +34,6 @@ const COMMIT = /^[0-9a-f]{40}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 const SAFE_COMMAND_ARG = /^[A-Za-z0-9_./:=+,-]{1,128}$/;
-const SENSITIVE_VALUE =
-  /(?:auth|bearer|credential|password|secret|token)|(?:^|[/._-])(?:ghp_|sk-)/i;
-const HOST_COORDINATE =
-  /(?:[a-z][a-z0-9+.-]*:\/\/|@|[?#\\]|\b(?:localhost|[a-z0-9-]+\.localhost)\b|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[a-z0-9-]+\.(?:com|net|org|io|ai|dev|cloud|internal|local|invalid)\b)/i;
 const CONTROL_CHARACTER = /[\x00-\x1f\x7f]/;
 
 export interface CuaPayloadFileIdentity {
@@ -159,8 +156,10 @@ function exactKeys(record: Record<string, unknown>, expected: readonly string[],
 }
 
 export function assertCuaAuthorityFileOwnership(filePath: string, label: string): void {
-  if (process.platform !== "linux") return;
   const effectiveUid = process.geteuid?.();
+  if (effectiveUid === undefined) {
+    throw new Error(`${label} ownership validation requires a POSIX host`);
+  }
   const hasTrustedOwner = (uid: number): boolean => uid === 0 || uid === effectiveUid;
   const stat = fs.lstatSync(filePath);
   if (
@@ -196,7 +195,7 @@ function requiredString(record: Record<string, unknown>, key: string, label: str
 
 function safeIdentity(record: Record<string, unknown>, key: string, label: string): string {
   const value = requiredString(record, key, label);
-  if (!SAFE_ID.test(value) || SENSITIVE_VALUE.test(value) || HOST_COORDINATE.test(value)) {
+  if (!SAFE_ID.test(value) || CUA_SENSITIVE_VALUE.test(value) || CUA_HOST_COORDINATE.test(value)) {
     throw new Error(`${label}.${key} must be a coordinate- and credential-free identity`);
   }
   return value;
@@ -233,8 +232,8 @@ function payloadFile(
   if (
     !SAFE_FILENAME.test(filename) ||
     path.basename(filename) !== filename ||
-    SENSITIVE_VALUE.test(filename) ||
-    HOST_COORDINATE.test(filename)
+    CUA_SENSITIVE_VALUE.test(filename) ||
+    CUA_HOST_COORDINATE.test(filename)
   ) {
     throw new Error(`${label}.filename must be one safe basename`);
   }
@@ -614,8 +613,8 @@ function manifestString(record: Record<string, unknown>, key: string, label: str
     value.length === 0 ||
     value.length > 512 ||
     CONTROL_CHARACTER.test(value) ||
-    HOST_COORDINATE.test(value) ||
-    SENSITIVE_VALUE.test(value)
+    CUA_HOST_COORDINATE.test(value) ||
+    CUA_SENSITIVE_VALUE.test(value)
   ) {
     throw new Error(`${label}.${key} must be bounded, printable, coordinate- and credential-free`);
   }

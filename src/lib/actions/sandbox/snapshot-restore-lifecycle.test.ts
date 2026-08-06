@@ -141,10 +141,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
   });
 
-  it("invalidates readiness-only CUA authority before a snapshot restore", async () => {
+  it("invalidates all CUA authority before a snapshot restore", async () => {
     f.getSandboxMock.mockReturnValue({
       name: "alpha",
       cuaRuntimeReadiness: { kind: "runtime-readiness" } as never,
+      cuaTarget: { kind: "target-attachment" } as never,
+      cuaSecurityAttestation: { kind: "security-attestation" } as never,
+      cuaTaskResults: [{ kind: "task-result" }] as never,
     });
     f.updateSandboxMock.mockReturnValue(true);
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
@@ -154,6 +157,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     expect(f.updateSandboxMock).toHaveBeenCalledWith("alpha", {
       cuaRuntimeReadiness: undefined,
+      cuaTarget: undefined,
+      cuaSecurityAttestation: undefined,
+      cuaTaskResults: undefined,
     });
     expect(f.updateSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
       f.restoreSandboxStateMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,

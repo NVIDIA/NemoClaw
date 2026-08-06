@@ -878,6 +878,7 @@ launchable_publication_path_identity="$(
 [[ "$("$REALPATH_BINARY" -- "$CUA_LAUNCHABLE_DESCRIPTOR")" == "$launchable_authority_path" &&
 "$launchable_publication_path_identity" == "$launchable_authority_identity" ]] \
   || fail "the executing Launchable path changed before publication"
+VALIDATED_ROOT_AUTHORITY_DIRECTORIES=$'\n'
 assert_root_authority_ancestors "$launchable_authority_path" \
   || fail "the executing Launchable path changed before publication"
 [[ "$("$SHA256SUM_BINARY" "$CUA_LAUNCHABLE_DESCRIPTOR" | "$AWK_BINARY" '{print $1}')" == "$launchable_digest" ]] \

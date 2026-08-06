@@ -190,9 +190,9 @@ function invokeAdapter(
         kind: "security-adapter-request",
         operation: "security.verify",
         sandboxName: input.sandboxName,
-        appliedPolicy,
-        runtime,
-        target,
+        appliedPolicy: structuredClone(appliedPolicy),
+        runtime: structuredClone(runtime),
+        target: structuredClone(target),
       }),
     );
     if (record.kind !== "security-attestation" && record.kind !== "failure") {

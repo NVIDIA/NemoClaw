@@ -477,4 +477,13 @@ describe("external NemoCUA runtime manifest", () => {
       }),
     ).toThrow(/group\/world write access/);
   });
+
+  it("fails closed when the host cannot report its effective owner identity (#7755)", () => {
+    const runtime = fixture();
+    vi.spyOn(process, "geteuid").mockReturnValue(undefined as never);
+
+    expect(() => loadCuaRuntimeManifest(runtime.env)).toThrow(
+      /ownership validation requires a POSIX host/,
+    );
+  });
 });

@@ -365,6 +365,8 @@ describe("CUA qualification artifact runner source boundary", () => {
       "for undeclared_path in /sys /usr/local /opt /home /run/host /run/systemd",
       "((cleanup_in_progress == 0)) || return 0",
       "trap handle_signal HUP INT QUIT TERM",
+      '[[ "${SUDO_UID:-}" == "$1" && "${SUDO_GID:-}" == "$2" ]]',
+      "root caller identity does not match sudo authority",
     ]) {
       expect(source).toContain(required);
     }

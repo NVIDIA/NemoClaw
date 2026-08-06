@@ -7,7 +7,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-
+import {
+  executable,
+  FIXED_HELPER_PATHS,
+  fileSha256,
+  NATIVE_FIXTURE_HELPERS,
+  replaceExactlyOnce,
+  replaceExactlyTwice,
+  shellLiteral,
+} from "./helpers/cua-launchable-fixture";
 import { runRealCheckoutVerifier as runExtractedRealCheckoutVerifier } from "./helpers/cua-launchable-git-verifier";
 import { testTimeout } from "./helpers/timeouts";
 
@@ -30,87 +38,6 @@ const PROBE_IMAGE = `nvcr.io/nvidia/cuda@sha256:${"c".repeat(64)}`;
 const SANDBOX_IMAGE = `nvcr.io/nvidia/nemocua@sha256:${"d".repeat(64)}`;
 const SERVICE_BUNDLE_DIGEST = `sha256:${"4".repeat(64)}`;
 const CUA_LAUNCHABLE_TEST_TIMEOUT_MS = testTimeout(60_000);
-const FIXED_HELPER_PATHS = {
-  AWK_BINARY: ["/usr/bin/awk", "awk"],
-  CHMOD_BINARY: ["/usr/bin/chmod", "chmod"],
-  CHOWN_BINARY: ["/usr/bin/chown", "chown"],
-  CMP_BINARY: ["/usr/bin/cmp", "cmp"],
-  CURL_BINARY: ["/usr/bin/curl", "curl"],
-  ENV_BINARY: ["/usr/bin/env", "env"],
-  GETENT_BINARY: ["/usr/bin/getent", "getent"],
-  GIT_BINARY: ["/usr/bin/git", "git"],
-  GREP_BINARY: ["/usr/bin/grep", "grep"],
-  HEAD_BINARY: ["/usr/bin/head", "head"],
-  ID_BINARY: ["/usr/bin/id", "id"],
-  INSTALL_BINARY: ["/usr/bin/install", "install"],
-  JQ_BINARY: ["/usr/bin/jq", "jq"],
-  MKDIR_BINARY: ["/usr/bin/mkdir", "mkdir"],
-  MKTEMP_BINARY: ["/usr/bin/mktemp", "mktemp"],
-  MV_BINARY: ["/usr/bin/mv", "mv"],
-  READLINK_BINARY: ["/usr/bin/readlink", "readlink"],
-  REALPATH_BINARY: ["/usr/bin/realpath", "realpath"],
-  RM_BINARY: ["/usr/bin/rm", "rm"],
-  SED_BINARY: ["/usr/bin/sed", "sed"],
-  SHA256SUM_BINARY: ["/usr/bin/sha256sum", "sha256sum"],
-  SORT_BINARY: ["/usr/bin/sort", "sort"],
-  STAT_BINARY: ["/usr/bin/stat", "stat"],
-  SUDO_BINARY: ["/usr/bin/sudo", "sudo"],
-  SYNC_BINARY: ["/usr/bin/sync", "sync"],
-  SYSTEMCTL_BINARY: ["/usr/bin/systemctl", "systemctl"],
-  TEE_BINARY: ["/usr/bin/tee", "tee"],
-  TRUE_BINARY: ["/usr/bin/true", "true"],
-  TR_BINARY: ["/usr/bin/tr", "tr"],
-  USERADD_BINARY: ["/usr/sbin/useradd", "useradd"],
-} as const;
-const NATIVE_FIXTURE_HELPERS: Partial<Record<keyof typeof FIXED_HELPER_PATHS, string>> = {
-  AWK_BINARY: "/usr/bin/awk",
-  CHMOD_BINARY: "/bin/chmod",
-  CHOWN_BINARY: "/usr/sbin/chown",
-  CMP_BINARY: "/usr/bin/cmp",
-  ENV_BINARY: "/usr/bin/env",
-  GREP_BINARY: "/usr/bin/grep",
-  HEAD_BINARY: "/usr/bin/head",
-  INSTALL_BINARY: "/usr/bin/install",
-  MKDIR_BINARY: "/bin/mkdir",
-  MV_BINARY: "/bin/mv",
-  READLINK_BINARY: "/usr/bin/readlink",
-  RM_BINARY: "/bin/rm",
-  SED_BINARY: "/usr/bin/sed",
-  SORT_BINARY: "/usr/bin/sort",
-  SYNC_BINARY: "/bin/sync",
-  TEE_BINARY: "/usr/bin/tee",
-  TRUE_BINARY: "/usr/bin/true",
-  TR_BINARY: "/usr/bin/tr",
-};
-
-function executable(directory: string, name: string, source: string): void {
-  fs.writeFileSync(path.join(directory, name), source, { mode: 0o755 });
-}
-
-function shellLiteral(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
-function fileSha256(file: string): string {
-  return `sha256:${createHash("sha256").update(fs.readFileSync(file)).digest("hex")}`;
-}
-
-function replaceExactlyOnce(source: string, expected: string, replacement: string): string {
-  const first = source.indexOf(expected);
-  if (first < 0 || source.indexOf(expected, first + expected.length) >= 0) {
-    throw new Error(`fixture could not replace exactly one ${expected}`);
-  }
-  return `${source.slice(0, first)}${replacement}${source.slice(first + expected.length)}`;
-}
-
-function replaceExactlyTwice(source: string, expected: string, replacement: string): string {
-  const parts = source.split(expected);
-  if (parts.length !== 3) {
-    throw new Error(`fixture could not replace exactly two ${expected}`);
-  }
-  return parts.join(replacement);
-}
-
 function runRealCheckoutVerifier(
   script: string,
   attack?: "--assume-unchanged" | "--skip-worktree" | "--replace-head",
@@ -200,6 +127,7 @@ function runCandidateFixture(input: {
   replaceBaseDuringGit?: boolean;
   replaceLaunchableDuringCurl?: boolean;
   mutateLaunchableDuringNvidiaSmi?: boolean;
+  mutateLaunchableAncestorDuringNvidiaSmi?: boolean;
   mutateHostToolDuringNvidiaSmi?: "node" | "docker" | "nvidia-ctk";
   nodeAuthorityPathMismatch?: boolean;
   publicationFailure?:
@@ -534,6 +462,11 @@ if [[ "\${1:-}" == "-Lc" && "\${2:-}" == "%u:%g:%F" && -d "\${!#}" ]]; then
   exit 0
 fi
 if [[ "\${1:-}" == "-Lc" && "\${2:-}" == "%a" && -d "\${!#}" ]]; then
+  if ${input.mutateLaunchableAncestorDuringNvidiaSmi ? "true" : "false"} &&
+    [[ "\${!#}" == ${shellLiteral(root)} && -e ${shellLiteral(launchableMutationMarker)} ]]; then
+    printf '%s\\n' '0770'
+    exit 0
+  fi
   printf '%s\\n' ${shellLiteral(input.launchableAncestorMode ?? "0755")}
   exit 0
 fi
@@ -710,6 +643,11 @@ if ${input.mutateLaunchableDuringNvidiaSmi ? "true" : "false"} &&
   chmod 0755 "$mutation_target"
   printf '%s\\n' '# concurrent mutation' >> "$mutation_target"
   chmod 0555 "$mutation_target"
+  printf mutated > ${shellLiteral(launchableMutationMarker)}
+fi
+if ${input.mutateLaunchableAncestorDuringNvidiaSmi ? "true" : "false"} &&
+  [ ! -e ${shellLiteral(launchableMutationMarker)} ]; then
+  chmod 0770 ${shellLiteral(root)}
   printf mutated > ${shellLiteral(launchableMutationMarker)}
 fi
 ${
@@ -1743,6 +1681,25 @@ describe("CUA GPU Brev Launchable (#7753)", { timeout: CUA_LAUNCHABLE_TEST_TIMEO
       expect(fs.existsSync(fixture.profileFile)).toBe(false);
       expect(fs.existsSync(fixture.sentinelFile)).toBe(false);
       expect(fs.existsSync(fixture.environmentMarker)).toBe(false);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks path ancestors immediately before privileged CUA state is published", () => {
+    const fixture = runCandidateFixture({
+      mutateLaunchableAncestorDuringNvidiaSmi: true,
+      nodeStatus: 0,
+    });
+    try {
+      expect(fixture.result.status).toBe(1);
+      expect(fixture.result.stderr).toContain(
+        "executing Launchable path changed before publication",
+      );
+      expect(fs.readFileSync(fixture.launchableMutationMarker, "utf8")).toBe("mutated");
+      expect(fs.existsSync(fixture.qualificationEnvironmentFile)).toBe(false);
+      expect(fs.existsSync(fixture.profileFile)).toBe(false);
+      expect(fs.existsSync(fixture.sentinelFile)).toBe(false);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CuaInferenceIdentity } from "./contract";
+import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE } from "./shared-primitives";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const RAW_DIGEST = /^[0-9a-f]{64}$/;
@@ -11,10 +12,6 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_TEXT = /^[A-Za-z0-9][A-Za-z0-9 ._+()-]{0,127}$/;
 const MODEL_SELECTOR =
   /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}){0,7}$/;
-const SENSITIVE_VALUE =
-  /(?:auth|bearer|credential|password|secret|token)|(?:^|[/._-])(?:ghp_|sk-)/i;
-const HOST_COORDINATE =
-  /(?:[a-z][a-z0-9+.-]*:\/\/|@|[?#\\]|\b(?:\d{1,3}\.){3}\d{1,3}\b|\[[0-9a-f:]+\]|\b(?:localhost|ip6-localhost)(?:\.[a-z0-9-]+)*\b|\b[a-z0-9-]+\.(?:com|net|org|io|ai|dev|cloud|internal|local|invalid)\b)/i;
 
 export const CUA_QUALIFICATION_SCENARIOS = ["browser"] as const;
 
@@ -138,7 +135,11 @@ function string(value: unknown, label: string): string {
 
 function safeValue(value: unknown, label: string, pattern = SAFE_TEXT): string {
   const parsed = string(value, label);
-  if (!pattern.test(parsed) || SENSITIVE_VALUE.test(parsed) || HOST_COORDINATE.test(parsed)) {
+  if (
+    !pattern.test(parsed) ||
+    CUA_SENSITIVE_VALUE.test(parsed) ||
+    CUA_HOST_COORDINATE.test(parsed)
+  ) {
     throw new Error(`${label} must be printable and coordinate- and credential-free`);
   }
   return parsed;

@@ -151,7 +151,16 @@ function invalidateCuaAuthorityBeforeSnapshotRestore(sandboxName: string): void 
     );
     snapshotExit(1);
   }
-  if (registry.updateSandbox(sandboxName, { cuaRuntimeReadiness: undefined })) return;
+  if (
+    registry.updateSandbox(sandboxName, {
+      cuaRuntimeReadiness: undefined,
+      cuaTarget: undefined,
+      cuaSecurityAttestation: undefined,
+      cuaTaskResults: undefined,
+    })
+  ) {
+    return;
+  }
   console.error(
     `  Cannot invalidate CUA runtime authority before restoring '${sandboxName}'. Destination state was not changed.`,
   );

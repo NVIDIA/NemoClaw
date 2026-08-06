@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
 import { isCredentialShapedName } from "../security/credential-env.js";
+import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE, canonicalJsonSha256 } from "./shared-primitives";
 
 export const CUA_LIFECYCLE_SCHEMA_VERSION = "1.1.0" as const;
 export const SUPPORTED_CUA_LIFECYCLE_SCHEMA_MAJOR = 1;
@@ -209,22 +209,9 @@ export interface CuaTaskResult {
   evidence: readonly CuaEvidenceReference[];
 }
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalize(child)]),
-  );
-}
-
 /** Content identity used to reject state replay across readiness changes. */
 export function getCuaRuntimeReadinessDigest(readiness: CuaRuntimeReadiness): string {
-  return `sha256:${crypto
-    .createHash("sha256")
-    .update(JSON.stringify(canonicalize(readiness)))
-    .digest("hex")}`;
+  return `sha256:${canonicalJsonSha256(readiness)}`;
 }
 
 export const CUA_DENIED_DESTINATIONS = [
@@ -437,10 +424,6 @@ const CUA_MODEL_SELECTOR =
   /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}){0,7}$/;
 const CUA_COMPONENT_IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CUA_COMPONENT_VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
-const CUA_SENSITIVE_IDENTITY =
-  /(?:auth|bearer|credential|password|secret|token)|(?:^|[/._-])(?:ghp_|sk-)/i;
-const CUA_HOST_COORDINATE =
-  /(?:[a-z][a-z0-9+.-]*:\/\/|@|[?#\\]|\b(?:localhost|[a-z0-9-]+\.localhost)\b|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[a-z0-9-]+\.(?:com|net|org|io|ai|dev|cloud|internal|local|invalid)\b)/i;
 const CUA_EVIDENCE_MEDIA_TYPE =
   /^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}\/[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/;
 
@@ -454,7 +437,7 @@ export function getCuaComponentIdentityErrors(
     ["owner", component.owner, CUA_COMPONENT_IDENTITY],
   ] as const;
   return fields.flatMap(([field, value, pattern]) =>
-    pattern.test(value) && !CUA_SENSITIVE_IDENTITY.test(value) && !CUA_HOST_COORDINATE.test(value)
+    pattern.test(value) && !CUA_SENSITIVE_VALUE.test(value) && !CUA_HOST_COORDINATE.test(value)
       ? []
       : [`${path}.${field} must be a printable coordinate- and credential-free identity`],
   );
@@ -491,7 +474,7 @@ function recordComponentIdentityErrors(record: CuaLifecycleRecord): string[] {
 
 export function getCuaCoordinateFreeSelectorErrors(value: string, path: string): string[] {
   return CUA_MODEL_SELECTOR.test(value) &&
-    !CUA_SENSITIVE_IDENTITY.test(value) &&
+    !CUA_SENSITIVE_VALUE.test(value) &&
     !CUA_HOST_COORDINATE.test(value)
     ? []
     : [`${path} must be a printable coordinate- and credential-free selector`];
@@ -501,7 +484,7 @@ function inferenceIdentityErrors(inference: CuaInferenceIdentity): string[] {
   const errors: string[] = [];
   if (
     !CUA_PROVIDER_IDENTITY.test(inference.provider) ||
-    CUA_SENSITIVE_IDENTITY.test(inference.provider) ||
+    CUA_SENSITIVE_VALUE.test(inference.provider) ||
     CUA_HOST_COORDINATE.test(inference.provider)
   ) {
     errors.push("inference.provider must be a printable credential-free identity");
@@ -517,7 +500,7 @@ function inferenceIdentityErrors(inference: CuaInferenceIdentity): string[] {
 
 function publicIdentifierErrors(value: string, path: string): string[] {
   return CUA_COMPONENT_IDENTITY.test(value) &&
-    !CUA_SENSITIVE_IDENTITY.test(value) &&
+    !CUA_SENSITIVE_VALUE.test(value) &&
     !CUA_HOST_COORDINATE.test(value)
     ? []
     : [`${path} must be a printable coordinate- and credential-free identity`];
@@ -529,7 +512,7 @@ function capabilityProtocolErrors(
 ): string[] {
   return capabilities.flatMap((capability, index) =>
     CUA_COMPONENT_VERSION.test(capability.protocolVersion) &&
-    !CUA_SENSITIVE_IDENTITY.test(capability.protocolVersion) &&
+    !CUA_SENSITIVE_VALUE.test(capability.protocolVersion) &&
     !CUA_HOST_COORDINATE.test(capability.protocolVersion)
       ? []
       : [
@@ -545,7 +528,7 @@ function evidenceMediaTypeErrors(
   return evidence.flatMap((entry, index) => {
     if (entry.mediaType === undefined) return [];
     return CUA_EVIDENCE_MEDIA_TYPE.test(entry.mediaType) &&
-      !CUA_SENSITIVE_IDENTITY.test(entry.mediaType) &&
+      !CUA_SENSITIVE_VALUE.test(entry.mediaType) &&
       !CUA_HOST_COORDINATE.test(entry.mediaType)
       ? []
       : [
