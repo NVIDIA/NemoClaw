@@ -26,6 +26,7 @@ import type {
   HostLocalCreateJournalStore,
 } from "./host-local-create-journal";
 import {
+  type HostLocalInferenceReceiptWriter,
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
 } from "./host-local-inference";
@@ -37,6 +38,7 @@ const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;
 const RUNTIME_ID = "e".repeat(64);
 const NETWORK_ID = "7".repeat(64);
 const TRANSACTION_ID = "9".repeat(64);
+const RECEIPT_TARGET_SHA256 = "8".repeat(64);
 const MODEL_CONTENT = Buffer.alloc(64, 0x61);
 const MODEL_FILENAME = "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
 const REVISION = "f".repeat(40);
@@ -75,6 +77,17 @@ function rawDigest(value: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(canonical(value)))
     .digest("hex");
+}
+
+function receiptWriter(
+  writeExact: (serializedReceipt: string) => string = (serializedReceipt) => serializedReceipt,
+  overrides: Partial<Pick<HostLocalInferenceReceiptWriter, "targetSha256" | "transactionId">> = {},
+): HostLocalInferenceReceiptWriter & { readonly writeExact: ReturnType<typeof vi.fn> } {
+  return {
+    transactionId: overrides.transactionId ?? TRANSACTION_ID,
+    targetSha256: overrides.targetSha256 ?? RECEIPT_TARGET_SHA256,
+    writeExact: vi.fn(writeExact),
+  };
 }
 
 beforeEach(() => {
@@ -255,11 +268,17 @@ function authorityStore(): PersistedEngineAuthorityStore {
 interface TestJournalStore extends HostLocalCreateJournalStore {
   readonly abandonExecution: () => void;
   readonly hasExecution: () => boolean;
+  readonly failNextPrepareReceipt: () => void;
+  readonly failNextPrepareReceiptAfterCommit: () => void;
+  readonly failNextFinalize: () => void;
 }
 
 function journalStore(): TestJournalStore {
   const records = new Map<string, HostLocalCreateJournalRecord>();
   let activeLease: HostLocalCreateJournalExecutionLease | null = null;
+  let prepareReceiptFails = false;
+  let prepareReceiptFailsAfterCommit = false;
+  let finalizeFails = false;
   const update = (
     id: string,
     mutate: (value: HostLocalCreateJournalRecord) => HostLocalCreateJournalRecord,
@@ -282,12 +301,36 @@ function journalStore(): TestJournalStore {
     recordCreated: (id, runtimeId) =>
       update(id, (record) => ({ ...record, phase: "created", runtimeId })),
     recordStarted: (id) => update(id, (record) => ({ ...record, phase: "started" })),
-    finalize: (id, receiptSha256) =>
-      update(id, (record) => ({
+    prepareReceipt: (id, serializedReceipt) => {
+      switch (prepareReceiptFails) {
+        case true:
+          prepareReceiptFails = false;
+          throw new Error("prepare receipt failed");
+      }
+      const prepared = update(id, (record) => ({
+        ...record,
+        phase: "receipt-prepared",
+        serializedReceipt,
+        receiptSha256: createHash("sha256").update(serializedReceipt).digest("hex"),
+      }));
+      switch (prepareReceiptFailsAfterCommit) {
+        case true:
+          prepareReceiptFailsAfterCommit = false;
+          throw new Error("prepare receipt outcome unknown");
+      }
+      return prepared;
+    },
+    finalize: (id) => {
+      switch (finalizeFails) {
+        case true:
+          finalizeFails = false;
+          throw new Error("finalize failed");
+      }
+      return update(id, (record) => ({
         ...record,
         phase: "finalized",
-        receiptSha256,
-      })),
+      }));
+    },
     retire: (id) => void records.delete(id),
     acquireExecution: (transactionId) => {
       invariant(activeLease === null, "execution is already owned by a live process");
@@ -308,6 +351,9 @@ function journalStore(): TestJournalStore {
     },
     abandonExecution: () => (activeLease = null),
     hasExecution: () => activeLease !== null,
+    failNextPrepareReceipt: () => (prepareReceiptFails = true),
+    failNextPrepareReceiptAfterCommit: () => (prepareReceiptFailsAfterCommit = true),
+    failNextFinalize: () => (finalizeFails = true),
   };
 }
 
@@ -584,7 +630,6 @@ function options(
 
 function controller(fixture: DockerFixture, store = journalStore(), now: () => number = Date.now) {
   return createDockerLlamaCppManagedLifecycle(options(fixture, store), {
-    createTransactionId: () => TRANSACTION_ID,
     now,
   });
 }
@@ -616,6 +661,7 @@ function preparedJournal(): HostLocalCreateJournalRecord {
         value: "gateway.primary",
       },
       probeImageReference: PROBE_IMAGE,
+      receiptTargetSha256: RECEIPT_TARGET_SHA256,
       runtimeGid: 1001,
       runtimeUid: 1001,
     }),
@@ -630,6 +676,8 @@ function preparedJournal(): HostLocalCreateJournalRecord {
     },
     apiKeyIdentitySha256: "3".repeat(64),
     apiKeyRootIdentitySha256: keyRootIdentitySha256(),
+    receiptTargetSha256: RECEIPT_TARGET_SHA256,
+    serializedReceipt: null,
     receiptSha256: null,
   };
 }
@@ -639,8 +687,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const lifecycle = controller(fixture, store);
-    const persist = vi.fn();
-    const receipt = lifecycle.start(persist);
+    const writer = receiptWriter();
+    const receipt = lifecycle.start(writer);
     const serialized = serializeHostLocalInferenceReceipt(receipt);
 
     expect(receipt.endpoint.port).toBe(49152);
@@ -654,7 +702,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       runtimeId: RUNTIME_ID,
       networkId: NETWORK_ID,
     });
-    expect(persist).toHaveBeenCalledExactlyOnceWith(serialized);
+    expect(writer.writeExact).toHaveBeenCalledExactlyOnceWith(serialized);
     expect(serialized).not.toContain(modelPath);
     expect(serialized).not.toContain(apiKeyPath);
     expect(serialized).not.toContain("filesystemIdentity");
@@ -673,7 +721,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("keeps already-absent destroy idempotent after its Docker network is removed (#8395)", () => {
     const fixture = dockerFixture();
     const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(vi.fn());
+    const receipt = lifecycle.start(receiptWriter());
     expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
     fixture.removeNetwork();
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
@@ -694,7 +742,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("rejects a self-consistent plan for another GGUF before any mutation (#8395)", () => {
     const fixture = dockerFixture();
     const store = journalStore();
-    const persist = vi.fn();
+    const writer = receiptWriter();
     const original = plan();
     const changedPayload = {
       schemaVersion: original.schemaVersion,
@@ -716,17 +764,17 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       ...changedPayload,
       planDigest: digest(changedPayload),
     };
-    const lifecycle = createDockerLlamaCppManagedLifecycle(
-      { ...options(fixture, store), plan: changedPlan },
-      { createTransactionId: () => TRANSACTION_ID },
-    );
+    const lifecycle = createDockerLlamaCppManagedLifecycle({
+      ...options(fixture, store),
+      plan: changedPlan,
+    });
 
-    expect(() => lifecycle.start(persist)).toThrow(
+    expect(() => lifecycle.start(writer)).toThrow(
       "plan, launch contract, and verified artifact disagree",
     );
     expect(fixture.capture).not.toHaveBeenCalled();
     expect(store.list()).toEqual([]);
-    expect(persist).not.toHaveBeenCalled();
+    expect(writer.writeExact).not.toHaveBeenCalled();
   });
 
   it("accepts the canonical blob resolved by the plan's exact snapshot entry (#8395)", () => {
@@ -739,7 +787,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
 
     const fixture = dockerFixture();
     const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(vi.fn());
+    const receipt = lifecycle.start(receiptWriter());
     expect(receipt.runtime).toMatchObject({
       kind: "container",
       runtimeId: RUNTIME_ID,
@@ -749,14 +797,18 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
 
   it("rejects writable cache authority and non-private API-key authority (#8395)", () => {
     fs.chmodSync(path.dirname(modelPath), 0o777);
-    expect(() => controller(dockerFixture()).start(vi.fn())).toThrow("owner-controlled");
+    expect(() => controller(dockerFixture()).start(receiptWriter())).toThrow("owner-controlled");
     fs.chmodSync(path.dirname(modelPath), 0o700);
     fs.chmodSync(apiKeyPath, 0o644);
-    expect(() => controller(dockerFixture()).start(vi.fn())).toThrow("private-file authority");
+    expect(() => controller(dockerFixture()).start(receiptWriter())).toThrow(
+      "private-file authority",
+    );
     fs.chmodSync(apiKeyPath, 0o600);
     fs.chmodSync(apiKeyRoot, 0o777);
     const unsafeParentFixture = dockerFixture();
-    expect(() => controller(unsafeParentFixture).start(vi.fn())).toThrow("owner-controlled");
+    expect(() => controller(unsafeParentFixture).start(receiptWriter())).toThrow(
+      "owner-controlled",
+    );
     expect(unsafeParentFixture.capture).not.toHaveBeenCalled();
   });
 
@@ -768,7 +820,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       const future = new Date(Date.now() + 10_000);
       fs.utimesSync(modelPath, future, future);
     });
-    expect(() => controller(fixture, store).start(vi.fn())).toThrow("filesystem identity");
+    expect(() => controller(fixture, store).start(receiptWriter())).toThrow("filesystem identity");
     expect(store.list()).toEqual([]);
     expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).toContainEqual([
       "rm",
@@ -779,13 +831,13 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("rolls back pathname replacement from inside Docker create capture before persistence (#8395)", () => {
     const fixture = dockerFixture();
     const store = journalStore();
-    const persist = vi.fn();
+    const writer = receiptWriter();
     fixture.onCreate(() => {
       fs.renameSync(modelPath, `${modelPath}.verified`);
       fs.writeFileSync(modelPath, MODEL_CONTENT, { mode: 0o600 });
     });
-    expect(() => controller(fixture, store).start(persist)).toThrow("filesystem identity");
-    expect(persist).not.toHaveBeenCalled();
+    expect(() => controller(fixture, store).start(writer)).toThrow("filesystem identity");
+    expect(writer.writeExact).not.toHaveBeenCalled();
     expect(store.list()).toEqual([]);
     expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).toContainEqual([
       "rm",
@@ -796,7 +848,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("rolls back an API-key root swap-and-restore inside Docker create capture (#8395)", () => {
     const fixture = dockerFixture();
     const store = journalStore();
-    const persist = vi.fn();
+    const writer = receiptWriter();
     fixture.onCreate(() => {
       const retained = `${apiKeyRoot}.retained`;
       fs.renameSync(apiKeyRoot, retained);
@@ -809,8 +861,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       const future = new Date(Date.now() + 10_000);
       fs.utimesSync(apiKeyRoot, future, future);
     });
-    expect(() => controller(fixture, store).start(persist)).toThrow("API-key file changed");
-    expect(persist).not.toHaveBeenCalled();
+    expect(() => controller(fixture, store).start(writer)).toThrow("API-key file changed");
+    expect(writer.writeExact).not.toHaveBeenCalled();
     expect(store.list()).toEqual([]);
     expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).toContainEqual([
       "rm",
@@ -818,29 +870,160 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     ]);
   });
 
-  it("rolls back malformed create output, readiness failure, and receipt persistence failure (#8395)", () => {
+  it("rolls back malformed create output and readiness failure before receipt prepare (#8395)", () => {
     const arrangeFailure = {
       stdout: (fixture: DockerFixture) => fixture.setCreateStdout("short-id\n"),
       probe: (fixture: DockerFixture) => fixture.failProbe(),
-      persist: (_fixture: DockerFixture) => undefined,
     } as const;
-    for (const failure of ["stdout", "probe", "persist"] as const) {
+    for (const failure of ["stdout", "probe"] as const) {
       const fixture = dockerFixture();
       const store = journalStore();
       arrangeFailure[failure](fixture);
-      const persist =
-        failure === "persist"
-          ? () => {
-              throw new Error("persist failed");
-            }
-          : vi.fn();
-      expect(() => controller(fixture, store).start(persist)).toThrow();
+      expect(() => controller(fixture, store).start(receiptWriter())).toThrow();
       expect(store.list()).toEqual([]);
       expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).toContainEqual([
         "rm",
         "--force",
       ]);
     }
+  });
+
+  it("rolls back when durable receipt preparation fails before publication is possible (#8414)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    store.failNextPrepareReceipt();
+
+    expect(() => controller(fixture, store).start(receiptWriter())).toThrow(
+      "prepare receipt failed",
+    );
+    expect(store.list()).toEqual([]);
+    expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).toContainEqual([
+      "rm",
+      "--force",
+    ]);
+  });
+
+  it("preserves and replays when receipt preparation commits then throws (#8414)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const writer = receiptWriter();
+    const lifecycle = controller(fixture, store);
+    store.failNextPrepareReceiptAfterCommit();
+
+    expect(() => lifecycle.start(writer)).toThrow("prepare receipt outcome unknown");
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
+    expect(writer.writeExact).not.toHaveBeenCalled();
+    expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).not.toContainEqual([
+      "rm",
+      "--force",
+    ]);
+    expect(lifecycle.recoverUnfinished(writer)).toEqual({
+      recovered: [TRANSACTION_ID],
+      failures: [],
+    });
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+    expect(writer.writeExact).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves and replays a receipt when the exact writer commits then throws (#8414)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    let committed: string | null = null;
+    const writer = receiptWriter((serializedReceipt) => {
+      switch (committed) {
+        case null:
+          committed = serializedReceipt;
+          throw new Error("writer outcome unknown");
+        default:
+          invariant(committed === serializedReceipt, "different receipt");
+          return committed;
+      }
+    });
+    const lifecycle = controller(fixture, store);
+
+    expect(() => lifecycle.start(writer)).toThrow("writer outcome unknown");
+    expect(store.load(TRANSACTION_ID)).toMatchObject({
+      phase: "receipt-prepared",
+      serializedReceipt: committed,
+    });
+    expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).not.toContainEqual([
+      "rm",
+      "--force",
+    ]);
+    expect(lifecycle.recoverUnfinished(writer)).toEqual({
+      recovered: [TRANSACTION_ID],
+      failures: [],
+    });
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+    expect(writer.writeExact).toHaveBeenCalledTimes(2);
+  });
+
+  it("replays an exact committed receipt after journal finalization fails (#8414)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const writer = receiptWriter();
+    const lifecycle = controller(fixture, store);
+    store.failNextFinalize();
+
+    expect(() => lifecycle.start(writer)).toThrow("finalize failed");
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
+    expect(lifecycle.recoverUnfinished(writer)).toEqual({
+      recovered: [TRANSACTION_ID],
+      failures: [],
+    });
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+    expect(writer.writeExact).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed on receipt writer target or existing-value drift (#8414)", () => {
+    for (const drift of ["transaction", "target", "value"] as const) {
+      const fixture = dockerFixture();
+      const store = journalStore();
+      const initialWriter = receiptWriter(() => {
+        throw new Error("writer unavailable");
+      });
+      const lifecycle = controller(fixture, store);
+      expect(() => lifecycle.start(initialWriter)).toThrow("writer unavailable");
+      const writesBeforeRecovery = fixture.capture.mock.calls.length;
+      const recoveryWriter =
+        drift === "transaction"
+          ? receiptWriter(undefined, { transactionId: "5".repeat(64) })
+          : drift === "target"
+            ? receiptWriter(undefined, { targetSha256: "6".repeat(64) })
+            : receiptWriter(() => {
+                throw new Error("different existing receipt");
+              });
+
+      const recovery = lifecycle.recoverUnfinished(recoveryWriter);
+      expect(recovery.recovered).toEqual([]);
+      expect(recovery.failures[0]?.message).toContain(
+        drift === "value" ? "different existing receipt" : "publication authority",
+      );
+      expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
+      switch (drift) {
+        case "transaction":
+        case "target":
+          expect(fixture.capture.mock.calls).toHaveLength(writesBeforeRecovery);
+      }
+    }
+  });
+
+  it("re-proves the verified model before replaying a prepared receipt (#8414)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const unavailableWriter = receiptWriter(() => {
+      throw new Error("writer unavailable");
+    });
+    const lifecycle = controller(fixture, store);
+    expect(() => lifecycle.start(unavailableWriter)).toThrow("writer unavailable");
+    fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    const replayWriter = receiptWriter();
+
+    const recovery = lifecycle.recoverUnfinished(replayWriter);
+    expect(recovery.recovered).toEqual([]);
+    expect(recovery.failures[0]?.message).toContain("filesystem identity");
+    expect(replayWriter.writeExact).not.toHaveBeenCalled();
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("receipt-prepared");
   });
 
   it("holds execution authority after an uncertain create and recovers a late exact container (#8395)", () => {
@@ -850,7 +1033,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const lifecycle = controller(fixture, store, () => now);
     fixture.failCreateUncertain();
 
-    expect(() => lifecycle.start(vi.fn())).toThrow("container create failed");
+    const writer = receiptWriter();
+    expect(() => lifecycle.start(writer)).toThrow("container create failed");
     const creating = store.load(TRANSACTION_ID);
     expect(creating).toMatchObject({
       phase: "creating",
@@ -859,13 +1043,13 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     });
     expect(store.hasExecution()).toBe(true);
 
-    const concurrent = lifecycle.recoverUnfinished();
+    const concurrent = lifecycle.recoverUnfinished(writer);
     expect(concurrent.recovered).toEqual([]);
     expect(concurrent.failures[0]?.message).toContain("already owned");
     expect(store.load(TRANSACTION_ID)).not.toBeNull();
 
     store.abandonExecution();
-    const insideGrace = lifecycle.recoverUnfinished();
+    const insideGrace = lifecycle.recoverUnfinished(writer);
     expect(insideGrace.recovered).toEqual([]);
     expect(insideGrace.failures[0]?.message).toContain("absence grace period");
     expect(store.load(TRANSACTION_ID)).not.toBeNull();
@@ -880,7 +1064,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
           fixture.seed(creating, false);
       }
     });
-    expect(lifecycle.recoverUnfinished()).toEqual({
+    expect(lifecycle.recoverUnfinished(writer)).toEqual({
       recovered: [TRANSACTION_ID],
       failures: [],
     });
@@ -913,7 +1097,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       const recovery = createDockerLlamaCppManagedLifecycle(
         options(fixture, store, bindings(), persistedAuthority),
         { now: () => 31 * 60 * 1_000 },
-      ).recoverUnfinished();
+      ).recoverUnfinished(receiptWriter());
       expect(recovery).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
       expect(store.list()).toEqual([]);
     }
@@ -940,7 +1124,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       arrangeAuthority[state]();
       const recovery = createDockerLlamaCppManagedLifecycle(
         options(fixture, store, bindings(), persistedAuthority),
-      ).recoverUnfinished();
+      ).recoverUnfinished(receiptWriter());
       expect(recovery.recovered).toEqual([]);
       expect(recovery.failures).toHaveLength(1);
       expect(store.load(TRANSACTION_ID)).not.toBeNull();
@@ -954,7 +1138,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("fails re-prove on Docker network identity drift (#8395)", () => {
     const fixture = dockerFixture();
     const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(vi.fn());
+    const receipt = lifecycle.start(receiptWriter());
     fixture.setNetworkId("8".repeat(64));
     expect(() => lifecycle.runtime.preserveForRebuild(receipt)).toThrow(
       "internal network identity changed",
@@ -964,7 +1148,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("rejects effective hardening drift after creation (#8395)", () => {
     const fixture = dockerFixture();
     const lifecycle = controller(fixture);
-    const receipt = lifecycle.start(vi.fn());
+    const receipt = lifecycle.start(receiptWriter());
     fixture.driftHardening();
     expect(() => lifecycle.runtime.inspectManaged(receipt)).toThrow("exact journal authority");
 
@@ -977,7 +1161,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     ]) {
       const candidate = dockerFixture();
       const candidateLifecycle = controller(candidate);
-      const candidateReceipt = candidateLifecycle.start(vi.fn());
+      const candidateReceipt = candidateLifecycle.start(receiptWriter());
       mutate(candidate);
       expect(() => candidateLifecycle.runtime.inspectManaged(candidateReceipt)).toThrow(
         "exact journal authority",
@@ -989,7 +1173,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const lifecycle = controller(fixture, store);
-    const receipt = lifecycle.start(vi.fn());
+    const receipt = lifecycle.start(receiptWriter());
     invariant(receipt.runtime.kind === "container", "expected container receipt");
     const crafted = {
       ...receipt,
@@ -1001,7 +1185,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const unavailable = dockerFixture();
     const unavailableStore = journalStore();
     unavailable.failInspectWithDaemonError();
-    expect(() => controller(unavailable, unavailableStore).start(vi.fn())).toThrow(
+    expect(() => controller(unavailable, unavailableStore).start(receiptWriter())).toThrow(
       "container inspection failed",
     );
     expect(unavailableStore.list()).toEqual([]);
