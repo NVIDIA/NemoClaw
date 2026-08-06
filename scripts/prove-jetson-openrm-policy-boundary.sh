@@ -47,33 +47,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-nemoclaw "$sandbox_name" policy get >"$baseline_policy"
-if [[ ! -s "$baseline_policy" ]]; then
-  printf 'Could not export the base policy for sandbox %s.\n' "$sandbox_name" >&2
-  exit 1
-fi
-if grep -Fxq "  - $candidate_path" "$baseline_policy"; then
-  printf 'The baseline policy already grants %s; this A/B test requires it to be absent.\n' \
-    "$candidate_path" >&2
-  exit 2
-fi
-
-awk -v candidate="$candidate_path" '
-  /^  read_only:$/ && !inserted {
-    print
-    print "  - " candidate
-    inserted = 1
-    next
-  }
-  { print }
-  END {
-    if (!inserted) exit 42
-  }
-' "$baseline_policy" >"$candidate_policy" || {
-  printf 'Could not add %s to filesystem_policy.read_only.\n' "$candidate_path" >&2
-  exit 1
-}
-
 cuda_probe='import ctypes
 import os
 import stat
@@ -155,7 +128,8 @@ printf 'sandbox=%s\n' "$sandbox_name"
 printf 'candidate_read_only=%s\n' "$candidate_path"
 printf 'This proof runs the real nemoclaw onboard --resume recreation, pauses the CLI while its replacement container is live, restores the original policy, and then allows normal rollback.\n'
 
-nemoclaw onboard --resume >"$onboard_log" 2>&1 &
+NEMOCLAW_POLICY_TIER=balanced \
+  nemoclaw onboard --resume --non-interactive </dev/null >"$onboard_log" 2>&1 &
 onboard_pid=$!
 
 replacement_id=""
@@ -199,6 +173,33 @@ if [[ "$container_status" != "running" || "$health_status" != "healthy" ]]; then
     "$container_status" "$health_status" >&2
   exit 1
 fi
+
+nemoclaw "$sandbox_name" policy get >"$baseline_policy"
+if [[ ! -s "$baseline_policy" ]]; then
+  printf 'Could not export the live base policy for sandbox %s.\n' "$sandbox_name" >&2
+  exit 1
+fi
+if grep -Fxq "  - $candidate_path" "$baseline_policy"; then
+  printf 'The live baseline policy already grants %s; this A/B test requires it to be absent.\n' \
+    "$candidate_path" >&2
+  exit 2
+fi
+
+awk -v candidate="$candidate_path" '
+  /^  read_only:$/ && !inserted {
+    print
+    print "  - " candidate
+    inserted = 1
+    next
+  }
+  { print }
+  END {
+    if (!inserted) exit 42
+  }
+' "$baseline_policy" >"$candidate_policy" || {
+  printf 'Could not add %s to filesystem_policy.read_only.\n' "$candidate_path" >&2
+  exit 1
+}
 
 run_probe "Direct Docker as sandbox with the recreated container" \
   docker exec --user sandbox "$replacement_id" python3 -c "$cuda_probe"
