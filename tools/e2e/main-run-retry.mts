@@ -274,7 +274,7 @@ export async function evaluateMainRunRetry(options: {
     if (!validateLatestRun(await request(latestPath), source)) {
       throw new Error("a newer E2E main push appeared before retry request");
     }
-    await request(`${runPath}/rerun`, { method: "POST" });
+    await request(`${runPath}/rerun-failed-jobs`, { method: "POST" });
   }
   return {
     schemaVersion: 1,

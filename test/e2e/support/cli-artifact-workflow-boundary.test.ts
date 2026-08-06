@@ -29,7 +29,7 @@ const PAYLOAD_SHA256 = "b".repeat(64);
 const CONTENT_ADDRESSED_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}-\${payload_sha256}"`;
 const UNBOUND_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}"`;
 
-function runIdentityValidation(overrides: Record<string, unknown> = {}) {
+function runIdentityValidation(overrides: Record<string, unknown> = {}, consumerAttempt = "1") {
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const workflowSha = "d".repeat(40);
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-identity-"));
@@ -40,7 +40,7 @@ function runIdentityValidation(overrides: Record<string, unknown> = {}) {
         ...process.env,
         CALLER_WORKFLOW_SHA: workflowSha,
         GITHUB_OUTPUT: path.join(outputDirectory, "github-output"),
-        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ATTEMPT: consumerAttempt,
         GITHUB_RUN_ID: "98765",
         PROVENANCE_JSON: JSON.stringify({
           kind: "nemoclaw-e2e-cli-provenance-v1",
@@ -346,7 +346,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
       GITHUB_WORKSPACE: workspace,
       PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
       PAYLOAD_SHA256: expectedPayloadSha256,
-      RUN_ATTEMPT: "1",
+      PRODUCER_RUN_ATTEMPT: "1",
       RUN_ID: "98765",
       RUNNER_TEMP: runnerTemp,
       WORKFLOW_SHA: workflowSha,
@@ -407,6 +407,19 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
+  it("reuses an immutable producer artifact during a later failed-job rerun", () => {
+    const result = runIdentityValidation({ runAttempt: "1" }, "2");
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects an invalid consumer attempt", () => {
+    const result = runIdentityValidation({}, "0");
+    expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "consumer workflow run attempt is invalid",
+    );
+  });
+
   it.each([
     ["empty artifact ID", { artifactId: "" }, "producer CLI artifact provenance is invalid"],
     [
@@ -457,8 +470,12 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       "consumer checkout repository does not match producer provenance",
     ],
     ["workflow SHA", { workflowSha: "e".repeat(40) }, "consumer and producer workflow SHAs differ"],
-    ["run ID", { runId: "98766" }, "consumer and producer workflow run identities differ"],
-    ["run attempt", { runAttempt: "2" }, "consumer and producer workflow run identities differ"],
+    ["run ID", { runId: "98766" }, "consumer and producer workflow run IDs differ"],
+    [
+      "future producer attempt",
+      { runAttempt: "2" },
+      "producer workflow attempt is newer than the consumer attempt",
+    ],
   ])("rejects a mismatched %s before artifact download", (_case, overrides, expectedError) => {
     const result = runIdentityValidation(overrides);
     expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);

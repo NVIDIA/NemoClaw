@@ -92,7 +92,7 @@ async function evaluate(options: { attempt: number; conclusion: string; latestRu
 }
 
 describe("main E2E retry controller", () => {
-  it.each([1, 2])("requests a full workflow rerun after attempt %s fails", async (attempt) => {
+  it.each([1, 2])("requests failed-job rerun after attempt %s fails", async (attempt) => {
     const { evidence, requests } = await evaluate({ attempt, conclusion: "failure" });
 
     expect(E2E_MAX_RETRIES).toBe(2);
@@ -104,11 +104,13 @@ describe("main E2E retry controller", () => {
     });
     expect(requests).toContainEqual({
       method: "POST",
-      path: `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun`,
+      path: `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun-failed-jobs`,
     });
-    // A failed-job rerun skips the successful CLI artifact producer.
-    // The consumer then reuses attempt-bound provenance from the prior attempt.
-    expect(requests.some((request) => request.path.endsWith("/rerun-failed-jobs"))).toBe(false);
+    expect(
+      requests.some(
+        (request) => request.path === `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun`,
+      ),
+    ).toBe(false);
   });
 
   it("stops after the third failed attempt", async () => {

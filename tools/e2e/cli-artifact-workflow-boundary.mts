@@ -33,7 +33,7 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "f90d4532a64473817b183856e225b401b201d71aaafa75bd7cf8d63a3deeb76f";
+  "3a81ad631b839aa938eaaf1ad6777bab247204bf86fbca3c43c326a44dfb9c6c";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
@@ -217,7 +217,9 @@ export function validateCliArtifactRestoreAction(
     '.artifactName == ("nemoclaw-cli-" + .candidateSha + "-" + .payloadSha256)',
     'git rev-parse --verify HEAD)" == "$candidate_sha"',
     '[[ "$workflow_sha" == "$CALLER_WORKFLOW_SHA" ]]',
-    '[[ "$run_id" == "$GITHUB_RUN_ID" && "$run_attempt" == "$GITHUB_RUN_ATTEMPT" ]]',
+    '[[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]',
+    '[[ "$run_id" == "$GITHUB_RUN_ID" ]]',
+    "(( run_attempt <= GITHUB_RUN_ATTEMPT ))",
     '[[ "$remote_repository" == "$candidate_repository" ]]',
     '<<<"$PROVENANCE_JSON" >>"$GITHUB_OUTPUT"',
   ]);
@@ -241,7 +243,7 @@ export function validateCliArtifactRestoreAction(
       CANDIDATE_REPOSITORY: "${{ steps.identity.outputs.candidate_repository }}",
       CANDIDATE_SHA: "${{ steps.identity.outputs.candidate_sha }}",
       PAYLOAD_SHA256: "${{ steps.identity.outputs.payload_sha256 }}",
-      RUN_ATTEMPT: "${{ steps.identity.outputs.run_attempt }}",
+      PRODUCER_RUN_ATTEMPT: "${{ steps.identity.outputs.producer_run_attempt }}",
       RUN_ID: "${{ steps.identity.outputs.run_id }}",
       WORKFLOW_SHA: "${{ steps.identity.outputs.workflow_sha }}",
     })
