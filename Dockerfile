@@ -1289,6 +1289,7 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 
 WORKDIR /sandbox
+RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox"
 USER sandbox
 
 # Write openclaw.json with gateway config but WITHOUT the real auth token.

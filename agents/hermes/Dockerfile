@@ -752,6 +752,7 @@ RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \
         "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual"
 
 WORKDIR /sandbox
+RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:999:/sandbox"
 USER sandbox
 
 # Set up blueprint for local resolution

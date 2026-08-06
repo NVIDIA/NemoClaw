@@ -323,6 +323,7 @@ ENV HOME=/sandbox \
     OPENAI_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL}
 
 WORKDIR /sandbox
+RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "999:999:/sandbox"
 USER sandbox
 
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
