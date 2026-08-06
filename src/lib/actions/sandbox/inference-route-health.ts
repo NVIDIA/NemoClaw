@@ -18,6 +18,25 @@ export type SandboxInferenceRouteHealth = {
   detail: string;
 };
 
+function describeInferenceTransportFailure(curlExitCode: number | null): string {
+  switch (curlExitCode) {
+    case 5:
+      return "The configured proxy hostname could not be resolved.";
+    case 6:
+      return "DNS resolution for inference.local failed inside the sandbox.";
+    case 7:
+      return "The sandbox could not connect to the inference gateway.";
+    case 28:
+      return "The inference gateway connection timed out.";
+    case 60:
+      return "TLS certificate validation failed for the inference gateway.";
+    case null:
+      return "DNS, connection, timeout, or TLS setup failed.";
+    default:
+      return `The inference transport failed with curl exit ${String(curlExitCode)}.`;
+  }
+}
+
 /**
  * Probe the authoritative `https://inference.local/v1/models` route from
  * inside the sandbox using the same agent-aware argv and parser as connect.
@@ -85,7 +104,7 @@ export async function probeSandboxInferenceGatewayHealth(
     detail:
       status === 0
         ? `Inference gateway unreachable on ${endpoint} from inside the sandbox. ` +
-          `DNS may have failed or the agent gateway / auth proxy is not running.`
+          describeInferenceTransportFailure(parsed.curlExitCode)
         : `Inference gateway returned an invalid HTTP status (${status}) on ${endpoint}; ` +
           `check the in-sandbox proxy and gateway.`,
   };

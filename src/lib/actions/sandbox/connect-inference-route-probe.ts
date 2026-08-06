@@ -9,6 +9,7 @@ export type ParsedInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
   httpStatus: number;
+  curlExitCode: number | null;
   detail: string;
 };
 
@@ -30,8 +31,10 @@ const INFERENCE_ROUTE_CA_FROM_ENV = 'CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FIL
 const INFERENCE_ROUTE_CA_VALIDATION =
   '[ -n "$CA_BUNDLE" ] && [ -f "$CA_BUNDLE" ] && [ -r "$CA_BUNDLE" ] || { printf \'UNAVAILABLE OpenShell CA bundle missing or unreadable\'; exit 1; }';
 const INFERENCE_ROUTE_PROBE_CORE_SCRIPT = [
-  "HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
-  'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
+  "CURL_EXIT=0",
+  "HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || CURL_EXIT=$?",
+  'HTTP_CODE="${HTTP_CODE:-000}"',
+  'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s curl_exit=%s\' "$HTTP_CODE" "$CURL_EXIT" ;; esac',
 ].join("; ");
 export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_FROM_ENV,
@@ -120,6 +123,7 @@ export function parseSandboxInferenceRouteProbeResult(
       healthy: false,
       broken: false,
       httpStatus: 0,
+      curlExitCode: null,
       detail: formatUntrustedProbeDetail(stderr),
     };
   }
@@ -131,6 +135,8 @@ export function parseSandboxInferenceRouteProbeResult(
   // shell startup output can never be mistaken for the authoritative result.
   const match = /^(OK|BROKEN)\s+([0-9]{3})\b[^\r\n]*$/.exec(detail);
   const httpStatus = match ? Number.parseInt(match[2], 10) : 0;
+  const curlExitMatch = /\bcurl_exit=([0-9]{1,3})\b/u.exec(detail);
+  const curlExitCode = curlExitMatch ? Number.parseInt(curlExitMatch[1], 10) : null;
   const isReachableHttpStatus = httpStatus >= 200 && httpStatus < 500;
   const commandSucceeded = result.status === 0;
   const healthy = commandSucceeded && match?.[1] === "OK" && isReachableHttpStatus;
@@ -141,6 +147,7 @@ export function parseSandboxInferenceRouteProbeResult(
     healthy,
     broken,
     httpStatus,
+    curlExitCode,
     detail:
       trustedDetail || `openshell sandbox exec exited with status ${String(result.status ?? 1)}`,
   };

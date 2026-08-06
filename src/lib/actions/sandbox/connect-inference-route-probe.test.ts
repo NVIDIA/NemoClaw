@@ -148,7 +148,7 @@ describe("sandbox connect inference route probe argv", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toBe("BROKEN 000");
+      expect(result.stdout).toMatch(/^BROKEN 000 curl_exit=[0-9]+$/u);
       expect(result.stdout).not.toContain(spoof);
       expect(fs.existsSync(profileMarker)).toBe(false);
       expect(fs.existsSync(curlConfigMarker)).toBe(false);
@@ -193,6 +193,17 @@ describe("sandbox inference route probe result", () => {
     expect(
       parseSandboxInferenceRouteProbeResult({ status: 0, output: `BROKEN ${httpStatus}` }),
     ).toMatchObject({ healthy: false, broken: true, httpStatus: Number(httpStatus) });
+  });
+
+  it("retains only the bounded curl exit code for transport diagnosis (#8441)", () => {
+    expect(
+      parseSandboxInferenceRouteProbeResult({ status: 0, output: "BROKEN 000 curl_exit=6" }),
+    ).toMatchObject({
+      healthy: false,
+      broken: true,
+      httpStatus: 0,
+      curlExitCode: 6,
+    });
   });
 
   it("does not classify an unavailable probe as healthy or broken (#6192)", () => {
