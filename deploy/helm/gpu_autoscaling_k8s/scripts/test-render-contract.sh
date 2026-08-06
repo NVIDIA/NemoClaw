@@ -40,10 +40,53 @@ if helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.y
   exit 1
 fi
 
+assert_persistence_render_rejected() {
+  local expected_message="${1:?expected message}"
+  shift
+  local output
+  if output="$(helm template persistence-policy-check "${CHART_DIR}" \
+    -f "${CHART_DIR}/values-step2-hpa.yaml" \
+    --set ingress.allowInsecureHttp=true \
+    --set ollama.persistence.enabled=true \
+    --set-string ollama.persistence.hostPath= \
+    "$@" 2>&1)"; then
+    echo "FAIL: chart rendered an unsafe shared persistence configuration" >&2
+    exit 1
+  fi
+  if [[ "${output}" != *"${expected_message}"* ]]; then
+    echo "FAIL: persistence validation returned an unexpected error" >&2
+    printf '%s\n' "${output}" >&2
+    exit 1
+  fi
+}
+
+assert_persistence_render_rejected \
+  "ollama.persistence.accessMode must be ReadWriteMany" \
+  --set ollama.persistence.accessMode=ReadWriteOnce \
+  --set ollama.persistence.storageClass=test-rwx
+assert_persistence_render_rejected \
+  "ollama.persistence.storageClass is required" \
+  --set ollama.persistence.accessMode=ReadWriteMany
+
+if ! helm template hostpath-policy-check "${CHART_DIR}" \
+  -f "${CHART_DIR}/values-step2-hpa.yaml" \
+  --set ingress.allowInsecureHttp=true \
+  --set ollama.persistence.enabled=true \
+  --set ollama.persistence.accessMode=ReadWriteOnce \
+  --set-string ollama.persistence.storageClass= \
+  >/dev/null; then
+  echo "FAIL: chart rejected the explicit single-node hostPath persistence mode" >&2
+  exit 1
+fi
+
 RENDERED_FILE="$(mktemp)"
 trap 'rm -f "${RENDERED_FILE}"' EXIT
 helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.yaml" \
   --set autoscaling.enabled=true \
+  --set ollama.persistence.enabled=true \
+  --set-string ollama.persistence.hostPath= \
+  --set ollama.persistence.accessMode=ReadWriteMany \
+  --set ollama.persistence.storageClass=test-rwx \
   --set ingress.allowInsecureHttp=true >"${RENDERED_FILE}"
 
 python3 - "${RENDERED_FILE}" <<'PYEOF'
@@ -71,6 +114,7 @@ deploy = get("Deployment")
 hpa = get("HorizontalPodAutoscaler")
 svc = get("Service")
 svcmon = get("ServiceMonitor")
+pvc = get("PersistentVolumeClaim")
 
 if deploy:
     deploy_name = deploy["metadata"]["name"]
@@ -108,6 +152,23 @@ if deploy:
                     f"{kind} selector {k}={v!r} does not match Deployment pod label {k}={pod_labels.get(k)!r}"
                 )
 
+    if pvc:
+        pvc_name = pvc["metadata"]["name"]
+        volumes = deploy["spec"]["template"]["spec"]["volumes"]
+        ollama_volumes = [v for v in volumes if v.get("name") == "ollama-data"]
+        if len(ollama_volumes) != 1:
+            failures.append(
+                f"expected exactly one ollama-data volume, found {len(ollama_volumes)}"
+            )
+        elif ollama_volumes[0].get("persistentVolumeClaim", {}).get("claimName") != pvc_name:
+            failures.append("Deployment ollama-data volume does not reference the rendered PVC")
+
+if pvc:
+    if pvc["spec"].get("accessModes") != ["ReadWriteMany"]:
+        failures.append("Ollama PVC does not request ReadWriteMany access")
+    if pvc["spec"].get("storageClassName") != "test-rwx":
+        failures.append("Ollama PVC does not use the configured storage class")
+
 if failures:
     print("FAIL: render contract violations:")
     for f in failures:
@@ -118,3 +179,5 @@ print("OK: HPA/Deployment/Service/ServiceMonitor render contract holds")
 PYEOF
 
 echo "OK: chart rejects cleartext Ingress without explicit opt-in"
+echo "OK: chart requires an explicit ReadWriteMany storage class for shared PVC persistence"
+echo "OK: chart preserves the explicit single-node hostPath persistence mode"

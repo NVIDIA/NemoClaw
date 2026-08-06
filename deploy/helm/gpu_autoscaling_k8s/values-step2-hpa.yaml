@@ -59,7 +59,8 @@ probes:
   readinessChecksInference: true
   startupProbeSeconds: 600
 
-# Shared model cache on the GPU node — pull once, reuse across HPA replicas and restarts.
+# Single-node model cache: pull once and reuse across HPA replicas and restarts.
+# For multi-node scheduling, clear hostPath and configure the RWX PVC settings documented in README.md.
 ollama:
   persistence:
     enabled: true

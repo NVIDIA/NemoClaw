@@ -390,6 +390,44 @@ kubectl get jobs,pods -n nemoclaw-gpu --show-labels
 
 The recovery boundary is correct when nonmatching Jobs and pods remain and the selected release reports its agent pods and HPA.
 
+## Configure Ollama Model Storage
+
+The base `values.yaml` disables persistence, so each replica uses an independent `emptyDir` volume.
+Kubernetes removes that cache when it replaces the pod, and the replacement pod downloads the configured model again.
+
+The provided `values-step2-hpa.yaml` sets `ollama.persistence.hostPath` for the documented single-node workflow.
+All replicas on that node share the directory.
+Do not use this mode when replicas can run on different nodes because the same path refers to different node-local directories.
+
+For storage that remains available when pods move between nodes, configure a storage class that provisions `ReadWriteMany` volumes:
+
+```yaml
+ollama:
+  persistence:
+    enabled: true
+    hostPath: ""
+    accessMode: ReadWriteMany
+    storageClass: example-rwx
+    size: 20Gi
+```
+
+Every replica mounts this one persistent volume claim and shares the mutable Ollama model cache.
+A model downloaded or removed by one replica is visible to the other replicas.
+Use a storage backend that supports concurrent access from every GPU node, and avoid changing the configured model while load-test or inference replicas are running.
+
+The chart rejects PVC persistence when `accessMode` is not `ReadWriteMany` or `storageClass` is empty.
+This render validation prevents a `ReadWriteOnce` claim from causing multi-attach failures when the HPA schedules replicas on different nodes.
+Kubernetes still determines whether the selected storage class can provision the requested access mode.
+
+After installing the RWX configuration, verify the claim before generating load:
+
+```bash
+kubectl get pvc -n nemoclaw-gpu
+kubectl get pods -n nemoclaw-gpu -o wide
+```
+
+The check passes when the Ollama claim reports `Bound` with `RWX` access and each agent pod's `READY` column reports `2/2`.
+
 ## Configuration files
 
 | File | Purpose |

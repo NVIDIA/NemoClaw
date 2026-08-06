@@ -34,14 +34,16 @@ ollama:
   port: 11434
   # Concurrent GPU batches per model (raise with care — VRAM limited).
   numParallel: 4
-  # Persist pulled models across pod restarts / scale-up (see accessMode + hostPath).
+  # Disabled uses an independent emptyDir for every replica. PVC persistence is shared by all
+  # replicas and therefore requires ReadWriteMany plus an explicit RWX-capable storage class.
+  # hostPath is the single-node development alternative and overrides the PVC settings.
   persistence:
     enabled: false
     size: 20Gi
     storageClass: ""
-    # ReadWriteMany: one PVC shared by all agent pods. ReadWriteOnce: single pod only.
+    # Every scalable replica mounts the same claim, so other access modes are rejected.
     accessMode: ReadWriteMany
-    # Single-node dev: host dir shared by all replicas (pull once per node). Overrides PVC.
+    # Single-node development: host directory shared by all replicas. Overrides PVC.
     hostPath: ""
 
 agent:

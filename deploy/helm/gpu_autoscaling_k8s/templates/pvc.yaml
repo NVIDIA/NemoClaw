@@ -1,6 +1,12 @@
 {{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{- if and .Values.ollama.persistence.enabled (not .Values.ollama.persistence.hostPath) }}
+{{- if ne .Values.ollama.persistence.accessMode "ReadWriteMany" }}
+{{- fail "ollama.persistence.accessMode must be ReadWriteMany when PVC persistence is enabled because every replica mounts the shared claim" }}
+{{- end }}
+{{- if not .Values.ollama.persistence.storageClass }}
+{{- fail "ollama.persistence.storageClass is required when PVC persistence is enabled; select a class that provisions ReadWriteMany volumes" }}
+{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -14,7 +20,5 @@ spec:
   resources:
     requests:
       storage: {{ .Values.ollama.persistence.size | quote }}
-  {{- with .Values.ollama.persistence.storageClass }}
-  storageClassName: {{ . | quote }}
-  {{- end }}
+  storageClassName: {{ .Values.ollama.persistence.storageClass | quote }}
 {{- end }}
