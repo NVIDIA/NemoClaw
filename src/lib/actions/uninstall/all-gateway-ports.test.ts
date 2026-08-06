@@ -72,11 +72,15 @@ describe("uninstall across every gateway port (#7791)", () => {
 
     runUninstallAllGatewayPorts({ ...OPTIONS, assumeYes: false }, deps);
 
-    expect(runSelectedPass.mock.calls[0]?.[0]).toMatchObject({ assumeYes: true });
+    expect(runSelectedPass.mock.calls[0]?.[0]).toMatchObject({
+      assumeYes: true,
+    });
   });
 
   it("does not run any pass when the whole-host confirmation is declined", () => {
-    const { deps, runPortPass, runSelectedPass } = sweepDeps({ readLine: () => "n" });
+    const { deps, runPortPass, runSelectedPass } = sweepDeps({
+      readLine: () => "n",
+    });
 
     const result = runUninstallAllGatewayPorts({ ...OPTIONS, assumeYes: false }, deps);
 
@@ -98,7 +102,9 @@ describe("uninstall across every gateway port (#7791)", () => {
 
   it("reports a failed port pass and still finishes the remaining ports", () => {
     const failingPortPass = vi.fn((port: number) => (port === 9000 ? 1 : 0));
-    const { deps, error, runSelectedPass } = sweepDeps({ runPortPass: failingPortPass });
+    const { deps, error, runSelectedPass } = sweepDeps({
+      runPortPass: failingPortPass,
+    });
 
     const result = runUninstallAllGatewayPorts(OPTIONS, deps);
 
@@ -115,7 +121,9 @@ describe("uninstall across every gateway port (#7791)", () => {
 
     runUninstallAllGatewayPorts(OPTIONS, deps);
 
-    expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({ retainedGatewayPorts: [9000] });
+    expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({
+      retainedGatewayPorts: [9000],
+    });
   });
 
   it("returns nonzero when the final pass still observes another gateway environment", () => {
@@ -146,7 +154,9 @@ describe("uninstall across every gateway port (#7791)", () => {
   });
 
   it("runs a single scoped pass when no other gateway port exists", () => {
-    const { deps, runPortPass, runSelectedPass } = sweepDeps({ listGatewayPorts: () => [8080] });
+    const { deps, runPortPass, runSelectedPass } = sweepDeps({
+      listGatewayPorts: () => [8080],
+    });
 
     const result = runUninstallAllGatewayPorts(OPTIONS, deps);
 
@@ -196,9 +206,18 @@ describe("uninstall across every gateway port (#7791)", () => {
         rmSync: fs.rmSync,
         run: (command, args) =>
           command === "openshell" && args.join(" ") === "gateway list -o json"
-            ? { status: 0, stdout: JSON.stringify([{ name: "nemoclaw-9123" }]), stderr: "" }
+            ? {
+                status: 0,
+                stdout: JSON.stringify([{ name: "nemoclaw-9123" }]),
+                stderr: "",
+              }
             : { status: 0, stdout: "", stderr: "" },
         runDocker: () => ({ status: 0, stdout: "", stderr: "" }),
+        runLocalModelRuntimeCleanup: () => ({
+          status: 0,
+          stdout: JSON.stringify({ ok: true, removed: [], skipped: [] }),
+          stderr: "",
+        }),
         runPortPass: () => 0,
       });
 
