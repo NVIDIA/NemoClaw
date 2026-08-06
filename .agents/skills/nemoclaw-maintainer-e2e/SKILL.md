@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers. Use for requests such as run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
+description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers, including exact-revision manual PR E2E. Use for requests such as run E2E for PR #123, run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -11,7 +11,67 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 Use `.github/workflows/e2e.yaml` from trusted `main`.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
-## Select the Mode
+## Manual PR E2E
+
+Use this mode when the maintainer requests live E2E for a pull request.
+It runs the default suite against the current exact PR head while the workflow definition remains on `main`.
+It is advisory and does not create a required PR check.
+
+Before dispatch, warn the maintainer that some default-suite jobs pass provider and messaging credentials from repository secrets to candidate-controlled processes through job environment variables.
+These long-lived credentials can remain valid after the workflow ends, and the workflow does not rotate or revoke them.
+Review the complete candidate diff before dispatch.
+Live targets can create external resources.
+After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
+
+Resolve the current PR and trusted workflow identities:
+
+```bash
+set -euo pipefail
+PR_NUMBER=123
+git fetch --prune origin main
+WORKFLOW_SHA="$(git rev-parse origin/main)"
+PR_JSON="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
+  --json number,state,headRefOid,baseRefOid,headRepository)"
+test "$(jq -r .state <<<"$PR_JSON")" = OPEN
+HEAD_SHA="$(jq -r .headRefOid <<<"$PR_JSON")"
+BASE_SHA="$(jq -r .baseRefOid <<<"$PR_JSON")"
+HEAD_REPOSITORY="$(jq -r .headRepository.nameWithOwner <<<"$PR_JSON")"
+[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+```
+
+Require a review reason containing 10 to 500 printable characters.
+Leave `jobs` and `targets` empty and keep Launchable disabled:
+
+```bash
+REVIEW_REASON='Reviewed the exact PR revision for credentialed live E2E.'
+CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+gh workflow run .github/workflows/e2e.yaml \
+  --repo NVIDIA/NemoClaw \
+  --ref main \
+  -f targets= \
+  -f jobs= \
+  -f inference_mode=mock \
+  -f include_staging_brev_launchable=false \
+  -f "pr_number=${PR_NUMBER}" \
+  -f "checkout_sha=${HEAD_SHA}" \
+  -f "checkout_repository=${HEAD_REPOSITORY}" \
+  -f "base_sha=${BASE_SHA}" \
+  -f "workflow_sha=${WORKFLOW_SHA}" \
+  -f "review_reason=${REVIEW_REASON}" \
+  -f "correlation_id=${CORRELATION_ID}"
+```
+
+The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and empty selectors.
+A second validation after checkout rejects a changed PR identity before preparation.
+
+Find the first-attempt `E2E PR #<number>` run created by this dispatch.
+Require its workflow SHA to equal `WORKFLOW_SHA`, wait for completion, and require a `success` conclusion.
+Return the PR number, head SHA, base SHA, workflow SHA, workflow URL, and result.
+A changed head or base invalidates the evidence and requires a new run.
+
+## Select the Main Mode
 
 | Request | Mode | `jobs` | `include_staging_brev_launchable` |
 |---|---|---|---|

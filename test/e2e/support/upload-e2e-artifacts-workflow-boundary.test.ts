@@ -138,37 +138,16 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects a scorecard upload outside its scheduled runtime summary contract", () => {
+  it("rejects restoring a scorecard artifact uploader", () => {
     const workflow = mutableWorkflow();
-    uploadStep(workflow.jobs.scorecard).with!.path = "e2e-artifacts/live/";
+    workflow.jobs.scorecard.steps!.push({
+      name: "Upload obsolete runtime summary",
+      uses: UPLOAD_E2E_ARTIFACTS_ACTION,
+      with: { name: "e2e-runtime-summary", path: "runtime-summary.json" },
+    });
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
-    );
-  });
-
-  it("rejects steps after the scorecard runtime summary upload", () => {
-    const workflow = mutableWorkflow();
-    workflow.jobs.scorecard.steps!.push({ name: "Run after upload", run: "echo too-late" });
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
-    );
-  });
-
-  it("rejects the scorecard runtime summary upload before its producer", () => {
-    const workflow = mutableWorkflow();
-    const scorecard = workflow.jobs.scorecard;
-    const upload = uploadStep(scorecard);
-    scorecard.steps!.splice(scorecard.steps!.indexOf(upload), 1);
-    const producerIndex = scorecard.steps!.findIndex(
-      (step) => step.name === "Generate E2E scorecard",
-    );
-    expect(producerIndex).toBeGreaterThanOrEqual(0);
-    scorecard.steps!.splice(producerIndex, 0, upload);
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+      "scorecard must not upload an obsolete runtime summary",
     );
   });
 

@@ -91,7 +91,7 @@ function runClassifier(environment: {
 
 describe("base-image publication workflow boundary (#7372)", () => {
   it.each([
-    ["scheduled main", "schedule", "", "1"],
+    ["pushd main", "push", "", "1"],
     ["manual main", "workflow_dispatch", "", "1"],
     ["controller-selected PR", "workflow_dispatch", "a".repeat(40), "0"],
   ])("classifies %s without executing untrusted code (#7372)", (_case, eventName, checkoutSha, required) => {
@@ -106,16 +106,10 @@ describe("base-image publication workflow boundary (#7372)", () => {
   });
 
   it.each([
-    ["a fork", "schedule", "", "refs/heads/main", "attacker/NemoClaw"],
-    ["a non-main ref", "schedule", "", "refs/heads/release", "NVIDIA/NemoClaw"],
+    ["a fork", "push", "", "refs/heads/main", "attacker/NemoClaw"],
+    ["a non-main ref", "push", "", "refs/heads/release", "NVIDIA/NemoClaw"],
     ["an unexpected event", "pull_request", "", "refs/heads/main", "NVIDIA/NemoClaw"],
-    [
-      "a scheduled controller checkout",
-      "schedule",
-      "a".repeat(40),
-      "refs/heads/main",
-      "NVIDIA/NemoClaw",
-    ],
+    ["a pushd controller checkout", "push", "a".repeat(40), "refs/heads/main", "NVIDIA/NemoClaw"],
   ])("rejects %s instead of skipping the gate (#7372)", (_case, eventName, checkoutSha, ref, repository) => {
     expect(runClassifier({ checkoutSha, eventName, ref, repository }).status).not.toBe(0);
   });
