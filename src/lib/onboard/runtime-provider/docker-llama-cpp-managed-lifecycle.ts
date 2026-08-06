@@ -158,8 +158,10 @@ function normalizeForCanonicalJson(value: unknown): unknown {
 }
 
 function sha256(value: unknown): string {
+  // This hashes non-secret canonical lifecycle identity metadata for drift detection,
+  // not passwords, credentials, or secret material.
   return createHash("sha256")
-    .update(JSON.stringify(normalizeForCanonicalJson(value)))
+    .update(JSON.stringify(normalizeForCanonicalJson(value))) // codeql[js/insufficient-password-hash]
     .digest("hex");
 }
 
