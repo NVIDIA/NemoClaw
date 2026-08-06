@@ -165,6 +165,30 @@ describe("host-local create journal", () => {
     expect(store.load(TRANSACTION_ID)?.phase).toBe("started");
   });
 
+  it("rejects a canonical receipt that differs from create authority before publication (#8414)", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    store.create(prepared());
+    store.recordCreating(TRANSACTION_ID, CREATE_INTENT_UNIX_MS);
+    store.recordCreated(TRANSACTION_ID, RUNTIME_ID);
+    store.recordStarted(TRANSACTION_ID);
+    const receipt = JSON.parse(serializedReceipt());
+    const mismatchedReceipt = serializeHostLocalInferenceReceipt({
+      ...receipt,
+      runtime: {
+        ...receipt.runtime,
+        model: {
+          ...receipt.runtime.model,
+          generation: "c".repeat(64),
+        },
+      },
+    });
+
+    expect(() => store.prepareReceipt(TRANSACTION_ID, mismatchedReceipt)).toThrow(
+      "prepared receipt differs from create authority",
+    );
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("started");
+  });
+
   it.each([
     ["receipt without its digest", { serializedReceipt: "hostPath=/secret\n" }],
     ["digest without its receipt", { receiptSha256: "9".repeat(64) }],
