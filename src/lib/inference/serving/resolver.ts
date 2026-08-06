@@ -19,8 +19,8 @@ import type {
   ManagedInferenceReadinessRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolution,
-  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceResolverInput,
+  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceSelectionIntent,
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
@@ -72,6 +72,35 @@ function explicitIntentWithoutPreset(intent: ManagedInferenceSelectionIntent): b
   );
 }
 
+const STORAGE_COMPATIBLE_CAPABILITY = "host.docker.storage_compatible";
+const STORAGE_REMEDIATION_CAPABILITY = "host.docker.storage_remediation_available";
+const STORAGE_INCOMPATIBLE_FINDING = "host.docker.storage_incompatible";
+
+function capabilityState(
+  report: ManagedInferenceReadinessSource["report"],
+  id: string,
+): "present" | "absent" | "unknown" | undefined {
+  const matches = report.capabilities.filter((capability) => capability.id === id);
+  return matches.length === 1 ? matches[0]!.state : undefined;
+}
+
+function hasRemediableStorageConflict(report: ManagedInferenceReadinessSource["report"]): boolean {
+  const blocking = report.findings.filter(
+    ({ severity }) => severity === "fatal" || severity === "blocking",
+  );
+  return (
+    report.status === "incompatible" &&
+    report.exitCode === 2 &&
+    blocking.length === 1 &&
+    blocking[0]!.id === STORAGE_INCOMPATIBLE_FINDING &&
+    blocking[0]!.severity === "blocking" &&
+    blocking[0]!.capabilityIds?.length === 1 &&
+    blocking[0]!.capabilityIds[0] === STORAGE_COMPATIBLE_CAPABILITY &&
+    capabilityState(report, STORAGE_COMPATIBLE_CAPABILITY) === "absent" &&
+    capabilityState(report, STORAGE_REMEDIATION_CAPABILITY) === "present"
+  );
+}
+
 function readinessError(
   source: ManagedInferenceReadinessSource,
   nowMs: number,
@@ -95,10 +124,14 @@ function readinessError(
   }
   const referenceErrors = getSystemReadinessReferenceErrors(report);
   if (referenceErrors.length > 0) return `${nodeId}: ${referenceErrors[0]}`;
-  if (report.status !== "supported" || report.exitCode !== 0) {
+  const remediableStorage = hasRemediableStorageConflict(report);
+  if ((report.status !== "supported" || report.exitCode !== 0) && !remediableStorage) {
     return `${nodeId}: readiness status is ${report.status}`;
   }
-  if (report.findings.some(({ severity }) => severity === "fatal" || severity === "blocking")) {
+  if (
+    report.findings.some(({ severity }) => severity === "fatal" || severity === "blocking") &&
+    !remediableStorage
+  ) {
     return `${nodeId}: readiness report contains a blocking finding`;
   }
   return undefined;
@@ -194,6 +227,42 @@ function readinessScopeMatches(
   return false;
 }
 
+function compareNumericDottedVersions(left: string, right: string): number | undefined {
+  const parse = (value: string): number[] | undefined => {
+    if (!/^\d+(?:\.\d+)+$/u.test(value)) return undefined;
+    const parts = value.split(".").map(Number);
+    return parts.every(Number.isSafeInteger) ? parts : undefined;
+  };
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  if (!leftParts || !rightParts) return undefined;
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+function readinessComparisonMatches(
+  actual: unknown,
+  comparison: ServingReadinessComparison,
+): boolean {
+  switch (comparison.operator) {
+    case "equals":
+      return scalarEquals(actual, comparison.value);
+    case "one-of":
+      return comparison.values.some((candidate) => scalarEquals(actual, candidate));
+    case "at-least":
+      return typeof actual === "number" && actual >= comparison.value;
+    case "version-at-least": {
+      if (typeof actual !== "string") return false;
+      const order = compareNumericDottedVersions(actual, comparison.value);
+      return order !== undefined && order >= 0;
+    }
+  }
+}
+
 function readinessRequirementMatches(
   requirement: ManagedInferenceReadinessRequirement["readiness"],
   reports: readonly ManagedInferenceReadinessSource[],
@@ -214,7 +283,13 @@ function readinessRequirementMatches(
     const collection =
       requirement.kind === "observation" ? report.observations : report.capabilities;
     const matches = collection.filter(({ id }) => id === requirement.id);
-    return matches.length === 1 && matches[0]!.state === requirement.state;
+    if (matches.length === 1 && matches[0]!.state === requirement.state) return true;
+    return (
+      requirement.kind === "capability" &&
+      requirement.id === STORAGE_COMPATIBLE_CAPABILITY &&
+      requirement.state === "present" &&
+      hasRemediableStorageConflict(report)
+    );
   });
 }
 
