@@ -805,16 +805,19 @@ The wizard cleans up stale port forwards and waits for gateway readiness automat
 On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 
-When the primary memory-query probe reports a placeholder name on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload:
+When the primary memory-query probe reports a placeholder name on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload.
+Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits.
+The workload uses this command:
 
 ```bash
 docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
 ```
 
-The run may first pull the CUDA sample image and is bounded to 3 minutes.
-Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to raise that bound on slow links.
-A host whose GPU passes the workload keeps GPU passthrough.
-A failed or timed-out workload does not enable GPU passthrough.
+The run is bounded to 3 minutes.
+Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive millisecond value to change that bound.
+Increase the value on slow links.
+A passing workload qualifies the detected GPU for GPU passthrough.
+A failed or timed-out workload leaves the GPU unproven and does not enable GPU passthrough.
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 WSL hosts that are not Docker Desktop-backed do not run the workload and continue to report the GPU as unavailable.
 
