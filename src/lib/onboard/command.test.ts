@@ -166,11 +166,15 @@ describe("onboard command options", () => {
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
+    const managedCatalogPath = path.join(tmpDir, "managed-catalog.json");
     fs.writeFileSync(dockerfilePath, "FROM scratch\n");
+    fs.writeFileSync(managedCatalogPath, "{}\n");
 
     expect(
       resolve(
         {
+          "temp-managed-runtime": true,
+          "temp-managed-runtime-catalog": managedCatalogPath,
           "non-interactive": true,
           resume: true,
           "recreate-sandbox": true,
@@ -190,6 +194,8 @@ describe("onboard command options", () => {
         { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
       ),
     ).toEqual({
+      tempManagedRuntime: true,
+      tempManagedRuntimeCatalog: managedCatalogPath,
       nonInteractive: true,
       resume: true,
       fresh: false,
@@ -216,6 +222,8 @@ describe("onboard command options", () => {
 
   it("uses explicit false/null defaults when flags are absent", () => {
     expect(resolve({})).toEqual({
+      tempManagedRuntime: false,
+      tempManagedRuntimeCatalog: null,
       nonInteractive: false,
       resume: false,
       fresh: false,
@@ -459,6 +467,9 @@ describe("onboard command options", () => {
       NEMOCLAW_PROVIDER: "previous-provider",
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+      NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_TIER: "previous-tier",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     };
     const observed: Record<string, string | undefined> = {};
     await runOnboardCommand({
@@ -470,6 +481,9 @@ describe("onboard command options", () => {
           "NEMOCLAW_PROVIDER",
           "NEMOCLAW_MODEL",
           "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+          "NEMOCLAW_POLICY_MODE",
+          "NEMOCLAW_POLICY_TIER",
+          "NEMOCLAW_TOOL_DISCLOSURE",
         ]) {
           observed[key] = env[key];
         }
@@ -481,12 +495,18 @@ describe("onboard command options", () => {
       NEMOCLAW_PROVIDER: "ollama",
       NEMOCLAW_MODEL: "qwen3-vl:4b",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+      NEMOCLAW_POLICY_MODE: "suggested",
+      NEMOCLAW_POLICY_TIER: "personal",
+      NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });
     expect(env).toMatchObject({
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+      NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_TIER: "previous-tier",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     });
   });
 

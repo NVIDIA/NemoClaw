@@ -141,7 +141,7 @@ function filterDisabledMessagingProviders(
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
 export function materializeSandboxCreatePlan({
   intent,
-  buildCtx,
+  fromRef,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
@@ -175,7 +175,7 @@ export function materializeSandboxCreatePlan({
   const driverConfig = buildSandboxDriverConfig(intent);
   const createArgs = [
     "--from",
-    `${buildCtx}/Dockerfile`,
+    fromRef,
     "--name",
     intent.sandboxName,
     "--policy",

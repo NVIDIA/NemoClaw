@@ -680,6 +680,7 @@ class SandboxStateFlow<
         this.options.hostMounts,
       ),
       recreateSandboxRequested: this.options.recreateSandbox(false),
+      recreateJournalHandoff: Boolean(this.options.recreateJournalTargetIntentFingerprint),
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,
         storedMessagingConfig,
