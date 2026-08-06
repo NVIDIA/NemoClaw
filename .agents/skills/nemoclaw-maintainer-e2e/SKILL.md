@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers. Use for requests such as run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
+description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers, including exact-revision manual PR E2E. Use for requests such as run E2E for PR #123, run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -11,7 +11,107 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 Use `.github/workflows/e2e.yaml` from trusted `main`.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
-## Select the Mode
+## Manual PR E2E
+
+Use this mode when the maintainer requests live E2E for a pull request.
+It runs the default suite against the current exact PR head while the workflow definition remains on `main`.
+It is advisory and does not create a required PR check.
+
+The default suite exposes these values to candidate-controlled job processes:
+
+- Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
+- Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
+- The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `checks: read`, `contents: read`, and `pull-requests: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
+- Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
+
+The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
+Live targets can create external resources.
+After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
+
+Resolve the current PR and trusted workflow identities:
+
+```bash
+set -euo pipefail
+PR_NUMBER=123
+git fetch --prune origin main
+WORKFLOW_SHA="$(git rev-parse origin/main)"
+PR_JSON="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
+  --json number,state,headRefOid,baseRefOid,headRepository)"
+test "$(jq -r .state <<<"$PR_JSON")" = OPEN
+HEAD_SHA="$(jq -r .headRefOid <<<"$PR_JSON")"
+BASE_SHA="$(jq -r .baseRefOid <<<"$PR_JSON")"
+HEAD_REPOSITORY="$(jq -r .headRepository.nameWithOwner <<<"$PR_JSON")"
+[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+```
+
+Require a review reason containing 10 to 500 printable characters.
+Leave `jobs` and `targets` empty and keep Launchable disabled:
+
+```bash
+REVIEW_REASON='Reviewed the exact PR revision for credentialed live E2E.'
+CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+gh workflow run .github/workflows/e2e.yaml \
+  --repo NVIDIA/NemoClaw \
+  --ref main \
+  -f targets= \
+  -f jobs= \
+  -f inference_mode=mock \
+  -f include_staging_brev_launchable=false \
+  -f "pr_number=${PR_NUMBER}" \
+  -f "checkout_sha=${HEAD_SHA}" \
+  -f "checkout_repository=${HEAD_REPOSITORY}" \
+  -f "base_sha=${BASE_SHA}" \
+  -f "workflow_sha=${WORKFLOW_SHA}" \
+  -f "review_reason=${REVIEW_REASON}" \
+  -f "correlation_id=${CORRELATION_ID}"
+```
+
+The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and empty selectors.
+A second validation after checkout rejects a changed PR identity before preparation.
+
+Find and verify the correlated run with bounded GitHub reads:
+
+```bash
+RUN_TITLE="E2E PR #${PR_NUMBER} (${CORRELATION_ID})"
+MATCHES='[]'
+for POLL_INDEX in $(seq 1 30); do
+  RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
+    --event workflow_dispatch --branch main --limit 50 \
+    --json databaseId,displayTitle,url)"
+  MATCHES="$(jq -c --arg title "$RUN_TITLE" \
+    '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
+  test "$(jq 'length' <<<"$MATCHES")" -le 1
+  test "$(jq 'length' <<<"$MATCHES")" -eq 0 || break
+  sleep 10
+done
+if test "$(jq 'length' <<<"$MATCHES")" -ne 1; then
+  echo 'The dispatched run was not visible after bounded polling. Do not dispatch again. Inspect the E2E Actions runs for the recorded correlation ID and clean up any resources from a matching run.' >&2
+  exit 1
+fi
+RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")
+RUN_URL="$(jq -r '.[0].url' <<<"$MATCHES")"
+gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
+RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
+jq -e --arg sha "$WORKFLOW_SHA" '
+  .run_attempt == 1 and
+  .head_sha == $sha and
+  .status == "completed" and
+  .conclusion == "success"
+' <<<"$RUN_JSON" >/dev/null
+CURRENT_PR="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
+  --json state,headRefOid,baseRefOid,headRepository)"
+test "$(jq -r .state <<<"$CURRENT_PR")" = OPEN
+test "$(jq -r .headRefOid <<<"$CURRENT_PR")" = "$HEAD_SHA"
+test "$(jq -r .baseRefOid <<<"$CURRENT_PR")" = "$BASE_SHA"
+test "$(jq -r .headRepository.nameWithOwner <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
+```
+
+Return the PR number, head repository, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
+A changed head repository, head SHA, or base SHA invalidates the evidence and requires a new run.
+
+## Select the Main Mode
 
 | Request | Mode | `jobs` | `include_staging_brev_launchable` |
 |---|---|---|---|
