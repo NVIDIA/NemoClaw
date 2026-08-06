@@ -4,8 +4,8 @@
 title: "Host Files and State"
 sidebar-title: "Host Files and State"
 description: "Reference for NemoClaw host-side state and selected local inference cache paths."
-description-agent: "Lists host-side NemoClaw state and selected local inference cache paths. Use when identifying config.json, sandboxes.json, local inference credentials, model caches, operational state, backup directories, or mounts."
-keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxes json", "nemoclaw local inference cache"]
+description-agent: "Lists host-side NemoClaw state and selected local inference cache paths. Use when identifying config.json, sandboxes.json, local inference credentials, model caches, operational state, backup directories, or mounts. Use when a command reports that sandboxes.json is present but not valid JSON."
+keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxes json", "nemoclaw malformed sandboxes json", "nemoclaw local inference cache"]
 content:
   type: "reference"
 ---
@@ -29,7 +29,7 @@ Share redacted diagnostics only.
 |---|---|---|
 | `~/.nemoclaw/config.json` | Host-level CLI configuration and defaults created by onboarding or config commands. | Only if you want NemoClaw to forget host defaults and rebuild them on the next setup. |
 | `~/.nemoclaw/credentials.json` | Legacy plaintext credential file from earlier releases. Onboarding stages allowlisted values, registers them with the OpenShell gateway, and securely deletes the file only after verifying their migration. Current releases do not create this file. | No; run `$$nemoclaw onboard` to complete migration and cleanup so you do not lose a credential that is not yet registered with the gateway. |
-| `~/.nemoclaw/sandboxes.json` | Current sandbox registry used by `$$nemoclaw list`, default sandbox selection, rebuild, and recovery commands. | No. Deleting it makes the host forget existing sandboxes and can block state-preserving recovery. |
+| `~/.nemoclaw/sandboxes.json` | Current sandbox registry used by `$$nemoclaw list`, default sandbox selection, rebuild, and recovery commands. See [Malformed Registry File](#malformed-registry-file) when a command reports that this file is not valid JSON. | No. Deleting it makes the host forget existing sandboxes and can block state-preserving recovery. |
 | `~/.nemoclaw/onboard-session.json` | Resume marker for an onboarding attempt that failed before completion. | Yes, when you intentionally want to discard the failed session and start over. Prefer `$$nemoclaw onboard --fresh` when available. |
 | `~/.nemoclaw/usage-notice.json` | Records the third-party software notice version in `acceptedVersion` and the acceptance time in `acceptedAt`. Install, onboarding, and rebuild flows consult this file and prompt again when its recorded version differs from the current notice or the file is absent. | Yes; deleting it makes the next applicable install, onboarding, or rebuild flow prompt for acceptance again. |
 | `~/.nemoclaw/ollama-proxy-token` | Local auth token used by the host-side Ollama auth proxy. | Yes, but re-run onboarding afterward so NemoClaw recreates and registers the proxy token. |
@@ -51,6 +51,30 @@ Do not move these files or directories manually.
 
 `sandboxes.json` is the current registry file name.
 If you see `registry.json` in older tests, notes, or discussions, treat it as legacy wording for the sandbox registry unless a specific release note says otherwise.
+
+### Malformed Registry File
+
+A `sandboxes.json` file that is present but does not contain valid JSON stops registry operations that require complete sandbox records, such as `$$nemoclaw list` and `$$nemoclaw onboard`.
+NemoClaw reports the file path and the recovery commands instead of reading the file as an empty registry.
+These operations cannot replace your sandbox records with empty state.
+Optional messaging health checks omit registry-derived information when they cannot read the registry.
+NemoClaw does not rename, move, or rewrite the file.
+
+<Warning>
+Removing `sandboxes.json` makes the host forget its registered sandboxes.
+Keep the copy until those sandboxes are registered again.
+</Warning>
+
+Copy the file, then remove it:
+
+```bash
+cp ~/.nemoclaw/sandboxes.json ~/.nemoclaw/sandboxes.json.bad
+rm ~/.nemoclaw/sandboxes.json
+```
+
+On a non-default gateway port, use the matching `~/.nemoclaw/gateways/<port>/sandboxes.json` path.
+Run the command again.
+Run `$$nemoclaw onboard` to register a sandbox again.
 
 ## Directories
 
