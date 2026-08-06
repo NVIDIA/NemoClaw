@@ -64,6 +64,7 @@ function executeTrustedControllerMatrix(targets: string) {
       env: {
         ...process.env,
         GITHUB_OUTPUT: outputPath,
+        JOBS: "",
         TARGETS: targets,
       },
       timeout: 30_000,
