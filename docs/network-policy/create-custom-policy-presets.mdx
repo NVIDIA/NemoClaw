@@ -207,6 +207,10 @@ Invalid option combinations fail without changing the journal.
 `--dry-run` leaves the pending journal and live policy unchanged, so omit it when you repair.
 The path argument is syntactically required, but NemoClaw does not read it during repair.
 It uses the exact source and target stored in the journal, so the original path may no longer exist and current DNS answers are not required.
+Before it reads the live policy, NemoClaw revalidates the recorded target's structure, endpoint safety, content-bound private-address pin authority, and exclusion from managed MCP ownership.
+If validation fails, NemoClaw preserves the journal, does not inspect or mutate the live policy, and neither clears nor commits the journal.
+Investigate and repair the registry's trusted state before retrying.
+If you did not alter the registry, preserve it for security investigation instead of bypassing the guard.
 The repair invocation reconciles only the pending apply and then exits.
 After a `--from-dir` repair, run the command again to load the directory and continue with the remaining files.
 For an interrupted remove, rerun the removal:
@@ -215,7 +219,7 @@ For an interrupted remove, rerun the removal:
 $$nemoclaw my-assistant policy remove my-service-api
 ```
 
-The retry reads the live policy before it changes or clears the journal.
+After target validation succeeds, or for an interrupted remove, the retry reads the live policy before it changes or clears the journal.
 If the live policy matches the exact target, NemoClaw records the completed operation.
 If an interrupted apply matches the exact source, NemoClaw reapplies the durable target from the journal.
 If an interrupted remove matches the exact source, NemoClaw retries the removal.
