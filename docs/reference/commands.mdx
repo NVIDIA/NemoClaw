@@ -1504,12 +1504,16 @@ For a `compatible-endpoint` route that uses `openai-completions`, the text outpu
 The line is omitted for another provider or API family.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `customPolicyTransition`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+`customPolicyTransition` is `null` when custom policy state is settled; otherwise it identifies the interrupted `apply` or `remove` preset that must be reconciled before protected mutations that could change or capture the same policy state.
+Follow [Recover an Interrupted Change](../network-policy/configure-policies/create-custom-policy-presets#recover-an-interrupted-change) to complete the recorded operation.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
 `baselineExclusionStates` reports each recorded key with its current verification state.
 The `excluded` state means the reviewed entry still matches the active agent baseline and the key is absent from the live OpenShell policy.
 Other states identify agent drift, changed or removed baseline content, an unreadable baseline or live policy, or a live policy that contains the excluded key.
-`baselineExclusionTransition` is `null` when policy state is settled; otherwise it identifies the interrupted `exclude` or `restore` key that must be reconciled before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
+`baselineExclusionTransition` is `null` when policy state is settled; otherwise it identifies the interrupted `exclude` or `restore` key that must be reconciled before protected mutations that could change or capture the same policy state.
+While it remains, NemoClaw blocks managed MCP and messaging-channel policy changes, Shields down, rebuild, `backup-all`, snapshot creation and restore, and sandbox creation or onboarding.
+Destroy is blocked while the sandbox is live or its state cannot be classified; if gateway-scoped checks prove it is already absent, destroy clears the exact pending journal and continues cleanup.
 The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable.
 Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route.
 When the live shared route differs, text output prints both routes and JSON output sets `routeDrift.live`, `routeDrift.recorded`, and `routeDrift.canConnect`.
@@ -1941,6 +1945,8 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows.
+A pending custom or baseline policy transaction blocks destroy while the sandbox is live or its state cannot be classified.
+If gateway-scoped checks prove that the sandbox is already absent, destroy clears the exact pending journal and continues local cleanup.
 
 <AgentOnly variant="hermes">
 
@@ -2011,6 +2017,10 @@ Do not pass `--raw` output to `openshell policy set` because the metadata header
 ### `$$nemoclaw <name> policy add`
 
 Add a policy preset to a sandbox.
+NemoClaw refuses ordinary `policy add`, `policy remove`, `policy exclude`, and `policy restore` mutations while Shields are down or a Shields transition is incomplete.
+For either state, run `$$nemoclaw <name> shields up`, confirm `$$nemoclaw <name> shields status` reports `UP`, and retry the policy command.
+If Shields state is corrupt, follow the reported repair guidance instead of changing policy.
+Managed MCP and rebuild transactions use narrowly scoped internal authority for their own lifecycle-owned policy writes; generic policy commands cannot use that authority to bypass Shields.
 Presets extend the baseline network policy with additional endpoints.
 Before applying, the command shows which endpoints the preset would open and prompts for confirmation.
 The scope comes from the exact preset YAML and includes each endpoint's host, port, access, protocol, TLS, and enforcement settings, allowed methods and paths, and binary allowlist.
@@ -2043,11 +2053,14 @@ When a baseline key is durably excluded, NemoClaw reserves that key and refuses 
 Restore the baseline entry before applying a preset that intentionally owns the same key, or rename a custom preset entry whose key represents different access.
 Custom preset files are tracked with the sandbox that applied them.
 `policy list`, `policy add`, and `policy remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
+Managed MCP-generated entries can appear in the shared policy listing, but ordinary `policy add` and `policy remove` commands refuse to replace or remove them.
+Use `$$nemoclaw <name> mcp restart <server>` or `$$nemoclaw <name> mcp remove <server>` instead.
 Before `policy add` writes a merged policy, it reads and parses the round-trippable base policy from OpenShell.
 If the base policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
 Fix the gateway or policy read problem, then rerun the command.
-For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy list` or `status`.
-Recover or re-onboard the sandbox, then re-apply the custom preset.
+For custom presets, NemoClaw records a durable journal before it changes the gateway policy.
+If the process stops or registry finalization fails before live and durable state agree, `policy list`, `status`, and `doctor` report the interrupted apply and block conflicting policy and sandbox lifecycle mutations.
+Re-run the external `policy add` form as described in [Recover an Interrupted Change](../network-policy/configure-policies/create-custom-policy-presets#recover-an-interrupted-change).
 
 With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit matching RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local endpoints.
 The option is invalid for built-in presets.
@@ -2106,7 +2119,12 @@ NemoClaw does not render network-policy rule bodies as prose in `policy list` ou
 Recorded baseline exclusions appear in a separate section.
 `active` means the reviewed digest still matches the current baseline, `baseline changed — re-review required` means the current entry differs, and `baseline entry removed — restore to clear` means the current release no longer defines the key.
 Use `status` or `doctor` to additionally verify that the approval belongs to the active agent and the excluded key is absent from the live policy.
-`repair required — interrupted exclude/restore; rebuild blocked` means NemoClaw preserved a durable transaction journal after a crash or persistence failure; rerun the displayed exact policy command to reconcile it before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
+`Custom policy repair required` means NemoClaw preserved a durable custom apply or remove journal.
+For an apply, rerun the displayed external `policy add` form; for a remove, rerun the displayed exact removal command.
+Follow [Recover an Interrupted Change](../network-policy/configure-policies/create-custom-policy-presets#recover-an-interrupted-change) before another policy or sandbox lifecycle mutation.
+`repair required — interrupted exclude/restore; rebuild blocked` means NemoClaw preserved a durable baseline transaction journal after a crash or persistence failure; rerun the displayed exact policy command to reconcile it.
+While either custom or baseline journal remains, NemoClaw blocks policy and sandbox lifecycle mutations that could change or capture the same state, including managed MCP, messaging-channel, Shields down, rebuild, backup, snapshot, and onboarding work.
+Destroy also blocks a live or unclassified sandbox, while an exact gateway-scoped absence proof lets destroy clear the matching journal and continue cleanup.
 
 Each active preset is annotated with its provenance so you can tell why it is applied:
 
@@ -2142,6 +2160,8 @@ $$nemoclaw my-assistant policy remove pypi --yes
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
 If the preset is unknown or not currently applied, the command exits non-zero with a clear error.
+For a custom preset, removal requires the live owned content to match the registry record exactly and refuses externally edited values for manual inspection.
+Managed MCP-generated entries must be removed with `$$nemoclaw <name> mcp remove <server>`.
 
 | Flag | Description |
 |------|-------------|
@@ -3073,7 +3093,7 @@ NemoClaw reports any MCP or shields restoration failure and does not present the
 Ambiguous state preserves MCP ownership and recovery metadata without attempting to stop NIM or claiming the original sandbox remains intact, and the rebuild process skips its immediate shields relock.
 Failures after a successful exec probe do not switch to the host-side path.
 Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
-It also refuses a pending baseline exclusion transaction before opening a shields-down window, starting backup, or deleting the sandbox, and prints the exact `policy exclude` or `policy restore` command to rerun.
+It refuses a pending custom or baseline policy transaction before opening a shields-down window, starting backup, or deleting the sandbox, and prints the applicable policy repair guidance.
 For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
 For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
 Before backup or deletion, rebuild checks the staged messaging configuration against other sandboxes in the selected OpenShell gateway's sandbox registry.
@@ -3175,6 +3195,7 @@ If the container cannot be returned to the stopped state, the command fails and 
 Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.
 
 For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
+If that sandbox has a pending custom or baseline policy transaction, `backup-all` refuses it before starting a stopped container, changing Shields, or copying state and reports the applicable repair guidance.
 Within that transaction, it starts a stopped container when required, opens a 30-minute shields-down window when the sandbox starts with Shields up, copies sandbox state, restores the previous Shields state, and returns any container it started to the stopped state.
 If the timer expires during the transaction, the deadline gate blocks new mutations and waits for the exact backup owner to finish without signaling it.
 An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
@@ -3199,6 +3220,7 @@ A skipped sandbox's uncommitted state is not included in its last successful bac
 Create a timestamped snapshot of sandbox state.
 Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
 The command requires shields to be down and keeps the shields check and backup under one per-sandbox transition.
+A pending custom or baseline policy transaction blocks snapshot creation before NemoClaw copies state.
 If the timer expires during a long-running backup, the deadline gate blocks new mutations and waits for the exact backup owner to finish.
 Auto-restore does not signal the backup process.
 If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
@@ -3279,7 +3301,8 @@ After NemoClaw creates the destination, it waits for the managed OpenClaw superv
 If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
 Correct the reported supervisor failure, then run `$$nemoclaw <destination> destroy` or rerun the restore with `--force`.
 </AgentOnly>
-A cross-sandbox restore refuses to clone a source or replace an existing destination whose baseline exclusion transaction needs repair, before it creates or deletes anything.
+A snapshot restore refuses a source with a pending custom or baseline policy transaction before it changes state.
+A cross-sandbox restore also refuses to replace an existing destination with either pending transaction before it creates or deletes anything.
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
 If the existing destination has an active shields timer, the force path restores and verifies lockdown, revokes the timer, and then deletes the destination.

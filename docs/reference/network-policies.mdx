@@ -318,7 +318,10 @@ The versioned exclusion record is bound to the reviewed entry content and active
 If the sandbox's active agent changes, NemoClaw requires you to clear or review the exclusion again instead of applying an approval from another agent baseline.
 NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies the exact live result before publishing the durable intent.
 If the process or persistence layer fails between those steps, `policy list`, `policy explain`, and `status` report `repair required`.
-Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only an exact source or target state.
+While the journal remains, NemoClaw refuses policy and sandbox lifecycle mutations that could change or capture the same state.
+These include managed MCP and messaging-channel policy changes, Shields down, rebuild, `backup-all`, snapshot creation and restore, and sandbox creation or onboarding.
+Destroy is blocked while the sandbox is live or its state cannot be classified; if gateway-scoped checks prove it is already absent, destroy clears the exact pending journal and continues cleanup.
+Rerunning the same `policy exclude` or `policy restore` command reconciles only an exact source or target state.
 An unreadable live policy, or one that matches neither the pre-mutation source nor the intended target, remains fail-closed for manual inspection instead of being guessed or overwritten.
 An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
 If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.

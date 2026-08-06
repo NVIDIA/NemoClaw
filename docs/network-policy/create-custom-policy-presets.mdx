@@ -4,8 +4,8 @@
 title: "Create Custom Policy Presets"
 sidebar-title: "Create Custom Presets"
 description: "Author and apply a scoped network policy preset for an endpoint that NemoClaw does not include."
-description-agent: "Creates and applies custom policy presets. Use when adding a reviewed endpoint or applying preset files."
-keywords: ["nemoclaw custom policy preset", "policy add from-file"]
+description-agent: "Creates, applies, and repairs custom policy presets. Use when adding a reviewed endpoint, applying preset files, or recovering an interrupted apply or remove."
+keywords: ["nemoclaw custom policy preset", "policy add from-file", "custom policy repair required", "policy journal recovery"]
 content:
   type: "how_to"
 skill:
@@ -50,6 +50,11 @@ Authorize only the process that needs the reviewed endpoint.
 The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens.
 It must not collide with a maintained preset name such as `slack` or `pypi`.
 Rename `preset.name` if NemoClaw reports a collision.
+Every `network_policies` key must also have one exclusive, attributable owner.
+NemoClaw refuses a custom apply or remove when a key overlaps a maintained, messaging-channel, managed MCP, or differently owned custom entry.
+A same-name custom reapply requires the live owned content to match its recorded state, replaces that preset's complete prior key set, removes keys that the prior version alone owned, and preserves unrelated keys.
+Removal also requires exact recorded content and refuses externally edited values for manual inspection.
+Managed MCP-generated entries can appear in policy listings, but ordinary custom policy commands cannot replace or remove them; use `$$nemoclaw <name> mcp restart <server>` or `$$nemoclaw <name> mcp remove <server>`.
 
 Each endpoint must name a specific host or a scoped subdomain wildcard such as `*.example.com`.
 NemoClaw rejects catch-all destinations, including `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0`.
@@ -97,6 +102,8 @@ NemoClaw combines the environment list with any `--trusted-private-host` options
 It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
 
 After schema validation, NemoClaw resolves each declared endpoint and inserts every validated address as an exact `allowed_ips` value in memory.
+An exact trusted host may return both public and supported private addresses; NemoClaw pins the complete canonical answer set.
+If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the preset instead of discarding that answer.
 The dry-run output shows the generated pins for review.
 NemoClaw applies and records the transformed preset instead of the unpinned source file.
 Rebuild replays recorded pins from the sandbox registry without depending on the ambient environment.
@@ -109,6 +116,10 @@ NemoClaw performs a new preflight and shows the changed pins before it applies t
 Do not add `allowed_ips` to the source YAML.
 
 ## Apply a Single File
+
+NemoClaw refuses ordinary custom policy changes while Shields are down or a Shields transition is incomplete.
+For either state, run `$$nemoclaw my-assistant shields up`, confirm `$$nemoclaw my-assistant shields status` reports `UP`, and retry.
+If Shields state is corrupt, follow the reported repair guidance instead of changing policy.
 
 Preview the file before you apply it:
 
@@ -176,14 +187,26 @@ $$nemoclaw my-assistant doctor
 ```
 
 Each command identifies the interrupted preset and operation.
-`policy list` also prints the required repair command.
-While the journal remains, NemoClaw refuses other policy changes, rebuild, snapshot creation, and snapshot restore.
+For an interrupted remove, `policy list` prints the exact retry command.
+For an interrupted apply, it identifies the required `policy add` form.
+While the journal remains, NemoClaw refuses policy and sandbox lifecycle mutations that could change or capture the same state.
+These include managed MCP and messaging-channel policy changes, Shields down, rebuild, `backup-all`, snapshot creation and restore, and sandbox creation or onboarding.
+Destroy is blocked while the sandbox is live or its state cannot be classified.
+If gateway-scoped checks prove that the sandbox is already absent, destroy clears the exact pending journal and continues cleanup.
 
 For an interrupted apply, run a `policy add --from-file` or `policy add --from-dir` command.
+
+```bash
+$$nemoclaw my-assistant policy add --from-file ./original-policy.yaml
+# or
+$$nemoclaw my-assistant policy add --from-dir ./original-policy-directory
+```
+
 NemoClaw validates the add options, then checks the journal before it reads the source path or resolves trusted-private DNS.
 Invalid option combinations fail without changing the journal.
 `--dry-run` leaves the pending journal and live policy unchanged, so omit it when you repair.
-It uses the exact source and target stored in the journal, so the original file and current DNS answers are not required for repair.
+The path argument is syntactically required, but NemoClaw does not read it during repair.
+It uses the exact source and target stored in the journal, so the original path may no longer exist and current DNS answers are not required.
 The repair invocation reconciles only the pending apply and then exits.
 After a `--from-dir` repair, run the command again to load the directory and continue with the remaining files.
 For an interrupted remove, rerun the removal:
@@ -197,7 +220,7 @@ If the live policy matches the exact target, NemoClaw records the completed oper
 If an interrupted apply matches the exact source, NemoClaw reapplies the durable target from the journal.
 If an interrupted remove matches the exact source, NemoClaw retries the removal.
 If the live policy is unreadable or matches neither state, NemoClaw preserves the journal and continues to block the listed operations.
-Inspect the live policy before you retry in that state.
+Inspect the live policy with `$$nemoclaw my-assistant policy get` before you retry in that state.
 
 <AgentOnly variant="openclaw,hermes">
 
