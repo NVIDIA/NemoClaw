@@ -207,10 +207,12 @@ describe("injected managed transport wrapper", () => {
   });
 
   it("sends the request when diagnostic identifier generation fails (#7957)", async () => {
+    let randomUuidCalls = 0;
     let innerCalls = 0;
     const { wrap, stderr } = loadHelper({ OPENSHELL_SANDBOX: "1" }, () => Date.now(), {
       crypto: {
         randomUUID: () => {
+          randomUuidCalls += 1;
           throw new Error("entropy unavailable");
         },
       },
@@ -227,10 +229,12 @@ describe("injected managed transport wrapper", () => {
 
     expect(response.status).toBe(200);
     expect(innerCalls).toBe(1);
+    expect(randomUuidCalls).toBeGreaterThan(0);
     expect(stderr).toEqual([]);
   });
 
   it("returns a successful response when shadow diagnostic emission fails (#7957)", async () => {
+    let stderrWrites = 0;
     let innerCalls = 0;
     const { wrap } = loadHelper(
       {
@@ -240,6 +244,7 @@ describe("injected managed transport wrapper", () => {
       () => Date.now(),
       {
         writeStderr: () => {
+          stderrWrites += 1;
           throw new Error("stderr unavailable");
         },
       },
@@ -260,6 +265,7 @@ describe("injected managed transport wrapper", () => {
 
     expect(response).toBe(expected);
     expect(innerCalls).toBe(1);
+    expect(stderrWrites).toBeGreaterThan(0);
   });
 
   it("emits opt-in operation timing and a bounded shadow recommendation without changing responses (#7957)", async () => {
