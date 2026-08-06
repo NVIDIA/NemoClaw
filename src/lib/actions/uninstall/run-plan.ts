@@ -989,6 +989,20 @@ function removeNemoclawOpenShellGatewayUserService(runtime: UninstallRuntime): b
   return true;
 }
 
+// scripts/install.sh stages the NemoClaw-managed gateway user service only for
+// the default gateway port, so an uninstall run for any other port leaves it in
+// place. `--keep-openshell` and an externally supervised authority leave it in
+// place too.
+function removeManagedDefaultGatewayUserService(
+  runtime: UninstallRuntime,
+  options: UninstallRunOptions,
+  externallySupervised: boolean,
+): boolean {
+  return options.keepOpenShell || externallySupervised || GATEWAY_PORT !== DEFAULT_GATEWAY_PORT
+    ? true
+    : removeNemoclawOpenShellGatewayUserService(runtime);
+}
+
 function removeNemoclawOpenShellGatewayEnv(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
@@ -1799,12 +1813,14 @@ function executePlan(
       if (!scopedToSelectedGateway && !removeManagedDistributedVllmRuntime(paths, runtime)) {
         return { ok: false };
       }
+      // #8220: a gateway-scoped uninstall still needs the selected OpenShell
+      // gateway service running to delete its sandbox, so "OpenShell resources"
+      // removes that unit after the sandbox delete succeeds.
       if (
-        !options.keepOpenShell &&
-        !externallySupervised &&
-        GATEWAY_PORT === DEFAULT_GATEWAY_PORT
+        !scopedToSelectedGateway &&
+        !removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)
       ) {
-        if (!removeNemoclawOpenShellGatewayUserService(runtime)) ok = false;
+        ok = false;
       }
       if (!scopedToSelectedGateway) {
         stopHelperServices(paths, runtime);
@@ -1874,6 +1890,9 @@ function executePlan(
         return { ok: false };
       }
       if (scopedToSelectedGateway && !options.keepOpenShell && !externallySupervised) {
+        if (!removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)) {
+          ok = false;
+        }
         stopHostGatewayProcessesForUninstall(runtime, {
           gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
           logNoProcesses: true,

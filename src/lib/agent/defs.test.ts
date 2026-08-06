@@ -105,6 +105,65 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/YAML object/);
   });
 
+  it("rejects the superseded runtime auth directory inventory (#8006)", () => {
+    const agentName = `runtime-auth-inventory-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Runtime Auth Inventory",
+        "state_dirs:",
+        "  - identity",
+        "runtime_auth_state_dirs:",
+        "  - identity",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/replaced.*backup: false/);
+  });
+
+  it("derives protected configuration files from each agent manifest (#8006)", () => {
+    expect(loadAgent("hermes").configPaths.shieldsFiles).toEqual([".env"]);
+    expect(loadAgent("openclaw").configPaths.shieldsFiles).toEqual([]);
+    expect(loadAgent("langchain-deepagents-code").configPaths.shieldsFiles).toEqual([]);
+  });
+
+  it("derives image state-lock-plan support from each agent manifest (#8006)", () => {
+    expect(loadAgent("openclaw").stateLockPlanInImage).toBe(true);
+    expect(loadAgent("hermes").stateLockPlanInImage).toBe(true);
+    expect(loadAgent("langchain-deepagents-code").stateLockPlanInImage).toBe(false);
+  });
+
+  it("rejects a non-boolean image state-lock-plan declaration (#8006)", () => {
+    const agentName = `invalid-image-plan-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "state_lock_plan_in_image: yes-please"].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/state_lock_plan_in_image.*boolean/);
+  });
+
+  it.each([
+    ["a scalar", "  shields_files: .env"],
+    ["a non-string entry", "  shields_files:\n    - 42"],
+  ])("rejects config.shields_files with %s", (_case, declaration) => {
+    const agentName = `invalid-shields-files-${String(Date.now())}-${_case.replaceAll(" ", "-")}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Invalid Shields Files",
+        "config:",
+        "  dir: /sandbox/.invalid",
+        "  config_file: config.json",
+        declaration,
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/config\.shields_files/);
+  });
+
   it("rejects invalid forward_ports values in manifests", () => {
     for (const port of [1023, 70000]) {
       const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;

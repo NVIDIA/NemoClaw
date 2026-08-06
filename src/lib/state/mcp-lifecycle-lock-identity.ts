@@ -32,6 +32,8 @@ export interface LockObservation {
   mtimeMs: number;
   dev: number;
   ino: number;
+  /** A directory cannot be restored with a hard link. */
+  reclaimable: boolean;
 }
 
 export type McpLifecycleLockDisposition = "active" | "stale" | "wait";
@@ -205,7 +207,9 @@ export function classifyMcpLifecycleLock(
 ): McpLifecycleLockDisposition {
   const { owner } = observation;
   if (!owner || owner.sandboxName !== sandboxName) {
-    return nowMs - observation.mtimeMs >= corruptLockGraceMs ? "stale" : "wait";
+    return observation.reclaimable && nowMs - observation.mtimeMs >= corruptLockGraceMs
+      ? "stale"
+      : "wait";
   }
   // The lock coordinates local CLI processes, not independent hosts or PID
   // namespaces. Never use this process's PID table to reap a foreign owner;
