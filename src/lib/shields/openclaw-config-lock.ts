@@ -19,8 +19,10 @@ export const OPENCLAW_CONFIG_HASH_PATH = `${OPENCLAW_CONFIG_DIR}/.config-hash`;
 const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const HOST_HELPER = path.resolve(__dirname, "../../../scripts/openclaw-config-guard.py");
 const CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "5m"];
-// The guard runs the recursive fan-out itself, so the host must outlast its
-// budget or the kill lands mid-unseal, past rollback and the JSON contract.
+// Must exceed STATE_DIR_GUARD_TIMEOUT_SECONDS (12m) in
+// scripts/openclaw-config-guard.py, which is the guard's whole-action budget
+// for the unseal and its rollback together. A shorter host timeout lands the
+// kill mid-unseal, past the rollback and the JSON contract.
 const RECOVERY_CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "15m"];
 const SCHEMA_VALIDATION_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "30s"];
 const MAX_SCHEMA_CANDIDATE_BYTES = 16 * 1024 * 1024;

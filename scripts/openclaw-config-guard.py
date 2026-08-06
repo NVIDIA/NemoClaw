@@ -78,7 +78,10 @@ OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NODE_BINARY_PATH = "/usr/local/bin/node"
 JSON5_MODULE_PATH = "/opt/nemoclaw/node_modules/json5"
 JSON5_VALIDATION_TIMEOUT_SECONDS = 5
-# Matches the budget the host allows its own state-dir step.
+# Whole-action budget for `unlock-failed-startup`: the recursive unseal and its
+# relock rollback share it. Keep it below RECOVERY_CONTAINER_TIMEOUT in
+# src/lib/shields/openclaw-config-lock.ts, or the host kills the guard before
+# the rollback can finish.
 STATE_DIR_GUARD_TIMEOUT_SECONDS = 12 * 60
 INSTALLED_HELPER_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py"
 COPY_BUFFER_BYTES = 1024 * 1024
