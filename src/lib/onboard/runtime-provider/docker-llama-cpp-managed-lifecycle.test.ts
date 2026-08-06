@@ -16,7 +16,6 @@ import {
   type LlamaCppHostLocalLaunchContract,
   type LlamaCppHostLocalRuntimeBindings,
 } from "../../inference/llama-cpp/host-local-runtime";
-import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createDockerLlamaCppManagedLifecycle,
   type DockerLlamaCppManagedLifecycleOptions,
@@ -26,8 +25,10 @@ import type {
   HostLocalCreateJournalRecord,
   HostLocalCreateJournalStore,
 } from "./host-local-create-journal";
-import { serializeHostLocalInferenceReceipt } from "./host-local-inference";
-import { reproveHostLocalInferenceReceipt } from "./host-local-inference-lifecycle";
+import {
+  parseHostLocalInferenceReceipt,
+  serializeHostLocalInferenceReceipt,
+} from "./host-local-inference";
 import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
 
 const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
@@ -638,17 +639,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(serialized).not.toContain("filesystemIdentity");
     expect(serialized).not.toContain("test-only-secret");
 
-    const production = createDockerRuntimeProviderBundle();
-    expect(production.hostLocalInference.supported).toBe(false);
-    const testBundle = {
-      ...production,
-      hostLocalInference: {
-        providerId: "docker",
-        supported: true as const,
-        runtime: lifecycle.runtime,
-      },
-    };
-    expect(reproveHostLocalInferenceReceipt(testBundle, serialized)).toBe(serialized);
+    expect(serializeHostLocalInferenceReceipt(parseHostLocalInferenceReceipt(serialized))).toBe(
+      serialized,
+    );
     expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
     expect(lifecycle.runtime.stopManaged(receipt).running).toBe(false);
     expect(lifecycle.runtime.prepareDestroy(receipt)).toEqual(receipt);

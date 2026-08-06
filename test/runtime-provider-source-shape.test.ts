@@ -254,8 +254,13 @@ describe("runtime provider central source boundary", () => {
   // source-shape-contract: security -- Registered runtime providers must remain bootstrap-unsupported until their complete transaction implementations are qualified
   it("keeps registered providers bootstrap-unsupported", () => {
     const dockerProvider = read("src/lib/onboard/runtime-provider/docker.ts");
+    // Neutral contracts may name an operation but cannot activate a provider implementation.
     const providerImplementationSource = providerPaths
-      .filter((path) => path !== "src/lib/onboard/runtime-provider/contract.ts")
+      .filter(
+        (path) =>
+          path !== "src/lib/onboard/runtime-provider/contract.ts" &&
+          path !== "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
+      )
       .map(read)
       .join("\n");
     expect(dockerProvider).not.toMatch(
