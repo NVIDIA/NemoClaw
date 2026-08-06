@@ -8,6 +8,7 @@ import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-co
 import type { VllmProfile } from "../inference/vllm";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
+import type { LocalModelProfilePlan } from "./local-model-profile/integration";
 import type { InferenceProviderHostState } from "./provider-host-state";
 import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
 
@@ -1291,6 +1292,41 @@ describe("createSetupNim", () => {
       preferredInferenceApi: "openai-completions",
     });
     expect(handleLlamaCppSelection).toHaveBeenCalledOnce();
+  });
+
+  it("routes a gated local model profile through its dedicated onboarder", async () => {
+    const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const plan = { runtime: "vllm" } as LocalModelProfilePlan;
+    const onboard = vi.fn<NonNullable<SetupNimFlowDeps["localModelProfileIntegration"]>["onboard"]>(
+      async (_plan, host, state) => {
+        expect(host).toMatchObject({
+          hasVllmImage: true,
+          sparkHost: true,
+          vllmProfile: profile,
+          vllmRunning: false,
+        });
+        state.provider = "vllm-local";
+        state.model = "catalog/model";
+        state.endpointUrl = "http://127.0.0.1:8000/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        localModelProfileIntegration: { resolvePlan: () => plan, onboard },
+        detectInferenceProviderHostState: () =>
+          makeHostState({ vllmProfile: profile, hasVllmImage: true }),
+        selectFromNumberedMenu: () => unexpected("provider menu"),
+      }),
+    );
+
+    await expect(
+      setupNim({ type: "nvidia", spark: true, platform: "spark" } as never),
+    ).resolves.toMatchObject({ provider: "vllm-local", model: "catalog/model" });
+    expect(onboard).toHaveBeenCalledOnce();
   });
 
   it("returns interactive occupied-port selection to the provider menu", async () => {

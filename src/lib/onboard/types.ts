@@ -143,4 +143,6 @@ export type OnboardOptions = {
   noGpu?: boolean;
   autoYes?: boolean;
   experimentalProfile?: import("./docker-driver-platform").ExperimentalOnboardProfile | null;
+  /** Exact secret-free serving catalog identity selected by the generic profile UX. */
+  servingProfileProvenance?: import("../inference/serving/types").ServingProfileProvenance | null;
 };

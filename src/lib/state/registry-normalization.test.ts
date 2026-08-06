@@ -45,6 +45,26 @@ afterEach(() => {
 });
 
 describe("sandbox registry normalization", () => {
+  const servingProfileProvenance = {
+    schemaVersion: 1,
+    catalogDigest: `sha256:${"1".repeat(64)}`,
+    preset: {
+      id: "vllm.dgx-spark-gb10.single.example",
+      digest: `sha256:${"2".repeat(64)}`,
+      displayName: "Example Spark profile",
+      supportState: "experimental",
+    },
+    recipe: {
+      id: "vllm.dgx-spark-gb10.single.example",
+      digest: `sha256:${"3".repeat(64)}`,
+      backend: "vllm",
+    },
+    model: { id: "example/model", revision: "revision-1" },
+    runtimeImage: null,
+    estimatedImageDownloadBytes: null,
+    estimatedModelDownloadBytes: null,
+  } as const;
+
   it.each([
     null,
     [],
@@ -137,6 +157,28 @@ describe("sandbox registry normalization", () => {
       lifecycleGeneration,
       lifecycleLiveIdentityFingerprint,
     });
+  });
+
+  it("round-trips immutable serving profile provenance while preserving legacy rows (#8246)", async () => {
+    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+    expect(registry.getSandbox("legacy")?.servingProfileProvenance).toBeUndefined();
+
+    registry.registerSandbox({ name: "profile", servingProfileProvenance });
+    vi.resetModules();
+    const reloadedRegistry = await import("./registry");
+    expect(reloadedRegistry.getSandbox("profile")?.servingProfileProvenance).toEqual(
+      servingProfileProvenance,
+    );
+  });
+
+  it("fails closed when persisted serving profile provenance is malformed (#8246)", async () => {
+    const registry = await loadRegistryWith({
+      profile: {
+        name: "profile",
+        servingProfileProvenance: { schemaVersion: 1, catalogDigest: "latest" },
+      },
+    });
+    expect(() => registry.getSandbox("profile")).toThrow("invalid serving profile provenance");
   });
 });
 
