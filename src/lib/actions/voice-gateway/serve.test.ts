@@ -77,8 +77,8 @@ describe("voice gateway listener lifetime", () => {
       listen(...args: unknown[]): this {
         this.listenArgs = args.slice(0, 2);
         this.listening = true;
-        const callback = args.at(-1);
-        typeof callback === "function" ? callback() : undefined;
+        const callback = args.at(-1) as () => void;
+        callback();
         return this;
       }
 
