@@ -89,11 +89,24 @@ describe("internal command documentation (#3782)", () => {
     expect(internalIds.length).toBeGreaterThanOrEqual(9);
   });
 
-  it.each(references)("documents every hidden internal command in $name", ({ text, binary }) => {
-    const undocumented = internalIds.filter(
-      (id) => !text.includes(spaceFormInvocation(binary, id)),
-    );
+  it.each(references)("documents every generally applicable hidden internal command in $name", ({
+    text,
+    binary,
+  }) => {
+    const undocumented = internalIds
+      .filter((id) => id !== "internal:voice-gateway:serve")
+      .filter((id) => !text.includes(spaceFormInvocation(binary, id)));
     expect(undocumented).toEqual([]);
+  });
+
+  it("publishes the experimental voice gateway only in the OpenClaw reference", () => {
+    const commandId = "internal:voice-gateway:serve";
+    expect(renderedCommandReferences[0].text).toContain(
+      spaceFormInvocation(renderedCommandReferences[0].binary, commandId),
+    );
+    for (const reference of renderedCommandReferences.slice(1)) {
+      expect(reference.text).not.toContain(spaceFormInvocation(reference.binary, commandId));
+    }
   });
 
   it.each(references)("keeps internal commands out of the public command headings in $name", ({

@@ -3789,16 +3789,15 @@ Use the hosted `curl … | bash` form only when the CLI is broken or already par
 ## Internal Commands
 
 NemoClaw registers a hidden `internal` command namespace. These commands are
-compatibility entrypoints for repo-owned scripts, such as the installer, the
-uninstaller, DNS setup, and developer tooling. They are not part of the
-supported public CLI surface.
+compatibility entrypoints for repo-owned scripts and experimental services.
+They are not part of the supported public CLI surface.
 
 Each command class sets `hidden = true`, so the commands stay out of
 `$$nemoclaw --help`. They remain registered and routable, which is why they are
 listed here for reference. Treat their names, flags, and output as
 implementation details. They exist to back `install.sh`, `uninstall.sh`, and
-related automation, and they may change or be removed without notice. Most run
-indirectly through those scripts rather than being typed by hand.
+related automation, and they may change or be removed without notice.
+Most run indirectly through those scripts rather than being typed by hand.
 
 For contributor guidance on how these command files are structured, refer to
 `src/commands/internal/README.md`.
@@ -3814,11 +3813,69 @@ For contributor guidance on how these command files are structured, refer to
 | `$$nemoclaw internal dns setup-proxy` | onboarding / sandbox setup | Configure the DNS forwarder bridge inside a sandbox pod. |
 | `$$nemoclaw internal dns fix-coredns` | onboarding / sandbox setup | Patch CoreDNS to use a non-loopback upstream resolver. |
 | `$$nemoclaw internal dev npm-link-or-shim` | `scripts/npm-link-or-shim.sh` (development) | Run `npm link`, falling back to a user-local NemoClaw development shim. |
+<AgentOnly variant="openclaw">
+| `$$nemoclaw internal voice-gateway serve` | Operator-started foreground service | Start the loopback-only experimental committed-turn gateway for one configured OpenClaw agent. |
+</AgentOnly>
 
 These commands do not appear in the command-level parity check, which compares
 `$$nemoclaw --help` against the public command headings in this reference; hidden
 commands are excluded from both. The table above is the canonical reference for
 the family.
+
+<AgentOnly variant="openclaw">
+
+### Experimental Voice Gateway
+
+The voice gateway is a private experimental runtime adapter for one configured OpenClaw agent.
+It is not a public protocol or a VoiceClaw, ElevenLabs, Hermes, Deep Agents, or general voice support claim.
+An operator starts it as a foreground service.
+NemoClaw does not install, start, restart, or supervise it, and onboarding and managed startup do not launch it.
+
+Before startup, provision separate deployment admission and OpenClaw agent gateway credentials at absolute paths outside the repository.
+Each file must be a current-user-owned regular file that group and other users cannot access.
+User-owned parent directories must not be writable by group or other users.
+The service rejects symbolic-link files and symbolic-link parent directories.
+Each credential contains 32–4,096 printable non-whitespace ASCII bytes; one trailing newline is accepted.
+NemoClaw does not create, distribute, rotate, recover, or delete these files. The files persist until the operator removes them. Removing a file does not revoke a value already loaded by the running process; rotation requires stopping and restarting the service.
+The runtime uses the deployment admission credential only to create a session and never receives the OpenClaw agent gateway credential.
+The runtime keeps its raw session grant in process memory. NemoClaw stores only its hash and removes the binding on close or expiry.
+
+Set `NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY=1` exactly.
+Any other value fails before the service reads credentials or creates a listener.
+Run the command with all required operator-controlled values:
+
+```bash
+NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY=1 $$nemoclaw internal voice-gateway serve \
+  --admission-credential-file /absolute/path/admission \
+  --openclaw-credential-file /absolute/path/openclaw \
+  --openclaw-endpoint ws://127.0.0.1:18789/ws \
+  --runtime-id local-runtime \
+  --runtime-profile pinned-profile \
+  --sandbox my-sandbox \
+  --agent main
+```
+
+The service binds only to `127.0.0.1`.
+The required running endpoint form is `ws://127.0.0.1:<port>/ws`.
+The optional `--listen-port` defaults to `18800` and accepts `1024`–`65535`.
+The optional `--session-lifetime-ms` defaults to `300000` and accepts `1`–`900000`.
+The optional `--turn-timeout-ms` defaults to `90000` and accepts `1`–`120000`.
+This slice allows one in-memory voice session and one committed turn.
+
+Verify listener responsiveness:
+
+```bash
+curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
+  http://127.0.0.1:18800/healthz
+```
+
+The expected output is `204`.
+This check confirms listener responsiveness only, not agent compatibility.
+Send `SIGINT` or `SIGTERM` to stop the process; process exit removes in-memory session state.
+The service emits structured lifecycle diagnostics without credentials or conversational content.
+
+</AgentOnly>
+
 
 ## Environment Variables
 

@@ -97,6 +97,19 @@ describe("internal oclif namespace", () => {
     });
   });
 
+  it("routes the experimental voice gateway through its internal command ID (#8378)", () => {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "internal", "voice-gateway", "serve", "--help"],
+      { encoding: "utf-8" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Internal: serve the experimental voice gateway");
+    expect(result.stdout).toContain("--admission-credential-file");
+    expect(result.stdout).toContain("--openclaw-credential-file");
+  });
+
   it("exposes installer ref and env normalization helpers through oclif routing", () => {
     const ref = spawnSync(
       process.execPath,

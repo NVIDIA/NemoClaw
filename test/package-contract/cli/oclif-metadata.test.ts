@@ -26,6 +26,13 @@ describe("oclif metadata lookup", () => {
     );
   });
 
+  it("includes the hidden experimental voice gateway command in the compiled package (#8378)", () => {
+    expect(getRegisteredOclifCommandMetadata("internal:voice-gateway:serve")).toMatchObject({
+      hidden: true,
+      summary: "Internal: serve the experimental voice gateway",
+    });
+  });
+
   it("keeps generated manifest command IDs aligned with oclif Config", async () => {
     const config = await OclifConfig.load(process.cwd());
     const expectedIds = config.commands.map((command) => command.id).sort();

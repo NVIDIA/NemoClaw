@@ -3,7 +3,7 @@
 
 # Internal commands
 
-Hidden `nemoclaw internal ...` commands are compatibility entrypoints for repo-owned scripts and migration helpers. They are not a public API.
+Hidden `nemoclaw internal ...` commands are compatibility entrypoints for repo-owned scripts, migration helpers, and explicitly gated experimental foreground services. They remain hidden and outside the supported public CLI.
 
 Keep command files thin:
 
