@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
-
+import {
+  parseHostLocalInferenceReceipt,
+  serializeHostLocalInferenceReceipt,
+} from "./host-local-inference";
 import {
   normalizePersistedEngineAuthority,
   type PersistedEngineAuthority,
@@ -18,6 +21,7 @@ export type HostLocalCreateJournalPhase =
   | "creating"
   | "created"
   | "started"
+  | "receipt-prepared"
   | "finalized";
 
 export interface HostLocalCreateJournalRecord {
@@ -37,6 +41,10 @@ export interface HostLocalCreateJournalRecord {
   /** Path-free identity of the private directory chain that owns the API-key pathname. */
   readonly apiKeyRootIdentitySha256: string;
   readonly engineAuthority: PersistedEngineAuthority;
+  /** Path- and value-free identity of the operation-scoped external state target. */
+  readonly receiptTargetSha256: string;
+  /** Canonical secret-free receipt retained for exact crash replay. */
+  readonly serializedReceipt: string | null;
   readonly receiptSha256: string | null;
 }
 
@@ -60,7 +68,11 @@ export interface HostLocalCreateJournalStore {
     runtimeId: string,
   ) => HostLocalCreateJournalRecord;
   readonly recordStarted: (transactionId: string) => HostLocalCreateJournalRecord;
-  readonly finalize: (transactionId: string, receiptSha256: string) => HostLocalCreateJournalRecord;
+  readonly prepareReceipt: (
+    transactionId: string,
+    serializedReceipt: string,
+  ) => HostLocalCreateJournalRecord;
+  readonly finalize: (transactionId: string) => HostLocalCreateJournalRecord;
   readonly retire: (transactionId: string) => void;
   readonly acquireExecution: (transactionId: string) => HostLocalCreateJournalExecutionLease;
   readonly assertExecution: (lease: HostLocalCreateJournalExecutionLease) => void;
@@ -75,7 +87,7 @@ export interface HostLocalCreateJournalStoreDependencies {
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
-const MAX_BYTES = 32 * 1024;
+const MAX_BYTES = 64 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const PROVIDER = /^[a-z][a-z0-9-]{0,62}$/u;
 const SERVICE = /^[a-z][a-z0-9.-]{0,62}$/u;
@@ -89,6 +101,7 @@ const PHASES = new Set<HostLocalCreateJournalPhase>([
   "creating",
   "created",
   "started",
+  "receipt-prepared",
   "finalized",
 ]);
 
@@ -113,6 +126,14 @@ function exactUnixMs(value: unknown): number {
     fail("create intent timestamp is malformed");
   }
   return Number(value);
+}
+
+function parsePreparedReceipt(serialized: string) {
+  try {
+    return parseHostLocalInferenceReceipt(serialized);
+  } catch (error) {
+    fail(`prepared receipt is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function normalizeExecutionLease(value: unknown): HostLocalCreateJournalExecutionLease {
@@ -155,8 +176,10 @@ export function normalizeHostLocalCreateJournalRecord(
     "phase",
     "providerId",
     "receiptSha256",
+    "receiptTargetSha256",
     "runtimeId",
     "schemaVersion",
+    "serializedReceipt",
     "service",
     "specSha256",
     "transactionId",
@@ -170,6 +193,9 @@ export function normalizeHostLocalCreateJournalRecord(
     fail("record schema is unsupported");
   }
   const phase = record.phase as HostLocalCreateJournalPhase;
+  const transactionId = exactText(record.transactionId, SHA256, "transaction identity");
+  const providerId = exactText(record.providerId, PROVIDER, "provider identity");
+  const service = exactText(record.service, SERVICE, "service identity");
   const runtimeId =
     record.runtimeId === null ? null : exactText(record.runtimeId, RUNTIME_ID, "runtime identity");
   const createIntentUnixMs =
@@ -178,25 +204,54 @@ export function normalizeHostLocalCreateJournalRecord(
     record.receiptSha256 === null
       ? null
       : exactText(record.receiptSha256, SHA256, "receipt digest");
+  const serializedReceipt =
+    record.serializedReceipt === null
+      ? null
+      : typeof record.serializedReceipt === "string"
+        ? record.serializedReceipt
+        : fail("serialized receipt must be canonical text or null");
   if ((phase === "prepared" || phase === "creating") !== (runtimeId === null)) {
     fail("phase and runtime identity disagree");
   }
   if ((phase === "prepared") !== (createIntentUnixMs === null)) {
     fail("phase and create intent timestamp disagree");
   }
-  if ((phase === "finalized") !== (receiptSha256 !== null)) {
-    fail("phase and receipt digest disagree");
+  const hasPreparedReceipt = phase === "receipt-prepared" || phase === "finalized";
+  if (
+    hasPreparedReceipt !== (receiptSha256 !== null) ||
+    hasPreparedReceipt !== (serializedReceipt !== null)
+  ) {
+    fail("phase and receipt fields disagree");
   }
   const authority = normalizePersistedEngineAuthority(record.engineAuthority);
   if (authority.operation !== "host-local-inference") {
     fail("engine authority has the wrong operation");
   }
+  if (serializedReceipt !== null && receiptSha256 !== null) {
+    const receipt = parsePreparedReceipt(serializedReceipt);
+    if (
+      serializeHostLocalInferenceReceipt(receipt) !== serializedReceipt ||
+      receipt.providerId !== providerId ||
+      receipt.service !== service ||
+      receipt.runtime.kind !== "container" ||
+      receipt.runtime.runtimeId !== runtimeId ||
+      receipt.runtime.specSha256 !== record.specSha256 ||
+      receipt.runtime.model?.generation !== transactionId ||
+      JSON.stringify(receipt.engineAuthority) !== JSON.stringify(authority)
+    ) {
+      fail("prepared receipt differs from create authority");
+    }
+    const expectedReceiptSha256 = createHash("sha256").update(serializedReceipt).digest("hex");
+    if (receiptSha256 !== expectedReceiptSha256) {
+      fail("prepared receipt digest changed");
+    }
+  }
   return Object.freeze({
     schemaVersion: HOST_LOCAL_CREATE_JOURNAL_SCHEMA_VERSION,
-    transactionId: exactText(record.transactionId, SHA256, "transaction identity"),
+    transactionId,
     phase,
-    providerId: exactText(record.providerId, PROVIDER, "provider identity"),
-    service: exactText(record.service, SERVICE, "service identity"),
+    providerId,
+    service,
     containerName: exactText(record.containerName, NAME, "container name"),
     runtimeId,
     createIntentUnixMs,
@@ -213,6 +268,8 @@ export function normalizeHostLocalCreateJournalRecord(
       "API-key directory authority digest",
     ),
     engineAuthority: authority,
+    receiptTargetSha256: exactText(record.receiptTargetSha256, SHA256, "receipt target identity"),
+    serializedReceipt,
     receiptSha256,
   });
 }
@@ -568,10 +625,30 @@ export function createHostLocalCreateJournalStore(
         return { ...current, phase: "started" };
       });
     },
-    finalize(transactionId, receiptSha256) {
+    prepareReceipt(transactionId, serializedReceipt) {
       return replace(transactionId, (current) => {
-        if (current.phase !== "started") fail("only a started transaction can finalize");
-        return { ...current, phase: "finalized", receiptSha256 };
+        if (current.phase !== "started") {
+          fail("only a started transaction can prepare receipt publication");
+        }
+        const receipt = parsePreparedReceipt(serializedReceipt);
+        if (serializeHostLocalInferenceReceipt(receipt) !== serializedReceipt) {
+          fail("prepared receipt bytes are not canonical");
+        }
+        return {
+          ...current,
+          phase: "receipt-prepared",
+          serializedReceipt,
+          receiptSha256: createHash("sha256").update(serializedReceipt).digest("hex"),
+        };
+      });
+    },
+    finalize(transactionId) {
+      return replace(transactionId, (current) => {
+        if (current.phase === "finalized") return current;
+        if (current.phase !== "receipt-prepared") {
+          fail("only a receipt-prepared transaction can finalize");
+        }
+        return { ...current, phase: "finalized" };
       });
     },
     retire(transactionId) {
