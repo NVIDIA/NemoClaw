@@ -28,11 +28,11 @@ on:
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
-      - "src/lib/onboard/managed-bootstrap/envelope.ts"
-      - "src/lib/onboard/managed-startup/**"
+      - "src/lib/onboard/**"
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
       - "tsconfig.runtime-preloads.json"
@@ -47,14 +47,17 @@ env:
 jobs:
   pr-build-and-entrypoint:
     name: PR build and direct managed startup (${{ matrix.display_name }})
-    # External contributor PRs remain eligible after GitHub's maintainer
-    # workflow approval. This hosted-runner lane has no secret or package-token
-    # permission, never pushes, and resolves each public base to an exact digest.
+    # External contributor PRs retain the local build/direct-startup lane after
+    # GitHub's maintainer workflow approval. Exact digest publication is limited
+    # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
+      packages: write
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -65,22 +68,26 @@ jobs:
             base_alias: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/sandbox-base
             image: nemoclaw-managed-pr/openclaw
+            repository: ghcr.io/nvidia/nemoclaw/openclaw-sandbox
           - agent: hermes
             display_name: Hermes
             dockerfile: agents/hermes/Dockerfile
             base_alias: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
             image: nemoclaw-managed-pr/hermes
+            repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox
           - agent: langchain-deepagents-code
             display_name: Deep Agents Code
             dockerfile: agents/langchain-deepagents-code/Dockerfile
             base_alias: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
             image: nemoclaw-managed-pr/langchain-deepagents-code
+            repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -161,10 +168,10 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: ${{ matrix.image }}:${{ github.sha }}
+          tags: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
             io.nvidia.nemoclaw.managed-image.platform=linux/amd64
@@ -184,7 +191,7 @@ jobs:
         shell: bash
         env:
           AGENT: ${{ matrix.agent }}
-          IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.sha }}
+          IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
           PLATFORM: linux/amd64
           PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
@@ -213,7 +220,7 @@ jobs:
                --arg cohort "$PUBLICATION_COHORT" \
                --arg image_id "$image_id" \
                --arg platform "$PLATFORM" \
-               --arg revision "$GITHUB_SHA" '
+               --arg revision "$CANDIDATE_SHA" '
                  length == 1 and
                  .[0].Id == $image_id and
                  ((.[0].Config.User // "") as $user |
@@ -251,6 +258,204 @@ jobs:
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
             --platform linux/amd64
+
+      - name: Log in to GHCR for exact same-repository PR digest
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publish by digest only. No candidate tag, cohort tag, or release alias is
+      # created, so this proof cannot expose an incomplete all-agent cohort.
+      - name: Publish exact same-repository PR managed image by digest
+        id: publish
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          outputs: type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
+            io.nvidia.nemoclaw.agent=${{ matrix.agent }}
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
+            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          provenance: false
+          sbom: false
+
+      - name: Remove PR publication credentials
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        run: docker logout ghcr.io
+
+      - name: Export exact published PR managed-image contract
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "ERROR: exact PR head SHA is invalid" >&2
+            exit 1
+          }
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+            echo "ERROR: PR publication did not return an immutable digest" >&2
+            exit 1
+          }
+          reference="${IMAGE}@${DIGEST}"
+          raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
+          docker buildx imagetools inspect "$reference" --raw > "$raw"
+          [[ "sha256:$(sha256sum "$raw" | awk '{print $1}')" == "$DIGEST" ]] || {
+            echo "ERROR: published PR manifest bytes do not match the build digest" >&2
+            exit 1
+          }
+          anonymous_config="$(mktemp -d "$RUNNER_TEMP/managed-pr-anonymous.XXXXXX")"
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          DOCKER_CONFIG="$anonymous_config" docker pull --platform linux/amd64 "$reference"
+          release="v$(node -p 'require("./package.json").version')"
+          contract_dir="$RUNNER_TEMP/managed-pr-contract"
+          mkdir -p "$contract_dir"
+          jq -n \
+            --arg agent "$AGENT" \
+            --arg cohort "$COHORT" \
+            --arg digest "$DIGEST" \
+            --arg image "$IMAGE" \
+            --arg reference "$reference" \
+            --arg release "$release" \
+            --arg revision "$CANDIDATE_SHA" \
+            '{
+              contractVersion: 1,
+              agent: $agent,
+              platform: "linux/amd64",
+              image: $image,
+              digest: $digest,
+              reference: $reference,
+              source: {
+                repository: "NVIDIA/NemoClaw",
+                revision: $revision,
+                release: $release,
+                cohort: $cohort
+              },
+              startupProfileContractVersion: 1,
+              capabilityContractVersion: 1
+            }' > "$contract_dir/contract.json"
+
+      - name: Upload exact published PR managed-image contract
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
+          path: ${{ runner.temp }}/managed-pr-contract/contract.json
+          if-no-files-found: error
+
+  pr-managed-activation:
+    name: PR exact all-agent managed runtime activation
+    needs: pr-build-and-entrypoint
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-activation
+      E2E_JOB: "1"
+      E2E_TARGET_ID: managed-image-activation
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Download exact published all-agent contracts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/managed-pr-contracts
+          merge-multiple: false
+
+      - name: Assemble exact all-agent activation catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' contracts < <(
+            find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
+          )
+          [[ "${#contracts[@]}" -eq 3 ]] || {
+            echo "ERROR: exact all-agent activation requires three contracts" >&2
+            exit 1
+          }
+          jq -se \
+            --arg revision "$CANDIDATE_SHA" '
+              if (
+                length == 3 and
+                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
+                ([.[].source.revision] | unique) == [$revision] and
+                ([.[].source.cohort] | unique | length) == 1 and
+                ([.[].platform] | unique) == ["linux/amd64"]
+              )
+              then map({key: .agent, value: .}) | from_entries
+              else error("published PR contracts do not form one exact all-agent cohort")
+              end
+            ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+
+      - name: Build exact candidate CLI
+        run: |
+          npm ci --ignore-scripts
+          npm run build:cli
+
+      - name: Install OpenShell CLI
+        shell: bash
+        run: env -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run real all-agent managed runtime activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
+            echo "ERROR: managed activation checkout does not match the exact PR head" >&2
+            exit 1
+          }
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
+
+      - name: Upload managed runtime activation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/managed-image-activation/
+          if-no-files-found: error
 
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
