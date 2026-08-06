@@ -95,17 +95,16 @@ export interface GpuDetection {
 }
 
 export interface DetectGpuDeps {
-  // Optional accept-path for ARM64 WSL Docker Desktop `JMJWOA-Generic-*` GPUs
-  // (#4565). Injected in tests; in production `detectGpu()` lazily builds the
-  // default prover from the onboard WSL Docker Desktop module only when it is
-  // about to reject a denylisted ARM64 name.
+  // Optional accept-path for native or Docker Desktop-backed WSL ARM64 Linux
+  // hosts that report a `JMJWOA-Generic-*` GPU (#4565/#8096). Injected in tests;
+  // in production `detectGpu()` lazily builds the default prover only when it
+  // is about to reject a denylisted ARM64 name.
   proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
 }
 
-// Lazily construct the default ARM64 WSL Docker Desktop GPU prover. Kept lazy
-// (and behind a require) so the inference layer does not statically depend on
-// the onboard layer, and so the bounded Docker proof is only wired when we
-// actually reach the denylist-reject path on an ARM64 host.
+// Lazily construct the default ARM64 Linux GPU prover. Keep it behind a require
+// so the inference layer does not statically depend on the onboard layer. The
+// bounded Docker proof is wired only at the denylist-reject path.
 function defaultArm64WslDockerDesktopGpuProver(): Arm64WslDockerDesktopGpuProver | null {
   try {
     return require("../onboard/wsl-docker-desktop-gpu").createArm64WslDockerDesktopGpuProver();

@@ -23,7 +23,7 @@ export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND =
 // so it is bounded generously (3 min) rather than with the 30s detection
 // timeout. Operators on slow links can override via
 // NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS. The timeout is the safety bound that keeps
-// onboarding from hanging if Docker Desktop GPU passthrough stalls.
+// onboarding from hanging if Docker GPU passthrough stalls.
 const WSL_DOCKER_DESKTOP_GPU_PROOF_DEFAULT_TIMEOUT_MS = 180_000;
 
 export function wslDockerDesktopGpuProofTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
