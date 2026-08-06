@@ -720,23 +720,42 @@ Docker then marks the container `(unhealthy)` even though `pgrep` still finds th
 NemoClaw prevents restart-class configuration changes from causing this condition and recovers a gateway that stops serving:
 
 - The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
-- A serving watchdog inside the sandbox stops a gateway process that no longer serves after returning at least one serving response, and the supervisor relaunches it.
+- A serving watchdog inside the sandbox stops a gateway process that does not serve, and the supervisor relaunches it.
 
 The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same response requirement the sandbox applies when it waits for the gateway at startup.
-After the gateway returns a serving response, these probe outcomes count as not serving:
+These probe outcomes count as not serving:
 
 - The connection is refused.
 - The probe times out.
 - The connection is accepted and then closed without a response.
 - The health endpoint returns an HTTP status other than `200` or `401`.
 
-The watchdog logs the cause of each not-serving probe only after a serving response.
-It stops the gateway after four not-serving probes without an intervening serving response.
-At the default 30-second interval, this takes roughly two minutes when there are no inconclusive probes.
+The watchdog logs the cause of every not-serving probe.
+Its recovery bound depends on whether the gateway has ever served:
+
+- After the gateway returns a serving response, the watchdog stops it on the fourth not-serving probe with no intervening serving response.
+  At the default 30-second interval, this takes roughly two minutes.
+- Before the gateway has ever served, the watchdog uses a longer boot grace window because it cannot distinguish a slow boot from a gateway that cannot serve.
+  It stops the gateway on the 20th not-serving probe, roughly 10 minutes after launch at the default interval.
+  Set `NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES` to change this bound.
+
+Each of these watchdog settings accepts a positive integer of up to nine digits:
+
+- `NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES`.
+- `NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS`.
+- `NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD`.
+
+The watchdog rejects any other value, logs which setting it rejected, and falls back to that setting's default.
+
 Look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`.
+Before recovery reaches its bound, each not-serving probe line shows the count and bound.
+Examples include `(2/4 since the last serving response)` and `(7/20 since launch, having never served)`.
+
+If the watchdog reports that this supervisor is no longer the gateway's parent, the process survived without the supervisor that relaunches it.
+Recover the sandbox with `$$nemoclaw <name> recover`.
 
 If the watchdog reports `health probe inconclusive`, the probe itself could not run inside the sandbox.
-An inconclusive probe leaves the gateway untouched and preserves the number of not-serving probes since the last serving response.
+An inconclusive probe leaves the gateway untouched and preserves the current not-serving count, whether the watchdog is counting since launch or since the last serving response.
 If `curl` is missing, the watchdog reports this exact diagnostic:
 
 ```text
