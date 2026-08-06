@@ -57,6 +57,7 @@ describe("rebuild policy restore fidelity", () => {
       configPath: "/sandbox/.hermes/config.yaml",
       configFile: "config.yaml",
       format: "yaml",
+      stateLockPlanInImage: true,
     } as const;
     vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue(target);
     const seedDashboard = vi
@@ -96,6 +97,7 @@ describe("rebuild policy restore fidelity", () => {
       configPath: "/sandbox/.hermes/config.yaml",
       configFile: "config.yaml",
       format: "yaml",
+      stateLockPlanInImage: true,
     });
     vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig").mockReturnValue("failed");
 
@@ -132,6 +134,7 @@ describe("rebuild policy restore fidelity", () => {
       configPath: "/sandbox/.openclaw/openclaw.json",
       configFile: "openclaw.json",
       format: "json",
+      stateLockPlanInImage: true,
     });
     const seedDashboard = vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig");
 

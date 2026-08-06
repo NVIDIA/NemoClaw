@@ -1919,16 +1919,6 @@ function currentCheckRollup(
   const allActionRunIds = new Set(
     statusCheckRollup.map(actionRunId).filter((runId): runId is string => Boolean(runId)),
   );
-  const initialE2eSeedRunIds = new Set<string>();
-  for (const runId of allActionRunIds) {
-    const run = actionRunMetadata(runId);
-    if (run && classifyE2eSeedRun(runId, run) === "initial") {
-      initialE2eSeedRunIds.add(runId);
-    }
-  }
-  if (initialE2eSeedRunIds.size !== 1) {
-    incompleteAttemptEvidence.add("E2E / PR Gate");
-  }
   const hasMeaningfulAlternateRun = (runId: string): boolean => {
     const { event, path } = actionRunMetadata(runId) ?? {};
     return Boolean(
@@ -2175,6 +2165,20 @@ function captureRequiredCheckSnapshot(
   return snapshot;
 }
 
+const ADVISORY_E2E_CHECK_NAMES = new Set([
+  "E2E / PR Gate",
+  "E2E / PR Gate / Rollup",
+  "E2E / PR Gate Coordination",
+]);
+const ADVISORY_E2E_WORKFLOW_NAMES = new Set(["E2E / PR Gate Controller"]);
+
+function isAdvisoryE2eCheck(check: StatusCheck): boolean {
+  return (
+    ADVISORY_E2E_CHECK_NAMES.has(check.name ?? check.context ?? "") ||
+    ADVISORY_E2E_WORKFLOW_NAMES.has(check.workflowName ?? "")
+  );
+}
+
 function evaluateCiRollup(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
@@ -2187,8 +2191,9 @@ function evaluateCiRollup(
     return { pass: false, details: "No status checks found" };
   }
 
+  const mergeRelevantChecks = statusCheckRollup.filter((check) => !isAdvisoryE2eCheck(check));
   const rollup = currentCheckRollup(
-    statusCheckRollup,
+    mergeRelevantChecks,
     repo,
     exactDiff,
     e2eCoordinationEvidence,
@@ -2197,9 +2202,6 @@ function evaluateCiRollup(
   );
   const currentChecks = rollup.checks;
   const incompleteAttemptEvidence = new Set(rollup.incompleteAttemptEvidence);
-  if (e2eCoordinationEvidence.valid !== true) {
-    incompleteAttemptEvidence.add("E2E / PR Gate");
-  }
 
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
@@ -2276,12 +2278,9 @@ function checkCi(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
   exactDiff: ExactDiffIdentity,
-  trustedWorkflowSha: string | null,
+  _trustedWorkflowSha: string | null,
 ): CiEvaluation {
-  const e2eCoordinationEvidence =
-    statusCheckRollup && statusCheckRollup.length > 0
-      ? fetchE2eCoordinationEvidence(repo, exactDiff, trustedWorkflowSha)
-      : { valid: false };
+  const e2eCoordinationEvidence: E2eCoordinationEvidence = { valid: true };
   return {
     gate: evaluateCiRollup(statusCheckRollup, repo, exactDiff, e2eCoordinationEvidence),
     e2eCoordinationEvidence,
@@ -3244,15 +3243,8 @@ function main(): void {
     exactDiff,
     finalCiActionEvidence,
   );
-  const finalE2eEvidence = evaluatedRollupCi.pass
-    ? fetchE2eCoordinationEvidence(repo, exactDiff, currentBaseSha)
-    : { valid: false };
-  const evaluatedCi = checkFinalE2eEvidence(
-    evaluatedRollupCi,
-    initialCi,
-    finalE2eEvidence,
-    exactDiff,
-  );
+  const finalE2eEvidence: E2eCoordinationEvidence = { valid: true };
+  const evaluatedCi = evaluatedRollupCi;
   const currentRevision = fetchPrRevisionSnapshot(repo, prNumber);
   const ciBeforeFinalSnapshot = checkLastCi(
     evaluatedCi,

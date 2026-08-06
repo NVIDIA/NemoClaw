@@ -145,7 +145,7 @@ During fixture teardown, every passing or failing live test writes
 `test-progress.json` beside its other target artifacts. The runtime audit
 groups those files by target, optional shard, and test name, then reports
 median, p95, maximum, p95-minus-median variability, and the slowest observed
-phase with its duration and outcome. Scheduled and ordinary manual workflows
+phase with its duration and outcome. Push and ordinary manual workflows
 publish the current run's table in the GitHub Actions scorecard summary. The
 summary reads the target identity from `E2E_TARGET_ID`, falling back to the
 Actions `GITHUB_JOB`, and reads `NEMOCLAW_E2E_SHARD` when set. It retains
@@ -271,31 +271,16 @@ test/e2e/
 
 ## CI Entry Points
 
-- `tools/advisors/risk-plan.mts` is the small deterministic selection policy
-  shared by PR Review Advisor and the PR E2E controller. It maps
-  changed runtime surfaces to invariant families and
-  canonical `e2e.yaml` jobs; it is not a second test runner or migration-status
-  ledger. The advisor uses it as recommendation context, while the controller
-  applies it independently without model output.
+- `tools/advisors/risk-plan.mts` is the small deterministic recommendation policy
+  used by PR Review Advisor. It maps changed runtime surfaces to invariant
+  families and canonical `e2e.yaml` jobs; it does not dispatch E2E.
 
-- `.github/workflows/pr-e2e-gate.yaml` reserves the internal custom check named
-  `E2E / PR Gate` on every exact PR head, including forks, before
-  `CI / Pull Request` completes. Its default-branch `pull_request_target` path
-  validates the live PR head and base and seeds the in-progress check. The
-  trusted completed-CI or authorized-dispatch path validates the exact diff and
-  records the terminal verdict directly in that same required check. There is
-  no separate polling Actions job. The coordinator has a 330-minute job budget
-  and allows a selected E2E child 140 minutes. During rollout, maintainer gate
-  inspection accepts the former `E2E / PR Gate Coordination` custom-check name
-  only when the current `E2E / PR Gate` check is absent. The exact-diff
-  reservation identity includes both the PR head and base SHAs. After eligible
-  PR CI passes, every internal revision with selected jobs or targets dispatches
-  its plan and verifies each expected `risk-signal.json`. This behavior includes
-  all internal E2E control-plane revisions. A fork revision with selected
-  credential-bearing work remains pending until a repository maintainer or
-  administrator launches the `approve-e2e` workflow operation for the exact
-  head and base SHAs. See
-  [NemoClaw E2E CI](../README.md) for the full lifecycle.
+- `.github/workflows/e2e.yaml` runs the default suite on every push to `main`.
+  A maintainer can also dispatch the trusted `main` workflow against the
+  current exact head of an open internal or fork PR. The manual path validates
+  the actor, PR number, head repository, head SHA, base SHA, workflow SHA, and
+  review reason before candidate checkout. It runs the default suite without
+  dynamic job or target selection. See [NemoClaw E2E CI](../README.md).
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -314,13 +299,12 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  PR E2E dispatches authenticate the controller-owned required check before
-  checking out the PR revision, then validate the PR SHA and controller
-  metadata before preparation. Direct manual dispatches cannot reuse the PR
-  input shape to run fork code. Selected runs attach
-  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations and suppress PR
-  reporting and scorecards. The workflow boundary requires every selected job
-  shard to upload its evidence artifact.
+  Manual PR E2E authenticates the maintainer and exact PR identity before
+  checking out the candidate revision, then validates the identity again before
+  preparation. Direct manual dispatches cannot use selectors with PR inputs.
+  Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
+  invocations and suppress PR reporting and scorecards. The workflow boundary
+  requires every selected job shard to upload its evidence artifact.
 - `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
   four independent shards on each of macOS and WSL, with `fail-fast` disabled.
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute

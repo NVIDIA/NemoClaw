@@ -71,6 +71,16 @@ function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(canonicalJson).digest("hex")}`;
 }
 
+/** Reject a plan whose recorded digest does not match its canonical declarative payload. */
+export function assertLlamaCppGgufCachePlanDigest(plan: LlamaCppGgufCachePlan): void {
+  const { planDigest, ...payload } = plan;
+  if (planDigest !== digest(payload)) {
+    throw new LlamaCppGgufCachePlanError(
+      "The llama.cpp GGUF cache plan digest does not match its canonical payload.",
+    );
+  }
+}
+
 function assertDeclarativeContract(recipe: LlamaCppServingRecipe): void {
   const { acquisition, cache, files } = recipe.spec.model;
   if (recipe.spec.backend !== "install-llama-cpp" || recipe.spec.providerId !== "llama-cpp-local") {
