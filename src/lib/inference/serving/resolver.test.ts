@@ -204,9 +204,13 @@ function storageRemediableReadinessReport(
       ...report.capabilities.map((capability) =>
         capability.id === "host.docker.storage_compatible"
           ? { ...capability, state: "absent" as const }
-          : capability,
+          : capability.id === "host.docker.storage_remediation_available"
+            ? { ...capability, state: "present" as const }
+            : capability,
       ),
-      { id: "host.docker.storage_remediation_available", state: "present" },
+      ...(report.capabilities.some(({ id }) => id === "host.docker.storage_remediation_available")
+        ? []
+        : [{ id: "host.docker.storage_remediation_available", state: "present" as const }]),
     ],
     findings: [
       {

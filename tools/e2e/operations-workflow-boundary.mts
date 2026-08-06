@@ -27,7 +27,7 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
-    "  NVIDIA/NemoClaw:refs/heads/main:schedule:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
     "    required=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
@@ -204,110 +204,16 @@ function passesNeedsAsEnvironmentData(step: WorkflowStep): boolean {
   );
 }
 
-function validateControllerAuthorization(
-  errors: string[],
-  workflow: OperationsWorkflow,
-  matrixJob: WorkflowJob,
-): void {
-  if (permissionMap(workflow.permissions).checks !== "read") {
-    errors.push("E2E workflow must grant read-only check access for controller authentication");
-  }
-  const steps = matrixJob.steps ?? [];
-  const authenticationIndex = steps.findIndex(
-    (step) => step.name === "Authenticate controller dispatch",
-  );
-  const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
-  const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
-  const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
-  if (authentication.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Controller authentication must be activated only by checkout_sha");
-  }
-  if (
-    authenticationIndex < 0 ||
-    checkoutIndex < 0 ||
-    validationIndex < 0 ||
-    authenticationIndex >= checkoutIndex ||
-    checkoutIndex >= validationIndex
-  ) {
-    errors.push("Controller authentication must run before untrusted checkout and PR validation");
-  }
-  const expectedEnvironment = {
-    ACTOR: "${{ github.actor }}",
-    BASE_SHA: "${{ inputs.base_sha }}",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    CONTROLLER_CHECK_ID: "${{ inputs.controller_check_id }}",
-    CORRELATION_ID: "${{ inputs.correlation_id }}",
-    JOBS: "${{ inputs.jobs }}",
-    PLAN_HASH: "${{ inputs.plan_hash }}",
-    PR_NUMBER: "${{ inputs.pr_number }}",
-    RUN_ATTEMPT: "${{ github.run_attempt }}",
-    RUN_ID: "${{ github.run_id }}",
-    TARGETS: "${{ inputs.targets }}",
-  };
-  for (const [name, value] of Object.entries(expectedEnvironment)) {
-    if (authentication.env?.[name] !== value) {
-      errors.push(`Controller authentication must bind ${name}`);
-    }
-  }
-  const source = String(authentication.run ?? "");
-  for (const fragment of [
-    '"$ACTOR" == "github-actions[bot]"',
-    '"$RUN_ATTEMPT" == "1"',
-    '"$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$',
-    "nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}",
-    "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}",
-    "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}",
-    '--header "Cache-Control: no-cache"',
-    "Child run: ${expected_run_url}.",
-    `[[ "$(jq -r '.output.summary // ""' <<< "$check_json")" == "$expected_summary" ]]`,
-    '.name == "E2E / PR Gate"',
-    ".app.id == 15368",
-    '.app.slug == "github-actions"',
-    ".external_id == $external_id",
-    '.status == "in_progress"',
-    ".conclusion == null",
-    ".output.summary == $summary",
-  ]) {
-    if (!source.includes(fragment)) {
-      errors.push(`Controller authentication must retain ${fragment}`);
-    }
-  }
-  const maxAttempts = Number.parseInt(
-    source.match(/controller_auth_max_attempts=(\d+)/u)?.[1] ?? "",
-    10,
-  );
-  const pollSeconds = Number.parseInt(
-    source.match(/controller_auth_poll_seconds=(\d+)/u)?.[1] ?? "",
-    10,
-  );
-  if (maxAttempts !== 45) {
-    errors.push("Controller authentication must use exactly 45 polling attempts");
-  }
-  if (pollSeconds !== 2) {
-    errors.push("Controller authentication must use two-second polling intervals");
-  }
-  if (
-    !Number.isSafeInteger(maxAttempts) ||
-    !Number.isSafeInteger(pollSeconds) ||
-    (maxAttempts - 1) * pollSeconds <= 60
-  ) {
-    errors.push(
-      "Controller authentication polling window must exceed GitHub's 60-second check cache",
-    );
-  }
-}
-
-function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow): void {
+function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
   for (const name of [
     "jobs",
     "pr_number",
     "checkout_sha",
     "checkout_repository",
-    "controller_check_id",
+    "review_reason",
     "base_sha",
     "workflow_sha",
-    "plan_hash",
     "correlation_id",
   ]) {
     const input = inputs[name];
@@ -318,84 +224,108 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   const expectedEnvironment = {
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
-    NEMOCLAW_E2E_PLAN_HASH: "${{ inputs.plan_hash }}",
     NEMOCLAW_E2E_SHARD: "default",
   };
   for (const [name, value] of Object.entries(expectedEnvironment)) {
-    if (workflow.env?.[name] !== value) {
-      errors.push(`E2E workflow must bind ${name} to controller metadata`);
-    }
+    if (workflow.env?.[name] !== value) errors.push(`E2E workflow must bind ${name}`);
   }
   const runName = String(workflow["run-name"] ?? "");
-  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number", "inputs.correlation_id"]) {
-    if (!runName.includes(fragment)) errors.push(`PR E2E run name must include ${fragment}`);
+  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number"]) {
+    if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must include ${fragment}`);
   }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");
   if (
     !concurrencyGroup.includes("inputs.checkout_sha") ||
-    !concurrencyGroup.includes("inputs.pr_number")
+    !concurrencyGroup.includes("inputs.pr_number") ||
+    !concurrencyGroup.includes("manual-pr")
   ) {
-    errors.push("PR E2E concurrency must be scoped to its pull request");
+    errors.push("Manual PR E2E concurrency must be scoped to its pull request");
   }
   if (workflow.concurrency?.["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("PR E2E concurrency must cancel obsolete runs");
+    errors.push("Manual PR E2E concurrency must cancel obsolete runs");
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
-  validateControllerAuthorization(errors, workflow, matrixJob);
   const steps = matrixJob.steps ?? [];
-  const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
+  const authenticationIndex = steps.findIndex(
+    (step) => step.name === "Authenticate manual PR dispatch",
+  );
+  const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+  const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-  const validation = validationIndex >= 0 ? steps[validationIndex] : {};
-  if (validation.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Controller validation must be activated only by checkout_sha");
+  if (
+    authenticationIndex < 0 ||
+    checkoutIndex < 0 ||
+    validationIndex < 0 ||
+    prepareIndex < 0 ||
+    authenticationIndex >= checkoutIndex ||
+    checkoutIndex >= validationIndex ||
+    validationIndex >= prepareIndex
+  ) {
+    errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
-  if (validationIndex < 0 || prepareIndex < 0 || validationIndex >= prepareIndex) {
-    errors.push("Controller validation must run before workspace preparation");
+
+  const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
+  if (authentication.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("Manual PR authentication must be activated only by checkout_sha");
   }
-  const expectedStepEnvironment = {
+  const authEnvironment = {
+    ACTOR: "${{ github.actor }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    GITHUB_TOKEN: "${{ github.token }}",
+    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable }}",
     JOBS: "${{ inputs.jobs }}",
-    PLAN_HASH: "${{ inputs.plan_hash }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
-    CORRELATION_ID: "${{ inputs.correlation_id }}",
+    REVIEW_REASON: "${{ inputs.review_reason }}",
+    RUN_ATTEMPT: "${{ github.run_attempt }}",
     TARGETS: "${{ inputs.targets }}",
+    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
+    WORKFLOW_EVENT: "${{ github.event_name }}",
+    WORKFLOW_REF: "${{ github.ref }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
-  for (const [name, value] of Object.entries(expectedStepEnvironment)) {
-    if (validation.env?.[name] !== value) {
-      errors.push(`Controller validation must bind ${name}`);
-    }
+  for (const [name, value] of Object.entries(authEnvironment)) {
+    if (authentication.env?.[name] !== value) errors.push(`Manual PR authentication must bind ${name}`);
   }
-  const validationScript = String(validation.run ?? "");
+  const authSource = String(authentication.run ?? "");
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$RUN_ATTEMPT" == "1"',
+    '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
-    '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
-    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
-    '"$PLAN_HASH" =~ ^[a-f0-9]{64}$',
-    '"$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
-    '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
-    '[[ -n "$JOBS" || -n "$TARGETS" ]]',
-    'case "$TARGETS" in',
-    "ubuntu-repo-cloud-langchain-deepagents-code",
-    "ubuntu-repo-docker-post-reboot-recovery",
-    "PR E2E target is not approved by the trusted controller",
+    '"$REVIEW_REASON" =~ ^[[:print:]]{10,500}$',
+    '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    "Manual PR E2E requires a repository maintainer or administrator",
+    "Manual PR E2E runs the default suite",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
-    "'.state'",
-    "'.head.repo.full_name // \"\"'",
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
-    if (!validationScript.includes(fragment)) {
-      errors.push(`Controller validation must retain ${fragment}`);
+    if (!authSource.includes(fragment)) errors.push(`Manual PR authentication must retain ${fragment}`);
+  }
+
+  const validation = validationIndex >= 0 ? steps[validationIndex] : {};
+  if (validation.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("Manual PR checkout validation must be activated only by checkout_sha");
+  }
+  const validationSource = String(validation.run ?? "");
+  for (const fragment of [
+    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
+    "pull request must still be open",
+    "checkout_repository changed before execution",
+    "checkout_sha changed before execution",
+    "base_sha changed before execution",
+  ]) {
+    if (!validationSource.includes(fragment)) {
+      errors.push(`Manual PR checkout validation must retain ${fragment}`);
     }
   }
 
@@ -697,9 +627,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   const permissions = permissionMap(job.permissions);
   if (
     job.if !==
-    "${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}"
+    "${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}"
   ) {
-    errors.push("scorecard must run after scheduled and manual E2E executions");
+    errors.push("scorecard must run after push and direct-main manual E2E executions");
   }
   if (
     permissions.actions !== "read" ||
@@ -772,7 +702,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/analyze-first-turn-latency.mts",
     "firstTurnLatency.readCurrentFirstTurnLatencySample",
     "currentFirstTurnLatency",
-    "runtimeHistory.loadPriorNightlySummaries",
+    "runtimeHistory.loadPriorPushSummaries",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -836,15 +766,15 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   const runtimeUpload = findStep(job, "Upload E2E runtime summary");
   requirePinnedAction(errors, runtimeUpload, "scorecard runtime summary upload");
   if (
+    runtimeUpload.if !== "${{ always() && github.event_name == 'push' }}" ||
     !String(runtimeUpload.uses ?? "").startsWith(E2E_ARTIFACT_ACTION) ||
-    runtimeUpload.if !== "${{ always() && github.event_name == 'schedule' }}" ||
     runtimeUpload.with?.name !== "e2e-runtime-summary" ||
     runtimeUpload.with?.path !== "${{ runner.temp }}/e2e-runtime-summary.json"
   ) {
-    errors.push(
-      "scorecard must upload only the bounded scheduled runtime summary through the canonical E2E uploader",
-    );
+    errors.push("scorecard must upload only the bounded push runtime summary");
   }
+
+
 }
 
 function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): void {
@@ -946,7 +876,7 @@ export function validateE2eOperationsWorkflow(
 ): string[] {
   const errors: string[] = [];
   errors.push(...validateBaseImagePublicationGate(workflow));
-  validatePrGateDispatch(errors, workflow);
+  validateManualPrDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
   validateIssueRoutingRetirement(errors, workflow);
