@@ -2123,9 +2123,7 @@ function assertNoLegacyStateLayout(sandboxName: string, configDir: string): void
 
 /** Whether a guard error reports the OpenClaw startup readiness lease. */
 function isOpenClawStartupNotReady(error: unknown): boolean {
-  return (error instanceof Error ? error.message : String(error)).includes(
-    "[startup-not-ready]",
-  );
+  return (error instanceof Error ? error.message : String(error)).includes("[startup-not-ready]");
 }
 
 /** The guard's refusal when the sandbox is simply not in a failed startup. */

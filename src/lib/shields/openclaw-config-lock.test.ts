@@ -418,7 +418,9 @@ describe("OpenClaw config guard failed-startup recovery wiring (#8304)", () => {
     const { calls, privileged } = createExec(true);
 
     runOpenClawConfigGuard(privileged, "unlock-failed-startup", { planJson: '{"version":1}' });
-    const recovery = calls.map(({ cmd }) => cmd).find((cmd) => cmd.includes("unlock-failed-startup"));
+    const recovery = calls
+      .map(({ cmd }) => cmd)
+      .find((cmd) => cmd.includes("unlock-failed-startup"));
 
     // The guard allows the state-dir fan-out 12m, so a 5m host timeout would
     // kill it mid-unseal, past its rollback and its JSON error contract.

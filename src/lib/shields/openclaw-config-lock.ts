@@ -410,15 +410,7 @@ export function runOpenClawConfigGuard(
         chattrApplied: false,
       };
     }
-    command = [
-      ...timeoutPrefix,
-      "python3",
-      "-I",
-      "-",
-      action,
-      "--config-dir",
-      OPENCLAW_CONFIG_DIR,
-    ];
+    command = [...timeoutPrefix, "python3", "-I", "-", action, "--config-dir", OPENCLAW_CONFIG_DIR];
   } else {
     return {
       issues: [executionFailure("OpenClaw config guard capability probe failed", capability)],
