@@ -4397,7 +4397,7 @@ The setting accepts an integer from `1500` through `10000` milliseconds.
 When unset or blank, NemoClaw adds no override; OpenClaw uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
 The override applies to catalog `tools/list` requests for every MCP server in that sandbox and takes precedence over a server-specific request timeout.
 It does not change connection timeouts or the separate MCP tool-call request timeout, which defaults to 60,000 ms.
-NemoClaw rejects an invalid value before sandbox creation.
+NemoClaw rejects an invalid value before sandbox creation or rebuild.
 
 For an existing sandbox, apply a 3,000 ms timeout:
 

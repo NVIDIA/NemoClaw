@@ -124,6 +124,20 @@ describe("buildSandboxRuntimeEnvArgs", () => {
     expect(envArgs).toContain(`NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=${expected}`);
   });
 
+  it("forwards the tools/list timeout to the legacy null-agent OpenClaw path", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: null,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "3000" },
+    }).envArgs;
+
+    expect(envArgs).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000");
+  });
+
   it.each([
     "1499",
     "10001",

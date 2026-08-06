@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
@@ -10,6 +13,8 @@ import {
   INJECTED_TOOLS_LIST_TIMEOUT_HELPER,
   MARKER,
   patchMcpToolsListTimeoutText,
+  patchOpenClawMcpToolsListTimeout,
+  SUPPORTED_OPENCLAW_VERSION,
   TOOLS_LIST_TIMEOUT_ENV,
   TOOLS_LIST_TIMEOUT_MAX_MS,
   TOOLS_LIST_TIMEOUT_MIN_MS,
@@ -120,6 +125,47 @@ describe("patchMcpToolsListTimeoutText", () => {
       expect(patchManagedTransportDiagnosticsText(composed, "fixture.js").status).toBe(
         "already-patched",
       );
+    }
+  });
+});
+
+describe("patchOpenClawMcpToolsListTimeout", () => {
+  it.each([
+    "2026.3.11",
+    "2026.4.24",
+  ])("skips the unsupported legacy OpenClaw %s fixture before bundle discovery", (version) => {
+    const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-timeout-"));
+    const distDir = path.join(packageRoot, "dist");
+    fs.mkdirSync(distDir);
+    fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version }));
+    try {
+      expect(patchOpenClawMcpToolsListTimeout(distDir)).toEqual({
+        status: "skipped-unsupported-version",
+        version,
+      });
+    } finally {
+      fs.rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the exact-shape patch enabled for the supported OpenClaw version", () => {
+    expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.7.1");
+  });
+
+  it("fails closed for an unreviewed OpenClaw version", () => {
+    const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-timeout-"));
+    const distDir = path.join(packageRoot, "dist");
+    fs.mkdirSync(distDir);
+    fs.writeFileSync(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ version: "2026.8.1" }),
+    );
+    try {
+      expect(() => patchOpenClawMcpToolsListTimeout(distDir)).toThrow(
+        "OpenClaw 2026.8.1 is not reviewed for the MCP tools/list timeout compatibility patch",
+      );
+    } finally {
+      fs.rmSync(packageRoot, { recursive: true, force: true });
     }
   });
 });

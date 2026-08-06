@@ -47,6 +47,8 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
   agent: AgentDefinition | null,
   env: NodeJS.ProcessEnv,
 ): void {
+  // A null definition is the legacy OpenClaw path; keep this aligned with
+  // appendOpenClawRuntimeEnvArgs and the auto-pair compatibility settings.
   if (agent && agent.name !== "openclaw") return;
   for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
     const value = env[key]?.trim();

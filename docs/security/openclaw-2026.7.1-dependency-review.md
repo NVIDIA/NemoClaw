@@ -516,7 +516,7 @@ Reviewed behavior:
 - An unset or blank `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` value adds no override.
   OpenClaw then uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
 - NemoClaw forwards the setting only to an OpenClaw sandbox.
-  Host-side validation trims surrounding whitespace, accepts the remaining canonical integer from 1,500 through 10,000 ms, forwards normalized digits, and rejects another value before sandbox creation.
+  Host-side validation trims surrounding whitespace, accepts the remaining canonical integer from 1,500 through 10,000 ms, forwards normalized digits, and rejects an invalid value before sandbox creation or rebuild.
 - The injected runtime parser repeats the range and integer checks.
   It ignores the host-side setting unless `OPENSHELL_SANDBOX=1` and stops module initialization for an invalid direct runtime value.
 - A valid override takes precedence over the server request timeout only for catalog `tools/list` requests.
@@ -524,6 +524,7 @@ Reviewed behavior:
 - OpenClaw writes one `mcp_tools_list_timeout_override_ms` line when the MCP runtime loads with an override.
   The default path emits no additional log line.
 - The existing OpenClaw test-only timeout setter keeps first precedence so upstream runtime tests retain their isolation control.
+- The build patch skips the reviewed 2026.3.11 and 2026.4.24 legacy E2E fixture versions before bundle discovery.
 
 `test/openclaw-mcp-tools-list-timeout-patch.test.ts` executes the injected parser and pins the compiled preimage.
 It covers patch idempotence, fail-closed drift rejection, host and sandbox gates, bounds, invalid values, and composition with managed transport diagnostics.
