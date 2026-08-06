@@ -3,6 +3,10 @@
 
 import { isObjectRecord } from "../core/json-types";
 import { isBlockedMcpUrlTargetHost, MCP_SERVER_URL_MAX_LENGTH } from "../security/mcp-url-target";
+import {
+  isOperatorTrustablePrivateIp,
+  normalizeTrustedPrivateHost,
+} from "../security/trusted-private-endpoint";
 
 export interface McpBridgeEntry {
   server: string;
@@ -10,6 +14,15 @@ export interface McpBridgeEntry {
   adapter?: string;
   url: string;
   env: string[];
+  /** Exact URL host explicitly admitted for routed private access. */
+  trustedPrivateHost?: string;
+  /**
+   * Immutable validated private address pins recorded when the bridge was
+   * added. After strict registry normalization, this durable host state is the
+   * operator-approved replay authority; lifecycle commands never widen it
+   * from ambient DNS.
+   */
+  allowedIps?: string[];
   providerName?: string;
   /** Immutable OpenShell ObjectMeta.id captured after provider creation. */
   providerId?: string;
@@ -101,7 +114,7 @@ export function normalizeSandboxMcpState(value: unknown): SandboxMcpState | unde
   };
 }
 
-function normalizeMcpUrl(value: string): string | null {
+function normalizeMcpUrl(value: string, trustedPrivateHost?: string): string | null {
   if (value.length > MCP_SERVER_URL_MAX_LENGTH) return null;
   let parsed: URL;
   try {
@@ -111,7 +124,12 @@ function normalizeMcpUrl(value: string): string | null {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
   if (!parsed.hostname || parsed.username || parsed.password) return null;
-  if (isBlockedMcpUrlTargetHost(parsed.hostname)) return null;
+  if (
+    isBlockedMcpUrlTargetHost(parsed.hostname) &&
+    parsed.hostname.toLowerCase() !== trustedPrivateHost
+  ) {
+    return null;
+  }
   if (parsed.hash) parsed.hash = "";
   if (!parsed.pathname) parsed.pathname = "/";
   const normalized = parsed.toString();
@@ -122,9 +140,46 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
   if (!isObjectRecord(value)) return null;
   const serverName = typeof value.server === "string" && value.server ? value.server : server;
   if (!MCP_SERVER_RE.test(serverName)) return null;
-  const url = typeof value.url === "string" ? normalizeMcpUrl(value.url) : null;
+  let trustedPrivateHost: string | undefined;
+  if (value.trustedPrivateHost !== undefined) {
+    if (typeof value.trustedPrivateHost !== "string") return null;
+    try {
+      trustedPrivateHost = normalizeTrustedPrivateHost(value.trustedPrivateHost);
+    } catch {
+      return null;
+    }
+    if (trustedPrivateHost !== value.trustedPrivateHost) return null;
+  }
+  const url = typeof value.url === "string" ? normalizeMcpUrl(value.url, trustedPrivateHost) : null;
   const policyName = typeof value.policyName === "string" ? value.policyName : "";
   if (!url || !MCP_SAFE_NAME_RE.test(policyName)) return null;
+  if (trustedPrivateHost && new URL(url).hostname.toLowerCase() !== trustedPrivateHost) return null;
+  let allowedIps: string[] | undefined;
+  const rawAllowedIps = value.allowedIps;
+  if (trustedPrivateHost) {
+    if (
+      !Array.isArray(rawAllowedIps) ||
+      rawAllowedIps.length === 0 ||
+      !rawAllowedIps.every(
+        (address): address is string =>
+          typeof address === "string" &&
+          address === address.toLowerCase() &&
+          isOperatorTrustablePrivateIp(address),
+      )
+    ) {
+      return null;
+    }
+    const validatedAllowedIps = rawAllowedIps as string[];
+    allowedIps = [...new Set(validatedAllowedIps)].sort();
+    if (
+      allowedIps.length !== validatedAllowedIps.length ||
+      allowedIps.some((address, index) => address !== validatedAllowedIps[index])
+    ) {
+      return null;
+    }
+  } else if (rawAllowedIps !== undefined) {
+    return null;
+  }
   const rawEnv = value.env;
   const env =
     Array.isArray(rawEnv) &&
@@ -156,6 +211,7 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
     ...(adapter ? { adapter } : {}),
     url,
     env,
+    ...(trustedPrivateHost ? { trustedPrivateHost, allowedIps } : {}),
     ...(providerName ? { providerName } : {}),
     ...(providerId ? { providerId } : {}),
     policyName,
