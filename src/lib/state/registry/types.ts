@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  CuaRuntimeReadiness,
+  CuaSecurityAttestation,
+  CuaTargetAttachment,
+  CuaTaskResult,
+} from "../../cua/contract";
+import type { CuaReconciliationState } from "../../cua/reconciliation";
 import type { InferenceSelection } from "../../inference/selection";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
@@ -108,6 +115,16 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
+  /** Verified CUA runtime contract recorded by canonical onboarding. */
+  cuaRuntimeReadiness?: CuaRuntimeReadiness;
+  /** Secret-free projection of the one attached disposable desktop target. */
+  cuaTarget?: CuaTargetAttachment;
+  /** Content-free proof that the CUA security boundary is enforced for current identities. */
+  cuaSecurityAttestation?: CuaSecurityAttestation;
+  /** Bounded completed CUA task results retained for reconnect inspection. */
+  cuaTaskResults?: CuaTaskResult[];
+  /** Durable deny-by-default journal for an uncertain external CUA effect. */
+  cuaReconciliation?: CuaReconciliationState;
   /** Plugin install baseline captured before state is restored into a fresh OpenClaw image. */
   openclawImagePluginInstalls?: OpenClawImagePluginInstall[];
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on

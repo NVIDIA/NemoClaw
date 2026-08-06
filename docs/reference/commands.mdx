@@ -1461,7 +1461,15 @@ For a `compatible-endpoint` route that uses `openai-completions`, the text outpu
 The line is omitted for another provider or API family.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `cuaRuntime`, `cuaTarget`, `cuaSecurity`, `cuaReconciliation`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+The `cuaRuntime`, `cuaTarget`, `cuaSecurity`, and `cuaReconciliation` fields are validated, content-free CUA lifecycle projections.
+The three runtime, target, and security fields are `null` when CUA is disabled or runtime readiness is missing, unavailable, incompatible, or invalid.
+An unresolved possible external effect remains visible under `cuaReconciliation` until an independent observation and explicit cleanup reconcile it.
+Candidate readiness is visible only when explicit qualification mode is active.
+With valid candidate readiness, `cuaRuntime` includes the secret-free `providerAuthorityDigest` and the exact OpenShell executable identity in `components.openshell`.
+`cuaTarget` and `cuaSecurity` remain `null` until their lifecycle states exist.
+Status re-observes the exact OpenShell executable, managed inference provider authority, and effective policy before it exposes CUA state.
+If the effective policy no longer matches the attestation, status hides `cuaSecurity` and returns `cuaTarget.activeTask` as `null`.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
 `baselineExclusionStates` reports each recorded key with its current verification state.
 The `excluded` state means the reviewed entry still matches the active agent baseline and the key is absent from the live OpenShell policy.
@@ -1702,6 +1710,625 @@ $$nemoclaw my-assistant doctor [--json]
 | `--json` | Emit the report as JSON |
 
 </AgentOnly>
+
+## CUA Runtime and Onboarding
+
+The CUA lifecycle is disabled by default.
+Set `NEMOCLAW_CUA_ENABLED=1` in every host process that discovers NemoCUA, runs onboarding, reads status, runs doctor, or invokes a CUA lifecycle command.
+Without that exact value, NemoCUA is not discovered and lifecycle requests return `lifecycle_unavailable`.
+
+The image lane supplies one external, sanitized runtime manifest and all payloads that it declares. Configure:
+
+- `NEMOCLAW_CUA_RUNTIME_MANIFEST` as an absolute path to the manifest;
+- `NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256` as the exact lowercase SHA-256 of the manifest's raw bytes; and
+- `NEMOCLAW_CUA_SANDBOX_IMAGE_REF` as an immutable image reference ending in `@sha256:<digest>`, with the same digest declared by the manifest.
+
+On Linux, the manifest and its parent directory must be owned by root or the effective process user and must not be group-writable, world-writable, or symbolic links.
+Every declared payload is a sibling file with a fixed basename, size, and raw SHA-256 digest.
+NemoClaw verifies the agent manifest, policy, Dockerfiles, host CLI, target services, and target, task, and security adapters before staging or running them.
+Each Dockerfile must use strict UTF-8, LF line endings, and one instruction per line.
+The base Dockerfile must contain only one `ARG`, `ARG NEMOCUA_RUNTIME_IMAGE`, and use `${NEMOCUA_RUNTIME_IMAGE}` as its sole `FROM` base.
+The agent Dockerfile must contain only one `ARG`, `ARG BASE_IMAGE` with an optional default, and use `${BASE_IMAGE}` as its sole `FROM` base.
+NemoClaw rejects parser directives, continuations, `ADD`, external stages, broad build-context copies, and build-time network or mount access.
+The base Dockerfile cannot copy from the build context.
+The agent Dockerfile can copy only exact manifest-declared payloads staged under `agents/nemocua`, and every `RUN` must use only BuildKit `--network=none`.
+The CUA build context contains only those declared payloads and the staged Dockerfile; NemoClaw does not send the source checkout to the builder.
+The external agent manifest must identify NemoCUA as a terminal runtime and declare its canonical binary, version, interactive, headless, and smoke-test commands.
+CUA onboarding resolves one absolute OpenShell executable, verifies its bounded raw bytes, and invokes a private snapshot for authority observations.
+Runtime readiness records that exact executable as `cuaRuntime.components.openshell`; its digest contains no executable path.
+Runtime readiness also records the manifest-bound target adapter as `cuaRuntime.components.targetAdapter`.
+Candidate qualification evidence must contain the same target-adapter digest.
+
+Run canonical onboarding with the external runtime selected:
+
+```bash
+NEMOCLAW_CUA_ENABLED=1 \
+NEMOCLAW_CUA_QUALIFICATION=1 \
+NEMOCLAW_CUA_QUALIFICATION_ENVIRONMENT=/etc/nemoclaw/cua-qualification-environment.json \
+NEMOCLAW_CUA_RUNTIME_MANIFEST=/absolute/path/to/cua-runtime-manifest.json \
+NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256=<64-lowercase-hex> \
+NEMOCLAW_CUA_SANDBOX_IMAGE_REF=<image>@sha256:<digest> \
+$$nemoclaw onboard --agent nemocua
+```
+
+`$$nemoclaw agents list` and the interactive onboarding menu discover NemoCUA only when the feature flag and both runtime-manifest variables are present and the external agent manifest validates.
+The aliases `cua` and `nemo-cua` also resolve to `nemocua`.
+Onboarding builds the existing OpenShell-managed NemoCUA agent sandbox, verifies the terminal runtime and managed inference route, and records runtime readiness.
+It does not create a nested sandbox or invoke `nemocua sandbox create`.
+
+The qualification candidate requires `NEMOCLAW_CUA_QUALIFICATION=1` and an absolute `NEMOCLAW_CUA_QUALIFICATION_ENVIRONMENT` path to the bounded, authority-owned `cua-qualification-environment` JSON file.
+Only the exact value `1` enables candidate qualification; an absent or different value fails closed.
+The file must bind the exact clean candidate commit and the raw SHA-256 of the sanitized `cua.release.bundle/v1` receipt.
+Candidate readiness appears in public status only while qualification mode is enabled.
+
+The Brev Launchable publishes candidate activation as three root-owned, read-only files.
+They are the environment record at `/etc/nemoclaw/cua-qualification-environment.json`, the shell profile at `/etc/profile.d/nemoclaw-cua.sh`, and the two-line sentinel at `/run/nemoclaw-cua-launchable-ready`.
+The sentinel binds the exact candidate commit, environment digest, Launchable digest, and profile digest.
+For Brev activation, the external manifest, every payload, the executing Launchable, and each required host executable must use a canonical, root-owned authority path with non-writable ancestors.
+The Launchable proves GPU access through an immutable probe image whose digest matches the runtime manifest's target-image digest.
+Immediately before atomic publication, it revalidates its own exact bytes, the clean candidate checkout, the external runtime manifest and every declared payload, the manifest-bound sandbox and target-image identities, and the canonical path and digest of each required host executable.
+The environment record binds the observed `node`, `docker`, `nvidia-smi`, and `nvidia-ctk` executable digests.
+The profile exports the CUA feature, manifest, image, qualification, host-executable, and artifact-runner settings only when its own digest and the environment digest match the sentinel.
+A stale, partial, or modified tuple leaves CUA disabled in a new shell.
+
+Live qualification directly executes sealed fixture and oracle snapshots for one `browser` scenario.
+The browser task enters text, selects an option, scrolls, and submits the seeded form.
+The fixture prepares deterministic state before the public task starts, and the independent oracle verifies the exact submitted JSON after the public task result is available.
+Their closed, content-free identity protocols bind the scenario, task, sandbox, target identity, and runtime-readiness digest.
+The oracle receives no expected fixture, state, or evidence digest; NemoClaw compares its observation with the receipt and public task result and evidence afterward.
+The receipt contains exactly one browser scenario and no recreation scenario.
+After the final public target destroy, the gate runs canonical sandbox destroy and independently observes public status, the NemoClaw registry, and OpenShell inventory.
+The receipt binds those observations with domain-separated digests instead of completion flags.
+The target cleanup digest proves the exact adapter's validated detached record; it is not an independent cloud-provider inventory.
+Qualification cleanup removes staged authority even when snapshot creation, permission changes, writes, or sealing fail during setup.
+Candidate fixture and oracle processes run through the exact root-installed qualification artifact runner.
+The runner gives each process fresh mount and process ID namespaces, private memory-backed scratch and temporary filesystems, and a dedicated non-login user with no supplementary groups or Linux capabilities.
+It starts the process with `no-new-privileges` and a fixed credential-free environment.
+Ordinary CUA lifecycle operations do not use this candidate-only runner.
+
+A candidate manifest carries no embedded qualification evidence and is accepted only in the two-flag candidate qualification lane.
+This slice does not authorize final `available` readiness or product support.
+A live checkout must pass a configuration-isolated Git cleanliness observation.
+A live checkout must also match the commit's tracked file modes and bytes.
+For a canonical Git LFS pointer, the materialized payload instead must match the size and SHA-256 digest committed in that pointer.
+NemoClaw rejects staged changes, untracked paths, Git replace refs, and hidden `assume-unchanged` or `skip-worktree` index flags.
+A packaged build must supply the closed CUA build-identity stamp from a non-writable authority path, and its revision must match the executing NemoClaw build.
+
+`$$nemoclaw <name> status --json` exposes validated `cuaRuntime`, `cuaTarget`, and `cuaSecurity` projections.
+`cuaRuntime` carries `schemaVersion`, `kind`, `agent`, `mode`, `status`, `sourceRevision`, `sourceClean`, `runtimeManifestDigest`, `providerAuthorityDigest`, and `qualification`.
+It also carries `components`, `inference`, `commands`, `limits`, `requiredCapabilities`, `targetOperations`, `taskOperations`, and `securityOperations`.
+Its component tuple includes the exact target adapter that target lifecycle commands can execute.
+Candidate readiness uses `status: "candidate"` and binds `qualification.state`, `environmentDigest`, and `bundleReceiptDigest`.
+Invalid or drifted runtime state is projected as `null`.
+`$$nemoclaw <name> status --json` and `$$nemoclaw <name> doctor` independently re-observe the exact OpenShell executable, live provider authority, and effective policy.
+Restore the registered provider route or reapply the sandbox policy before you rerun canonical onboarding or security verification.
+
+Candidate readiness advertises exactly these target operations: `target.attach`, `target.status`, `target.health`, `target.detach`, and `target.destroy`.
+It advertises exactly these security operations: `security.verify` and `security.status`.
+It advertises exactly these task operations: `task.start`, `task.status`, `task.result`, and `task.cancel`.
+
+Every advertised target, task, and security command first holds the shared per-sandbox mutation lease used by inference, policy, shields, and snapshot changes, then the shared per-gateway route-mutation lease.
+The registry lock is held only to snapshot the complete sandbox row and compare-and-swap that exact row after the adapter returns.
+An adapter never runs under the age-expiring registry lock.
+Commands validate the live route and secret-free `providerAuthorityDigest` before granting authority, then revalidate them after an adapter call before accepting durable output.
+Concurrent route, policy, target, readiness, or same-sandbox registry drift rejects the output without overwriting the newer state.
+
+## CUA Target Lifecycle
+
+These commands attach one CUA sandbox to one dedicated disposable desktop target.
+The target must expose `browser`, `computer`, and `terminal` services.
+The manifest-bound target adapter probes those services and returns their health in a lifecycle record.
+NemoClaw validates that record, compares the immutable identities, and requires all three services to report healthy before it records the attachment.
+
+Every target command also requires canonical CUA runtime-readiness state for the sandbox.
+Until canonical onboarding records `cuaRuntime.status: "candidate"` in explicit qualification mode, the commands return `lifecycle_unavailable`.
+
+Target provisioning stays outside NemoClaw.
+The target adapter operates inside the operator's host authority boundary and retains all cloud, host administration, SSH, VNC, and service credentials.
+NemoClaw does not pass those credentials to the sandbox or store them in its registry.
+
+The `--adapter` value must be the exact absolute target-adapter path declared by the runtime manifest.
+NemoClaw executes that path only after its raw digest validates.
+NemoClaw starts it without a shell, writes one `target-adapter-request` JSON object to standard input, and accepts one record from `schemas/cua-lifecycle.schema.json` on standard output.
+The adapter must return a `target-attachment` record after success or a `failure` record after failure.
+NemoClaw does not copy adapter standard error into public output.
+
+Attachment also requires a secret-free JSON manifest that matches `schemas/cua-target-manifest.schema.json`.
+The manifest contains immutable target, image, service-bundle, and protocol identities.
+It must not contain endpoints, credentials, host names, instance IDs, transport handles, or administration data.
+The manifest path must directly name a regular file no larger than 64 KiB; NemoClaw does not follow symbolic links.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "kind": "target-manifest",
+  "identityDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "platform": "desktop-linux-amd64",
+  "image": {
+    "name": "desktop-image",
+    "version": "1.0.0",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "owner": "target-owner"
+  },
+  "serviceBundle": {
+    "name": "desktop-services",
+    "version": "1.0.0",
+    "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "owner": "target-owner"
+  },
+  "capabilities": [
+    { "id": "browser", "protocolVersion": "1.0.0" },
+    { "id": "computer", "protocolVersion": "1.0.0" },
+    { "id": "terminal", "protocolVersion": "1.0.0" }
+  ]
+}
+```
+
+All commands support `--json`.
+Successful commands exit `0`.
+Validation failures exit `2`, target or task conflicts exit `3`, unavailable lifecycle components exit `4`, and target health or compatibility failures exit `5`.
+Failure output uses the versioned `failure` record and does not include raw adapter diagnostics.
+
+Before a side-effecting target, task, or security adapter call, NemoClaw records a durable reconciliation journal.
+If the call times out, fails validation, or loses runtime authority before its result is committed, `status --json` reports `cuaReconciliation` and normal CUA operations remain unavailable across restart.
+Run `cua target health` or `cua task status` to record an independent observation.
+Cancel the exact observed active task first, then run `cua target detach` or `cua target destroy` to prove cleanup.
+Onboarding, rebuild, snapshot restore, inference changes, and sandbox destruction cannot discard an unreconciled target or task.
+
+### `$$nemoclaw <name> cua target attach`
+
+Attach one target after its manifest, image, service bundle, and three capability checks match.
+A worker that already has a target returns `target_conflict` without invoking the adapter.
+
+```bash
+$$nemoclaw my-cua cua target attach \
+  --adapter /absolute/path/to/target-adapter \
+  --target-manifest ./target-manifest.json \
+  --json
+```
+
+### `$$nemoclaw <name> cua target status`
+
+Read the recorded secret-free attachment projection without invoking the adapter.
+The output includes bounded target identity, capability protocol and health, and active-task state.
+It contains no endpoint or credential material.
+
+```bash
+$$nemoclaw my-cua cua target status --json
+```
+
+The same bounded projection appears as `cuaTarget` in `$$nemoclaw <name> status --json`.
+`$$nemoclaw <name> doctor` reports the recorded attachment state and capability health; it does not perform a live target probe.
+Run `$$nemoclaw <name> cua target health --adapter <absolute-path>` for fresh validation.
+
+### `$$nemoclaw <name> cua target health`
+
+Recover fresh authority through the host adapter.
+The command compares the observed target with the recorded identity and checks all three services.
+It records `unreachable`, `incompatible`, or `replaced` without accepting the target when validation fails.
+The command observes the effective applied-policy identity before it invokes the adapter and re-observes it after the adapter returns.
+If the policy changes during the call, NemoClaw rejects the adapter result with `policy_invalid`, preserves any observed active task, and records a reconciliation gate.
+The stale attestation and retained results are unavailable; cleanup requires an independent status observation followed by task cancellation and target detach or destroy.
+
+```bash
+$$nemoclaw my-cua cua target health \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+### `$$nemoclaw <name> cua target reset`
+
+This is a known compatibility command that this candidate does not advertise.
+It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
+
+```bash
+$$nemoclaw my-cua cua target reset \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+### `$$nemoclaw <name> cua target detach`
+
+Ask the adapter to revoke target reachability.
+NemoClaw clears the attachment projection only after the adapter returns a detached record.
+The command rejects detach while a task is active.
+
+```bash
+$$nemoclaw my-cua cua target detach \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+### `$$nemoclaw <name> cua target destroy`
+
+Ask the adapter to destroy the disposable target.
+NemoClaw clears the attachment projection only after the adapter confirms that the target is detached.
+The command rejects destroy while a task is active.
+
+```bash
+$$nemoclaw my-cua cua target destroy \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+Normal backups retain only the secret-free attachment projection.
+They exclude the target, browser profile, mutable desktop state, adapter state, and administration material.
+Recovery never reuses an attachment handle.
+The host adapter obtains fresh authority and NemoClaw validates the immutable identities again.
+
+## CUA Security Lifecycle
+
+These commands verify the CUA sandbox and target security boundary through one trusted, host-side verifier.
+The verifier inspects the actually applied policy, target reachability, process isolation, secret delivery, artifact handling, and fixture authority.
+It returns only a content-free `security-attestation` record.
+Private service endpoints, host names, transport details, paths, and credentials remain inside the verifier boundary.
+
+Runtime readiness must declare the trusted verifier as `components.securityVerifier`.
+The component digest must equal the SHA-256 digest of the verifier executable's raw bytes.
+The image lane supplies that executable and its immutable component identity.
+
+The `--adapter` value must be the exact absolute security-verifier path declared by the runtime manifest.
+The manifest-declared path must directly name a regular executable from 1 byte through 64 MiB.
+NemoClaw does not follow symbolic links.
+Before execution, NemoClaw compares the executable's raw bytes with `components.securityVerifier.digest`.
+It rejects a mismatch without running the supplied executable.
+NemoClaw executes a private snapshot of the verified bytes, so a path replacement after validation cannot change the invoked executable.
+It starts the snapshot without a shell, with a fixed credential-free environment, and writes one `security-adapter-request` JSON object to standard input.
+The request contains the sandbox name plus the public runtime-readiness and target-attachment records.
+It also contains `appliedPolicy`, a content-free object with the effective policy `revision` and SHA-256 `digest`.
+It contains no private verifier authority, service endpoint, host name, transport detail, path, or credential.
+NemoClaw accepts one `security-attestation` or `failure` record from `schemas/cua-lifecycle.schema.json` on standard output and never copies verifier standard error into public output.
+The returned `attestation.verifier` identity must exactly match `components.securityVerifier`.
+An executable digest mismatch or attestation identity mismatch fails with `policy_invalid` and clears prior CUA security and task state.
+
+A valid attestation proves that:
+
+- network access defaults to deny and permits only managed inference plus the declared browser, computer, and terminal services;
+- unrelated Internet access, cloud metadata, undeclared loopback, host administration, host desktop access, and the host Docker socket are denied;
+- provider, target, and service credentials remain in the host-side secret boundary and are absent from prompts, the sandbox filesystem, arguments, logs, state, diagnostics, backups, public JSON, and build logs;
+- the sandbox runs unprivileged as a non-root user without broad writable host mounts;
+- screenshots, page and screen content, downloads, browser profiles, cookies, mutable target state, task content, results, logs, and documents are SHA-256-addressed, owner-only, metadata-bounded, excluded from backups, and retained only until target detach or destroy; and
+- synthetic local fixtures cannot produce external side effects, and untrusted task or runtime content cannot expand authority.
+
+The attestation is valid only for the exact recorded OpenShell executable, runtime, sandbox image, target image, service bundle, declared policy, applied policy, task protocol, security verifier, inference route, capability protocols, and target identity.
+The attestation records the effective policy identity as `bindings.appliedPolicy`.
+Identity drift makes the recorded attestation stale and blocks status validation and task execution.
+NemoClaw clears it after a successful target detach or destroy, or when target health records the target as unreachable, incompatible, or replaced.
+An explicit verification failure also clears any prior attestation.
+Outside reconciliation, every task operation requires a current matching attestation before it invokes the task adapter.
+During reconciliation, only an independent `task.status` observation and the exact observed `task.cancel` cleanup may run without that attestation, using the journal's policy binding.
+If the effective policy revision or digest changes, public status hides the attestation and active-task authority without erasing the durable external-task record.
+A subsequent lifecycle or verification attempt records the drift under `cuaReconciliation`.
+Normal lifecycle and repeated verification remain blocked until an independent target or task status observation and explicit cleanup prove that no external work remains.
+Run `$$nemoclaw <name> cua security verify --adapter <absolute-path> --json` again only after reconciliation and after restoring or intentionally changing the policy.
+
+Successful commands exit `0`.
+Validation failures exit `2`, unavailable runtime or lifecycle state exits `4`, and absent, malformed, incomplete, or identity-stale security state exits `5`.
+
+### `$$nemoclaw <name> cua security verify`
+
+Run the trusted verifier and record its content-free attestation only when every required boundary is enforced.
+
+```bash
+$$nemoclaw my-cua cua security verify \
+  --adapter /absolute/path/to/security-verifier \
+  --json
+```
+
+### `$$nemoclaw <name> cua security status`
+
+Validate the recorded attestation against the current runtime and target identities without invoking the verifier.
+The same content-free projection appears as `cuaSecurity` in `$$nemoclaw <name> status --json`.
+`$$nemoclaw <name> doctor` reports whether the attestation is present and current.
+
+```bash
+$$nemoclaw my-cua cua security status --json
+```
+
+## CUA Task Lifecycle
+
+These commands drive the checked-in CUA task contract through the exact task adapter declared by the runtime manifest.
+The adapter is a protocol boundary for the selected CUA runtime; it is not a runtime plugin or a terminal-output parser.
+This candidate starts the seeded browser-form task in `headless` mode with an explicit task ID.
+Before a normal task adapter call, the sandbox must have a current CUA security attestation for the exact runtime, policy, inference, target, and capability identities.
+The reconciliation-only `task.status` and exact observed `task.cancel` exceptions use the durable cleanup journal instead.
+
+The current candidate implements and advertises exactly four task operations: `task.start`, `task.status`, `task.result`, and `task.cancel`.
+The CLI retains `task.pause`, `task.guide`, `task.respond`, `task.events`, `task.logs`, and `task.plans` as known compatibility commands.
+Each compatibility command returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
+
+The `--adapter` value must be the exact absolute task-adapter path declared by the runtime manifest.
+NemoClaw validates the manifest-declared path and raw digest, starts that adapter without a shell, and writes one `task-adapter-request` JSON object to standard input.
+The request includes the recorded runtime and target identities, the effective `appliedPolicy`, and the requested operation.
+Task text for `task.start` comes from a non-empty UTF-8 `--input-file` of at most 64 KiB.
+The path must directly name a regular file; NemoClaw does not follow symbolic links.
+That private input is sent to the adapter only.
+NemoClaw does not write it to public JSON, canonical registry state, logs, diagnostics, snapshots, or backups.
+
+The adapter returns one record from `schemas/cua-lifecycle.schema.json`:
+
+- A `target-attachment` record reports active `running`, `paused`, `input-required`, or `cancelling` state.
+- A terminal `task-result` record reports `succeeded`, `failed`, or `cancelled`.
+- A `failure` record contains one bounded failure family and no raw runtime diagnostics.
+
+A succeeded result declares exactly the `browser` capability and contains exactly one completed browser receipt with at least one evidence digest.
+It also requires at least one independent verification check and verification evidence that is not limited to the agent-result digest.
+Results that claim success without that complete proof fail validation.
+
+Outside reconciliation, every non-null `target-attachment.activeTask` and `task-result` binds the same `appliedPolicy` revision and digest as the current security attestation.
+Reconciliation observations and an exact task-cancel result bind the durable journal's `appliedPolicy` instead.
+NemoClaw compares every terminal result with the recorded OpenShell executable, runtime, sandbox image, target image, service bundle, declared policy, applied policy, task protocol, inference route, capability protocols, and target identity.
+Any identity drift fails closed.
+The most recent 16 terminal results and their content-addressed evidence references remain available through `cua task result` and `cua task status` after a normal CLI reconnect.
+NemoClaw does not retain the private task input or artifact bytes in its registry or backups.
+The host-side boundary keeps private screenshots, page content, browser state, runtime files, and adapter state only until target detach or destroy.
+
+Successful commands exit `0`.
+Validation failures exit `2`, an active-task conflict exits `3`, unavailable lifecycle or runtime operations exit `4`, and execution, compatibility, target, inference, policy, timeout, or cancellation failures exit `5`.
+
+### `$$nemoclaw <name> cua task start`
+
+Start one task with an explicit ID, execution surface, and private input file.
+A target with an active task returns `task_conflict` without invoking the adapter.
+A task ID that remains in the retained result history must not be reused.
+
+```bash
+$$nemoclaw my-cua cua task start \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --mode headless \
+  --input-file ./task.txt \
+  --json
+```
+
+```json
+{
+  "schemaVersion": "1.1.0",
+  "kind": "target-attachment",
+  "status": "attached",
+  "runtimeReadinessDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "target": {
+    "identityDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "platform": "desktop-linux-amd64",
+    "image": {
+      "name": "desktop-image",
+      "version": "1.0.0",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "owner": "target-owner"
+    },
+    "serviceBundle": {
+      "name": "desktop-services",
+      "version": "1.0.0",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "owner": "target-owner"
+    },
+    "capabilities": [
+      { "id": "browser", "protocolVersion": "1.0.0", "health": "healthy" },
+      { "id": "computer", "protocolVersion": "1.0.0", "health": "healthy" },
+      { "id": "terminal", "protocolVersion": "1.0.0", "health": "healthy" }
+    ]
+  },
+  "activeTask": {
+    "taskId": "task-001",
+    "status": "running",
+    "appliedPolicy": {
+      "revision": 1,
+      "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  }
+}
+```
+
+### `$$nemoclaw <name> cua task status`
+
+Report an active task and its exact attached target identity.
+After completion, return the retained terminal result without reading runtime-private files.
+
+```bash
+$$nemoclaw my-cua cua task status \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task result`
+
+Retrieve and validate the terminal result.
+The result separates the agent-authored status, independent verification, per-capability receipts, and private evidence references.
+A succeeded result requires a succeeded agent result, passed independent verification, and one completed browser receipt with non-empty evidence.
+
+```bash
+$$nemoclaw my-cua cua task result \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+```json
+{
+  "schemaVersion": "1.1.0",
+  "kind": "task-result",
+  "taskId": "task-001",
+  "status": "succeeded",
+  "targetIdentityDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "runtimeReadinessDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "components": {
+    "openshell": {
+      "name": "openshell",
+      "version": "qualification-bound",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "owner": "NVIDIA"
+    },
+    "runtime": {
+      "name": "cua-runtime",
+      "version": "1.0.0",
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "owner": "runtime-owner"
+    },
+    "sandboxImage": {
+      "name": "sandbox-image",
+      "version": "1.0.0",
+      "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "owner": "sandbox-owner"
+    },
+    "targetImage": {
+      "name": "desktop-image",
+      "version": "1.0.0",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "owner": "target-owner"
+    },
+    "serviceBundle": {
+      "name": "desktop-services",
+      "version": "1.0.0",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "owner": "target-owner"
+    },
+    "policy": {
+      "name": "cua-policy",
+      "version": "1.0.0",
+      "digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "owner": "policy-owner"
+    },
+    "taskProtocol": {
+      "name": "cua-task-protocol",
+      "version": "1.0.0",
+      "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "owner": "runtime-owner"
+    }
+  },
+  "inference": {
+    "provider": "managed-provider",
+    "model": "managed-model",
+    "routeDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "appliedPolicy": {
+    "revision": 1,
+    "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "capabilities": [
+    { "id": "browser", "protocolVersion": "1.0.0" }
+  ],
+  "agentResult": {
+    "status": "succeeded",
+    "resultDigest": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  "verification": {
+    "status": "passed",
+    "checkIds": ["browser-form-json"],
+    "evidenceDigests": [
+      "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+    ]
+  },
+  "receipts": [
+    {
+      "capability": "browser",
+      "status": "completed",
+      "evidenceDigests": [
+        "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "classification": "private",
+      "mediaType": "application/json"
+    },
+    {
+      "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+      "classification": "private",
+      "mediaType": "application/json"
+    }
+  ]
+}
+```
+
+### `$$nemoclaw <name> cua task events`
+
+This is a known compatibility command that this candidate does not advertise.
+It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
+
+```bash
+$$nemoclaw my-cua cua task events \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task logs`
+
+This is a known compatibility command that this candidate does not advertise.
+It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
+
+```bash
+$$nemoclaw my-cua cua task logs \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task plans`
+
+This is a known compatibility command that this candidate does not advertise.
+It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
+
+```bash
+$$nemoclaw my-cua cua task plans \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task pause`
+
+This is a known compatibility command that this candidate does not advertise.
+It returns `lifecycle_unavailable` before NemoClaw reads command inputs, resolves the adapter, or invokes the adapter.
+
+```bash
+$$nemoclaw my-cua cua task pause \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task cancel`
+
+Cancel an active task.
+Only a validated terminal cancelled result clears active-task state.
+An adapter timeout or failure after the cancellation attempt begins leaves the task under reconciliation until an independent status observation and the exact task cancellation prove cleanup.
+
+```bash
+$$nemoclaw my-cua cua task cancel \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task guide`
+
+This is a known compatibility command that this candidate does not advertise.
+It returns `lifecycle_unavailable` before NemoClaw reads `--input-file`, resolves the adapter, or invokes the adapter.
+
+```bash
+$$nemoclaw my-cua cua task guide \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --input-file ./guidance.txt \
+  --json
+```
+
+### `$$nemoclaw <name> cua task respond`
+
+This is a known compatibility command that this candidate does not advertise.
+It returns `lifecycle_unavailable` before NemoClaw reads `--input-file`, resolves the adapter, or invokes the adapter.
+
+```bash
+$$nemoclaw my-cua cua task respond \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --input-file ./response.txt \
+  --json
+```
 
 ### `$$nemoclaw <name> exec`
 
@@ -4116,7 +4743,13 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips the wizard's eager Ollama auto-start during inference-provider selection (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, an agent that uses the legacy `16384`-token context floor, currently OpenClaw, prints a warning and selects the default fallback model instead of spawning `ollama serve`. An agent that requires a larger verified runtime context, currently Hermes at `64000` tokens, returns to interactive provider selection or exits when the Ollama provider is pinned or onboarding is non-interactive. The flag covers only the provider-selection step; later setup steps (auth proxy, validation, model warm) still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon before this gate runs. |
 | `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE` | `prompt` or empty/unset | When set to `prompt`, allows non-interactive onboarding to use prompt-capable `sudo` for host setup steps that require elevation, which can ask for a password. Empty/unset is the default and uses `sudo -n`, which fails instead of asking for a password. Any other value is rejected. |
 | `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark, DGX Station, and Windows WSL express install prompt and continues with the normal interactive onboarding flow. |
-| `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |
+| `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and onboarding flows. It does not enable CUA. |
+| `NEMOCLAW_CUA_ENABLED` | `1` to enable | Enables external NemoCUA discovery, onboarding, readiness projection, and lifecycle commands. Disabled by default. |
+| `NEMOCLAW_CUA_RUNTIME_MANIFEST` | absolute path | Selects the sanitized external CUA runtime manifest. Its declared payload files must be siblings of the manifest. |
+| `NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256` | 64 lowercase hexadecimal characters | Pins the exact raw bytes of the external CUA runtime manifest. |
+| `NEMOCLAW_CUA_SANDBOX_IMAGE_REF` | immutable OCI digest reference | Selects the NemoCUA sandbox image. The digest must match the runtime manifest. |
+| `NEMOCLAW_CUA_QUALIFICATION` | `1` to enable | Allows candidate readiness only for the bounded qualification lane. It has no effect unless `NEMOCLAW_CUA_ENABLED=1`. |
+| `NEMOCLAW_CUA_QUALIFICATION_ENVIRONMENT` | absolute path | Selects the authority-owned candidate qualification environment file. Required only while qualification mode is enabled. |
 | `NEMOCLAW_IGNORE_RUNTIME_RESOURCES` | `1` to enable | Suppresses the under-provisioned runtime warning during preflight. Use only when you know the sandbox host meets the minimums. |
 | `NEMOCLAW_DISABLE_OVERLAY_FIX` | `1` to enable | Skips the Docker overlay-fix step during sandbox build. For environments where the fix is incompatible. |
 | `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for sandbox builds. Empty (default) preserves containerd's choice. |

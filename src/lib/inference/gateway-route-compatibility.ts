@@ -5,6 +5,9 @@ import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import type { SandboxEntry } from "../state/registry";
 
+/** Resolve the canonical gateway name used by live inference route checks. */
+export const resolveLiveInferenceGatewayName = resolveSandboxGatewayName;
+
 export type GatewayInferenceRoute = Pick<
   SandboxEntry,
   "provider" | "model" | "endpointUrl" | "preferredInferenceApi" | "credentialEnv"

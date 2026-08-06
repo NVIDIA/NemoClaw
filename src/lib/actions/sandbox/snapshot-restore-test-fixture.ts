@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -52,6 +52,11 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
+  cuaRuntimeReadiness?: SandboxEntry["cuaRuntimeReadiness"];
+  cuaTarget?: SandboxEntry["cuaTarget"];
+  cuaSecurityAttestation?: SandboxEntry["cuaSecurityAttestation"];
+  cuaTaskResults?: SandboxEntry["cuaTaskResults"];
+  cuaReconciliation?: SandboxEntry["cuaReconciliation"];
 };
 export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
@@ -186,6 +191,7 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
 );
 export const registerSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
+export const requireCuaReconciliationBeforeSandboxMutationMock = vi.fn(() => false);
 export const restoreSandboxStateMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
   (
@@ -308,6 +314,7 @@ vi.mock("../../state/registry", () => ({
   }),
   registerSandbox: registerSandboxMock,
   removeSandbox: vi.fn(),
+  requireCuaReconciliationBeforeSandboxMutation: requireCuaReconciliationBeforeSandboxMutationMock,
   updateSandbox: updateSandboxMock,
 }));
 
@@ -390,6 +397,8 @@ export function resetSnapshotRestoreMocks(): void {
   registerSandboxMock.mockReset();
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   updateSandboxMock.mockReset();
+  requireCuaReconciliationBeforeSandboxMutationMock.mockReset();
+  requireCuaReconciliationBeforeSandboxMutationMock.mockReturnValue(false);
   restoreSandboxStateMock.mockReturnValue({
     success: true,
     restoredDirs: [],

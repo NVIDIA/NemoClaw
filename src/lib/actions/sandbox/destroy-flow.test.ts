@@ -59,6 +59,22 @@ describe("destroySandbox flow", () => {
     expectSuccessfulLiveDestroy(harness, exitSpy);
   });
 
+  it("refuses to orphan a CUA target before any sandbox destroy side effect", async () => {
+    const harness = createDestroyHarness({ requireCuaReconciliation: true });
+
+    await expect(harness.destroySandbox("alpha", { yes: true, force: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.requireCuaReconciliationSpy).toHaveBeenCalledWith(
+      "alpha",
+      "runtime-authority-change",
+    );
+    expect(harness.events).not.toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("cannot be destroyed yet");
+  });
+
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
     const routeId = "a".repeat(64);
     const harness = createDestroyHarness({
