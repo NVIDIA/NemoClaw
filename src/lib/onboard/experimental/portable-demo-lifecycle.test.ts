@@ -55,7 +55,9 @@ function sandboxEntry(): SandboxEntry {
   };
 }
 
-function createPodman(options: { running?: boolean; sandboxId?: string } = {}) {
+function createPodman(
+  options: { running?: boolean; sandboxId?: string; updateStatus?: number } = {},
+) {
   let running = options.running ?? true;
   let sandboxId = options.sandboxId ?? SANDBOX_ID;
   let managedLabel = "true";
@@ -85,7 +87,7 @@ function createPodman(options: { running?: boolean; sandboxId?: string } = {}) {
         running = true;
         return { status: 0 };
       case "update":
-        return { status: 0 };
+        return { status: options.updateStatus ?? 0 };
       default:
         throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
     }
@@ -265,6 +267,18 @@ describe("portable demo sandbox lifecycle", () => {
     );
     expect(receipt).not.toContain("PROXY");
     expect(receipt).not.toContain("user:password");
+  });
+
+  it("does not record lifecycle ownership when the restart policy update fails (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({ updateStatus: 125 });
+
+    expect(() => installReceipt(stateDir, runtime.podman)).toThrow(
+      "Setting the portable restart policy",
+    );
+    expect(fs.existsSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir))).toBe(
+      false,
+    );
   });
 
   it("starts the stopped container with the current OpenShell CA environment (#8441)", () => {

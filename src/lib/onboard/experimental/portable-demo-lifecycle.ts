@@ -418,11 +418,11 @@ export function installPortableDemoSandboxLifecycle(
     containerId: inspection.containerId,
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
   };
-  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
   requireCommand(
     podman(["update", "--restart=unless-stopped", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
+  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
 }
 
 /**
