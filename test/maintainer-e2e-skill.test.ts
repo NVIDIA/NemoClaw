@@ -98,7 +98,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
     evidence.jobs.jobs[0]!.run_attempt = 1;
 
     expect(validateFullE2eEvidence({ ...evidence, jobs: [evidence.jobs] })).toMatchObject({
-      attempt: 2,
+      attempt: 1,
       jobUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
     });
   });

@@ -343,7 +343,7 @@ Return:
 - candidate SHA;
 - workflow run URL and conclusion;
 - `Exact staging Brev Launchable` job URL;
-- workflow attempt number;
+- selected successful Launchable job attempt;
 - Launchable E2E identity; and
 - cleanup result.
 

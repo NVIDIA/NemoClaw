@@ -177,7 +177,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
   }
 
   return {
-    attempt,
+    attempt: receiptAttempt,
     candidateSha: input.candidateSha,
     cleanup: {
       status: "ABSENT",

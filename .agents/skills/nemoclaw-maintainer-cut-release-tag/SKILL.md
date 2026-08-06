@@ -149,7 +149,7 @@ Before accepting full-mode exact Brev evidence, require:
 - the trusted dispatch receipt to prove empty selectors and `include_staging_brev_launchable=true`;
 - the workflow conclusion to be `success`;
 - the `Exact staging Brev Launchable` job conclusion to be `success`;
-- the job URL and workflow attempt number;
+- the job URL and selected successful Launchable job attempt;
 - Launchable E2E identity for the same SHA; and
 - cleanup evidence that reports the qualified workspace as `ABSENT`.
 
@@ -210,7 +210,7 @@ Before showing the confirmation prompt, present:
 - the candidate SHA;
 - the number of tests with successful evidence out of the number required by the workflow;
 - each required test mapped to a successful run or job URL and attempt; and
-- when accepted full-mode exact Brev evidence exists, its workflow URL, `Exact staging Brev Launchable` job URL, attempt, Launchable E2E identity, and cleanup result; and
+- when accepted full-mode exact Brev evidence exists, its workflow URL, `Exact staging Brev Launchable` job URL, selected evidence attempt, Launchable E2E identity, and cleanup result; and
 - a separate itemized maintainer exception for each missing or skipped execution in the accepted successful workflow run, including its test identifier, run links, current result, and rationale; and
 - a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run, including run and job URLs, the missing or invalid receipt, and rationale.
 
