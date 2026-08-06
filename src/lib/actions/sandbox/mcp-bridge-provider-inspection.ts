@@ -3,7 +3,10 @@
 
 import { stripAnsi } from "../../adapters/openshell/client";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
-import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
+import {
+  isOperatorTrustablePrivateIp,
+  replayTrustedPrivateEndpoint,
+} from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
@@ -294,6 +297,7 @@ export async function preflightMcpEntryTargets(
         if (
           replay.host !== entry.trustedPrivateHost ||
           recordedPins.length === 0 ||
+          recordedPins.some((address) => !isOperatorTrustablePrivateIp(address)) ||
           replay.addresses.length !== recordedPins.length ||
           replay.addresses.some((address, index) => address !== recordedPins[index])
         ) {

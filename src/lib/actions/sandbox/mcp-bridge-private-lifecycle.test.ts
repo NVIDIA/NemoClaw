@@ -26,9 +26,9 @@ function privateEntry(adapter: AgentMcpAdapter, agent: string): McpBridgeEntry {
     server: "local",
     agent,
     adapter,
-    url: "https://mcp.corp.example/mcp",
+    url: "https://mcp.corp.internal/mcp",
     env: ["LOCAL_MCP_TOKEN"],
-    trustedPrivateHost: "mcp.corp.example",
+    trustedPrivateHost: "mcp.corp.internal",
     allowedIps: ["10.20.30.40", "fd00::40"],
     providerName: "alpha-mcp-local",
     providerId: "11111111-2222-4333-8444-555555555555",
@@ -55,13 +55,33 @@ describe("trusted-private MCP lifecycle replay", () => {
     expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(entry.allowedIps);
   });
 
+  it.each(adapters)("replays a direct private IPv4 target for $agent (#8267)", async ({
+    adapter,
+    agent,
+  }) => {
+    const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
+    const entry = privateEntry(adapter, agent);
+    entry.url = "https://10.20.30.40/mcp";
+    entry.trustedPrivateHost = "10.20.30.40";
+    entry.allowedIps = ["10.20.30.40"];
+
+    const target = (await preflightMcpEntryTargets([entry])).get(entry.server);
+
+    expect(lookup).not.toHaveBeenCalled();
+    expect(target).toMatchObject({
+      addresses: ["10.20.30.40"],
+      trustedPrivateHost: "10.20.30.40",
+    });
+    expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(["10.20.30.40"]);
+  });
+
   it("rejects invalid durable private pins without consulting DNS (#8267)", async () => {
     const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
     const entry = privateEntry("mcporter", "openclaw");
     entry.allowedIps = ["10.20.30.40", "8.8.8.8"];
 
     await expect(preflightMcpEntryTargets([entry])).rejects.toThrow(
-      /invalid durable trusted-private intent/,
+      /non-canonical trusted-private address pins/,
     );
     expect(lookup).not.toHaveBeenCalled();
   });

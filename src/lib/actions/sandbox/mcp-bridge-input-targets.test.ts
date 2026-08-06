@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { isTrustedPrivateEndpointCapability } from "../../security/trusted-private-endpoint";
 import { addMcpBridge, normalizeMcpServerUrl } from "./mcp-bridge";
 import {
   inspectMcpRecordedTargetPins,
@@ -84,6 +85,61 @@ describe("MCP URL target validation", () => {
           addresses: ["10.20.30.40", "10.20.30.41"],
         }),
         trustedPrivateHost: "mcp.corp.example",
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("admits a direct private IPv4 target with exact host-bound authority (#8267)", async () => {
+    const lookup = vi.spyOn(dns, "lookup");
+    try {
+      const url = normalizeMcpServerUrl("https://10.20.30.40/mcp", {
+        trustedPrivateHosts: ["10.20.30.40"],
+      });
+      const target = await preflightMcpServerUrlResolvedTarget(new URL(url), {
+        trustedPrivateHosts: ["10.20.30.40"],
+        requireTrustedPrivateEndpoint: true,
+      });
+
+      expect(lookup).not.toHaveBeenCalled();
+      expect(target).toMatchObject({
+        addresses: ["10.20.30.40"],
+        trustedPrivateHost: "10.20.30.40",
+      });
+      expect(isTrustedPrivateEndpointCapability(target.trustedPrivateCapability)).toBe(true);
+      expect(target.trustedPrivateCapability).toMatchObject({
+        host: "10.20.30.40",
+        addresses: ["10.20.30.40"],
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("admits a trusted reserved-suffix DNS target with exact private pins (#8267)", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "10.20.30.40", family: 4 }] as never);
+    try {
+      expect(() => normalizeMcpServerUrl("https://mcp.corp.internal/mcp")).toThrow(
+        /private, local, or special-use/,
+      );
+      const url = normalizeMcpServerUrl("https://mcp.corp.internal/mcp", {
+        trustedPrivateHosts: ["mcp.corp.internal"],
+      });
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL(url), {
+          trustedPrivateHosts: ["mcp.corp.internal"],
+          requireTrustedPrivateEndpoint: true,
+        }),
+      ).resolves.toMatchObject({
+        addresses: ["10.20.30.40"],
+        trustedPrivateHost: "mcp.corp.internal",
+        trustedPrivateCapability: {
+          host: "mcp.corp.internal",
+          addresses: ["10.20.30.40"],
+        },
       });
     } finally {
       lookup.mockRestore();
