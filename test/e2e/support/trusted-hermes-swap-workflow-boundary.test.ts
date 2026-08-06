@@ -304,7 +304,7 @@ describe("trusted Hermes swap workflow boundary", () => {
   });
 
   it.each([
-    "schedule",
+    "push",
     "workflow_dispatch",
   ])("accepts the trusted direct main source for %s runs (#7145)", (eventName) => {
     const result = runTrustedSwapHarness({
@@ -323,8 +323,8 @@ describe("trusted Hermes swap workflow boundary", () => {
   it.each([
     {
       expected: "direct main runs must not request an alternate checkout or workflow revision",
-      name: "a scheduled run supplies an alternate checkout",
-      options: { checkoutSha: "a".repeat(40), eventName: "schedule" },
+      name: "a push run supplies an alternate checkout",
+      options: { checkoutSha: "a".repeat(40), eventName: "push" },
     },
     {
       expected: "direct main runs must not request an alternate checkout or workflow revision",
@@ -371,7 +371,7 @@ describe("trusted Hermes swap workflow boundary", () => {
       options: { ref: "refs/heads/candidate" },
     },
     {
-      expected: "workflow event must be schedule or workflow_dispatch",
+      expected: "workflow event must be push or workflow_dispatch",
       name: "the event is not trusted",
       options: { eventName: "pull_request" },
     },
@@ -536,7 +536,7 @@ describe("trusted Hermes swap workflow boundary", () => {
 
     const hermesE2eProvision = trustedSwapStep(workflow, "hermes-e2e");
     hermesE2eProvision.if = hermesE2eProvision.if!.replace(
-      " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))",
+      " && (github.event_name == 'push' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))",
       "",
     );
 
