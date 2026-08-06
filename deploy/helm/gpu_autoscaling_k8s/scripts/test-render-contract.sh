@@ -48,9 +48,17 @@ grep -Fq 'Per-pod GPU metrics: kubectl get --raw' "${NOTES_FILE}" || {
   exit 1
 }
 
-if helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.yaml" \
-  --set autoscaling.enabled=true >/dev/null 2>&1; then
+CLEARTEXT_RENDER_OUTPUT=""
+if CLEARTEXT_RENDER_OUTPUT="$(helm template test-release "${CHART_DIR}" \
+  -f "${CHART_DIR}/values-step2-hpa.yaml" \
+  --set autoscaling.enabled=true 2>&1)"; then
   echo "FAIL: chart rendered a cleartext Ingress without explicit opt-in" >&2
+  exit 1
+fi
+EXPECTED_TLS_POLICY_ERROR='ingress.tls is empty and ingress.allowInsecureHttp is false: refusing to render an Ingress that would expose /v1/chat/completions over plain HTTP. Configure ingress.tls with a real certificate, or set ALLOW_INSECURE_HTTP=1 when running the chart scripts to acknowledge cleartext HTTP after their exposure preflight. See README "Ingress security".'
+if [[ "${CLEARTEXT_RENDER_OUTPUT}" != *"${EXPECTED_TLS_POLICY_ERROR}"* ]]; then
+  echo "FAIL: cleartext Ingress render failed for an unexpected reason" >&2
+  printf '%s\n' "${CLEARTEXT_RENDER_OUTPUT}" >&2
   exit 1
 fi
 
