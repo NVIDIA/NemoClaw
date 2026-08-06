@@ -59,12 +59,12 @@ function collectStrings(value: unknown): string[] {
 }
 
 describe("hosted-runner recovery workflow boundary", () => {
-  it("subscribes only to completed runs from the four approved workflows (#7140)", () => {
+  it("subscribes only to completed runs from the three platform workflows (#7140)", () => {
     const value = workflow();
     expect(value.name).toBe("Hosted Runner Recovery");
     expect(value.on).toEqual({
       workflow_run: {
-        workflows: ["E2E", "E2E / WSL", "E2E / macOS", "CI / Platform Vitest Main Watch"],
+        workflows: ["E2E / WSL", "E2E / macOS", "CI / Platform Vitest Main Watch"],
         types: ["completed"],
       },
     });
@@ -96,12 +96,7 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(wsl).not.toHaveProperty("run-name");
     expect(macos).not.toHaveProperty("run-name");
     expect(platform).not.toHaveProperty("run-name");
-    expect(workflow().on.workflow_run.workflows).toEqual([
-      e2e.name,
-      wsl.name,
-      macos.name,
-      platform.name,
-    ]);
+    expect(workflow().on.workflow_run.workflows).toEqual([wsl.name, macos.name, platform.name]);
   });
 
   it("fails closed on controller, source, repository, branch, event, path, and title (#7140)", () => {
@@ -114,11 +109,6 @@ describe("hosted-runner recovery workflow boundary", () => {
       "github.event.workflow_run.conclusion == 'failure'",
       "github.event.workflow_run.head_branch == 'main'",
       "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-      "github.event.workflow_run.path == '.github/workflows/e2e.yaml'",
-      "github.event.workflow_run.event == 'push'",
-      "github.event.workflow_run.event == 'workflow_dispatch'",
-      "github.event.workflow_run.display_title == 'E2E main'",
-      "github.event.workflow_run.event == 'push'",
       "github.event.workflow_run.path == '.github/workflows/wsl-e2e.yaml'",
       "github.event.workflow_run.path == '.github/workflows/macos-e2e.yaml'",
       "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
