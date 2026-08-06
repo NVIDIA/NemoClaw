@@ -211,7 +211,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("itemized maintainer exception");
     expect(policy).toContain("If the candidate SHA changes");
     expect(policy).toContain("This does not freeze `main` or prevent merges");
-    expect(policy).toContain("Require one full workflow run");
+    expect(policy).toContain("Require one completed, successful full workflow run");
     expect(policy).toContain("discard the ledger and its exceptions");
     expect(policy).toContain("selector inputs");
     expect(release).toContain('"dispatchJson"');
@@ -240,6 +240,10 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("Tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
     expect(dailyFlow).toContain("capture the candidate SHA and review every E2E test");
+    expect(dailyFlow).toContain(
+      "`head_sha` and all associated evidence to match the candidate SHA",
+    );
+    expect(dailyFlow).toContain("invalidate the prior run and evidence");
     expect(priorities).toContain("Record the release SHA and required E2E evidence");
   });
 
@@ -283,11 +287,11 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("A failed workflow run cannot supply the release ledger");
     expect(release).toContain("Reject a failed workflow run before presenting the ledger");
     expect(evening).not.toContain("readiness variable");
-    expect(policy).toContain("Require one full workflow run");
+    expect(policy).toContain("Require one completed, successful full workflow run");
     expect(policy).toContain(
       "Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence",
     );
-    expect(policy).toContain("successful `Exact staging Brev Launchable` job");
+    expect(policy).toContain("including `Exact staging Brev Launchable`");
     expect(policy).toContain("cleanup receipt");
     expect(policy).toContain("trusted dispatch receipt");
     expect(policy).toContain(

@@ -56,7 +56,7 @@ Before asking for the release confirmation phrase, build and show an evidence le
 - Require every declared `RELEASE_E2E_ACTIVATION_PATH` to exist at the candidate SHA. A missing path is a preflight failure.
 - Require the workflow-produced trusted dispatch receipt to bind the accepted run candidate SHA, run ID, attempt, and selector inputs.
 - Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence for the candidate SHA.
-- Require one full workflow run that is completed and successful and includes every workflow E2E and a successful `Exact staging Brev Launchable` job.
+- Require one completed, successful full workflow run that selects every workflow E2E, including `Exact staging Brev Launchable`.
 - Require the trusted dispatch receipt to bind the workflow run and an attempt no later than the run's latest attempt. The receipt must record empty selectors and `include_staging_brev_launchable=true`.
 - Require the Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
 - Require the cleanup receipt to identify the qualified workspace and report `ABSENT`.

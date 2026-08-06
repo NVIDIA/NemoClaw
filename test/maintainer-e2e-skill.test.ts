@@ -200,6 +200,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("run pre-tag full E2E");
     expect(skill).toContain("run release-candidate E2E");
     expect(skill).toContain("must not authorize the Brev Launchable path");
+    expect(skill).toContain("Pre-tag evidence still requires the full `workflow_dispatch` mode");
     expect(skill).toContain(
       "an authorized environment reviewer must approve it before qualification starts",
     );

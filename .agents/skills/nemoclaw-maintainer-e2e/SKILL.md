@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers, including exact-revision manual PR E2E. Use for requests such as run E2E for PR #123, run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
+description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers, including manual PR E2E for the current PR head commit. Use for requests such as run E2E for PR #123, run the E2E suite, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -9,7 +9,7 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 # Run Maintainer E2E
 
 Use `.github/workflows/e2e.yaml` from trusted `main`.
-Every push to `main` selects every workflow E2E. A selected job can remain queued until its configured runner is available. No workflow E2E requires a separate explicit dispatch.
+Every push to `main` selects every workflow E2E. A selected job can remain queued until its configured runner is available. No E2E job is excluded from trusted `main` push selection. Pre-tag evidence still requires the full `workflow_dispatch` mode described below.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
 ## Manual PR E2E
