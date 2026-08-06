@@ -12,10 +12,11 @@ fi
 
 printf 'The proof is armed for sandbox %s. Complete the normal onboarding prompts.\n' \
   "$sandbox_name"
+printf 'The sandbox will be rebuilt with the current checkout before the proof runs.\n'
 printf 'When the live replacement returns cuInit(0)=801, NemoClaw will run the one-path A/B before its normal rollback.\n'
 
 npm run build:cli
 
 export NEMOCLAW_SANDBOX_NAME="$sandbox_name"
 export NEMOCLAW_DIAGNOSE_JETSON_OPENRM_POLICY=1
-exec node bin/nemoclaw.js onboard --resume
+exec node bin/nemoclaw.js onboard --resume --recreate-sandbox
