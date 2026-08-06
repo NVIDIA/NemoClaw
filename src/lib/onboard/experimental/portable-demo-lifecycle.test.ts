@@ -46,6 +46,8 @@ function sandboxEntry(): SandboxEntry {
 function createPodman(options: { running?: boolean; sandboxId?: string } = {}) {
   let running = options.running ?? true;
   let sandboxId = options.sandboxId ?? SANDBOX_ID;
+  let managedLabel = "true";
+  let sandboxNameLabel = "alpha";
   const podman = vi.fn((args: readonly string[]) => {
     switch (args[0]) {
       case "ps":
@@ -58,9 +60,9 @@ function createPodman(options: { running?: boolean; sandboxId?: string } = {}) {
               Id: CONTAINER_ID,
               Config: {
                 Labels: {
-                  "openshell.managed": "true",
+                  "openshell.managed": managedLabel,
                   "openshell.sandbox-id": sandboxId,
-                  "openshell.sandbox-name": "alpha",
+                  "openshell.sandbox-name": sandboxNameLabel,
                 },
               },
               State: { Running: running },
@@ -81,6 +83,12 @@ function createPodman(options: { running?: boolean; sandboxId?: string } = {}) {
     setSandboxId(value: string) {
       sandboxId = value;
     },
+    setManagedLabel(value: string) {
+      managedLabel = value;
+    },
+    setSandboxNameLabel(value: string) {
+      sandboxNameLabel = value;
+    },
   };
 }
 
@@ -91,6 +99,28 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
     { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
     { platform: "linux", podman, stateDir },
   );
+}
+
+function expectRecoveryIdentityRefusal(
+  stateDir: string,
+  runtime: ReturnType<typeof createPodman>,
+): void {
+  const launchOpenshell = vi.fn();
+
+  expect(() =>
+    recoverPortableDemoSandboxLifecycle(
+      "alpha",
+      { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+      {
+        platform: "linux",
+        stateDir,
+        podman: runtime.podman,
+        launchOpenshell,
+      },
+    ),
+  ).toThrow("OpenShell identity does not match");
+  expect(runtime.podman).not.toHaveBeenCalledWith(["start", CONTAINER_ID]);
+  expect(launchOpenshell).not.toHaveBeenCalled();
 }
 
 afterEach(() => {
@@ -268,5 +298,23 @@ describe("portable demo sandbox lifecycle", () => {
       ),
     ).toThrow("OpenShell sandbox ID changed");
     expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("refuses a container whose OpenShell managed label is not true (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setManagedLabel("false");
+
+    expectRecoveryIdentityRefusal(stateDir, runtime);
+  });
+
+  it("refuses a container whose OpenShell sandbox name changed (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setSandboxNameLabel("different-name");
+
+    expectRecoveryIdentityRefusal(stateDir, runtime);
   });
 });
