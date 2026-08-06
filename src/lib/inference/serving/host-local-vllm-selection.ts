@@ -14,8 +14,10 @@ import {
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
-import type { ResolvedHostLocalInferenceSelection } from "./types.js";
-import type { HostLocalInferenceServingRecipe } from "./types.js";
+import type {
+  HostLocalInferenceServingRecipe,
+  ResolvedHostLocalInferenceSelection,
+} from "./types.js";
 
 const MATERIALIZER_OWNED_ARGUMENTS = new Set([
   "--host",
@@ -160,6 +162,7 @@ export function materializeHostLocalVllmSelection(
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
       defaultModel: model,
       servingCatalog: {
+        catalogDigest: selection.catalogDigest,
         presetId: preset.metadata.id,
         presetDigest: selection.presetDigest,
         recipeId: recipe.metadata.id,
