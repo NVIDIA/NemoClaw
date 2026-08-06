@@ -222,7 +222,7 @@ export const INJECTED_DIAGNOSTIC_HELPER = [
   "\t\tNEMOCLAW_MTD_SHADOW_SAMPLES.set(key, samples);",
   "\t}",
   "\tconst sorted = [...samples].sort((left, right) => left - right);",
-  "\tconst percentile = sorted.length > 0 ? sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] : undefined;",
+  "\tconst percentile = sorted.length >= NEMOCLAW_MTD_SHADOW_MIN_SAMPLES ? sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] : undefined;",
   "\tlet recommended;",
   '\tif (timedOut && typeof effectiveTimeoutMs === "number") recommended = effectiveTimeoutMs * 2;',
   "\telse if (sorted.length >= NEMOCLAW_MTD_SHADOW_MIN_SAMPLES) recommended = percentile * NEMOCLAW_MTD_SHADOW_SAFETY_FACTOR;",
