@@ -12,6 +12,7 @@ import {
 } from "../../../inference/gateway-route-compatibility";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
 import type { InferenceEndpointSource } from "../../../inference/selection";
+import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
@@ -234,6 +235,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
+    assessHost(): Host;
+    formatSandboxBuildEstimateNote(host: Host): string | null;
     formatOnboardConfigSummary(options: {
       provider: string;
       model: string;
@@ -243,6 +246,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       hermesToolGateways: string[];
       enabledChannels: string[] | null;
       sandboxName: string;
+      servingProfileProvenance?: ServingProfileProvenance | null;
       notes: string[];
     }): string;
     promptYesNoOrDefault(
@@ -959,6 +963,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     try {
       if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
       const confirmedSandboxName = sandboxName;
+      const buildEstimateNote =
+        env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
+          ? null
+          : deps.formatSandboxBuildEstimateNote(deps.assessHost());
       deps.log(
         deps.formatOnboardConfigSummary({
           provider,
@@ -969,7 +977,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName: confirmedSandboxName,
-          notes: [],
+          servingProfileProvenance: session?.servingProfileProvenance ?? null,
+          notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );
       deps.log("  Web search and messaging channels will be prompted next.");

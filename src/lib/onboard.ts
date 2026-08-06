@@ -3999,7 +3999,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     GATEWAY_PORT = authoritativeGateway.port;
     process.env.OPENSHELL_GATEWAY = authoritativeGateway.name;
   }
-
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,
@@ -4017,6 +4016,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         cannotPrompt,
         nonInteractive: isNonInteractive(),
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+        servingProfileProvenance: opts.servingProfileProvenance ?? null,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
         ...stationSessionInput,
