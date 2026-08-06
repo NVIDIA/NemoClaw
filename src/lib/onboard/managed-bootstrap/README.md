@@ -118,10 +118,11 @@ Image bootstrap accepts only that prepared authority. It stages one protected
 root-apply envelope, starts the exact replacement, and authenticates the
 image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
 The watcher remains stopped and the journal remains authoritative throughout.
-These modules are intentionally absent from the production provider registry;
-the hidden experimental runtime boundary can qualify them before later slices
+These modules are intentionally absent from the production provider registry and
+cannot be selected by the hidden managed-image qualification path. Unit tests
+exercise the dormant Podman bootstrap components in isolation. Later slices must
 add persisted engine recovery, GPU and local inference, installer coverage,
-and supported activation.
+protected E2E qualification, and accepted product activation.
 The image-owned shared-state transaction uses the same identity-bound model: a
 commit atomically moves its pending manifest and backups into a durable receipt
 namespace, compacts that state to an exact commit receipt, and rejects rollback
