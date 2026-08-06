@@ -15,7 +15,7 @@ export function setAgentRegistryReaderForTest(reader: AgentRegistryReader | null
   agentRegistryReaderForTest = reader;
 }
 
-function readAgentRegistryNames(): readonly string[] {
+export function readAgentRegistryNames(): readonly string[] {
   if (agentRegistryReaderForTest) return agentRegistryReaderForTest();
   const { listAgents } = require("../agent/defs") as typeof import("../agent/defs");
   return listAgents();

@@ -61,6 +61,7 @@
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.mts",
+    "generate:agent-state-lock-plans": "node --import tsx scripts/lib/generate-agent-state-lock-plans.mts",
     "type-safety:hotspots": "tsx scripts/type-safety-hotspots.mts",
     "source-shape:scan": "tsx scripts/find-source-shape-tests.mts --metrics",
     "source-shape:check": "tsx scripts/find-source-shape-tests.mts --check",
@@ -109,6 +110,8 @@
   "files": [
     ".version",
     ".source-revision",
+    "agents/*/manifest.yaml",
+    "agents/*/state-lock-plan.json",
     "agents/hermes/host/",
     "bin/",
     "dist/",
