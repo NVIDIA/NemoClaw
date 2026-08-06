@@ -3,13 +3,15 @@
 
 import { stripAnsi } from "../../adapters/openshell/client";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
+import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
   normalizeMcpServerUrl,
-  validateMcpServerUrlResolvedTarget,
+  preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-validation";
 
 export type McpProviderInspection = {
@@ -261,18 +263,54 @@ export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProvider
 
 export async function preflightMcpEntryTargets(
   entries: readonly McpBridgeEntry[],
-): Promise<Map<string, string[]>> {
+): Promise<Map<string, McpBridgeTargetValidation>> {
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const results = await Promise.all(
     entries.map(async (entry) => {
-      const normalized = normalizeMcpServerUrl(entry.url);
+      const trustedPrivateHosts = entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined;
+      const normalized = normalizeMcpServerUrl(entry.url, { trustedPrivateHosts });
       if (normalized !== entry.url) {
         throw new McpBridgeError(
           `MCP server '${entry.server}' has a non-canonical stored URL. Remove it with --force and add it again before lifecycle operations.`,
         );
       }
-      const addresses = await validateMcpServerUrlResolvedTarget(new URL(normalized));
-      return [entry.server, addresses] as const;
+      if (entry.trustedPrivateHost) {
+        if (new URL(normalized).hostname.toLowerCase() !== entry.trustedPrivateHost) {
+          throw new McpBridgeError(
+            `MCP server '${entry.server}' has trusted-private intent for a host that does not match its stored URL. Remove it with --force and add it again.`,
+            2,
+          );
+        }
+        const recordedPins = entry.allowedIps ?? [];
+        let replay;
+        try {
+          replay = replayTrustedPrivateEndpoint(entry.trustedPrivateHost, recordedPins);
+        } catch (error) {
+          throw new McpBridgeError(
+            `MCP server '${entry.server}' has invalid durable trusted-private intent: ${error instanceof Error ? error.message : String(error)}. Remove it with --force and add it again.`,
+            2,
+          );
+        }
+        if (
+          replay.host !== entry.trustedPrivateHost ||
+          recordedPins.length === 0 ||
+          replay.addresses.length !== recordedPins.length ||
+          replay.addresses.some((address, index) => address !== recordedPins[index])
+        ) {
+          throw new McpBridgeError(
+            `MCP server '${entry.server}' has non-canonical trusted-private address pins. Remove it with --force and add it again.`,
+            2,
+          );
+        }
+        const target: McpBridgeTargetValidation = {
+          addresses: [...replay.addresses],
+          trustedPrivateCapability: replay.trustedPrivateCapability,
+          trustedPrivateHost: replay.host,
+        };
+        return [entry.server, target] as const;
+      }
+      const target = await preflightMcpServerUrlResolvedTarget(new URL(normalized));
+      return [entry.server, target] as const;
     }),
   );
   return new Map(results);

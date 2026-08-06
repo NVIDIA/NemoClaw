@@ -36,6 +36,7 @@ import {
   nowIso,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
+import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
   assertMcpCredentialBoundaryRuntimeVersion,
@@ -44,16 +45,16 @@ import {
 } from "./mcp-bridge-validation";
 
 function resolvedTargetPins(
-  resolvedByServer: ReadonlyMap<string, string[]>,
+  resolvedByServer: ReadonlyMap<string, McpBridgeTargetValidation>,
   entry: McpBridgeEntry,
-): string[] {
-  const addresses = resolvedByServer.get(entry.server);
-  if (!addresses || addresses.length === 0) {
+): McpBridgeTargetValidation {
+  const target = resolvedByServer.get(entry.server);
+  if (!target || target.addresses.length === 0) {
     throw new McpBridgeError(
-      `MCP server '${entry.server}' has no validated public address pins. Refusing policy mutation.`,
+      `MCP server '${entry.server}' has no validated address pins. Refusing policy mutation.`,
     );
   }
-  return addresses;
+  return target;
 }
 
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
@@ -122,12 +123,12 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     let entry = storedEntry;
     const envRefs = entry.env.map((envName) => ({ name: envName }));
     const adapterEnvValues = resolveCredentialEnv(envRefs);
-    const resolvedAddresses = resolvedTargetPins(resolvedByServer, entry);
+    const target = resolvedTargetPins(resolvedByServer, entry);
     let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
     assertNoAttachedProviderCredentialCollision(sandboxName, entry);
     // Revalidate the actual running supervisor before rotating, recreating,
     // attaching, or re-registering an authenticated provider.
-    applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
+    applyGeneratedPolicy(sandboxName, entry, target);
     const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
       allowExisting: true,
       expectedProviderId: entry.providerId,
