@@ -112,9 +112,12 @@ const UNSUPPORTED_CONFIG_KEYS = new Set([
   "Volumes",
 ]);
 
-// Docker exposes each attach stream independently through `--attach`, so the
-// clone renderer can preserve these Config booleans exactly. Keep them in the
-// normalized launch spec and verify the stopped replacement before cutover.
+// AttachStdin/AttachStdout/AttachStderr describe the Docker client's create-time
+// attachment request, not the container's durable launch state. In particular,
+// the Docker CLI defaults stdout/stderr to true and cannot express an empty
+// attachment set, while OpenShell's Engine API create request records all three
+// as false. OpenStdin and Tty remain hash-bound below because they do affect the
+// durable container configuration.
 
 const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "BlkioDeviceReadBps",
@@ -286,6 +289,9 @@ function canonicalStringSet(value: unknown, label: string): string[] {
 
 function normalizedConfig(config: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...config };
+  delete normalized.AttachStdin;
+  delete normalized.AttachStdout;
+  delete normalized.AttachStderr;
   // Docker API clients may omit inactive image-only fields while older Docker
   // CLIs serialize the same defaults as null, false, or an empty collection.
   // Active values are rejected above because the clone cannot reproduce them.
@@ -301,6 +307,12 @@ function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<strin
     if (normalized[key] === null) normalized[key] = [];
   }
   if (normalized.OomKillDisable === null) normalized.OomKillDisable = false;
+  // Docker's Engine API can retain an absent port-binding map as null, while
+  // `docker create` serializes the same no-bindings state as an empty object.
+  // Active bindings remain present and hash-bound.
+  if (normalized.PortBindings === null || normalized.PortBindings === undefined) {
+    normalized.PortBindings = {};
+  }
   for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
     if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
   }
