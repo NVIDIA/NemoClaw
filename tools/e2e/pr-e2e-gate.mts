@@ -139,7 +139,9 @@ const EVIDENCE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const EVIDENCE_DOWNLOAD_KILL_GRACE_MS = 30_000;
 const EVIDENCE_LIMITS = {
   maxDepth: 8,
-  maxEntries: 4096,
+  baseEntries: 1024,
+  entriesPerExpectedSignal: 256,
+  maxEntries: 16_384,
 } as const;
 
 type ControllerPaths = {
@@ -3634,6 +3636,16 @@ export function findSignalFiles(
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+export function evidenceEntryLimit(expectedSignalCount: number): number {
+  if (!Number.isSafeInteger(expectedSignalCount) || expectedSignalCount < 1) {
+    throw new Error("E2E expected signal count is invalid");
+  }
+  return Math.min(
+    EVIDENCE_LIMITS.maxEntries,
+    EVIDENCE_LIMITS.baseEntries + expectedSignalCount * EVIDENCE_LIMITS.entriesPerExpectedSignal,
+  );
+}
+
 export async function finishPrGate(options: {
   statePath: string;
   stateHash: string;
@@ -3737,7 +3749,8 @@ export async function finishPrGate(options: {
         throw error;
       }
       const signals = findSignalFiles(options.evidencePath, {
-        ...EVIDENCE_LIMITS,
+        maxDepth: EVIDENCE_LIMITS.maxDepth,
+        maxEntries: evidenceEntryLimit(expectedSignalCount),
         maxSignalFiles: expectedSignalCount + 1,
       }).map((file) => validateSignal(readRegularJson(file), state));
       verdict = classifyPrGateEvidence({
