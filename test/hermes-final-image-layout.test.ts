@@ -20,6 +20,11 @@ const HERMES_INTEGRITY_FILES = [
     target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
   },
   {
+    arg: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
+    source: "agents/hermes/patch-hermes-sqlite-temp-store.py",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
     source: "agents/hermes/hermes-wrapper.py",
     target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
