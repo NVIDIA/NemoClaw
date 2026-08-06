@@ -530,6 +530,12 @@ export function recoverPortableDemoSandboxLifecycle(
     }
   }
   if (startupProbe.status !== 1 || startupProbe.error) {
+    if (startupProbe.status === 0 && !startupProbe.error) {
+      const recovered = waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) =>
+        gatewayIsRunning(receipt, gatewayName, capture, remainingMs),
+      );
+      if (recovered) return { kind: "already-running" };
+    }
     throw new Error(
       startupProbe.status === 0
         ? `Portable sandbox '${sandboxName}' has a startup process, but its agent gateway did not pass the dashboard health check`

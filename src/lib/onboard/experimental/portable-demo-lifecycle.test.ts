@@ -375,6 +375,75 @@ describe("portable demo sandbox lifecycle", () => {
     expect(launchOpenshell).toHaveBeenCalledOnce();
   });
 
+  it("waits for the agent gateway to pass its health check when the managed startup process already exists (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const launchOpenshell = vi.fn();
+    let now = 0;
+    const captureOpenshell = vi.fn((args: readonly string[]) => {
+      const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+      switch (command) {
+        case "true":
+        case "pgrep":
+          return { status: 0 };
+        case "curl":
+          return { status: 0, stdout: now >= 2_000 ? "200" : "000" };
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+      }
+    });
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell,
+          launchOpenshell,
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        },
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(now).toBe(2_000);
+    expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("fails after the startup timeout when the managed startup process exists and the agent gateway does not pass its health check (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const launchOpenshell = vi.fn();
+    let now = 0;
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "000" } : { status: 0 },
+          launchOpenshell,
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        },
+      ),
+    ).toThrow("has a startup process, but its agent gateway did not pass");
+    expect(now).toBe(90_000);
+    expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
   it("retries the same receipt after a detached startup times out (#8441)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman();
