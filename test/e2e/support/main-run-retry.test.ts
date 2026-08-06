@@ -51,27 +51,30 @@ function setup(options: { attempt: number; conclusion: string; latestRunId?: num
   const request = async (path: string, init?: { method?: "GET" | "POST" }) => {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
-    if (method === "POST") return undefined;
-    if (path.endsWith(`/actions/runs/${RUN_ID}`)) return run;
-    if (path.includes(`/actions/workflows/${WORKFLOW_ID}/runs?`)) {
-      return {
-        total_count: 1,
-        workflow_runs: [
-          sourceRun(options.attempt, options.conclusion, {
-            id: options.latestRunId ?? RUN_ID,
-          }),
-        ],
-      };
+    switch (true) {
+      case method === "POST":
+        return undefined;
+      case path.endsWith(`/actions/runs/${RUN_ID}`):
+        return run;
+      case path.includes(`/actions/workflows/${WORKFLOW_ID}/runs?`):
+        return {
+          total_count: 1,
+          workflow_runs: [
+            sourceRun(options.attempt, options.conclusion, {
+              id: options.latestRunId ?? RUN_ID,
+            }),
+          ],
+        };
+      case /\/attempts\/(\d+)\/jobs/u.test(path): {
+        const attempt = Number(/\/attempts\/(\d+)\/jobs/u.exec(path)![1]);
+        return {
+          total_count: 1,
+          jobs: [job(attempt, attempt === options.attempt ? options.conclusion : "failure")],
+        };
+      }
+      default:
+        throw new Error(`unexpected request ${method} ${path}`);
     }
-    const attemptMatch = /\/attempts\/(\d+)\/jobs/u.exec(path);
-    if (attemptMatch) {
-      const attempt = Number(attemptMatch[1]);
-      return {
-        total_count: 1,
-        jobs: [job(attempt, attempt === options.attempt ? options.conclusion : "failure")],
-      };
-    }
-    throw new Error(`unexpected request ${method} ${path}`);
   };
   return { request, requests };
 }
