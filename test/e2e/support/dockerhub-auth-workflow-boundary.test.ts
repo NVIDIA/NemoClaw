@@ -251,7 +251,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         "canonical Docker Hub auth step must always run so untrusted refs receive an isolated empty Docker config",
-        "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
+        "canonical Docker Hub auth must gate username on the trusted repository, main ref, and push/manual events",
         `canonical Docker Hub auth step must invoke only ${AUTH_HELPER_USES}`,
         "live Docker Hub cleanup step must contain exactly name, if, shell, and run",
         "live Docker Hub cleanup step must always run",
@@ -275,9 +275,9 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and scheduled/manual events",
-        "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
-        "canonical Docker Hub auth must gate token on the trusted repository, main ref, and scheduled/manual events",
+        "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and push/manual events",
+        "canonical Docker Hub auth must gate username on the trusted repository, main ref, and push/manual events",
+        "canonical Docker Hub auth must gate token on the trusted repository, main ref, and push/manual events",
       ]),
     );
   });

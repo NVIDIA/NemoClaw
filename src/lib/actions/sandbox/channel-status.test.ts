@@ -17,6 +17,17 @@ function waStatusJson(wa: Record<string, unknown>): string {
   });
 }
 
+function hermesSessionProbeOutput(options: {
+  gatewaySessionCreds: boolean;
+  dashboardSessionCreds: boolean;
+}): string {
+  return [
+    "NEMOCLAW_HERMES_WHATSAPP_SESSION_V1",
+    `GATEWAY_SESSION=${options.gatewaySessionCreds ? "present" : "missing"}`,
+    `DASHBOARD_SESSION=${options.dashboardSessionCreds ? "present" : "missing"}`,
+  ].join("\n");
+}
+
 describe("showSandboxChannelStatus (whatsapp)", () => {
   it("returns idle verdict and exit code 1 when paired but no inbound observed", async () => {
     const stdout = waStatusJson({
@@ -214,22 +225,60 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(threw?.message).toBe("process.exit(1)");
   });
 
-  it("falls back to basic status for Hermes without running the OpenClaw probe", async () => {
+  it("reports a Hermes dashboard-home session that the gateway path cannot read", async () => {
     const exec = vi.fn((_sandbox: string, _command: string, _timeoutMs?: number) => ({
       status: 0,
-      stdout: "",
+      stdout: hermesSessionProbeOutput({
+        gatewaySessionCreds: false,
+        dashboardSessionCreds: true,
+      }),
       stderr: "",
     }));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     const { deps } = makeDeps({
       exec,
       agentName: "hermes",
       sandbox: entry(["whatsapp"], [], {}, "hermes"),
     });
-    const result = await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    let threw: Error | null = null;
+    try {
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    } catch (err) {
+      threw = err as Error;
+    } finally {
+      exitSpy.mockRestore();
+    }
     const commands = exec.mock.calls.map((call) => String(call[1] ?? "")).join("\n");
+    expect(threw?.message).toBe("process.exit(1)");
     expect(commands).not.toContain("openclaw channels status");
-    expect(commands).not.toContain("platforms/whatsapp/session/creds.json");
-    expect(result && "verdict" in result && result.verdict).toBe("info");
+    expect(commands).toContain("/sandbox/.hermes/platforms/whatsapp/session/creds.json");
+    expect(commands).toContain(
+      "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json",
+    );
+  });
+
+  it("keeps Hermes gateway session presence as an unknown live-health verdict", async () => {
+    const { deps } = makeDeps({
+      exec: () => ({
+        status: 0,
+        stdout: hermesSessionProbeOutput({
+          gatewaySessionCreds: true,
+          dashboardSessionCreds: false,
+        }),
+        stderr: "",
+      }),
+      agentName: "hermes",
+      sandbox: entry(["whatsapp"], [], {}, "hermes"),
+    });
+    const result = await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    expect(result && "report" in result && result.report.verdict).toBe("unknown");
+    const session =
+      result && "report" in result
+        ? result.report.signals.find((signal) => signal.label === "Session location")
+        : undefined;
+    expect(session?.severity).toBe("ok");
   });
 
   it("skips the deep probe and reports paused state when WhatsApp is in disabledChannels", async () => {
