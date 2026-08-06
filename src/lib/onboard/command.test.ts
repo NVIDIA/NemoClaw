@@ -433,6 +433,9 @@ describe("onboard command options", () => {
       NEMOCLAW_PROVIDER: "previous-provider",
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+      NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_TIER: "previous-tier",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     };
     const observed: Record<string, string | undefined> = {};
     await runOnboardCommand({
@@ -444,6 +447,9 @@ describe("onboard command options", () => {
           "NEMOCLAW_PROVIDER",
           "NEMOCLAW_MODEL",
           "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+          "NEMOCLAW_POLICY_MODE",
+          "NEMOCLAW_POLICY_TIER",
+          "NEMOCLAW_TOOL_DISCLOSURE",
         ]) {
           observed[key] = env[key];
         }
@@ -455,12 +461,18 @@ describe("onboard command options", () => {
       NEMOCLAW_PROVIDER: "ollama",
       NEMOCLAW_MODEL: "qwen3-vl:4b",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+      NEMOCLAW_POLICY_MODE: "suggested",
+      NEMOCLAW_POLICY_TIER: "personal",
+      NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });
     expect(env).toMatchObject({
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+      NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_TIER: "previous-tier",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     });
   });
 
