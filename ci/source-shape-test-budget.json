@@ -13,7 +13,7 @@
     },
     {
       "file": "src/lib/agent/base-image-hermes.test.ts",
-      "test": "accepts only the tracked published Hermes base digest",
+      "test": "requires the pinned Hermes base image and checks installed dependency versions after messaging package installation (#8328)",
       "category": "security"
     },
     {

@@ -195,8 +195,9 @@ function readinessSources(): ManagedInferenceReadinessSource[] {
 
 function storageRemediableReadinessReport(
   extraFindings: SystemReadinessReport["findings"] = [],
+  preset: ManagedInferenceServingPreset = shippedPreset(),
 ): SystemReadinessReport {
-  const report = readinessReport();
+  const report = readinessReport({}, preset);
   return {
     ...report,
     capabilities: [
@@ -628,6 +629,11 @@ describe("managed inference resolver", () => {
       ["at-least", "host.gpu.count", 0],
       ["version-at-least", "host.gpu.driver_version", "579.99.0"],
       ["malformed version-at-least", "host.gpu.driver_version", "580.65.x"],
+      [
+        "version segment above Number.MAX_SAFE_INTEGER",
+        "host.gpu.driver_version",
+        "9007199254740992.1",
+      ],
     ] as const;
     for (const [caseName, id, value] of nonmatchingObservations) {
       const rejectedReports = reports.map(({ nodeId, report }, index) => ({
@@ -826,10 +832,13 @@ describe("managed inference resolver", () => {
 
   it("admits a storage conflict that the public lifecycle can remediate (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
-    const presetId = catalog.presets[0]!.metadata.id;
+    const preset = catalog.presets[0]!;
+    const presetId = preset.metadata.id;
     const result = resolveManagedInferenceServing(
       {
-        readinessReports: [{ nodeId: "spark-head", report: storageRemediableReadinessReport() }],
+        readinessReports: [
+          { nodeId: "spark-head", report: storageRemediableReadinessReport([], preset) },
+        ],
         topologyQualifications: [],
         intent: { preset: presetId },
         now: NOW,
