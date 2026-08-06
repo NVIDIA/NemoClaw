@@ -141,10 +141,13 @@ async function checkInference() {
     }
     const data = await res.json();
     const names = (data.models || []).map((m) => m.name || m.model || "");
-    const want = MODEL.split(":")[0];
-    const ok =
-      names.some((n) => n === MODEL || n.startsWith(`${want}:`) || n.includes(MODEL)) ||
-      names.length > 0;
+    const ok = MODEL
+      ? names.some(
+          (name) =>
+            name === MODEL ||
+            (!MODEL.includes(":") && name.startsWith(`${MODEL}:`)),
+        )
+      : names.length > 0;
     if (ok) {
       inferenceReadyEver = true;
       inferenceFailStreak = 0;
