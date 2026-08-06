@@ -11,6 +11,18 @@ script_dir=$(
 )
 cd "$script_dir"
 
+# Self-hosted GPU builders can have a much smaller connection budget than
+# hosted builders, while dual-stack DNS can add a second failure path. Keep the
+# reviewed install deterministic while bounding each registry attempt and the
+# number of sockets npm can consume. These settings do not weaken lockfile,
+# signature, or audit verification below.
+export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"
+export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"
+export NPM_CONFIG_FETCH_RETRIES="${NPM_CONFIG_FETCH_RETRIES:-5}"
+export NPM_CONFIG_FETCH_RETRY_MINTIMEOUT="${NPM_CONFIG_FETCH_RETRY_MINTIMEOUT:-1000}"
+export NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT="${NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT:-20000}"
+export NPM_CONFIG_FETCH_TIMEOUT="${NPM_CONFIG_FETCH_TIMEOUT:-60000}"
+
 if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then
   command -v base64 >/dev/null 2>&1 || {
     echo "[nemoclaw] base64 is required to decode the corporate CA for the MCP discovery runtime" >&2
@@ -48,7 +60,11 @@ install_log=$(mktemp)
 trap 'rm -f "$install_log"' EXIT
 install_attempt=1
 while :; do
-  if npm ci --ignore-scripts --no-audit --no-fund --no-progress >"$install_log" 2>&1; then
+  set -- ci --ignore-scripts --no-audit --no-fund --no-progress
+  if [ "$install_attempt" -gt 1 ]; then
+    set -- "$@" --prefer-offline
+  fi
+  if npm "$@" >"$install_log" 2>&1; then
     cat "$install_log"
     break
   else

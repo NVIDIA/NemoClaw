@@ -17,10 +17,12 @@ FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea5
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NODE_OPTIONS=--dns-result-order=ipv4first \
+    NPM_CONFIG_MAXSOCKETS=4 \
     NPM_CONFIG_FETCH_RETRIES=5 \
-    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
-    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
-    NPM_CONFIG_FETCH_TIMEOUT=300000
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_TIMEOUT=60000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 WORKDIR /opt/nemoclaw
 RUN npm ci
@@ -42,7 +44,10 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 # Build the agent-neutral, names-only MCP diagnostic once from a committed
 # production lock. The final image copies only the bundled runtime, not its
 # build-time dependency tree.
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
+# Depend on the completed plugin builder so BuildKit does not run two npm
+# dependency installs concurrently on connection-constrained GPU runners. The
+# final image still copies only the reviewed MCP bundle from this stage.
+FROM builder AS mcp-tool-discovery-runtime
 ARG NEMOCLAW_CORPORATE_CA_B64
 ENV AWS_EC2_METADATA_DISABLED=true \
     NPM_CONFIG_AUDIT=false \

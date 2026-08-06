@@ -87,6 +87,13 @@ describe("MCP tool discovery image contract", () => {
         .map((line) => line.trim())
         .filter((line) => line.startsWith("npm audit")),
     ).toEqual(["npm audit signatures", "npm audit --omit=dev --audit-level=low"]);
+    expect(installer).toContain(
+      'export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"',
+    );
+    expect(installer).toContain('export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"');
+    expect(fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8")).toContain(
+      "FROM builder AS mcp-tool-discovery-runtime",
+    );
   });
 
   it.each(
@@ -148,7 +155,7 @@ exit 0
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("7");
         expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 2)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
-          "ci --ignore-scripts --no-audit --no-fund --no-progress",
+          "ci --ignore-scripts --no-audit --no-fund --no-progress --prefer-offline",
         ]);
       } finally {
         fs.rmSync(fixture, { force: true, recursive: true });
