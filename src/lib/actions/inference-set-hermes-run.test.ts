@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
@@ -28,6 +28,7 @@ describe("runInferenceSet Hermes routing", () => {
       defaultSandbox: "hermes",
       target: HERMES_TARGET,
       session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      contextWindow: 128_000,
     });
 
     const result = await runInferenceSet(
@@ -57,13 +58,32 @@ describe("runInferenceSet Hermes routing", () => {
     expect(config).toEqual({
       _nemoclaw_upstream: {
         provider: "hermes-provider",
+        provider_key: "hermes-provider",
         model: "openai/gpt-5.4-mini",
       },
+      custom_providers: [
+        {
+          name: "hermes-provider",
+          base_url: "https://inference.local/v1",
+          api_key: HERMES_PROXY_REWRITE_SENTINEL,
+          discover_models: true,
+        },
+      ],
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
         base_url: "https://inference.local/v1",
-        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
+        context_length: 128_000,
+      },
+      providers: {
+        "hermes-provider": {
+          name: "hermes-provider",
+          api: "https://inference.local/v1",
+          api_key: HERMES_PROXY_REWRITE_SENTINEL,
+          default_model: "openai/gpt-5.4-mini",
+          discover_models: true,
+        },
       },
       terminal: { backend: "local" },
     });
@@ -103,6 +123,48 @@ describe("runInferenceSet Hermes routing", () => {
       sessionUpdated: true,
     });
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
+      "hermes-provider",
+      "openai/gpt-5.4-mini",
+    );
+  });
+
+  it("uses Hermes model discovery when the selected context window is unavailable", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+        context_length: 32_768,
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      contextWindow: null,
+    });
+
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(config.model).not.toHaveProperty("context_length");
+    const logs = deps.calls.log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logs).toContain("omitting context_length so Hermes can discover it");
   });
 
   it("re-seeds the isolated Hermes dashboard config after an in-place switch (#6893)", async () => {
@@ -358,12 +420,13 @@ describe("runInferenceSet Hermes routing", () => {
       default: "claude-sonnet-proxy",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     // The upstream annotation must track the selected provider together with
     // the API-family field, so the two cannot drift apart on later switches.
     expect(config._nemoclaw_upstream).toEqual({
       provider: "compatible-anthropic-endpoint",
+      provider_key: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
     });
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
@@ -515,7 +578,7 @@ describe("runInferenceSet Hermes routing", () => {
       default: "anthropic.claude-sonnet-4-6-20260101-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     expect(result).toMatchObject({
       providerKey: "inference",

@@ -6,6 +6,32 @@ import { describe, expect, it } from "vitest";
 import { REQUIRED_CHECK_NAMES, runComparatorGate, runGate } from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate contributor compliance", () => {
+  it("classifies the merge-gate checker as risky code with direct test coverage", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        files: [
+          {
+            path: ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
+            status: "modified",
+          },
+          {
+            path: "test/skills/check-gates-compliance.test.ts",
+            status: "modified",
+          },
+        ],
+      }).stdout,
+    );
+
+    expect(output.gates.riskyCodeTested).toMatchObject({
+      pass: true,
+      details: "1 risky file(s) changed; test files present in PR",
+      riskyFiles: [".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts"],
+      hasTests: true,
+    });
+  });
+
   it("passes when the PR body has DCO and every commit is GitHub Verified", () => {
     const result = runGate({
       body: "## Summary\n\nPolicy alignment.\n\nSigned-off-by: Example User <user@example.com>",
@@ -748,7 +774,7 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(output.gates.ci_green_sha).toBe(false);
     expect(output.details.ci_missing_required_checks).toEqual(REQUIRED_CHECK_NAMES);
     expect(output.failures).toContain(
-      "substantive:ci_failures=0,pending=0,missing=checks,check-hash,changes,commit-lint,dco-check,E2E / PR Gate",
+      "substantive:ci_failures=0,pending=0,missing=checks,check-hash,changes,commit-lint,dco-check",
     );
   });
 
@@ -772,7 +798,7 @@ describe("maintainer PR comparator contributor compliance", () => {
     const fixture = {
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
-      checkNames: REQUIRED_CHECK_NAMES.filter((name) => name !== "E2E / PR Gate"),
+      checkNames: REQUIRED_CHECK_NAMES.filter((name) => name !== "checks"),
     };
     const mergeGate = runGate(fixture);
     const comparator = runComparatorGate(fixture);
@@ -781,41 +807,21 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(comparator.status).toBe(0);
     const mergeOutput = JSON.parse(mergeGate.stdout);
     const comparatorOutput = JSON.parse(comparator.stdout);
-    expect(mergeOutput.gates.ci).toMatchObject({
-      pass: false,
-      missingChecks: ["E2E / PR Gate"],
-    });
+    expect(mergeOutput.gates.ci).toMatchObject({ pass: false, missingChecks: ["checks"] });
     expect(mergeOutput.allPass).toBe(false);
     expect(comparatorOutput.gates.ci_green_sha).toBe(false);
-    expect(comparatorOutput.details.ci_missing_required_checks).toEqual(["E2E / PR Gate"]);
-    expect(comparatorOutput.failures).toContain(
-      "substantive:ci_failures=0,pending=0,missing=E2E / PR Gate",
-    );
+    expect(comparatorOutput.details.ci_missing_required_checks).toEqual(["checks"]);
   });
 
-  it.each([
-    "NEUTRAL",
-    "SKIPPED",
-  ])("requires a literal SUCCESS conclusion from E2E / PR Gate when it is %s", (conclusion) => {
+  it("treats the former PR E2E gate as advisory", () => {
     const fixture = {
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
-      checkConclusions: { "E2E / PR Gate": conclusion },
+      checkConclusions: { "E2E / PR Gate": "FAILURE" },
     };
-    const mergeGate = runGate(fixture);
-    const comparator = runComparatorGate(fixture);
 
-    expect(mergeGate.status).toBe(0);
-    expect(comparator.status).toBe(0);
-    const mergeOutput = JSON.parse(mergeGate.stdout);
-    const comparatorOutput = JSON.parse(comparator.stdout);
-    expect(mergeOutput.gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: [`E2E / PR Gate: ${conclusion}`],
-    });
-    expect(mergeOutput.allPass).toBe(false);
-    expect(comparatorOutput.gates.ci_green_sha).toBe(false);
-    expect(comparatorOutput.details.ci_failing_checks).toEqual([`E2E / PR Gate: ${conclusion}`]);
+    expect(JSON.parse(runGate(fixture).stdout).gates.ci.pass).toBe(true);
+    expect(JSON.parse(runComparatorGate(fixture).stdout).gates.ci_green_sha).toBe(true);
   });
 
   it.each([

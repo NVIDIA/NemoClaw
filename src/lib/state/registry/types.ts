@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InferenceSelection } from "../../inference/selection";
+import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
+import type { TrustedPrivatePolicyPinReceipt } from "../../policy/trusted-private-endpoints";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
@@ -16,6 +19,8 @@ export interface CustomPolicyEntry {
   pendingContent?: string;
   sourcePath?: string;
   appliedAt?: string;
+  /** Content-bound authority for generated exact destination pins. */
+  trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
 }
 
 export interface BaselineExclusionEntry {
@@ -75,6 +80,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
   reservationSessionId?: string;
   createdAt?: string;
+  /** Immutable catalog provenance for an explicitly selected serving profile. */
+  servingProfileProvenance?: ServingProfileProvenance;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
   sandboxGpuEnabled?: boolean;
@@ -181,7 +188,8 @@ export type SandboxWorkloadReceipt =
       readonly kind: "legacy-dockerfile";
       readonly reference: string | null;
       readonly shared: false;
-    };
+    }
+  | NativeArtifactWorkloadReceiptV1;
 
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;

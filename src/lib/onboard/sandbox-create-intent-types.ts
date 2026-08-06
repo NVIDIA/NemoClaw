@@ -34,7 +34,7 @@ export type SandboxCreatePolicyRequest = {
 
 /**
  * Serializable intent for the create-time sandbox contributions. When built
- * through `prepareSandboxCreatePlan`, messaging credential values are
+ * through `materializeSandboxCreatePlan`, messaging credential values are
  * represented only by their logical environment-key bindings and presence.
  *
  * This is deliberately separate from the execution plan, which contains
@@ -87,7 +87,7 @@ export type ResolveSandboxCreateIntentInput = {
 
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
-  buildCtx: string;
+  fromRef: string;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(

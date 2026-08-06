@@ -1,0 +1,23 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "version": 1,
+  "readOnlyRoots": [
+    "cron",
+    "hooks",
+    "platforms",
+    "plugins",
+    "profiles",
+    "skills",
+    "skins",
+    "weixin",
+    "workspace"
+  ],
+  "confidentialRoots": [
+    "pairing"
+  ],
+  "readOnlyPrefixes": [],
+  "confidentialPrefixes": [],
+  "writableSubpaths": [
+    "profiles/dashboard-home"
+  ]
+}

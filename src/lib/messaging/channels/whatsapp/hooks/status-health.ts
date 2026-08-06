@@ -8,6 +8,20 @@
  * command via the status-hook runner, so no whatsapp-specific code lives in
  * the generic status orchestrator.
  *
+ * For Hermes, the probe reads only fixed boolean evidence about the two known
+ * WhatsApp session paths:
+ *
+ *   /sandbox/.hermes/platforms/whatsapp/session/creds.json
+ *   /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json
+ *
+ * It never reads credential file contents or lists session directories.
+ *
+ * This is a bounded compatibility probe for Hermes dashboard pairing that can
+ * write credentials under profiles/dashboard-home while the gateway reads the
+ * default session path. Remove the dashboard profile branch after Hermes uses
+ * one shared WhatsApp session path for both dashboard pairing and gateway
+ * startup.
+ *
  * The probe reads OpenClaw's authoritative live status JSON:
  *
  *   openclaw channels status --channel whatsapp --json --timeout <ms>
@@ -44,6 +58,7 @@ import {
   evaluateWhatsappDiagnostics,
   type WhatsappHeartbeat,
   type WhatsappProbeInput,
+  type WhatsappSessionLocations,
 } from "./status-health-eval";
 
 export const WHATSAPP_STATUS_HEALTH_HOOK_HANDLER_ID = "whatsapp.statusHealth";
@@ -53,6 +68,7 @@ export const WHATSAPP_STATUS_HEALTH_HOOK_HANDLER_ID = "whatsapp.statusHealth";
 // the Noise WebSocket is stuck; a fast hard cap keeps channels status from
 // inheriting that hang.
 const DEFAULT_TIMEOUT_MS = 8_000;
+const HERMES_SESSION_PROBE_SENTINEL = "NEMOCLAW_HERMES_WHATSAPP_SESSION_V1";
 /** WhatsApp uses the generic channel-health hook options unchanged. */
 export type WhatsappStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 
@@ -69,12 +85,14 @@ export function createWhatsappStatusHealthHook(
     if (!execute || !sandboxName) return {};
 
     const agent = normalizeString(context.inputs?.agent) ?? "openclaw";
-    // This hook consumes an OpenClaw-specific status contract. The manifest
-    // gates it to OpenClaw; keep the handler fail-safe when invoked directly
-    // so another agent never receives an unsupported health verdict.
-    if (agent !== "openclaw") return {};
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
-    const probe = runOpenclawStatusProbe(execute, sandboxName, timeoutMs);
+    const probe =
+      agent === "openclaw"
+        ? runOpenclawStatusProbe(execute, sandboxName, timeoutMs)
+        : agent === "hermes"
+          ? runHermesSessionProbe(execute, sandboxName, timeoutMs)
+          : null;
+    if (!probe) return {};
 
     const input: WhatsappProbeInput = {
       agent,
@@ -88,6 +106,7 @@ export function createWhatsappStatusHealthHook(
       presetInRegistry: Boolean(context.inputs?.presetInRegistry),
       presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
       channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
+      ...(probe.sessionLocations ? { sessionLocations: probe.sessionLocations } : {}),
     };
     const report = evaluateWhatsappDiagnostics(input);
     return {
@@ -138,6 +157,7 @@ type ProbeResult = {
   readonly bridgeProcessAlive: boolean | null;
   readonly heartbeat: WhatsappHeartbeat | null;
   readonly recentLogSignals: readonly string[];
+  readonly sessionLocations?: WhatsappSessionLocations;
 };
 
 const PROBE_UNREACHABLE: ProbeResult = {
@@ -201,6 +221,61 @@ function runOpenclawStatusProbe(
   }
   if (!hasRequiredWhatsappLiveness(wa)) return PROBE_UNREACHABLE;
   return mapOpenclawWaState(wa);
+}
+
+function runHermesSessionProbe(
+  execute: NonNullable<WhatsappStatusHealthHookOptions["executeSandboxCommand"]>,
+  sandboxName: string,
+  timeoutMs: number,
+): ProbeResult {
+  const command = hermesSessionProbeCommand();
+  let exec: ReturnType<typeof execute>;
+  try {
+    exec = execute(sandboxName, command, timeoutMs);
+  } catch {
+    return PROBE_UNREACHABLE;
+  }
+  if (!exec || exec.status !== 0) return PROBE_UNREACHABLE;
+  const locations = parseHermesSessionProbe(String(exec.stdout ?? ""));
+  if (!locations) return PROBE_UNREACHABLE;
+  const gatewaySession = locations.gatewaySessionCreds === true;
+  return {
+    probeReachable: true,
+    paired: gatewaySession ? null : false,
+    bridgeProcessAlive: null,
+    heartbeat: null,
+    recentLogSignals: [],
+    sessionLocations: locations,
+  };
+}
+
+function hermesSessionProbeCommand(): string {
+  return [
+    'gateway="/sandbox/.hermes/platforms/whatsapp/session/creds.json"',
+    'dashboard="/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json"',
+    `printf '%s\\n' '${HERMES_SESSION_PROBE_SENTINEL}'`,
+    'if [ -f "$gateway" ]; then printf "%s\\n" "GATEWAY_SESSION=present"; else printf "%s\\n" "GATEWAY_SESSION=missing"; fi',
+    'if [ -f "$dashboard" ]; then printf "%s\\n" "DASHBOARD_SESSION=present"; else printf "%s\\n" "DASHBOARD_SESSION=missing"; fi',
+  ].join("; ");
+}
+
+function parseHermesSessionProbe(stdout: string): WhatsappSessionLocations | null {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.includes(HERMES_SESSION_PROBE_SENTINEL)) return null;
+  const gateway = readProbeBoolean(lines, "GATEWAY_SESSION");
+  const dashboard = readProbeBoolean(lines, "DASHBOARD_SESSION");
+  if (gateway === null || dashboard === null) return null;
+  return { gatewaySessionCreds: gateway, dashboardSessionCreds: dashboard };
+}
+
+function readProbeBoolean(lines: readonly string[], key: string): boolean | null {
+  const match = lines.find((line) => line === `${key}=present` || line === `${key}=missing`);
+  if (match === `${key}=present`) return true;
+  if (match === `${key}=missing`) return false;
+  return null;
 }
 
 function hasRequiredWhatsappLiveness(

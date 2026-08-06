@@ -20,6 +20,7 @@ import type { SandboxEntry } from "../../state/registry";
 import type { DestroyRunOpenshell } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
+  McpBridgeError,
   type McpDestroyPreparation,
   prepareMcpBridgesForAbsentSandboxDestroy,
   prepareMcpBridgesForDestroy,
@@ -228,7 +229,7 @@ async function finalizeMcpDestroy(
   try {
     await finalizeMcpBridgesAfterSandboxDelete(sandboxName, preparation, { force });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = redactDestroyError(error);
     console.error(
       `  Sandbox '${sandboxName}' is gone, but authenticated MCP provider cleanup is incomplete: ${detail}`,
     );
@@ -269,12 +270,22 @@ export async function executeSandboxDestroy({
         };
       }
     }
-    const mcpPreparation = await prepareMcpDestroy(
-      sandboxName,
-      sandbox,
-      sandboxConfirmedAbsent,
-      force,
-    );
+    let mcpPreparation: McpDestroyPreparation;
+    try {
+      mcpPreparation = await prepareMcpDestroy(sandboxName, sandbox, sandboxConfirmedAbsent, force);
+    } catch (error) {
+      if (error instanceof McpBridgeError) {
+        return {
+          ok: false as const,
+          deleteOutput: redactDestroyError(error),
+          exitCode: error.exitCode,
+          gatewayUnreachable: false,
+          mcpOwnershipRequiresGateway: false,
+          shieldsRelockRequiresGateway: false,
+        };
+      }
+      throw error;
+    }
     // Prepared-only/incomplete adds have no external resources and are safely
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
@@ -329,7 +340,21 @@ export async function executeSandboxDestroy({
     // stale timer state cannot target a same-name replacement.
     cleanupShieldsArtifacts(sandboxName);
     if (!forcedLocalCleanup) {
-      await finalizeMcpDestroy(sandboxName, mcpPreparation, force);
+      try {
+        await finalizeMcpDestroy(sandboxName, mcpPreparation, force);
+      } catch (error) {
+        if (error instanceof McpBridgeError) {
+          return {
+            ok: false as const,
+            deleteOutput: redactDestroyError(error),
+            exitCode: error.exitCode,
+            gatewayUnreachable: false,
+            mcpOwnershipRequiresGateway: false,
+            shieldsRelockRequiresGateway: false,
+          };
+        }
+        throw error;
+      }
     }
     return {
       ok: true as const,

@@ -60,6 +60,9 @@ const HERMES_MANAGED_CONFIG_FILES = [
   "/sandbox/.hermes/config.yaml",
   "/sandbox/.hermes/.env",
 ] as const;
+const HERMES_GENERATED_MANAGED_POLICY_FILE = "/sandbox/.hermes/managed-policy.json";
+const HERMES_INSTALLED_MANAGED_POLICY_FILE = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
+const MAX_HERMES_MANAGED_POLICY_BYTES = 4 * 1024 * 1024;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
@@ -437,10 +440,7 @@ function readSandboxIdentity(): { readonly uid: string; readonly gid: string } {
   return { uid: readId("-u"), gid: readId("-g") };
 }
 
-function sandboxPrefix(): readonly string[] {
-  if (trustedExecutable("/usr/local/bin/gosu")) {
-    return ["/usr/local/bin/gosu", "sandbox"];
-  }
+export function managedStartupSandboxPrefix(): readonly string[] {
   if (trustedExecutable("/usr/bin/setpriv")) {
     const identity = readSandboxIdentity();
     return [
@@ -451,7 +451,7 @@ function sandboxPrefix(): readonly string[] {
       "--",
     ];
   }
-  return fail("a trusted gosu or setpriv executable is required");
+  return fail("a trusted setpriv executable is required");
 }
 
 function commandEnvironment(
@@ -485,7 +485,7 @@ function execute(
   capture = false,
 ): CommandResult {
   if (argv.length === 0) fail("refusing an empty managed startup command");
-  const command = runAs === "sandbox" ? [...sandboxPrefix(), ...argv] : [...argv];
+  const command = runAs === "sandbox" ? [...managedStartupSandboxPrefix(), ...argv] : [...argv];
   const result = spawnSync(command[0] as string, command.slice(1), {
     encoding: "utf8",
     env: commandEnvironment(configurationEnvironment, applicationRuntime),
@@ -817,6 +817,20 @@ export function readStableRegularFileSnapshot(target: string, maxBytes: number):
 
 export function readStableRegularFile(target: string, maxBytes: number): Buffer {
   return readStableRegularFileSnapshot(target, maxBytes).bytes;
+}
+
+/** Promote the generator output to the one root-owned policy artifact used at runtime. */
+export function installHermesManagedPolicy(
+  source = HERMES_GENERATED_MANAGED_POLICY_FILE,
+  target = HERMES_INSTALLED_MANAGED_POLICY_FILE,
+): void {
+  const generated = readStableRegularFileSnapshot(source, MAX_HERMES_MANAGED_POLICY_BYTES);
+  atomicWriteRootFile(target, generated.bytes, 0o444);
+  const current = fs.lstatSync(source, { bigint: true });
+  if (!sameStableFileMetadata(generated.stat, current)) {
+    fail(`Hermes managed policy changed before source cleanup: ${source}`);
+  }
+  fs.unlinkSync(source);
 }
 
 /**
@@ -1299,6 +1313,7 @@ function applyAdapter(
       sealOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       break;
     case "hermes":
+      installHermesManagedPolicy();
       sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       // Normalize before the coordinator commits a newly applied profile so
       // the durable transaction never records generator-created 0600 files as

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import { exportLlamaCppDgxSparkQualificationPlan } from "../scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts";
 import {
@@ -28,15 +29,26 @@ function candidateRoot(options: { activation?: string; enabled?: boolean } = {})
     path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml"),
     "utf8",
   );
-  const enabledImage = sourceImage
-    .replace("      execution: disabled", "      execution: enabled")
-    .replace("      runner: null", "      runner: linux-arm64-gpu-dgx-spark-gb10-protected-1")
-    .replace("      environment: null", "      environment: approve-dgx-spark-image-qualification")
-    .replace(
-      "        hostPath: null",
-      "        hostPath: /var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
-    );
-  const image = options.enabled ? enabledImage : sourceImage;
+  const imageDocument = YAML.parse(sourceImage) as {
+    spec: {
+      publication: {
+        qualification: {
+          environment: string | null;
+          execution: "disabled" | "enabled";
+          model: { hostPath: string | null };
+          runner: string | null;
+        };
+      };
+    };
+  };
+  const qualification = imageDocument.spec.publication.qualification;
+  qualification.execution = options.enabled ? "enabled" : "disabled";
+  qualification.runner = options.enabled ? "linux-arm64-gpu-dgx-spark-gb10-protected-1" : null;
+  qualification.environment = options.enabled ? "approve-dgx-spark-image-qualification" : null;
+  qualification.model.hostPath = options.enabled
+    ? "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
+    : null;
+  const image = YAML.stringify(imageDocument);
   fs.writeFileSync(path.join(imageDirectory, "image.yaml"), image);
   fs.copyFileSync(
     path.join(
@@ -83,6 +95,17 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
     expect(
       parseLlamaCppDgxSparkExecutionPlan(JSON.parse(output.plan), output.plan_sha256),
     ).toMatchObject({ contractVersion: 1 });
+  });
+
+  it("exports the checked-in main qualification as enabled", () => {
+    const output = exportLlamaCppDgxSparkQualificationPlan(repoRoot);
+
+    expect(output).toMatchObject({
+      environment: "approve-dgx-spark-image-qualification",
+      execution: "enabled",
+      model_host_path: "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
+      runner: "linux-arm64-gpu-dgx-spark-gb10-protected-1",
+    });
   });
 
   it("rejects a dormant image even when an activation file exists", () => {

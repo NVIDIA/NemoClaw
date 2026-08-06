@@ -11,6 +11,7 @@ import {
   findLabeledSandboxContainers,
   recoverDockerDriverSandbox,
 } from "../docker-driver-sandbox-recovery";
+import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -284,6 +285,7 @@ function acceptsReceipt(
 ): boolean {
   if (!receipt) return true;
   if (receipt.kind === "legacy-dockerfile") return profile.legacyDockerfileBuilds;
+  if (receipt.kind === "native-artifact") return false;
   if (receipt.platform === undefined) return false;
   return (
     profile.support !== null &&
@@ -359,7 +361,7 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    bootstrap: unsupported(providerId, futureReason),
+    bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
       queryRuntimeSnapshot: deps.queryRuntimeSnapshot,

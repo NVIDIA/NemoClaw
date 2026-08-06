@@ -36,6 +36,7 @@ import {
   applyManagedStartupImageProfile,
   applyManagedStartupRootRequest,
   buildManagedStartupImageActionPlan,
+  installHermesManagedPolicy,
   MANAGED_STARTUP_PROFILE_ENV,
   type ManagedStartupImageActionPlanInput,
 } from "./managed-startup/image-runtime";
@@ -327,11 +328,86 @@ describe("buildManagedStartupImageActionPlan", () => {
 });
 
 describe("managed startup image runtime", () => {
+  const policyTemporaryDirectories: string[] = [];
+
+  function temporaryPolicyDirectory(): string {
+    const directory = fs.mkdtempSync(path.join(process.env.TMPDIR!, "nemoclaw-managed-policy-"));
+    policyTemporaryDirectories.push(directory);
+    return directory;
+  }
+
   beforeEach(() => {
     coordinatorMock.coordinateManagedStartupApplication.mockReset();
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    for (const directory of policyTemporaryDirectories.splice(0)) {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  function mockRootOwnedPolicyInstallPaths(
+    source: string,
+    shareDirectory: string,
+    target: string,
+    beforeSourceCleanup?: () => void,
+  ): void {
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const rootOwned = (stat: fs.Stats): fs.Stats =>
+      new Proxy(stat, {
+        get(inner, property) {
+          const value = property === "uid" || property === "gid" ? 0 : Reflect.get(inner, property);
+          return typeof value === "function" ? value.bind(inner) : value;
+        },
+      });
+    vi.spyOn(fs, "lstatSync").mockImplementation(((
+      file: fs.PathLike,
+      options?: { bigint?: boolean },
+    ) => {
+      const sourceCleanupHook =
+        file.toString() === source && options?.bigint === true ? beforeSourceCleanup : undefined;
+      sourceCleanupHook?.();
+      const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
+      const rootPath = file.toString() === shareDirectory || file.toString() === target;
+      return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
+    }) as typeof fs.lstatSync);
+    vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
+  }
+
+  it("promotes generated Hermes policy to one root-owned, read-only runtime artifact", () => {
+    const directory = temporaryPolicyDirectory();
+    const shareDirectory = path.join(directory, "share");
+    const source = path.join(directory, "managed-policy.json");
+    const target = path.join(shareDirectory, "hermes-managed-policy.json");
+    const policy = '{"schema_version":1}\n';
+    fs.mkdirSync(shareDirectory);
+    fs.writeFileSync(source, policy, { mode: 0o600 });
+    mockRootOwnedPolicyInstallPaths(source, shareDirectory, target);
+
+    installHermesManagedPolicy(source, target);
+
+    expect(fs.existsSync(source)).toBe(false);
+    expect(fs.readFileSync(target, "utf8")).toBe(policy);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o444);
+  });
+
+  it("preserves generated Hermes policy when it changes before source cleanup", () => {
+    const directory = temporaryPolicyDirectory();
+    const shareDirectory = path.join(directory, "share");
+    const source = path.join(directory, "managed-policy.json");
+    const target = path.join(shareDirectory, "hermes-managed-policy.json");
+    const policy = '{"schema_version":1}\n';
+    fs.mkdirSync(shareDirectory);
+    fs.writeFileSync(source, policy, { mode: 0o600 });
+    mockRootOwnedPolicyInstallPaths(source, shareDirectory, target, () => {
+      fs.appendFileSync(source, "changed\n");
+    });
+
+    expect(() => installHermesManagedPolicy(source, target)).toThrow(
+      /changed before source cleanup/u,
+    );
+    expect(fs.readFileSync(source, "utf8")).toBe(`${policy}changed\n`);
+    expect(fs.readFileSync(target, "utf8")).toBe(policy);
   });
 
   it("rejects invalid OpenClaw launch controls before filesystem or coordinator mutation", async () => {

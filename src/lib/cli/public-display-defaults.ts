@@ -360,7 +360,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Policy Presets",
       order: 17,
-      flags: "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)",
+      flags:
+        "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>, --trusted-private-host <host>)",
     },
   ],
   "sandbox:policy:explain": [
@@ -584,6 +585,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 2.5,
       usage: "nemoclaw use <name>",
       flags: "[--json]",
+    },
+  ],
+  launch: [
+    {
+      group: "Sandbox Management",
+      order: 2.6,
+      usage: "nemoclaw launch <name>",
     },
   ],
   update: [

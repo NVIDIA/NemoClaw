@@ -17,6 +17,22 @@ import {
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
+  it("starts directly with setup when the serving environment is empty (#8246)", () => {
+    const command = buildVllmServeCommand({
+      id: "test/model",
+      label: "Test model",
+      envValue: "test-model",
+      downloadSizeBytes: 1,
+      maxModelLen: 4096,
+      modelArgs: [],
+      gated: false,
+      platforms: ["spark"],
+      serveEnv: {},
+    });
+
+    expect(command).toMatch(/^pip install vllm\[fastsafetensors\] && vllm serve/u);
+  });
+
   it("records a finite positive Hugging Face file size for every model", () => {
     for (const model of VLLM_MODELS) {
       expect(Number.isFinite(model.downloadSizeBytes)).toBe(true);
@@ -279,6 +295,31 @@ describe("vllm model registry", () => {
     expect(cmd).toContain(`--served-model-name 'operator'"'"'s model'`);
   });
 
+  it("quotes registry arguments and serving environment values as shell literals (#8246)", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand({
+      ...qwen!,
+      id: "example/model; touch /tmp/model-injection",
+      modelArgs: ["--served-model-name", "$(touch /tmp/argument-injection)"],
+      serveEnv: { SAFE_VALUE: "literal; $(touch /tmp/environment-injection)" },
+    });
+
+    expect(cmd).toContain("export SAFE_VALUE='literal; $(touch /tmp/environment-injection)'");
+    expect(cmd).toContain("vllm serve 'example/model; touch /tmp/model-injection'");
+    expect(cmd).toContain("--served-model-name '$(touch /tmp/argument-injection)'");
+  });
+
+  it("rejects invalid serving environment variable names", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+
+    expect(() =>
+      buildVllmServeCommand({
+        ...qwen!,
+        serveEnv: { "UNSAFE; touch /tmp/environment-name-injection": "1" },
+      }),
+    ).toThrow("Invalid vLLM serving environment variable name");
+  });
+
   it("uses model-specific max-model-len when building the command", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     const cmd = buildVllmServeCommand(deepseek!);
@@ -360,7 +401,7 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("builds the NVFP4 serve command from the DGX Spark model-card recipe (#6457)", () => {
+  it("builds the MTP-free NVFP4 serve command for DGX Spark (#7127)", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     const cmd = buildVllmServeCommand(qwen35b!);
     // The current NVIDIA model card no longer needs Spark-specific env exports.
@@ -390,9 +431,14 @@ describe("vllm model registry", () => {
     expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--max-model-len 262144");
-    expect(cmd).toContain(
-      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
-    );
+    expect(cmd).toContain("--dtype auto");
+    expect(cmd).toContain("--max-num-seqs 4");
+    expect(cmd).toContain("--max-num-batched-tokens 8192");
+    expect(cmd).toContain("--enable-chunked-prefill");
+    expect(cmd).toContain("--async-scheduling");
+    expect(cmd).toContain("--enable-prefix-caching");
+    expect(cmd).not.toContain("--speculative-config");
+    expect(cmd).not.toContain('"method":"mtp"');
     // Single-node parallel flags stay shared; 0.4 utilization follows the
     // current DGX Spark model-card recipe.
     expect(cmd).toContain("--gpu-memory-utilization 0.4");

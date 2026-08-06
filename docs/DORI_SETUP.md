@@ -7,7 +7,7 @@
 
 Use this guide only when the user explicitly asks to install or configure NVIDIA DORI.
 Before inspecting or installing private components, ask the user to confirm that they can access `gitlab-master.nvidia.com`.
-If the user does not confirm access, stop this setup and use the checked-in [Writing Style Guide](AGENTS.md#writing-style-guide).
+If the user does not confirm access, stop this setup and use the checked-in [Style Guide](CONTRIBUTING.md#style-guide).
 Access confirmation does not approve installation or host configuration.
 
 Use these internal sources for the current installation and registration instructions:
@@ -56,7 +56,7 @@ Before an installation or host configuration change, ask:
 
 Continue only after explicit approval.
 The user's private-source access confirmation does not approve these changes.
-If the user declines, use the [Writing Style Guide](AGENTS.md#writing-style-guide).
+If the user declines, use the [Style Guide](CONTRIBUTING.md#style-guide).
 
 ## Install Missing Components
 
@@ -101,7 +101,7 @@ Then perform the following checks:
 Follow the activation action that DORI reports.
 The action can require an application restart, a new session, a window reload, or enabling the MCP server.
 
-Until the current agent exposes DORI tools, continue the original task with the [Writing Style Guide](AGENTS.md#writing-style-guide).
+Until the current agent exposes DORI tools, continue the original task with the [Style Guide](CONTRIBUTING.md#style-guide).
 
 ## Protect Credentials and Repository State
 

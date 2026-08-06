@@ -9,6 +9,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildLlamaCppHostLocalDockerArgv,
+  type VerifiedLocalModelArtifact,
+} from "../../src/lib/inference/llama-cpp/host-local-runtime.ts";
+import {
   LLAMA_CPP_DGX_SPARK_MODEL_PATH_PATTERN,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_IMAGE_REPOSITORY,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND,
@@ -27,8 +31,6 @@ const registryImage =
 const registryOwnerLabel = "io.nvidia.nemoclaw.llama-cpp-qualification-owner";
 const localImageRepository = LLAMA_CPP_DGX_SPARK_QUALIFICATION_IMAGE_REPOSITORY;
 const expectedWorkflowRef = "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main";
-const containerModelPath = "/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
-const containerApiKeyPath = "/run/secrets/llama-cpp-api-key";
 const maximumPlanBytes = 1024 * 1024;
 const maximumDockerfileBytes = 1024 * 1024;
 const maximumModelBytes = 128 * 1024 * 1024 * 1024;
@@ -157,11 +159,13 @@ function requireTrustedEnvironment(
   runAttempt: string,
   workflowSha?: string,
 ): void {
+  const actor = environment.GITHUB_ACTOR ?? "";
   if (
     environment.GITHUB_REPOSITORY !== "NVIDIA/NemoClaw" ||
     environment.GITHUB_REF !== "refs/heads/main" ||
-    environment.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
-    environment.GITHUB_ACTOR !== "github-actions[bot]" ||
+    (environment.GITHUB_EVENT_NAME !== "push" &&
+      environment.GITHUB_EVENT_NAME !== "workflow_dispatch") ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/u.test(actor) ||
     environment.GITHUB_RUN_ID !== runId ||
     environment.GITHUB_RUN_ATTEMPT !== runAttempt ||
     !/^[1-9][0-9]*$/u.test(environment.GITHUB_ACTOR_ID ?? "") ||
@@ -303,86 +307,23 @@ export function buildServerContainerArgv(
     apiKeyHostPath: string;
     containerName: string;
     imageReference: string;
-    modelHostPath: string;
+    model: VerifiedLocalModelArtifact;
     networkName: string;
     registryOwner: string;
     runtimeGid: number;
     runtimeUid: number;
   },
 ): string[] {
-  const { resources } = plan.recipe.runtime;
-  const { serve } = plan.recipe;
-  const runtimeUid = requiredInteger(options.runtimeUid, "runtime uid", 1, 2_147_483_647);
-  const runtimeGid = requiredInteger(options.runtimeGid, "runtime gid", 1, 2_147_483_647);
-  return [
-    "run",
-    "--detach",
-    "--name",
-    options.containerName,
-    "--label",
-    `${registryOwnerLabel}=${options.registryOwner}`,
-    "--network",
-    options.networkName,
-    "--user",
-    `${runtimeUid}:${runtimeGid}`,
-    "--publish",
-    `127.0.0.1::${serve.port}`,
-    "--read-only",
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges=true",
-    "--memory",
-    `${resources.memoryBytes}b`,
-    "--memory-swap",
-    `${resources.memoryBytes}b`,
-    "--pids-limit",
-    String(resources.pidsLimit),
-    "--gpus",
-    "1",
-    "--tmpfs",
-    `/tmp:rw,noexec,nosuid,nodev,size=${resources.writableStorageBytes},uid=${runtimeUid},gid=${runtimeGid},mode=1777`,
-    "--mount",
-    `type=bind,source=${options.modelHostPath},target=${containerModelPath},readonly`,
-    "--mount",
-    `type=bind,source=${options.apiKeyHostPath},target=${containerApiKeyPath},readonly`,
-    options.imageReference,
-    "--model",
-    containerModelPath,
-    "--alias",
-    plan.recipe.model.servedName,
-    "--host",
-    "0.0.0.0",
-    "--port",
-    String(serve.port),
-    "--gpu-layers",
-    "all",
-    "--ctx-size",
-    String(serve.contextSize),
-    "--parallel",
-    String(serve.slots),
-    "--sleep-idle-seconds",
-    String(serve.idleSleepSeconds),
-    "--batch-size",
-    String(serve.batchSize),
-    "--ubatch-size",
-    String(serve.microBatchSize),
-    "--cache-type-k",
-    serve.kvCache.key,
-    "--cache-type-v",
-    serve.kvCache.value,
-    "--flash-attn",
-    "on",
-    "--timeout",
-    String(serve.limits.requestTimeoutSeconds),
-    "--api-key-file",
-    containerApiKeyPath,
-    "--metrics",
-    "--no-ui",
-    "--no-slots",
-    "--no-mmproj",
-    "--no-agent",
-  ];
+  return buildLlamaCppHostLocalDockerArgv(plan.recipe, {
+    apiKeyHostPath: options.apiKeyHostPath,
+    containerName: options.containerName,
+    imageReference: options.imageReference,
+    model: options.model,
+    network: { isolation: "docker-internal", name: options.networkName },
+    ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
+    runtimeGid: options.runtimeGid,
+    runtimeUid: options.runtimeUid,
+  });
 }
 
 export function validateStartupLog(log: string): { offloadedLayers: number; totalLayers: number } {
@@ -560,10 +501,10 @@ function validateCandidateCheckout(invocation: QualificationInvocation): string 
   return root;
 }
 
-function hashModelFile(
+export function hashModelFile(
   modelHostPath: string,
   plan: QualificationPlan,
-): { digest: string; sizeBytes: number } {
+): VerifiedLocalModelArtifact {
   if (path.basename(modelHostPath) !== plan.recipe.model.file.path) {
     throw new Error("model file name does not match the qualification plan");
   }
@@ -571,35 +512,39 @@ function hashModelFile(
   if (realPath !== modelHostPath) throw new Error("model file path must not use symlinks");
   const descriptor = fs.openSync(modelHostPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    const before = fs.fstatSync(descriptor);
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const expectedSize = BigInt(plan.recipe.model.file.sizeBytes);
     if (
       !before.isFile() ||
-      before.size !== plan.recipe.model.file.sizeBytes ||
-      before.size < 1 ||
-      before.size > maximumModelBytes
+      before.size !== expectedSize ||
+      before.size < 1n ||
+      before.size > BigInt(maximumModelBytes)
     ) {
       throw new Error("model file size does not match the bounded qualification plan");
     }
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(8 * 1024 * 1024);
+    const sizeBytes = Number(before.size);
     let position = 0;
-    while (position < before.size) {
+    while (position < sizeBytes) {
       const read = fs.readSync(
         descriptor,
         buffer,
         0,
-        Math.min(buffer.length, before.size - position),
+        Math.min(buffer.length, sizeBytes - position),
         position,
       );
       if (read < 1) throw new Error("model file changed during verification");
       hash.update(buffer.subarray(0, read));
       position += read;
     }
-    const after = fs.fstatSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
     if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
       before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
     ) {
       throw new Error("model file changed during verification");
     }
@@ -607,7 +552,18 @@ function hashModelFile(
     if (digest !== plan.recipe.model.file.digest) {
       throw new Error("model file digest does not match the qualification plan");
     }
-    return { digest, sizeBytes: after.size };
+    return {
+      digest,
+      filesystemIdentity: {
+        ctimeNs: after.ctimeNs,
+        dev: after.dev,
+        ino: after.ino,
+        mtimeNs: after.mtimeNs,
+        size: after.size,
+      },
+      hostPath: modelHostPath,
+      sizeBytes,
+    };
   } finally {
     fs.closeSync(descriptor);
   }
@@ -943,7 +899,7 @@ async function runQualification(
         apiKeyHostPath,
         containerName: names.containerName,
         imageReference: image.reference,
-        modelHostPath: invocation.modelHostPath,
+        model,
         networkName: names.networkName,
         registryOwner: names.registryOwner,
         runtimeGid,

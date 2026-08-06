@@ -20,6 +20,7 @@ import {
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
+import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
@@ -456,6 +457,26 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
   expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
 
+  const dependencyVersions = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/opt/hermes/.venv/bin/python",
+      "-I",
+      "-c",
+      "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual; print('\\n'.join(f'{name}=={actual[name]}' for name in sorted(actual)))",
+    ],
+    {
+      artifactName: "phase-4-hermes-dependency-versions",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(dependencyVersions.exitCode, resultText(dependencyVersions)).toBe(0);
+  expect(dependencyVersions.stdout.trim().split(/\r?\n/u)).toEqual([
+    "aiohttp==3.14.3",
+    "cryptography==50.0.0",
+  ]);
+
   const configProbe = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -554,7 +575,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(httpStatusOk(dashboardInternal.stdout)).toBe(true);
   }
 
-  progress.phase("restart Hermes gateway and validate supervision");
+  progress.phase("restart Hermes gateway, validate supervision, and launch a turn");
   // Phase 5: host-mediated Hermes gateway restart. This validates the
   // runtime contract behind #2426 against a real OpenShell/Hermes sandbox:
   // The installed supervision tree controls the gateway process, direct
@@ -599,9 +620,9 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
           "set -eu",
           `marker=${shellQuote(envMarker)}`,
           `backup=${shellQuote(envBackup)}`,
-          "command -v gosu >/dev/null 2>&1",
-          'gosu sandbox cp /sandbox/.hermes/.env "$backup"',
-          'gosu sandbox sh -lc \'printf "\\nNEMOCLAW_E2E_RESTART_MARKER=%s\\n" "$1" >> /sandbox/.hermes/.env\' sh "$marker"',
+          "test -x /usr/bin/setpriv",
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- cp /sandbox/.hermes/.env "$backup"',
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc \'printf "\\nNEMOCLAW_E2E_RESTART_MARKER=%s\\n" "$1" >> /sandbox/.hermes/.env\' sh "$marker"',
         ].join("; "),
       ),
       {
@@ -640,7 +661,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
         [
           "set -eu",
           `backup=${shellQuote(envBackup)}`,
-          'gosu sandbox sh -c \'cat "$1" > /sandbox/.hermes/.env && rm -f "$1"\' sh "$backup"',
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'cat "$1" > /sandbox/.hermes/.env && rm -f "$1"\' sh "$backup"',
           "sha256sum -c /etc/nemoclaw/hermes.config-hash --status",
           "echo ENV_RESTORED",
         ].join("; "),
@@ -1181,6 +1202,17 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       ).toBe(true);
     }
   }
+
+  await (process.platform === "linux"
+    ? runLaunchAgentTurn({
+        artifactName: "phase-5-hermes-launch-turn-after-recovery",
+        cliCommand: "nemoclaw",
+        env,
+        host,
+        redactionValues,
+        sandboxName: SANDBOX_NAME,
+      })
+    : Promise.resolve());
 
   progress.phase("exercise hosted and inference.local routes");
   // Phase 6: live inference through both the external provider and the

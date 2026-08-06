@@ -7,6 +7,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import {
+  CLI_ARTIFACT_PUBLISH_STEP,
+  CLI_ARTIFACT_UPLOAD_ACTION,
+} from "./cli-artifact-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -30,6 +34,11 @@ const CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION = "./.github/actions/upload-e2e
 const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
+const MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP = "Publish exact amd64 protected runtime build cache";
+const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME =
+  "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}";
+const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH =
+  "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/";
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -43,7 +52,7 @@ const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const SCORECARD_RUNTIME_UPLOAD_CONTRACT: WorkflowStep = {
   name: "Upload E2E runtime summary",
-  if: "${{ always() && github.event_name == 'schedule' }}",
+  if: "${{ always() && github.event_name == 'push' }}",
   uses: UPLOAD_E2E_ARTIFACTS_ACTION,
   with: {
     name: "e2e-runtime-summary",
@@ -68,6 +77,17 @@ type ExplicitUploadContract = {
   path?: string;
 };
 
+function isExactManagedImageBuildCacheUpload(jobName: string, step: WorkflowStep): boolean {
+  const inputs = record(step.with);
+  return (
+    jobName === "managed-image-multiarch-startup" &&
+    step.name === MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP &&
+    step.uses === UPLOAD_ARTIFACT_ACTION &&
+    inputs.name === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME &&
+    inputs.path === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH
+  );
+}
+
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "generate-matrix",
@@ -86,7 +106,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "staging-brev-launchable",
     {
-      name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}",
+      name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
         "${{ steps.workspace.outputs.work_dir }}/dispatch.json",
@@ -433,13 +453,32 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     const job = record(value);
     const jobSteps = steps(job.steps);
     const expected = expectedJobs.has(jobName);
+    const exactManagedImageBuildCacheUploads = jobSteps.filter((step) =>
+      isExactManagedImageBuildCacheUpload(jobName, step),
+    );
+    if (
+      jobName === "managed-image-multiarch-startup" &&
+      exactManagedImageBuildCacheUploads.length !== 1
+    ) {
+      errors.push(
+        "managed-image-multiarch-startup must define exactly one exact protected build-cache direct upload",
+      );
+    }
 
     for (const step of jobSteps) {
       const uses = typeof step.uses === "string" ? step.uses : "";
       if (uses.startsWith(CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION)) {
         errors.push(`${jobName} must not load upload-e2e-artifacts from the target checkout`);
       }
-      if (uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX)) {
+      const isExactCommitCliArtifactUpload =
+        jobName === "generate-matrix" &&
+        step.name === CLI_ARTIFACT_PUBLISH_STEP &&
+        uses === CLI_ARTIFACT_UPLOAD_ACTION;
+      if (
+        uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
+        !isExactCommitCliArtifactUpload &&
+        !isExactManagedImageBuildCacheUpload(jobName, step)
+      ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }
       if (
@@ -452,19 +491,16 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
 
     const uploadSteps = jobSteps.filter((step) => step.uses === UPLOAD_E2E_ARTIFACTS_ACTION);
     if (jobName === "scorecard") {
-      if (uploadSteps.length !== 1) {
+      if (
+        uploadSteps.length !== 1 ||
+        !isDeepStrictEqual(uploadSteps[0], SCORECARD_RUNTIME_UPLOAD_CONTRACT)
+      ) {
         errors.push(
-          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+          "scorecard must use upload-e2e-artifacts exactly once with its push runtime summary contract",
         );
         continue;
       }
-      const upload = uploadSteps[0];
-      if (!isDeepStrictEqual(upload, SCORECARD_RUNTIME_UPLOAD_CONTRACT)) {
-        errors.push(
-          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
-        );
-      }
-      validateUploadPlacement(errors, jobName, jobSteps, upload);
+      validateUploadPlacement(errors, jobName, jobSteps, uploadSteps[0]);
       continue;
     }
     if (!expected) {
