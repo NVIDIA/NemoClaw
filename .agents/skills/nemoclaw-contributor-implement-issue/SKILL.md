@@ -47,8 +47,12 @@ changes and validation; it does not authorize GitHub writes, a push, or pull req
 
 ## Discover the current implementation
 
-Follow [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the
-shared [Code Change Considerations](../_shared/code-change-considerations.md),
+Before running any `git` or `gh` issue or repository discovery command, follow
+[Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
+Stop and request user remediation for any Git or GitHub access error. Do not attempt a credential,
+remote, protocol, or permission bypass. Then follow
+[Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared
+[Code Change Considerations](../_shared/code-change-considerations.md),
 [Security Rubric](../_shared/security-rubric.md), and
 [Documentation Writing and Review](../_shared/documentation-writing-review.md) contract.
 
