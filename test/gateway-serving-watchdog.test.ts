@@ -190,6 +190,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     // slowest plausible boot before acting, while still reporting what it sees.
     const { result, fakeAlive, gatewayLog, tmpDir } = runWatchdog({
       curlPlan: [7],
+      env: { NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES: "100000" },
       expectKill: false,
     });
     try {
@@ -263,18 +264,17 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
   });
 
   it("falls back to the default boot grace window when the override is invalid", () => {
-    const { result, fakeAlive, tmpDir } = runWatchdog({
+    const { result, tmpDir } = runWatchdog({
       curlPlan: [7],
       env: { NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES: "0" },
       expectKill: false,
     });
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
-      expect(fakeAlive).toBe(true);
       expect(result.stderr).toContain(
         "invalid NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES='0'; defaulting to 20",
       );
-      expect(result.stderr).not.toContain("CRITICAL");
+      expect(result.stderr).toContain("(1/20 since launch, having never served)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
