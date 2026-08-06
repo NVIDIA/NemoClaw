@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createTempSshConfig } from "../../../sandbox/temp-ssh-config";
+import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 
 export type SandboxCommandResult = {
   status: number;
@@ -74,7 +74,7 @@ export function executeSandboxCommandTransport(
         encoding: "utf-8",
         env: deps.buildSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 15000,
+        timeout: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
       },
     );
     return {

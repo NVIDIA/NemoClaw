@@ -12,6 +12,14 @@ import {
   isCommandTimeout,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  type CommandTransportDependencies,
+  DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  executeSandboxCommandTransport,
+  executeSandboxExecCommandTransport,
+  type SandboxCommandResult,
+  type SandboxExecCommandOptions,
+} from "../../adapters/sandbox/command-transport";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds, waitUntil } from "../../core/wait";
@@ -51,14 +59,6 @@ import {
   inspectHermesMcpReconciliationRefusal,
   processRecoveryMcpReconciliationRefusal,
 } from "./mcp-bridge-recovery";
-import {
-  type CommandTransportDependencies,
-  DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-  executeSandboxCommandTransport,
-  executeSandboxExecCommandTransport,
-  type SandboxCommandResult,
-  type SandboxExecCommandOptions,
-} from "./process-recovery/command-transport";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
