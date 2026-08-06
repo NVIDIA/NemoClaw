@@ -398,19 +398,19 @@ describe("SandboxClient disruption helpers (#2701)", () => {
     await expect(sandbox.wipeGuardChain("e2e-2701")).rejects.toThrow(/wipe guard chain/);
   });
 
-  it("killGatewayTree pkills the openclaw tree and verifies nothing remains", async () => {
+  it("killGatewayTree kills the observed OpenClaw tree without racing its watchdog", async () => {
     const runner = new ScriptedRunner();
     const sandbox = new SandboxClient(runner);
 
     await sandbox.killGatewayTree("e2e-2701");
 
+    expect(runner.calls).toHaveLength(1);
     const args = runner.calls[0]?.args ?? [];
     const script = args[args.length - 1];
-    expect(script).toContain("pkill -9 -f '[o]penclaw'");
-    expect(script).toContain("pgrep -af '[o]penclaw'");
+    expect(script).toBe("pkill -9 -f '[o]penclaw'");
   });
 
-  it("killGatewayTree throws if openclaw processes survive the kill", async () => {
+  it("killGatewayTree throws when no OpenClaw process was killed", async () => {
     const runner = new ScriptedRunner();
     runner.queue({ exitCode: 1 });
     const sandbox = new SandboxClient(runner);

@@ -100,6 +100,17 @@ function openclawJson(wa: Record<string, unknown> | null): string {
   return JSON.stringify(openclawPayload(wa));
 }
 
+function hermesSessionProbeOutput(options: {
+  gatewaySessionCreds: boolean;
+  dashboardSessionCreds: boolean;
+}): string {
+  return [
+    "NEMOCLAW_HERMES_WHATSAPP_SESSION_V1",
+    `GATEWAY_SESSION=${options.gatewaySessionCreds ? "present" : "missing"}`,
+    `DASHBOARD_SESSION=${options.dashboardSessionCreds ? "present" : "missing"}`,
+  ].join("\n");
+}
+
 const HEALTHY_WA: WaFixture = {
   configured: true,
   statusState: "linked",
@@ -381,13 +392,77 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(reportOf(run())?.verdict).toBeDefined();
   });
 
-  it("no-ops for Hermes because the live status contract is OpenClaw-only", () => {
-    const exec = makeExec({ status: 0, stdout: openclawJson(HEALTHY_WA), stderr: "" });
+  it("reports the Hermes dashboard-only session path split from fixed session roots", () => {
+    const exec = makeExec({
+      status: 0,
+      stdout: hermesSessionProbeOutput({
+        gatewaySessionCreds: false,
+        dashboardSessionCreds: true,
+      }),
+      stderr: "",
+    });
     const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
-    expect(outputsOf(result)).toBeUndefined();
-    expect(exec).not.toHaveBeenCalled();
+    const report = reportOf(result);
+    const command = String(exec.mock.calls[0]?.[1] ?? "");
+    expect(report?.verdict).toBe("unpaired");
+    expect(report?.signals.find((s) => s.label === "Session location")?.hint).toContain(
+      "platforms.whatsapp.extra.session_path",
+    );
+    expect(report?.signals.find((s) => s.label === "Session location")?.hint).toContain(
+      "--config-accept-new-path",
+    );
+    expect(command).toContain("/sandbox/.hermes/platforms/whatsapp/session/creds.json");
+    expect(command).toContain(
+      "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json",
+    );
+    expect(command).not.toMatch(/(^|[;&|]\s*)(cat|grep|find|ls)\b/);
+  });
+
+  it("does not treat a Hermes gateway session file as live inbound health", () => {
+    const exec = makeExec({
+      status: 0,
+      stdout: hermesSessionProbeOutput({
+        gatewaySessionCreds: true,
+        dashboardSessionCreds: false,
+      }),
+      stderr: "",
+    });
+    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+      context({ ...BASE_INPUTS, agent: "hermes" }),
+    );
+    const report = reportOf(result);
+    expect(report?.verdict).toBe("unknown");
+    expect(report?.signals.find((s) => s.label === "Session location")?.severity).toBe("ok");
+  });
+
+  it.each([
+    {
+      label: "missing sentinel",
+      stdout: ["GATEWAY_SESSION=missing", "DASHBOARD_SESSION=present"].join("\n"),
+    },
+    {
+      label: "missing gateway session line",
+      stdout: ["NEMOCLAW_HERMES_WHATSAPP_SESSION_V1", "DASHBOARD_SESSION=present"].join("\n"),
+    },
+    {
+      label: "invalid dashboard session value",
+      stdout: [
+        "NEMOCLAW_HERMES_WHATSAPP_SESSION_V1",
+        "GATEWAY_SESSION=missing",
+        "DASHBOARD_SESSION=yes",
+      ].join("\n"),
+    },
+  ])("reports probe_failed for malformed Hermes probe output: $label", ({ stdout }) => {
+    const exec = makeExec({ status: 0, stdout, stderr: "" });
+    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+      context({ ...BASE_INPUTS, agent: "hermes" }),
+    );
+    const report = reportOf(result);
+    expect(report?.verdict).toBe("probe_failed");
+    expect(report?.signals.find((s) => s.label === "Session location")).toBeUndefined();
+    expect(stringifyReport(result)).not.toContain("platforms.whatsapp.extra.session_path");
   });
 
   it.each([

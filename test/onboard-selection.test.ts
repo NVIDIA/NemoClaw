@@ -127,7 +127,6 @@ type RemoteModelValidatorDeps = Parameters<typeof createRemoteModelValidator>[0]
 function unexpected(name: string): never {
   throw new Error(`Unexpected ${name} call`);
 }
-
 function makeSetupNimHostState(
   overrides: Partial<InferenceProviderHostState> = {},
 ): InferenceProviderHostState {
@@ -151,7 +150,6 @@ function makeSetupNimHostState(
     ...overrides,
   };
 }
-
 function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
   return {
     remoteProviderConfig: TEST_SETUP_NIM_REMOTE_PROVIDER_CONFIG,
