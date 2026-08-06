@@ -71,7 +71,7 @@ Pair only one sandbox per WhatsApp account at a time.
 For non-interactive onboarding, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list to select WhatsApp for either agent.
 <AgentOnly variant="hermes">
 Hermes uses these values as its WhatsApp sender allowlist only when `WHATSAPP_MODE=bot`.
-Refer to the section below.
+Refer to Reply to Other Senders below.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
@@ -90,7 +90,7 @@ Restart the gateway after the rebuild.
 The WhatsApp adapter reads the paired session once while the gateway starts, and the rebuild restores that session afterward.
 
 In bot mode the sandbox replies to the listed senders and stops replying to the paired account's self-chat.
-Bot mode rejects every sender when the allowlist is empty, so set both values together.
+Bot mode rejects every sender when the allowlist is empty, so set `WHATSAPP_MODE` and `WHATSAPP_ALLOWED_IDS` together.
 For individual sender IDs, use digits only, such as `15551234567`, without a leading `+`.
 Set `WHATSAPP_ALLOWED_IDS='*'` to let any sender reach the paired account.
 </AgentOnly>
