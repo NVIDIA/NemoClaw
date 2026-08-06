@@ -169,10 +169,12 @@ describe("runtime provider central source boundary", () => {
     const docker = read("src/lib/onboard/runtime-provider/docker.ts");
     const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
     const installer = read("src/lib/inference/llama-cpp/managed-installer.ts");
-    const productionComposition = trackedPaths(".")
+    const localModelProfilePlan = read("src/lib/onboard/local-model-profile/plan.ts");
+    const allTrackedPaths = trackedPaths(".");
+    expect(allTrackedPaths.filter((path) => !existsSync(join(repoRoot, path)))).toEqual([]);
+    const productionComposition = allTrackedPaths
       .filter(
         (path) =>
-          existsSync(join(repoRoot, path)) &&
           /\.[cm]?ts$/u.test(path) &&
           !path.endsWith(".test.ts") &&
           !path.includes("/test/") &&
@@ -187,6 +189,11 @@ describe("runtime provider central source boundary", () => {
     expect(installer).toContain("createDockerLlamaCppManagedLifecycle");
     expect(productionComposition).toContain("createDockerLlamaCppManagedLifecycle");
     expect(productionComposition).toContain("docker-llama-cpp-managed-lifecycle");
+    expect(localModelProfilePlan).toContain(
+      'export const LOCAL_MODEL_PROFILE_ENABLED_ENV = "NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE"',
+    );
+    expect(localModelProfilePlan).toContain('export type LocalModelProfileRuntime = "vllm";');
+    expect(localModelProfilePlan).not.toMatch(/LocalModelProfileRuntime\s*=\s*[^;]*llama-cpp/u);
   });
 
   it("inventories every production Dockerfile", () => {

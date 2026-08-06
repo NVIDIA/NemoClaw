@@ -63,8 +63,8 @@ function fixture() {
   const preset = catalog.presets.find(
     ({ spec }) => spec.plan.backend === "install-llama-cpp" && spec.plan.recipeRef === RECIPE_ID,
   );
-  if (!preset) throw new Error("Shipped managed llama.cpp preset is missing.");
-  return { catalog, preset, report: readinessReport(preset) };
+  expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
+  return { catalog, preset: preset!, report: readinessReport(preset!) };
 }
 
 describe("managed llama.cpp selection", () => {
@@ -126,10 +126,13 @@ describe("managed llama.cpp selection", () => {
 
     const resolved = resolveManagedLlamaCppSelection({}, catalog, report);
 
-    expect(resolved.kind).toBe("selected");
-    if (resolved.kind !== "selected") return;
-    expect(resolved.selection.recipe.metadata.id).toBe(RECIPE_ID);
-    expect(resolved.selection.preset.spec.plan.backend).toBe("install-llama-cpp");
+    expect(resolved).toMatchObject({
+      kind: "selected",
+      selection: {
+        recipe: { metadata: { id: RECIPE_ID } },
+        preset: { spec: { plan: { backend: "install-llama-cpp" } } },
+      },
+    });
   });
 
   it("selects an explicitly named shipped recipe", () => {
@@ -171,8 +174,9 @@ describe("managed llama.cpp selection", () => {
 
     const resolved = resolveManagedLlamaCppSelection({}, catalog, stale);
 
-    expect(resolved.kind).toBe("rejected");
-    if (resolved.kind !== "rejected") return;
-    expect(resolved.reason).toContain("stale or has an invalid observation time");
+    expect(resolved).toMatchObject({
+      kind: "rejected",
+      reason: expect.stringContaining("stale or has an invalid observation time"),
+    });
   });
 });

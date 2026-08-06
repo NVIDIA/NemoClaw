@@ -7,10 +7,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type {
-  ContainerEngine,
-  ContainerEngineCommandCapture,
-} from "../../adapters/container-engine";
 import type { DockerLlamaCppManagedLifecycle } from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
 import {
   type HostLocalInferenceReceipt,
@@ -29,6 +25,11 @@ import {
   managedLlamaCppBindingSha256,
   resumeManagedLlamaCppRuntime,
 } from "./managed-installer";
+import {
+  driftingDockerCapture,
+  engineHarness,
+  successfulDockerCapture,
+} from "./managed-installer.test-support";
 import {
   createManagedLlamaCppReceiptWriter,
   managedLlamaCppStatePaths,
@@ -50,6 +51,15 @@ function temporaryHome(): string {
   return canonicalHome;
 }
 
+function temporarySymlinkedHome(): { readonly alias: string; readonly canonical: string } {
+  const root = temporaryHome();
+  const canonical = path.join(root, "canonical-home");
+  const alias = path.join(root, "symlinked-home");
+  fs.mkdirSync(canonical, { mode: 0o700 });
+  fs.symlinkSync(canonical, alias, "dir");
+  return { alias, canonical: fs.realpathSync(canonical) };
+}
+
 function selection(): ResolvedLlamaCppInferenceSelection {
   const catalog = loadManagedInferenceCatalog();
   const recipe = catalog.recipes.find(
@@ -58,113 +68,119 @@ function selection(): ResolvedLlamaCppInferenceSelection {
   const preset = catalog.presets.find(
     ({ metadata }) => metadata.id === "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
   );
-  if (!recipe || !isLlamaCppServingRecipe(recipe) || !preset) {
-    throw new Error("managed llama.cpp catalog fixture is unavailable");
-  }
+  expect(recipe, "managed llama.cpp recipe fixture is unavailable").toBeDefined();
+  expect(isLlamaCppServingRecipe(recipe!), "managed llama.cpp recipe fixture is invalid").toBe(
+    true,
+  );
+  expect(preset, "managed llama.cpp preset fixture is unavailable").toBeDefined();
   return {
     outcome: "selected",
     selection: "explicit",
     catalogDigest: catalog.catalogDigest,
     presetDigest: catalog.sources.find(
-      ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
+      ({ kind, id }) => kind === "ServingPreset" && id === preset!.metadata.id,
     )!.digest,
     recipeDigest: catalog.sources.find(
-      ({ kind, id }) => kind === "ServingRecipe" && id === recipe.metadata.id,
+      ({ kind, id }) => kind === "ServingRecipe" && id === recipe!.metadata.id,
     )!.digest,
-    preset,
-    recipe,
+    preset: preset!,
+    recipe: recipe! as ResolvedLlamaCppInferenceSelection["recipe"],
   };
-}
-
-function engineHarness(): {
-  engine: ContainerEngine;
-  capture: ReturnType<typeof vi.fn>;
-  images: Set<string>;
-} {
-  let networkPresent = false;
-  const images = new Set<string>();
-  const capture = vi.fn((args: readonly string[]) => {
-    if (args[0] === "network" && args[1] === "create") {
-      networkPresent = true;
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    if (args[0] === "network" && args[1] === "inspect") {
-      if (!networkPresent) return { status: 1, stdout: "", stderr: "No such network" };
-      return {
-        status: 0,
-        stderr: "",
-        stdout: JSON.stringify([
-          {
-            Driver: "bridge",
-            Id: "a".repeat(64),
-            Internal: true,
-            Labels: { "io.nvidia.nemoclaw.managed-llama-cpp": "true" },
-            Name: MANAGED_LLAMA_CPP_NETWORK_NAME,
-            Scope: "local",
-          },
-        ]),
-      };
-    }
-    if (args[0] === "network" && args[1] === "rm") {
-      if (!networkPresent || args[2] !== "a".repeat(64)) {
-        return { status: 1, stdout: "", stderr: "No such network" };
-      }
-      networkPresent = false;
-      return { status: 0, stdout: `${args[2]}\n`, stderr: "" };
-    }
-    if (args[0] === "container" && args[1] === "inspect") {
-      return { status: 1, stdout: "", stderr: "No such container" };
-    }
-    if (args[0] === "image" && args[1] === "inspect") {
-      return images.has(args[2]!)
-        ? { status: 0, stdout: "[]", stderr: "" }
-        : { status: 1, stdout: "", stderr: "No such image" };
-    }
-    throw new Error(`unexpected engine command: ${args.join(" ")}`);
-  });
-  return {
-    capture,
-    images,
-    engine: {
-      operation: "host-local-inference",
-      engineId: "docker",
-      displayName: "Docker",
-      authorityId: "docker:test",
-      capture,
-      captureHost: capture,
-    },
-  };
-}
-
-function successfulDockerCapture(
-  endpoints: Readonly<Record<string, string>>,
-  currentContext = "default",
-): ReturnType<typeof vi.fn<ContainerEngineCommandCapture>> {
-  return vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
-    const contextCommand = args.findIndex(
-      (value, index) => value === "context" && args[index + 1] === "inspect",
-    );
-    if (contextCommand >= 0) {
-      const context = args[contextCommand + 2] ?? "";
-      const host = endpoints[context];
-      if (!host) return { status: 1, stdout: "", stderr: "context not found" };
-      return {
-        status: 0,
-        stdout: JSON.stringify({ Host: host, SkipTLSVerify: false }),
-        stderr: "",
-      };
-    }
-    const showCommand = args.findIndex(
-      (value, index) => value === "context" && args[index + 1] === "show",
-    );
-    if (showCommand >= 0) {
-      return { status: 0, stdout: `${currentContext}\n`, stderr: "" };
-    }
-    return { status: 0, stdout: "", stderr: "" };
-  });
 }
 
 describe("managed llama.cpp Docker authority", () => {
+  it("rejects a direct plaintext TCP daemon before spawning and never exposes HF_TOKEN", () => {
+    const capture = successfulDockerCapture({});
+    const spawnDocker = vi.fn<ManagedLlamaCppDockerAuthority["spawnDocker"]>(() => ({}) as never);
+
+    expect(() =>
+      createManagedLlamaCppDockerAuthority(
+        {
+          DOCKER_HOST: "tcp://spark.example.test:2375",
+          HF_TOKEN: "hf_secret_value",
+        },
+        capture,
+        spawnDocker,
+      ),
+    ).toThrowError(/^Managed llama\.cpp requires verified TLS for remote Docker TCP endpoints\.$/u);
+    expect(capture).not.toHaveBeenCalled();
+    expect(spawnDocker).not.toHaveBeenCalled();
+  });
+
+  it("rejects a TCP context that skips TLS verification before a daemon command", () => {
+    const capture = successfulDockerCapture({
+      spark: {
+        host: "tcp://spark.example.test:2376",
+        skipTlsVerify: true,
+        tlsMaterial: ["ca.pem", "cert.pem", "key.pem"],
+      },
+    });
+
+    expect(() =>
+      createManagedLlamaCppEngine({ HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" }, capture),
+    ).toThrow("requires verified TLS for remote Docker TCP endpoints");
+    expect(capture.mock.calls.some(([, args]) => args.at(-1) === "info")).toBe(false);
+  });
+
+  it("rejects a TCP context without a trusted CA before a daemon command", () => {
+    const capture = successfulDockerCapture({
+      spark: {
+        host: "tcp://spark.example.test:2376",
+        skipTlsVerify: false,
+        tlsMaterial: ["cert.pem", "key.pem"],
+      },
+    });
+
+    expect(() =>
+      createManagedLlamaCppEngine({ HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" }, capture),
+    ).toThrow("requires verified TLS for remote Docker TCP endpoints");
+    expect(capture.mock.calls.some(([, args]) => args.at(-1) === "info")).toBe(false);
+  });
+
+  it("accepts a TCP context with verification enabled and trusted CA material", () => {
+    const capture = successfulDockerCapture({
+      spark: {
+        host: "tcp://spark.example.test:2376",
+        skipTlsVerify: false,
+        tlsMaterial: ["key.pem", "ca.pem", "cert.pem"],
+      },
+    });
+    const engine = createManagedLlamaCppEngine(
+      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },
+      capture,
+    );
+
+    expect(engine.capture(["info"]).status).toBe(0);
+    expect(capture.mock.calls.map(([, args]) => args)).toContainEqual([
+      "--config",
+      "/tmp/nemoclaw-home/.docker",
+      "--context",
+      "spark",
+      "info",
+    ]);
+  });
+
+  it.each([
+    ["unix socket", "unix:///var/run/docker.sock"],
+    ["Windows named pipe", "npipe:////./pipe/docker_engine"],
+    ["SSH", "ssh://nvidia@spark.example.test"],
+  ])("accepts a direct %s daemon without Docker TLS flags", (_label, host) => {
+    const capture = successfulDockerCapture({});
+    const engine = createManagedLlamaCppEngine(
+      { HOME: "/tmp/nemoclaw-home", DOCKER_HOST: host },
+      capture,
+    );
+
+    expect(engine.capture(["info"]).status).toBe(0);
+    expect(capture.mock.calls.at(-1)?.[1]).toEqual([
+      "--config",
+      "/tmp/nemoclaw-home/.docker",
+      "--host",
+      host,
+      "info",
+    ]);
+  });
+
   it("prefixes streamed acquisition with the exact endpoint without exposing HF_TOKEN", () => {
     const capture = successfulDockerCapture({
       spark: "ssh://nvidia@spark.example.test",
@@ -202,24 +218,7 @@ describe("managed llama.cpp Docker authority", () => {
   });
 
   it("rechecks a qualified endpoint before forwarding HF_TOKEN to Docker", () => {
-    let inspections = 0;
-    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
-      if (args.includes("inspect")) {
-        inspections += 1;
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            Host:
-              inspections === 1
-                ? "ssh://nvidia@spark-a.example.test"
-                : "ssh://nvidia@spark-b.example.test",
-            SkipTLSVerify: false,
-          }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    const capture = driftingDockerCapture();
     const spawnDocker = vi.fn(() => ({}) as never);
     const authority = createManagedLlamaCppDockerAuthority(
       { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },
@@ -331,27 +330,7 @@ describe("managed llama.cpp Docker authority", () => {
   });
 
   it("fails closed before a daemon command when a qualified context endpoint drifts", () => {
-    let inspections = 0;
-    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
-      const contextCommand = args.findIndex(
-        (value, index) => value === "context" && args[index + 1] === "inspect",
-      );
-      if (contextCommand >= 0) {
-        inspections += 1;
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            Host:
-              inspections === 1
-                ? "ssh://nvidia@spark-a.example.test"
-                : "ssh://nvidia@spark-b.example.test",
-            SkipTLSVerify: false,
-          }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    const capture = driftingDockerCapture();
     const engine = createManagedLlamaCppEngine(
       { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },
       capture,
@@ -365,6 +344,125 @@ describe("managed llama.cpp Docker authority", () => {
 });
 
 describe("managed llama.cpp installer", () => {
+  it("rejects a group/world-writable shared cache parent before pull or acquisition", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const cacheParent = path.join(homeDir, ".cache");
+    fs.mkdirSync(cacheParent, { mode: 0o700 });
+    fs.chmodSync(cacheParent, 0o777);
+    const harness = engineHarness();
+    const pullImage = vi.fn();
+    const acquireGguf = vi.fn();
+
+    const result = await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      engine: harness.engine,
+      pullImage: pullImage as never,
+      acquireGguf: acquireGguf as never,
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "The shared cache parent is not current-user filesystem authority.",
+    });
+    expect(pullImage).not.toHaveBeenCalled();
+    expect(acquireGguf).not.toHaveBeenCalled();
+    expect(harness.capture.mock.calls.some(([args]) => args[0] === "image")).toBe(false);
+  });
+
+  it("rejects a symlinked shared cache parent before pull or acquisition", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const cacheTarget = temporaryHome();
+    fs.symlinkSync(cacheTarget, path.join(homeDir, ".cache"), "dir");
+    const harness = engineHarness();
+    const pullImage = vi.fn();
+    const acquireGguf = vi.fn();
+
+    const result = await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      engine: harness.engine,
+      pullImage: pullImage as never,
+      acquireGguf: acquireGguf as never,
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "The shared cache parent is not current-user filesystem authority.",
+    });
+    expect(pullImage).not.toHaveBeenCalled();
+    expect(acquireGguf).not.toHaveBeenCalled();
+    expect(harness.capture.mock.calls.some(([args]) => args[0] === "image")).toBe(false);
+  });
+
+  it("canonicalizes a symlinked home and reuses its existing safe shared cache", async () => {
+    const selected = selection();
+    const home = temporarySymlinkedHome();
+    const cacheRoot = path.join(home.canonical, ".cache", "huggingface");
+    fs.mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(cacheRoot), 0o700);
+    fs.chmodSync(cacheRoot, 0o700);
+    const cacheIdentity = fs.lstatSync(cacheRoot, { bigint: true });
+    const modelPath = path.join(home.canonical, "cached-model.gguf");
+    fs.writeFileSync(modelPath, "fixture", { mode: 0o600 });
+    const modelIdentity = fs.lstatSync(modelPath, { bigint: true });
+    const artifact = {
+      digest: selected.recipe.spec.model.files[0]!.digest,
+      filesystemIdentity: {
+        ctimeNs: modelIdentity.ctimeNs,
+        dev: modelIdentity.dev,
+        ino: modelIdentity.ino,
+        mtimeNs: modelIdentity.mtimeNs,
+        size: modelIdentity.size,
+      },
+      hostPath: modelPath,
+      sizeBytes: selected.recipe.spec.model.files[0]!.sizeBytes,
+    };
+    const harness = engineHarness();
+    harness.images.add(selected.recipe.spec.runtime.image);
+    harness.images.add(selected.recipe.spec.readiness.probeImage);
+    const receipt = { schemaVersion: 1 } as HostLocalInferenceReceipt;
+    const lifecycle = {
+      recoverUnfinished: vi.fn(() => ({ recovered: [], failures: [] })),
+      resume: vi.fn(() => receipt),
+      runtime: {} as DockerLlamaCppManagedLifecycle["runtime"],
+      start: vi.fn(() => receipt),
+    } satisfies DockerLlamaCppManagedLifecycle;
+    const createLifecycle = vi.fn(() => lifecycle);
+    const verifyGguf = vi.fn(async () => artifact);
+    const pullImage = vi.fn();
+    const acquireGguf = vi.fn();
+
+    await expect(
+      installManagedLlamaCpp(selected, {
+        sandboxName: "spark-agent",
+        homeDir: home.alias,
+        engine: harness.engine,
+        pullImage: pullImage as never,
+        acquireGguf: acquireGguf as never,
+        verifyGguf,
+        checkPort: vi.fn(async () => ({ ok: true })),
+        createLifecycle,
+        log: vi.fn(),
+      }),
+    ).resolves.toMatchObject({ ok: true, receipt });
+
+    expect(verifyGguf).toHaveBeenCalledWith(expect.any(Object), cacheRoot);
+    expect(createLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ cacheRootHostPath: cacheRoot }),
+    );
+    expect(fs.lstatSync(cacheRoot, { bigint: true }).ino).toBe(cacheIdentity.ino);
+    expect(fs.existsSync(managedLlamaCppStatePaths(home.canonical).ownerPath)).toBe(true);
+    expect(pullImage).not.toHaveBeenCalled();
+    expect(acquireGguf).not.toHaveBeenCalled();
+  });
+
   it("reconstructs current canonical model identity for the lifecycle exact inspector", () => {
     const selected = selection();
     const homeDir = temporaryHome();
@@ -728,8 +826,8 @@ describe("managed llama.cpp installer", () => {
 
   it("reconstructs a matching managed owner during normal resume", async () => {
     const selected = selection();
-    const homeDir = temporaryHome();
-    reserveManagedLlamaCppOwner(managedLlamaCppStatePaths(homeDir), {
+    const home = temporarySymlinkedHome();
+    reserveManagedLlamaCppOwner(managedLlamaCppStatePaths(home.canonical), {
       schemaVersion: 1,
       sandboxName: "spark-agent",
       catalogDigest: selected.catalogDigest,
@@ -737,7 +835,7 @@ describe("managed llama.cpp installer", () => {
       recipeDigest: selected.recipeDigest,
       recipeId: selected.recipe.metadata.id,
     });
-    const modelPath = path.join(homeDir, "resume-model.gguf");
+    const modelPath = path.join(home.canonical, "resume-model.gguf");
     fs.writeFileSync(modelPath, "fixture", { mode: 0o600 });
     const status = fs.lstatSync(modelPath, { bigint: true });
     const artifact = {
@@ -763,18 +861,23 @@ describe("managed llama.cpp installer", () => {
       start: vi.fn(() => receipt),
     } satisfies DockerLlamaCppManagedLifecycle;
     const env: NodeJS.ProcessEnv = {};
+    const verifyGguf = vi.fn(async () => artifact);
 
     await expect(
       resumeManagedLlamaCppRuntime("spark-agent", {
-        homeDir,
+        homeDir: home.alias,
         env,
         engine: harness.engine,
-        verifyGguf: vi.fn(async () => artifact),
+        verifyGguf,
         checkPort: vi.fn(async () => ({ ok: true })),
         createLifecycle: vi.fn(() => lifecycle),
       }),
     ).resolves.toBe(true);
     expect(lifecycle.start).toHaveBeenCalledOnce();
+    expect(verifyGguf).toHaveBeenCalledWith(
+      expect.any(Object),
+      path.join(home.canonical, ".cache", "huggingface"),
+    );
     expect(env.NEMOCLAW_LLAMACPP_LOCAL_TOKEN).toMatch(/^[0-9a-f]{64}$/u);
   });
 

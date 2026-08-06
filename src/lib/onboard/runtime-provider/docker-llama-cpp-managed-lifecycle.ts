@@ -232,11 +232,12 @@ function inspectNetworkIfPresent(
   transactionId?: string,
 ): DockerNetworkAuthority | null {
   const result = engine.capture(["network", "inspect", name], INSPECT_TIMEOUT_MS);
-  if (
-    !result.error &&
-    result.status === 1 &&
-    /(?:No such network|not found)/iu.test(result.stderr.trim())
-  ) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const exactAbsent = new RegExp(
+    `^(?:Error response from daemon:\\s*)?(?:No such network: ${escapedName}|network ${escapedName} not found)$`,
+    "iu",
+  );
+  if (!result.error && result.status === 1 && exactAbsent.test(result.stderr.trim())) {
     return null;
   }
   const output = requireSuccess("network inspection", result);

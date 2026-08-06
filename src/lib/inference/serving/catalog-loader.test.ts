@@ -133,7 +133,7 @@ describe("managed inference catalog loader", () => {
     expect(managedCatalogValidationError(catalog)).toMatch(/Managed inference (preset|recipe)/u);
   });
 
-  it("rejects an incomplete registered llama.cpp definition", () => {
+  it("rejects an incomplete registered llama.cpp definition (#8433)", () => {
     const servingCatalog: CompiledServingCatalog = {
       ...EMPTY_CATALOG,
       recipes: [HOST_LOCAL_RECIPE],
@@ -194,7 +194,7 @@ describe("managed inference catalog loader", () => {
     expect(projected.presets.map(({ metadata }) => metadata.id)).toEqual([preset.metadata.id]);
   });
 
-  it("retains the registered declarative llama.cpp definition", () => {
+  it("retains the registered declarative llama.cpp definition (#8433)", () => {
     const servingCatalog = loadServingCatalog();
     const recipe = servingCatalog.recipes.find(
       ({ spec }) =>
@@ -219,7 +219,7 @@ describe("managed inference catalog loader", () => {
     expectManagedRuntimeDefinitions(managedInferenceCatalogFromServingCatalog(servingCatalog));
   });
 
-  it("loads every registered managed runtime through the public loader", () => {
+  it("loads every registered managed runtime through the public loader (#8433)", () => {
     const projectedCatalog = managedInferenceCatalogFromServingCatalog(loadServingCatalog());
     const loadedCatalog = loadManagedInferenceCatalog();
 

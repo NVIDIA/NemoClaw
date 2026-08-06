@@ -119,7 +119,7 @@ export interface ManagedLlamaCppDockerAuthority {
 const DOCKER_CONTEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const DOCKER_HOST_PATTERN = /^(?:npipe|ssh|tcp|unix):\/\/[^\s\u0000-\u001f\u007f]+$/u;
 const DOCKER_ARGUMENT_MAX_BYTES = 16 * 1024;
-const DOCKER_CONTEXT_INSPECT_FORMAT = "{{json .Endpoints.docker}}";
+const DOCKER_CONTEXT_INSPECT_FORMAT = "{{json .}}";
 
 function exactDockerValue(value: string | undefined, label: string): string | undefined {
   if (value === undefined || value === "") return undefined;
@@ -146,7 +146,10 @@ function dockerConfigPath(env: NodeJS.ProcessEnv): string {
   return path.join(path.resolve(home), ".docker");
 }
 
-function dockerTlsArgs(env: NodeJS.ProcessEnv): readonly string[] {
+function dockerTlsArgs(env: NodeJS.ProcessEnv): {
+  readonly args: readonly string[];
+  readonly verify: boolean;
+} {
   const tls = exactDockerValue(env.DOCKER_TLS, "DOCKER_TLS") !== undefined;
   const tlsVerify = exactDockerValue(env.DOCKER_TLS_VERIFY, "DOCKER_TLS_VERIFY") !== undefined;
   const certPath = exactDockerValue(env.DOCKER_CERT_PATH, "DOCKER_CERT_PATH");
@@ -164,7 +167,7 @@ function dockerTlsArgs(env: NodeJS.ProcessEnv): readonly string[] {
       path.join(directory, "key.pem"),
     );
   }
-  return Object.freeze(args);
+  return Object.freeze({ args: Object.freeze(args), verify: tlsVerify });
 }
 
 function dockerContextName(value: string, label: string): string {
@@ -181,6 +184,12 @@ function dockerHost(value: string): string {
     throw new Error("Managed llama.cpp DOCKER_HOST is invalid.");
   }
   return host;
+}
+
+function requireSecureDockerEndpoint(host: string, tlsVerificationEnabled: boolean): void {
+  if (host.startsWith("tcp://") && !tlsVerificationEnabled) {
+    throw new Error("Managed llama.cpp requires verified TLS for remote Docker TCP endpoints.");
+  }
 }
 
 function dockerBindingProbe(
@@ -221,17 +230,34 @@ function resolvedDockerContextEndpoint(probe: ContainerEngine, context: string):
   } catch {
     throw new Error("Managed llama.cpp Docker context endpoint is unreadable.");
   }
+  if (typeof endpoint !== "object" || endpoint === null) {
+    throw new Error("Managed llama.cpp Docker context endpoint is invalid.");
+  }
+  const inspection = endpoint as {
+    Endpoints?: { docker?: { Host?: unknown; SkipTLSVerify?: unknown } };
+    TLSMaterial?: { docker?: unknown };
+  };
+  const dockerEndpoint = inspection.Endpoints?.docker;
   if (
-    typeof endpoint !== "object" ||
-    endpoint === null ||
-    typeof (endpoint as { Host?: unknown }).Host !== "string" ||
-    typeof (endpoint as { SkipTLSVerify?: unknown }).SkipTLSVerify !== "boolean"
+    typeof dockerEndpoint?.Host !== "string" ||
+    typeof dockerEndpoint.SkipTLSVerify !== "boolean"
   ) {
     throw new Error("Managed llama.cpp Docker context endpoint is invalid.");
   }
+  const host = dockerHost(dockerEndpoint.Host);
+  const tlsMaterial = inspection.TLSMaterial?.docker ?? [];
+  if (
+    !Array.isArray(tlsMaterial) ||
+    tlsMaterial.some((entry) => typeof entry !== "string" || !/^[A-Za-z0-9._-]+$/u.test(entry))
+  ) {
+    throw new Error("Managed llama.cpp Docker context TLS material is invalid.");
+  }
+  const tlsFiles = [...tlsMaterial].sort();
+  requireSecureDockerEndpoint(host, !dockerEndpoint.SkipTLSVerify && tlsFiles.includes("ca.pem"));
   return JSON.stringify({
-    host: dockerHost((endpoint as { Host: string }).Host),
-    skipTlsVerify: (endpoint as { SkipTLSVerify: boolean }).SkipTLSVerify,
+    host,
+    skipTlsVerify: dockerEndpoint.SkipTLSVerify,
+    tlsMaterial: tlsFiles,
   });
 }
 
@@ -240,16 +266,13 @@ function dockerClientBinding(
   capture?: ContainerEngineCommandCapture,
 ): ManagedDockerBinding {
   const configArgs = ["--config", dockerConfigPath(env)] as const;
-  const tlsArgs = dockerTlsArgs(env);
+  const tls = dockerTlsArgs(env);
   const explicitContext = exactDockerValue(env.DOCKER_CONTEXT, "DOCKER_CONTEXT");
   const explicitHost = exactDockerValue(env.DOCKER_HOST, "DOCKER_HOST");
   if (!explicitContext && explicitHost) {
-    const endpointArgs = Object.freeze([
-      ...configArgs,
-      "--host",
-      dockerHost(explicitHost),
-      ...tlsArgs,
-    ]);
+    const host = dockerHost(explicitHost);
+    requireSecureDockerEndpoint(host, tls.verify);
+    const endpointArgs = Object.freeze([...configArgs, "--host", host, ...tls.args]);
     return {
       endpointArgs,
       identity: createHash("sha256").update(JSON.stringify(endpointArgs)).digest("hex"),
@@ -260,7 +283,7 @@ function dockerClientBinding(
   if (explicitContext) {
     context = dockerContextName(explicitContext, "DOCKER_CONTEXT");
   } else {
-    const selectorProbe = dockerBindingProbe([...configArgs, ...tlsArgs], capture);
+    const selectorProbe = dockerBindingProbe([...configArgs, ...tls.args], capture);
     context = dockerContextName(
       requireDockerProbeOutput(
         selectorProbe.capture(["context", "show"]),
@@ -269,7 +292,7 @@ function dockerClientBinding(
       "current Docker context",
     );
   }
-  const endpointArgs = Object.freeze([...configArgs, "--context", context, ...tlsArgs]);
+  const endpointArgs = Object.freeze([...configArgs, "--context", context, ...tls.args]);
   const endpointProbe = dockerBindingProbe(endpointArgs, capture);
   const qualifiedEndpoint = resolvedDockerContextEndpoint(endpointProbe, context);
   const identity = createHash("sha256")
@@ -442,20 +465,40 @@ function rollbackFreshUnjournaledInstall(input: {
   }
 }
 
-function ensureSharedHuggingFaceCache(homeDir: string): string {
-  const cacheRoot = path.join(homeDir, ".cache", "huggingface");
-  fs.mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
-  const status = fs.lstatSync(cacheRoot);
+function sharedHuggingFaceCacheRoot(homeDir: string): string {
+  return path.join(homeDir, ".cache", "huggingface");
+}
+
+function createDirectoryIfAbsent(directory: string): void {
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
+function requireCurrentUserCacheDirectory(directory: string, label: string): void {
+  const status = fs.lstatSync(directory);
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
   if (
     !status.isDirectory() ||
     status.isSymbolicLink() ||
     status.uid !== uid ||
     (status.mode & 0o022) !== 0 ||
-    fs.realpathSync(cacheRoot) !== cacheRoot
+    fs.realpathSync(directory) !== directory
   ) {
-    throw new Error("The shared Hugging Face cache is not current-user filesystem authority.");
+    throw new Error(`${label} is not current-user filesystem authority.`);
   }
+}
+
+function ensureSharedHuggingFaceCache(homeDir: string): string {
+  const cacheParent = path.join(homeDir, ".cache");
+  const cacheRoot = sharedHuggingFaceCacheRoot(homeDir);
+  createDirectoryIfAbsent(cacheParent);
+  requireCurrentUserCacheDirectory(cacheParent, "The shared cache parent");
+  createDirectoryIfAbsent(cacheRoot);
+  requireCurrentUserCacheDirectory(cacheParent, "The shared cache parent");
+  requireCurrentUserCacheDirectory(cacheRoot, "The shared Hugging Face cache");
   return cacheRoot;
 }
 
@@ -630,7 +673,7 @@ function currentManagedLlamaCppArtifact(
   selection: ResolvedLlamaCppInferenceSelection,
   homeDir: string,
 ): { readonly artifact: VerifiedLocalModelArtifact; readonly cacheRoot: string } {
-  const cacheRoot = path.join(homeDir, ".cache", "huggingface");
+  const cacheRoot = sharedHuggingFaceCacheRoot(homeDir);
   const plan = compileLlamaCppGgufCachePlan(selection.recipe);
   const source = plan.acquisition.source;
   const snapshotEntry = path.join(
@@ -690,7 +733,7 @@ export async function installManagedLlamaCpp(
   options: ManagedLlamaCppInstallOptions,
 ): Promise<ManagedLlamaCppInstallResult> {
   const env = options.env ?? process.env;
-  const homeDir = options.homeDir ?? os.homedir();
+  const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
   const pull = options.pullImage;
   const acquire = options.acquireGguf ?? acquireVerifiedLlamaCppGguf;
@@ -862,7 +905,7 @@ export async function resumeManagedLlamaCppRuntime(
   options: ManagedLlamaCppResumeOptions = {},
 ): Promise<boolean> {
   const env = options.env ?? process.env;
-  const homeDir = options.homeDir ?? os.homedir();
+  const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
   if (!fs.existsSync(paths.ownerPath)) return false;
   const owner = loadManagedLlamaCppOwner(paths);
@@ -929,9 +972,9 @@ export async function resumeManagedLlamaCppRuntime(
     }
     loadOrCreateManagedLlamaCppApiKey(paths);
     const transactionId = randomBytes(32).toString("hex");
-    receipt = lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
+    lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
   } else {
-    receipt = lifecycle.resume(receipt);
+    lifecycle.resume(receipt);
   }
   const apiKey = loadManagedLlamaCppApiKey(paths);
   if (apiKey === null) throw new Error("Managed llama.cpp API-key authority is missing.");

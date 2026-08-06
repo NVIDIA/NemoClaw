@@ -113,12 +113,15 @@ describe("llama.cpp GGUF acquisition", () => {
     await createSnapshot(cacheRoot);
     const token = "hf_must_not_escape";
     let guardCalls = 0;
-    const assertDockerAuthority = vi.fn(() => {
-      guardCalls += 1;
-      if (guardCalls === 2) {
+    const assertDockerAuthority = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        guardCalls += 1;
+      })
+      .mockImplementationOnce(() => {
+        guardCalls += 1;
         throw new Error("Docker context endpoint changed after qualification");
-      }
-    });
+      });
     const acquire = vi.fn().mockImplementation(async (request) => {
       expect(guardCalls).toBe(1);
       expect(request.credentialEnv).toMatchObject({ HF_TOKEN: token });

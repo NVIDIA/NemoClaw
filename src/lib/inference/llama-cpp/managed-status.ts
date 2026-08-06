@@ -65,7 +65,7 @@ export function inspectManagedLlamaCppStatus(
   sandboxName: string,
   options: ManagedLlamaCppStatusOptions = {},
 ): ManagedLlamaCppStatus | null {
-  const homeDir = options.homeDir ?? os.homedir();
+  const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
   if (!fs.existsSync(paths.ownerPath)) return null;
   let owner;

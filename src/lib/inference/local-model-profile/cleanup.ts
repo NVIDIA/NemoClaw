@@ -42,7 +42,7 @@ import {
   HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   validateHostLocalVllmRuntimeReceipt,
 } from "../serving/vllm-host-local-lifecycle";
-import { loadManagedVllmApiKey } from "../vllm-api-key";
+import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
 
 const LLAMA_MANAGED_LABEL = "io.nvidia.nemoclaw.host-local-inference.managed";
 const LLAMA_PROVIDER_LABEL = "io.nvidia.nemoclaw.host-local-inference.provider";
@@ -191,13 +191,19 @@ function requirePrivateManagedState(paths: ManagedLlamaCppStatePaths, uid: numbe
   if (uid !== null && status.uid !== uid) {
     throw new Error("managed llama.cpp state directory is not owned by the current user");
   }
-  if ((status.mode & 0o077) !== 0 || fs.realpathSync(paths.stateDir) !== paths.stateDir) {
+  const resolvedParent = fs.realpathSync(path.dirname(paths.stateDir));
+  const resolvedStateDir = path.join(resolvedParent, path.basename(paths.stateDir));
+  if ((status.mode & 0o077) !== 0 || fs.realpathSync(paths.stateDir) !== resolvedStateDir) {
     throw new Error("managed llama.cpp state directory is not private current-user authority");
   }
 }
 
 function statePathExists(target: string): boolean {
   return fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined;
+}
+
+function canonicalCleanupHomeDir(homeDir: string): string {
+  return statePathExists(homeDir) ? fs.realpathSync(homeDir) : path.resolve(homeDir);
 }
 
 function requireEngineSuccess(
@@ -562,7 +568,7 @@ export function resolveManagedLlamaCppCleanupTarget(
   homeDir: string,
   gatewayPort: number,
 ): ManagedLlamaCppCleanupTarget | null {
-  const paths = managedLlamaCppStatePaths(homeDir, gatewayPort);
+  const paths = managedLlamaCppStatePaths(canonicalCleanupHomeDir(homeDir), gatewayPort);
   if (!statePathExists(paths.stateDir)) return null;
   requirePrivateManagedState(paths, typeof process.getuid === "function" ? process.getuid() : null);
   if (!statePathExists(paths.ownerPath)) return null;
@@ -580,7 +586,6 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
   sandboxName: string,
   options: ManagedLlamaCppSandboxCleanupOptions = {},
 ): LocalModelRuntimeCleanupResult {
-  const homeDir = options.homeDir ?? os.homedir();
   const deps: CleanupDeps = {
     capture: options.deps?.capture ?? dockerCapture,
     currentUserId:
@@ -595,6 +600,7 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
   const removed: string[] = [];
   const preserved: string[] = [];
   try {
+    const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
     const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
     if (!statePathExists(paths.stateDir)) return { ok: true, removed, preserved };
     requirePrivateManagedState(paths, deps.currentUserId);
@@ -617,9 +623,6 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
 export function cleanupLocalModelRuntimes(
   options: LocalModelRuntimeCleanupOptions,
 ): LocalModelRuntimeCleanupResult {
-  const homeDir = options.homeDir ?? os.homedir();
-  const llamaPaths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
-  const stateDir = llamaPaths.root;
   const deps: CleanupDeps = {
     capture: options.deps?.capture ?? dockerCapture,
     currentUserId:
@@ -634,19 +637,22 @@ export function cleanupLocalModelRuntimes(
   const removed: string[] = [];
   const preserved: string[] = [];
   try {
+    const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
+    const llamaPaths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
+    const vllmStateDir = managedVllmStateDir(homeDir);
     if (statePathExists(llamaPaths.stateDir)) {
       requirePrivateManagedState(llamaPaths, deps.currentUserId);
     }
     const vllmStateRequiresDocker =
-      fs.existsSync(path.join(stateDir, MANAGED_VLLM_API_KEY_FILE)) &&
-      !distributedReceiptPresent(stateDir);
+      fs.existsSync(path.join(vllmStateDir, MANAGED_VLLM_API_KEY_FILE)) &&
+      !distributedReceiptPresent(vllmStateDir);
     if (vllmStateRequiresDocker) {
       const dockerReady =
         deps.run(["info"], { ignoreError: true, suppressOutput: true }).status === 0;
       if (!dockerReady) {
         throw new Error("Docker is unavailable while host-local vLLM ownership state remains");
       }
-      cleanupHostLocalVllm(stateDir, deps, removed);
+      cleanupHostLocalVllm(vllmStateDir, deps, removed);
     }
     if (statePathExists(llamaPaths.stateDir)) {
       cleanupLlamaCpp(homeDir, deps, removed, preserved, {

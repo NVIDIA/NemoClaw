@@ -345,8 +345,9 @@ describe("managed inference resolver", () => {
     );
     expect(result.outcome).toBe("selected");
     expect(result).not.toHaveProperty("topologyQualification");
-    if (result.outcome !== "selected") throw new Error("expected selected resolution");
-    expect(isHostLocalInferenceServingRecipe(result.recipe)).toBe(true);
+    expect(result).toHaveProperty("recipe");
+    const selectedResult = result as ResolvedHostLocalInferenceSelection;
+    expect(isHostLocalInferenceServingRecipe(selectedResult.recipe)).toBe(true);
     const baseProfile = {
       name: "DGX Spark",
       platform: "spark",
@@ -358,10 +359,7 @@ describe("managed inference resolver", () => {
       pullTimeoutSec: 1,
       loadTimeoutSec: 1,
     } satisfies VllmProfile;
-    const selected = materializeHostLocalVllmSelection(
-      result as ResolvedHostLocalInferenceSelection,
-      baseProfile,
-    );
+    const selected = materializeHostLocalVllmSelection(selectedResult, baseProfile);
 
     expect(selected).toMatchObject({
       presetId,

@@ -148,24 +148,22 @@ describe("managed llama.cpp status", () => {
       running: true,
       receipt: {} as never,
     }));
-    const capture = vi.fn((args: readonly string[]) => {
-      if (args[0] === "network") {
-        return {
-          status: 0,
-          stderr: "",
-          stdout: JSON.stringify([
-            {
-              Driver: "bridge",
-              Id: NETWORK_ID,
-              Internal: true,
-              Labels: { [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE },
-              Name: MANAGED_LLAMA_CPP_NETWORK_NAME,
-              Scope: "local",
-            },
-          ]),
-        };
-      }
-      return {
+    const capturedInspections = {
+      network: {
+        status: 0,
+        stderr: "",
+        stdout: JSON.stringify([
+          {
+            Driver: "bridge",
+            Id: NETWORK_ID,
+            Internal: true,
+            Labels: { [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE },
+            Name: MANAGED_LLAMA_CPP_NETWORK_NAME,
+            Scope: "local",
+          },
+        ]),
+      },
+      container: {
         status: 0,
         stderr: "",
         stdout: JSON.stringify([
@@ -188,7 +186,10 @@ describe("managed llama.cpp status", () => {
             State: { Running: true },
           },
         ]),
-      };
+      },
+    } as const;
+    const capture = vi.fn((args: readonly string[]) => {
+      return capturedInspections[args[0] as keyof typeof capturedInspections];
     });
     const runtimeEngine = engine(capture);
     const homeDir = temporaryHome();

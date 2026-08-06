@@ -377,6 +377,7 @@ interface DockerFixture {
   readonly driftGpuRequest: (driver: string | undefined, count: number) => void;
   readonly driftExtraDeviceAuthority: (kind: "cap-add" | "legacy-device") => void;
   readonly failInspectWithDaemonError: () => void;
+  readonly setAbsentNetworkInspectError: (value: string) => void;
   readonly onAbsentInspect: (callback: () => void) => void;
   readonly onAbsentNetworkInspect: (callback: () => void) => void;
   readonly onNetworkCreate: (callback: () => void) => void;
@@ -404,6 +405,7 @@ function dockerFixture(): DockerFixture {
   let capAdd: null | string[] = null;
   let legacyDevices: null | object[] = null;
   let inspectDaemonError = false;
+  let absentNetworkInspectError: string | null = null;
   let absentInspectHook: (() => void) | undefined;
   let absentNetworkInspectHook: (() => void) | undefined;
   let networkCreateHook: (() => void) | undefined;
@@ -485,54 +487,61 @@ function dockerFixture(): DockerFixture {
     const unexpected = `unexpected Docker command: ${args.join(" ")}`;
     switch (args[0]) {
       case "network":
-        if (args[1] === "inspect") {
-          if (!networkPresent) absentNetworkInspectHook?.();
-          return networkPresent
-            ? {
-                status: 0,
-                stdout: JSON.stringify([
-                  {
-                    Id: networkId,
-                    Name: args[2],
-                    Internal: true,
-                    Driver: "bridge",
-                    Scope: "local",
-                    Labels: {
-                      "io.nvidia.nemoclaw.llama-cpp-owner": "gateway.primary",
-                      "io.nvidia.nemoclaw.host-local-inference.network-transaction-sha256":
-                        networkTransactionId,
+        switch (args[1]) {
+          case "inspect":
+            switch (networkPresent) {
+              case false:
+                absentNetworkInspectHook?.();
+            }
+            return networkPresent
+              ? {
+                  status: 0,
+                  stdout: JSON.stringify([
+                    {
+                      Id: networkId,
+                      Name: args[2],
+                      Internal: true,
+                      Driver: "bridge",
+                      Scope: "local",
+                      Labels: {
+                        "io.nvidia.nemoclaw.llama-cpp-owner": "gateway.primary",
+                        "io.nvidia.nemoclaw.host-local-inference.network-transaction-sha256":
+                          networkTransactionId,
+                      },
                     },
-                  },
-                ]),
-                stderr: "",
-              }
-            : {
-                status: 1,
-                stdout: "",
-                stderr: `Error response from daemon: No such network: ${String(args[2])}`,
-              };
-        }
-        if (args[1] === "create") {
-          networkCreateHook?.();
-          const labelIndex = args.lastIndexOf("--label");
-          networkTransactionId = String(args[labelIndex + 1]).split("=")[1] ?? "";
-          networkPresent = !networkCreateUncertain || uncertainNetworkAppears;
-          if (networkCreateUncertain) {
-            return {
-              status: 1,
-              stdout: "",
-              stderr: "",
-              error: new Error("Docker network create capture timed out"),
-            };
+                  ]),
+                  stderr: "",
+                }
+              : {
+                  status: 1,
+                  stdout: "",
+                  stderr:
+                    absentNetworkInspectError ??
+                    `Error response from daemon: No such network: ${String(args[2])}`,
+                };
+          case "create": {
+            networkCreateHook?.();
+            const labelIndex = args.lastIndexOf("--label");
+            networkTransactionId = String(args[labelIndex + 1]).split("=")[1] ?? "";
+            networkPresent = !networkCreateUncertain || uncertainNetworkAppears;
+            switch (networkCreateUncertain) {
+              case true:
+                return {
+                  status: 1,
+                  stdout: "",
+                  stderr: "",
+                  error: new Error("Docker network create capture timed out"),
+                };
+            }
+            return { status: 0, stdout: `${networkId}\n`, stderr: "" };
           }
-          return { status: 0, stdout: `${networkId}\n`, stderr: "" };
+          case "rm":
+            invariant(args[2] === networkId, unexpected);
+            networkPresent = false;
+            return { status: 0, stdout: `${networkId}\n`, stderr: "" };
+          default:
+            throw new Error(unexpected);
         }
-        if (args[1] === "rm") {
-          invariant(args[2] === networkId, unexpected);
-          networkPresent = false;
-          return { status: 0, stdout: `${networkId}\n`, stderr: "" };
-        }
-        throw new Error(unexpected);
       case "container": {
         invariant(args[1] === "inspect", unexpected);
         switch (inspectDaemonError) {
@@ -643,6 +652,7 @@ function dockerFixture(): DockerFixture {
         : (legacyDevices = [{ PathOnHost: "/dev/nvidia0" }]);
     },
     failInspectWithDaemonError: () => (inspectDaemonError = true),
+    setAbsentNetworkInspectError: (value) => (absentNetworkInspectError = value),
     onAbsentInspect: (callback) => (absentInspectHook = callback),
     onAbsentNetworkInspect: (callback) => (absentNetworkInspectHook = callback),
     onNetworkCreate: (callback) => (networkCreateHook = callback),
@@ -1243,6 +1253,64 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       "rm",
     ]);
     expect(store.load(TRANSACTION_ID)?.phase).toBe("network-creating");
+  });
+
+  it.each([
+    ["another network name", "Error response from daemon: No such network: unrelated-network"],
+    ["an unrelated not-found failure", "registry metadata not found"],
+  ])("preserves network-create authority when inspection reports %s", (_case, stderr) => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const journal = {
+      ...preparedJournal(),
+      phase: "network-creating" as const,
+      networkId: null,
+      createIntentUnixMs: 1_000,
+    };
+    store.create(journal);
+    const persistedAuthority = authorityStore();
+    persistedAuthority.record(journal.engineAuthority);
+    fixture.setAbsentNetworkInspectError(stderr);
+
+    const recovery = createDockerLlamaCppManagedLifecycle(
+      options(fixture, store, bindings(), persistedAuthority),
+      { now: () => 31 * 60 * 1_000 },
+    ).recoverUnfinished(receiptWriter());
+
+    expect(recovery.recovered).toEqual([]);
+    expect(recovery.failures[0]?.message).toContain("network inspection failed");
+    expect(store.load(TRANSACTION_ID)).toEqual(journal);
+    expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).not.toContainEqual([
+      "network",
+      "rm",
+    ]);
+  });
+
+  it("accepts an exact alternate Docker network-absence response during rollback", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const journal = {
+      ...preparedJournal(),
+      phase: "network-creating" as const,
+      networkId: null,
+      createIntentUnixMs: 1_000,
+    };
+    store.create(journal);
+    const persistedAuthority = authorityStore();
+    persistedAuthority.record(journal.engineAuthority);
+    fixture.setAbsentNetworkInspectError("network nemoclaw-llama-cpp-internal not found");
+
+    expect(
+      createDockerLlamaCppManagedLifecycle(
+        options(fixture, store, bindings(), persistedAuthority),
+        { now: () => 31 * 60 * 1_000 },
+      ).recoverUnfinished(receiptWriter()),
+    ).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
+    expect(store.list()).toEqual([]);
+    expect(fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).not.toContainEqual([
+      "network",
+      "rm",
+    ]);
   });
 
   it("recovers prepared and exact creating/created/started journals without touching finalized ownership (#8395)", () => {
