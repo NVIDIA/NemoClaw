@@ -38,9 +38,12 @@ After scanning a dashboard QR code, run `$$nemoclaw <sandbox> channels status --
 If the report says `dashboard-home has WhatsApp credentials, but the Hermes gateway session path is empty`, point the gateway at the dashboard session with the supported config command:
 
 ```bash
+$$nemoclaw <sandbox> shields down --reason "repair Hermes WhatsApp session path"
 $$nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path
+$$nemoclaw <sandbox> shields up
 ```
 
+Keep Shields down until `config set` finishes, then restore the restrictive posture with `shields up`.
 The `--config-accept-new-path` flag lets the command write the `platforms.whatsapp.extra.session_path` configuration key when the generated config does not already contain it.
 Dashboard pairing writes session credentials under `profiles/dashboard-home`; this bounded compatibility repair redirects the gateway to that session path while it still reads the default path otherwise.
 The repair stays documented until Hermes dashboard pairing state and gateway startup converge on one shared session path; NemoClaw can redirect the configured path but does not rewrite Hermes pairing state.
