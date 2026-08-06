@@ -52,7 +52,7 @@ describe("scorecard coordinator selectors and run mode", () => {
 
   it("maps event and selectors to the scheduled, full, and selective run modes", () => {
     expect(coordinator.deriveRunMode("schedule", "", "")).toEqual({
-      runMode: "Scheduled E2E",
+      runMode: "Main push",
       isDispatch: false,
       isSelectiveDispatch: false,
     });
@@ -84,7 +84,7 @@ describe("scorecard coordinator assembly", () => {
       }),
     );
 
-    expect(scorecardData.runMode).toBe("Scheduled E2E");
+    expect(scorecardData.runMode).toBe("Main push");
     expect(scorecardData).toMatchObject({
       ran: 1,
       total: 1,
@@ -95,7 +95,7 @@ describe("scorecard coordinator assembly", () => {
     expect(slackData.channel).toBe("daily");
     expect(slackData.payload.attachments[0].color).toBe("good");
     expect(summaryMarkdown).toContain("## 🌅 NemoClaw E2E Scorecard — Jul 16");
-    expect(summaryMarkdown).toContain("**Run mode:** Scheduled E2E");
+    expect(summaryMarkdown).toContain("**Run mode:** Main push");
     expect(summaryMarkdown).toContain("🎉 **All jobs passed!**");
     expect(summaryMarkdown).toContain("Trace: cloud-onboard total 2.0s");
     expect(summaryMarkdown).toContain(

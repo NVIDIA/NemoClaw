@@ -7406,7 +7406,7 @@ jobs:
             }
             const runtimeHistoryMarkdown = runtimeHistoryRows === null
               ? [
-                  '## E2E Nightly Runtime Trend',
+                  '## E2E Push Runtime Trend',
                   '',
                   'The trend is unavailable because a `test-progress.json` artifact was invalid.',
                   '',

@@ -501,7 +501,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const coordinator = {
       buildScorecard: vi.fn().mockReturnValue({
-        scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+        scorecardData: { ran: 0, runMode: "Main push", total: 0 },
         slackData: { channel: "daily", payload: { attachments: [], text: "scorecard fallback" } },
         summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard\n\n### Onboard Performance Budget",
       }),
@@ -635,7 +635,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         "/workspace/scripts/scorecard/coordinate-scorecard.mts",
         {
           buildScorecard: vi.fn().mockReturnValue({
-            scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+            scorecardData: { ran: 0, runMode: "Main push", total: 0 },
             slackData: { channel: "daily", payload: { attachments: [], text: "scorecard" } },
             summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard",
           }),
