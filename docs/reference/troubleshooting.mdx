@@ -745,7 +745,7 @@ If the watchdog reports that this supervisor is no longer the gateway's parent, 
 Recover the sandbox with `$$nemoclaw <name> recover`.
 
 If the watchdog reports `health probe inconclusive`, the probe itself could not run inside the sandbox.
-An inconclusive probe leaves the gateway untouched and preserves the number of not-serving probes since the last serving response.
+An inconclusive probe leaves the gateway untouched and preserves the current not-serving count, whether the watchdog is counting since launch or since the last serving response.
 If `curl` is missing, the watchdog reports this exact diagnostic:
 
 ```text
