@@ -299,11 +299,11 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  Manual PR E2E authenticates the maintainer and exact PR identity before
-  checking out the candidate revision, then validates the identity again before
-  preparation. Direct manual dispatches accept either the default suite without
-  selectors or only the `managed-image-protected-runtime` job selector with PR
-  inputs.
+  A maintainer can dispatch the trusted `main` workflow against the current exact
+  head of an open internal or fork PR. Empty selectors run the default suite. The
+  only job-selected PR qualification is `managed-image-protected-runtime`; it
+  requires the protected dispatch procedure described in
+  [NemoClaw E2E CI](../README.md).
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
   invocations and suppress PR reporting and scorecards. The workflow boundary
   requires every selected job shard to upload its evidence artifact.

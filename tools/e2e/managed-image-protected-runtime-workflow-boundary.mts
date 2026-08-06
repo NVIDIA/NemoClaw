@@ -142,7 +142,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Validate protected runtime exact-head dispatch",
   );
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
-    ACTOR: "${{ github.actor }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EVENT_NAME: "${{ github.event_name }}",
@@ -156,7 +155,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
     '"workflow_dispatch"',
-    '"github-actions[bot]"',
     '[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
     '"$RUNNER_ARCH_KIND" == "X64"',
