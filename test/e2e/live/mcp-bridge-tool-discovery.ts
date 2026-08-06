@@ -138,21 +138,25 @@ export async function assertAuthenticatedMcpToolDiscovery(
   options: {
     sandboxName: string;
     artifactPrefix: string;
+    credentialKey?: string;
     hostSecret: string;
     progress: Pick<TestProgress, "event">;
+    serverName?: string;
   },
 ): Promise<void> {
+  const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
+  const serverName = options.serverName ?? "fake";
   const requestOffset = fakeMcp.requests.length;
   let status: Awaited<ReturnType<HostCliClient["nemoclaw"]>> | undefined;
   let statusJson: McpToolDiscoveryStatusJson | undefined;
   for (let attempt = 1; attempt <= MCP_TOOL_DISCOVERY_ATTEMPTS; attempt += 1) {
     status = await host.nemoclaw(
-      [options.sandboxName, "mcp", "status", "fake", "--tools", "--json"],
+      [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
       {
         artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
         env: {
           ...buildAvailabilityProbeEnv(),
-          FAKE_MCP_SECRET: options.hostSecret,
+          [credentialKey]: options.hostSecret,
         },
         redactionValues: [options.hostSecret],
         timeoutMs: 60_000,

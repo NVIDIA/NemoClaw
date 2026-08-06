@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as policies from "../../policy";
@@ -253,11 +255,17 @@ describe("rebuild policy restore fidelity", () => {
       failedFiles: [],
     });
     const applyPresetContent = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+    const privateContent =
+      "network_policies:\n  custom-egress:\n    endpoints:\n      - host: api.corp.example\n        allowed_ips: [10.20.30.40]\n";
     const customPolicies = [
       {
         name: "custom-egress",
-        content: "network_policies:\n  custom-egress: {}\n",
+        content: privateContent,
         sourcePath: "/tmp/custom-egress.yaml",
+        trustedPrivatePins: {
+          version: 1 as const,
+          contentDigest: createHash("sha256").update(privateContent).digest("hex"),
+        },
       },
     ];
     const result = runStandardRebuildRestorePhase({
@@ -273,7 +281,14 @@ describe("rebuild policy restore fidelity", () => {
       "alpha",
       "custom-egress",
       customPolicies[0]!.content,
-      { custom: { sourcePath: "/tmp/custom-egress.yaml" } },
+      {
+        custom: {
+          sourcePath: "/tmp/custom-egress.yaml",
+          trustedPrivatePinCapability: expect.objectContaining({
+            receipt: customPolicies[0]!.trustedPrivatePins,
+          }),
+        },
+      },
     );
     expect(result.restoredPresets).toEqual(["custom-egress"]);
     expect(result.finalPresets).toEqual(["custom-egress"]);

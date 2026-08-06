@@ -11,6 +11,7 @@ type ControllerWorkflow = {
 };
 
 const EXPECTED_ERROR = "trusted controller matrix must pin typed target runner to ubuntu-latest";
+const CONTROLLER_CASE = 'case "${JOBS}:${TARGETS}" in';
 const TRUSTED_MAPPING =
   '{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}';
 
@@ -41,7 +42,7 @@ describe("trusted E2E target routing boundary (#7824)", () => {
   it("rejects a dead approved case block before unsafe target routing", () => {
     const { controllerMatrix, workflow } = fixture();
     const run = controllerMatrix.run!;
-    const caseStart = run.indexOf('case "${TARGETS}" in');
+    const caseStart = run.indexOf(CONTROLLER_CASE);
     const caseEnd = run.indexOf("\nesac", caseStart) + "\nesac".length;
     requireFixture(caseStart >= 0, "trusted target fixture case is missing");
     requireFixture(caseEnd > caseStart, "trusted target fixture case terminator is missing");
@@ -57,20 +58,19 @@ describe("trusted E2E target routing boundary (#7824)", () => {
 
   it("rejects an executable wildcard before approved target routing", () => {
     const { controllerMatrix, workflow } = fixture();
-    const caseStart = 'case "${TARGETS}" in';
     const unsafeWildcard = [
       "*)",
       'matrix=\'[{"id":"untrusted","runner":"self-hosted","label":"untrusted"}]\'',
       ";;",
     ].join("\n");
     requireFixture(
-      controllerMatrix.run?.includes(caseStart),
+      controllerMatrix.run?.includes(CONTROLLER_CASE),
       "trusted target fixture case is missing",
     );
 
     controllerMatrix.run = controllerMatrix.run!.replace(
-      caseStart,
-      `${caseStart}\n${unsafeWildcard}`,
+      CONTROLLER_CASE,
+      `${CONTROLLER_CASE}\n${unsafeWildcard}`,
     );
 
     expect(validateE2eWorkflow(workflow)).toContain(EXPECTED_ERROR);
