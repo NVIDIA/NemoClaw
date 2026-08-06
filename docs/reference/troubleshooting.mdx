@@ -138,6 +138,8 @@ It rejects remote endpoints and relative socket paths before service startup.
 
 The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
 NemoClaw does not use the standalone gateway fallback when this validation fails.
+Onboarding prints the advisory identifier in parentheses after each action title in the `Suggested fix` list.
+The terminal output names `invalid_docker_host` when this validation fails, so you can match the message to this section.
 Remove the override to use Docker's default local socket:
 
 ```bash
@@ -2967,6 +2969,24 @@ For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/qu
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+
+The portable experimental profile uses the `docker` command to drive rootless Podman.
+Before you run this profile, make sure a Docker-compatible CLI is available on `PATH`.
+On a Podman-only host, install the `podman-docker` shim for your distribution:
+
+```bash
+# Debian or Ubuntu
+sudo apt install podman-docker
+
+# Fedora
+sudo dnf install podman-docker
+```
+
+Then rerun portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
 
 <AgentOnly variant="hermes">
 
