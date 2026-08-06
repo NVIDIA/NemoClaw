@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "Plan a NemoClaw Issue"
+  short_description: "Refine issues into valuable capability slices"
+  default_prompt: "Use $nemoclaw-contributor-plan-issue to research this issue and propose independently valuable capability slices without implementing or publishing them."

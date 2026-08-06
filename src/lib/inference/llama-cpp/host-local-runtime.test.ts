@@ -133,7 +133,7 @@ describe("llama.cpp host-local runtime materializer", () => {
       `type=bind,source=${runtime.apiKeyHostPath},target=/run/secrets/llama-cpp-api-key,readonly`,
     ]);
     expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
-    expect(valuesAfter(argv, "--gpus")).toEqual(["1"]);
+    expect(valuesAfter(argv, "--gpus")).toEqual(["driver=nvidia,count=1"]);
     expect(valuesAfter(argv, "--gpu-layers")).toEqual(["all"]);
     expect(valuesAfter(argv, "--ctx-size")).toEqual([String(input.serve.contextSize)]);
     expect(valuesAfter(argv, "--batch-size")).toEqual([String(input.serve.batchSize)]);
@@ -206,7 +206,7 @@ describe("llama.cpp host-local runtime materializer", () => {
       "--pids-limit",
       "256",
       "--gpus",
-      "1",
+      "driver=nvidia,count=1",
       "--tmpfs",
       "/tmp:rw,noexec,nosuid,nodev,size=42949672960,uid=1001,gid=1001,mode=1777",
       "--mount",
