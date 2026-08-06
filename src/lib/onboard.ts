@@ -3514,7 +3514,6 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
 }
 export type SetupNimDeps = import("./onboard/setup-nim-flow").SetupNimFlowDeps;
 export type SetupNim = import("./onboard/setup-nim-flow").SetupNim;
-
 function getSetupNimDeps(): SetupNimDeps {
   return {
     remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
@@ -4028,7 +4027,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     GATEWAY_PORT = authoritativeGateway.port;
     process.env.OPENSHELL_GATEWAY = authoritativeGateway.name;
   }
-
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,
@@ -4046,6 +4044,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         cannotPrompt,
         nonInteractive: isNonInteractive(),
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+        servingProfileProvenance: opts.servingProfileProvenance ?? null,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
         ...stationSessionInput,

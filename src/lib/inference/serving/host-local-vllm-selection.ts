@@ -163,6 +163,7 @@ export function materializeHostLocalVllmSelection(
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
       defaultModel: model,
       servingCatalog: {
+        catalogDigest: selection.catalogDigest,
         presetId: preset.metadata.id,
         presetDigest: selection.presetDigest,
         recipeId: recipe.metadata.id,

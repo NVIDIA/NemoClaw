@@ -20,16 +20,16 @@ import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import {
-  CURRENT_RUNTIME_PROVIDER_BUNDLES,
-  RuntimeProviderBundleRegistry,
-  requireRuntimeProviderBundleForSandbox,
-  requireRuntimeProviderMutationAuthority,
-  RuntimeProviderSelectionError,
-} from "./runtime-provider/access";
-import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
 } from "./hermes-dashboard";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  requireRuntimeProviderBundleForSandbox,
+  requireRuntimeProviderMutationAuthority,
+} from "./runtime-provider/access";
 import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 
 export type CreatedSandboxRuntimeFields = Pick<
@@ -172,6 +172,11 @@ export function selection(
 export function buildCreatedSandboxRegistryEntry(
   input: CreatedSandboxRegistryEntryInput,
 ): SandboxEntry {
+  const session = onboardSession.loadSession();
+  const servingProfileProvenance =
+    session?.sandboxName === input.sandboxName
+      ? (session.servingProfileProvenance ?? undefined)
+      : undefined;
   const messagingState =
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
@@ -185,6 +190,7 @@ export function buildCreatedSandboxRegistryEntry(
 
   return {
     name: input.sandboxName,
+    servingProfileProvenance,
     ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
@@ -223,6 +229,14 @@ export function buildCreatedSandboxRegistryEntry(
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   };
+}
+
+/** Load only the immutable profile identity needed by command-level resume validation. */
+export function loadServingProfileResumeSession(): {
+  servingProfileProvenance: onboardSession.Session["servingProfileProvenance"];
+} | null {
+  const session = onboardSession.loadSession();
+  return session ? { servingProfileProvenance: session.servingProfileProvenance } : null;
 }
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {

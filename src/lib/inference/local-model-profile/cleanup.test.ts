@@ -32,6 +32,19 @@ import {
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "../llama-cpp/managed-state";
+import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
+import {
+  HOST_LOCAL_VLLM_AUTH_LABEL,
+  HOST_LOCAL_VLLM_CATALOG_LABEL,
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
+  HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL,
+  HOST_LOCAL_VLLM_PRESET_LABEL,
+  HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL,
+  HOST_LOCAL_VLLM_RECIPE_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+  persistHostLocalVllmRuntimeReceipt,
+} from "../serving/vllm-host-local-lifecycle";
 import { cleanupLocalModelRuntimes, cleanupManagedLlamaCppRuntimeForSandbox } from "./cleanup";
 
 const TRANSACTION_ID = "1".repeat(64);
@@ -55,6 +68,15 @@ function temporaryHome(): string {
 
 function commandResult(status: number, stdout = "", stderr = ""): ContainerEngineCommandResult {
   return { status, stdout, stderr };
+}
+
+function ownedContainer(
+  name: string,
+  id: string,
+  labels: Record<string, string>,
+  env: string[] = [],
+): string {
+  return JSON.stringify([{ Id: id, Name: `/${name}`, Config: { Env: env, Labels: labels } }]);
 }
 
 interface EngineHarnessOptions {
@@ -291,6 +313,164 @@ describe("host-local model cleanup", () => {
       "rm",
       "--force",
     ]);
+  });
+
+  it("removes authenticated legacy host-local vLLM when key and fingerprint match", () => {
+    const homeDir = temporaryHome();
+    const stateDir = path.join(homeDir, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    const apiKey = "c".repeat(64);
+    const containerId = "d".repeat(64);
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
+      mode: 0o600,
+    });
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
+    const capture = vi.fn((argv: readonly string[]) =>
+      argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+        ? ownedContainer(
+            HOST_LOCAL_VLLM_CONTAINER_NAME,
+            containerId,
+            {
+              [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
+              [HOST_LOCAL_VLLM_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
+            },
+            [`VLLM_API_KEY=${apiKey}`],
+          )
+        : "",
+    );
+
+    expect(
+      cleanupLocalModelRuntimes({
+        deleteModels: false,
+        homeDir,
+        deps: {
+          capture: capture as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
+      }),
+    ).toMatchObject({ ok: true, removed: [`container:${containerId}`] });
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(false);
+  });
+
+  it("removes a profile-labeled vLLM and its exact ownership receipt", () => {
+    const homeDir = temporaryHome();
+    const stateDir = path.join(homeDir, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    const apiKey = "1".repeat(64);
+    const containerId = "2".repeat(64);
+    const serving = {
+      catalogDigest: `sha256:${"3".repeat(64)}`,
+      presetId: "vllm.dgx-spark-gb10.single.example",
+      presetDigest: `sha256:${"4".repeat(64)}`,
+      recipeId: "vllm.dgx-spark-gb10.single.example",
+      recipeDigest: `sha256:${"5".repeat(64)}`,
+    } as const;
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
+      mode: 0o600,
+    });
+    persistHostLocalVllmRuntimeReceipt(
+      { containerId, authFingerprint: runtimeAuthFingerprint(apiKey), serving },
+      stateDir,
+    );
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
+    const capture = vi.fn((argv: readonly string[]) =>
+      argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+        ? ownedContainer(
+            HOST_LOCAL_VLLM_CONTAINER_NAME,
+            containerId,
+            {
+              [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
+              [HOST_LOCAL_VLLM_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
+              [HOST_LOCAL_VLLM_CATALOG_LABEL]: serving.catalogDigest,
+              [HOST_LOCAL_VLLM_PRESET_LABEL]: serving.presetId,
+              [HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: serving.presetDigest,
+              [HOST_LOCAL_VLLM_RECIPE_LABEL]: serving.recipeId,
+              [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: serving.recipeDigest,
+            },
+            [`VLLM_API_KEY=${apiKey}`],
+          )
+        : "",
+    );
+
+    expect(
+      cleanupLocalModelRuntimes({
+        deleteModels: false,
+        homeDir,
+        deps: {
+          capture: capture as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
+      }),
+    ).toMatchObject({ ok: true, removed: [`container:${containerId}`] });
+    expect(fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))).toBe(false);
+  });
+
+  it("refuses to remove a profile-labeled vLLM without its ownership receipt", () => {
+    const homeDir = temporaryHome();
+    const stateDir = path.join(homeDir, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    const apiKey = "6".repeat(64);
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
+      mode: 0o600,
+    });
+    const labels = {
+      [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
+      [HOST_LOCAL_VLLM_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
+      [HOST_LOCAL_VLLM_CATALOG_LABEL]: `sha256:${"7".repeat(64)}`,
+      [HOST_LOCAL_VLLM_PRESET_LABEL]: "vllm.dgx-spark-gb10.single.example",
+      [HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: `sha256:${"8".repeat(64)}`,
+      [HOST_LOCAL_VLLM_RECIPE_LABEL]: "vllm.dgx-spark-gb10.single.example",
+      [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: `sha256:${"9".repeat(64)}`,
+    };
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
+
+    expect(
+      cleanupLocalModelRuntimes({
+        deleteModels: false,
+        homeDir,
+        deps: {
+          capture: vi.fn(() =>
+            ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "a".repeat(64), labels, [
+              `VLLM_API_KEY=${apiKey}`,
+            ]),
+          ) as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
+      }),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("ownership receipt") });
+    expect(forceRm).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the vLLM container name is foreign while local key state remains", () => {
+    const homeDir = temporaryHome();
+    const stateDir = path.join(homeDir, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${"e".repeat(64)}\n`, {
+      mode: 0o600,
+    });
+    const capture = vi.fn((argv: readonly string[]) => {
+      return argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+        ? ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "f".repeat(64), {})
+        : "";
+    });
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
+
+    expect(
+      cleanupLocalModelRuntimes({
+        deleteModels: false,
+        homeDir,
+        deps: {
+          capture: capture as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
+      }),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("container name is foreign") });
+    expect(forceRm).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(true);
   });
 
   it("removes only exact receipt-owned llama.cpp resources through the qualified engine", () => {

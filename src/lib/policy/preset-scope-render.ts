@@ -13,12 +13,14 @@ type RuleScope = {
 };
 
 type EndpointScope = {
-  host: string;
+  host?: string;
   port?: number | string;
+  ports: Array<number | string>;
   protocol?: string;
   access?: string;
   tls?: string;
   enforcement?: string;
+  allowedIps: string[];
   rules: RuleScope[];
 };
 
@@ -70,6 +72,14 @@ function toPortOrUndefined(value: unknown): number | string | undefined {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.length > 0) return value;
   return undefined;
+}
+
+function portArray(value: unknown): Array<number | string> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (port): port is number | string =>
+      typeof port === "number" || (typeof port === "string" && port.length > 0),
+  );
 }
 
 function stringArray(value: unknown): string[] {
@@ -124,15 +134,18 @@ function extractPresetScope(content: string): PresetScope | null {
     if (Array.isArray(rawEndpoints)) {
       for (const rawEndpoint of rawEndpoints) {
         if (!isObjectRecord(rawEndpoint)) continue;
-        const host = typeof rawEndpoint.host === "string" ? rawEndpoint.host : null;
-        if (!host) continue;
+        const host = typeof rawEndpoint.host === "string" ? rawEndpoint.host : undefined;
+        const allowedIps = stringArray(rawEndpoint.allowed_ips);
+        if (!host && allowedIps.length === 0) continue;
         endpoints.push({
-          host,
+          ...(host ? { host } : {}),
           port: toPortOrUndefined(rawEndpoint.port),
+          ports: portArray(rawEndpoint.ports),
           protocol: toStringOrUndefined(rawEndpoint.protocol as PolicyValue | undefined),
           access: toStringOrUndefined(rawEndpoint.access as PolicyValue | undefined),
           tls: toStringOrUndefined(rawEndpoint.tls as PolicyValue | undefined),
           enforcement: toStringOrUndefined(rawEndpoint.enforcement as PolicyValue | undefined),
+          allowedIps,
           rules: collectRules(rawEndpoint),
         });
       }
@@ -143,7 +156,11 @@ function extractPresetScope(content: string): PresetScope | null {
 }
 
 function formatEndpoint(endpoint: EndpointScope): string[] {
-  const port = renderTerminalText(String(endpoint.port ?? "?"));
+  const host = endpoint.host
+    ? renderTerminalText(endpoint.host)
+    : "<any hostname resolving to allowed_ips>";
+  const portValue = endpoint.ports.length > 0 ? endpoint.ports.join(",") : (endpoint.port ?? "?");
+  const port = renderTerminalText(String(portValue));
   const modeBits: string[] = [];
   if (endpoint.access) modeBits.push(`access: ${renderTerminalText(endpoint.access)}`);
   if (endpoint.protocol) modeBits.push(`protocol: ${renderTerminalText(endpoint.protocol)}`);
@@ -152,14 +169,17 @@ function formatEndpoint(endpoint: EndpointScope): string[] {
     modeBits.push(`enforcement: ${renderTerminalText(endpoint.enforcement)}`);
   }
   const modeSuffix = modeBits.length > 0 ? ` (${modeBits.join(", ")})` : "";
-  const header = `      - ${renderTerminalText(endpoint.host)}:${port}${modeSuffix}`;
-  if (endpoint.rules.length === 0) return [header];
+  const header = `      - ${host}:${port}${modeSuffix}`;
+  const allowedIpLines = endpoint.allowedIps.map(
+    (allowedIp) => `          allowed_ip: ${renderTerminalText(allowedIp)}`,
+  );
+  if (endpoint.rules.length === 0) return [header, ...allowedIpLines];
   const ruleLines = endpoint.rules.map((rule) => {
     const methods = rule.methods.map(renderTerminalText).join(", ");
     const paths = rule.paths.map(renderTerminalText).join(", ");
     return `          ${rule.action}: ${methods}  ${paths}`;
   });
-  return [header, ...ruleLines];
+  return [header, ...allowedIpLines, ...ruleLines];
 }
 
 export function renderPresetScope(

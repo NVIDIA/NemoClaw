@@ -121,6 +121,13 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "supportState": {
+          "enum": [
+            "supported",
+            "experimental",
+            "disabled"
+          ]
         }
       },
       "additionalProperties": false
