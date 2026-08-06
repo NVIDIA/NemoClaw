@@ -10,6 +10,7 @@ import { formatInferenceRouteDriftForDisplay } from "../../inference/config";
 import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import { getEffectiveReasoningEffort } from "../../inference/selection";
+import { isSshSession } from "../../onboard/ssh-forward-hint";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
 import {
   BASELINE_EXCLUSION_SUPPORT_IMPACT,
@@ -378,6 +379,17 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }
 
+// On an SSH session the loopback-only dashboard needs a port forward to reach
+// from the operator's workstation. `status` does not print the dashboard URL,
+// so point to `dashboard-url`, which renders the copy-pastable `ssh -L` block.
+// This extends the #5925 remote-access guidance to the status surface (#8465).
+function printDashboardRemoteAccessHint(sandboxName: string): void {
+  if (!isSshSession()) return;
+  console.log(
+    `      Remote access: run \`${CLI_NAME} ${sandboxName} dashboard-url\` for SSH port-forward instructions.`,
+  );
+}
+
 async function printGatewayProcessStatus(context: SandboxStatusTextContext): Promise<void> {
   const { sandboxName, statusAgent } = context;
   const running = await isSandboxGatewayRunningForStatus(sandboxName);
@@ -385,6 +397,7 @@ async function printGatewayProcessStatus(context: SandboxStatusTextContext): Pro
   const agentName = statusAgent.agentDisplayName;
   if (running) {
     console.log(`    ${agentName}: ${G}running${R}`);
+    printDashboardRemoteAccessHint(sandboxName);
     return;
   }
   console.log(`    ${agentName}: ${RD}not running${R}`);
