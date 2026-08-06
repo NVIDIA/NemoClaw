@@ -18,7 +18,7 @@ concurrency:
 jobs:
   dispatch-production-image:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check out LKG target

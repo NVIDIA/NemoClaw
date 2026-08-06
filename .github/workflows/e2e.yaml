@@ -96,7 +96,7 @@ env:
 
 jobs:
   base-image-publication:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 55
     permissions:
       actions: read
@@ -149,7 +149,7 @@ jobs:
 
   generate-matrix:
     needs: base-image-publication
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
@@ -170,19 +170,19 @@ jobs:
           set -euo pipefail
           case "${JOBS}:${TARGETS}" in
             :)
-              matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"linux-amd64-cpu4"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"linux-amd64-cpu4"},{"id":"ubuntu-repo-cloud-openclaw","runner":"linux-amd64-cpu4"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"linux-amd64-cpu4"}]'
+              matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               ;;
             managed-image-protected-runtime:)
               matrix='[]'
               ;;
             :ubuntu-repo-cloud-langchain-deepagents-code)
-              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"linux-amd64-cpu4","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
               ;;
             :ubuntu-repo-docker-post-reboot-recovery)
-              matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"linux-amd64-cpu4","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
+              matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
               ;;
             :ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
-              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"linux-amd64-cpu4","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"linux-amd64-cpu4","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
               ;;
             *)
               echo "::error::PR E2E target is not approved by the trusted controller" >&2
@@ -201,7 +201,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          larger_runner="linux-amd64-cpu4"
+          larger_runner="ubuntu-latest"
           if [[ "${REPOSITORY}" == "NVIDIA/NemoClaw" && "${REF}" == "refs/heads/main" && -z "${CHECKOUT_SHA}" && -n "${LARGER_RUNNER_LABEL}" ]]; then
             if [[ ! "${LARGER_RUNNER_LABEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
               echo "::error::E2E_LARGER_RUNNER_LABEL must be a 1-64 character workflow label using letters, digits, dots, underscores, or hyphens" >&2
@@ -209,7 +209,7 @@ jobs:
             fi
             larger_runner="${LARGER_RUNNER_LABEL}"
           fi
-          runner_routing="$(jq -cn --arg standard "linux-amd64-cpu4" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
+          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
           printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
       - name: Authenticate manual PR dispatch
@@ -607,7 +607,7 @@ jobs:
   retired-selector-compatibility:
     needs: generate-matrix
     if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,')) }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/retired-selector-compatibility
@@ -645,7 +645,7 @@ jobs:
     name: Exact staging Brev Launchable
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
       contents: read
@@ -937,7 +937,7 @@ jobs:
     name: Shared E2E (${{ matrix.id }})
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.test_matrix != '[]' }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -986,7 +986,7 @@ jobs:
     needs: generate-matrix
     # Run on every main push. Exact manual selection remains available for diagnosis.
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       E2E_JOB: "1"
@@ -1386,7 +1386,7 @@ jobs:
   openshell-credential-generation-window:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge,') || contains(format(',{0},', inputs.targets), ',mcp-bridge,') || contains(format(',{0},', inputs.jobs), ',openshell-credential-generation-window,') || contains(format(',{0},', inputs.targets), ',openshell-credential-generation-window,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     # Keep the credential-generation lifecycle on a fresh runner so it can
@@ -1505,7 +1505,7 @@ jobs:
     needs: generate-matrix
     # Run moving OpenShell development artifacts on every main push.
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge-dev,') || contains(format(',{0},', inputs.targets), ',mcp-bridge-dev,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 90
@@ -1625,7 +1625,7 @@ jobs:
   skill-agent:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',skill-agent,') || contains(format(',{0},', inputs.targets), ',skill-agent,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       E2E_JOB: "1"
@@ -1706,7 +1706,7 @@ jobs:
   openclaw-skill-cli:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-skill-cli,') || contains(format(',{0},', inputs.targets), ',openclaw-skill-cli,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -1755,7 +1755,7 @@ jobs:
   inference-routing:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',inference-routing,') || contains(format(',{0},', inputs.targets), ',inference-routing,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -1830,7 +1830,7 @@ jobs:
   cloud-inference:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',cloud-inference,') || contains(format(',{0},', inputs.targets), ',cloud-inference,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 50
     env:
       E2E_JOB: "1"
@@ -1960,10 +1960,10 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: linux-amd64-cpu4
+            runner: ubuntu-24.04
             shard: linux-amd64
           - platform: linux/arm64
-            runner: linux-arm64-cpu4
+            runner: ubuntu-24.04-arm
             shard: linux-arm64
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}
@@ -2293,7 +2293,7 @@ jobs:
     name: Compile protected llama.cpp DGX Spark plan
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -2841,7 +2841,7 @@ jobs:
   agent-turn-latency:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',agent-turn-latency,') || contains(format(',{0},', inputs.targets), ',agent-turn-latency,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 110
     env:
       E2E_JOB: "1"
@@ -2939,7 +2939,7 @@ jobs:
   kimi-inference-compat:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',kimi-inference-compat,') || contains(format(',{0},', inputs.targets), ',kimi-inference-compat,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 50
     env:
       E2E_JOB: "1"
@@ -3089,7 +3089,7 @@ jobs:
   brave-search:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',brave-search,') || contains(format(',{0},', inputs.targets), ',brave-search,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -3156,7 +3156,7 @@ jobs:
   ollama-auth-proxy:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',ollama-auth-proxy,') || contains(format(',{0},', inputs.targets), ',ollama-auth-proxy,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -3196,7 +3196,7 @@ jobs:
   cron-preflight-inference-local:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',cron-preflight-inference-local,') || contains(format(',{0},', inputs.targets), ',cron-preflight-inference-local,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -3262,7 +3262,7 @@ jobs:
   issue-4434-tui-unreachable-inference:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',issue-4434-tui-unreachable-inference,') || contains(format(',{0},', inputs.targets), ',issue-4434-tui-unreachable-inference,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       E2E_JOB: "1"
@@ -3340,7 +3340,7 @@ jobs:
   dashboard-remote-bind:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',dashboard-remote-bind,') || contains(format(',{0},', inputs.targets), ',dashboard-remote-bind,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 65
     env:
       E2E_JOB: "1"
@@ -3390,7 +3390,7 @@ jobs:
   sessions-agents-cli:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sessions-agents-cli,') || contains(format(',{0},', inputs.targets), ',sessions-agents-cli,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
       E2E_JOB: "1"
@@ -3928,7 +3928,7 @@ jobs:
 
       - name: Run Hermes Discord live test
         # Preserves the
-        # linux-amd64-cpu4 Docker/OpenShell/Hermes Discord schema, provider,
+        # ubuntu-latest Docker/OpenShell/Hermes Discord schema, provider,
         # placeholder isolation, native gateway rewrite, and rebuild contracts.
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -3959,7 +3959,7 @@ jobs:
     name: Network policy (${{ matrix.scenario }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',network-policy,') || contains(format(',{0},', inputs.targets), ',network-policy,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -4170,7 +4170,7 @@ jobs:
   shields-config:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',shields-config,') || contains(format(',{0},', inputs.targets), ',shields-config,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -4304,7 +4304,7 @@ jobs:
   rebuild-openclaw:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-openclaw,') || contains(format(',{0},', inputs.targets), ',rebuild-openclaw,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 130
     env:
       E2E_JOB: "1"
@@ -4615,7 +4615,7 @@ jobs:
   overlayfs-autofix:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',overlayfs-autofix,') || contains(format(',{0},', inputs.targets), ',overlayfs-autofix,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -4667,7 +4667,7 @@ jobs:
   state-backup-restore:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',state-backup-restore,') || contains(format(',{0},', inputs.targets), ',state-backup-restore,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -4737,7 +4737,7 @@ jobs:
   double-onboard:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',double-onboard,') || contains(format(',{0},', inputs.targets), ',double-onboard,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -4802,7 +4802,7 @@ jobs:
     # timeout-minutes only after runner assignment. Maintainers must keep the
     # configured runner label online.
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
-    runs-on: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'linux-amd64-cpu4' }}
+    runs-on: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -4880,7 +4880,7 @@ jobs:
   concurrent-gateway-ports:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',concurrent-gateway-ports,') || contains(format(',{0},', inputs.targets), ',concurrent-gateway-ports,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -4942,7 +4942,7 @@ jobs:
   onboard-resume:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',onboard-resume,') || contains(format(',{0},', inputs.targets), ',onboard-resume,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -5003,7 +5003,7 @@ jobs:
   full-e2e:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',full-e2e,') || contains(format(',{0},', inputs.targets), ',full-e2e,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -5173,7 +5173,7 @@ jobs:
   cloud-onboard:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',cloud-onboard,') || contains(format(',{0},', inputs.targets), ',cloud-onboard,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
       E2E_JOB: "1"
@@ -5357,7 +5357,7 @@ jobs:
   onboard-repair:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',onboard-repair,') || contains(format(',{0},', inputs.targets), ',onboard-repair,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -5418,7 +5418,7 @@ jobs:
   issue-4462-scope-upgrade-approval:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',issue-4462-scope-upgrade-approval,') || contains(format(',{0},', inputs.targets), ',issue-4462-scope-upgrade-approval,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -5482,7 +5482,7 @@ jobs:
   token-rotation:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',token-rotation,') || contains(format(',{0},', inputs.targets), ',token-rotation,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -5510,7 +5510,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run token rotation live test
-        # Preserve the original runner class: linux-amd64-cpu4 with Docker/OpenShell
+        # Preserve the original runner class: ubuntu-latest with Docker/OpenShell
         # plus the fake OpenAI-compatible endpoint path and fake
         # Telegram/Discord/Slack token boundary.
         env:
@@ -5539,7 +5539,7 @@ jobs:
   messaging-compatible-endpoint:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',messaging-compatible-endpoint,') || contains(format(',{0},', inputs.targets), ',messaging-compatible-endpoint,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -5600,7 +5600,7 @@ jobs:
       matrix:
         include:
           - id: v0.0.36-x86_64
-            runner: linux-amd64-cpu4
+            runner: ubuntu-latest
             shard: v0-0-36-x86-64
             nemoclaw_ref: v0.0.36
             nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
@@ -5609,7 +5609,7 @@ jobs:
             openshell_version: 0.0.36
             openclaw_version: 2026.4.24
           - id: v0.0.55-x86_64
-            runner: linux-amd64-cpu4
+            runner: ubuntu-latest
             shard: v0-0-55-x86-64
             nemoclaw_ref: v0.0.55
             nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
@@ -5618,7 +5618,7 @@ jobs:
             openshell_version: 0.0.44
             openclaw_version: 2026.5.22
           - id: v0.0.55-aarch64
-            runner: linux-arm64-cpu4
+            runner: ubuntu-24.04-arm
             shard: v0-0-55-aarch64
             nemoclaw_ref: v0.0.55
             nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
@@ -5627,7 +5627,7 @@ jobs:
             openshell_version: 0.0.44
             openclaw_version: 2026.5.22
           - id: v0.0.74-x86_64
-            runner: linux-amd64-cpu4
+            runner: ubuntu-latest
             shard: v0-0-74-x86-64
             nemoclaw_ref: v0.0.74
             nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3"
@@ -5636,7 +5636,7 @@ jobs:
             openshell_version: 0.0.72
             openclaw_version: 2026.5.27
           - id: v0.0.89-x86_64
-            runner: linux-amd64-cpu4
+            runner: ubuntu-latest
             shard: v0-0-89-x86-64
             nemoclaw_ref: v0.0.89
             nemoclaw_commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e"
@@ -5711,7 +5711,7 @@ jobs:
   messaging-providers:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',messaging-providers,') || contains(format(',{0},', inputs.targets), ',messaging-providers,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -5774,7 +5774,7 @@ jobs:
   bootstrap-install-smoke:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',bootstrap-install-smoke,') || contains(format(',{0},', inputs.targets), ',bootstrap-install-smoke,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       E2E_JOB: "1"
@@ -5826,7 +5826,7 @@ jobs:
   model-router-provider-routed-inference:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',model-router-provider-routed-inference,') || contains(format(',{0},', inputs.targets), ',model-router-provider-routed-inference,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -5876,7 +5876,7 @@ jobs:
   snapshot-commands:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',snapshot-commands,') || contains(format(',{0},', inputs.targets), ',snapshot-commands,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       E2E_JOB: "1"
@@ -5920,7 +5920,7 @@ jobs:
   sandbox-operations:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sandbox-operations,') || contains(format(',{0},', inputs.jobs), ',sandbox-rlimits-connect,') || contains(format(',{0},', inputs.targets), ',sandbox-operations,') || contains(format(',{0},', inputs.targets), ',sandbox-rlimits-connect,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     # The live test receives 45 minutes for two onboards plus process/gateway
     # recovery. The remaining 15 minutes cover checkout, build, OpenShell setup,
     # artifact upload, and unconditional credential/resource cleanup.
@@ -5992,7 +5992,7 @@ jobs:
   sandbox-survival:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sandbox-survival,') || contains(format(',{0},', inputs.targets), ',sandbox-survival,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       E2E_JOB: "1"
@@ -6049,7 +6049,7 @@ jobs:
   openclaw-plugin-runtime-exdev-release:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-plugin-runtime-exdev-release,') || contains(format(',{0},', inputs.targets), ',openclaw-plugin-runtime-exdev-release,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 55
@@ -6119,7 +6119,7 @@ jobs:
   openclaw-plugin-runtime-exdev:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-plugin-runtime-exdev,') || contains(format(',{0},', inputs.targets), ',openclaw-plugin-runtime-exdev,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     # Two bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
@@ -6189,7 +6189,7 @@ jobs:
   openclaw-tui-chat-correlation:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation,') || contains(format(',{0},', inputs.targets), ',openclaw-tui-chat-correlation,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 75
@@ -6273,7 +6273,7 @@ jobs:
   gateway-guard-recovery:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') || contains(format(',{0},', inputs.targets), ',gateway-guard-recovery,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -6359,7 +6359,7 @@ jobs:
   openclaw-inference-switch:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-inference-switch,') || contains(format(',{0},', inputs.targets), ',openclaw-inference-switch,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 90
@@ -6432,7 +6432,7 @@ jobs:
   bedrock-runtime-compatible-anthropic:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',bedrock-runtime-compatible-anthropic,') || contains(format(',{0},', inputs.targets), ',bedrock-runtime-compatible-anthropic,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -6513,7 +6513,7 @@ jobs:
   device-auth-health:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',device-auth-health,') || contains(format(',{0},', inputs.targets), ',device-auth-health,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       E2E_JOB: "1"
@@ -6577,7 +6577,7 @@ jobs:
   channels-add-remove:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',channels-add-remove,') || contains(format(',{0},', inputs.targets), ',channels-add-remove,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -6653,7 +6653,7 @@ jobs:
   telegram-injection:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',telegram-injection,') || contains(format(',{0},', inputs.targets), ',telegram-injection,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -6846,7 +6846,7 @@ jobs:
   openclaw-slack-pairing:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-slack-pairing,') || contains(format(',{0},', inputs.targets), ',openclaw-slack-pairing,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -6919,7 +6919,7 @@ jobs:
   issue-2478-crash-loop-recovery:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery,') || contains(format(',{0},', inputs.targets), ',issue-2478-crash-loop-recovery,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       E2E_JOB: "1"
@@ -6983,7 +6983,7 @@ jobs:
   openclaw-discord-pairing:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-discord-pairing,') || contains(format(',{0},', inputs.targets), ',openclaw-discord-pairing,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -7055,7 +7055,7 @@ jobs:
   tunnel-lifecycle:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',tunnel-lifecycle,') || contains(format(',{0},', inputs.targets), ',tunnel-lifecycle,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -7138,7 +7138,7 @@ jobs:
   spark-install:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',spark-install,') || contains(format(',{0},', inputs.targets), ',spark-install,') }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -7193,7 +7193,7 @@ jobs:
   # even when target jobs failed — that's the whole point of a result
   # comment.
   report-to-pr:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
     # makes the report wait for and record any requested job without adding
@@ -7334,7 +7334,7 @@ jobs:
 
   # ── Push/manual scorecard ─────────────────────────────────────────────────
   scorecard:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: *e2e-result-jobs
     if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}

@@ -33,7 +33,7 @@ concurrency:
 jobs:
   config:
     name: Compile declarative image configuration
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       backend_directory: ${{ steps.manifest.outputs.backend_directory }}
@@ -240,7 +240,7 @@ jobs:
     name: Validate trusted publication request
     needs: config
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     outputs:
@@ -314,7 +314,7 @@ jobs:
   publication-preflight:
     name: Require public GHCR package
     needs: [config, publication-gate]
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       packages: read
@@ -459,7 +459,7 @@ jobs:
   assemble-candidate:
     name: Assemble exact llama.cpp candidate index
     needs: [config, publication-gate, publish-platform]
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -586,7 +586,7 @@ jobs:
   scan-candidate:
     name: Scan llama.cpp digest (${{ matrix.arch }})
     needs: [config, publication-gate, assemble-candidate]
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -664,7 +664,7 @@ jobs:
         scan-candidate,
         attest-candidate,
       ]
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       attestations: read

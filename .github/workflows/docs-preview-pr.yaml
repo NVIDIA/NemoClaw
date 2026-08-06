@@ -30,7 +30,7 @@ env:
 
 jobs:
   preview:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout repository
