@@ -17,13 +17,16 @@ FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea5
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NODE_OPTIONS=--dns-result-order=ipv4first \
+    NPM_CONFIG_MAXSOCKETS=4 \
     NPM_CONFIG_FETCH_RETRIES=5 \
-    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
-    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
-    NPM_CONFIG_FETCH_TIMEOUT=300000
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_TIMEOUT=60000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
+COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /opt/nemoclaw-build-tools/npm-ci-locked.sh
 WORKDIR /opt/nemoclaw
-RUN npm ci
+RUN /opt/nemoclaw-build-tools/npm-ci-locked.sh
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 RUN npm run build \
@@ -42,16 +45,19 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 # Build the agent-neutral, names-only MCP diagnostic once from a committed
 # production lock. The final image copies only the bundled runtime, not its
 # build-time dependency tree.
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
+# Depend on the completed plugin builder so BuildKit does not run two npm
+# dependency installs concurrently on connection-constrained GPU runners. The
+# final image still copies only the reviewed MCP bundle from this stage.
+FROM builder AS mcp-tool-discovery-runtime
 ARG NEMOCLAW_CORPORATE_CA_B64
 ENV AWS_EC2_METADATA_DISABLED=true \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 WORKDIR /opt/mcp-tool-discovery-runtime
-COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/*.ts ./
+COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/npm-ci-locked.sh tools/mcp-tool-discovery-runtime/*.ts ./
 RUN ./install-reviewed-runtime.sh \
-    && rm -f ./install-reviewed-runtime.sh
+    && rm -f ./install-reviewed-runtime.sh ./npm-ci-locked.sh
 
 # Bundle the driver-neutral startup-profile applicator into one CommonJS file.
 # The final image needs no TypeScript loader or repository dependency tree.
@@ -72,12 +78,8 @@ RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains
 # interpreted at runtime after the native boundary has scrubbed process control.
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS managed-bootstrap-entrypoint-builder
+FROM node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da AS managed-bootstrap-entrypoint-builder
 ARG TARGETARCH
-# hadolint ignore=DL3008
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils gcc \
-    && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/nemoclaw-managed-bootstrap-build
 COPY scripts/managed-bootstrap-entrypoint.c ./
 COPY scripts/managed-bootstrap-trampoline.sh ./
@@ -329,15 +331,19 @@ RUN set -eu; \
 # Install runtime dependencies before copying mutable build outputs so source
 # and blueprint changes keep the production dependency layer cached.
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
+COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 WORKDIR /opt/nemoclaw
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_MAXSOCKETS=4 \
     NPM_CONFIG_FETCH_RETRIES=5 \
-    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
-    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
-    NPM_CONFIG_FETCH_TIMEOUT=300000
-RUN npm ci --omit=dev
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_TIMEOUT=60000
+RUN NODE_OPTIONS=--dns-result-order=ipv4first \
+        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev \
+    && rm -f /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 
 # Copy the grouped plugin and blueprint payload after runtime dependency
 # installation so source-only changes do not invalidate that cache boundary.
