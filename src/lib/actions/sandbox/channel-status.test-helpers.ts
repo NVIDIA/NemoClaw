@@ -79,6 +79,7 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
         configFile: name === "openclaw" ? "openclaw.json" : "config.yaml",
         envFile: name === "hermes" ? ".env" : null,
         format: name === "openclaw" ? "json" : "yaml",
+        shieldsFiles: name === "hermes" ? [".env"] : [],
       };
     },
     get inferenceProviderOptions() {

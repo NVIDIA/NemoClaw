@@ -17,6 +17,11 @@
       "category": "security"
     },
     {
+      "file": "src/lib/agent/state-directory-contract.test.ts",
+      "test": "keeps generated image plans equal to their AgentDefinition projections (#8006)",
+      "category": "security"
+    },
+    {
       "file": "src/lib/onboard/managed-startup-profile.test.ts",
       "test": "classifies every stock Docker ARG as startup-affordance or deliberate exclusion",
       "category": "compatibility"
