@@ -276,11 +276,13 @@ test/e2e/
   families and canonical `e2e.yaml` jobs; it does not dispatch E2E.
 
 - `.github/workflows/e2e.yaml` runs the default suite on every push to `main`.
-  A maintainer can also dispatch the trusted `main` workflow against the
-  current exact head of an open internal or fork PR. The manual path validates
-  the actor, PR number, head repository, head SHA, base SHA, workflow SHA, and
-  review reason before candidate checkout. It runs the default suite without
-  dynamic job or target selection. See [NemoClaw E2E CI](../README.md).
+  A maintainer can also dispatch the trusted `main` workflow against the exact
+  head of an open internal or fork PR. The manual path validates the actor, PR
+  number, head repository, head SHA, base SHA, workflow SHA, review reason, and
+  selected mode before candidate checkout. Empty `jobs` and `targets` run the
+  default suite. The only accepted nonempty `jobs` value is
+  `managed-image-protected-runtime`; `targets` must remain empty. Refer to
+  [NemoClaw E2E CI](../README.md).
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -299,9 +301,6 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  Manual PR E2E authenticates the maintainer and exact PR identity before
-  checking out the candidate revision, then validates the identity again before
-  preparation. Direct manual dispatches cannot use selectors with PR inputs.
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
   invocations and suppress PR reporting and scorecards. The workflow boundary
   requires every selected job shard to upload its evidence artifact.
