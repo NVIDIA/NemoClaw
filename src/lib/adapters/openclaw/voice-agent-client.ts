@@ -193,6 +193,7 @@ export class OpenClawVoiceAgentClient implements VoiceAgentClient {
         request.signal,
       )
         .then((value) => {
+          if (settled) return;
           const response = objectValue(value);
           const runId = typeof response?.runId === "string" ? response.runId : undefined;
           if (!runId) {
@@ -226,7 +227,9 @@ export class OpenClawVoiceAgentClient implements VoiceAgentClient {
   }
 
   private connect(signal: AbortSignal): Promise<WebSocket> {
-    if (this.closed) return Promise.reject(new VoiceAgentError("agent_connection_failed"));
+    if (signal.aborted || this.closed) {
+      return Promise.reject(new VoiceAgentError("agent_connection_failed"));
+    }
     if (this.socket?.readyState === WebSocket.OPEN) return Promise.resolve(this.socket);
     const endpoint = parseFixedLoopbackEndpoint(this.options.endpoint);
     const socket = this.options.createSocket?.(endpoint) ?? new WebSocket(endpoint);
@@ -318,6 +321,9 @@ export class OpenClawVoiceAgentClient implements VoiceAgentClient {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new VoiceAgentError("agent_connection_failed"));
+    }
+    if (signal.aborted) {
+      return Promise.reject(new VoiceAgentError("agent_unavailable"));
     }
     const id = `voice-${++this.requestSequence}`;
     return new Promise((resolve, reject) => {

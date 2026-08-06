@@ -59,8 +59,6 @@ describe("private voice credential files", () => {
 
   it("rejects a credential reached through a symbolic-link directory (#8378)", () => {
     const item = fixture();
-    const originalHome = process.env.HOME;
-    process.env.HOME = item.directory;
     const realDirectory = path.join(item.directory, "real-parent");
     const linkDirectory = path.join(item.directory, "linked-parent");
     fs.mkdirSync(realDirectory);
@@ -71,13 +69,6 @@ describe("private voice credential files", () => {
         readPrivateCredentialFile(path.join(linkDirectory, "credential"), "Voice credential"),
       ).toThrow("symlink");
     } finally {
-      const restoreHome =
-        originalHome === undefined
-          ? () => delete process.env.HOME
-          : () => {
-              process.env.HOME = originalHome;
-            };
-      restoreHome();
       fs.rmSync(item.directory, { recursive: true, force: true });
     }
   });

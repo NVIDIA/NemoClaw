@@ -125,9 +125,11 @@ function readJsonBody(
       if (bytes > maxBytes) finish(new VoiceHttpError(413, "request_too_large"));
       else chunks.push(value);
     });
-    request.once("aborted", () => finish(new VoiceHttpError(400, "invalid_request")));
     request.once("error", () => finish(new VoiceHttpError(400, "invalid_request")));
     request.once("end", () => finish());
+    request.once("close", () => {
+      if (!request.readableEnded) finish(new VoiceHttpError(400, "invalid_request"));
+    });
   });
 }
 
@@ -199,7 +201,9 @@ export function createVoiceGatewayServer(options: VoiceGatewayServerOptions): ht
         let streamStarted = false;
         response.once("close", () => {
           deliveryOpen = false;
-          if (!response.writableFinished) options.sessionService.disconnectTurn(voiceSessionId);
+          if (streamStarted && !response.writableFinished) {
+            options.sessionService.disconnectTurn(voiceSessionId, grant);
+          }
         });
         const deliver = (event: VoiceResponseEvent): boolean => {
           if (!deliveryOpen || response.destroyed || response.writableEnded) return false;
@@ -214,7 +218,7 @@ export function createVoiceGatewayServer(options: VoiceGatewayServerOptions): ht
           response.write(`${JSON.stringify(event)}\n`);
           if (response.writableLength > MAX_STREAM_BUFFER_BYTES) {
             deliveryOpen = false;
-            options.sessionService.disconnectTurn(voiceSessionId);
+            options.sessionService.disconnectTurn(voiceSessionId, grant);
             response.destroy();
             return false;
           }

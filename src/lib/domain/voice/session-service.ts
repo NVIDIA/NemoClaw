@@ -259,9 +259,14 @@ export class VoiceSessionService {
     this.clearSession("session_closed");
   }
 
-  disconnectTurn(voiceSessionId: string): void {
-    const session = this.session;
-    if (!session || session.voiceSessionId !== voiceSessionId || !session.active) return;
+  disconnectTurn(voiceSessionId: string, grant: string): void {
+    let session: SessionRecord;
+    try {
+      session = this.authorize(voiceSessionId, grant);
+    } catch {
+      return;
+    }
+    if (!session.active) return;
     session.active.controller.abort();
     session.agentClient.close();
   }
@@ -356,6 +361,14 @@ export class VoiceSessionService {
       });
     };
 
+    const failureReason = (): VoiceFailureReason | undefined =>
+      active.expiryReason ??
+      (active.responseLimitExceeded
+        ? "agent_response_limit"
+        : active.timedOut
+          ? "turn_timeout"
+          : undefined);
+
     const timeout = setTimeout(() => {
       active.timedOut = true;
       active.controller.abort();
@@ -392,21 +405,11 @@ export class VoiceSessionService {
           });
         },
       });
-      if (responseBytes > VOICE_MAX_RESPONSE_TEXT_BYTES) emitTerminal("agent_response_limit");
-      else if (active.expiryReason) emitTerminal(active.expiryReason);
-      else if (active.timedOut) emitTerminal("turn_timeout");
-      else emitTerminal();
+      emitTerminal(failureReason());
     } catch (error) {
-      const reason =
-        active.expiryReason ??
-        (active.responseLimitExceeded
-          ? "agent_response_limit"
-          : active.timedOut
-            ? "turn_timeout"
-            : isVoiceFailureReason(error)
-              ? error.reason
-              : "agent_unavailable");
-      emitTerminal(reason);
+      emitTerminal(
+        failureReason() ?? (isVoiceFailureReason(error) ? error.reason : "agent_unavailable"),
+      );
     } finally {
       clearTimeout(timeout);
       session.agentClient.close();

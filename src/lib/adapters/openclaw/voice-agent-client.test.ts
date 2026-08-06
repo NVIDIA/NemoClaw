@@ -302,6 +302,118 @@ describe("OpenClaw voice agent client", () => {
     ).rejects.toMatchObject({ reason: "agent_response_limit" });
   });
 
+  it("does not publish a run id after a protocol failure settled the turn (#8378)", async () => {
+    class LateAckSocket extends FakeSocket {
+      override send(value: string) {
+        const frame = JSON.parse(value) as Record<string, unknown>;
+        this.sent.push(frame);
+        const handlers: Record<string, () => void> = {
+          connect: () =>
+            queueMicrotask(() =>
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    payload: { type: "hello-ok" },
+                  }),
+                }),
+              ),
+            ),
+          "chat.send": () => {
+            for (let seq = 1; seq <= 65; seq += 1) {
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({
+                    type: "event",
+                    event: "chat",
+                    payload: {
+                      sessionKey: "agent:main:voice:session",
+                      runId: "expected-run",
+                      seq,
+                      state: "delta",
+                      deltaText: "queued",
+                    },
+                  }),
+                }),
+              );
+            }
+            queueMicrotask(() =>
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({
+                    type: "res",
+                    id: frame.id,
+                    ok: true,
+                    payload: { runId: "expected-run" },
+                  }),
+                }),
+              ),
+            );
+          },
+        };
+        handlers[String(frame.method)]?.();
+      }
+    }
+    const socket = new LateAckSocket();
+    const onRun = vi.fn();
+    const client = new OpenClawVoiceAgentClient({
+      endpoint: "ws://127.0.0.1:18789/ws",
+      credential: "openclaw-secret-value-with-at-least-32-bytes",
+      requestTimeoutMs: 1_000,
+      createSocket: () => socket as never,
+    });
+    queueMicrotask(() =>
+      socket.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "event",
+            event: "connect.challenge",
+            payload: { nonce: "challenge" },
+          }),
+        }),
+      ),
+    );
+
+    await expect(
+      client.invoke({
+        agentSessionKey: "agent:main:voice:session",
+        idempotencyKey: "key",
+        text: "text",
+        signal: new AbortController().signal,
+        onText: vi.fn(),
+        onRun,
+      }),
+    ).rejects.toMatchObject({ reason: "agent_protocol_error" });
+    await Promise.resolve();
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-aborted turn before sending a request (#8378)", async () => {
+    const socket = new FakeSocket();
+    const controller = new AbortController();
+    controller.abort();
+    const client = new OpenClawVoiceAgentClient({
+      endpoint: "ws://127.0.0.1:18789/ws",
+      credential: "openclaw-secret-value-with-at-least-32-bytes",
+      requestTimeoutMs: 1_000,
+      createSocket: () => socket as never,
+    });
+
+    await expect(
+      client.invoke({
+        agentSessionKey: "agent:main:voice:session",
+        idempotencyKey: "key",
+        text: "text",
+        signal: controller.signal,
+        onText: vi.fn(),
+        onRun: vi.fn(),
+      }),
+    ).rejects.toMatchObject({ reason: "agent_connection_failed" });
+    expect(socket.sent).toEqual([]);
+  });
+
   it.each([
     "ws://example.com:18789/ws",
     "wss://127.0.0.1:18789/ws",

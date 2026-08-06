@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type VoiceAgentClient,
   VoiceAgentError,
@@ -64,6 +64,7 @@ function collect() {
 }
 
 describe("experimental voice session state", () => {
+  afterEach(() => vi.useRealTimers());
   it("binds trusted runtime and agent configuration to an opaque session (#8378)", () => {
     const h = harness();
     const created = create(h);
@@ -77,8 +78,27 @@ describe("experimental voice session state", () => {
       agent: "main",
       agentSessionKey: "agent:main:voice:opaque-2",
     });
-    expect(created.grant).toHaveLength(42);
     expect(h.service.getBindingForTest()).not.toHaveProperty("grant");
+  });
+
+  it("issues unique high-entropy grants with the default generator (#8378)", () => {
+    const createAgentClient = () => ({ close: vi.fn(), invoke: vi.fn() });
+    const service = new VoiceSessionService({
+      runtimeId: "runtime-a",
+      runtimeProfile: "voiceclaw-pinned",
+      sandbox: "sandbox-a",
+      agent: "main",
+      sessionLifetimeMs: 60_000,
+      turnTimeoutMs: 1_000,
+      createAgentClient,
+    });
+    const first = service.createSession("conversation-a");
+    service.closeSession(first.voiceSessionId, first.grant);
+    const second = service.createSession("conversation-b");
+
+    expect(first.grant).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(second.grant).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(second.grant).not.toBe(first.grant);
   });
 
   it("streams one ordered response with one terminal outcome (#8378)", async () => {
@@ -169,7 +189,6 @@ describe("experimental voice session state", () => {
       expect.objectContaining({ code: "session_not_found" }),
     );
     expect(h.close).toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
   it("bounds a running turn with a stable content-free failure (#8378)", async () => {
@@ -197,7 +216,6 @@ describe("experimental voice session state", () => {
 
     expect(output.events.at(-1)).toMatchObject({ type: "response.failed", reason: "turn_timeout" });
     expect(JSON.stringify(h.diagnostics)).not.toContain("secret transcript");
-    vi.useRealTimers();
   });
 
   it("stops response delivery after the runtime disconnects (#8378)", async () => {
@@ -223,6 +241,25 @@ describe("experimental voice session state", () => {
     expect(events.map((event) => event.type)).toEqual(["response.started", "response.text.delta"]);
   });
 
+  it("does not disconnect active work for an invalid session grant (#8378)", async () => {
+    const running = deferred<void>();
+    const h = harness(() => running.promise);
+    const created = create(h);
+    const turn = h.service.startTurn(
+      created.voiceSessionId,
+      created.grant,
+      "commit-a",
+      "text",
+      () => true,
+    );
+    await vi.waitFor(() => expect(h.service.getBindingForTest()).toBeDefined());
+
+    h.service.disconnectTurn(created.voiceSessionId, "invalid-grant-value");
+    expect(h.close).not.toHaveBeenCalled();
+    running.resolve();
+    await turn;
+  });
+
   it("closes active agent work when response delivery disconnects (#8378)", async () => {
     const running = deferred<void>();
     const h = harness(() => running.promise);
@@ -236,7 +273,7 @@ describe("experimental voice session state", () => {
     );
     await vi.waitFor(() => expect(h.service.getBindingForTest()).toBeDefined());
 
-    h.service.disconnectTurn(created.voiceSessionId);
+    h.service.disconnectTurn(created.voiceSessionId, created.grant);
     expect(h.close).toHaveBeenCalled();
     running.resolve();
     await turn;
