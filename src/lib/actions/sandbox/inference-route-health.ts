@@ -21,6 +21,8 @@ export type SandboxInferenceRouteHealth = {
 function describeInferenceTransportFailure(
   curlExitCode: number | null,
   tlsVerifyResult: number | null,
+  canonicalCurlExitCode: number | null,
+  canonicalTlsVerifyResult: number | null,
 ): string {
   switch (curlExitCode) {
     case 5:
@@ -32,6 +34,12 @@ function describeInferenceTransportFailure(
     case 28:
       return "The inference route probe timed out inside the sandbox.";
     case 60:
+      if (canonicalCurlExitCode === 0 && canonicalTlsVerifyResult === 0) {
+        return "The inherited CA bundle is stale; OpenShell's canonical runtime CA verifies the inference route.";
+      }
+      if (canonicalCurlExitCode === 60 && canonicalTlsVerifyResult !== null) {
+        return `OpenShell's canonical runtime CA does not trust the inference proxy certificate (verification result ${String(canonicalTlsVerifyResult)}).`;
+      }
       return tlsVerifyResult === null
         ? "TLS certificate validation failed for the inference route."
         : `TLS certificate validation failed for the inference route (verification result ${String(tlsVerifyResult)}).`;
@@ -109,7 +117,12 @@ export async function probeSandboxInferenceGatewayHealth(
     detail:
       status === 0
         ? `Inference gateway unreachable on ${endpoint} from inside the sandbox. ` +
-          describeInferenceTransportFailure(parsed.curlExitCode, parsed.tlsVerifyResult)
+          describeInferenceTransportFailure(
+            parsed.curlExitCode,
+            parsed.tlsVerifyResult,
+            parsed.canonicalCurlExitCode,
+            parsed.canonicalTlsVerifyResult,
+          )
         : `Inference gateway returned an invalid HTTP status (${status}) on ${endpoint}; ` +
           `check the in-sandbox proxy and gateway.`,
   };

@@ -11,6 +11,8 @@ export type ParsedInferenceRouteProbe = {
   httpStatus: number;
   curlExitCode: number | null;
   tlsVerifyResult: number | null;
+  canonicalCurlExitCode: number | null;
+  canonicalTlsVerifyResult: number | null;
   detail: string;
 };
 
@@ -38,7 +40,9 @@ const INFERENCE_ROUTE_PROBE_CORE_SCRIPT = [
   'TLS_VERIFY_RESULT="${CURL_RESULT#* }"',
   'HTTP_CODE="${HTTP_CODE:-000}"',
   'case "$TLS_VERIFY_RESULT" in ""|*[!0-9]*) TLS_VERIFY_RESULT=0 ;; esac',
-  'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s curl_exit=%s tls_verify=%s\' "$HTTP_CODE" "$CURL_EXIT" "$TLS_VERIFY_RESULT" ;; esac',
+  'CANONICAL_DETAIL=""',
+  'if [ "$CURL_EXIT" -eq 60 ] && [ -r /etc/openshell-tls/ca-bundle.pem ]; then CANONICAL_CURL_EXIT=0; CANONICAL_RESULT=$(/usr/bin/curl -q -s -o /dev/null -w \'%{ssl_verify_result}\' --cacert /etc/openshell-tls/ca-bundle.pem --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || CANONICAL_CURL_EXIT=$?; case "$CANONICAL_RESULT" in ""|*[!0-9]*) CANONICAL_RESULT=0 ;; esac; CANONICAL_DETAIL=" canonical_curl_exit=$CANONICAL_CURL_EXIT canonical_tls_verify=$CANONICAL_RESULT"; fi',
+  'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s curl_exit=%s tls_verify=%s%s\' "$HTTP_CODE" "$CURL_EXIT" "$TLS_VERIFY_RESULT" "$CANONICAL_DETAIL" ;; esac',
 ].join("; ");
 export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_FROM_ENV,
@@ -129,6 +133,8 @@ export function parseSandboxInferenceRouteProbeResult(
       httpStatus: 0,
       curlExitCode: null,
       tlsVerifyResult: null,
+      canonicalCurlExitCode: null,
+      canonicalTlsVerifyResult: null,
       detail: formatUntrustedProbeDetail(stderr),
     };
   }
@@ -144,6 +150,14 @@ export function parseSandboxInferenceRouteProbeResult(
   const curlExitCode = curlExitMatch ? Number.parseInt(curlExitMatch[1], 10) : null;
   const tlsVerifyMatch = /\btls_verify=([0-9]{1,4})\b/u.exec(detail);
   const tlsVerifyResult = tlsVerifyMatch ? Number.parseInt(tlsVerifyMatch[1], 10) : null;
+  const canonicalCurlExitMatch = /\bcanonical_curl_exit=([0-9]{1,3})\b/u.exec(detail);
+  const canonicalCurlExitCode = canonicalCurlExitMatch
+    ? Number.parseInt(canonicalCurlExitMatch[1], 10)
+    : null;
+  const canonicalTlsVerifyMatch = /\bcanonical_tls_verify=([0-9]{1,4})\b/u.exec(detail);
+  const canonicalTlsVerifyResult = canonicalTlsVerifyMatch
+    ? Number.parseInt(canonicalTlsVerifyMatch[1], 10)
+    : null;
   const isReachableHttpStatus = httpStatus >= 200 && httpStatus < 500;
   const commandSucceeded = result.status === 0;
   const healthy = commandSucceeded && match?.[1] === "OK" && isReachableHttpStatus;
@@ -156,6 +170,8 @@ export function parseSandboxInferenceRouteProbeResult(
     httpStatus,
     curlExitCode,
     tlsVerifyResult,
+    canonicalCurlExitCode,
+    canonicalTlsVerifyResult,
     detail:
       trustedDetail || `openshell sandbox exec exited with status ${String(result.status ?? 1)}`,
   };

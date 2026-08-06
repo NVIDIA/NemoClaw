@@ -72,7 +72,7 @@ describe("sandbox connect inference route probe argv", () => {
     expect(script).toContain('CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FILE:-}}"');
     expect(script).toContain('--cacert "$CA_BUNDLE"');
     expect(script).toContain("printf 'UNAVAILABLE OpenShell CA bundle missing or unreadable'");
-    expect(script).not.toContain("/etc/openshell-tls");
+    expect(script).toContain('[ "$CURL_EXIT" -eq 60 ] && [ -r /etc/openshell-tls/ca-bundle.pem ]');
     expect(script).not.toContain("curl -sk");
     expect(script).not.toContain("--insecure");
     expect(script).not.toContain("/tmp/");
@@ -199,7 +199,8 @@ describe("sandbox inference route probe result", () => {
     expect(
       parseSandboxInferenceRouteProbeResult({
         status: 0,
-        output: "BROKEN 000 curl_exit=60 tls_verify=20",
+        output:
+          "BROKEN 000 curl_exit=60 tls_verify=20 canonical_curl_exit=60 canonical_tls_verify=19",
       }),
     ).toMatchObject({
       healthy: false,
@@ -207,6 +208,8 @@ describe("sandbox inference route probe result", () => {
       httpStatus: 0,
       curlExitCode: 60,
       tlsVerifyResult: 20,
+      canonicalCurlExitCode: 60,
+      canonicalTlsVerifyResult: 19,
     });
   });
 
