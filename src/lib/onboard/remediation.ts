@@ -7,7 +7,7 @@ const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.
 
 export function printRemediationActions(
   actions:
-    | Array<{ id?: string; title: string; reason: string; commands?: string[] }>
+    | Array<{ id: string; title: string; reason: string; commands?: string[] }>
     | null
     | undefined,
 ): void {
@@ -19,8 +19,7 @@ export function printRemediationActions(
   console.error("  Suggested fix:");
   console.error("");
   for (const action of actions) {
-    const label = action.id ? `${action.title} (${action.id})` : action.title;
-    console.error(`  - ${label}: ${action.reason}`);
+    console.error(`  - ${action.title} (${action.id}): ${action.reason}`);
     for (const command of action.commands || []) {
       console.error(`    ${command}`);
     }
