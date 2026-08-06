@@ -37,9 +37,13 @@ Configure the provider credential separately instead of putting it in the endpoi
 Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
 
 Custom endpoint onboarding has one narrower operator-controlled exception for corporate inference gateways.
-Set `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` to a comma-separated list of exact hostnames or IP literals to admit an endpoint on RFC1918, CGNAT, or IPv6 ULA space.
+Set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hostnames or IP literals to admit an endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
 NemoClaw still resolves DNS, pins the validation connection, and rejects wildcard or suffix matches, link-local metadata, reserved destinations, and resolver failures.
 This allowlist does not relax direct blueprint, `config set`, or unrelated persisted-URL validation.
+
+`NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` remains an inference-only compatibility alias.
+Inference onboarding combines exact entries from the generic variable and the compatibility alias.
+New configurations should use `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`.
 
 After onboarding records an admitted custom endpoint, `inference set` accepts that same canonical URL for a model change without resolving it again.
 The registry must record onboarding as the endpoint source, and the supplied URL must match exactly after normalization.
