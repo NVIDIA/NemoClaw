@@ -27,6 +27,8 @@ const STARTUP_ARGV = [
 ];
 const RECOVERY_STARTUP_ARGV = [
   "env",
+  "NEMOCLAW_MANAGED_STARTUP_APPLIED=1",
+  "_NEMOCLAW_CORPORATE_CA_MERGED=0",
   "NODE_EXTRA_CA_CERTS=/etc/openshell-tls/openshell-ca.pem",
   "DENO_CERT=/etc/openshell-tls/openshell-ca.pem",
   "SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem",

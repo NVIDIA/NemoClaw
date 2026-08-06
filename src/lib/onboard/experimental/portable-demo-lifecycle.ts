@@ -296,6 +296,13 @@ function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
   // CA bundle from the current OpenShell CA.
   return [
     "env",
+    // The preserved container filesystem can retain the pre-restart merged
+    // bundle at /tmp/nemoclaw-ca-bundle.pem. The pinned startup script uses
+    // this marker only to skip that merge. Keep the portable recovery on the
+    // current root-owned OpenShell CA instead of repointing the gateway at the
+    // stale merged file; #8058 removes this direct startup contract.
+    "NEMOCLAW_MANAGED_STARTUP_APPLIED=1",
+    "_NEMOCLAW_CORPORATE_CA_MERGED=0",
     `NODE_EXTRA_CA_CERTS=${OPENSHELL_RUNTIME_CA_CERT}`,
     `DENO_CERT=${OPENSHELL_RUNTIME_CA_CERT}`,
     `SSL_CERT_FILE=${OPENSHELL_RUNTIME_CA_BUNDLE}`,
