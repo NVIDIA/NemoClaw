@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -101,6 +102,27 @@ const EMPTY = `preset:
   name: empty-egress
 network_policies:
   {}
+`;
+
+const PRIVATE = `preset:
+  name: private-egress
+network_policies:
+  private:
+    name: private
+    endpoints:
+      - host: api.corp.example
+        port: 443
+        allowed_ips: [10.20.30.40]
+`;
+
+const DANGEROUS = `preset:
+  name: dangerous-egress
+network_policies:
+  dangerous:
+    name: dangerous
+    endpoints:
+      - host: "*"
+        port: 443
 `;
 
 const UNRELATED = {
@@ -448,6 +470,100 @@ describe("custom policy transaction boundary (#8176)", () => {
       expect.objectContaining({ name: "fresh-egress", content: FRESH }),
     ]);
     expect(state.transition).toBeNull();
+  });
+
+  it("repairs a pending private apply only from its content-bound pin receipt", () => {
+    const transition = pendingApply(null, "private-egress", PRIVATE);
+    if (!transition.desired) throw new Error("test fixture requires a desired entry");
+    transition.desired.trustedPrivatePins = {
+      version: 1,
+      contentDigest: createHash("sha256").update(PRIVATE).digest("hex"),
+    };
+    state.transition = transition;
+
+    expect(repairPendingCustomPolicyApply("alpha", EXTERNAL_APPLY_REPAIR)).toEqual({
+      state: "completed",
+      presetName: "private-egress",
+    });
+
+    expect(mocks.run).toHaveBeenCalledOnce();
+    expect(mocks.commitCustomPolicyTransition).toHaveBeenCalledOnce();
+    expect(state.customPolicies).toEqual([
+      expect.objectContaining({
+        name: "private-egress",
+        content: PRIVATE,
+        trustedPrivatePins: transition.desired.trustedPrivatePins,
+      }),
+    ]);
+    expect(state.transition).toBeNull();
+  });
+
+  it("does not inspect or mutate live policy for a private repair without pin authority", () => {
+    state.transition = pendingApply(null, "private-egress", PRIVATE);
+
+    expect(repairPendingCustomPolicyApply("alpha", EXTERNAL_APPLY_REPAIR)).toEqual({
+      state: "blocked",
+    });
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.commitCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(mocks.clearCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("'allowed_ips'"));
+    expect(state.transition).toMatchObject({ operation: "apply", name: "private-egress" });
+  });
+
+  it("does not inspect or mutate live policy for malformed desired content", () => {
+    state.transition = pendingApply(
+      null,
+      "malformed-egress",
+      "network_policies:\n  malformed: not-a-policy-map\n",
+    );
+
+    expect(repairPendingCustomPolicyApply("alpha", EXTERNAL_APPLY_REPAIR)).toEqual({
+      state: "blocked",
+    });
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.commitCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(mocks.clearCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("invalid desired content"));
+    expect(state.transition).toMatchObject({ operation: "apply", name: "malformed-egress" });
+  });
+
+  it("does not commit or mutate an unsafe repair target even when it is already live", () => {
+    state.transition = pendingApply(null, "dangerous-egress", DANGEROUS);
+    state.livePolicy = livePolicy({ ...UNRELATED, ...policyEntries(DANGEROUS) });
+
+    expect(repairPendingCustomPolicyApply("alpha", EXTERNAL_APPLY_REPAIR)).toEqual({
+      state: "blocked",
+    });
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.commitCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(mocks.clearCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("unsafe endpoint"));
+    expect(state.transition).toMatchObject({ operation: "apply", name: "dangerous-egress" });
+  });
+
+  it("does not inspect or mutate a repair journal that claims managed MCP ownership", () => {
+    const transition = pendingApply(null);
+    if (!transition.desired) throw new Error("test fixture requires a desired entry");
+    transition.desired.sourcePath = MCP_BRIDGE_POLICY_SOURCE;
+    state.transition = transition;
+
+    expect(repairPendingCustomPolicyApply("alpha", EXTERNAL_APPLY_REPAIR)).toEqual({
+      state: "blocked",
+    });
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.commitCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(mocks.clearCustomPolicyTransition).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("managed MCP ownership"));
+    expect(state.transition).toMatchObject({ operation: "apply", name: "fresh-egress" });
   });
 
   it("preserves a pending apply journal when its durable retry stays at source", () => {

@@ -494,6 +494,7 @@ export function beginCustomPolicyTransition(
     if (!sandbox || sandbox.customPolicyTransition || sandbox.baselineExclusionTransition) {
       return false;
     }
+    if (customPolicyTransitionClaimsManagedMcpOwnership(transition)) return false;
     const normalized = normalizeCustomPolicyTransition(transition);
     if (
       !normalized ||

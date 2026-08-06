@@ -572,8 +572,14 @@ export function registerRebuildFlowRecoveryTests(): void {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
-      expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "teams");
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith(
+        "alpha",
+        "npm",
+        expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+      );
+      expect(
+        harness.applyPresetSpy.mock.calls.some(([, presetName]) => presetName === "teams"),
+      ).toBe(false);
       expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
         agentVersion: "0.2.0",
         policies: ["npm"],
@@ -709,8 +715,16 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(output).toContain("State restore was incomplete");
       expect(output).toContain("Mutable config permissions were not verified");
       expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith(
+        "alpha",
+        "bad",
+        expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+      );
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith(
+        "alpha",
+        "throw",
+        expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+      );
       expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringContaining("bad, throw"));
       expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
       expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {

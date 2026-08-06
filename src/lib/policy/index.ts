@@ -26,7 +26,6 @@ import {
 } from "../messaging/channels";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
-import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import { ROOT, run, runCapture } from "../runner";
 import type { ShieldsPolicyMutationAuthority } from "../shields/transition-lock";
 import * as registry from "../state/registry";
@@ -43,6 +42,10 @@ import {
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
 } from "./commands";
+import {
+  inspectCustomPolicyContent,
+  networkPoliciesHasAllowedIps,
+} from "./custom-policy-validation";
 import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import {
   parseOpenShellPolicy,
@@ -64,7 +67,6 @@ import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
 import {
   type ExternalPolicyPreset,
-  isTrustedPrivatePolicyPinCapability,
   prepareTrustedPrivatePolicyPresets,
   replayTrustedPrivatePolicyPinCapability,
   type TrustedPrivatePolicyPinCapability,
@@ -190,40 +192,6 @@ function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): stri
 function loadPreset(name: string): string | null {
   return loadPresetForAgent(name, { agent: "openclaw" });
 }
-// The single sandbox->host bridge hostname OpenShell provisions. An endpoint
-// that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
-// (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
-// is a user-preset egress-bypass attempt (#6073). Keep this hostname shared
-// with the config-set and inference endpoint bridge trust boundary.
-const HOST_GATEWAY_BRIDGE_HOST = OPENSHELL_SANDBOX_HOST_BRIDGE;
-
-function endpointHostIsGatewayBridge(ep: PolicyObject): boolean {
-  const host = (ep as { host?: unknown }).host;
-  return (
-    typeof host === "string" && host.replace(/\.$/, "").toLowerCase() === HOST_GATEWAY_BRIDGE_HOST
-  );
-}
-
-function networkPoliciesHasAllowedIps(np: PolicyObject): boolean {
-  for (const policyVal of Object.values(np)) {
-    if (!isPolicyObject(policyVal)) continue;
-    // Object-level `allowed_ips` has no endpoint host context and is never a
-    // legitimate shape; always reject. Use `in` (not `Object.hasOwn`) so an
-    // inherited/prototype-chain `allowed_ips` can't bypass the guard (#6072).
-    if ("allowed_ips" in policyVal) return true;
-    const endpoints = (policyVal as PolicyObject).endpoints;
-    if (!Array.isArray(endpoints)) continue;
-    for (const ep of endpoints) {
-      if (!isPolicyObject(ep) || !("allowed_ips" in ep)) continue;
-      // Trust-boundary exemption: `allowed_ips` is permitted only to pin the
-      // sandbox->host bridge; reject it for every other host (#6073).
-      if (endpointHostIsGatewayBridge(ep)) continue;
-      return true;
-    }
-  }
-  return false;
-}
-
 function parsePresetPolicyKeys(presetContent: string | null | undefined): string[] {
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) return [];
@@ -1444,6 +1412,76 @@ type PendingCustomPolicyApplyRepairResult =
   | { state: "none" | "blocked" }
   | { state: "completed"; presetName: string };
 
+function customPolicyContentPassesValidation(
+  presetName: string,
+  presetContent: string,
+  trustedPrivatePinAuthority?: unknown,
+): boolean {
+  const validation = inspectCustomPolicyContent(presetContent, trustedPrivatePinAuthority);
+  if (
+    validation.trustedPrivatePinAuthorityProvided &&
+    !validation.trustedPrivatePinAuthorityValid
+  ) {
+    console.error(
+      `  Preset '${presetName}' has invalid trusted-private pin authority for its content.`,
+    );
+    return false;
+  }
+  if (validation.hasRestrictedAllowedIps && !validation.trustedPrivatePinAuthorityValid) {
+    console.error(
+      `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets.`,
+    );
+    return false;
+  }
+  for (const finding of validation.semanticWarnings) {
+    console.warn(
+      `  Preset '${presetName}' has a policy warning at ${finding.path}: ${finding.message}`,
+    );
+  }
+  if (validation.semanticErrors.length > 0) {
+    for (const finding of validation.semanticErrors) {
+      console.error(
+        `  Preset '${presetName}' has an unsafe endpoint at ${finding.path}: ${finding.message}`,
+      );
+    }
+    return false;
+  }
+  return true;
+}
+
+function customPolicyJournalTargetPassesValidation(
+  transitionName: string,
+  entry: registry.CustomPolicyEntry,
+): boolean {
+  try {
+    customPolicyEntryNetworkPolicies(entry);
+  } catch (error) {
+    console.error(
+      `  Pending custom policy '${transitionName}' has invalid desired content: ${error instanceof Error ? error.message : String(error)}. The journal was preserved.`,
+    );
+    return false;
+  }
+  let trustedPrivatePinCapability: TrustedPrivatePolicyPinCapability | undefined;
+  try {
+    if (entry.trustedPrivatePins) {
+      trustedPrivatePinCapability = replayTrustedPrivatePolicyPinCapability(
+        entry.content,
+        entry.trustedPrivatePins,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `  Pending custom policy '${transitionName}' has invalid desired trusted-private pin authority: ${error instanceof Error ? error.message : String(error)}. The journal was preserved.`,
+    );
+    return false;
+  }
+  return customPolicyContentPassesValidation(
+    transitionName,
+    entry.content,
+    trustedPrivatePinCapability,
+  );
+}
+
 /** Resume a pending custom apply only for a parsed, non-dry external policy add. */
 function repairPendingCustomPolicyApply(
   sandboxName: string,
@@ -1467,6 +1505,24 @@ function repairPendingCustomPolicyApply(
     console.error(
       `  --dry-run cannot repair the pending custom policy apply for '${transition.name}'. Re-run policy add without --dry-run to reconcile live and durable state.`,
     );
+    return { state: "blocked" };
+  }
+  if (!transition.desired) {
+    console.error(
+      `  Pending custom policy apply for '${transition.name}' has no durable target. The journal was preserved.`,
+    );
+    return { state: "blocked" };
+  }
+  if (
+    transition.previous?.sourcePath === registry.MCP_BRIDGE_POLICY_SOURCE ||
+    transition.desired.sourcePath === registry.MCP_BRIDGE_POLICY_SOURCE
+  ) {
+    console.error(
+      `  Pending custom policy '${transition.name}' claims managed MCP ownership. The journal was preserved.`,
+    );
+    return { state: "blocked" };
+  }
+  if (!customPolicyJournalTargetPassesValidation(transition.name, transition.desired)) {
     return { state: "blocked" };
   }
   if (shieldsPolicyMutationBlocked(sandboxName)) {
@@ -1508,12 +1564,6 @@ function repairPendingCustomPolicyApply(
     if (!live.sourceMatches) {
       console.error(
         `  Live custom policy '${transition.name}' matches neither side of the pending 'apply' transaction. The journal was preserved; inspect the live policy before retrying lifecycle operations.`,
-      );
-      return false;
-    }
-    if (!transition.desired) {
-      console.error(
-        `  Pending custom policy apply for '${transition.name}' has no durable target. The journal was preserved.`,
       );
       return false;
     }
@@ -2366,38 +2416,13 @@ function applyPresetContent(
   }
 
   if (options.custom) {
-    const np = parseNetworkPolicies(presetContent);
-    const hasGeneratedPins = np !== null && networkPoliciesHasAllowedIps(np);
-    const trustedPrivatePinsValid = isTrustedPrivatePolicyPinCapability(
-      presetContent,
-      options.custom.trustedPrivatePinCapability,
-    );
-    if (options.custom.trustedPrivatePinCapability && !trustedPrivatePinsValid) {
-      console.error(
-        `  Preset '${presetName}' has an invalid trusted-private pin receipt for its content.`,
-      );
-      return false;
-    }
-    if (hasGeneratedPins && !trustedPrivatePinsValid) {
-      console.error(
-        `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets.`,
-      );
-      return false;
-    }
-    const { errors: semanticErrors, warnings: semanticWarnings } = splitSemanticFindings(
-      validatePolicySemantics({ network_policies: np }),
-    );
-    for (const finding of semanticWarnings) {
-      console.warn(
-        `  Preset '${presetName}' has a policy warning at ${finding.path}: ${finding.message}`,
-      );
-    }
-    if (semanticErrors.length > 0) {
-      for (const finding of semanticErrors) {
-        console.error(
-          `  Preset '${presetName}' has an unsafe endpoint at ${finding.path}: ${finding.message}`,
-        );
-      }
+    if (
+      !customPolicyContentPassesValidation(
+        presetName,
+        presetContent,
+        options.custom.trustedPrivatePinCapability,
+      )
+    ) {
       return false;
     }
   }

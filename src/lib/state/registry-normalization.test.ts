@@ -328,6 +328,48 @@ describe("custom policy transition normalization (#8176)", () => {
       }),
     ).toThrow(/invalid previous entry.*before rebuilding/i);
   });
+
+  it("requires content-bound authority for private pins in the desired journal state", () => {
+    const privateContent = `network_policies:
+  private_api:
+    endpoints:
+      - host: api.corp.example
+        allowed_ips: [10.20.30.40]
+`;
+
+    expect(() =>
+      normalizeCustomPolicyTransition({
+        ...applyTransition,
+        desired: { ...desired, content: privateContent },
+      }),
+    ).toThrow(/missing trusted-private pin authority.*before rebuilding/i);
+
+    const trustedPrivatePins = {
+      version: 1 as const,
+      contentDigest: createHash("sha256").update(privateContent).digest("hex"),
+    };
+    expect(
+      normalizeCustomPolicyTransition({
+        ...applyTransition,
+        desired: { ...desired, content: privateContent, trustedPrivatePins },
+      }),
+    ).toEqual({
+      ...applyTransition,
+      desired: { ...desired, content: privateContent, trustedPrivatePins },
+    });
+  });
+
+  it.each([
+    "previous",
+    "desired",
+  ] as const)("rejects managed MCP ownership in the %s journal state", (field) => {
+    expect(() =>
+      normalizeCustomPolicyTransition({
+        ...applyTransition,
+        [field]: { ...applyTransition[field], sourcePath: MCP_BRIDGE_POLICY_SOURCE },
+      }),
+    ).toThrow(/inconsistent intent.*before rebuilding/i);
+  });
 });
 
 describe("custom policy transition registry helpers (#8176)", () => {

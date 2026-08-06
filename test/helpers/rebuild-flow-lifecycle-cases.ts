@@ -115,9 +115,21 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
         "Preserving journaled source registry entry across sandbox recreation",
       );
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith(
+        "alpha",
+        "npm",
+        expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+      );
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith(
+        "alpha",
+        "bad",
+        expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+      );
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith(
+        "alpha",
+        "throw",
+        expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+      );
       expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
         agentVersion: "0.2.0",
         policies: ["npm", "bad", "throw"],

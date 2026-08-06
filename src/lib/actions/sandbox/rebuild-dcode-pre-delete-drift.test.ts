@@ -181,11 +181,13 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
       sandboxEntry: originalEntry,
       sandboxEntryReads: [
         originalEntry, // Initial rebuild target.
+        originalEntry, // Pending-policy guard at preflight entry.
         originalEntry, // Exact post-confirmation lock guard.
         originalEntry, // Messaging config hydration.
         originalEntry, // Messaging-conflict gateway lookup (#5954).
         originalEntry, // Final pre-backup target verification.
-        driftedEntry, // Registry reread at the destructive boundary.
+        originalEntry, // Pending-policy guard before shields open.
+        driftedEntry, // Post-backup DCode mutation-edge verification.
       ],
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
     });

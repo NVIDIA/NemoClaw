@@ -130,25 +130,28 @@ describe("rebuild destroy phase", () => {
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
+    const pendingSandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      baselineExclusionTransition: {
+        id: "tx-1",
+        operation: "restore" as const,
+        exclusion: {
+          version: 1 as const,
+          agent: "openclaw",
+          key: "nous_research",
+          digest: "approved-digest",
+        },
+        targetLiveDigest: "current-digest",
+        startedAt: "2026-07-19T00:00:00.000Z",
+      },
+    };
+    mocks.getSandbox.mockReturnValue(pendingSandbox);
 
     await expect(
       runRebuildDestroyPhase({
         sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          baselineExclusionTransition: {
-            id: "tx-1",
-            operation: "restore",
-            exclusion: {
-              version: 1,
-              agent: "openclaw",
-              key: "nous_research",
-              digest: "approved-digest",
-            },
-            targetLiveDigest: "current-digest",
-            startedAt: "2026-07-19T00:00:00.000Z",
-          },
-        },
+        sandboxEntry: pendingSandbox,
         staleRecovery: false,
         recreateJournal: stubRecreateJournal(),
         backupManifest: null,
@@ -340,9 +343,9 @@ describe("rebuild destroy phase", () => {
       }),
     ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
 
-    expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
+    expect(mocks.getSandbox).toHaveBeenCalledTimes(3);
     expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+      mocks.getSandbox.mock.invocationCallOrder[2] ?? Number.POSITIVE_INFINITY,
     );
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
@@ -446,7 +449,7 @@ describe("rebuild destroy phase", () => {
   });
 
   it("converges as deleted when a nonzero delete is followed by exact NotFound (#7062)", async () => {
-    mocks.getSandbox.mockReturnValueOnce({
+    mocks.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "openclaw",
       nimContainer: "nim-alpha",
@@ -713,7 +716,7 @@ describe("rebuild destroy phase", () => {
   it("stops local NIM only after a read-only MCP rebuild deletes the sandbox (#7062)", async () => {
     const revalidateBeforeDelete = vi.fn().mockResolvedValue(undefined);
     const assertDeleteEdgeUnchanged = vi.fn();
-    mocks.getSandbox.mockReturnValueOnce({
+    mocks.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "openclaw",
       nimContainer: "nim-alpha",

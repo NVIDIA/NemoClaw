@@ -108,8 +108,14 @@ export function registerRebuildFlowTargetCredentialsTests(): void {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
-      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "tavily");
-      expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "brave");
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith(
+        "alpha",
+        "tavily",
+        expect.objectContaining({ shieldsPolicyMutationAuthority: expect.any(Object) }),
+      );
+      expect(
+        harness.applyPresetSpy.mock.calls.some(([, presetName]) => presetName === "brave"),
+      ).toBe(false);
       expect(harness.session.webSearchConfig).toEqual({
         fetchEnabled: true,
         provider: "tavily",

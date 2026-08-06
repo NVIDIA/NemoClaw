@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
+import { inspectCustomPolicyContent } from "../policy/custom-policy-validation";
 import { normalizeTrustedPrivatePolicyPinReceipt } from "../policy/trusted-private-endpoints";
 import type {
   BaselineExclusionEntry,
@@ -10,6 +11,7 @@ import type {
   CustomPolicyTransition,
   SandboxEntry,
 } from "./registry";
+import { MCP_BRIDGE_POLICY_SOURCE } from "./registry-mcp";
 
 const REGISTRY_TRANSITION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -132,12 +134,22 @@ export function normalizeCustomPolicyTransition(
     (desired?.name !== undefined && desired.name !== name) ||
     previous?.pendingContent !== undefined ||
     desired?.pendingContent !== undefined ||
+    previous?.sourcePath === MCP_BRIDGE_POLICY_SOURCE ||
+    desired?.sourcePath === MCP_BRIDGE_POLICY_SOURCE ||
     (operation === "apply" && desired === null) ||
     (operation === "remove" && (previous === null || desired !== null))
   ) {
     throw new Error(
       `Sandbox registry custom policy transition '${name}' has inconsistent intent; repair the registry before rebuilding`,
     );
+  }
+  if (desired) {
+    const validation = inspectCustomPolicyContent(desired.content);
+    if (validation.hasRestrictedAllowedIps && !desired.trustedPrivatePins) {
+      throw new Error(
+        `Sandbox registry custom policy transition '${name}' has missing trusted-private pin authority; repair the registry before rebuilding`,
+      );
+    }
   }
   return { version, id, operation, name, previous, desired, startedAt };
 }
