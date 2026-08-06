@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 
@@ -27,10 +27,15 @@ import {
   type HostLocalCreateJournalStore,
   normalizeHostLocalCreateJournalRecord,
 } from "./host-local-create-journal";
-import type { HostLocalInferenceReceipt, HostLocalInferenceRuntime } from "./host-local-inference";
+import type {
+  HostLocalInferenceReceipt,
+  HostLocalInferenceReceiptWriter,
+  HostLocalInferenceRuntime,
+} from "./host-local-inference";
 import {
   normalizeHostLocalInferenceImageRef,
   normalizeHostLocalInferenceReceipt,
+  parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
 } from "./host-local-inference";
 import {
@@ -71,7 +76,6 @@ export interface DockerLlamaCppManagedLifecycleOptions {
 }
 
 export interface DockerLlamaCppManagedLifecycleDependencies {
-  readonly createTransactionId?: () => string;
   readonly now?: () => number;
 }
 
@@ -85,8 +89,8 @@ export interface DockerLlamaCppRecoveryResult {
 
 export interface DockerLlamaCppManagedLifecycle {
   readonly runtime: HostLocalInferenceRuntime;
-  start(persistReceipt: (serializedReceipt: string) => void): HostLocalInferenceReceipt;
-  recoverUnfinished(): DockerLlamaCppRecoveryResult;
+  start(writer: HostLocalInferenceReceiptWriter): HostLocalInferenceReceipt;
+  recoverUnfinished(writer: HostLocalInferenceReceiptWriter): DockerLlamaCppRecoveryResult;
 }
 
 interface DockerNetworkAuthority {
@@ -161,6 +165,10 @@ function sha256(value: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(normalizeForCanonicalJson(value)))
     .digest("hex");
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -654,6 +662,7 @@ function specificationDigest(
   options: DockerLlamaCppManagedLifecycleOptions,
   network: DockerNetworkAuthority,
   apiKeyRootIdentity: string,
+  receiptTargetSha256: string,
 ): string {
   return sha256({
     apiKeyRootIdentitySha256: apiKeyRootIdentity,
@@ -669,6 +678,7 @@ function specificationDigest(
     network,
     ownerLabel: options.bindings.ownerLabel,
     probeImageReference: options.probeImageReference,
+    receiptTargetSha256,
     runtimeGid: options.bindings.runtimeGid,
     runtimeUid: options.bindings.runtimeUid,
   });
@@ -892,6 +902,52 @@ function operationTime(dependencies: DockerLlamaCppManagedLifecycleDependencies)
   return value;
 }
 
+function requireReceiptWriter(
+  value: HostLocalInferenceReceiptWriter,
+): HostLocalInferenceReceiptWriter {
+  const transactionId = value?.transactionId;
+  const targetSha256 = value?.targetSha256;
+  const writeExact = value?.writeExact;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof transactionId !== "string" ||
+    !SHA256.test(transactionId) ||
+    typeof targetSha256 !== "string" ||
+    !SHA256.test(targetSha256) ||
+    typeof writeExact !== "function"
+  ) {
+    throw new Error("Docker llama.cpp receipt writer authority is malformed.");
+  }
+  return Object.freeze({
+    transactionId,
+    targetSha256,
+    writeExact: (serializedReceipt: string) => writeExact.call(value, serializedReceipt),
+  });
+}
+
+function writePreparedReceipt(
+  writerValue: HostLocalInferenceReceiptWriter,
+  journalValue: HostLocalCreateJournalRecord,
+): string {
+  const writer = requireReceiptWriter(writerValue);
+  const journal = normalizeHostLocalCreateJournalRecord(journalValue);
+  if (
+    journal.phase !== "receipt-prepared" ||
+    journal.serializedReceipt === null ||
+    journal.receiptSha256 === null ||
+    writer.transactionId !== journal.transactionId ||
+    writer.targetSha256 !== journal.receiptTargetSha256
+  ) {
+    throw new Error("Docker llama.cpp receipt writer differs from prepared publication authority.");
+  }
+  const committed = writer.writeExact(journal.serializedReceipt);
+  if (committed !== journal.serializedReceipt) {
+    throw new Error("Docker llama.cpp receipt writer did not acknowledge the exact receipt.");
+  }
+  return committed;
+}
+
 export function createDockerLlamaCppManagedLifecycle(
   options: DockerLlamaCppManagedLifecycleOptions,
   dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
@@ -956,7 +1012,11 @@ export function createDockerLlamaCppManagedLifecycle(
             options,
             { id: journal.networkId, name: options.bindings.network.name },
             journal.apiKeyRootIdentitySha256,
+            journal.receiptTargetSha256,
           );
+    const serializedReceipt = serializeHostLocalInferenceReceipt(receipt);
+    const publicationPrepared =
+      journal?.phase === "receipt-prepared" || journal?.phase === "finalized";
     if (
       journal === null ||
       journal.providerId !== PROVIDER_ID ||
@@ -966,9 +1026,11 @@ export function createDockerLlamaCppManagedLifecycle(
       journal.specSha256 !== expectedSpecSha256 ||
       journal.specSha256 !== receipt.runtime.specSha256 ||
       JSON.stringify(journal.engineAuthority) !== JSON.stringify(qualifiedAuthority) ||
+      !publicationPrepared ||
+      journal.serializedReceipt !== serializedReceipt ||
+      journal.receiptSha256 !== sha256Text(serializedReceipt) ||
       (requireFinalized && journal.phase !== "finalized") ||
-      (journal.phase === "finalized" &&
-        journal.receiptSha256 !== sha256(JSON.parse(serializeHostLocalInferenceReceipt(receipt))))
+      (journal.phase !== "receipt-prepared" && journal.phase !== "finalized")
     ) {
       throw new Error("Docker llama.cpp receipt does not match its durable create journal.");
     }
@@ -1172,25 +1234,25 @@ export function createDockerLlamaCppManagedLifecycle(
 
   return Object.freeze({
     runtime,
-    start(persistReceipt: (serializedReceipt: string) => void) {
-      if (typeof persistReceipt !== "function") {
-        throw new Error("Docker llama.cpp start requires an operation-scoped receipt writer.");
-      }
+    start(writerValue: HostLocalInferenceReceiptWriter) {
+      const writer = requireReceiptWriter(writerValue);
       assertLlamaCppGgufCachePlanDigest(options.plan);
       assertModelFilesystemAuthority(options);
       const startingApiKeyRootIdentitySha256 = apiKeyRootIdentitySha256(options);
       const startingKeyIdentity = apiKeyIdentity(options);
       const network = inspectNetwork(options.engine, options.bindings.network.name);
       const authority = authorizeEngine(options, qualifiedAuthority, true);
-      const specSha256 = specificationDigest(options, network, startingApiKeyRootIdentitySha256);
-      const transactionId =
-        dependencies.createTransactionId?.() ?? sha256({ generation: randomUUID() });
-      if (!SHA256.test(transactionId)) {
-        throw new Error("Docker llama.cpp transaction identity is malformed.");
-      }
+      const transactionId = writer.transactionId;
+      const specSha256 = specificationDigest(
+        options,
+        network,
+        startingApiKeyRootIdentitySha256,
+        writer.targetSha256,
+      );
       const lease = options.journalStore.acquireExecution(transactionId);
       const execution: MutationExecutionState = { unknown: false };
       let journal: HostLocalCreateJournalRecord | null = null;
+      let receiptPublicationPossible = false;
       try {
         if (
           inspectContainer(
@@ -1217,6 +1279,8 @@ export function createDockerLlamaCppManagedLifecycle(
           engineAuthority: authority,
           apiKeyIdentitySha256: apiKeyIdentitySha256(startingKeyIdentity),
           apiKeyRootIdentitySha256: startingApiKeyRootIdentitySha256,
+          receiptTargetSha256: writer.targetSha256,
+          serializedReceipt: null,
           receiptSha256: null,
         });
         options.journalStore.assertExecution(lease);
@@ -1281,16 +1345,39 @@ export function createDockerLlamaCppManagedLifecycle(
         requireExactNetwork(options, network.id);
         const receipt = receiptFor(options, authority, journal, started);
         const serialized = serializeHostLocalInferenceReceipt(receipt);
-        // Schema-v1 llama.cpp receipt persistence remains rejected by the production registry.
-        // Activation must make this persist/finalize boundary atomically durable first.
-        persistReceipt(serialized);
         options.journalStore.assertExecution(lease);
-        options.journalStore.finalize(transactionId, sha256(JSON.parse(serialized)));
+        try {
+          journal = options.journalStore.prepareReceipt(transactionId, serialized);
+          receiptPublicationPossible = true;
+        } catch (error) {
+          try {
+            const persisted = options.journalStore.load(transactionId);
+            if (persisted === null) {
+              receiptPublicationPossible = true;
+            } else {
+              journal = normalizeHostLocalCreateJournalRecord(persisted);
+              receiptPublicationPossible = journal.phase !== "started";
+            }
+          } catch {
+            receiptPublicationPossible = true;
+          }
+          throw error;
+        }
+        options.journalStore.assertExecution(lease);
+        writePreparedReceipt(writer, journal);
+        options.journalStore.assertExecution(lease);
+        journal = options.journalStore.finalize(transactionId);
         options.journalStore.assertExecution(lease);
         return receipt;
       } catch (error) {
         let rollbackFailure: unknown;
-        if (journal !== null && !execution.unknown) {
+        if (
+          journal !== null &&
+          !receiptPublicationPossible &&
+          journal.phase !== "receipt-prepared" &&
+          journal.phase !== "finalized" &&
+          !execution.unknown
+        ) {
           try {
             rollbackExact(options, journal, lease, execution);
           } catch (rollbackError) {
@@ -1307,7 +1394,8 @@ export function createDockerLlamaCppManagedLifecycle(
         if (!execution.unknown) options.journalStore.releaseExecution(lease);
       }
     },
-    recoverUnfinished() {
+    recoverUnfinished(writerValue: HostLocalInferenceReceiptWriter) {
+      const writer = requireReceiptWriter(writerValue);
       const recovered: string[] = [];
       const failures: { transactionId: string; message: string }[] = [];
       for (const candidate of options.journalStore.list()) {
@@ -1327,6 +1415,15 @@ export function createDockerLlamaCppManagedLifecycle(
           if (active === null) continue;
           journal = normalizeHostLocalCreateJournalRecord(active);
           if (journal.phase === "finalized") continue;
+          if (
+            journal.phase === "receipt-prepared" &&
+            (writer.transactionId !== journal.transactionId ||
+              writer.targetSha256 !== journal.receiptTargetSha256)
+          ) {
+            throw new Error(
+              "Docker llama.cpp receipt writer differs from prepared publication authority.",
+            );
+          }
           const currentAuthority = authorizeEngine(options, qualifiedAuthority, false);
           const journalAuthority = requirePersistedEngineAuthority(
             journal.engineAuthority,
@@ -1341,6 +1438,7 @@ export function createDockerLlamaCppManagedLifecycle(
             options,
             { id: journal.networkId, name: options.bindings.network.name },
             journal.apiKeyRootIdentitySha256,
+            journal.receiptTargetSha256,
           );
           if (journal.specSha256 !== expectedSpecSha256) {
             throw new Error(
@@ -1348,13 +1446,39 @@ export function createDockerLlamaCppManagedLifecycle(
             );
           }
           requireExactNetwork(options, journal.networkId);
-          rollbackExact(
-            options,
-            journal,
-            lease,
-            execution,
-            journal.phase === "creating" ? operationTime(dependencies) : undefined,
-          );
+          if (journal.phase === "receipt-prepared") {
+            if (journal.serializedReceipt === null) {
+              throw new Error("Docker llama.cpp prepared receipt is missing.");
+            }
+            const receipt = parseHostLocalInferenceReceipt(journal.serializedReceipt);
+            const activeKeyIdentity = apiKeyIdentity(options);
+            if (apiKeyIdentitySha256(activeKeyIdentity) !== journal.apiKeyIdentitySha256) {
+              throw new Error("Docker llama.cpp API-key identity differs from its create journal.");
+            }
+            assertModelFilesystemAuthority(options);
+            assertApiKeyIdentity(options, activeKeyIdentity, journal.apiKeyRootIdentitySha256);
+            const inspected = inspectAuthorized(receipt, false);
+            if (!inspected.container.running) {
+              throw new Error("Docker llama.cpp receipt publication requires a running runtime.");
+            }
+            probeReady(options, lease, execution);
+            assertModelFilesystemAuthority(options);
+            assertApiKeyIdentity(options, activeKeyIdentity, journal.apiKeyRootIdentitySha256);
+            requireExactNetwork(options, journal.networkId);
+            options.journalStore.assertExecution(lease);
+            writePreparedReceipt(writer, journal);
+            options.journalStore.assertExecution(lease);
+            options.journalStore.finalize(journal.transactionId);
+            options.journalStore.assertExecution(lease);
+          } else {
+            rollbackExact(
+              options,
+              journal,
+              lease,
+              execution,
+              journal.phase === "creating" ? operationTime(dependencies) : undefined,
+            );
+          }
           recovered.push(journal.transactionId);
         } catch (error) {
           failures.push({
