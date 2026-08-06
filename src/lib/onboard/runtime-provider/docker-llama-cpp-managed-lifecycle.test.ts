@@ -366,6 +366,7 @@ interface DockerFixture {
   readonly failCreateUncertain: () => void;
   readonly failProbe: () => void;
   readonly driftHardening: () => void;
+  readonly dropTmpfs: () => void;
   readonly driftGpuRequest: (driver: string | undefined, count: number) => void;
   readonly driftExtraDeviceAuthority: (kind: "cap-add" | "legacy-device") => void;
   readonly failInspectWithDaemonError: () => void;
@@ -382,6 +383,9 @@ function dockerFixture(): DockerFixture {
   let createUncertain = false;
   let probeFails = false;
   let hardeningDrift = false;
+  let tmpfs: Record<string, string> | null = {
+    "/tmp": "rw,noexec,nosuid,nodev,size=1024,uid=1001,gid=1001,mode=1777",
+  };
   let gpuDriver: string | undefined = "nvidia";
   let gpuCount = 1;
   let capAdd: null | string[] = null;
@@ -432,9 +436,7 @@ function dockerFixture(): DockerFixture {
         CapAdd: capAdd,
         Devices: legacyDevices,
         Privileged: false,
-        Tmpfs: {
-          "/tmp": "rw,noexec,nosuid,nodev,size=1024,uid=1001,gid=1001,mode=1777",
-        },
+        Tmpfs: tmpfs,
       },
       State: {
         Running: container?.running ?? false,
@@ -573,6 +575,7 @@ function dockerFixture(): DockerFixture {
     failCreateUncertain: () => (createUncertain = true),
     failProbe: () => (probeFails = true),
     driftHardening: () => (hardeningDrift = true),
+    dropTmpfs: () => (tmpfs = null),
     driftGpuRequest: (driver, count) => {
       gpuDriver = driver;
       gpuCount = count;
@@ -1154,6 +1157,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       (candidate: DockerFixture) => candidate.driftGpuRequest("nvidia", 2),
       (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("cap-add"),
       (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("legacy-device"),
+      (candidate: DockerFixture) => candidate.dropTmpfs(),
     ]) {
       const candidate = dockerFixture();
       const candidateLifecycle = controller(candidate);
