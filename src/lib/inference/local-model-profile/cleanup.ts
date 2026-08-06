@@ -26,6 +26,8 @@ import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
   HOST_LOCAL_VLLM_CONTAINER_NAME,
   HOST_LOCAL_VLLM_MANAGED_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+  validateHostLocalVllmRuntimeReceipt,
 } from "../serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey } from "../vllm-api-key";
 
@@ -390,9 +392,16 @@ function cleanupHostLocalVllm(stateDir: string, deps: CleanupDeps, removed: stri
   ) {
     throw new Error("host-local vLLM ownership or authentication does not match persisted state");
   }
+  const servingIdentity = validateHostLocalVllmRuntimeReceipt(
+    { containerId: inspected.id, labels: labels ?? {}, authFingerprint },
+    stateDir,
+  );
   const removal = deps.forceRm(inspected.id, { ignoreError: true, suppressOutput: true });
   if (removal.status !== 0) throw new Error("host-local vLLM container removal failed");
   removed.push(`container:${inspected.id}`);
+  if (servingIdentity) {
+    fs.unlinkSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE));
+  }
   fs.unlinkSync(path.join(stateDir, MANAGED_VLLM_API_KEY_FILE));
 }
 

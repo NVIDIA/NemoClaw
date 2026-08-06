@@ -17,6 +17,22 @@ import {
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
+  it("starts directly with setup when the serving environment is empty (#8246)", () => {
+    const command = buildVllmServeCommand({
+      id: "test/model",
+      label: "Test model",
+      envValue: "test-model",
+      downloadSizeBytes: 1,
+      maxModelLen: 4096,
+      modelArgs: [],
+      gated: false,
+      platforms: ["spark"],
+      serveEnv: {},
+    });
+
+    expect(command).toMatch(/^pip install vllm\[fastsafetensors\] && vllm serve/u);
+  });
+
   it("records a finite positive Hugging Face file size for every model", () => {
     for (const model of VLLM_MODELS) {
       expect(Number.isFinite(model.downloadSizeBytes)).toBe(true);
