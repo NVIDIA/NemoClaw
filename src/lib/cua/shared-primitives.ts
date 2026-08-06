@@ -16,18 +16,29 @@ function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-export function canonicalizeCuaJson(value: unknown): string | undefined {
-  if (Array.isArray(value)) {
-    return `[${Array.from(value, (child) => canonicalizeCuaJson(child) ?? "null").join(",")}]`;
-  }
+function canonicalizeCuaJsonValue(value: unknown, active: WeakSet<object>): string | undefined {
   if (typeof value !== "object" || value === null) return JSON.stringify(value);
-  const entries = Object.entries(value)
-    .sort(([left], [right]) => compareCodeUnits(left, right))
-    .flatMap(([key, child]) => {
-      const serialized = canonicalizeCuaJson(child);
-      return serialized === undefined ? [] : [`${JSON.stringify(key)}:${serialized}`];
-    });
-  return `{${entries.join(",")}}`;
+  if (active.has(value))
+    throw new TypeError("CUA canonical JSON value contains a circular reference");
+  active.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return `[${Array.from(value, (child) => canonicalizeCuaJsonValue(child, active) ?? "null").join(",")}]`;
+    }
+    const entries = Object.entries(value)
+      .sort(([left], [right]) => compareCodeUnits(left, right))
+      .flatMap(([key, child]) => {
+        const serialized = canonicalizeCuaJsonValue(child, active);
+        return serialized === undefined ? [] : [`${JSON.stringify(key)}:${serialized}`];
+      });
+    return `{${entries.join(",")}}`;
+  } finally {
+    active.delete(value);
+  }
+}
+
+export function canonicalizeCuaJson(value: unknown): string | undefined {
+  return canonicalizeCuaJsonValue(value, new WeakSet());
 }
 
 export function canonicalJsonSha256(value: unknown): string {

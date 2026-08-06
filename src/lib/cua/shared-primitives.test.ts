@@ -25,4 +25,17 @@ describe("CUA shared public-value primitives", () => {
       "83906dec6494e0c5b8791aaf0b84a3aa9d718c74154ccde98c48ca49c96d398e",
     );
   });
+
+  it("rejects circular values and accepts repeated acyclic references (#7755)", () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    expect(() => canonicalizeCuaJson(circular)).toThrow(
+      new TypeError("CUA canonical JSON value contains a circular reference"),
+    );
+
+    const shared = { value: 1 };
+    expect(canonicalizeCuaJson({ left: shared, right: shared })).toBe(
+      '{"left":{"value":1},"right":{"value":1}}',
+    );
+  });
 });

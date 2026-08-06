@@ -1485,11 +1485,9 @@ describe("CUA GPU qualification receipt (#7753)", () => {
     const symlinkPath = path.join(directory, "receipt-link.json");
     fs.symlinkSync(validPath, symlinkPath);
     expect(() => readBoundedCuaQualificationJson(symlinkPath)).toThrow(/regular file/);
-
     const oversizedPath = path.join(directory, "oversized.json");
     fs.writeFileSync(oversizedPath, "x".repeat(CUA_QUALIFICATION_FILE_MAX_BYTES + 1));
     expect(() => readBoundedCuaQualificationJson(oversizedPath)).toThrow(/no larger/);
-
     const tamperedPath = path.join(directory, "tampered.json");
     fs.writeFileSync(tamperedPath, JSON.stringify(receipt()));
     const realReadSync = fs.readSync.bind(fs);
@@ -1508,7 +1506,9 @@ describe("CUA GPU qualification receipt (#7753)", () => {
       }
       return read;
     }) as typeof fs.readSync);
-    expect(() => readBoundedCuaQualificationJson(tamperedPath)).toThrow(/changed during/);
+    expect(() => readBoundedCuaQualificationJson(tamperedPath)).toThrow(
+      `${tamperedPath} changed during bounded validation`,
+    );
   });
 
   it("consumes exact qualification bytes only from a private non-writable authority snapshot", () => {
