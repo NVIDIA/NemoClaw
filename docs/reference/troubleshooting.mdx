@@ -735,6 +735,9 @@ The watchdog logs the cause of every not-serving probe, and its recovery bound d
 - After the gateway returns a serving response, the watchdog stops it on the fourth not-serving probe with no intervening serving response. At the default 30-second interval, this takes roughly two minutes.
 - Before the gateway has ever served, the watchdog waits out a longer boot grace window of 20 not-serving probes, roughly 10 minutes, because it cannot tell a slow boot from a gateway that came up unable to serve. Set `NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES` to change this bound.
 
+`NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES` accepts a positive integer of up to nine digits, and so do `NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS` and `NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD`.
+The watchdog rejects any other value, logs which setting it rejected, and falls back to that setting's default.
+
 Look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`.
 Each line states the count and the bound it is counting toward, such as `(2/4 since the last serving response)` or `(7/20 since launch, having never served)`.
 

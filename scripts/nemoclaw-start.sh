@@ -4820,7 +4820,12 @@ gateway_pid_is_openclaw_gateway() {
 # validation. Extracted so a regression test can exercise the regex against
 # trailing non-digit and zero or invalid inputs without starting the watcher.
 gateway_watchdog_positive_int_ok() {
-  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+  # Bound the length as well as the shape. A longer decimal still looks like a
+  # positive integer but overflows Bash arithmetic to a negative value, and a
+  # negative threshold makes every "count is below the threshold" test false,
+  # so the watchdog would kill the gateway on its first not-serving probe.
+  # Nine digits is far above any useful interval or probe count.
+  [[ "$1" =~ ^[1-9][0-9]{0,8}$ ]]
 }
 
 # Is this PID still the tracked gateway process, regardless of who its parent
