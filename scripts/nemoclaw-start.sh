@@ -3402,13 +3402,14 @@ GATEWAYTOKENRECONCILESTART
     printf "if ( OPENCLAW_GATEWAY_TOKEN='%s' ) 2>/dev/null; then\n" \
       "$_escaped_intended_gateway_token"
     printf "  OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_intended_gateway_token"
-    printf "elif [ \"\${OPENCLAW_GATEWAY_TOKEN-}\" = '%s' ]; then\n" \
-      "$_escaped_intended_gateway_token"
+    printf "else\n  case \"\${OPENCLAW_GATEWAY_TOKEN-}\" in\n"
+    printf "    '%s') : ;;\n" "$_escaped_intended_gateway_token"
     cat <<'GATEWAYTOKENRECONCILEEND'
-  :
-else
-  echo "Error: conflicting trust anchor" >&2
-  return 1 2>/dev/null || exit 1
+    *)
+      echo "Error: conflicting trust anchor" >&2
+      return 1 2>/dev/null || exit 1
+      ;;
+  esac
 fi
 # nemoclaw-gateway-token-reconcile end
 GATEWAYTOKENRECONCILEEND

@@ -37,6 +37,7 @@ interface Scenario {
   preset?: { value: string; readonly: boolean };
   repeatSources?: boolean;
   readonlyPrivateSentinel?: boolean;
+  shadowTestCommand?: boolean;
   sourceUrl?: string;
 }
 
@@ -80,6 +81,7 @@ function runReconcile(scenario: Scenario): {
       ? `${scenario.preset.readonly ? "readonly " : ""}OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.preset.value)}`
       : "",
     scenario.readonlyPrivateSentinel ? "readonly _nemoclaw_gateway_token='CALLER-SENTINEL'" : "",
+    scenario.shadowTestCommand ? "function [ { return 0; }" : "",
     scenario.sourceUrl ? `OPENCLAW_GATEWAY_URL=${shellQuote(scenario.sourceUrl)}` : "",
   ].filter(Boolean);
   const sourceAndPrint = [
@@ -118,6 +120,20 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     expect(stdout).toContain(`TOKEN=[${REAL_TOKEN}]`);
     expect(stderr).not.toContain("conflicting trust anchor");
     expect(stderr).not.toContain("read only");
+  });
+
+  it("rejects a conflicting readonly value when Bash shadows the test command", () => {
+    const { status, stdout, stderr } = runReconcile({
+      intended: REAL_TOKEN,
+      shell: "bash",
+      preset: { value: "SENTINEL_CONFLICT", readonly: true },
+      shadowTestCommand: true,
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain("Error: conflicting trust anchor");
+    expect(stderr).not.toContain("read only");
+    expect(`${stdout}\n${stderr}`).not.toContain(REAL_TOKEN);
+    expect(stdout).not.toContain("TOKEN=");
   });
 
   it.each(SHELLS)("advances a writable value across repeated sourcing under %s", (shell) => {
