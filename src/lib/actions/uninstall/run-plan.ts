@@ -1651,6 +1651,12 @@ function inspectOtherGatewayEnvironments(
   );
 }
 
+// Names a desktop environment writes beside real content: Finder's .DS_Store
+// and .localized, and the ._ companion a macOS copy leaves for a resource fork.
+function isDesktopMetadataEntry(name: string): boolean {
+  return name === ".DS_Store" || name === ".localized" || name.startsWith("._");
+}
+
 function discoverOtherGatewayEnvironments(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
@@ -1721,6 +1727,12 @@ function discoverOtherGatewayEnvironments(
     for (const entry of fs.readdirSync(gatewaysDir, { withFileTypes: true })) {
       const candidate = path.resolve(gatewaysDir, entry.name);
       if (candidate === selectedRoot) continue;
+      // A plain file the desktop environment drops into any directory it shows
+      // holds no gateway state. Counting one as unidentified scopes the whole
+      // uninstall, which keeps the CLI and shell shims on PATH after a run that
+      // reports success (#7905). Only regular files match, so a directory or a
+      // symlink wearing the same name still gets the conservative treatment.
+      if (entry.isFile() && isDesktopMetadataEntry(entry.name)) continue;
       // Never follow or dismiss a symlink or non-directory: a surprising shape
       // may hide live gateway state, so keep the conservative treatment.
       if (entry.isSymbolicLink() || !entry.isDirectory()) {
