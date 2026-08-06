@@ -26,7 +26,7 @@ export interface FullE2eEvidenceSummary {
     workspaceName: string;
   };
   dispatch: {
-    defaultSuiteSelected: true;
+    emptySelectors: true;
     includeStagingBrevLaunchable: true;
   };
   jobUrl: string;
@@ -45,6 +45,19 @@ function record(value: unknown, owner: string): JsonRecord {
     throw new Error(`${owner} must be an object`);
   }
   return value as JsonRecord;
+}
+
+function jobRecords(value: unknown): JsonRecord[] {
+  const pages = Array.isArray(value) ? value : [value];
+  return pages.flatMap((page, pageIndex) => {
+    const payload = record(page, `jobs response[${pageIndex}]`);
+    if (!Array.isArray(payload.jobs)) {
+      throw new Error(`jobs response[${pageIndex}].jobs must be an array`);
+    }
+    return payload.jobs.map((job, jobIndex) =>
+      record(job, `jobs response[${pageIndex}].jobs[${jobIndex}]`),
+    );
+  });
 }
 
 function stringField(value: JsonRecord, key: string, owner: string): string {
@@ -97,7 +110,10 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
   requireEqual(dispatch.candidateSha, input.candidateSha, "dispatch.candidateSha");
   requireEqual(dispatch.eventName, "workflow_dispatch", "dispatch.eventName");
   requireEqual(dispatch.workflowRunId, String(runId), "dispatch.workflowRunId");
-  requireEqual(dispatch.workflowRunAttempt, attempt, "dispatch.workflowRunAttempt");
+  const receiptAttempt = positiveIntegerField(dispatch, "workflowRunAttempt", "dispatch");
+  if (receiptAttempt > attempt) {
+    throw new Error("dispatch.workflowRunAttempt exceeds run.run_attempt");
+  }
   requireEqual(dispatch.jobs, "", "dispatch.jobs");
   requireEqual(dispatch.targets, "", "dispatch.targets");
   requireEqual(
@@ -105,22 +121,32 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
     true,
     "dispatch.includeStagingBrevLaunchable",
   );
-  requireEqual(dispatch.defaultSuiteSelected, true, "dispatch.defaultSuiteSelected");
+  requireEqual(dispatch.emptySelectors, true, "dispatch.emptySelectors");
 
-  const jobsPayload = record(input.jobs, "jobs response");
-  if (!Array.isArray(jobsPayload.jobs)) {
-    throw new Error("jobs response.jobs must be an array");
+  const matchingJobs = jobRecords(input.jobs).filter(
+    (job) => job.name === "Exact staging Brev Launchable",
+  );
+  const successfulJobs = matchingJobs
+    .map((job, index) => ({
+      attempt: positiveIntegerField(job, "run_attempt", `Exact staging Brev Launchable[${index}]`),
+      job,
+      runId: positiveIntegerField(job, "run_id", `Exact staging Brev Launchable[${index}]`),
+    }))
+    .filter(
+      ({ attempt: jobAttempt, job, runId: jobRunId }) =>
+        jobRunId === runId &&
+        jobAttempt <= attempt &&
+        jobAttempt === receiptAttempt &&
+        job.status === "completed" &&
+        job.conclusion === "success",
+    )
+    .sort((left, right) => right.attempt - left.attempt);
+  if (successfulJobs.length === 0) {
+    throw new Error(
+      "jobs response must contain a completed successful Exact staging Brev Launchable job from this workflow run",
+    );
   }
-  const matchingJobs = jobsPayload.jobs
-    .map((job, index) => record(job, `jobs response.jobs[${index}]`))
-    .filter((job) => job.name === "Exact staging Brev Launchable");
-  if (matchingJobs.length !== 1) {
-    throw new Error("jobs response must contain exactly one Exact staging Brev Launchable job");
-  }
-  const job = matchingJobs[0]!;
-  requireEqual(job.status, "completed", "Exact staging Brev Launchable status");
-  requireEqual(job.conclusion, "success", "Exact staging Brev Launchable conclusion");
-  requireEqual(job.run_attempt, attempt, "Exact staging Brev Launchable run_attempt");
+  const job = successfulJobs[0]!.job;
   const jobUrl = stringField(job, "html_url", "Exact staging Brev Launchable");
   requireGitHubUrl(jobUrl, "Exact staging Brev Launchable html_url");
   if (!jobUrl.startsWith(`${runUrl}/job/`)) {
@@ -151,7 +177,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
   }
 
   return {
-    attempt,
+    attempt: receiptAttempt,
     candidateSha: input.candidateSha,
     cleanup: {
       status: "ABSENT",
@@ -160,7 +186,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
       workspaceName,
     },
     dispatch: {
-      defaultSuiteSelected: true,
+      emptySelectors: true,
       includeStagingBrevLaunchable: true,
     },
     jobUrl,

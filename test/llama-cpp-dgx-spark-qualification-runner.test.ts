@@ -44,7 +44,7 @@ const plan = validateQualificationPlan(planSource, planDigest);
 
 function trustedEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
-    GITHUB_ACTOR: "github-actions[bot]",
+    GITHUB_ACTOR: "trusted-maintainer",
     GITHUB_ACTOR_ID: "41898282",
     GITHUB_EVENT_NAME: "workflow_dispatch",
     GITHUB_REF: "refs/heads/main",
@@ -170,6 +170,17 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
 
     expect(
       parseQualificationInvocation(
+        invocationArguments(),
+        trustedEnvironment({
+          GITHUB_ACTOR: "merge-queue[bot]",
+          GITHUB_ACTOR_ID: "12345",
+          GITHUB_EVENT_NAME: "push",
+        }),
+      ),
+    ).toMatchObject({ cleanupOnly: false, workflowSha: WORKFLOW_SHA });
+
+    expect(
+      parseQualificationInvocation(
         [
           "--cleanup-only",
           "--registry-name",
@@ -209,7 +220,9 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       trustedEnvironment({ GITHUB_REPOSITORY: "attacker/fork" }),
       trustedEnvironment({ GITHUB_REF: "refs/pull/1/merge" }),
       trustedEnvironment({ GITHUB_EVENT_NAME: "pull_request_target" }),
-      trustedEnvironment({ GITHUB_ACTOR: "untrusted-user" }),
+      trustedEnvironment({ GITHUB_ACTOR: "untrusted user" }),
+      trustedEnvironment({ GITHUB_ACTOR_ID: "0" }),
+      trustedEnvironment({ GITHUB_RUN_ATTEMPT: "3" }),
       trustedEnvironment({ GITHUB_RUN_ID: "43" }),
       trustedEnvironment({ GITHUB_SHA: HEAD_SHA }),
       trustedEnvironment({

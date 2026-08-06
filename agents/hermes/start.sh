@@ -223,6 +223,7 @@ _HERMES_DASHBOARD_CONFIG_SEEDER="/usr/local/lib/nemoclaw/seed-hermes-dashboard-c
 if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
   _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
 fi
+_HERMES_MANAGED_POLICY="/usr/local/share/nemoclaw/hermes-managed-policy.json"
 
 # Descriptor-safe updater for runtime-mutable Hermes config/env/hash files.
 _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
@@ -1469,6 +1470,7 @@ prepare_hermes_dashboard_home() {
       HERMES_DASHBOARD_HOME="$HERMES_DASHBOARD_HOME" \
       _HERMES_PYTHON="$_HERMES_PYTHON" \
       _HERMES_DASHBOARD_CONFIG_SEEDER="$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+      _HERMES_MANAGED_POLICY="$_HERMES_MANAGED_POLICY" \
       "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
         if [ -L "$HERMES_DASHBOARD_HOME" ]; then
           echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
@@ -1486,6 +1488,7 @@ prepare_hermes_dashboard_home() {
         # state that poisons /api/status even while the real gateway is healthy.
         rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
         exec "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+          "$_HERMES_MANAGED_POLICY" \
           "${HERMES_DIR}/config.yaml" "${HERMES_DASHBOARD_HOME}/config.yaml" \
           "${HERMES_DIR}/.env" "${HERMES_DASHBOARD_HOME}/.env"
       ' || rc=$?
@@ -1509,10 +1512,10 @@ prepare_hermes_dashboard_home() {
   seed_hermes_dashboard_config
 }
 
-# Mirror the gateway's model routing and dotenv context into the dashboard's
-# isolated HERMES_HOME so its Models page (/api/model/options), Chat/TUI setup
-# checks, and kanban specifier/dispatcher resolve the routed model. The
-# dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
+# Mirror the gateway's model routing and non-secret dotenv context into the
+# dashboard's isolated HERMES_HOME so its Models page (/api/model/options),
+# Chat/TUI setup checks, and kanban specifier/dispatcher resolve the routed
+# model. The dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
 # otherwise only sees a Hermes-default config with an empty model. Idempotent:
 # refreshes the keys on every launch. Missing gateway config is a benign no-op
 # in the seeder; security refusals and write failures abort startup.
@@ -1526,6 +1529,7 @@ seed_hermes_dashboard_config() {
   # prepare_hermes_dashboard_home after stepping down to the sandbox identity.
   rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
   env "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+    "$_HERMES_MANAGED_POLICY" \
     "${HERMES_DIR}/config.yaml" "$dst" \
     "${HERMES_DIR}/.env" "$env_dst" || rc=$?
 
@@ -1541,6 +1545,7 @@ start_hermes_dashboard_current_user() {
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
     nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
@@ -1559,6 +1564,7 @@ start_hermes_dashboard_sandbox_user() {
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
     nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
