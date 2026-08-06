@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentTurnEvent } from "./contracts";
 import { OpenClawVoiceClient } from "./openclaw-client";
@@ -76,6 +76,13 @@ function orderedReplyHandlers(firstReply = "hel", finalReply = "hello"): Record<
   };
 }
 
+function activeTurnHandlers(): Record<string, Handler> {
+  return {
+    connect: (request, socket) => socket.respond(request.id, {}),
+    "chat.send": (request, socket) => socket.respond(request.id, { runId: "expected-run" }),
+  };
+}
+
 function oversizedFrameHandlers(): Record<string, Handler> {
   return {
     connect: (request, socket) => {
@@ -144,22 +151,29 @@ describe("OpenClaw voice gateway client", () => {
     ).resolves.toEqual({ outcome: "failed", reason: "agent_protocol_error" });
   });
 
-  it("closes the direct WebSocket connection when the session owner revokes it (#8378)", () => {
-    const socket = new FakeWebSocket(orderedReplyHandlers());
+  it("closes the direct WebSocket connection when the session owner revokes it (#8378)", async () => {
+    const socket = new FakeWebSocket(activeTurnHandlers());
     const client = new OpenClawVoiceClient({
       gatewayUrl: "ws://127.0.0.1:18789/ws",
       credential: "openclaw-credential-must-not-cross",
       webSocketFactory: () => socket,
     });
-    void client.runTurn({
+    const turn = client.runTurn({
       sessionKey: "agent:main:nemoclaw-voice:session",
       idempotencyKey: "generated-turn-id",
       message: "repository status",
       onEvent: () => {},
     });
+    await vi.waitFor(() =>
+      expect(socket.sent.some((request) => request.method === "chat.send")).toBe(true),
+    );
 
     client.close();
 
+    await expect(turn).resolves.toEqual({
+      outcome: "failed",
+      reason: "agent_gateway_unavailable",
+    });
     expect(socket.closed).toBe(true);
   });
 
