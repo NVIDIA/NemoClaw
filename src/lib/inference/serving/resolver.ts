@@ -28,6 +28,7 @@ import type {
   ManagedInferenceTopologyRequirement,
   ResolvedHostLocalInferenceSelection,
   ResolvedManagedInferenceSelection,
+  ServingReadinessComparison,
 } from "./types.js";
 
 export const MANAGED_INFERENCE_READINESS_MAX_AGE_MS = 30_000;
@@ -151,6 +152,37 @@ function matchesOperator(actual: unknown, operator: SelectionOperator, expected:
   }
 }
 
+function versionAtLeast(actual: unknown, minimum: string): boolean {
+  if (typeof actual !== "string") return false;
+  const versionPattern = /^\d+(?:\.\d+)*$/u;
+  if (!versionPattern.test(actual) || !versionPattern.test(minimum)) return false;
+  const actualParts = actual.split(".").map(Number);
+  const minimumParts = minimum.split(".").map(Number);
+  const width = Math.max(actualParts.length, minimumParts.length);
+  for (let index = 0; index < width; index += 1) {
+    const actualPart = actualParts[index] ?? 0;
+    const minimumPart = minimumParts[index] ?? 0;
+    if (actualPart !== minimumPart) return actualPart > minimumPart;
+  }
+  return true;
+}
+
+function readinessComparisonMatches(
+  actual: unknown,
+  comparison: ServingReadinessComparison,
+): boolean {
+  switch (comparison.operator) {
+    case "equals":
+      return scalarEquals(actual, comparison.value);
+    case "one-of":
+      return comparison.values.some((candidate) => scalarEquals(actual, candidate));
+    case "at-least":
+      return typeof actual === "number" && actual >= comparison.value;
+    case "version-at-least":
+      return versionAtLeast(actual, comparison.value);
+  }
+}
+
 function readinessScopeMatches(
   scope: string,
   reports: readonly ManagedInferenceReadinessSource[],
@@ -171,7 +203,14 @@ function readinessRequirementMatches(
       const matches = report.qualifications.filter(({ id }) => id === requirement.id);
       return matches.length === 1 && matches[0]!.status === requirement.status;
     }
-    if ("comparison" in requirement) return false;
+    if ("comparison" in requirement) {
+      const matches = report.observations.filter(({ id }) => id === requirement.id);
+      return (
+        matches.length === 1 &&
+        matches[0]!.state === "present" &&
+        readinessComparisonMatches(matches[0]!.value, requirement.comparison)
+      );
+    }
     const collection =
       requirement.kind === "observation" ? report.observations : report.capabilities;
     const matches = collection.filter(({ id }) => id === requirement.id);
@@ -348,7 +387,10 @@ function matchingCandidate<TOutput>(
   compiledPreset: CompiledManagedInferenceCatalog["presets"][number],
   input: ManagedInferenceResolverInput<TOutput>,
 ):
-  | { readonly outcome: "matched"; readonly candidate: MatchingCandidate<TOutput> }
+  | {
+      readonly outcome: "matched";
+      readonly candidate: MatchingCandidate<TOutput>;
+    }
   | { readonly outcome: "unmet"; readonly message: string }
   | { readonly outcome: "invalid-topology"; readonly message: string }
   | { readonly outcome: "incompatible-intent"; readonly message: string } {
@@ -452,7 +494,11 @@ export function resolveManagedInferenceServing<TOutput>(
   }
   const reportsError = readinessReportsError(input.readinessReports, nowMs, maxAgeMs);
   if (reportsError) {
-    return { outcome: "rejected", code: "invalid-readiness", message: reportsError };
+    return {
+      outcome: "rejected",
+      code: "invalid-readiness",
+      message: reportsError,
+    };
   }
 
   if (explicitPresetId) {

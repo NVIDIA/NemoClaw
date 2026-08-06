@@ -645,7 +645,7 @@ describe("managed inference serving catalog compiler", () => {
 
   it("rejects automatic selection for a llama.cpp recipe (#8181)", () => {
     expect(() => compile([llamaCppRecipeSource(), llamaCppPresetSource("automatic")])).toThrow(
-      "must use explicit-only selection for llama.cpp recipe",
+      "must not use automatic selection for llama.cpp recipe",
     );
   });
 
