@@ -206,6 +206,9 @@ export type DockerContainerInspect = {
   Name?: string;
   Config?: {
     Image?: string;
+    AttachStdin?: boolean;
+    AttachStdout?: boolean;
+    AttachStderr?: boolean;
     Env?: string[] | null;
     Labels?: Record<string, string> | null;
     Entrypoint?: string[] | string | null;
@@ -260,6 +263,8 @@ export type DockerContainerInspect = {
     CpuPeriod?: number;
     CpusetCpus?: string;
     CpusetMems?: string;
+    PidsLimit?: number | null;
+    ConsoleSize?: number[] | null;
     Privileged?: boolean;
     Init?: boolean;
     IpcMode?: string;

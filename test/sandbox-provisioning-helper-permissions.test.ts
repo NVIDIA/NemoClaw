@@ -131,6 +131,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
     const jetsonGroupBootstrapPath = path.join(localLib, "jetson-device-group-bootstrap.sh");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
+    const stateLockPlanPath = path.join(localShare, "state-lock-plan.json");
     const configGuardPath = path.join(localLib, "openclaw-config-guard.py");
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
@@ -145,6 +146,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       gatewaySupervisorPath,
       jetsonGroupBootstrapPath,
       stateDirGuardPath,
+      stateLockPlanPath,
       configGuardPath,
       managedGatewayControlPath,
       path.join(localLib, "openclaw_device_approval_policy.py"),
@@ -207,6 +209,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(jetsonGroupBootstrapPath).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(stateLockPlanPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(configGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {

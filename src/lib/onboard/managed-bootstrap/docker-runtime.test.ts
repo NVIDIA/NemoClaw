@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const adapterMocks = vi.hoisted(() => ({
@@ -43,7 +47,6 @@ vi.mock("../docker-gpu-sandbox-create", async (importOriginal) => ({
 
 import type {
   ManagedBootstrapActivatedTransaction,
-  ManagedBootstrapAdapter,
   ManagedBootstrapPreparedTransaction,
 } from "./adapter";
 import { createDockerManagedBootstrapSurface } from "./docker-runtime";
@@ -136,6 +139,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
   });
 
   it("does not finalize rollback after a claimed commit loses acknowledgement", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-"));
     const seed = authority("openclaw");
     const prepared = Object.freeze({}) as ManagedBootstrapPreparedTransaction;
     const activated = Object.freeze({
@@ -156,6 +160,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
+      stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
       image: seed.plan.image,
@@ -167,7 +172,6 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       authorityStore: {
         recordPreparedAuthority: vi.fn(),
       },
-      adapterOverride: {} as ManagedBootstrapAdapter,
       route: "none",
       persistStartupCommand: false,
       sandboxName: "alpha",
@@ -208,5 +212,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       expect.objectContaining({ outcome: "commit", transaction: activated }),
     );
     expect(onPatchFailure).toHaveBeenCalledOnce();
+    await expect(lifecycle.recoverUnfinished()).resolves.toEqual({ receipts: [], failures: [] });
+    fs.rmSync(stateRoot, { recursive: true, force: true });
   });
 });

@@ -389,6 +389,21 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
     expect(result.stdout).toContain("e2e-x  Ready");
     expect(runner.calls).toHaveLength(2);
   });
+
+  it("waits for Ready before checking a sandbox after gateway restart", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  Provisioning\n"));
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  Ready\n"));
+    const cleanup = new FakeCleanup();
+
+    const result = await fixture(runner, cleanup).assertSandboxReadyAfterGatewayRestart("e2e-x", {
+      attempts: 2,
+      delayMs: 0,
+    });
+
+    expect(result.stdout).toContain("e2e-x  Ready");
+    expect(runner.calls).toHaveLength(2);
+  });
 });
 
 describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {

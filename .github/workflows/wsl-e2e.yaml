@@ -5,16 +5,6 @@ name: E2E / WSL
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "bin/**"
-      - "nemoclaw/**"
-      - "scripts/**"
-      - "test/**"
-      - ".github/workflows/wsl-e2e.yaml"
-      - "tools/wsl/**"
-      - "package.json"
-      - "vitest.config.ts"
   push:
     branches:
       - main

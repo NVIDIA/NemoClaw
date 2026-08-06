@@ -323,6 +323,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
           bootstrap: {
             providerId: "mxc",
             supported: true,
+            createAuthorityStore: vi.fn(() => ({
+              recordPreparedAuthority: vi.fn(),
+            })),
             createLifecycle,
             createOnboardRouting: vi.fn(() => ({
               nativeFallbackHasCleanBaseline: false,
@@ -344,6 +347,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     };
     input.managedBootstrap = {
       bootstrapIdentity: launch.managedBootstrapIdentity!,
+      stateRoot: "/tmp/nemoclaw-mxc-bootstrap",
       runtimeProvider,
       authorityStore: {
         async recordPreparedAuthority(authority) {

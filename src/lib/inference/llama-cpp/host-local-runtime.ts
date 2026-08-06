@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { type BigIntStats, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { isSafeLlamaCppServedModelAlias } from "./contract";
@@ -79,6 +80,8 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly apiKeyHostPath: string;
   readonly containerName: string;
   readonly imageReference: string;
+  /** Fixed loopback host port for product installs; omitted only by isolated qualification. */
+  readonly hostPort?: number;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
   readonly network: {
@@ -86,12 +89,21 @@ export interface LlamaCppHostLocalRuntimeBindings {
     readonly name: string;
   };
   readonly ownerLabel: { readonly name: string; readonly value: string };
+  readonly identityLabels?: readonly { readonly name: string; readonly value: string }[];
   readonly runtimeGid: number;
   readonly runtimeUid: number;
 }
 
 export interface VerifiedLocalModelArtifact {
   readonly digest: string;
+  /** Executor-only identity captured from the descriptor that verified this file. */
+  readonly filesystemIdentity: {
+    readonly ctimeNs: bigint;
+    readonly dev: bigint;
+    readonly ino: bigint;
+    readonly mtimeNs: bigint;
+    readonly size: bigint;
+  };
   readonly hostPath: string;
   readonly sizeBytes: number;
 }
@@ -162,20 +174,57 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   }
 }
 
-function validateBindings(
+/** Re-prove executor-only filesystem identity before a container-engine mutation. */
+export function assertLlamaCppVerifiedLocalModelArtifact(
   contract: LlamaCppHostLocalLaunchContract,
-  bindings: LlamaCppHostLocalRuntimeBindings,
+  model: VerifiedLocalModelArtifact,
 ): void {
-  safeHostPath(bindings.model.hostPath, "llama.cpp model path");
-  safeHostPath(bindings.apiKeyHostPath, "llama.cpp API-key path");
+  safeHostPath(model.hostPath, "llama.cpp model path");
   if (
-    bindings.model.digest !== contract.model.file.digest ||
-    bindings.model.sizeBytes !== contract.model.file.sizeBytes
+    model.digest !== contract.model.file.digest ||
+    model.sizeBytes !== contract.model.file.sizeBytes
   ) {
     throw new Error(
       "llama.cpp verified model artifact does not match the declarative GGUF identity",
     );
   }
+  let canonicalModelPath: string;
+  let modelStatus: BigIntStats;
+  try {
+    canonicalModelPath = realpathSync(model.hostPath);
+    modelStatus = lstatSync(model.hostPath, { bigint: true });
+  } catch {
+    throw new Error("llama.cpp verified model artifact is unavailable");
+  }
+  const identity = model.filesystemIdentity;
+  if (
+    !identity ||
+    typeof identity.dev !== "bigint" ||
+    typeof identity.ino !== "bigint" ||
+    typeof identity.size !== "bigint" ||
+    typeof identity.mtimeNs !== "bigint" ||
+    typeof identity.ctimeNs !== "bigint" ||
+    canonicalModelPath !== model.hostPath ||
+    !modelStatus.isFile() ||
+    modelStatus.dev !== identity.dev ||
+    modelStatus.ino !== identity.ino ||
+    modelStatus.size !== identity.size ||
+    modelStatus.mtimeNs !== identity.mtimeNs ||
+    modelStatus.ctimeNs !== identity.ctimeNs ||
+    modelStatus.size !== BigInt(model.sizeBytes)
+  ) {
+    throw new Error(
+      "llama.cpp verified model artifact does not match its verified filesystem identity",
+    );
+  }
+}
+
+function validateBindings(
+  contract: LlamaCppHostLocalLaunchContract,
+  bindings: LlamaCppHostLocalRuntimeBindings,
+): void {
+  assertLlamaCppVerifiedLocalModelArtifact(contract, bindings.model);
+  safeHostPath(bindings.apiKeyHostPath, "llama.cpp API-key path");
   if (
     !SAFE_NAME.test(bindings.containerName) ||
     bindings.network.isolation !== "docker-internal" ||
@@ -183,12 +232,23 @@ function validateBindings(
     DOCKER_BUILTIN_NETWORKS.has(bindings.network.name) ||
     !SAFE_LABEL_NAME.test(bindings.ownerLabel.name) ||
     !SAFE_LABEL_VALUE.test(bindings.ownerLabel.value) ||
+    bindings.identityLabels?.some(
+      ({ name, value }) =>
+        name === bindings.ownerLabel.name ||
+        !SAFE_LABEL_NAME.test(name) ||
+        !SAFE_LABEL_VALUE.test(value),
+    ) ||
+    new Set(bindings.identityLabels?.map(({ name }) => name)).size !==
+      (bindings.identityLabels?.length ?? 0) ||
     !IMAGE_DIGEST.test(bindings.imageReference)
   ) {
     throw new Error("llama.cpp host-local runtime binding is invalid");
   }
   positiveInteger(bindings.runtimeUid, "llama.cpp runtime uid", 2_147_483_647);
   positiveInteger(bindings.runtimeGid, "llama.cpp runtime gid", 2_147_483_647);
+  if (bindings.hostPort !== undefined) {
+    positiveInteger(bindings.hostPort, "llama.cpp host port", 65_535);
+  }
 }
 
 /**
@@ -212,12 +272,16 @@ export function buildLlamaCppHostLocalDockerArgv(
     bindings.containerName,
     "--label",
     `${bindings.ownerLabel.name}=${bindings.ownerLabel.value}`,
+    ...(bindings.identityLabels ?? []).flatMap(({ name, value }) => [
+      "--label",
+      `${name}=${value}`,
+    ]),
     "--network",
     bindings.network.name,
     "--user",
     runtimeIdentity,
     "--publish",
-    `127.0.0.1::${String(serve.port)}`,
+    `127.0.0.1:${bindings.hostPort === undefined ? "" : String(bindings.hostPort)}:${String(serve.port)}`,
     "--read-only",
     "--cap-drop",
     "ALL",
@@ -230,7 +294,7 @@ export function buildLlamaCppHostLocalDockerArgv(
     "--pids-limit",
     String(resources.pidsLimit),
     "--gpus",
-    "1",
+    "driver=nvidia,count=1",
     "--tmpfs",
     `/tmp:rw,noexec,nosuid,nodev,size=${String(resources.writableStorageBytes)},uid=${String(bindings.runtimeUid)},gid=${String(bindings.runtimeGid)},mode=1777`,
     "--mount",
@@ -238,6 +302,18 @@ export function buildLlamaCppHostLocalDockerArgv(
     "--mount",
     `type=bind,source=${bindings.apiKeyHostPath},target=${LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH},readonly`,
     bindings.imageReference,
+    ...buildLlamaCppHostLocalServerArgv(contract),
+  ];
+}
+
+/** Reconstruct the immutable in-container server command without host filesystem state. */
+export function buildLlamaCppHostLocalServerArgv(
+  contract: LlamaCppHostLocalLaunchContract,
+): readonly string[] {
+  validateContract(contract);
+  const { serve } = contract;
+  const containerModelPath = `/models/${contract.model.file.path}`;
+  return Object.freeze([
     "--model",
     containerModelPath,
     "--alias",
@@ -273,5 +349,5 @@ export function buildLlamaCppHostLocalDockerArgv(
     "--no-slots",
     "--no-mmproj",
     "--no-agent",
-  ];
+  ]);
 }
