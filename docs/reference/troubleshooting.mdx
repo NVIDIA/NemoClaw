@@ -1370,9 +1370,10 @@ Run `$$nemoclaw <name> rebuild --yes` when you want NemoClaw to recreate the san
 
 ### A command reports that the registry file is not valid JSON
 
-A command that reads or writes the sandbox registry stops with `Configuration file is present but is not valid JSON`, followed by the path to `sandboxes.json` and the recovery commands.
+Registry operations that require complete sandbox records, such as `$$nemoclaw list` and `$$nemoclaw onboard`, stop with `Configuration file is present but is not valid JSON`, followed by the path to `sandboxes.json` and the recovery commands.
 
-NemoClaw stops instead of reading the file as an empty registry, so no later command replaces your sandbox records with empty state.
+These operations stop instead of reading the file as an empty registry, so they cannot replace your sandbox records with empty state.
+Optional messaging health checks omit registry-derived information when they cannot read the registry.
 It does not rename, move, or rewrite the file.
 
 Follow [Malformed Registry File](host-files-and-state#malformed-registry-file) to keep a copy and remove it.

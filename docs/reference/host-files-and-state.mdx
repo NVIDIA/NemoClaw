@@ -54,9 +54,10 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 
 ### Malformed Registry File
 
-A `sandboxes.json` file that is present but does not contain valid JSON stops the commands that read or write the sandbox registry, such as `$$nemoclaw list` and `$$nemoclaw onboard`.
+A `sandboxes.json` file that is present but does not contain valid JSON stops registry operations that require complete sandbox records, such as `$$nemoclaw list` and `$$nemoclaw onboard`.
 NemoClaw reports the file path and the recovery commands instead of reading the file as an empty registry.
-No later command then replaces your sandbox records with empty state.
+These operations cannot replace your sandbox records with empty state.
+Optional messaging health checks omit registry-derived information when they cannot read the registry.
 NemoClaw does not rename, move, or rewrite the file.
 
 <Warning>
