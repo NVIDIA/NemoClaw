@@ -271,6 +271,47 @@ describe("network-policy.schema.json", () => {
     ).toBe(true);
   });
 
+  it("accepts an OpenShell hostless L4 endpoint with explicit address ranges", () => {
+    expect(
+      validate({
+        open_internet: {
+          name: "Open internet",
+          binaries: [{ path: "/**" }],
+          endpoints: [
+            {
+              ports: [80, 443],
+              allowed_ips: ["1.0.0.0/8", "2000::/3"],
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a hostless endpoint without explicit address ranges", () => {
+    expect(
+      validate({
+        invalid: {
+          name: "Invalid",
+          binaries: [{ path: "/**" }],
+          endpoints: [{ port: 443 }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects an endpoint that declares both port forms", () => {
+    expect(
+      validate({
+        invalid: {
+          name: "Invalid",
+          binaries: [{ path: "/**" }],
+          endpoints: [{ host: "api.example.com", port: 443, ports: [80, 443] }],
+        },
+      }),
+    ).toBe(false);
+  });
+
   it.each([
     ["an empty policy map", {}],
     ["an unrelated object", { unrelated: true }],

@@ -12,6 +12,8 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
+const DOCKER_HUB_CLEANUP_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3";
 
 const JOB_CONTRACTS = [
   {
@@ -190,7 +192,14 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
     if (revoke.if !== "always()") {
       errors.push(`${jobName} must always revoke Docker auth before the release-pinned fixture`);
     }
-    requireRunContains(errors, jobName, revoke, "bash .github/scripts/docker-auth-cleanup.sh");
+    if (
+      revoke.uses !== DOCKER_HUB_CLEANUP_ACTION ||
+      Object.keys(revoke).sort().join(",") !== "if,name,uses"
+    ) {
+      errors.push(
+        `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
+      );
+    }
 
     const run = findStep(job, runName);
     for (const fragment of [

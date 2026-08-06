@@ -572,7 +572,7 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).not.toContain("not-allowlisted");
     expect(comment).not.toContain("do not publish an unknown selector");
     expect(comment).toContain(
-      "Second-opinion terminology and E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate.",
+      "Second-opinion terminology and E2E selections are advisory. Live E2E does not run automatically for pull requests.",
     );
     expect(comment).toContain("<summary>1 optional E2E recommendation</summary>");
     expect(comment.match(/<code>vllm-docker-storage<\/code>/gu)).toHaveLength(1);

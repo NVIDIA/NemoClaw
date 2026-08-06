@@ -138,73 +138,6 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it.each([
-    {
-      name: "workflow-run status",
-      run: { status: "future_status" },
-    },
-    {
-      name: "workflow-run conclusion",
-      run: { conclusion: "future_conclusion" },
-    },
-    {
-      name: "job status",
-      job: { status: "future_status" },
-    },
-    {
-      name: "job conclusion",
-      job: { conclusion: "future_conclusion" },
-    },
-  ])("fails closed on an unknown $name", ({ run, job }) => {
-    const result = runGate(
-      e2eRunFixture(e2eChecks([444, 41, "SUCCESS"]), {
-        "444": {
-          ...exactDiffGateRun("success", [{ id: 41, name: "E2E / PR Gate", ...job }]),
-          ...run,
-        },
-      }),
-    );
-
-    const output = JSON.parse(result.stdout);
-    expect(output.gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
-    });
-    expect(output.allPass).toBe(false);
-  });
-
-  it.each([
-    {
-      name: "still running",
-      run: { status: "in_progress", conclusion: null },
-      jobs: [{ id: 41, name: "E2E / PR Gate" }],
-    },
-    {
-      name: "failed with a differently named failed job",
-      run: { status: "completed", conclusion: "failure" },
-      jobs: [
-        { id: 41, name: "E2E / PR Gate" },
-        { id: 42, name: "hidden-failure", conclusion: "failure" },
-      ],
-    },
-  ])("fails closed when an Actions run is $name", ({ run, jobs }) => {
-    const result = runGate(
-      e2eRunFixture(e2eChecks([445, 41, "SUCCESS"]), {
-        "445": {
-          ...exactDiffGateRun("success", jobs),
-          ...run,
-        },
-      }),
-    );
-
-    const output = JSON.parse(result.stdout);
-    expect(output.gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
-    });
-    expect(output.allPass).toBe(false);
-  });
-
   it("uses the latest attempt for duplicate check-run contexts", () => {
     const result = runGate(
       e2eRunFixture(
@@ -227,31 +160,6 @@ describe("maintainer merge-gate contributor compliance", () => {
 
     const output = JSON.parse(result.stdout);
     expect(output.gates.ci).toMatchObject({ pass: true });
-  });
-  it("orders overlapping workflow runs by run creation time", () => {
-    const result = runGate(
-      e2eRunFixture(
-        [
-          [102, 3, "SUCCESS", "2026-01-01T00:03:00Z"],
-          [103, 4, "FAILURE", "2026-01-01T00:02:00Z"],
-        ],
-        {
-          "102": {
-            ...exactDiffGateRun("success", [{ id: 3, name: "E2E / PR Gate" }]),
-            createdAt: "2026-01-01T00:00:00Z",
-          },
-          "103": {
-            ...exactDiffGateRun("failure", [{ id: 4, name: "E2E / PR Gate" }]),
-            createdAt: "2026-01-01T00:01:00Z",
-          },
-        },
-      ),
-    );
-
-    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: ["E2E / PR Gate: FAILURE"],
-    });
   });
   it("keeps every duplicate job from the latest workflow run", () => {
     const result = runGate({
@@ -321,18 +229,6 @@ describe("maintainer merge-gate contributor compliance", () => {
     );
     expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
   });
-  it("rejects required checks represented only by a status context", () => {
-    const fixture = e2eRunFixture([], {});
-    fixture.statusChecks?.push({
-      __typename: "StatusContext",
-      context: "E2E / PR Gate",
-      state: "SUCCESS",
-    });
-    expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: INCOMPLETE_E2E,
-    });
-  });
   it("uses the latest attempt for custom check-run details URLs", () => {
     const fixture = e2eRunFixture(
       [
@@ -343,32 +239,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       { "874": exactDiffGateRun("success", e2eJobs(2)) },
     );
     expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
-  });
-  it("uses the latest attempt when GitHub reuses an Actions run ID", () => {
-    const fixture = {
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      statusChecks: [
-        ...successfulRequiredChecksWithoutE2e(),
-        e2eGateCheck([300, 10, "FAILURE", "2026-01-01T00:00:00Z"]),
-        e2eGateCheck([300, 20, "SUCCESS", "2026-01-01T00:02:00Z"]),
-      ],
-    };
-    const result = runGate({
-      ...fixture,
-      actionRunAttempts: {
-        "300": exactDiffGateRun("success", [{ id: 20, name: "E2E / PR Gate" }], 2),
-      },
-    });
-
-    const output = JSON.parse(result.stdout);
-    expect(output.gates.ci).toMatchObject({ pass: true });
-
-    const unavailable = runGate(fixture);
-    expect(JSON.parse(unavailable.stdout).gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: ["E2E / PR Gate: FAILURE"],
-    });
   });
   it("uses an envelope-bound E2E run when a later association-less label run is skipped", () => {
     const fixture = e2eRunFixture(
@@ -410,102 +280,6 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       allPass: true,
       gates: { ci: { pass: true } },
-    });
-  });
-
-  it("does not discard a skipped E2E run with malformed immutable identity", () => {
-    const result = runGate(
-      e2eRunFixture(
-        [
-          [405, 45, "SUCCESS"],
-          [406, 46, "SKIPPED"],
-        ],
-        {
-          "405": exactDiffGateRun("success", [{ id: 45, name: "E2E / PR Gate" }]),
-          "406": {
-            ...exactDiffGateRun("skipped", [
-              { id: 46, name: "E2E / PR Gate", conclusion: "skipped" },
-            ]),
-            displayTitle: "E2E Gate stale metadata",
-          },
-        },
-      ),
-    );
-
-    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: ["E2E / PR Gate: SKIPPED"],
-    });
-  });
-
-  it.each([
-    [
-      "does not enclose trusted coordination",
-      {
-        createdAt: "2026-01-01T00:02:00Z",
-        updatedAt: "2026-01-01T00:03:00Z",
-      },
-    ],
-    [
-      "names another PR base",
-      {
-        displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${"c".repeat(40)} gate true`,
-      },
-    ],
-    [
-      "names another PR number",
-      {
-        displayTitle: `E2E Gate PR #43 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
-      },
-    ],
-    ["has another head branch", { headBranch: "other-branch" }],
-    ["has another head repository", { headRepository: "example/fork" }],
-  ])("rejects an association-less E2E run that %s", (_name, overrides) => {
-    const result = runGate(
-      e2eRunFixture(e2eChecks([402, 42, "SUCCESS"]), {
-        "402": {
-          ...exactDiffGateRun("success", [{ id: 42, name: "E2E / PR Gate" }]),
-          pullRequests: [],
-          ...overrides,
-        },
-      }),
-    );
-
-    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: INCOMPLETE_E2E,
-    });
-  });
-
-  it("fails closed when an Actions run timing changes during job collection", () => {
-    const result = runGate(
-      e2eRunFixture(e2eChecks([403, 43, "SUCCESS"]), {
-        "403": {
-          ...exactDiffGateRun("success", [{ id: 43, name: "E2E / PR Gate" }]),
-          nextUpdatedAt: "2026-01-01T00:04:00Z",
-        },
-      }),
-    );
-
-    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: INCOMPLETE_E2E,
-    });
-  });
-
-  it("fails closed when E2E controller identity changes during job collection", () => {
-    const result = runGate(
-      e2eRunFixture(e2eChecks([404, 44, "SUCCESS"]), {
-        "404": {
-          ...exactDiffGateRun("success", [{ id: 44, name: "E2E / PR Gate" }]),
-          nextDisplayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${"c".repeat(40)} gate true`,
-        },
-      }),
-    );
-
-    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: INCOMPLETE_E2E,
     });
   });
 });

@@ -28,6 +28,7 @@ import {
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   blockRebuildOnPendingBaselineTransition,
+  revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
 import {
@@ -269,6 +270,15 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      const managedWorkloadMutationGuard = revalidateManagedWorkloadRebuildBeforeDelete(
+        sandboxName,
+        recreateOptions.managedWorkloadRebuild,
+      );
+      if (managedWorkloadMutationGuard) {
+        bail(managedWorkloadMutationGuard.message);
+        return;
+      }
+
       const recreateJournal = openRebuildRecreateJournal({
         target: {
           sandboxName,
@@ -372,7 +382,11 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
-        validateAtDeleteEdge: () => revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
+        validateAtDeleteEdge: () =>
+          revalidateManagedWorkloadRebuildBeforeDelete(
+            sandboxName,
+            recreateOptions.managedWorkloadRebuild,
+          ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
         onDeleted: () => {
           sandboxStillExists = false;
         },

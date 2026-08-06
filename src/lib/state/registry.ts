@@ -7,6 +7,7 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
+import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
   applyAddExtraProvider,
@@ -108,12 +109,17 @@ export function getDefault(): string | null {
 export function registerSandbox(entry: SandboxEntry): void {
   withLock(() => {
     const data = load();
+    const servingProfileProvenance = parseServingProfileProvenance(entry.servingProfileProvenance);
+    if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
+      throw new Error("Cannot register a sandbox with invalid serving profile provenance");
+    }
     if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
       data.defaultSandbox = null;
     }
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
+      servingProfileProvenance: servingProfileProvenance ?? undefined,
       ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
