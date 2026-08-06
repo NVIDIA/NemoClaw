@@ -139,6 +139,32 @@ const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "VolumesFrom",
 ]);
 
+const NULLABLE_HOST_CONFIG_ARRAY_KEYS = [
+  "Binds",
+  "BlkioDeviceReadBps",
+  "BlkioDeviceReadIOps",
+  "BlkioDeviceWriteBps",
+  "BlkioDeviceWriteIOps",
+  "BlkioWeightDevice",
+  "CapAdd",
+  "CapDrop",
+  "DeviceCgroupRules",
+  "DeviceRequests",
+  "Devices",
+  "Dns",
+  "DnsOptions",
+  "DnsSearch",
+  "ExtraHosts",
+  "GroupAdd",
+  "Links",
+  "MaskedPaths",
+  "Mounts",
+  "ReadonlyPaths",
+  "SecurityOpt",
+  "Ulimits",
+  "VolumesFrom",
+] as const;
+
 // Docker derives ConsoleSize, MaskedPaths, and ReadonlyPaths when it creates a
 // container. They have no corresponding create flags, but the adapter inspects
 // the stopped replacement and compares its complete normalized spec before it
@@ -226,6 +252,39 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
+function canonicalCapability(value: unknown, label: string): string {
+  const raw = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  const normalized = raw === "ALL" || raw.startsWith("CAP_") ? raw : `CAP_${raw}`;
+  if (normalized !== "ALL" && !/^CAP_[A-Z0-9_]+$/u.test(normalized)) {
+    throw new Error(`Managed bootstrap Docker ${label} contains an invalid capability.`);
+  }
+  return normalized;
+}
+
+function canonicalCapabilities(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Managed bootstrap Docker ${label} must be an array.`);
+  }
+  const normalized = value.map((entry) => canonicalCapability(entry, label));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate capabilities.`);
+  }
+  return normalized.sort();
+}
+
+function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...hostConfig };
+  for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
+    if (normalized[key] === null) normalized[key] = [];
+  }
+  for (const key of ["CapAdd", "CapDrop"] as const) {
+    if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
+  }
+  return normalized;
+}
+
 function deepFreeze<T>(value: T): T {
   if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
   for (const nested of Object.values(value)) deepFreeze(nested);
@@ -288,7 +347,7 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
     inspect: {
       Name: inspect.Name,
       Config: config as DockerContainerInspect["Config"],
-      HostConfig: hostConfig as DockerContainerInspect["HostConfig"],
+      HostConfig: normalizedHostConfig(hostConfig) as DockerContainerInspect["HostConfig"],
       NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings),
       ...("Platform" in raw && typeof raw.Platform === "string" ? { Platform: raw.Platform } : {}),
     },

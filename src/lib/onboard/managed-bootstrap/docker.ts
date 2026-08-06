@@ -775,6 +775,27 @@ function assertExactStringSet(observed: unknown, expected: readonly string[], la
   }
 }
 
+function capabilitySet(value: unknown, label: string): string[] {
+  const normalized = exactStringArray(value ?? [], label).map((entry) => {
+    const raw = entry.trim().toUpperCase();
+    return raw === "ALL" || raw.startsWith("CAP_") ? raw : `CAP_${raw}`;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate capabilities.`);
+  }
+  return normalized.sort();
+}
+
+function assertExactCapabilitySet(
+  observed: unknown,
+  expected: readonly string[],
+  label: string,
+): void {
+  if (!exactArrayEqual(capabilitySet(observed, label), capabilitySet(expected, label))) {
+    throw new Error(`Managed bootstrap Docker ${label} changed outside declared deltas.`);
+  }
+}
+
 function modeEnvironment(mode: DockerGpuPatchMode): string[] {
   const values: string[] = [];
   for (let index = 0; index < mode.args.length; index += 1) {
@@ -984,11 +1005,12 @@ function assertReplacementMatchesIntent(
   const observedHost = objectField(observedInspect, "HostConfig");
   const gpuAugment = plan.mode.kind !== "startup-command";
   assertExactEnvironmentDelta(originalConfig, observedConfig, plan.mode, intendedSandboxCommand);
-  assertExactStringSet(
+  const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
+  assertExactCapabilitySet(
     observedHost.CapAdd,
     [
-      ...stringSet(originalHost.CapAdd, "original capability additions"),
-      ...(gpuAugment ? ["SYS_PTRACE"] : []),
+      ...originalCapabilities,
+      ...(gpuAugment && !originalCapabilities.includes("CAP_SYS_PTRACE") ? ["CAP_SYS_PTRACE"] : []),
     ].filter((value, index, values) => values.indexOf(value) === index),
     "capability additions",
   );

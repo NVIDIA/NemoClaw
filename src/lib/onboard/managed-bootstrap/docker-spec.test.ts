@@ -73,6 +73,43 @@ describe("managed bootstrap Docker launch spec", () => {
     expect(observed.hash).not.toBe(expected.hash);
   });
 
+  it("canonicalizes Docker API and CLI host-list representations", () => {
+    const apiInspect = createDockerGpuInspectFixture();
+    Object.assign(apiInspect.HostConfig!, {
+      BlkioDeviceReadBps: null,
+      BlkioDeviceReadIOps: null,
+      BlkioDeviceWriteBps: null,
+      BlkioDeviceWriteIOps: null,
+      BlkioWeightDevice: null,
+      CapAdd: ["NET_ADMIN", "SYS_ADMIN"],
+      CapDrop: ["NET_RAW"],
+      Devices: null,
+      DnsOptions: null,
+      DnsSearch: null,
+      Ulimits: null,
+    });
+    const cliInspect = structuredClone(apiInspect);
+    Object.assign(cliInspect.HostConfig!, {
+      BlkioDeviceReadBps: [],
+      BlkioDeviceReadIOps: [],
+      BlkioDeviceWriteBps: [],
+      BlkioDeviceWriteIOps: [],
+      BlkioWeightDevice: [],
+      CapAdd: ["CAP_SYS_ADMIN", "CAP_NET_ADMIN"],
+      CapDrop: ["CAP_NET_RAW"],
+      Devices: [],
+      DnsOptions: [],
+      DnsSearch: [],
+      Ulimits: [],
+    });
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(apiInspect);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(cliInspect);
+
+    expect(observed.canonicalJson).toBe(expected.canonicalJson);
+    expect(observed.hash).toBe(expected.hash);
+  });
+
   it("orders durable launch keys by code unit across host locale settings", () => {
     const inspect = createDockerGpuInspectFixture();
     inspect.Config!.Labels = {
