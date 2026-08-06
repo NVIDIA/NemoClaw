@@ -27,11 +27,19 @@ const EMPTY_CATALOG: CompiledServingCatalog = {
   sources: [],
   catalogDigest: `sha256:${"b".repeat(64)}`,
 };
-const EXPECTED_MANAGED_RECIPE_IDS = ["vllm.deepseek-v4-flash-0731.spark-dual.v1"];
-const EXPECTED_MANAGED_PRESET_IDS = ["vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731"];
+const EXPECTED_MANAGED_RECIPE_IDS = [
+  "vllm.deepseek-v4-flash-0731.spark-dual.v1",
+  "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
+];
+const EXPECTED_MANAGED_PRESET_IDS = [
+  "local-model-profile.vllm.spark.v1",
+  "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
+];
 const EXPECTED_MANAGED_SOURCE_IDS = [
+  "local-model-profile.vllm.spark.v1",
   "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
   "vllm.deepseek-v4-flash-0731.spark-dual.v1",
+  "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
 ];
 
 const INCOMPLETE_MANAGED_RECIPE: ServingRecipe = {
@@ -80,7 +88,10 @@ const HOST_LOCAL_PRESET: ServingPreset = {
   spec: {
     selection: "explicit-only",
     priority: 1,
-    plan: { backend: "install-llama-cpp", recipeRef: HOST_LOCAL_RECIPE.metadata.id },
+    plan: {
+      backend: "install-llama-cpp",
+      recipeRef: HOST_LOCAL_RECIPE.metadata.id,
+    },
   },
 };
 
@@ -134,7 +145,11 @@ describe("managed inference catalog loader", () => {
 
   it("retains registered host-local vLLM definitions (#8246)", () => {
     const servingCatalog = loadServingCatalog();
-    const sourceRecipe = servingCatalog.recipes.find(({ spec }) => spec.backend === "vllm")!;
+    const sourceRecipe = servingCatalog.recipes.find(
+      ({ spec }) =>
+        spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF &&
+        spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF,
+    )!;
     expect(sourceRecipe).toBeDefined();
     const sourceSpec = sourceRecipe.spec as Exclude<
       ServingRecipe["spec"],
@@ -143,19 +158,14 @@ describe("managed inference catalog loader", () => {
     const sourcePreset = servingCatalog.presets.find(
       ({ spec }) => spec.plan.recipeRef === sourceRecipe.metadata.id,
     )!;
-    const { bindings: _bindings, ...hostLocalSpec } = sourceSpec;
-    const execution = {
-      materializerRef: HOST_LOCAL_VLLM_MATERIALIZER_REF,
-      lifecycleRef: HOST_LOCAL_VLLM_LIFECYCLE_REF,
-    };
     const recipe = {
       ...sourceRecipe,
       metadata: { id: "test.vllm-host-local-recipe" },
       spec: {
-        ...hostLocalSpec,
-        backend: "vllm",
-        model: { ...sourceSpec.model, preparation: { ref: "none/v1" } },
-        execution,
+        ...sourceSpec,
+        model: { ...sourceSpec.model },
+        execution: { ...sourceSpec.execution },
+        runtime: { ...sourceSpec.runtime },
       },
     } satisfies ServingRecipe;
     const preset = {
