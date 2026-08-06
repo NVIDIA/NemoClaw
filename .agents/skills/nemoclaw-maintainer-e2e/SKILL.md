@@ -284,7 +284,7 @@ gh api --paginate --slurp \
   >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
 ```
 
-Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs and as the full-mode validator inputs. Do not fetch the same run again. `jobs-latest-$RUN_ID.json` is only for ordinary and Launchable modes.
+Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the full-mode validator inputs. Do not fetch the same run again. `jobs-latest-$RUN_ID.json` is only for ordinary and Launchable modes.
 
 For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
 
@@ -337,7 +337,7 @@ A missing, mismatched, or failed cleanup receipt is not evidence.
 
 ## Bind Release Evidence
 
-If no release plan exists, label a successful full run against `origin/main` as provisional release evidence.
+Label a successful full run against `origin/main` as SHA-bound diagnostic evidence.
 Return:
 
 - candidate SHA;
@@ -347,13 +347,11 @@ Return:
 - Launchable E2E identity; and
 - cleanup result.
 
-If the release candidate SHA changes, discard the earlier full run and dispatch full mode for the new SHA.
-No release-note-only delta exception is currently defined.
+When validating another SHA, dispatch or locate a run bound to that exact SHA rather than reusing an earlier result.
 
-When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
+Return the validated fields for post-merge triage or any explicitly requested full-run audit.
 The trusted `dispatch.json` receipt proves that full mode used empty selectors and included `Exact staging Brev Launchable`.
-The release evidence ledger proves the result of each workflow E2E.
-Do not ask for the release confirmation phrase in this skill.
+The evidence proves the result of each workflow E2E; it does not gate merging or a release tag.
 
 ## Access Failures
 

@@ -185,123 +185,33 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(taxonomy.quality_rules.post_merge_untagged_release_labeling_allowed).toBe(true);
   });
 
-  it("requires E2E evidence for the release candidate commit or itemized maintainer exceptions", () => {
+  it("keeps the semi-automatic 4 PM tag and merging independent from asynchronous E2E stabilization", () => {
     const dailyFlow = read(".agents/skills/nemoclaw-maintainer-policies/references/daily-flow.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
-    expect(policy).toContain("full `origin/main` commit SHA");
-    expect(policy).toContain("`.github/workflows/e2e.yaml` is the sole source of truth");
-    expect(policy).toContain("Do not maintain a separate release-gating test list");
-    expect(policy).toContain("at least one completed, successful execution");
-    expect(policy).toContain("Successful evidence may accumulate across rerun attempts");
-    expect(policy).toContain("Evidence from another workflow run does not satisfy the ledger");
-    expect(policy).toContain("Require every declared `RELEASE_E2E_ACTIVATION_PATH`");
-    expect(policy).toContain("A missing path is a preflight failure");
-    expect(release).toContain("Each job that declares `RELEASE_E2E_ACTIVATION_PATH`");
-    expect(release).toContain("A missing activation path is a preflight failure");
-    expect(policy).toContain("each expanded matrix execution as a separate ledger entry");
-    expect(policy).toContain("matrix `id`");
-    expect(policy).toContain("A later failure does not erase an earlier successful execution");
-    expect(policy).toContain(
-      "Skipped, unexecuted, queued, in-progress, cancelled, and failing results do not count as successful evidence",
-    );
-    expect(policy).toContain("itemized maintainer exception");
-    expect(policy).toContain("If the candidate SHA changes");
-    expect(policy).toContain("This does not freeze `main` or prevent merges");
-    expect(policy).toContain("Require one completed, successful full workflow run");
-    expect(policy).toContain("discard the ledger and its exceptions");
-    expect(policy).toContain("selector inputs");
-    expect(release).toContain('"dispatchJson"');
-    expect(release).toContain("the number of tests with successful evidence");
-    expect(release).toContain("successful run or job URL and attempt");
-    expect(release).toContain("npm run release:e2e-evidence");
-    expect(release).toContain("filter=all");
-    expect(release).toContain("actions/runs/$RUN_ID/artifacts");
-    expect(release).toContain("sort_by(.created_at)");
-    expect(release).not.toContain("RECEIPT_ATTEMPT");
-    expect(release).toContain("rerun preflight and the full E2E workflow");
-    expect(release).toContain("Immediately before asking, refresh `origin/main` once");
-    const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
-    const confirmationPrompt = release.indexOf(
-      "Ask the maintainer to paste this phrase",
-      evidenceSummary,
-    );
-    expect(evidenceSummary).toBeGreaterThanOrEqual(0);
-    expect(evidenceSummary).toBeLessThan(confirmationPrompt);
-    expect(evening).toContain(
-      "Each missing or skipped execution in that successful run requires its own itemized maintainer exception",
-    );
-    expect(evening).toContain(
-      "Missing or invalid Launchable E2E evidence in that successful run requires a separate",
-    );
-    expect(evening).toContain("Tag the confirmed release commit with `vX.Y.Z`");
-    expect(evening).not.toContain("tag `main`");
-    expect(dailyFlow).toContain("capture the candidate SHA and review every E2E test");
-    expect(dailyFlow).toContain(
-      "`head_sha` and all associated evidence to match the candidate SHA",
-    );
-    expect(dailyFlow).toContain("invalidate the prior run and evidence");
-    expect(priorities).toContain("Record the release SHA and required E2E evidence");
-  });
-
-  it("requires full-mode exact Brev Launchable evidence before release confirmation (#7487)", () => {
-    const e2e = read(".agents/skills/nemoclaw-maintainer-e2e/SKILL.md");
-    const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
-    const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
-    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
-    const skillsGuide = read(".agents/skills/nemoclaw-skills-guide/SKILL.md");
-
-    expect(e2e).toContain("include_staging_brev_launchable=true");
-    expect(e2e).toContain("Exact staging Brev Launchable");
-    expect(e2e).toContain("launchable-e2e.json");
-    expect(e2e).toContain("cleanup.json");
-    expect(e2e).toContain("dispatch.json");
-    expect(e2e).toContain("If the release candidate SHA changes");
-    expect(e2e).toContain("jobs?filter=all&per_page=100");
-    expect(e2e).toContain("Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
-    expect(release).toContain("reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
-    expect(release).toContain("load `nemoclaw-maintainer-e2e` and dispatch one full run");
-    expect(release).toContain("Treat a skipped job as missing evidence");
-    expect(release).toContain("include_staging_brev_launchable=true");
-    expect(release).toContain("cleanup evidence that reports the qualified workspace as `ABSENT`");
-    expect(release).toContain(
-      "a separate itemized maintainer exception for each missing or skipped execution",
-    );
-    expect(release).toContain(
-      "a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence",
-    );
-    expect(release).toContain("when accepted full-mode exact Brev evidence exists");
-    expect(
-      release.indexOf("load `nemoclaw-maintainer-e2e` and dispatch one full run"),
-    ).toBeLessThan(release.indexOf("Ask the maintainer to paste this phrase"));
-    expect(evening).toContain("load `nemoclaw-maintainer-e2e`");
-    expect(evening).toContain(
-      "Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E",
-    );
-    expect(release).toContain(
-      "Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E",
-    );
-    expect(policy).toContain("A failed workflow run cannot supply the release ledger");
-    expect(release).toContain("Reject a failed workflow run before presenting the ledger");
-    expect(evening).not.toContain("readiness variable");
-    expect(policy).toContain("Require one completed, successful full workflow run");
-    expect(policy).toContain(
-      "Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence",
-    );
-    expect(policy).toContain("including `Exact staging Brev Launchable`");
-    expect(policy).toContain("cleanup receipt");
-    expect(policy).toContain("trusted dispatch receipt");
-    expect(policy).toContain(
-      "Each missing or skipped execution in the accepted successful workflow run",
-    );
-    expect(policy).toContain(
-      "Missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run",
-    );
-    expect(policy).toContain("No release-note-only delta exception is currently defined");
-    expect(skillsGuide).toContain("`nemoclaw-maintainer-e2e`");
+    expect(policy).toContain("4 PM America/Los_Angeles");
+    expect(policy).toContain("Every push to `main` starts the complete E2E workflow");
+    expect(policy).toContain("They never block merging");
+    expect(policy).toContain("From 4 PM through 8 AM");
+    expect(policy).toContain("At 8 AM, hand the remaining state");
+    expect(policy).toContain("authorized maintainer to confirm and sign locally");
+    expect(policy).toContain("Never put the release signing key in GitHub Actions");
+    expect(release).toContain("This is semi-automatic");
+    expect(release).toContain("Do not consult E2E state before cutting the tag");
+    expect(release).toContain("Never put the release signing key in a GitHub Actions secret");
+    expect(release).toContain("npm run release:cut -- --plan <plan.json> --preflight-only");
+    expect(release).toContain("CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>");
+    expect(release).not.toContain("release:e2e-evidence");
+    expect(release).not.toContain("release-daily-tag");
+    expect(release).not.toContain("NEMOCLAW_RELEASE_TAG_SIGNING_KEY");
+    expect(evening).toContain("keep merging normally");
+    expect(evening).toContain("Do not delay or retry the tag");
+    expect(evening).toContain("maintainer's local signer");
+    expect(dailyFlow).toContain("regardless of E2E state");
+    expect(priorities).toContain("E2E does not block the tag or merging");
   });
 
   it("runs release-prep docs before generating the final release plan", () => {
