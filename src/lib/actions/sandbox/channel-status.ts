@@ -284,7 +284,7 @@ function buildBasicChannelReport(
         : "not checked in summary view",
       hint: options.channelPaused
         ? undefined
-        : `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` to probe live health`,
+        : `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` for detailed status`,
     });
   } else if (options.includeDeepDiagnostics ?? true) {
     signals.push({

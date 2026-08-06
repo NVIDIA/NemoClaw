@@ -3,7 +3,7 @@
 
 /** Pure Slack payload builder for the consolidated E2E scorecard. */
 
-type ScorecardRunMode = "Scheduled E2E" | "Manual full run" | "Selective dispatch" | (string & {});
+type ScorecardRunMode = "Main push" | "Manual full run" | "Selective dispatch" | (string & {});
 
 type ScorecardData = {
   today: string;
@@ -39,7 +39,7 @@ type SlackBlock = SlackActionsBlock | SlackContextBlock | SlackSectionBlock;
 
 function buildBlocks(data: ScorecardData): SlackBlock[] {
   const blocks: SlackBlock[] = [];
-  const showActor = data.runMode !== "Scheduled E2E" && Boolean(data.actor);
+  const showActor = data.runMode !== "Main push" && Boolean(data.actor);
   const runModeText = showActor ? `${data.runMode} (by *${data.actor}*)` : data.runMode;
   const contextElements: SlackMrkdwnText[] = [
     { type: "mrkdwn", text: `*Run mode:* ${runModeText}` },
@@ -120,8 +120,8 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
 function buildFallbackText(data: ScorecardData): string {
   let modeSegment: string;
   switch (data.runMode) {
-    case "Scheduled E2E":
-      modeSegment = "🗓️ DAILY";
+    case "Main push":
+      modeSegment = "🚀 MAIN PUSH";
       break;
     case "Manual full run":
       modeSegment = data.actor ? `🛠 Manual full by ${data.actor}` : "🛠 Manual full";
@@ -146,7 +146,7 @@ function getStatusColor(data: ScorecardData): SlackStatusColor {
 type SlackChannel = "daily" | "fullrun" | "preview";
 
 function getSlackChannel(data: ScorecardData): SlackChannel {
-  if (data.runMode === "Scheduled E2E") return "daily";
+  if (data.runMode === "Main push") return "daily";
   if (data.runMode === "Manual full run") return "fullrun";
   return "preview";
 }

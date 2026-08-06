@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>]" >&2
+  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--offline-cache <absolute-dir>]" >&2
   exit 2
 }
 
@@ -17,8 +17,15 @@ openclaw_base=""
 hermes_base=""
 dcode_base=""
 source_root="$PWD"
+cache_to=""
+offline_cache=""
 while (($# > 0)); do
   case "$1" in
+    --cache-to)
+      (($# >= 2)) || usage
+      cache_to="$2"
+      shift 2
+      ;;
     --output)
       (($# >= 2)) || usage
       output="$2"
@@ -42,6 +49,11 @@ while (($# > 0)); do
     --openclaw-base)
       (($# >= 2)) || usage
       openclaw_base="$2"
+      shift 2
+      ;;
+    --offline-cache)
+      (($# >= 2)) || usage
+      offline_cache="$2"
       shift 2
       ;;
     --hermes-base)
@@ -74,6 +86,31 @@ done
 [[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
+if [[ -n "$cache_to" ]]; then
+  [[ "$cache_to" == /* && "$cache_to" != *$'\n'* && ! -L "$cache_to" ]] || usage
+  mkdir -p -- "$cache_to"
+  [[ -d "$cache_to" && ! -L "$cache_to" ]] || usage
+  cache_to="$(cd -- "$cache_to" && pwd -P)"
+  [[ -z "$(find "$cache_to" -mindepth 1 -print -quit)" ]] || {
+    echo "ERROR: protected managed-image cache destination must be empty" >&2
+    exit 1
+  }
+fi
+if [[ -n "$offline_cache" ]]; then
+  [[ "$offline_cache" == /* && "$offline_cache" != *$'\n'* && -d "$offline_cache" && ! -L "$offline_cache" ]] || usage
+  offline_cache="$(cd -- "$offline_cache" && pwd -P)"
+  [[ -z "$(find "$offline_cache" -type l -print -quit)" ]] || {
+    echo "ERROR: protected managed-image offline cache contains a symlink" >&2
+    exit 1
+  }
+  for agent in openclaw hermes langchain-deepagents-code; do
+    cache_source="$offline_cache/$agent"
+    [[ -d "$cache_source/blobs/sha256" && -f "$cache_source/index.json" ]] || {
+      echo "ERROR: protected managed-image offline cache is incomplete for ${agent}" >&2
+      exit 1
+    }
+  done
+fi
 
 for command in docker jq sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -96,6 +133,16 @@ build_agent() {
   local exact_base_raw="$work_dir/${agent}-base-exact.raw"
   local metadata="$work_dir/${agent}-build-metadata.json"
   local exact_image_raw="$work_dir/${agent}-image-exact.raw"
+  local -a cache_args=()
+
+  if [[ -n "$cache_to" ]]; then
+    local cache_destination="$cache_to/$agent"
+    cache_args+=(--cache-to "type=local,dest=${cache_destination},mode=max")
+  fi
+  if [[ -n "$offline_cache" ]]; then
+    local cache_source="$offline_cache/$agent"
+    cache_args+=(--cache-from "type=local,src=${cache_source}" --network none)
+  fi
 
   local base_digest="${base_reference##*@}"
   docker buildx imagetools inspect "$base_reference" --raw >"$exact_base_raw"
@@ -119,6 +166,7 @@ build_agent() {
     --provenance=false \
     --sbom=false \
     --metadata-file "$metadata" \
+    ${cache_args[@]+"${cache_args[@]}"} \
     --tag "${image_repository}:${revision}" \
     --label "org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw" \
     --label "org.opencontainers.image.revision=${revision}" \

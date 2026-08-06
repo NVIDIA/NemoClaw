@@ -140,6 +140,7 @@ const { createSandbox } = require(${onboardPath});
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       },
     });
 

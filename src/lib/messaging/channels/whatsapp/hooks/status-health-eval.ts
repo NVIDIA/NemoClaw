@@ -85,6 +85,14 @@ export type WhatsappProbeInput = {
   presetOnGateway: boolean | null;
   // Whether the whatsapp channel is recorded in the registry messaging plan.
   channelEnabledInRegistry: boolean;
+  // Hermes runs the dashboard under a separate home. This probe records only
+  // whether the two expected credential files exist, never their contents.
+  sessionLocations?: WhatsappSessionLocations;
+};
+
+export type WhatsappSessionLocations = {
+  gatewaySessionCreds: boolean | null;
+  dashboardSessionCreds: boolean | null;
 };
 
 /**
@@ -139,6 +147,17 @@ function pairingSignal(input: WhatsappProbeInput): DiagnosticSignal {
     };
   }
   if (input.paired === false) {
+    const dashboardOnly = hermesDashboardOnlySession(input);
+    if (input.agent === "hermes") {
+      return {
+        label: "Pairing / session",
+        severity: "warn",
+        detail: "Hermes gateway session path has no WhatsApp credentials",
+        hint: dashboardOnly
+          ? "point the Hermes WhatsApp session_path at the dashboard-home session path, then restart the gateway"
+          : "run `hermes whatsapp` inside the sandbox to display a QR code",
+      };
+    }
     const loginHint =
       input.agent === "hermes"
         ? "run `hermes whatsapp` inside the sandbox to display a QR code"
@@ -154,6 +173,57 @@ function pairingSignal(input: WhatsappProbeInput): DiagnosticSignal {
     label: "Pairing / session",
     severity: "ok",
     detail: "paired (reported by channel runtime)",
+  };
+}
+
+function hermesDashboardOnlySession(input: WhatsappProbeInput): boolean {
+  return (
+    input.agent === "hermes" &&
+    input.sessionLocations?.gatewaySessionCreds === false &&
+    input.sessionLocations.dashboardSessionCreds === true
+  );
+}
+
+function sessionLocationSignal(input: WhatsappProbeInput): DiagnosticSignal | null {
+  const locations = input.sessionLocations;
+  if (!locations) return null;
+  const gateway = locations.gatewaySessionCreds;
+  const dashboard = locations.dashboardSessionCreds;
+  if (gateway === false && dashboard === true) {
+    return {
+      label: "Session location",
+      severity: "warn",
+      detail:
+        "dashboard-home has WhatsApp credentials, but the Hermes gateway session path is empty",
+      hint: "run `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path`",
+    };
+  }
+  if (gateway === true && dashboard === false) {
+    return {
+      label: "Session location",
+      severity: "ok",
+      detail: "Hermes gateway session path contains WhatsApp credentials",
+    };
+  }
+  if (gateway === false && dashboard === false) {
+    return {
+      label: "Session location",
+      severity: "info",
+      detail: "no WhatsApp credentials found in the Hermes gateway or dashboard session paths",
+    };
+  }
+  if (gateway === true && dashboard === true) {
+    return {
+      label: "Session location",
+      severity: "info",
+      detail: "both Hermes session paths contain WhatsApp credentials",
+      hint: "use one active WhatsApp bridge for the paired account",
+    };
+  }
+  return {
+    label: "Session location",
+    severity: "info",
+    detail: "Hermes session paths could not be inspected",
   };
 }
 
@@ -400,6 +470,13 @@ function buildHints(verdict: WhatsappVerdict, input: WhatsappProbeInput): string
       );
       break;
     case "unpaired":
+      if (hermesDashboardOnlySession(input)) {
+        hints.push(
+          "Hermes dashboard pairing wrote credentials under dashboard-home, but the gateway reads the default platforms path.",
+          "Use `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path` to point the gateway at that session.",
+        );
+        break;
+      }
       hints.push(
         input.agent === "hermes"
           ? "Run `hermes whatsapp` inside the sandbox and scan the QR with your phone."
@@ -429,9 +506,11 @@ function buildHints(verdict: WhatsappVerdict, input: WhatsappProbeInput): string
 }
 
 export function evaluateWhatsappDiagnostics(input: WhatsappProbeInput): WhatsappDiagnosticReport {
+  const sessionSignal = sessionLocationSignal(input);
   const signals: DiagnosticSignal[] = [
     configCoverageSignal(input),
     pairingSignal(input),
+    ...(sessionSignal ? [sessionSignal] : []),
     bridgeProcessSignal(input),
     websocketSignal(input),
     inboundSignal(input),
