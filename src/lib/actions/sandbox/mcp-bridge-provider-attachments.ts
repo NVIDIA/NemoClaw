@@ -105,6 +105,17 @@ export function providerDetachChangedState(status: number | null, output: string
 
 export type ProviderDetachOutcome = "detached" | "absent" | "unknown";
 
+const MCP_PROVIDER_DETACH_ATTEMPTS = 2;
+
+function isRetryableSandboxMutationConflict(status: number | null, output: string): boolean {
+  return (
+    status !== 0 &&
+    /Failed to detach provider:\s*sandbox was modified by another operation\.\s*Please retry the command\.?/i.test(
+      stripAnsi(output),
+    )
+  );
+}
+
 export function detachProvider(
   sandboxName: string,
   entry: McpBridgeEntry,
@@ -118,43 +129,50 @@ export function detachProvider(
       `MCP server '${entry.server}' has no recorded provider ID for prechecked detach.`,
     );
   }
-  const before = exactAttachment(sandboxName, entry);
-  if (!before.inspection.attachments) {
+  for (let attempt = 0; attempt < MCP_PROVIDER_DETACH_ATTEMPTS; attempt += 1) {
+    const before = exactAttachment(sandboxName, entry);
+    if (!before.inspection.attachments) {
+      if (options.bestEffort) return "unknown";
+      throw new McpBridgeError(
+        before.inspection.error ?? `Could not inspect provider attachment '${entry.providerName}'.`,
+      );
+    }
+    if (!before.attachment) return "absent";
+    if (!attachmentMatchesCurrentProviderSnapshot(before.attachment, entry)) {
+      if (options.bestEffort) return "unknown";
+      throw new McpBridgeError(
+        `Provider attachment '${entry.providerName}' does not match MCP server '${entry.server}'. Expected stable provider ID '${entry.providerId}', found '${before.attachment.providerId ?? "missing"}', with credential keys '${before.attachment.credentialKeys.join(", ") || "none"}'.`,
+      );
+    }
+    const result = runOpenshellProviderCommand(
+      ["sandbox", "provider", "detach", sandboxName, entry.providerName],
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
+      } as Record<string, unknown>,
+    ) as OpenShellCommandResult;
+    const output = commandOutput(result);
+    const after = exactAttachment(sandboxName, entry);
+    if (after.inspection.attachments && !after.attachment) {
+      return providerDetachChangedState(result.status, output) ? "detached" : "absent";
+    }
+    if (
+      attempt + 1 < MCP_PROVIDER_DETACH_ATTEMPTS &&
+      after.inspection.attachments &&
+      attachmentMatchesCurrentProviderSnapshot(after.attachment, entry) &&
+      isRetryableSandboxMutationConflict(result.status, output)
+    ) {
+      continue;
+    }
     if (options.bestEffort) return "unknown";
     throw new McpBridgeError(
-      before.inspection.error ?? `Could not inspect provider attachment '${entry.providerName}'.`,
+      output ||
+        after.inspection.error ||
+        `OpenShell did not confirm removal of provider attachment '${entry.providerName}'.`,
     );
   }
-  if (!before.attachment) return "absent";
-  if (
-    before.attachment.providerId !== entry.providerId ||
-    before.attachment.credentialKeys.length !== 1 ||
-    before.attachment.credentialKeys[0] !== entry.env[0]
-  ) {
-    if (options.bestEffort) return "unknown";
-    throw new McpBridgeError(
-      `Provider attachment '${entry.providerName}' does not match MCP server '${entry.server}'. Expected stable provider ID '${entry.providerId}', found '${before.attachment.providerId ?? "missing"}', with credential keys '${before.attachment.credentialKeys.join(", ") || "none"}'.`,
-    );
-  }
-  const result = runOpenshellProviderCommand(
-    ["sandbox", "provider", "detach", sandboxName, entry.providerName],
-    {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      suppressOutput: true,
-    } as Record<string, unknown>,
-  ) as OpenShellCommandResult;
-  const output = commandOutput(result);
-  const after = exactAttachment(sandboxName, entry);
-  if (after.inspection.attachments && !after.attachment) {
-    return providerDetachChangedState(result.status, output) ? "detached" : "absent";
-  }
-  if (options.bestEffort) return "unknown";
-  throw new McpBridgeError(
-    output ||
-      after.inspection.error ||
-      `OpenShell did not confirm removal of provider attachment '${entry.providerName}'.`,
-  );
+  return "unknown";
 }
 
 /**

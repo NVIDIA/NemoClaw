@@ -14,26 +14,12 @@ import {
 const candidateSha = "a".repeat(40);
 
 function preflight(
-  input: {
-    candidatePathExists?: (candidateSha: string, candidatePath: string) => boolean;
-    jetsonRunnerOnline?: "true" | "unknown";
-  } = {},
+  input: { candidatePathExists?: (candidateSha: string, candidatePath: string) => boolean } = {},
 ) {
   return buildReleaseE2ePreflight({
     candidateSha,
-    candidatePathExists: input.candidatePathExists ?? (() => false),
-    jetsonRunnerOnline: input.jetsonRunnerOnline ?? "true",
+    candidatePathExists: input.candidatePathExists ?? (() => true),
   });
-}
-
-function selectedJobs(plan: ReleaseE2ePreflight, group: ReleaseE2eExecution["group"]): string[] {
-  return [
-    ...new Set(
-      plan.executions
-        .filter((execution) => execution.group === group)
-        .map((execution) => execution.jobId),
-    ),
-  ];
 }
 
 function runEvidence(
@@ -48,19 +34,18 @@ function runEvidence(
   } = {},
 ): ReleaseE2eRunEvidence {
   const attempt = options.attempt ?? 1;
-  const runId = 1000 + attempt;
+  const runId = 1001;
   const executions = plan.executions.filter(
     (execution) => execution.group === group && (options.only?.(execution) ?? true),
   );
-  const selectors = group === "default" ? [] : selectedJobs(plan, group);
+  const selectors: string[] = [];
   return {
     dispatch: {
-      allowJetsonRunnerQueue: group === "conditional",
+      allowJetsonRunnerQueue: false,
       candidateSha,
-      defaultSuiteSelected: group === "default",
+      emptySelectors: true,
       eventName: "workflow_dispatch",
-      includeStagingBrevLaunchable:
-        group === "default" && plan.dispatches.defaultSuite.includeStagingBrevLaunchable,
+      includeStagingBrevLaunchable: plan.dispatches.completeRun.includeStagingBrevLaunchable,
       jobs: selectors.join(","),
       kind: "nemoclaw-e2e-dispatch-v1",
       targets: "",
@@ -82,6 +67,8 @@ function runEvidence(
       head_branch: "main",
       id: runId,
       path: ".github/workflows/e2e.yaml",
+      status: "completed",
+      conclusion: "success",
       run_attempt: attempt,
       head_sha: options.sha ?? candidateSha,
       html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
@@ -90,46 +77,54 @@ function runEvidence(
 }
 
 describe("release E2E evidence", () => {
-  it("derives full, concurrent, conditional, and Launchable E2E work from the workflow", () => {
-    const plan = preflight({ jetsonRunnerOnline: "unknown" });
+  it("derives one complete release E2E run from the workflow", () => {
+    const plan = preflight();
 
-    expect(plan.dispatches.defaultSuite).toEqual({
+    expect(plan.dispatches.completeRun).toEqual({
       includeStagingBrevLaunchable: true,
       jobs: "",
       mode: "full",
       targets: "",
     });
-    const parallelExplicitJobs = plan.dispatches.parallelExplicit.jobs.split(",");
-    expect(parallelExplicitJobs).toHaveLength(3);
-    expect(new Set(parallelExplicitJobs)).toEqual(
-      new Set(["openshell-gateway-auth-contract", "mcp-bridge-dev", "hermes-gpu-startup"]),
-    );
-    expect(plan.dispatches.conditional).toEqual([
-      expect.objectContaining({ allowJetsonRunnerQueue: false, jobs: "jetson-nvmap-gpu" }),
-    ]);
     expect(plan.launchableE2eJobId).toBe("staging-brev-launchable");
-    expect(plan.exceptionsRequired).toEqual(["jetson-nvmap-gpu"]);
+    expect(plan.exceptionsRequired).toEqual([]);
   });
 
-  it("includes an activation-gated explicit lane only when its candidate marker exists", () => {
-    const plan = preflight({
-      candidatePathExists: (_sha, candidatePath) =>
-        candidatePath === "ci/protected-managed-image-multiarch-activation-v1.json",
-    });
-
-    expect(plan.dispatches.parallelExplicit.jobs.split(",")).toContain(
-      "managed-image-multiarch-startup",
+  it("rejects a missing activation path for a default E2E", () => {
+    expect(() =>
+      preflight({
+        candidatePathExists: (_sha, candidatePath) =>
+          candidatePath !== "ci/protected-managed-image-multiarch-activation-v1.json",
+      }),
+    ).toThrow(
+      "candidate commit is missing required E2E activation path ci/protected-managed-image-multiarch-activation-v1.json for managed-image-multiarch-startup",
     );
-    expect(
-      plan.executions.filter((execution) => execution.jobId === "managed-image-multiarch-startup"),
-    ).toHaveLength(2);
+  });
+
+  it("rejects an in-progress workflow with successful execution jobs", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    (evidence.run as Record<string, unknown>).status = "in_progress";
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
+      'runs[0].run.status must equal "completed"',
+    );
+  });
+
+  it("rejects a failed workflow with successful execution jobs", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    (evidence.run as Record<string, unknown>).conclusion = "failure";
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
+      'runs[0].run.conclusion must equal "success"',
+    );
   });
 
   it("fails when the candidate commit cannot be inspected for activation paths", () => {
     expect(() =>
       buildReleaseE2ePreflight({
         candidateSha: "0".repeat(40),
-        jetsonRunnerOnline: "true",
       }),
     ).toThrow("could not inspect release E2E activation path");
   });
@@ -146,7 +141,7 @@ describe("release E2E evidence", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("accumulates successful evidence across parallel runs and attempts", () => {
+  it("accumulates successful evidence across rerun attempts", () => {
     const plan = preflight();
     const firstDefaultRun = runEvidence(plan, "default");
     const laterFailure = runEvidence(plan, "default", {
@@ -154,34 +149,47 @@ describe("release E2E evidence", () => {
       conclusion: () => "failure",
       only: (execution) => execution.id === "snapshot-commands",
     });
-    const ledger = buildReleaseE2eLedger(plan, [
-      firstDefaultRun,
-      runEvidence(plan, "parallel-explicit"),
-      runEvidence(plan, "conditional"),
-      laterFailure,
-    ]);
+    (firstDefaultRun.run as Record<string, unknown>).run_attempt = 2;
+    (firstDefaultRun.jobs as { jobs: unknown[] }).jobs.push(
+      ...(laterFailure.jobs as { jobs: unknown[] }).jobs,
+    );
+    const ledger = buildReleaseE2eLedger(plan, [firstDefaultRun]);
 
-    expect(ledger.greenCount).toBe(ledger.requiredCount);
+    expect(ledger.successfulCount).toBe(ledger.requiredCount);
     expect(ledger.missingCount).toBe(0);
     expect(ledger.entries.find((entry) => entry.id === "snapshot-commands")).toMatchObject({
       attempts: [
         { attempt: 2, conclusion: "failure" },
         { attempt: 1, conclusion: "success" },
       ],
-      greenEvidence: { attempt: 1 },
-      status: "green",
+      successfulEvidence: { attempt: 1 },
+      status: "successful",
     });
+  });
+
+  it("rejects evidence assembled from multiple workflow runs", () => {
+    const plan = preflight();
+    expect(() =>
+      buildReleaseE2eLedger(plan, [runEvidence(plan, "default"), runEvidence(plan, "default")]),
+    ).toThrow("release E2E evidence requires exactly one workflow run, received 2");
+  });
+
+  it("requires the full run to include staging Brev Launchable", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    (evidence.dispatch as Record<string, unknown>).includeStagingBrevLaunchable = false;
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
+      "runs[0].dispatch.includeStagingBrevLaunchable must equal true",
+    );
   });
 
   it("reports a failed matrix row without collapsing its successful siblings", () => {
     const plan = preflight();
     const failedId = 'hermes-gpu-startup[scenario="fallback"]';
     const ledger = buildReleaseE2eLedger(plan, [
-      runEvidence(plan, "default"),
-      runEvidence(plan, "parallel-explicit", {
+      runEvidence(plan, "default", {
         conclusion: (execution) => (execution.id === failedId ? "failure" : "success"),
       }),
-      runEvidence(plan, "conditional"),
     ]);
 
     expect(ledger.missingCount).toBe(1);
@@ -193,18 +201,16 @@ describe("release E2E evidence", () => {
       ledger.entries.find(
         (entry) => entry.id === 'hermes-gpu-startup[scenario="compatibility-only"]',
       ),
-    ).toMatchObject({ status: "green" });
+    ).toMatchObject({ status: "successful" });
   });
 
-  it("does not count an in-progress execution as green", () => {
+  it("does not count an in-progress execution as successful", () => {
     const plan = preflight();
     const pendingId = "snapshot-commands";
     const ledger = buildReleaseE2eLedger(plan, [
       runEvidence(plan, "default", {
         status: (execution) => (execution.id === pendingId ? "in_progress" : "completed"),
       }),
-      runEvidence(plan, "parallel-explicit"),
-      runEvidence(plan, "conditional"),
     ]);
 
     expect(ledger.missingCount).toBe(1);
@@ -221,8 +227,6 @@ describe("release E2E evidence", () => {
       runEvidence(plan, "default", {
         conclusion: (execution) => (execution.id === skippedId ? "skipped" : "success"),
       }),
-      runEvidence(plan, "parallel-explicit"),
-      runEvidence(plan, "conditional"),
     ]);
 
     expect(ledger.entries.find((entry) => entry.id === skippedId)).toMatchObject({
@@ -272,15 +276,15 @@ describe("release E2E evidence", () => {
     );
   });
 
-  it("rejects a selective dispatch receipt that claims default-suite coverage", () => {
+  it("rejects a selective dispatch receipt that claims empty selectors", () => {
     const plan = preflight();
     const selective = runEvidence(plan, "default");
     const dispatch = selective.dispatch as Record<string, unknown>;
     dispatch.jobs = "snapshot-commands";
-    dispatch.defaultSuiteSelected = true;
+    dispatch.emptySelectors = true;
 
     expect(() => buildReleaseE2eLedger(plan, [selective])).toThrow(
-      "runs[0].dispatch.defaultSuiteSelected must equal false",
+      'runs[0].dispatch.jobs must equal ""',
     );
   });
 
