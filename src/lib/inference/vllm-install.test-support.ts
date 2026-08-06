@@ -177,7 +177,9 @@ export function mockSuccessfulVllmInstall(
     ["ps", () => `${containerName}\n`],
   ]);
   mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
-    (dockerCaptureByCommand.get(args[0] ?? "") ?? (() => ""))(),
+    args[0] === "container" && mocks.dockerRunDetached.mock.calls.length > 0
+      ? vllmContainerRow(containerName, { state: "running" })
+      : (dockerCaptureByCommand.get(args[0] ?? "") ?? (() => ""))(),
   );
 }
 

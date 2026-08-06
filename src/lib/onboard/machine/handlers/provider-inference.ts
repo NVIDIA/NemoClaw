@@ -12,6 +12,7 @@ import {
 } from "../../../inference/gateway-route-compatibility";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
 import type { InferenceEndpointSource } from "../../../inference/selection";
+import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
@@ -245,6 +246,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       hermesToolGateways: string[];
       enabledChannels: string[] | null;
       sandboxName: string;
+      servingProfileProvenance?: ServingProfileProvenance | null;
       notes: string[];
     }): string;
     promptYesNoOrDefault(
@@ -975,6 +977,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName: confirmedSandboxName,
+          servingProfileProvenance: session?.servingProfileProvenance ?? null,
           notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );

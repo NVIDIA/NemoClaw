@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   measureDirectorySizeBytes: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
+  persistHostLocalVllmRuntimeReceipt: vi.fn(),
+  runCurlProbe: vi.fn(),
   resolveHostLocalVllmSelection: vi.fn<() => HostLocalVllmSelectionResult>(() => ({
     kind: "not-selected",
   })),
@@ -42,6 +44,10 @@ vi.mock("../adapters/docker", () => ({
   dockerStop: mocks.dockerStop,
 }));
 
+vi.mock("../adapters/http/probe", () => ({
+  runCurlProbe: mocks.runCurlProbe,
+}));
+
 vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
@@ -61,6 +67,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./serving/vllm-managed-support")>();
   return {
     ...actual,
+    persistHostLocalVllmRuntimeReceipt: mocks.persistHostLocalVllmRuntimeReceipt,
     resolveHostLocalVllmSelection: mocks.resolveHostLocalVllmSelection,
     tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
   };
@@ -96,6 +103,15 @@ import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 beforeEach(() => {
   applyVllmInstallProbeDefaults(mocks);
   mocks.getGpuIndicesByName.mockReturnValue([]);
+  mocks.persistHostLocalVllmRuntimeReceipt.mockReset();
+  mocks.runCurlProbe.mockReturnValue({
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: "",
+    stderr: "",
+    message: "",
+  });
   mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
   mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({ kind: "not-selected" });
 });
@@ -432,6 +448,7 @@ describe("vLLM run command", () => {
     const catalogProfile = {
       ...profile!,
       servingCatalog: {
+        catalogDigest: `sha256:${"0".repeat(64)}`,
         presetId: "vllm.dgx-spark-gb10.single.optional-model",
         presetDigest: `sha256:${"a".repeat(64)}`,
         recipeId: "vllm.optional-model.spark-single.v1",
@@ -949,6 +966,43 @@ describe("installVllm model resolution", () => {
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("gated on Hugging Face"));
   });
 
+  it("persists exact profile ownership before authenticating a catalog-selected runtime (#8246)", async () => {
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const servingCatalog = {
+      catalogDigest: `sha256:${"1".repeat(64)}`,
+      presetId: "vllm.dgx-spark-gb10.single.example",
+      presetDigest: `sha256:${"2".repeat(64)}`,
+      recipeId: "vllm.dgx-spark-gb10.single.example",
+      recipeDigest: `sha256:${"3".repeat(64)}`,
+    };
+    const model = { ...baseProfile.defaultModel, managedBearerAuth: true as const };
+    const profile = { ...baseProfile, defaultModel: model, servingCatalog };
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({
+      kind: "selected",
+      profile,
+      model,
+      presetId: servingCatalog.presetId,
+      recipeId: servingCatalog.recipeId,
+    });
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    const result = await installVllm(baseProfile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+    expect(result).toEqual({ ok: false });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("unauthenticated model inventory"));
+    expect(mocks.persistHostLocalVllmRuntimeReceipt).toHaveBeenCalledWith({
+      containerId: MANAGED_CONTAINER_ID,
+      authFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      serving: servingCatalog,
+    });
+    expect(mocks.persistHostLocalVllmRuntimeReceipt.mock.invocationCallOrder[0]).toBeLessThan(
+      errSpy.mock.invocationCallOrder.at(-1)!,
+    );
+  });
+
   it("guards the effective served model before any docker work (#6315)", async () => {
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
       "--served-model-name",
@@ -1012,7 +1066,7 @@ describe("installVllm model resolution", () => {
       ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
       ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
     ];
-    expect(dockerAdapterOptions).toHaveLength(9);
+    expect(dockerAdapterOptions).toHaveLength(10);
     const canonicalOwnershipOptions = dockerAdapterOptions.filter(
       (options) => options.env?.DOCKER_CONTEXT === "default",
     );
@@ -1020,7 +1074,7 @@ describe("installVllm model resolution", () => {
     const ambientDockerOptions = dockerAdapterOptions.filter(
       (options) => options.env?.DOCKER_CONTEXT !== "default",
     );
-    expect(ambientDockerOptions).toHaveLength(7);
+    expect(ambientDockerOptions).toHaveLength(8);
     for (const options of ambientDockerOptions) {
       expect(options).toEqual(
         expect.objectContaining({
