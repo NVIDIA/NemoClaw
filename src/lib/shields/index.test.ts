@@ -37,12 +37,32 @@ vi.mock("../policy", () => ({
 }));
 
 vi.mock("../sandbox/agent-config", () => ({
+  resolveAgentStateLockContract: vi.fn(() => ({
+    stateLockPlan: {
+      version: 1,
+      readOnlyRoots: ["skills"],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    },
+    stateLockPlanInImage: true,
+  })),
   resolveAgentConfig: vi.fn(() => ({
     agentName: "openclaw",
     configPath: "/sandbox/.openclaw/openclaw.json",
     configDir: "/sandbox/.openclaw",
     format: "json",
     configFile: "openclaw.json",
+    stateLockPlan: {
+      version: 1,
+      readOnlyRoots: ["skills"],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    },
+    stateLockPlanInImage: true,
   })),
 }));
 
@@ -947,10 +967,12 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
             configDir: "/sandbox/.openclaw",
+            stateLockPlanInImage: true,
           }),
         }),
       ).toThrow("exit 2");
@@ -977,6 +999,7 @@ describe("shields — unit logic", () => {
       const { shieldsStatus } = await loadShieldsModule();
       shieldsStatus(sandboxName, true, {
         verifyLockState: () => ({ ok: true, issues: [] }),
+        verifyStateLockPlan: () => [],
         resolveConfig: () => ({
           agentName: "openclaw",
           configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1016,6 +1039,7 @@ describe("shields — unit logic", () => {
 
       const { shieldsStatus } = await loadShieldsModule();
       shieldsStatus(sandboxName, true, {
+        verifyStateLockPlan: () => [],
         verifyLockState: (
           _name: string,
           _target: unknown,
@@ -1053,6 +1077,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: true, issues: [] }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1088,6 +1113,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1118,6 +1144,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => ({
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1148,6 +1175,7 @@ describe("shields — unit logic", () => {
       expect(() =>
         shieldsStatus(sandboxName, true, {
           verifyLockState: () => ({ ok: true, issues: [] }),
+          verifyStateLockPlan: () => [],
           resolveConfig: () => {
             throw new Error("agent config not found");
           },

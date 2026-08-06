@@ -93,6 +93,7 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py",
           "COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
+          "COPY agents/openclaw/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json",
           "COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start",
@@ -147,6 +148,7 @@ describe("OpenClaw final image layout", () => {
       "/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root:700'",
       "/usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500'",
+      "/usr/local/share/nemoclaw/state-lock-plan.json 'root:root:444'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
       "/scripts/checks/node-tar-image-scan.mts 'root:root:755'",
     ]) {
