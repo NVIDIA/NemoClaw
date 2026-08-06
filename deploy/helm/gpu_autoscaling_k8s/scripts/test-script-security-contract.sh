@@ -20,7 +20,9 @@ cat >"${TEST_TMP}/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$*" == "get nodes -o json" ]]; then
+if [[ "$*" == "get hpa -n test-namespace -o json" ]]; then
+  printf '%s' "${HPA_FORMAT_FIXTURE:?}"
+elif [[ "$*" == "get nodes -o json" ]]; then
   case "${MOCK_NODE_MODE:-private}" in
     private)
       printf '%s' '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"10.1.2.3"}]}}]}'
@@ -124,6 +126,38 @@ if ALLOW_INSECURE_HTTP=yes hpa_common_ingress_allow_insecure_value >/dev/null 2>
   fail "invalid cleartext opt-in value was accepted"
 fi
 
+assert_hpa_format() {
+  local fixture="${1:?fixture}"
+  shift
+  local output
+  output="$(HPA_FORMAT_FIXTURE="${fixture}" PATH="${TEST_TMP}:${PATH}" \
+    hpa_common_format_hpa test-namespace 1 script)"
+  local expected
+  for expected in "$@"; do
+    [[ "${output}" == *"${expected}"* ]] \
+      || fail "HPA output does not contain ${expected}: ${output}"
+  done
+}
+
+assert_hpa_format \
+  '{"items":[{"metadata":{"name":"gpu-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"agent"},"metrics":[{"type":"Pods","pods":{"metric":{"name":"gpu_utilization_percent"},"target":{"type":"AverageValue","averageValue":"40"}}}]},"status":{"currentMetrics":[{"type":"Pods","pods":{"current":{"averageValue":"30250m"}}}]}}]}' \
+  'GPU utilization rate (avg per pod): current / target' \
+  'GPU UTIL %' \
+  '30.25%/40%'
+assert_hpa_format \
+  '{"items":[{"metadata":{"name":"performance-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"agent"},"metrics":[{"type":"Pods","pods":{"metric":{"name":"nemoclaw_http_inflight_requests"},"target":{"type":"AverageValue","averageValue":"8"}}}]},"status":{"currentMetrics":[{"type":"Pods","pods":{"current":{"averageValue":"3"}}}]}}]}' \
+  'nemoclaw_http_inflight_requests (avg per pod): current / target' \
+  'nemoclaw_http_inflight_requests: 3/8'
+assert_hpa_format \
+  '{"items":[{"metadata":{"name":"latency-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"agent"},"metrics":[{"type":"Pods","pods":{"metric":{"name":"nemoclaw_llm_latency_p95_milliseconds"},"target":{"type":"AverageValue","averageValue":"2000"}}}]},"status":{"currentMetrics":[{"type":"Pods","pods":{"current":{"averageValue":"900"}}}]}}]}' \
+  'nemoclaw_llm_latency_p95_milliseconds (avg per pod): current / target' \
+  'nemoclaw_llm_latency_p95_milliseconds: 900/2000'
+assert_hpa_format \
+  '{"items":[{"metadata":{"name":"cpu-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"agent"},"metrics":[{"type":"Resource","resource":{"name":"cpu","target":{"type":"Utilization","averageUtilization":70}}}]},"status":{"currentMetrics":[{"type":"Resource","resource":{"current":{"averageUtilization":45}}}]}}]}' \
+  'CPU utilization: current / target' \
+  'CPU UTIL %' \
+  'cpu: 45%/70%'
+
 KUBECTL_LOG="${TEST_TMP}/kubectl.log"
 export KUBECTL_LOG
 
@@ -175,4 +209,4 @@ grep -Fq 'RESTART_MICROK8S="${RESTART_MICROK8S:-0}"' "${SCRIPT_DIR}/cluster-reco
 grep -Fq 'INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"' "${SCRIPT_DIR}/install-hpa.sh" \
   || fail "installer ingress Service does not default to ClusterIP"
 
-echo "OK: recovery ownership and cleartext ingress security contracts hold"
+echo "OK: recovery ownership, cleartext ingress security, and HPA formatting contracts hold"

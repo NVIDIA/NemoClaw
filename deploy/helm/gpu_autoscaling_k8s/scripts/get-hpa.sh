@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# One-shot HPA with readable GPU % (30.25%/40%, not 30250m/40).
+# One-shot HPA with readable metric-specific current/target values.
+# GPU quantities render as percentages (30.25%/40%, not 30250m/40).
 # For live updates prefer: kubectl get hpa -n nemoclaw-gpu -w
 #
 # Usage:
@@ -32,7 +33,8 @@ while [[ $# -gt 0 ]]; do
       cat <<EOF
 Usage: $(basename "$0") [-n NAMESPACE] [-w]
 
-One-shot: formatted GPU UTIL % column (30.25%/40%, not 30250m/40).
+One-shot: formatted metric-specific current/target column.
+GPU quantities render as percentages (30.25%/40%, not 30250m/40).
 
 Live HPA (recommended):
   kubectl get hpa -n nemoclaw-gpu -w
