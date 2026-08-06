@@ -28,7 +28,8 @@ type WorkflowStep = WorkflowRecord & {
 };
 
 const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
-const SELECTOR = `\${{ contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') }}`;
+const PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime";
+const SELECTOR = `\${{ contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') || contains(format(',{0},', inputs.jobs), ',${PROTECTED_RUNTIME_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${PROTECTED_RUNTIME_JOB_ID},') }}`;
 const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
@@ -123,8 +124,16 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "fail-fast": false,
     matrix: {
       include: [
-        { platform: "linux/amd64", runner: "ubuntu-24.04", shard: "linux-amd64" },
-        { platform: "linux/arm64", runner: "ubuntu-24.04-arm", shard: "linux-arm64" },
+        {
+          platform: "linux/amd64",
+          runner: "ubuntu-24.04",
+          shard: "linux-amd64",
+        },
+        {
+          platform: "linux/arm64",
+          runner: "ubuntu-24.04-arm",
+          shard: "linux-arm64",
+        },
       ],
     },
   };
@@ -141,6 +150,10 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_E2E_SHARD: "${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
+      "${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
+      "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:
       "protected-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT:
@@ -157,7 +170,6 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   const steps = workflowSteps(job.steps);
   const guard = requireStep(errors, steps, "Validate protected exact-head dispatch");
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
-    ACTOR: "${{ github.actor }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EVENT_NAME: "${{ github.event_name }}",
@@ -172,7 +184,6 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
     '"workflow_dispatch"',
-    '"github-actions[bot]"',
     '[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
     "linux/amd64:X64 | linux/arm64:ARM64",
@@ -233,6 +244,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '--revision "$CHECKOUT_SHA"',
     '--cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT"',
     '--platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM"',
+    'cache_args=(--cache-to "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE")',
+    '"${cache_args[@]}"',
     '--openclaw-base "$BASE_OPENCLAW"',
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
@@ -271,6 +284,25 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "tools/e2e/live-vitest-invocation.mts run",
     `--test-path ${DIRECT_TEST_PATH}`,
   ]);
+  const cacheUpload = requireStep(
+    errors,
+    steps,
+    "Publish exact amd64 protected runtime build cache",
+  );
+  if (cacheUpload?.if !== "${{ matrix.platform == 'linux/amd64' }}") {
+    errors.push(`${JOB_ID} build cache publication must remain amd64-only`);
+  }
+  if (cacheUpload?.uses !== "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") {
+    errors.push(`${JOB_ID} must pin the reviewed build cache upload action`);
+  }
+  requireValues(errors, `${JOB_ID} build cache upload`, record(cacheUpload?.with), {
+    name: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}",
+    path: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/",
+    "if-no-files-found": "error",
+    "retention-days": 1,
+    "compression-level": 0,
+    overwrite: true,
+  });
   requireStep(errors, steps, "Upload protected managed-image evidence");
   requireStep(errors, steps, "Clean up Docker auth");
   requireOrderedSteps(errors, steps, [
@@ -282,6 +314,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Run every exact managed-image contract directly",
     "Remove isolated protected managed-image registry",
     "Validate protected managed-image evidence",
+    "Publish exact amd64 protected runtime build cache",
     "Upload protected managed-image evidence",
     "Clean up Docker auth",
   ]);

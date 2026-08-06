@@ -86,7 +86,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(15);
+    expect(first.version).toBe(16);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -204,13 +204,23 @@ describe("deterministic PR risk plan", () => {
     const result = plan(changedFile);
     const expectedRequiredJobs = changedFile.startsWith("agents/hermes/")
       ? [...HERMES_SANDBOX_BOUNDARY_JOBS, "rebuild-hermes"]
-      : [
-          "onboard-repair",
-          "onboard-resume",
-          "rebuild-hermes",
-          "rebuild-openclaw",
-          "state-backup-restore",
-        ];
+      : changedFile === "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts"
+        ? [
+            "managed-image-multiarch-startup",
+            "managed-image-protected-runtime",
+            "onboard-repair",
+            "onboard-resume",
+            "rebuild-hermes",
+            "rebuild-openclaw",
+            "state-backup-restore",
+          ]
+        : [
+            "onboard-repair",
+            "onboard-resume",
+            "rebuild-hermes",
+            "rebuild-openclaw",
+            "state-backup-restore",
+          ];
 
     expect(result.families).toContainEqual(
       expect.objectContaining({
@@ -420,11 +430,13 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
-  it("keeps protected GPU and local-inference qualification activation-only until trusted (#7744)", () => {
+  it("selects protected GPU, local-inference, and multiarch qualification for activated runtime inputs (#7744)", () => {
     const activation = "ci/protected-managed-image-runtime-activation-v1.json";
     const result = plan(activation);
-    const dormantImplementation = plan(
+    const activatedImplementation = plan(
       "scripts/checks/run-managed-image-openshell-e2e.ts",
+      "src/lib/onboard/managed-bootstrap/docker.ts",
+      "src/lib/onboard/managed-workload/onboard-orchestration.ts",
       "test/e2e/live/managed-image-protected-runtime.test.ts",
     );
 
@@ -432,12 +444,26 @@ describe("deterministic PR risk plan", () => {
       expect.objectContaining({
         id: "managed-image-protected-runtime",
         matchedFiles: [activation],
-        requiredJobs: ["managed-image-protected-runtime"],
+        requiredJobs: ["managed-image-protected-runtime", "managed-image-multiarch-startup"],
       }),
     );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-protected-runtime"]);
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
+    ]);
     expect(
-      dormantImplementation.families.some(
+      activatedImplementation.families.some(
+        (family) => family.id === "managed-image-protected-runtime",
+      ),
+    ).toBe(true);
+    expect(riskPlanRequiredJobIds(activatedImplementation)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup",
+        "managed-image-protected-runtime",
+      ]),
+    );
+    expect(
+      plan("src/lib/actions/sandbox/rebuilding-status.ts").families.some(
         (family) => family.id === "managed-image-protected-runtime",
       ),
     ).toBe(false);
@@ -574,6 +600,35 @@ describe("deterministic PR risk plan", () => {
     );
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentCheck.planHash);
+  });
+
+  it.each([
+    "src/lib/onboard/machine/handlers/sandbox-resume.ts",
+    "src/lib/onboard/machine/handlers/sandbox.ts",
+  ])("selects gateway upgrade and the Deep Agents Code target for journaled recreation changes in %s", (file) => {
+    const result = plan(file);
+
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "openshell-gateway-upgrade",
+        families: ["focused-e2e"],
+        matchedFiles: [file],
+      }),
+    );
+    expect(result.requiredTargets).toContainEqual(
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[0],
+        families: ["focused-e2e"],
+        matchedFiles: [file],
+      }),
+    );
+  });
+
+  it("does not select the journaled recreation lanes for an adjacent sandbox handler", () => {
+    const result = plan("src/lib/onboard/machine/handlers/sandbox-messaging.ts");
+
+    expect(riskPlanRequiredJobIds(result)).not.toContain("openshell-gateway-upgrade");
+    expect(riskPlanRequiredTargetIds(result)).not.toContain(PR_E2E_TYPED_TARGET_IDS[0]);
   });
 
   it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {
@@ -823,6 +878,7 @@ describe("deterministic PR risk plan", () => {
       "cloud-inference",
       "cloud-onboard",
       "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",

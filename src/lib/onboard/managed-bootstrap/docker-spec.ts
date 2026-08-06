@@ -106,14 +106,15 @@ const HOST_CONFIG_KEYS = new Set([
 
 const UNSUPPORTED_CONFIG_KEYS = new Set([
   "ArgsEscaped",
-  "AttachStderr",
-  "AttachStdin",
-  "AttachStdout",
   "MacAddress",
   "OnBuild",
   "Shell",
   "Volumes",
 ]);
+
+// Docker exposes each attach stream independently through `--attach`, so the
+// clone renderer can preserve these Config booleans exactly. Keep them in the
+// normalized launch spec and verify the stopped replacement before cutover.
 
 const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "BlkioDeviceReadBps",
@@ -123,7 +124,6 @@ const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "BlkioWeight",
   "BlkioWeightDevice",
   "Cgroup",
-  "ConsoleSize",
   "ContainerIDFile",
   "CpuCount",
   "CpuPercent",
@@ -133,13 +133,44 @@ const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "IOMaximumIOps",
   "Isolation",
   "Links",
-  "MaskedPaths",
   "MemorySwappiness",
-  "ReadonlyPaths",
   "StorageOpt",
   "VolumeDriver",
   "VolumesFrom",
 ]);
+
+const NULLABLE_HOST_CONFIG_ARRAY_KEYS = [
+  "Binds",
+  "BlkioDeviceReadBps",
+  "BlkioDeviceReadIOps",
+  "BlkioDeviceWriteBps",
+  "BlkioDeviceWriteIOps",
+  "BlkioWeightDevice",
+  "CapAdd",
+  "CapDrop",
+  "DeviceCgroupRules",
+  "DeviceRequests",
+  "Devices",
+  "Dns",
+  "DnsOptions",
+  "DnsSearch",
+  "ExtraHosts",
+  "GroupAdd",
+  "Links",
+  "MaskedPaths",
+  "Mounts",
+  "ReadonlyPaths",
+  "SecurityOpt",
+  "Ulimits",
+  "VolumesFrom",
+] as const;
+
+// Docker derives ConsoleSize, MaskedPaths, and ReadonlyPaths when it creates a
+// container. They have no corresponding create flags, but the adapter inspects
+// the stopped replacement and compares its complete normalized spec before it
+// stops the original. Keep these runtime-derived security fields hash-bound so
+// a daemon-default mismatch fails before cutover instead of rejecting defaults
+// that Docker can reproduce exactly.
 
 export interface DockerManagedBootstrapLaunchSpec {
   readonly schemaVersion: 1;
@@ -221,6 +252,64 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
+function canonicalCapability(value: unknown, label: string): string {
+  const raw = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  const normalized = raw === "ALL" || raw.startsWith("CAP_") ? raw : `CAP_${raw}`;
+  if (normalized !== "ALL" && !/^CAP_[A-Z0-9_]+$/u.test(normalized)) {
+    throw new Error(`Managed bootstrap Docker ${label} contains an invalid capability.`);
+  }
+  return normalized;
+}
+
+function canonicalCapabilities(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Managed bootstrap Docker ${label} must be an array.`);
+  }
+  const normalized = value.map((entry) => canonicalCapability(entry, label));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate capabilities.`);
+  }
+  return normalized.sort();
+}
+
+function canonicalStringSet(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`Managed bootstrap Docker ${label} must be a string array.`);
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate entries.`);
+  }
+  return [...value].sort();
+}
+
+function normalizedConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...config };
+  // Docker API clients may omit inactive image-only fields while older Docker
+  // CLIs serialize the same defaults as null, false, or an empty collection.
+  // Active values are rejected above because the clone cannot reproduce them.
+  for (const key of UNSUPPORTED_CONFIG_KEYS) {
+    if (isEmptyDefault(normalized[key])) delete normalized[key];
+  }
+  return normalized;
+}
+
+function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...hostConfig };
+  for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
+    if (normalized[key] === null) normalized[key] = [];
+  }
+  if (normalized.OomKillDisable === null) normalized.OomKillDisable = false;
+  for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
+    if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
+  }
+  for (const key of ["CapAdd", "CapDrop"] as const) {
+    if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
+  }
+  return normalized;
+}
+
 function deepFreeze<T>(value: T): T {
   if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
   for (const nested of Object.values(value)) deepFreeze(nested);
@@ -282,8 +371,8 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
     schemaVersion: 1,
     inspect: {
       Name: inspect.Name,
-      Config: config as DockerContainerInspect["Config"],
-      HostConfig: hostConfig as DockerContainerInspect["HostConfig"],
+      Config: normalizedConfig(config) as DockerContainerInspect["Config"],
+      HostConfig: normalizedHostConfig(hostConfig) as DockerContainerInspect["HostConfig"],
       NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings),
       ...("Platform" in raw && typeof raw.Platform === "string" ? { Platform: raw.Platform } : {}),
     },

@@ -34,6 +34,11 @@ const CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION = "./.github/actions/upload-e2e
 const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
+const MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP = "Publish exact amd64 protected runtime build cache";
+const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME =
+  "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}";
+const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH =
+  "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/";
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -73,6 +78,17 @@ type ExplicitUploadContract = {
   name: string;
   path?: string;
 };
+
+function isExactManagedImageBuildCacheUpload(jobName: string, step: WorkflowStep): boolean {
+  const inputs = record(step.with);
+  return (
+    jobName === "managed-image-multiarch-startup" &&
+    step.name === MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP &&
+    step.uses === UPLOAD_ARTIFACT_ACTION &&
+    inputs.name === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME &&
+    inputs.path === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH
+  );
+}
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
@@ -439,6 +455,17 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     const job = record(value);
     const jobSteps = steps(job.steps);
     const expected = expectedJobs.has(jobName);
+    const exactManagedImageBuildCacheUploads = jobSteps.filter((step) =>
+      isExactManagedImageBuildCacheUpload(jobName, step),
+    );
+    if (
+      jobName === "managed-image-multiarch-startup" &&
+      exactManagedImageBuildCacheUploads.length !== 1
+    ) {
+      errors.push(
+        "managed-image-multiarch-startup must define exactly one exact protected build-cache direct upload",
+      );
+    }
 
     for (const step of jobSteps) {
       const uses = typeof step.uses === "string" ? step.uses : "";
@@ -449,7 +476,11 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         jobName === "generate-matrix" &&
         step.name === CLI_ARTIFACT_PUBLISH_STEP &&
         uses === CLI_ARTIFACT_UPLOAD_ACTION;
-      if (uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) && !isExactCommitCliArtifactUpload) {
+      if (
+        uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
+        !isExactCommitCliArtifactUpload &&
+        !isExactManagedImageBuildCacheUpload(jobName, step)
+      ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }
       if (
