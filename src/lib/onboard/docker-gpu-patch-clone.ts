@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isIP } from "node:net";
-
 import type {
   DockerContainerInspect,
   DockerGpuCloneRunOptions,
@@ -335,60 +333,6 @@ function dockerNetworkAliases(
     .filter((alias) => !sameContainerId(alias, containerId));
 }
 
-function dockerPort(value: string, label: string): string {
-  if (!/^[1-9][0-9]{0,4}$/u.test(value) || Number(value) > 65_535) {
-    throw new Error(`Docker ${label} is invalid.`);
-  }
-  return value;
-}
-
-function dockerExposedPort(value: string): string {
-  const match = /^([1-9][0-9]{0,4})\/(tcp|udp|sctp)$/u.exec(value);
-  if (!match) throw new Error("Docker exposed port is invalid.");
-  dockerPort(match[1], "container port");
-  return value;
-}
-
-function dockerPublishedPort(
-  exposedPort: string,
-  binding: { HostIp?: string; HostPort?: string },
-): string {
-  const hostIp = String(binding.HostIp ?? "").trim();
-  const hostPort = String(binding.HostPort ?? "").trim();
-  if (hostIp && isIP(hostIp) === 0) throw new Error("Docker port binding host IP is invalid.");
-  if (hostPort) dockerPort(hostPort, "host port");
-  const renderedHostIp = isIP(hostIp) === 6 ? `[${hostIp}]` : hostIp;
-  return `${renderedHostIp ? `${renderedHostIp}:` : ""}${hostPort}:${exposedPort}`;
-}
-
-function dockerPortArgs(inspect: DockerContainerInspect): string[] {
-  const exposedPorts = inspect.Config?.ExposedPorts ?? {};
-  const portBindings = inspect.HostConfig?.PortBindings ?? {};
-  const args: string[] = [];
-  const publishedPorts = new Set<string>();
-
-  for (const exposedPort of Object.keys(portBindings).sort()) {
-    dockerExposedPort(exposedPort);
-    const bindings = portBindings[exposedPort];
-    if (!Array.isArray(bindings) || bindings.length === 0) {
-      throw new Error("Docker port binding must contain at least one host binding.");
-    }
-    for (const binding of bindings) {
-      if (!binding || typeof binding !== "object") {
-        throw new Error("Docker port binding is invalid.");
-      }
-      args.push("--publish", dockerPublishedPort(exposedPort, binding));
-    }
-    publishedPorts.add(exposedPort);
-  }
-
-  for (const exposedPort of Object.keys(exposedPorts).sort()) {
-    dockerExposedPort(exposedPort);
-    if (!publishedPorts.has(exposedPort)) args.push("--expose", exposedPort);
-  }
-  return args;
-}
-
 export function buildDockerGpuCloneRunArgs(
   inspect: DockerContainerInspect,
   mode: DockerGpuPatchMode,
@@ -462,7 +406,6 @@ export function buildDockerGpuCloneRunArgs(
   pushStringFlag(args, "--network", networkMode);
   for (const alias of dockerNetworkAliases(inspect, networkMode))
     args.push("--network-alias", alias);
-  args.push(...dockerPortArgs(inspect));
 
   const restart = host.RestartPolicy;
   if (restart?.Name && restart.Name !== "no") {

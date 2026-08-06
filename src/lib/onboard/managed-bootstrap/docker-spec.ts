@@ -112,9 +112,9 @@ const UNSUPPORTED_CONFIG_KEYS = new Set([
   "Volumes",
 ]);
 
-// Docker exposes active attach streams through `--attach`. Keep each
-// representable combination in the launch spec and verify the stopped
-// replacement before cutover. `normalizedConfig` handles the all-false tuple.
+// Docker exposes each attach stream independently through `--attach`, so the
+// clone renderer can preserve these Config booleans exactly. Keep them in the
+// normalized launch spec and verify the stopped replacement before cutover.
 
 const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "BlkioDeviceReadBps",
@@ -292,18 +292,6 @@ function normalizedConfig(config: Record<string, unknown>): Record<string, unkno
   for (const key of UNSUPPORTED_CONFIG_KEYS) {
     if (isEmptyDefault(normalized[key])) delete normalized[key];
   }
-  // Docker CLI cannot encode all three Attach fields as false. `docker create`
-  // writes false, true, true when no `--attach` flag is present. Managed
-  // bootstrap starts the container without attaching a client to any stream.
-  if (
-    normalized.AttachStdin !== true &&
-    normalized.AttachStdout !== true &&
-    normalized.AttachStderr !== true
-  ) {
-    normalized.AttachStdin = false;
-    normalized.AttachStdout = true;
-    normalized.AttachStderr = true;
-  }
   return normalized;
 }
 
@@ -311,9 +299,6 @@ function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<strin
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
     if (normalized[key] === null) normalized[key] = [];
-  }
-  if (normalized.PortBindings === null || normalized.PortBindings === undefined) {
-    normalized.PortBindings = {};
   }
   if (normalized.OomKillDisable === null) normalized.OomKillDisable = false;
   for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
