@@ -802,8 +802,20 @@ The wizard cleans up stale port forwards and waits for gateway readiness automat
 
 ### GPU setup fails with a placeholder GPU name
 
-On Windows or WSL hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
+On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
+
+On ARM64 Linux hosts that are native or Docker Desktop-backed WSL, onboarding clears a placeholder name with one bounded Docker CUDA workload before rejecting the GPU:
+
+```
+docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+```
+
+The run may first pull the CUDA sample image and is bounded to 3 minutes.
+Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to raise that bound on slow links.
+A host whose GPU passes the workload keeps GPU passthrough; a host that fails or times out falls back to CPU.
+WSL hosts that are not Docker Desktop-backed do not run the workload and continue to report the GPU as unavailable.
+
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.

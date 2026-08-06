@@ -39,7 +39,8 @@ export interface DockerGpuProofResult {
 
 // Optional accept-path used by `detectGpu()` when an ARM64 Linux host reports a
 // denylisted `JMJWOA-Generic-*` placeholder. The prover returns `null` when the
-// host is not a proof candidate (not ARM64 WSL Docker Desktop), preserving the
+// host is not a proof candidate (not ARM64 Linux that is native or Docker
+// Desktop-backed WSL, #8096), preserving the
 // #3988 fail-closed default; otherwise it returns the bounded Docker GPU proof
 // outcome so a passing real GPU can be trusted without trusting the name alone.
 export type Arm64WslDockerDesktopGpuProver = (gpuNames: string[]) => DockerGpuProofResult | null;

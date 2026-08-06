@@ -184,10 +184,10 @@ function runWslDockerDesktopGpuProof(argv: string[], timeoutMs: number): DockerG
   }
 }
 
-// Build the ARM64 WSL Docker Desktop GPU prover consumed by `detectGpu()` for
-// denylisted `JMJWOA-Generic-*` names (#4565). Returns `null` for any host that
-// is not ARM64 Linux on Docker Desktop-backed WSL, so the #3988/#4424 fail-
-// closed default is preserved everywhere else. When the host IS a candidate it
+// Build the ARM64 GPU prover consumed by `detectGpu()` for denylisted
+// `JMJWOA-Generic-*` names (#4565). Returns `null` unless the host is ARM64
+// Linux that is either native or Docker Desktop-backed WSL (#8096), so the
+// #3988/#4424 fail-closed default is preserved everywhere else. When the host IS a candidate it
 // runs one bounded Docker `--gpus` CUDA workload (the aarch64 vectorAdd sample):
 // a real N1X GPU passes, while the Snapdragon nvidia-smi shim — which has no
 // usable CUDA device — cannot, so the placeholder name alone is never trusted.
@@ -201,20 +201,26 @@ export function createArm64WslDockerDesktopGpuProver(
     const platform = deps.platform ?? process.platform;
     const arch = deps.arch ?? process.arch;
     if (platform !== "linux" || arch !== "arm64") return null;
-    if (detectStatus(deps) !== "docker-desktop") return null;
+    // Docker Desktop-backed WSL is not the only host that reports a denylisted
+    // `JMJWOA-Generic-*` name for a genuine GPU; native Linux ARM64 hosts do
+    // too (#8096), and previously had no way to prove one. Only that host class
+    // is added here: a WSL host that is not Docker Desktop-backed still returns
+    // `null`, so Windows-on-ARM passthrough scope is unchanged. The bounded CUDA
+    // proof remains the trust boundary, not the container runtime. The Snapdragon
+    // nvidia-smi shim exposes no usable CUDA device, so it still fails closed
+    // wherever the proof runs (#3988/#4565).
+    if (detectWsl(deps) && detectStatus(deps) !== "docker-desktop") return null;
     const names = gpuNames.filter(Boolean).join(", ") || "generic ARM64 GPU";
-    log(
-      `  Running bounded Docker Desktop WSL GPU proof for ${names} (may pull a CUDA sample image)...`,
-    );
+    log(`  Running bounded Docker GPU proof for ${names} (may pull a CUDA sample image)...`);
     log(`    ${WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND}`);
     const result = runProof(
       wslDockerDesktopGpuProofArgv(),
       wslDockerDesktopGpuProofTimeoutMs(deps.env),
     );
     if (result.passed) {
-      log("  ✓ Docker Desktop WSL GPU proof passed; trusting the reported GPU.");
+      log("  ✓ Docker GPU proof passed; trusting the reported GPU.");
     } else if (result.timedOut) {
-      log("  ✗ Docker Desktop WSL GPU proof timed out; treating GPU as unproven (CPU fallback).");
+      log("  ✗ Docker GPU proof timed out; treating GPU as unproven (CPU fallback).");
       log(
         "    Rerun with --no-gpu to skip GPU passthrough, or raise NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS.",
       );
@@ -222,9 +228,7 @@ export function createArm64WslDockerDesktopGpuProver(
       // The proof binary's architecture did not match the host. This is an image
       // problem, not a GPU problem, so call it out explicitly rather than letting
       // the host fall back to CPU as if no GPU were present (#4565).
-      log(
-        "  ✗ Docker Desktop WSL GPU proof could not run: CUDA sample image architecture does not",
-      );
+      log("  ✗ Docker GPU proof could not run: CUDA sample image architecture does not");
       log(
         "    match this host (exec format error). This is a proof-image issue, not a missing GPU.",
       );
@@ -232,7 +236,7 @@ export function createArm64WslDockerDesktopGpuProver(
         "    Rerun with --no-gpu to skip GPU passthrough, or report this so the proof image can be fixed.",
       );
     } else {
-      log("  ✗ Docker Desktop WSL GPU proof failed; treating GPU as unproven (CPU fallback).");
+      log("  ✗ Docker GPU proof failed; treating GPU as unproven (CPU fallback).");
       log("    Rerun with --no-gpu to skip GPU passthrough.");
     }
     return result;

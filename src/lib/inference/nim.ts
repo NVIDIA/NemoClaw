@@ -84,12 +84,13 @@ export interface GpuDetection {
   // skips `computeIntensive` registry entries on these hosts.
   computeConstrained?: boolean;
   // Set when a denylisted `JMJWOA-Generic-*` placeholder name was accepted only
-  // because a bounded Docker `--gpus` CUDA proof passed (Windows-ARM N1X + WSL2
-  // + Docker Desktop, #4565). Diagnostic marker that this detection cleared a
-  // live proof rather than firmware/name trust. The sandbox GPU preflight still
-  // reaches the Docker Desktop WSL compatibility branch via its own
-  // `detectWslDockerDesktopStatus()` check (consistent because the proof itself
-  // requires Docker Desktop WSL); this flag does not gate that branch.
+  // because a bounded Docker `--gpus` CUDA proof passed, on Windows-ARM N1X
+  // (WSL2 + Docker Desktop, #4565) or native ARM64 Linux (#8096). Diagnostic
+  // marker that this detection cleared a live proof rather than firmware/name
+  // trust. The sandbox GPU preflight reaches the Docker Desktop WSL
+  // compatibility branch via its own `detectWslDockerDesktopStatus()` check,
+  // which stays false on a native Linux host; this flag does not gate that
+  // branch.
   wslDockerDesktopGpuProofPassed?: boolean;
 }
 
@@ -510,9 +511,10 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
-          // The proof-passed Windows-ARM N1X iGPU is memory-shared like Jetson
-          // and cannot serve a computeIntensive model in-loop, so tag it
+          // The proof-passed ARM64 N1X GPU is memory-shared like Jetson and
+          // cannot serve a computeIntensive model in-loop, so tag it
           // computeConstrained to exclude those Ollama bootstrap models (#3707).
+          // This covers the N1X part on WSL2 and on native Linux (#8096).
           ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
             ? { computeConstrained: true }
             : {}),

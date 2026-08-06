@@ -85,17 +85,58 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     expect(runProof).not.toHaveBeenCalled();
   });
 
-  it("returns null when the host is not Docker Desktop-backed WSL", () => {
+  it("proves a denylisted GPU name on native Linux ARM64 (#8096)", () => {
+    // A native Linux ARM64 host reports a genuine GPU as `JMJWOA-Generic-GPU`.
+    // Gating the proof on Docker Desktop left no way to verify that GPU, so
+    // onboarding reported "no NVIDIA GPU detected" on a host where
+    // `docker run --gpus all` runs a CUDA workload.
     const runProof = vi.fn(() => passingProof);
     const prover = createArm64WslDockerDesktopGpuProver({
       platform: "linux",
       arch: "arm64",
-      detectWslDockerDesktopStatus: () => "not-docker-desktop",
+      env: {},
+      release: "6.17.0-1029-nvidia",
+      procVersion: "Linux version 6.17.0-1029-nvidia",
       runProof,
       log: () => undefined,
     });
-    expect(prover(["JMJWOA-Generic-GPU"])).toBeNull();
-    expect(runProof).not.toHaveBeenCalled();
+    expect(prover(["JMJWOA-Generic-GPU"])).toEqual(passingProof);
+    expect(runProof).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps failing closed when the bounded proof does not pass", () => {
+    // The Snapdragon nvidia-smi shim reaches the same path; only the CUDA
+    // workload separates it from real hardware (#3988/#4565).
+    const failingProof = { passed: false, timedOut: false, exitCode: 1, diagnostic: "" };
+    const runProof = vi.fn(() => failingProof);
+    const prover = createArm64WslDockerDesktopGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      env: {},
+      release: "6.17.0-1029-nvidia",
+      procVersion: "Linux version 6.17.0-1029-nvidia",
+      runProof,
+      log: () => undefined,
+    });
+    expect(prover(["JMJWOA-Generic-GPU"])).toEqual(failingProof);
+    expect(runProof).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves WSL hosts without Docker Desktop unproven (#8096)", () => {
+    // Windows-on-ARM passthrough scope is unchanged: only native Linux is added.
+    for (const status of ["not-docker-desktop", "unknown"] as const) {
+      const runProof = vi.fn(() => passingProof);
+      const prover = createArm64WslDockerDesktopGpuProver({
+        platform: "linux",
+        arch: "arm64",
+        env: { WSL_DISTRO_NAME: "Ubuntu" },
+        detectWslDockerDesktopStatus: () => status,
+        runProof,
+        log: () => undefined,
+      });
+      expect(prover(["JMJWOA-Generic-GPU"])).toBeNull();
+      expect(runProof).not.toHaveBeenCalled();
+    }
   });
 
   it("runs the bounded proof and reports the result on ARM64 Docker Desktop WSL", () => {
