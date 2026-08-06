@@ -22,6 +22,7 @@ import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
+  normalizeCustomPolicyEntries,
   retainedDefaultSandbox,
 } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
@@ -75,7 +76,6 @@ export type {
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -83,6 +83,7 @@ export {
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
+export { normalizeCustomPolicyEntries };
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 

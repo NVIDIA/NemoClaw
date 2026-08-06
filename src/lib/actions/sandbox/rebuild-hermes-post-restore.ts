@@ -108,22 +108,23 @@ export function ensureHermesGatewayAfterStateRestore(
   const restarted = restart(sandboxName, { quiet: true }).ok;
   const checkAndRecover =
     deps.checkAndRecoverSandboxProcesses ?? processRecovery.checkAndRecoverSandboxProcesses;
-  const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, { quiet: true });
-  if (
-    !observation.checked ||
-    observation.forwardRecoveryFailed === true ||
-    observation.secretBoundaryRefused === true ||
-    observation.mcpReconciliationRefused === true
-  ) {
-    return "unverified";
+  for (let attempt = 1; attempt <= HERMES_GATEWAY_RECHECK_ATTEMPTS; attempt += 1) {
+    const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, { quiet: true });
+    if (
+      observation.forwardRecoveryFailed === true ||
+      observation.secretBoundaryRefused === true ||
+      observation.mcpReconciliationRefused === true
+    ) {
+      return "unverified";
+    }
+    if (!observation.checked) continue;
+    // Recovery replaces the process, so a recovered gateway reads the restored
+    // state whatever the restart reported. A gateway that stayed up through a
+    // failed restart is still serving what it read before the restore, which is
+    // the state this step exists to replace.
+    if (observation.recovered) return "recovered";
+    if (restarted && observation.wasRunning === true) return "healthy";
   }
-  // Recovery replaces the process, so a recovered gateway reads the restored
-  // state whatever the restart reported. A gateway that stayed up through a
-  // failed restart is still serving what it read before the restore, which is
-  // the state this step exists to replace.
-  if (observation.recovered) return "recovered";
-  if (!restarted) return "unverified";
-  if (observation.wasRunning === true) return "healthy";
   return "unverified";
 }
 

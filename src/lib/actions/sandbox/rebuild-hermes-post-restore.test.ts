@@ -87,6 +87,71 @@ describe("binding the Hermes gateway to restored state", () => {
   });
 });
 
+describe("Hermes gateway post-restore recheck", () => {
+  it("accepts a gateway that becomes healthy after an inconclusive recovery check (#7084)", () => {
+    const checkAndRecoverSandboxProcesses = vi
+      .fn()
+      .mockReturnValueOnce({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+      })
+      .mockReturnValueOnce({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+      });
+
+    expect(
+      ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+        restartSandboxGateway: () => RESTART_SUCCEEDED,
+        checkAndRecoverSandboxProcesses,
+      }),
+    ).toBe("healthy");
+
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "forwardRecoveryFailed",
+    "secretBoundaryRefused",
+    "mcpReconciliationRefused",
+  ] as const)("fails immediately when recovery reports %s (#7084)", (failureFlag) => {
+    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      [failureFlag]: true,
+    }));
+
+    expect(
+      ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+        restartSandboxGateway: () => RESTART_SUCCEEDED,
+        checkAndRecoverSandboxProcesses,
+      }),
+    ).toBe("unverified");
+
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed after the bounded gateway recheck remains inconclusive (#7084)", () => {
+    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+    }));
+
+    expect(
+      ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+        restartSandboxGateway: () => RESTART_SUCCEEDED,
+        checkAndRecoverSandboxProcesses,
+      }),
+    ).toBe("unverified");
+
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("Hermes rebuild post-restore verification", () => {
   beforeEach(resetRebuildFlowTestEnvironment);
   afterEach(restoreRebuildFlowTestEnvironment);

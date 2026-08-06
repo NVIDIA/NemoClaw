@@ -2049,10 +2049,19 @@ Fix the gateway or policy read problem, then rerun the command.
 For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy list` or `status`.
 Recover or re-onboard the sandbox, then re-apply the custom preset.
 
+With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit matching RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local endpoints.
+The option is invalid for built-in presets.
+You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options.
+NemoClaw resolves each matching exact host and adds generated `allowed_ips` pins to an in-memory copy of the preset.
+User-authored `allowed_ips` remains rejected.
+Dry-run output shows the generated pins, and rebuild replays the transformed preset recorded in the sandbox registry without widening it from ambient DNS.
+A snapshot alone does not grant private-host authority to a clean target; after a cross-sandbox restore, reapply the source preset with explicit trust.
+
 | Flag | Description |
 |------|-------------|
 | `--from-file <path>` | Apply a custom preset YAML file instead of a built-in preset |
 | `--from-dir <path>` | Apply every custom preset YAML file in a directory in lexicographic order |
+| `--trusted-private-host <exact-host-or-ip>` | Admit one exact private endpoint host from a custom preset and generate exact address pins; repeat for additional hosts |
 | `--yes`, `--force` | Skip the confirmation prompt (requires a preset name, `--from-file`, or `--from-dir`) |
 | `--dry-run` | Preview the endpoints a preset would open without applying changes |
 
@@ -2066,6 +2075,15 @@ Apply a custom preset file when you need to grant access to an endpoint that is 
 
 ```bash
 $$nemoclaw my-assistant policy add --from-file ./presets/my-internal-api.yaml
+```
+
+For a trusted private endpoint, preview the generated pins before applying them:
+
+```bash
+$$nemoclaw my-assistant policy add \
+  --from-file ./presets/my-internal-api.yaml \
+  --trusted-private-host api.corp.example \
+  --dry-run
 ```
 
 For batch workflows, apply all preset files from a directory:
@@ -2445,6 +2463,11 @@ $$nemoclaw my-assistant mcp list [--json]
 
 Add an MCP Streamable HTTP server to a sandbox.
 Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer credential for the sandbox-side MCP client.
+Pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit an exact RFC1918, CGNAT, or IPv6 unique local destination for the current command.
+The declaration must equal the normalized host from `--url`.
+For managed MCP, use a DNS hostname for an IPv6 unique local address because OpenShell `v0.0.85` cannot represent a direct IPv6 literal proxy target.
+You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options.
+NemoClaw records the resulting exact trust intent and address pins, so restart, rebuild, and restore do not depend on the ambient environment.
 NemoClaw registers that credential in an OpenShell provider, installs a generated OpenShell `protocol: mcp` policy for the target endpoint, attaches the provider to the running sandbox, and writes only an `openshell:resolve:env:KEY` placeholder into the agent config.
 Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments.
 Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`.
@@ -2483,10 +2506,24 @@ $$nemoclaw my-assistant mcp add github --url https://api.githubcopilot.com/mcp/ 
 unset GITHUB_MCP_TOKEN
 ```
 
+For a private endpoint, use its exact URL host:
+
+```bash
+export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw my-assistant mcp add local-tools \
+  --url https://mcp-host.corp.example/mcp \
+  --env LOCAL_MCP_TOKEN \
+  --trusted-private-host mcp-host.corp.example
+unset LOCAL_MCP_TOKEN
+```
+
 ### `$$nemoclaw <name> mcp status`
 
 Inspect MCP server state for one server or for all configured servers.
 Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode.
+For a trusted private endpoint, status also compares current DNS answers with recorded pins without changing the policy.
+Text output reports `private address pins: match`, `drift`, or `unresolved`.
+JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins.
 While a managed provider is attached, text and JSON status warn that its credential is sandbox-scoped until OpenShell supports endpoint-exclusive binding plus Host, scheme, and query enforcement.
 When a single server is named, status requests a differential wire-level credential-resolution probe.
 It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, generic type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail.
@@ -2531,6 +2568,8 @@ $$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe] [--too
 
 Refresh one MCP server registration, or every server on the sandbox when no server is supplied.
 Restart reapplies the generated policy, reattaches the OpenShell provider when needed, and refreshes the sandbox agent adapter registration.
+For a trusted-private entry, restart replays recorded address pins without resolving the endpoint again or widening the policy.
+For a public entry, restart resolves the hostname again and refreshes the policy with the current validated public addresses.
 If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
 Otherwise, restart reuses an existing provider whose current metadata match the registry.
 A missing provider requires the variable to be exported before retrying.
@@ -3983,7 +4022,8 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication for an HTTP OpenAI-compatible endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435` during non-interactive onboarding. |
-| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 ULA inference endpoints during custom endpoint onboarding. Link-local metadata and other reserved ranges remain blocked; DNS resolution and connection pinning remain active; wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and exact address pinning remain active; wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated exact hostnames or IP literals | Inference-only compatibility alias. Inference onboarding combines entries from this variable and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. |
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
 | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | Declares model input modalities for vision-capable models. Validated strictly; unknown tokens are ignored. |
 | `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
