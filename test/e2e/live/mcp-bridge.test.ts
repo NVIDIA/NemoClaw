@@ -24,7 +24,7 @@ import {
   cleanupMcpBridge,
   MCP_MUTATION_TIMEOUT_MS,
   type McpAdapter,
-  shouldRetryMcpMutationAfterConcurrencyConflict,
+  removeMcpBridgeWithOneConcurrencyRetry,
 } from "./mcp-bridge-cleanup.ts";
 import {
   assertHermesConfig,
@@ -554,18 +554,13 @@ async function removeBridgeAndAssertEmpty(
     mcpUrl: string;
   },
 ): Promise<void> {
-  let remove = await host.nemoclaw([options.sandboxName, "mcp", "remove", SERVER_NAME], {
-    artifactName: `${options.artifactPrefix}-mcp-remove-fake-server`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.adapter],
-  });
-  if (remove.exitCode !== 0 && shouldRetryMcpMutationAfterConcurrencyConflict(resultText(remove))) {
-    remove = await host.nemoclaw([options.sandboxName, "mcp", "remove", SERVER_NAME], {
-      artifactName: `${options.artifactPrefix}-mcp-remove-fake-server-retry`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.adapter],
-    });
-  }
+  const remove = await removeMcpBridgeWithOneConcurrencyRetry(
+    host,
+    options.sandboxName,
+    SERVER_NAME,
+    options.adapter,
+    options.artifactPrefix,
+  );
   expectExitZero(remove, `${options.artifactPrefix} mcp remove fake server`);
   const list = await host.nemoclaw([options.sandboxName, "mcp", "list", "--json"], {
     artifactName: `${options.artifactPrefix}-mcp-list-after-remove`,

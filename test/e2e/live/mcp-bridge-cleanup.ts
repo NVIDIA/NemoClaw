@@ -3,6 +3,7 @@
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 
 export type McpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
@@ -39,4 +40,29 @@ const MCP_MUTATION_CONCURRENCY_CONFLICT =
 
 export function shouldRetryMcpMutationAfterConcurrencyConflict(output: string): boolean {
   return MCP_MUTATION_CONCURRENCY_CONFLICT.test(output);
+}
+
+export async function removeMcpBridgeWithOneConcurrencyRetry(
+  host: HostCliClient,
+  sandboxName: string,
+  server: string,
+  adapter: McpAdapter,
+  artifactPrefix: string,
+): Promise<Awaited<ReturnType<HostCliClient["nemoclaw"]>>> {
+  const remove = await host.nemoclaw([sandboxName, "mcp", "remove", server], {
+    artifactName: `${artifactPrefix}-mcp-remove-${server}`,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: MCP_MUTATION_TIMEOUT_MS[adapter],
+  });
+  if (
+    remove.exitCode === 0 ||
+    !shouldRetryMcpMutationAfterConcurrencyConflict(resultText(remove))
+  ) {
+    return remove;
+  }
+  return host.nemoclaw([sandboxName, "mcp", "remove", server], {
+    artifactName: `${artifactPrefix}-mcp-remove-${server}-retry`,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: MCP_MUTATION_TIMEOUT_MS[adapter],
+  });
 }
