@@ -43,6 +43,7 @@ const { SANDBOX_BUILD_CONTEXT_PREFIX } = buildContextModule;
 const BASE_IMAGE =
   "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
 const PORTABLE_PROFILE_E2E_PHASES = [
+  "select the Podman-reported runtime socket",
   "prepare the rootless container runtime",
   "build and publish the sandbox image",
   "verify the fixed host route",
@@ -129,6 +130,17 @@ esac
   );
 }
 
+function selectInstallerPodmanRuntime(repoRoot: string): string {
+  const payload = path.join(repoRoot, "scripts", "install.sh");
+  const script = [
+    `source "${payload}" >/dev/null 2>&1 || true`,
+    'export NEMOCLAW_EXPERIMENTAL_PROFILE="portable"',
+    "prepare_portable_experimental_runtime_override >&2",
+    'printf "%s" "$DOCKER_HOST"',
+  ].join("\n");
+  return run("bash", ["-c", script]);
+}
+
 async function main(progress: { phase: (phase: string) => void }): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
@@ -153,6 +165,10 @@ async function main(progress: { phase: (phase: string) => void }): Promise<void>
   });
 
   try {
+    progress.phase("select the Podman-reported runtime socket");
+    const installerDockerHost = selectInstallerPodmanRuntime(process.cwd());
+    assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
+
     progress.phase("prepare the rootless container runtime");
     preparePortableExperimentalHost(process.env);
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
