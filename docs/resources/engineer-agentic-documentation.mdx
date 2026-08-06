@@ -59,9 +59,9 @@ Repository instructions tell that agent when documentation is required, where th
 
 The repository provides a control stack for this workflow:
 
-- The root `AGENTS.md` defines repository-wide success criteria, product scope, and documentation expectations.
-- `docs/AGENTS.md` defines the documentation role, source-of-truth rules, variant patterns, and verification requirements.
-- `docs/CONTRIBUTING.md` defines the public writing, navigation, release, and review contracts.
+- The root `AGENTS.md` defines repository-wide success criteria, product scope, documentation impact, and independent review.
+- `docs/AGENTS.md` defines the documentation-agent role, DORI routing, skill selection, and task workflow.
+- `docs/CONTRIBUTING.md` defines public documentation rules, navigation, release procedures, and validation.
 - The `nemoclaw-contributor-update-docs` skill maps product changes to canonical pages and produces an evidence-backed documentation update.
 - Build scripts, tests, hooks, previews, and publication workflows enforce the contracts after the agent edits the files.
 
@@ -564,7 +564,8 @@ The current NemoClaw repository provides concrete examples for each layer.
 |---|---|
 | Canonical content | `docs/**/*.mdx`. |
 | Repository-wide documentation contract | `AGENTS.md`. |
-| Authoring and review policy | `docs/CONTRIBUTING.md` and `docs/AGENTS.md`. |
+| Agent documentation workflow | `AGENTS.md` and `docs/AGENTS.md`. |
+| Public documentation rules and validation | `docs/CONTRIBUTING.md`. |
 | Navigation and published guide variants | `docs/index.yml`. |
 | Intentional partial guide variant scope | Source `agent-variants` frontmatter validated by `scripts/sync-agent-variant-docs.mts`. |
 | Site and redirect configuration | `fern/docs.yml` and `fern/fern.config.json`. |
