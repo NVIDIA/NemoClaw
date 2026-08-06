@@ -50,16 +50,25 @@ describe("sandbox inference route health", () => {
   it.each([
     [5, "proxy hostname"],
     [6, "DNS resolution"],
-    [7, "could not connect"],
+    [7, "connection failed"],
     [28, "timed out"],
     [60, "TLS certificate validation"],
   ] as const)("reports curl exit %i as a bounded %s diagnosis (#8441)", async (exitCode, detail) => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture(`BROKEN 000 curl_exit=${String(exitCode)}`),
+      captureOpenshellImpl: makeCapture(`BROKEN 000 curl_exit=${String(exitCode)} tls_verify=0`),
     });
 
     expect(result).toMatchObject({ ok: false, httpStatus: 0 });
     expect(result?.detail).toContain(detail);
+  });
+
+  it("reports the bounded TLS verification result without certificate material (#8441)", async () => {
+    const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
+      captureOpenshellImpl: makeCapture("BROKEN 000 curl_exit=60 tls_verify=20"),
+    });
+
+    expect(result).toMatchObject({ ok: false, httpStatus: 0 });
+    expect(result?.detail).toContain("verification result 20");
   });
 
   it("returns null when the authoritative probe is unavailable (#6192)", async () => {
