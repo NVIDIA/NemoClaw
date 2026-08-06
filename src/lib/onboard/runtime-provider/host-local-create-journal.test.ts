@@ -165,6 +165,18 @@ describe("host-local create journal", () => {
     expect(store.load(TRANSACTION_ID)?.phase).toBe("started");
   });
 
+  it.each([
+    ["receipt without its digest", { serializedReceipt: "hostPath=/secret\n" }],
+    ["digest without its receipt", { receiptSha256: "9".repeat(64) }],
+  ])("rejects partial %s journal state (#8414)", (_name, partial) => {
+    expect(() =>
+      serializeHostLocalCreateJournalRecord({
+        ...prepared(),
+        ...partial,
+      }),
+    ).toThrow("Host-local create journal is invalid: phase and receipt fields disagree");
+  });
+
   it("rejects receipt or digest tampering after a durable publication prepare (#8414)", () => {
     const store = createHostLocalCreateJournalStore(stateDirectory);
     store.create(prepared());

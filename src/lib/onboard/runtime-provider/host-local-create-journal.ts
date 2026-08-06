@@ -217,8 +217,11 @@ export function normalizeHostLocalCreateJournalRecord(
     fail("phase and create intent timestamp disagree");
   }
   const hasPreparedReceipt = phase === "receipt-prepared" || phase === "finalized";
-  if (hasPreparedReceipt !== (receiptSha256 !== null && serializedReceipt !== null)) {
-    fail("phase and receipt digest disagree");
+  if (
+    hasPreparedReceipt !== (receiptSha256 !== null) ||
+    hasPreparedReceipt !== (serializedReceipt !== null)
+  ) {
+    fail("phase and receipt fields disagree");
   }
   const authority = normalizePersistedEngineAuthority(record.engineAuthority);
   if (authority.operation !== "host-local-inference") {
