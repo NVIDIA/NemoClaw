@@ -2241,6 +2241,40 @@ verify_nemoclaw() {
     fi
   fi
 
+  # The npm prefix active now can differ from the prefix the CLI was installed
+  # under — a Homebrew npm shadowing the installer's nvm npm, for example — which
+  # leaves the user-local shim as the only working entry point. Probe it here
+  # rather than only listing it in the diagnostic below, so a working install is
+  # not reported as a failure (#8311).
+  #
+  # NEMOCLAW_READY_NOW deliberately stays false for the same reason as the
+  # npm-prefix branch above: this shell still cannot resolve $_CLI_BIN by name,
+  # so print_done() must keep emitting the PATH-refresh hint.
+  if [[ -x "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" ]] \
+    && is_real_nemoclaw_cli "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" "$_CLI_BIN"; then
+    _CLI_PATH="$NEMOCLAW_SHIM_DIR/$_CLI_BIN"
+    record_cli_resolution_state "$_CLI_PATH" "$npm_bin"
+
+    # record_cli_resolution_state clears the refresh flag as soon as the shim
+    # directory sits on the initial PATH, which is the whole story only when the
+    # name resolves to this shim. A rejected binary earlier on PATH still
+    # shadows it, so re-check and keep the hint when it does — otherwise
+    # print_done() reports a clean install for a shell where $_CLI_BIN still
+    # runs the binary this function just refused.
+    if [[ "$(command -v "$_CLI_BIN" 2>/dev/null)" -ef "$_CLI_PATH" ]]; then
+      NEMOCLAW_READY_NOW=true
+      info "Verified: ${_CLI_BIN} is available at $_CLI_PATH"
+      return 0
+    fi
+
+    NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=true
+    NEMOCLAW_RECOVERY_EXPORT_DIR="${NEMOCLAW_RECOVERY_EXPORT_DIR:-$NEMOCLAW_SHIM_DIR}"
+    NEMOCLAW_RECOVERY_PROFILE="${NEMOCLAW_RECOVERY_PROFILE:-$(detect_shell_profile)}"
+    warn "Found ${_CLI_BIN} at $_CLI_PATH but this shell's PATH does not yet resolve it."
+    warn "Running onboarding via the absolute path; refresh your shell PATH afterwards (commands below)."
+    return 0
+  fi
+
   # Single warn header, then plain printf for each bullet. warn() prefixes
   # every line with "[warn]" + colour codes, which would render the bulleted
   # diagnostic table as six separate warnings rather than one structured block.
