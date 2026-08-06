@@ -158,11 +158,11 @@ exit 0
         });
 
         expect(result.status).toBe(0);
-        expect(result.stderr).toContain("retrying the locked install once from cache");
+        expect(result.stderr).toContain("retrying the locked install once offline from cache");
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("7");
         expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 2)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
-          "ci --ignore-scripts --no-audit --no-fund --no-progress --prefer-offline",
+          "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
         ]);
       } finally {
         fs.rmSync(fixture, { force: true, recursive: true });

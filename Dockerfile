@@ -330,15 +330,19 @@ RUN set -eu; \
 # Install runtime dependencies before copying mutable build outputs so source
 # and blueprint changes keep the production dependency layer cached.
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
+COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 WORKDIR /opt/nemoclaw
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NODE_OPTIONS=--dns-result-order=ipv4first \
+    NPM_CONFIG_MAXSOCKETS=4 \
     NPM_CONFIG_FETCH_RETRIES=5 \
-    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
-    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
-    NPM_CONFIG_FETCH_TIMEOUT=300000
-RUN npm ci --omit=dev
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_TIMEOUT=60000
+RUN /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev \
+    && rm -f /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 
 # Copy the grouped plugin and blueprint payload after runtime dependency
 # installation so source-only changes do not invalidate that cache boundary.

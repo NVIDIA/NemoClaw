@@ -132,6 +132,7 @@ describe("OpenClaw final image layout", () => {
       "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
       dependencyCopy,
       "COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/",
+      "COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh",
       pluginCopy,
       patchCopy,
       runtimeCopy,
@@ -170,7 +171,10 @@ describe("OpenClaw final image layout", () => {
       finalStage,
       "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
     );
-    const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
+    const pluginInstall = indexOfRequired(
+      finalStage,
+      "RUN /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev",
+    );
     const managedMessagingUnionInstall = indexOfRequired(
       finalStage,
       "--agent openclaw --phase managed-image-capability-union",
