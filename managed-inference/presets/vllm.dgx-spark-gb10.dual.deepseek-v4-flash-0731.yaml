@@ -7,6 +7,7 @@ kind: ServingPreset
 metadata:
   id: vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731
   displayName: DeepSeek V4 Flash 0731 on two DGX Sparks
+  supportState: experimental
 
 spec:
   selection: automatic
