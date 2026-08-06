@@ -30,7 +30,10 @@ import {
 import type {
   HostLocalInferenceReceipt,
   HostLocalInferenceReceiptWriter,
+  HostLocalInferenceRecoveryResult,
   HostLocalInferenceRuntime,
+  HostLocalLlamaCppLifecycle,
+  HostLocalLlamaCppLifecycleInput,
 } from "./host-local-inference";
 import {
   normalizeHostLocalInferenceImageRef,
@@ -64,38 +67,15 @@ const UNCERTAIN_CREATE_ABSENCE_GRACE_MS = MUTATION_TIMEOUT_MS + INSPECT_TIMEOUT_
 const STOP_GRACE_SECONDS = 30;
 const AT_REST = new Set(["created", "dead", "exited"]);
 
-export interface DockerLlamaCppManagedLifecycleOptions {
-  readonly authorityStore: PersistedEngineAuthorityStore;
-  readonly apiKeyRootHostPath: string;
-  readonly bindingSha256: string;
-  readonly bindings: LlamaCppHostLocalRuntimeBindings;
-  readonly cacheRootHostPath: string;
-  readonly contract: LlamaCppHostLocalLaunchContract;
-  readonly engine: ContainerEngine;
-  readonly journalStore: HostLocalCreateJournalStore;
-  readonly plan: LlamaCppGgufCachePlan;
-  readonly probeImageReference: string;
-  readonly readinessTimeoutSeconds: number;
-}
+export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleInput;
 
 export interface DockerLlamaCppManagedLifecycleDependencies {
   readonly now?: () => number;
 }
 
-export interface DockerLlamaCppRecoveryResult {
-  readonly recovered: readonly string[];
-  readonly failures: readonly {
-    readonly transactionId: string;
-    readonly message: string;
-  }[];
-}
+export type DockerLlamaCppRecoveryResult = HostLocalInferenceRecoveryResult;
 
-export interface DockerLlamaCppManagedLifecycle {
-  readonly runtime: HostLocalInferenceRuntime;
-  start(writer: HostLocalInferenceReceiptWriter): HostLocalInferenceReceipt;
-  resume(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
-  recoverUnfinished(writer: HostLocalInferenceReceiptWriter): DockerLlamaCppRecoveryResult;
-}
+export type DockerLlamaCppManagedLifecycle = HostLocalLlamaCppLifecycle;
 
 interface DockerNetworkAuthority {
   readonly id: string;

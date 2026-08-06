@@ -6,23 +6,29 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import type { RuntimeProviderWorkloadProfile } from "../../onboard/runtime-provider/contract";
+import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
 import type { DockerLlamaCppManagedLifecycle } from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
 import {
+  createDockerLlamaCppOperationAuthority as createManagedLlamaCppDockerAuthority,
+  createManagedLlamaCppEngine,
+  type DockerLlamaCppOperationAuthority as ManagedLlamaCppDockerAuthority,
+  dockerLlamaCppBindingSha256 as managedLlamaCppBindingSha256,
+} from "../../onboard/runtime-provider/docker-llama-cpp-operation";
+import {
+  type HostLocalInferenceOperation,
   type HostLocalInferenceReceipt,
+  type HostLocalLlamaCppLifecycle,
   serializeHostLocalInferenceReceipt,
 } from "../../onboard/runtime-provider/host-local-inference";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import {
-  createManagedLlamaCppDockerAuthority,
-  createManagedLlamaCppEngine,
   inspectManagedLlamaCppRuntimeExact,
   installManagedLlamaCpp,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
-  type ManagedLlamaCppDockerAuthority,
-  managedLlamaCppBindingSha256,
   resumeManagedLlamaCppRuntime,
 } from "./managed-installer";
 import {
@@ -35,6 +41,13 @@ import {
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "./managed-state";
+
+const TEST_WORKLOAD_PROFILE = {
+  support: null,
+  hostArchitectures: ["arm64"],
+  managedImageSelectionPolicy: "prefer-managed",
+  legacyDockerfileBuilds: false,
+} as const satisfies RuntimeProviderWorkloadProfile;
 
 const temporaryDirectories: string[] = [];
 
@@ -58,6 +71,40 @@ function temporarySymlinkedHome(): { readonly alias: string; readonly canonical:
   fs.mkdirSync(canonical, { mode: 0o700 });
   fs.symlinkSync(canonical, alias, "dir");
   return { alias, canonical: fs.realpathSync(canonical) };
+}
+
+function managedOperation(
+  engine: HostLocalInferenceOperation["engine"],
+  createLlamaCppLifecycle: (
+    input: Parameters<HostLocalInferenceOperation["createLlamaCppLifecycle"]>[0],
+  ) => HostLocalLlamaCppLifecycle,
+): HostLocalInferenceOperation {
+  return {
+    providerId: "docker",
+    engine,
+    bindingSha256: managedLlamaCppBindingSha256(engine),
+    assertAuthority: vi.fn(),
+    spawn: vi.fn(() => ({}) as never),
+    createLlamaCppLifecycle,
+  };
+}
+
+function managedRuntimeProvider(
+  engine: HostLocalInferenceOperation["engine"],
+  createLlamaCppLifecycle: HostLocalInferenceOperation["createLlamaCppLifecycle"] = vi.fn(() => {
+    throw new Error("Unexpected managed llama.cpp lifecycle construction");
+  }),
+) {
+  const bundle = createDockerRuntimeProviderBundle();
+  return {
+    ...bundle,
+    hostLocalInference: {
+      providerId: "docker",
+      supported: true as const,
+      services: ["llama-cpp" as const],
+      createOperation: vi.fn(() => managedOperation(engine, createLlamaCppLifecycle)),
+    },
+  };
 }
 
 function selection(): ResolvedLlamaCppInferenceSelection {
@@ -91,7 +138,7 @@ function selection(): ResolvedLlamaCppInferenceSelection {
 describe("managed llama.cpp Docker authority", () => {
   it("rejects a direct plaintext TCP daemon before spawning and never exposes HF_TOKEN", () => {
     const capture = successfulDockerCapture({});
-    const spawnDocker = vi.fn<ManagedLlamaCppDockerAuthority["spawnDocker"]>(() => ({}) as never);
+    const spawnDocker = vi.fn<ManagedLlamaCppDockerAuthority["spawn"]>(() => ({}) as never);
 
     expect(() =>
       createManagedLlamaCppDockerAuthority(
@@ -185,7 +232,7 @@ describe("managed llama.cpp Docker authority", () => {
     const capture = successfulDockerCapture({
       spark: "ssh://nvidia@spark.example.test",
     });
-    const spawnDocker = vi.fn<ManagedLlamaCppDockerAuthority["spawnDocker"]>(() => ({}) as never);
+    const spawnDocker = vi.fn<ManagedLlamaCppDockerAuthority["spawn"]>(() => ({}) as never);
     const authority = createManagedLlamaCppDockerAuthority(
       {
         DOCKER_CONFIG: "/tmp/nemoclaw-docker-config",
@@ -195,7 +242,7 @@ describe("managed llama.cpp Docker authority", () => {
       spawnDocker,
     );
 
-    authority.spawnDocker(["run", "-e", "HF_TOKEN", "example.invalid/downloader@sha256:deadbeef"], {
+    authority.spawn(["run", "-e", "HF_TOKEN", "example.invalid/downloader@sha256:deadbeef"], {
       env: { HF_TOKEN: "hf_secret_value" },
     });
 
@@ -227,7 +274,7 @@ describe("managed llama.cpp Docker authority", () => {
     );
 
     expect(() =>
-      authority.spawnDocker(["run", "-e", "HF_TOKEN", "example.invalid/downloader"], {
+      authority.spawn(["run", "-e", "HF_TOKEN", "example.invalid/downloader"], {
         env: { HF_TOKEN: "hf_secret_value" },
       }),
     ).toThrow("Docker context endpoint changed after qualification");
@@ -344,6 +391,44 @@ describe("managed llama.cpp Docker authority", () => {
 });
 
 describe("managed llama.cpp installer", () => {
+  it.each([
+    "podman",
+    "unsupported-runtime",
+  ])("rejects the %s provider before any Docker or installer mutation", async (providerId) => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const pullImage = vi.fn();
+    const acquireGguf = vi.fn();
+    const verifyGguf = vi.fn();
+    const checkPort = vi.fn();
+    const runtimeProvider = createInMemoryRuntimeProviderBundle({
+      providerId,
+      workloadProfile: TEST_WORKLOAD_PROFILE,
+    });
+
+    await expect(
+      installManagedLlamaCpp(selected, {
+        sandboxName: "spark-agent",
+        homeDir,
+        runtimeProvider,
+        pullImage: pullImage as never,
+        acquireGguf: acquireGguf as never,
+        verifyGguf: verifyGguf as never,
+        checkPort: checkPort as never,
+        log: vi.fn(),
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: `Runtime provider '${providerId}' does not provide the host-local-inference capability required for llama-cpp: Unsupported by this in-memory contract fixture.`,
+    });
+
+    expect(pullImage).not.toHaveBeenCalled();
+    expect(acquireGguf).not.toHaveBeenCalled();
+    expect(verifyGguf).not.toHaveBeenCalled();
+    expect(checkPort).not.toHaveBeenCalled();
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+  });
+
   it("rejects a group/world-writable shared cache parent before pull or acquisition", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
@@ -357,7 +442,7 @@ describe("managed llama.cpp installer", () => {
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
-      engine: harness.engine,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
       pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       checkPort: vi.fn(async () => ({ ok: true })),
@@ -385,7 +470,7 @@ describe("managed llama.cpp installer", () => {
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
-      engine: harness.engine,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
       pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       checkPort: vi.fn(async () => ({ ok: true })),
@@ -443,12 +528,11 @@ describe("managed llama.cpp installer", () => {
       installManagedLlamaCpp(selected, {
         sandboxName: "spark-agent",
         homeDir: home.alias,
-        engine: harness.engine,
+        runtimeProvider: managedRuntimeProvider(harness.engine, createLifecycle),
         pullImage: pullImage as never,
         acquireGguf: acquireGguf as never,
         verifyGguf,
         checkPort: vi.fn(async () => ({ ok: true })),
-        createLifecycle,
         log: vi.fn(),
       }),
     ).resolves.toMatchObject({ ok: true, receipt });
@@ -495,9 +579,8 @@ describe("managed llama.cpp installer", () => {
 
     expect(
       inspectManagedLlamaCppRuntimeExact({
-        createLifecycle,
-        engine: harness.engine,
         homeDir,
+        operation: managedOperation(harness.engine, createLifecycle),
         paths: managedLlamaCppStatePaths(homeDir),
         receipt,
         selection: selected,
@@ -556,16 +639,16 @@ describe("managed llama.cpp installer", () => {
     const verifyGguf = vi.fn(async () => {
       throw new Error("not cached");
     });
+    const runtimeProvider = managedRuntimeProvider(harness.engine, createLifecycle);
 
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
-      engine: harness.engine,
+      runtimeProvider,
       pullImage,
       acquireGguf,
       verifyGguf,
       checkPort: vi.fn(async () => ({ ok: true })),
-      createLifecycle,
       log: vi.fn(),
     });
 
@@ -587,10 +670,21 @@ describe("managed llama.cpp installer", () => {
       expect.any(Object),
       path.join(homeDir, ".cache", "huggingface"),
     );
+    expect(runtimeProvider.hostLocalInference.createOperation).toHaveBeenCalledWith({
+      env: process.env,
+    });
     expect(createLifecycle).toHaveBeenCalledWith(
       expect.objectContaining({
+        bindings: expect.objectContaining({
+          imageReference: selected.recipe.spec.runtime.image,
+        }),
         contract: expect.objectContaining({
           runtime: expect.objectContaining({ restartPolicy: "unless-stopped" }),
+          serve: expect.objectContaining({
+            batchSize: selected.recipe.spec.serve.batchSize,
+            contextSize: selected.recipe.spec.serve.contextSize,
+            port: selected.recipe.spec.serve.port,
+          }),
         }),
         probeImageReference: selected.recipe.spec.readiness.probeImage,
         readinessTimeoutSeconds: selected.recipe.spec.readiness.timeoutSeconds,
@@ -681,12 +775,11 @@ describe("managed llama.cpp installer", () => {
       installManagedLlamaCpp(selected, {
         sandboxName: "spark-agent",
         homeDir,
-        engine: harness.engine,
+        runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
         pullImage: pullImage as never,
         acquireGguf: acquireGguf as never,
         verifyGguf: vi.fn(async () => artifact),
         checkPort: checkPort as never,
-        createLifecycle: vi.fn(() => lifecycle),
         log: vi.fn(),
       }),
     ).resolves.toMatchObject({ ok: true, receipt });
@@ -716,7 +809,7 @@ describe("managed llama.cpp installer", () => {
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "second-sandbox",
       homeDir,
-      engine: harness.engine,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
       pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       log: vi.fn(),
@@ -741,7 +834,7 @@ describe("managed llama.cpp installer", () => {
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
-      engine: harness.engine,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
       pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       checkPort: vi.fn(async () => ({
@@ -795,10 +888,8 @@ describe("managed llama.cpp installer", () => {
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
-      engine: harness.engine,
-      verifyGguf: vi.fn(async () => artifact),
-      checkPort,
-      createLifecycle: vi.fn(
+      runtimeProvider: managedRuntimeProvider(
+        harness.engine,
         () =>
           ({
             recoverUnfinished: vi.fn(() => ({ recovered: [], failures: [] })),
@@ -807,6 +898,8 @@ describe("managed llama.cpp installer", () => {
             start,
           }) as DockerLlamaCppManagedLifecycle,
       ),
+      verifyGguf: vi.fn(async () => artifact),
+      checkPort,
       log: vi.fn(),
     });
 
@@ -867,10 +960,9 @@ describe("managed llama.cpp installer", () => {
       resumeManagedLlamaCppRuntime("spark-agent", {
         homeDir: home.alias,
         env,
-        engine: harness.engine,
+        runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
         verifyGguf,
         checkPort: vi.fn(async () => ({ ok: true })),
-        createLifecycle: vi.fn(() => lifecycle),
       }),
     ).resolves.toBe(true);
     expect(lifecycle.start).toHaveBeenCalledOnce();
@@ -897,7 +989,7 @@ describe("managed llama.cpp installer", () => {
     await expect(
       resumeManagedLlamaCppRuntime("second-sandbox", {
         homeDir,
-        engine: harness.engine,
+        runtimeProvider: managedRuntimeProvider(harness.engine),
       }),
     ).rejects.toThrow(
       "Managed llama.cpp on this gateway is owned by sandbox 'first-sandbox', not 'second-sandbox'.",

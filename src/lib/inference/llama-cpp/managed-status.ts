@@ -5,13 +5,15 @@ import fs from "node:fs";
 import os from "node:os";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
+import {
+  createDockerLlamaCppHostLocalOperation,
+  createDockerLlamaCppInspectionOperation,
+} from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { requirePersistedEngineAuthority } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { probeLlamaCppAttachment } from "./index";
 import {
-  createManagedLlamaCppEngine,
   inspectManagedLlamaCppRuntimeExact,
   MANAGED_LLAMA_CPP_CONTAINER_NAME,
-  managedLlamaCppBindingSha256,
   resolveManagedLlamaCppOwnerSelection,
 } from "./managed-installer";
 import {
@@ -112,13 +114,17 @@ export function inspectManagedLlamaCppStatus(
     endpoint: "https://inference.local/v1" as const,
   };
   let engine: ContainerEngine;
+  let operation: ReturnType<typeof createDockerLlamaCppHostLocalOperation>;
   try {
-    engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
+    operation = options.engine
+      ? createDockerLlamaCppInspectionOperation(options.engine)
+      : createDockerLlamaCppHostLocalOperation(options.env ?? process.env);
+    engine = operation.engine;
     requirePersistedEngineAuthority(
       receipt.engineAuthority,
       "docker",
       engine,
-      managedLlamaCppBindingSha256(engine),
+      operation.bindingSha256,
     );
   } catch (error) {
     return {
@@ -152,8 +158,8 @@ export function inspectManagedLlamaCppStatus(
   }
   try {
     const inspected = (options.inspectExact ?? inspectManagedLlamaCppRuntimeExact)({
-      engine,
       homeDir,
+      operation,
       paths,
       receipt,
       selection,

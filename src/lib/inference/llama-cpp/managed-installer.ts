@@ -1,30 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  type ContainerEngine,
-  type ContainerEngineCommandCapture,
-  createContainerEngineCommand,
-} from "../../adapters/container-engine";
-import { dockerSpawn } from "../../adapters/docker/exec";
-import { dockerPullWithProgressWatchdog } from "../../adapters/docker/pull";
+import type { ContainerEngine } from "../../adapters/container-engine";
 import { checkPortAvailable } from "../../onboard/preflight";
-import {
-  createDockerLlamaCppManagedLifecycle,
-  type DockerLlamaCppManagedLifecycle,
-} from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
+import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
-import type { HostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceReceipt,
+  HostLocalLlamaCppLifecycle,
+} from "../../onboard/runtime-provider/host-local-inference";
 import {
   createFilePersistedEngineAuthorityStore,
   createPersistedEngineAuthority,
 } from "../../onboard/runtime-provider/persisted-engine-authority";
-import type { HuggingFaceModelAcquisitionRequest } from "../model-acquisition/hugging-face";
+import { requireRuntimeProviderHostLocalInferenceOperation } from "../../onboard/runtime-provider/registry";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
@@ -57,15 +52,14 @@ const DOCKER_INSPECT_TIMEOUT_MS = 15_000;
 
 export interface ManagedLlamaCppInstallOptions {
   readonly sandboxName: string;
+  readonly runtimeProvider: RuntimeProviderBundle;
   readonly gatewayPort?: number;
   readonly homeDir?: string;
   readonly env?: NodeJS.ProcessEnv;
-  readonly engine?: ContainerEngine;
-  readonly pullImage?: typeof dockerPullWithProgressWatchdog;
+  readonly pullImage?: ManagedLlamaCppImagePull;
   readonly acquireGguf?: typeof acquireVerifiedLlamaCppGguf;
   readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
   readonly checkPort?: typeof checkPortAvailable;
-  readonly createLifecycle?: typeof createDockerLlamaCppManagedLifecycle;
   readonly log?: (message: string) => void;
 }
 
@@ -79,19 +73,17 @@ export type ManagedLlamaCppInstallResult =
   | { readonly ok: false; readonly reason: string };
 
 export interface ManagedLlamaCppResumeOptions {
+  readonly runtimeProvider: RuntimeProviderBundle;
   readonly gatewayPort?: number;
   readonly homeDir?: string;
   readonly env?: NodeJS.ProcessEnv;
-  readonly engine?: ContainerEngine;
   readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
   readonly checkPort?: typeof checkPortAvailable;
-  readonly createLifecycle?: typeof createDockerLlamaCppManagedLifecycle;
 }
 
 export interface ManagedLlamaCppExactInspectionOptions {
-  readonly createLifecycle?: typeof createDockerLlamaCppManagedLifecycle;
-  readonly engine: ContainerEngine;
   readonly homeDir: string;
+  readonly operation: HostLocalInferenceOperation;
   readonly paths: ManagedLlamaCppStatePaths;
   readonly receipt: HostLocalInferenceReceipt;
   readonly selection: ResolvedLlamaCppInferenceSelection;
@@ -102,262 +94,19 @@ interface DockerNetworkInspection {
   readonly id?: string;
 }
 
-interface ManagedDockerBinding {
-  readonly endpointArgs: readonly string[];
-  readonly identity: string;
-  readonly guard?: () => void;
+interface ManagedLlamaCppImagePullResult {
+  readonly status: number | null;
+  readonly error?: Error;
 }
 
-type DockerSpawn = HuggingFaceModelAcquisitionRequest["spawnDocker"];
-
-export interface ManagedLlamaCppDockerAuthority {
-  readonly assertAuthority: () => void;
-  readonly engine: ContainerEngine;
-  readonly spawnDocker: DockerSpawn;
-}
-
-const DOCKER_CONTEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
-const DOCKER_HOST_PATTERN = /^(?:npipe|ssh|tcp|unix):\/\/[^\s\u0000-\u001f\u007f]+$/u;
-const DOCKER_ARGUMENT_MAX_BYTES = 16 * 1024;
-const DOCKER_CONTEXT_INSPECT_FORMAT = "{{json .}}";
-
-function exactDockerValue(value: string | undefined, label: string): string | undefined {
-  if (value === undefined || value === "") return undefined;
-  if (
-    value !== value.trim() ||
-    Buffer.byteLength(value, "utf8") > DOCKER_ARGUMENT_MAX_BYTES ||
-    /[\u0000-\u001f\u007f-\u009f]/u.test(value)
-  ) {
-    throw new Error(`Managed llama.cpp ${label} is invalid.`);
-  }
-  return value;
-}
-
-function absoluteDockerPath(value: string, label: string): string {
-  const candidate = exactDockerValue(value, label);
-  if (!candidate) throw new Error(`Managed llama.cpp ${label} is invalid.`);
-  return path.resolve(candidate);
-}
-
-function dockerConfigPath(env: NodeJS.ProcessEnv): string {
-  const configured = exactDockerValue(env.DOCKER_CONFIG, "DOCKER_CONFIG");
-  if (configured) return path.resolve(configured);
-  const home = exactDockerValue(env.HOME, "HOME") ?? os.homedir();
-  return path.join(path.resolve(home), ".docker");
-}
-
-function dockerTlsArgs(env: NodeJS.ProcessEnv): {
-  readonly args: readonly string[];
-  readonly verify: boolean;
-} {
-  const tls = exactDockerValue(env.DOCKER_TLS, "DOCKER_TLS") !== undefined;
-  const tlsVerify = exactDockerValue(env.DOCKER_TLS_VERIFY, "DOCKER_TLS_VERIFY") !== undefined;
-  const certPath = exactDockerValue(env.DOCKER_CERT_PATH, "DOCKER_CERT_PATH");
-  const args: string[] = [];
-  if (tlsVerify) args.push("--tlsverify");
-  else if (tls) args.push("--tls");
-  if (certPath) {
-    const directory = absoluteDockerPath(certPath, "DOCKER_CERT_PATH");
-    args.push(
-      "--tlscacert",
-      path.join(directory, "ca.pem"),
-      "--tlscert",
-      path.join(directory, "cert.pem"),
-      "--tlskey",
-      path.join(directory, "key.pem"),
-    );
-  }
-  return Object.freeze({ args: Object.freeze(args), verify: tlsVerify });
-}
-
-function dockerContextName(value: string, label: string): string {
-  const context = exactDockerValue(value, label);
-  if (!context || !DOCKER_CONTEXT_PATTERN.test(context)) {
-    throw new Error(`Managed llama.cpp ${label} is invalid.`);
-  }
-  return context;
-}
-
-function dockerHost(value: string): string {
-  const host = exactDockerValue(value, "DOCKER_HOST");
-  if (!host || !DOCKER_HOST_PATTERN.test(host)) {
-    throw new Error("Managed llama.cpp DOCKER_HOST is invalid.");
-  }
-  return host;
-}
-
-function requireSecureDockerEndpoint(host: string, tlsVerificationEnabled: boolean): void {
-  if (host.startsWith("tcp://") && !tlsVerificationEnabled) {
-    throw new Error("Managed llama.cpp requires verified TLS for remote Docker TCP endpoints.");
-  }
-}
-
-function dockerBindingProbe(
-  endpointArgs: readonly string[],
-  capture?: ContainerEngineCommandCapture,
-): ContainerEngine {
-  return createContainerEngineCommand({
-    operation: "host-local-inference",
-    engineId: "docker",
-    displayName: "Docker",
-    authorityId: "docker:qualification",
-    executable: "docker",
-    endpointArgs,
-    ...(capture ? { capture } : {}),
-  });
-}
-
-function requireDockerProbeOutput(
-  result: ReturnType<ContainerEngine["capture"]>,
-  label: string,
-): string {
-  if (result.error || result.status !== 0) {
-    throw new Error(`Managed llama.cpp could not ${label}.`);
-  }
-  const output = result.stdout.trim();
-  if (!output) throw new Error(`Managed llama.cpp could not ${label}.`);
-  return output;
-}
-
-function resolvedDockerContextEndpoint(probe: ContainerEngine, context: string): string {
-  const output = requireDockerProbeOutput(
-    probe.capture(["context", "inspect", context, "--format", DOCKER_CONTEXT_INSPECT_FORMAT]),
-    "qualify the Docker context endpoint",
-  );
-  let endpoint: unknown;
-  try {
-    endpoint = JSON.parse(output);
-  } catch {
-    throw new Error("Managed llama.cpp Docker context endpoint is unreadable.");
-  }
-  if (typeof endpoint !== "object" || endpoint === null) {
-    throw new Error("Managed llama.cpp Docker context endpoint is invalid.");
-  }
-  const inspection = endpoint as {
-    Endpoints?: { docker?: { Host?: unknown; SkipTLSVerify?: unknown } };
-    TLSMaterial?: { docker?: unknown };
-  };
-  const dockerEndpoint = inspection.Endpoints?.docker;
-  if (
-    typeof dockerEndpoint?.Host !== "string" ||
-    typeof dockerEndpoint.SkipTLSVerify !== "boolean"
-  ) {
-    throw new Error("Managed llama.cpp Docker context endpoint is invalid.");
-  }
-  const host = dockerHost(dockerEndpoint.Host);
-  const tlsMaterial = inspection.TLSMaterial?.docker ?? [];
-  if (
-    !Array.isArray(tlsMaterial) ||
-    tlsMaterial.some((entry) => typeof entry !== "string" || !/^[A-Za-z0-9._-]+$/u.test(entry))
-  ) {
-    throw new Error("Managed llama.cpp Docker context TLS material is invalid.");
-  }
-  const tlsFiles = [...tlsMaterial].sort();
-  requireSecureDockerEndpoint(host, !dockerEndpoint.SkipTLSVerify && tlsFiles.includes("ca.pem"));
-  return JSON.stringify({
-    host,
-    skipTlsVerify: dockerEndpoint.SkipTLSVerify,
-    tlsMaterial: tlsFiles,
-  });
-}
-
-function dockerClientBinding(
-  env: NodeJS.ProcessEnv,
-  capture?: ContainerEngineCommandCapture,
-): ManagedDockerBinding {
-  const configArgs = ["--config", dockerConfigPath(env)] as const;
-  const tls = dockerTlsArgs(env);
-  const explicitContext = exactDockerValue(env.DOCKER_CONTEXT, "DOCKER_CONTEXT");
-  const explicitHost = exactDockerValue(env.DOCKER_HOST, "DOCKER_HOST");
-  if (!explicitContext && explicitHost) {
-    const host = dockerHost(explicitHost);
-    requireSecureDockerEndpoint(host, tls.verify);
-    const endpointArgs = Object.freeze([...configArgs, "--host", host, ...tls.args]);
-    return {
-      endpointArgs,
-      identity: createHash("sha256").update(JSON.stringify(endpointArgs)).digest("hex"),
-    };
-  }
-
-  let context: string;
-  if (explicitContext) {
-    context = dockerContextName(explicitContext, "DOCKER_CONTEXT");
-  } else {
-    const selectorProbe = dockerBindingProbe([...configArgs, ...tls.args], capture);
-    context = dockerContextName(
-      requireDockerProbeOutput(
-        selectorProbe.capture(["context", "show"]),
-        "resolve the Docker context",
-      ),
-      "current Docker context",
-    );
-  }
-  const endpointArgs = Object.freeze([...configArgs, "--context", context, ...tls.args]);
-  const endpointProbe = dockerBindingProbe(endpointArgs, capture);
-  const qualifiedEndpoint = resolvedDockerContextEndpoint(endpointProbe, context);
-  const identity = createHash("sha256")
-    .update(JSON.stringify({ endpointArgs, qualifiedEndpoint }))
-    .digest("hex");
-  return {
-    endpointArgs,
-    identity,
-    guard: () => {
-      if (resolvedDockerContextEndpoint(endpointProbe, context) !== qualifiedEndpoint) {
-        throw new Error(
-          "Managed llama.cpp Docker context endpoint changed after qualification; retry the operation.",
-        );
-      }
-    },
-  };
-}
-
-export function createManagedLlamaCppEngine(
-  env: NodeJS.ProcessEnv = process.env,
-  capture?: ContainerEngineCommandCapture,
-): ContainerEngine {
-  return createManagedLlamaCppDockerAuthority(env, capture).engine;
-}
-
-/** Bind synchronous lifecycle commands and streamed acquisition to one qualified daemon. */
-export function createManagedLlamaCppDockerAuthority(
-  env: NodeJS.ProcessEnv = process.env,
-  capture?: ContainerEngineCommandCapture,
-  spawnDocker: DockerSpawn = dockerSpawn,
-): ManagedLlamaCppDockerAuthority {
-  const binding = dockerClientBinding(env, capture);
-  const assertAuthority = () => binding.guard?.();
-  const engine = createContainerEngineCommand({
-    operation: "host-local-inference",
-    engineId: "docker",
-    displayName: "Docker",
-    authorityId: `docker:${binding.identity}`,
-    executable: "docker",
-    endpointArgs: binding.endpointArgs,
-    ...(capture ? { capture } : {}),
-    ...(binding.guard ? { guard: binding.guard } : {}),
-  });
-  return Object.freeze({
-    assertAuthority,
-    engine,
-    spawnDocker: (args: Parameters<DockerSpawn>[0], options?: Parameters<DockerSpawn>[1]) => {
-      assertAuthority();
-      return spawnDocker([...binding.endpointArgs, ...args], options);
-    },
-  });
-}
-
-export function managedLlamaCppBindingSha256(engine: ContainerEngine): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        operation: engine.operation,
-        engineId: engine.engineId,
-        authorityId: engine.authorityId,
-        executable: "docker",
-      }),
-    )
-    .digest("hex");
-}
+type ManagedLlamaCppImagePull = (
+  image: string,
+  options: {
+    readonly env: Record<string, string>;
+    readonly maxTimeoutMs: number;
+    readonly logLine: (line: string) => void;
+  },
+) => Promise<ManagedLlamaCppImagePullResult>;
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {
   if (result.error || result.status !== 0) {
@@ -552,7 +301,7 @@ function launchContract(
 async function pullExactImages(
   images: readonly string[],
   engine: ContainerEngine,
-  pull: typeof dockerPullWithProgressWatchdog | undefined,
+  pull: ManagedLlamaCppImagePull | undefined,
   dockerEnv: Record<string, string>,
   log: (message: string) => void,
 ): Promise<void> {
@@ -635,15 +384,14 @@ function lifecycleFor(input: {
   readonly paths: ManagedLlamaCppStatePaths;
   readonly cacheRoot: string;
   readonly artifact: VerifiedLocalModelArtifact;
-  readonly engine: ContainerEngine;
-  readonly createLifecycle: typeof createDockerLlamaCppManagedLifecycle;
-}): DockerLlamaCppManagedLifecycle {
+  readonly operation: HostLocalInferenceOperation;
+}): HostLocalLlamaCppLifecycle {
   const identity = runtimeIdentity();
   const recipe = input.selection.recipe;
-  return input.createLifecycle({
+  return input.operation.createLlamaCppLifecycle({
     authorityStore: createFilePersistedEngineAuthorityStore(input.paths.stateDir),
     apiKeyRootHostPath: input.paths.stateDir,
-    bindingSha256: managedLlamaCppBindingSha256(input.engine),
+    bindingSha256: input.operation.bindingSha256,
     bindings: {
       apiKeyHostPath: input.paths.apiKeyPath,
       containerName: MANAGED_LLAMA_CPP_CONTAINER_NAME,
@@ -661,7 +409,7 @@ function lifecycleFor(input: {
     },
     cacheRootHostPath: input.cacheRoot,
     contract: launchContract(input.selection),
-    engine: input.engine,
+    engine: input.operation.engine,
     journalStore: createHostLocalCreateJournalStore(input.paths.stateDir),
     plan: compileLlamaCppGgufCachePlan(recipe),
     probeImageReference: recipe.spec.readiness.probeImage,
@@ -715,15 +463,14 @@ function currentManagedLlamaCppArtifact(
 /** Reconstruct current declarative and filesystem authority, then use the lifecycle's exact inspector. */
 export function inspectManagedLlamaCppRuntimeExact(
   options: ManagedLlamaCppExactInspectionOptions,
-): ReturnType<DockerLlamaCppManagedLifecycle["runtime"]["inspectManaged"]> {
+): ReturnType<HostLocalLlamaCppLifecycle["runtime"]["inspectManaged"]> {
   const current = currentManagedLlamaCppArtifact(options.selection, options.homeDir);
   return lifecycleFor({
     selection: options.selection,
     paths: options.paths,
     cacheRoot: current.cacheRoot,
     artifact: current.artifact,
-    engine: options.engine,
-    createLifecycle: options.createLifecycle ?? createDockerLlamaCppManagedLifecycle,
+    operation: options.operation,
   }).runtime.inspectManaged(options.receipt);
 }
 
@@ -739,14 +486,20 @@ export async function installManagedLlamaCpp(
   const acquire = options.acquireGguf ?? acquireVerifiedLlamaCppGguf;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
-  const createLifecycle = options.createLifecycle ?? createDockerLlamaCppManagedLifecycle;
   const log = options.log ?? ((message: string) => console.log(message));
   const recipe = selection.recipe;
   let engine: ContainerEngine | null = null;
+  let operation: HostLocalInferenceOperation | null = null;
   let owner: ReturnType<typeof claimManagedLlamaCppOwner>["owner"] | null = null;
   let ownerCreated = false;
 
   try {
+    operation = requireRuntimeProviderHostLocalInferenceOperation(
+      options.runtimeProvider,
+      "llama-cpp",
+      { env },
+    );
+    engine = operation.engine;
     const reservation = claimManagedLlamaCppOwner(paths, {
       schemaVersion: 1,
       sandboxName: options.sandboxName,
@@ -757,10 +510,8 @@ export async function installManagedLlamaCpp(
     });
     owner = reservation.owner;
     ownerCreated = reservation.created;
-    const dockerAuthority = options.engine ? null : createManagedLlamaCppDockerAuthority(env);
-    engine = options.engine ?? dockerAuthority!.engine;
     createFilePersistedEngineAuthorityStore(paths.stateDir).record(
-      createPersistedEngineAuthority("docker", engine, managedLlamaCppBindingSha256(engine)),
+      createPersistedEngineAuthority(operation.providerId, engine, operation.bindingSha256),
     );
     const persistedReceipt = loadManagedLlamaCppReceipt(paths);
     const journalStore = createHostLocalCreateJournalStore(paths.stateDir);
@@ -813,27 +564,16 @@ export async function installManagedLlamaCpp(
       log,
     );
     if (acquireModel) {
-      if (dockerAuthority === null && options.acquireGguf === undefined) {
-        throw new Error(
-          "Managed llama.cpp GGUF acquisition requires its qualified Docker authority.",
-        );
-      }
       log("  Acquiring and verifying the exact llama.cpp GGUF in the shared Hugging Face cache");
       const identity = runtimeIdentity();
       artifact = await acquire({
-        ...(dockerAuthority ? { assertDockerAuthority: dockerAuthority.assertAuthority } : {}),
+        assertDockerAuthority: operation.assertAuthority,
         execution: {
           credentialEnv: env,
           dockerEnv,
           downloaderImage: plan.acquisition.downloaderImage,
           hostCacheDir: cacheRoot,
-          spawnDocker:
-            dockerAuthority?.spawnDocker ??
-            (() => {
-              throw new Error(
-                "Managed llama.cpp GGUF acquisition requires its qualified Docker authority.",
-              );
-            }),
+          spawnDocker: operation.spawn,
           userIdentity: identity.dockerUser,
         },
         observer: {
@@ -852,8 +592,7 @@ export async function installManagedLlamaCpp(
       paths,
       cacheRoot,
       artifact,
-      engine,
-      createLifecycle,
+      operation,
     });
 
     if (pending.length === 1) {
@@ -902,7 +641,7 @@ export async function installManagedLlamaCpp(
 /** Recover one exact gateway-owned runtime during normal resume or rebuild. */
 export async function resumeManagedLlamaCppRuntime(
   sandboxName: string,
-  options: ManagedLlamaCppResumeOptions = {},
+  options: ManagedLlamaCppResumeOptions,
 ): Promise<boolean> {
   const env = options.env ?? process.env;
   const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
@@ -917,9 +656,13 @@ export async function resumeManagedLlamaCppRuntime(
   }
 
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
-  const engine = options.engine ?? createManagedLlamaCppEngine(env);
+  const operation = requireRuntimeProviderHostLocalInferenceOperation(
+    options.runtimeProvider,
+    "llama-cpp",
+    { env },
+  );
+  const engine = operation.engine;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
-  const createLifecycle = options.createLifecycle ?? createDockerLlamaCppManagedLifecycle;
   const checkPort = options.checkPort ?? checkPortAvailable;
   const plan = compileLlamaCppGgufCachePlan(selection.recipe);
   const cacheRoot = ensureSharedHuggingFaceCache(homeDir);
@@ -951,8 +694,7 @@ export async function resumeManagedLlamaCppRuntime(
     paths,
     cacheRoot,
     artifact,
-    engine,
-    createLifecycle,
+    operation,
   });
   if (pending.length === 1) {
     const recovery = lifecycle.recoverUnfinished(

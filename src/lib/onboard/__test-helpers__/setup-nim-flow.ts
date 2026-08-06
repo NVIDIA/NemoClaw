@@ -5,6 +5,7 @@ import { expect, vi } from "vitest";
 
 import { getWindowsHostOllamaDockerRequirement } from "../local-inference-topology";
 import type { InferenceProviderHostState } from "../provider-host-state";
+import { createDockerRuntimeProviderBundle } from "../runtime-provider/docker";
 import type { SetupNimFlowDeps } from "../setup-nim-flow";
 
 const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
@@ -98,6 +99,7 @@ export function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlo
     ollamaPort: 11434,
     vllmPort: 8000,
     getGatewayPort: () => 8080,
+    getRuntimeProvider: () => createDockerRuntimeProviderBundle(),
     step: vi.fn(),
     isNonInteractive: () => false,
     getNonInteractiveProvider: () => null,

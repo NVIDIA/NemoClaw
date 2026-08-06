@@ -7,6 +7,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
+import { dockerLlamaCppBindingSha256 as managedLlamaCppBindingSha256 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import {
   createHostLocalCreateJournalStore,
   type HostLocalCreateJournalPhase,
@@ -21,7 +22,6 @@ import {
   MANAGED_LLAMA_CPP_NETWORK_NAME,
   MANAGED_LLAMA_CPP_OWNER_LABEL,
   MANAGED_LLAMA_CPP_OWNER_VALUE,
-  managedLlamaCppBindingSha256,
 } from "../llama-cpp/managed-installer";
 import {
   createManagedLlamaCppReceiptWriter,

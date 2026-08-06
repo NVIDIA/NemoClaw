@@ -8,6 +8,10 @@ import path from "node:path";
 import type { ContainerEngine } from "../../adapters/container-engine";
 import { dockerCapture, dockerForceRm, dockerRun } from "../../adapters/docker/local-model-runtime";
 import {
+  createManagedLlamaCppEngine,
+  dockerLlamaCppBindingSha256,
+} from "../../onboard/runtime-provider/docker-llama-cpp-operation";
+import {
   createHostLocalCreateJournalStore,
   type HostLocalCreateJournalRecord,
 } from "../../onboard/runtime-provider/host-local-create-journal";
@@ -16,12 +20,10 @@ import {
   requirePersistedEngineAuthority,
 } from "../../onboard/runtime-provider/persisted-engine-authority";
 import {
-  createManagedLlamaCppEngine,
   MANAGED_LLAMA_CPP_CONTAINER_NAME,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
   MANAGED_LLAMA_CPP_OWNER_LABEL,
   MANAGED_LLAMA_CPP_OWNER_VALUE,
-  managedLlamaCppBindingSha256,
 } from "../llama-cpp/managed-installer";
 import {
   loadManagedLlamaCppOwner,
@@ -315,12 +317,7 @@ function requireQualifiedEngine(
   authority: HostLocalCreateJournalRecord["engineAuthority"],
   engine: ContainerEngine,
 ): void {
-  requirePersistedEngineAuthority(
-    authority,
-    "docker",
-    engine,
-    managedLlamaCppBindingSha256(engine),
-  );
+  requirePersistedEngineAuthority(authority, "docker", engine, dockerLlamaCppBindingSha256(engine));
 }
 
 function removeExactContainerForJournal(

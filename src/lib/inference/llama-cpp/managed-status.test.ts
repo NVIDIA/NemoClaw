@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
+import { dockerLlamaCppBindingSha256 as managedLlamaCppBindingSha256 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
 import { serializeHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
@@ -16,7 +17,6 @@ import {
   MANAGED_LLAMA_CPP_NETWORK_NAME,
   MANAGED_LLAMA_CPP_OWNER_LABEL,
   MANAGED_LLAMA_CPP_OWNER_VALUE,
-  managedLlamaCppBindingSha256,
 } from "./managed-installer";
 import {
   createManagedLlamaCppReceiptWriter,
@@ -212,8 +212,8 @@ describe("managed llama.cpp status", () => {
     });
     expect(inspectExact).toHaveBeenCalledOnce();
     expect(inspectExact.mock.calls[0]?.[0]).toMatchObject({
-      engine: runtimeEngine,
       homeDir,
+      operation: { engine: runtimeEngine },
       paths: managedLlamaCppStatePaths(homeDir),
     });
   });

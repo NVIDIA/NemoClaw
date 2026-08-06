@@ -154,6 +154,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
@@ -168,6 +169,8 @@ describe("runtime provider central source boundary", () => {
   it("activates Docker llama.cpp only through its durable lifecycle controller (#8433)", () => {
     const docker = read("src/lib/onboard/runtime-provider/docker.ts");
     const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
+    const operation = read("src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts");
+    const hostLocalContract = read("src/lib/onboard/runtime-provider/host-local-inference.ts");
     const installer = read("src/lib/inference/llama-cpp/managed-installer.ts");
     const localModelProfilePlan = read("src/lib/onboard/local-model-profile/plan.ts");
     const allTrackedPaths = trackedPaths(".");
@@ -183,10 +186,13 @@ describe("runtime provider central source boundary", () => {
       )
       .map(read)
       .join("\n");
-    expect(docker).not.toContain("docker-llama-cpp-managed-lifecycle");
-    expect(docker).toMatch(/operation:\s*["']host-local-inference["']/u);
+    expect(docker).toContain("createDockerLlamaCppHostLocalOperation");
+    expect(docker).toMatch(/hostLocalInference:\s*\{[\s\S]*services:\s*\[["']llama-cpp["']\]/u);
     expect(adapter).toContain("createDockerLlamaCppManagedLifecycle");
-    expect(installer).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(operation).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(installer).toContain("requireRuntimeProviderHostLocalInferenceOperation");
+    expect(installer).not.toMatch(/(?:createDocker|docker-llama-cpp)/u);
+    expect(hostLocalContract).not.toMatch(/(?:Docker|Podman|createDocker)/u);
     expect(productionComposition).toContain("createDockerLlamaCppManagedLifecycle");
     expect(productionComposition).toContain("docker-llama-cpp-managed-lifecycle");
     expect(localModelProfilePlan).toContain(

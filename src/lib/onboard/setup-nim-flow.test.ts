@@ -1146,11 +1146,14 @@ describe("createSetupNim", () => {
         return "selected";
       },
     );
+    const runtimeProvider = makeDeps().getRuntimeProvider();
+    const getRuntimeProvider = vi.fn(() => runtimeProvider);
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "llama-cpp",
         getNonInteractiveModel: () => "team/model-alias",
+        getRuntimeProvider,
         handleLlamaCppSelection,
       }),
     );
@@ -1163,6 +1166,7 @@ describe("createSetupNim", () => {
       preferredInferenceApi: "openai-completions",
     });
     expect(handleLlamaCppSelection).toHaveBeenCalledOnce();
+    expect(getRuntimeProvider).not.toHaveBeenCalled();
   });
 
   it("activates a readiness-selected managed llama.cpp recipe for the selected gateway", async () => {
@@ -1199,6 +1203,8 @@ describe("createSetupNim", () => {
         return "selected";
       },
     );
+    const runtimeProvider = makeDeps().getRuntimeProvider();
+    const getRuntimeProvider = vi.fn(() => runtimeProvider);
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
@@ -1206,6 +1212,7 @@ describe("createSetupNim", () => {
         getGatewayPort: () => 8091,
         resolveManagedLlamaCppSelection,
         installManagedLlamaCpp,
+        getRuntimeProvider,
         handleLlamaCppSelection,
       }),
     );
@@ -1219,7 +1226,38 @@ describe("createSetupNim", () => {
     expect(installManagedLlamaCpp).toHaveBeenCalledWith(selection, {
       sandboxName: "spark-agent",
       gatewayPort: 8091,
+      runtimeProvider,
     });
+    expect(getRuntimeProvider).toHaveBeenCalledOnce();
+  });
+
+  it("does not resolve a host-local-inference runtime provider for existing vLLM", async () => {
+    const getRuntimeProvider = vi.fn(() => unexpected("runtime provider selection"));
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      state.provider = "vllm-local";
+      state.model = "existing-vllm-model";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "vllm",
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmEntries: [{ key: "vllm", label: "Local vLLM — running" }],
+          }),
+        getRuntimeProvider,
+        handleVllmSelection,
+      }),
+    );
+
+    await expect(setupNim(null)).resolves.toMatchObject({
+      provider: "vllm-local",
+      model: "existing-vllm-model",
+    });
+    expect(handleVllmSelection).toHaveBeenCalledOnce();
+    expect(getRuntimeProvider).not.toHaveBeenCalled();
   });
 
   it("rejects an incompatible gateway route before managed llama.cpp install effects", async () => {

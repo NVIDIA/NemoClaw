@@ -42,6 +42,10 @@ import { resolveRequestedProviderSelection } from "./provider-selection";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
+import type { RuntimeProviderBundle } from "./runtime-provider/contract";
+
+export { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
+
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
 
@@ -90,6 +94,7 @@ export interface SetupNimFlowDeps {
   ollamaPort: number;
   vllmPort: number;
   getGatewayPort(): number;
+  getRuntimeProvider(): RuntimeProviderBundle;
   step(current: number, total: number, label: string): void;
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
@@ -701,7 +706,11 @@ export function createSetupNim(
           state.assertRouteCompatible?.();
           const installed = await (deps.installManagedLlamaCpp ?? installManagedLlamaCpp)(
             resolved.selection,
-            { sandboxName, gatewayPort: deps.getGatewayPort() },
+            {
+              sandboxName,
+              gatewayPort: deps.getGatewayPort(),
+              runtimeProvider: deps.getRuntimeProvider(),
+            },
           );
           if (!installed.ok) {
             deps.error(`  Managed llama.cpp install failed: ${installed.reason}`);

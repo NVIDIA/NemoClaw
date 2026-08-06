@@ -43,6 +43,7 @@ import type { InferenceProviderHostState } from "../src/lib/onboard/provider-hos
 import { buildInferenceProviderMenu } from "../src/lib/onboard/provider-menu.js";
 import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
 import { reportProviderSelectionFailure } from "../src/lib/onboard/provider-selection-failure.js";
+import { createDockerRuntimeProviderBundle } from "../src/lib/onboard/runtime-provider/docker.js";
 import { createSetupNim, type SetupNimFlowDeps } from "../src/lib/onboard/setup-nim-flow.js";
 import { createSetupNimOllamaHandlers } from "../src/lib/onboard/setup-nim-ollama.js";
 import {
@@ -157,6 +158,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     ollamaPort: 11434,
     vllmPort: 8000,
     getGatewayPort: () => 8080,
+    getRuntimeProvider: () => createDockerRuntimeProviderBundle(),
     step: () => {},
     isNonInteractive: () => false,
     getNonInteractiveProvider: () => null,
