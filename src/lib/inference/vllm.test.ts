@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
   persistHostLocalVllmRuntimeReceipt: vi.fn(),
+  runCurlProbe: vi.fn(),
   resolveHostLocalVllmSelection: vi.fn<() => HostLocalVllmSelectionResult>(() => ({
     kind: "not-selected",
   })),
@@ -42,6 +43,10 @@ vi.mock("../adapters/docker", () => ({
   dockerRunDetached: mocks.dockerRunDetached,
   dockerSpawn: mocks.dockerSpawn,
   dockerStop: mocks.dockerStop,
+}));
+
+vi.mock("../adapters/http/probe", () => ({
+  runCurlProbe: mocks.runCurlProbe,
 }));
 
 vi.mock("./nim", () => ({
@@ -109,6 +114,14 @@ beforeEach(() => {
     },
   });
   mocks.persistHostLocalVllmRuntimeReceipt.mockReset();
+  mocks.runCurlProbe.mockReturnValue({
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: "",
+    stderr: "",
+    message: "",
+  });
   mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
 });
 
