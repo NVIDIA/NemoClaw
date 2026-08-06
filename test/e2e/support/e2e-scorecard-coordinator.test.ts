@@ -24,7 +24,7 @@ const coordinator = require("../../../scripts/scorecard/coordinate-scorecard.mts
 
 function coordinatorInput(overrides: Partial<ScorecardInput> = {}): ScorecardInput {
   return {
-    eventName: "schedule",
+    eventName: "push",
     actor: "",
     serverUrl: "https://github.com",
     repo: { owner: "NVIDIA", repo: "NemoClaw" },
@@ -50,8 +50,8 @@ describe("scorecard coordinator selectors and run mode", () => {
     expect(coordinator.parseSelectors("   ")).toEqual([]);
   });
 
-  it("maps event and selectors to the scheduled, full, and selective run modes", () => {
-    expect(coordinator.deriveRunMode("schedule", "", "")).toEqual({
+  it("maps event and selectors to the main-push, full, and selective run modes", () => {
+    expect(coordinator.deriveRunMode("push", "", "")).toEqual({
       runMode: "Main push",
       isDispatch: false,
       isSelectiveDispatch: false,
@@ -73,7 +73,7 @@ describe("scorecard coordinator selectors and run mode", () => {
 });
 
 describe("scorecard coordinator assembly", () => {
-  it("routes a clean scheduled run to the daily channel with a perfect summary", () => {
+  it("routes a clean main-push run to the daily channel with a perfect summary", () => {
     const { scorecardData, slackData, summaryMarkdown } = coordinator.buildScorecard(
       coordinatorInput({
         needs: { "cloud-onboard": { result: "success" }, "report-to-pr": { result: "success" } },

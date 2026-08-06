@@ -71,13 +71,22 @@ Find and verify the correlated run with bounded GitHub reads:
 
 ```bash
 RUN_TITLE="E2E PR #${PR_NUMBER} (${CORRELATION_ID})"
-RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
-  --event workflow_dispatch --branch main --limit 50 \
-  --json databaseId,displayTitle)"
-MATCHES="$(jq -c --arg title "$RUN_TITLE" \
-  '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
-test "$(jq 'length' <<<"$MATCHES")" -eq 1
-RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
+MATCHES='[]'
+for POLL_INDEX in $(seq 1 30); do
+  RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
+    --event workflow_dispatch --branch main --limit 50 \
+    --json databaseId,displayTitle)"
+  MATCHES="$(jq -c --arg title "$RUN_TITLE" \
+    '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
+  test "$(jq 'length' <<<"$MATCHES")" -le 1
+  test "$(jq 'length' <<<"$MATCHES")" -eq 0 || break
+  sleep 10
+done
+if test "$(jq 'length' <<<"$MATCHES")" -ne 1; then
+  echo 'The dispatched run was not visible after bounded polling. Do not dispatch again. Inspect the E2E Actions runs for the recorded correlation ID and clean up any resources from a matching run.' >&2
+  exit 1
+fi
+RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
 RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '

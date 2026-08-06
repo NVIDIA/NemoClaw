@@ -516,7 +516,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const runtimeHistory = {
       buildRuntimeHistory: vi
         .fn()
-        .mockResolvedValue("## E2E Nightly Runtime Trend\n\n| Target | Prior median |"),
+        .mockResolvedValue("## E2E Push Runtime Trend\n\n| Target | Prior median |"),
       loadPriorPushSummaries: vi.fn(),
     };
     const firstTurnLatency = {
@@ -549,7 +549,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const context = {
       actor: "scorecard-test",
-      eventName: "schedule",
+      eventName: "push",
       repo: { owner: "NVIDIA", repo: "NemoClaw" },
       runId: 123,
       serverUrl: "https://github.com",
@@ -588,7 +588,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(coordinator.buildScorecard).toHaveBeenCalledWith(
       expect.objectContaining({
         apiJobs: [],
-        eventName: "schedule",
+        eventName: "push",
         needs: { "generate-matrix": { result: "success" } },
         rawExplicitOnly: "",
         rawJobs: "",
@@ -600,7 +600,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringMatching(
-        /### Onboard Performance Budget[\s\S]*## E2E Test Phase Runtime[\s\S]*## E2E Nightly Runtime Trend/u,
+        /### Onboard Performance Budget[\s\S]*## E2E Test Phase Runtime[\s\S]*## E2E Push Runtime Trend/u,
       ),
     );
     expect(summary.write).toHaveBeenCalledOnce();
@@ -674,7 +674,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const context = {
       actor: "scorecard-test",
-      eventName: "schedule",
+      eventName: "push",
       repo: { owner: "NVIDIA", repo: "NemoClaw" },
       runId: 123,
       serverUrl: "https://github.com",

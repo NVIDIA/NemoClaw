@@ -467,7 +467,7 @@ export function formatRuntimeHistory(
   }
 
   lines.push(
-    "| Target | Scenario | Prior nights | Current | Prior median | Prior p95 | Delta | Current outcome | Prior P/F/S | Failure streak | Common failed phase | Significant regressions |",
+    "| Target | Scenario | Prior pushes | Current | Prior median | Prior p95 | Delta | Current outcome | Prior P/F/S | Failure streak | Common failed phase | Significant regressions |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- |",
   );
   for (const current of [...currentRows]
