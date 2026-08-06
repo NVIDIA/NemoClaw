@@ -1,7 +1,8 @@
 {{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 HPA: kubectl get hpa -n {{ include "nemoclaw-gpu.namespace" . }} -w
-Pods: ./scripts/get-agent-pods.sh -n {{ include "nemoclaw-gpu.namespace" . }} -w  (per-pod GPU %)
+Pods: kubectl get pods -n {{ include "nemoclaw-gpu.namespace" . }} -l 'app.kubernetes.io/name={{ include "nemoclaw-gpu.name" . }},app.kubernetes.io/instance={{ .Release.Name }},component=gpu-agent' -w
+Per-pod GPU metrics: kubectl get --raw '/apis/custom.metrics.k8s.io/v1beta1/namespaces/{{ include "nemoclaw-gpu.namespace" . }}/pods/*/gpu_utilization_percent'
 Ingress: kubectl get ingress {{ include "nemoclaw-gpu.fullname" . }}-agent -n {{ include "nemoclaw-gpu.namespace" . }}
 Endpoint: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}
 {{- if and .Values.ingress.auth.enabled (not .Values.ingress.auth.existingSecret) }}

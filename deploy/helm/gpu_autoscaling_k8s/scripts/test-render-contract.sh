@@ -34,6 +34,20 @@ python3 -c 'import yaml' 2>/dev/null || {
   exit 1
 }
 
+NOTES_FILE="${CHART_DIR}/templates/NOTES.txt"
+if grep -q '\./scripts/' "${NOTES_FILE}"; then
+  echo "FAIL: Helm NOTES contains a chart-directory-relative script command" >&2
+  exit 1
+fi
+grep -Fq 'Pods: kubectl get pods' "${NOTES_FILE}" || {
+  echo "FAIL: Helm NOTES does not provide a working-directory-independent pod command" >&2
+  exit 1
+}
+grep -Fq 'Per-pod GPU metrics: kubectl get --raw' "${NOTES_FILE}" || {
+  echo "FAIL: Helm NOTES does not provide the per-pod GPU metrics command" >&2
+  exit 1
+}
+
 if helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/values-step2-hpa.yaml" \
   --set autoscaling.enabled=true >/dev/null 2>&1; then
   echo "FAIL: chart rendered a cleartext Ingress without explicit opt-in" >&2
@@ -206,6 +220,7 @@ print("OK: HPA/Deployment/Service/ServiceMonitor render contract holds")
 PYEOF
 
 echo "OK: chart rejects cleartext Ingress without explicit opt-in"
+echo "OK: Helm NOTES commands do not depend on the chart source directory"
 echo "OK: chart enforces ssl-redirect=true when TLS is configured"
 echo "OK: chart requires an explicit ReadWriteMany storage class for shared PVC persistence"
 echo "OK: chart preserves the explicit single-node hostPath persistence mode"
