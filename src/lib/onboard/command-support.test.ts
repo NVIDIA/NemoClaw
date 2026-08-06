@@ -55,6 +55,18 @@ describe("buildOnboardFlags --events help", () => {
   });
 });
 
+describe("buildOnboardFlags temporary managed runtime gate", () => {
+  it("accepts the activation flag without advertising it in CLI help", () => {
+    const flags = buildOnboardFlags({ includeEvents: true });
+
+    expect(flags["temp-managed-runtime"].hidden).toBe(true);
+    expect(flags["temp-managed-runtime"].description).toBeUndefined();
+    expect(flags["temp-managed-runtime-catalog"].hidden).toBe(true);
+    expect(flags["temp-managed-runtime-catalog"].dependsOn).toEqual(["temp-managed-runtime"]);
+    expect(flags.events.hidden).not.toBe(true);
+  });
+});
+
 describe("buildOnboardFlags experimental profile", () => {
   it("keeps the portable profile hidden and value constrained", () => {
     const flags = buildOnboardFlags();

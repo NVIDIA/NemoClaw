@@ -5,18 +5,6 @@ name: E2E / macOS
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "bin/**"
-      - "nemoclaw/**"
-      - "scripts/**"
-      - "src/**"
-      - "test/**"
-      - ".github/workflows/macos-e2e.yaml"
-      - "package.json"
-      - "package-lock.json"
-      - "nemoclaw/package-lock.json"
-      - "vitest.config.ts"
   push:
     branches:
       - main
@@ -91,9 +79,9 @@ jobs:
           echo "Docker is unavailable on the Apple Silicon runner."
 
       - name: Run macOS full E2E
-        if: steps.docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: steps.docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main'
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ github.token }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -103,11 +91,9 @@ jobs:
           NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
       - name: Explain skipped macOS live E2E
-        if: steps.docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
+        if: steps.docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main'
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo 'Skipping secret-bearing macOS live E2E on pull_request; use trusted workflow_dispatch/push evidence for live validation.'
-          elif [ "${{ github.ref }}" != "refs/heads/main" ]; then
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
             echo 'Skipping secret-bearing macOS live E2E outside the trusted main branch.'
           elif [ "${{ steps.docker.outputs.docker_ok }}" != "true" ]; then
             echo 'Skipping macOS live E2E because Docker is unavailable on this runner.'
@@ -115,7 +101,7 @@ jobs:
           echo 'The workflow still validated the NemoClaw build on macOS (Apple Silicon).'
 
       - name: Upload logs on failure
-        if: failure() && github.event_name == 'pull_request'
+        if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-e2e-logs

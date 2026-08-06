@@ -102,10 +102,10 @@ describe("stageCreateSandboxBuildContext", () => {
 
     expect(createAgentSandbox).toHaveBeenCalledWith(agent);
     expect(result.buildCtx).toBe(agentBuild.buildCtx);
-    expect(result.origin).toBe("custom");
+    expect(result.origin).toBe("generated");
     expect(logs).toEqual([
-      `  Using custom Dockerfile: ${agentDockerfile}`,
-      "  This is the managed Hermes Dockerfile; staging the repository root as the Docker build context.",
+      `  Using trusted Hermes Dockerfile: ${agentDockerfile}`,
+      "  Staging the repository root as the managed Hermes build context.",
     ]);
   });
 
