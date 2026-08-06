@@ -74,6 +74,10 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
     ],
   },
   {
+    relativePath: "src/lib/onboard/diagnostics/jetson-openrm-proof.ts",
+    expectedReads: [preservingBase("maybeRunJetsonOpenRmPolicyProof")],
+  },
+  {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
     expectedReads: [unclassifiedBase("actionApply")],
   },

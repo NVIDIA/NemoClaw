@@ -1,5 +1,9 @@
 [
   {
+    "name": "NEMOCLAW_DIAGNOSE_JETSON_OPENRM_POLICY",
+    "reason": "Temporary maintainer-only Jetson hardware A/B for issue #7610; remove after the exact policy boundary is proven."
+  },
+  {
     "name": "NEMOCLAW_DISABLE_AUTO_DISPATCH",
     "reason": "Test harness sentinel set to '1' so test files can import src/nemoclaw.ts without triggering main(). Never user-set in production."
   },

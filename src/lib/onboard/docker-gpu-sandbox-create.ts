@@ -3,6 +3,7 @@
 
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
+import { maybeRunJetsonOpenRmPolicyProof } from "./diagnostics/jetson-openrm-proof";
 import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
@@ -557,6 +558,21 @@ export function createDockerGpuSandboxCreatePatch(
         return proof;
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
+        try {
+          maybeRunJetsonOpenRmPolicyProof({
+            backend: options.backend,
+            failure,
+            preserveJetsonDeviceGroupMembership: options.preserveJetsonDeviceGroupMembership,
+            result,
+            sandboxName,
+            verifyDirectSandboxGpu,
+            deps: options.deps,
+          });
+        } catch (diagnosticError) {
+          console.error(
+            `  OpenRM A/B inconclusive: ${diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError)}`,
+          );
+        }
         printDockerGpuProofFailure(sandboxName, failure, selectedMode(), {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,

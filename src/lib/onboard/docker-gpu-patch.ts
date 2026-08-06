@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture } from "../adapters/docker";
+import { dockerCapture, dockerRun } from "../adapters/docker";
 import { parseLiveSandboxEntries } from "../runtime-recovery";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
@@ -27,6 +27,7 @@ export {
   getDockerGpuPatchNetworkMode,
   parseDockerInspectJson,
 } from "./docker-gpu-patch-clone";
+export { dockerRun };
 
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch-diagnostics";
 import {
