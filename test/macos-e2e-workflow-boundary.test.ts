@@ -50,14 +50,10 @@ function stepNamed(name: string, jobName = "macos-e2e"): WorkflowStep {
 describe("macOS E2E workflow boundary", () => {
   // source-shape-contract: security -- Live credentials must stay gated to trusted main-branch workflow code
   it("keeps secret-bearing live E2E on trusted main-branch code", () => {
-    expect(readMacosWorkflow().on?.pull_request).toBeDefined();
+    expect(readMacosWorkflow().on?.pull_request).toBeUndefined();
 
-    expect(stepNamed("Run macOS full E2E").if).toContain("github.event_name != 'pull_request'");
     expect(stepNamed("Run macOS full E2E").if).toContain("github.ref == 'refs/heads/main'");
 
-    expect(String(stepNamed("Run macOS full E2E").env?.NVIDIA_INFERENCE_API_KEY)).toContain(
-      "github.event_name != 'pull_request'",
-    );
     expect(String(stepNamed("Run macOS full E2E").env?.NVIDIA_INFERENCE_API_KEY)).toContain(
       "github.ref == 'refs/heads/main'",
     );
@@ -92,6 +88,6 @@ describe("macOS E2E workflow boundary", () => {
       "/tmp/nemoclaw-e2e-*.log",
       "${{ github.workspace }}/e2e-artifacts/live",
     ]);
-    expect(upload?.if).toBe("failure() && github.event_name == 'pull_request'");
+    expect(upload?.if).toBe("failure()");
   });
 });

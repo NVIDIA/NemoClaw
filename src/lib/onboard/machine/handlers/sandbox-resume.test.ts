@@ -133,6 +133,59 @@ describe("decideSandboxResume", () => {
     });
   });
 
+  it.each([
+    "missing",
+    "not_ready",
+  ])("continues an owned recreate when the outer transaction leaves the source %s", (sandboxReuseState) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxStepComplete: false,
+          sandboxReuseState,
+          recreateSandboxRequested: true,
+          recreateJournalHandoff: true,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    });
+  });
+
+  it("does not trust a journal handoff when the sandbox state is unknown", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxStepComplete: false,
+          sandboxReuseState: "unknown",
+          recreateSandboxRequested: true,
+          recreateJournalHandoff: true,
+        }),
+      ),
+    ).toEqual({ kind: "create" });
+  });
+
+  it.each([
+    [
+      "only explicit recreation is requested",
+      { recreateSandboxRequested: true, recreateJournalHandoff: false },
+    ],
+    [
+      "only a journal handoff is present",
+      { recreateSandboxRequested: false, recreateJournalHandoff: true },
+    ],
+  ])("repairs a not-ready sandbox when %s", (_scenario, overrides) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...overrides,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
   it("repairs a not-ready sandbox before recreating for DCode auto-approval drift", () => {
     expect(
       decideSandboxResume(
