@@ -12,9 +12,11 @@ import YAML from "yaml";
 
 import {
   validateDockerHubAuthAction,
+  validateDockerHubCleanupAction,
   validateE2eWorkflowBoundary,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+import { testTimeout } from "../../helpers/timeouts";
 
 const NO_IMAGE_E2E_JOBS = ["staging-brev-launchable", "shared-e2e"] as const;
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
@@ -30,6 +32,13 @@ const AUTH_ACTION_PATH = path.join(
   ".github",
   "actions",
   "docker-auth-setup",
+  "action.yaml",
+);
+const CLEANUP_ACTION_PATH = path.join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "docker-auth-cleanup",
   "action.yaml",
 );
 
@@ -89,7 +98,7 @@ function writeExecutable(filePath: string, source: string): void {
   fs.chmodSync(filePath, 0o755);
 }
 
-function mutateAuthActionSource(
+function mutateActionSource(
   source: string,
   mutateAction: (action: Record<string, unknown>) => void,
 ): string {
@@ -108,12 +117,33 @@ function validateAuthArtifactMutation(options: {
   try {
     const actionSource = fs.readFileSync(AUTH_ACTION_PATH, "utf8");
     const mutatedActionSource = options.mutateAction
-      ? mutateAuthActionSource(actionSource, options.mutateAction)
+      ? mutateActionSource(actionSource, options.mutateAction)
       : actionSource;
     fs.writeFileSync(actionPath, mutatedActionSource);
     const scriptSource = fs.readFileSync(AUTH_HELPER_PATH, "utf8");
     fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
     return validateDockerHubAuthAction(actionPath, scriptPath);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+function validateCleanupArtifactMutation(options: {
+  mutateAction?: (action: Record<string, unknown>) => void;
+  mutateScript?: (source: string) => string;
+}): string[] {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-cleanup-action-"));
+  const actionPath = path.join(directory, "action.yaml");
+  const scriptPath = path.join(directory, "docker-auth-cleanup.sh");
+  try {
+    const actionSource = fs.readFileSync(CLEANUP_ACTION_PATH, "utf8");
+    const mutatedActionSource = options.mutateAction
+      ? mutateActionSource(actionSource, options.mutateAction)
+      : actionSource;
+    fs.writeFileSync(actionPath, mutatedActionSource);
+    const scriptSource = fs.readFileSync(CLEANUP_HELPER_PATH, "utf8");
+    fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
+    return validateDockerHubCleanupAction(actionPath, scriptPath);
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -150,6 +180,93 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       "docker-auth-setup script content must match the helper reviewed at its immutable commit pin",
     );
   });
+
+  // source-shape-contract: security -- The cleanup action and helper content must remain bound to the pinned commit.
+  it("binds the cleanup action and helper content to the pinned commit", () => {
+    expect(validateDockerHubCleanupAction()).toEqual([]);
+
+    const actionErrors = validateCleanupArtifactMutation({
+      mutateAction: (action) => {
+        const runs = action.runs as { steps: WorkflowStep[] };
+        runs.steps[0].run = "bash .github/scripts/docker-auth-cleanup.sh";
+      },
+    });
+    expect(actionErrors).toContain(
+      "docker-auth-cleanup action content must match the pinned commit",
+    );
+    expect(actionErrors).toContain(
+      "docker-auth-cleanup action must invoke the helper through github.action_path",
+    );
+
+    expect(
+      validateCleanupArtifactMutation({
+        mutateScript: (source) => `${source}# unreviewed drift\n`,
+      }),
+    ).toContain("docker-auth-cleanup script content must match the pinned commit");
+  });
+
+  it(
+    "accepts only the pinned pre-restore cleanup action in the complete workflow",
+    () => {
+      expect(validateE2eWorkflowBoundary()).toEqual([]);
+
+      const jobNames = [
+        "openclaw-plugin-runtime-exdev",
+        "openclaw-plugin-runtime-exdev-release",
+      ] as const;
+      const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
+        (cleanup) => {
+          cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
+        },
+        (cleanup) => {
+          cleanup.uses = "./.github/actions/docker-auth-cleanup";
+        },
+        (cleanup) => {
+          delete cleanup.uses;
+          cleanup.shell = "bash";
+          cleanup.run = CLEANUP_HELPER_RUN;
+        },
+      ];
+      for (const mutateCleanup of cleanupMutations) {
+        const errors = validateMutation((workflow) => {
+          for (const jobName of jobNames) {
+            const cleanup = namedStep(
+              workflow.jobs[jobName],
+              "Remove Docker auth before release-pinned fixture",
+            );
+            expect(cleanup).toBeDefined();
+            mutateCleanup(cleanup!);
+          }
+        });
+
+        for (const jobName of jobNames) {
+          expect(errors).toContain(
+            `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
+          );
+        }
+      }
+
+      const orderingErrors = validateMutation((workflow) => {
+        for (const jobName of jobNames) {
+          const job = workflow.jobs[jobName];
+          const steps = job.steps!;
+          const cleanup = namedStep(job, "Remove Docker auth before release-pinned fixture");
+          const restore = namedStep(job, "Restore exact-commit CLI artifact");
+          expect(cleanup).toBeDefined();
+          expect(restore).toBeDefined();
+          steps.splice(steps.indexOf(cleanup!), 1);
+          steps.splice(steps.indexOf(restore!) + 1, 0, cleanup!);
+        }
+      });
+
+      for (const jobName of jobNames) {
+        expect(orderingErrors).toContain(
+          `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
+        );
+      }
+    },
+    testTimeout(15_000),
+  );
 
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
     const workflow = loadWorkflow();
