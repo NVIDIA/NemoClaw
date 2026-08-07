@@ -48,12 +48,13 @@ export function exportLlamaCppDgxSparkQualificationPlan(sourceRoot: string) {
   ) {
     throw new Error("protected llama.cpp DGX Spark qualification is not enabled");
   }
-  parseLlamaCppDgxSparkExecutionPlan(
+  const executionPlan = parseLlamaCppDgxSparkExecutionPlan(
     JSON.parse(config.publication_qualification_plan) as unknown,
     config.publication_qualification_plan_sha256,
   );
 
   return {
+    agent_qualification_execution: executionPlan.qualification.agentQualification.execution,
     environment: qualification.environment,
     execution: qualification.execution,
     model_host_path: qualification.model.hostPath,
@@ -72,6 +73,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const output = githubOutput(exportLlamaCppDgxSparkQualificationPlan(args[1]));
   const githubOutputPath = process.env.GITHUB_OUTPUT;
   if (githubOutputPath)
-    fs.appendFileSync(githubOutputPath, output, { encoding: "utf8", mode: 0o600 });
+    fs.appendFileSync(githubOutputPath, output, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
   else process.stdout.write(output);
 }
