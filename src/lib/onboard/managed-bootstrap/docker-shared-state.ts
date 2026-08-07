@@ -185,6 +185,7 @@ function verifyCopiedManagedStartupReceipt(
       profileFingerprint,
       "--bootstrap-identity",
       transaction.bootstrapIdentity,
+      "--read-only-receipt",
     ],
     DOCKER_MUTATION_OPTIONS,
   );

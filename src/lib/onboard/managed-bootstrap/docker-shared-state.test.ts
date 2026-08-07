@@ -95,6 +95,11 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
     expect(helpers.some((args) => args.includes("--shared-state-transaction-status"))).toBe(true);
     expect(helpers.some((args) => args.includes("--commit-shared-state-transaction"))).toBe(true);
     expect(helpers).not.toHaveLength(0);
+    expect(
+      helpers
+        .filter((args) => args.includes("--shared-state-transaction-status"))
+        .every((args) => args.at(-1) === "--read-only-receipt"),
+    ).toBe(true);
     helpers.filter((args) => args[0] === "run").forEach(expectCleanRunNodeHelper);
     helpers.filter((args) => args[0] === "exec").forEach(expectCleanExecNodeHelper);
   });
@@ -115,6 +120,11 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
     expect(helpers).toHaveLength(2);
     expect(helpers.some((args) => args.includes("--shared-state-transaction-status"))).toBe(true);
     expect(helpers.some((args) => args.includes("--rollback-shared-state-transaction"))).toBe(true);
+    expect(
+      helpers
+        .filter((args) => args.includes("--shared-state-transaction-status"))
+        .every((args) => args.at(-1) === "--read-only-receipt"),
+    ).toBe(true);
     helpers.forEach(expectCleanRunNodeHelper);
   });
 
