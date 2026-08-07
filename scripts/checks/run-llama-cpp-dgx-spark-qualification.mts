@@ -399,6 +399,22 @@ export function validateStartupLog(log: string): {
   return counts[0] as { offloadedLayers: number; totalLayers: number };
 }
 
+export function validateRuntimeLogRedaction(
+  log: string,
+  forbiddenValues: readonly string[],
+): { readonly ok: true } {
+  if (Buffer.byteLength(log) < 1 || Buffer.byteLength(log) > 16 * 1024 * 1024) {
+    throw new Error("runtime log evidence is missing or exceeds the bounded log size");
+  }
+  if (
+    forbiddenValues.length < 1 ||
+    forbiddenValues.some((value) => value.length < 8 || log.includes(value))
+  ) {
+    throw new Error("runtime log evidence contains a credential, path, prompt, or response value");
+  }
+  return { ok: true };
+}
+
 function compareVersions(left: string, right: string): number {
   const leftParts = left.split(".").map(Number);
   const rightParts = right.split(".").map(Number);
@@ -1014,6 +1030,24 @@ async function runQualification(
         else process.env[baseUrlEnvironmentName] = priorBaseUrl;
       }
     }
+    const logRedaction = validateRuntimeLogRedaction(
+      runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
+        maximumBytes: 16 * 1024 * 1024,
+      }).toString("utf8"),
+      [
+        apiKey,
+        authorization,
+        invocation.modelHostPath,
+        "Return one short readiness token.",
+        "Reply with exactly: ready",
+        "Report the requested qualification status.",
+        "Use the available tool to get the weather in Seattle.",
+        agentPlan.prompts.normal,
+        agentPlan.prompts.tool,
+        agentPlan.prompts.continuation,
+        agentPlan.fixture.value,
+      ],
+    );
     successReceipt = {
       agentQualification,
       baseSha: invocation.candidateBase,
@@ -1047,7 +1081,7 @@ async function runQualification(
         fullOffload: true,
         ...offload,
       },
-      probes,
+      probes: { ...probes, logRedaction },
     };
   } catch (error) {
     failure = error;

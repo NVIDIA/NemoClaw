@@ -25,6 +25,7 @@ import {
   validateModelsResponse,
   validateOpenClawQualificationImageLabels,
   validateQualificationPlan,
+  validateRuntimeLogRedaction,
   validateStartupLog,
 } from "../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 
@@ -428,6 +429,23 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       "offloaded 57/57 layers to GPU\noffloaded 58/58 layers to GPU",
     ]) {
       expect(() => validateStartupLog(log)).toThrow();
+    }
+  });
+
+  it("rejects credentials, host paths, prompts, and responses in bounded runtime logs (#8144)", () => {
+    const forbidden = [
+      "a".repeat(64),
+      MODEL_PATH,
+      "Return one short readiness token.",
+      "LLAMA_CPP_OPENCLAW_TOOL_OK",
+    ];
+    expect(validateRuntimeLogRedaction("server request complete\n", forbidden)).toEqual({
+      ok: true,
+    });
+    for (const value of forbidden) {
+      expect(() => validateRuntimeLogRedaction(`server log: ${value}\n`, forbidden)).toThrow(
+        /credential, path, prompt, or response/u,
+      );
     }
   });
 

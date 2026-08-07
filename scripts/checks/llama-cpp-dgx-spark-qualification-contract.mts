@@ -42,6 +42,9 @@ export const LLAMA_CPP_DGX_SPARK_MINIMUM_DRIVER_VERSION = "580.65.06" as const;
 export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "health",
   "models",
+  "properties",
+  "metrics",
+  "disabled-surfaces",
   "synchronous-chat",
   "streaming-chat",
   "usage",
@@ -53,6 +56,23 @@ export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "malformed-request",
   "cancellation",
   "client-timeout",
+] as const;
+export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES = [
+  ...LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  "log-redaction",
+] as const;
+export const LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES = [
+  "llamacpp:prompt_tokens_total",
+  "llamacpp:prompt_seconds_total",
+  "llamacpp:prompt_tokens_seconds",
+  "llamacpp:tokens_predicted_total",
+  "llamacpp:tokens_predicted_seconds_total",
+  "llamacpp:predicted_tokens_seconds",
+  "llamacpp:requests_processing",
+  "llamacpp:requests_deferred",
+  "llamacpp:n_tokens_max",
+  "llamacpp:n_decode_total",
+  "llamacpp:n_busy_slots_per_decode",
 ] as const;
 export const LLAMA_CPP_DGX_SPARK_AGENT_PROBES = [
   "synchronous-chat",
@@ -128,7 +148,7 @@ export type LlamaCppDgxSparkQualificationPlan = {
       readonly toolResultContinuation: number;
     };
   };
-  readonly probes: typeof LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES;
+  readonly probes: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES;
   readonly profile: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE;
   readonly recipeRef: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE;
   readonly required: true;
@@ -175,7 +195,7 @@ export type LlamaCppDgxSparkExecutionPlan = {
   readonly qualification: {
     readonly agentQualification: LlamaCppDgxSparkAgentQualificationPlan;
     readonly probeBounds: LlamaCppDgxSparkQualificationPlan["probeBounds"];
-    readonly probes: typeof LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES;
+    readonly probes: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES;
   };
   readonly recipe: {
     readonly capabilities: {
@@ -419,8 +439,21 @@ export type LlamaCppDgxSparkQualificationReceipt = {
       readonly ok: true;
       readonly slots: 1;
     };
+    readonly disabledSurfaces: {
+      readonly corsProxyHttpStatus: 403;
+      readonly multimodal: false;
+      readonly ok: true;
+      readonly propertiesMutationHttpStatus: 501;
+      readonly routerHttpStatus: 404;
+      readonly slotsHttpStatus: 501;
+      readonly toolsHttpStatus: 403;
+      readonly uiHttpStatus: 404;
+    };
     readonly health: {
       readonly httpStatus: 200;
+      readonly ok: true;
+    };
+    readonly logRedaction: {
       readonly ok: true;
     };
     readonly malformedRequest: {
@@ -430,6 +463,19 @@ export type LlamaCppDgxSparkQualificationReceipt = {
     readonly models: {
       readonly httpStatus: 200;
       readonly model: typeof LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID;
+      readonly ok: true;
+    };
+    readonly metrics: {
+      readonly httpStatus: 200;
+      readonly ok: true;
+      readonly requiredSeries: number;
+      readonly unauthenticatedHttpStatus: 401;
+    };
+    readonly properties: {
+      readonly httpStatus: 200;
+      readonly metrics: true;
+      readonly model: typeof LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID;
+      readonly modelPath: "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
       readonly ok: true;
     };
     readonly clientTimeout: {
@@ -893,7 +939,7 @@ export function parseLlamaCppDgxSparkQualificationPlan(
     gpu.cpuFallback !== "reject" ||
     model.id !== LLAMA_CPP_DGX_SPARK_MODEL_ID ||
     model.digest !== LLAMA_CPP_DGX_SPARK_MODEL_DIGEST ||
-    JSON.stringify(plan.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
+    JSON.stringify(plan.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES)
   ) {
     throw new Error("llama.cpp DGX Spark qualification plan is invalid");
   }
@@ -908,7 +954,7 @@ export function parseLlamaCppDgxSparkQualificationPlan(
     },
     platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
     probeBounds: parsedProbeBounds,
-    probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+    probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
     profile: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
     recipeRef: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
     required: true,
@@ -937,7 +983,8 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     "compiled protocol qualification",
   );
   if (
-    JSON.stringify(qualification.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
+    JSON.stringify(qualification.probes) !==
+    JSON.stringify(LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES)
   ) {
     throw new Error("compiled llama.cpp DGX Spark protocol probes are invalid");
   }
@@ -1299,7 +1346,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     qualification: {
       agentQualification,
       probeBounds: protocolProbeBounds,
-      probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+      probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
     },
     recipe: {
       capabilities: {
@@ -1683,9 +1730,13 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
       "authentication",
       "cancellation",
       "contextWindow",
+      "disabledSurfaces",
       "health",
+      "logRedaction",
       "malformedRequest",
+      "metrics",
       "models",
+      "properties",
       "clientTimeout",
       "streamingChat",
       "structuredOutput",
@@ -1698,8 +1749,45 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
   );
   const health = record(probes.health, "llama.cpp DGX Spark health probe");
   requireExactKeys(health, ["httpStatus", "ok"], "health probe");
+  const logRedaction = record(probes.logRedaction, "llama.cpp DGX Spark log-redaction probe");
+  requireExactKeys(logRedaction, ["ok"], "log-redaction probe");
   const models = record(probes.models, "llama.cpp DGX Spark models probe");
   requireExactKeys(models, ["httpStatus", "model", "ok"], "models probe");
+  const metrics = record(probes.metrics, "llama.cpp DGX Spark metrics probe");
+  requireExactKeys(
+    metrics,
+    ["httpStatus", "ok", "requiredSeries", "unauthenticatedHttpStatus"],
+    "metrics probe",
+  );
+  const requiredSeries = safeInteger(
+    metrics.requiredSeries,
+    "required metrics series count",
+    LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES.length,
+  );
+  const properties = record(probes.properties, "llama.cpp DGX Spark properties probe");
+  requireExactKeys(
+    properties,
+    ["httpStatus", "metrics", "model", "modelPath", "ok"],
+    "properties probe",
+  );
+  const disabledSurfaces = record(
+    probes.disabledSurfaces,
+    "llama.cpp DGX Spark disabled-surfaces probe",
+  );
+  requireExactKeys(
+    disabledSurfaces,
+    [
+      "corsProxyHttpStatus",
+      "multimodal",
+      "ok",
+      "propertiesMutationHttpStatus",
+      "routerHttpStatus",
+      "slotsHttpStatus",
+      "toolsHttpStatus",
+      "uiHttpStatus",
+    ],
+    "disabled-surfaces probe",
+  );
   const synchronousChat = record(probes.synchronousChat, "synchronous chat probe");
   requireExactKeys(synchronousChat, ["httpStatus", "model", "ok"], "synchronous chat probe");
   const streamingChat = record(probes.streamingChat, "streaming chat probe");
@@ -1773,9 +1861,27 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
   if (
     health.ok !== true ||
     health.httpStatus !== 200 ||
+    logRedaction.ok !== true ||
     models.ok !== true ||
     models.httpStatus !== 200 ||
     models.model !== LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID ||
+    metrics.ok !== true ||
+    metrics.httpStatus !== 200 ||
+    metrics.unauthenticatedHttpStatus !== 401 ||
+    requiredSeries !== LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES.length ||
+    properties.ok !== true ||
+    properties.httpStatus !== 200 ||
+    properties.metrics !== true ||
+    properties.model !== LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID ||
+    properties.modelPath !== "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf" ||
+    disabledSurfaces.ok !== true ||
+    disabledSurfaces.corsProxyHttpStatus !== 403 ||
+    disabledSurfaces.multimodal !== false ||
+    disabledSurfaces.propertiesMutationHttpStatus !== 501 ||
+    disabledSurfaces.routerHttpStatus !== 404 ||
+    disabledSurfaces.slotsHttpStatus !== 501 ||
+    disabledSurfaces.toolsHttpStatus !== 403 ||
+    disabledSurfaces.uiHttpStatus !== 404 ||
     synchronousChat.ok !== true ||
     synchronousChat.httpStatus !== 200 ||
     synchronousChat.model !== LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID ||
@@ -1865,11 +1971,35 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
       authentication: { httpStatus: 401, ok: true },
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize, ok: true, slots: 1 },
+      disabledSurfaces: {
+        corsProxyHttpStatus: 403,
+        multimodal: false,
+        ok: true,
+        propertiesMutationHttpStatus: 501,
+        routerHttpStatus: 404,
+        slotsHttpStatus: 501,
+        toolsHttpStatus: 403,
+        uiHttpStatus: 404,
+      },
       health: { httpStatus: 200, ok: true },
+      logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
+      metrics: {
+        httpStatus: 200,
+        ok: true,
+        requiredSeries: LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES.length,
+        unauthenticatedHttpStatus: 401,
+      },
       models: {
         httpStatus: 200,
         model: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+        ok: true,
+      },
+      properties: {
+        httpStatus: 200,
+        metrics: true,
+        model: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+        modelPath: "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
         ok: true,
       },
       clientTimeout: {
