@@ -93,8 +93,8 @@ def _gateway_public_port() -> int:
     supervisor environment, which this one-shot exec does not inherit, so the
     entrypoint publishes it as a root-owned read-only marker. Reading anything
     the sandbox user can write would let the agent redirect the relay probe.
-    Sandboxes built before the port became per-sandbox have no marker and keep
-    the original port.
+    A sandbox whose image predates the marker has none and keeps the original
+    port, which the sandbox user can bind.
     """
     try:
         raw = Path(GATEWAY_PUBLIC_PORT_PATH).read_text(encoding="utf-8").strip()

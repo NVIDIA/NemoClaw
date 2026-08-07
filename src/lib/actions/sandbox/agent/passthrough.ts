@@ -15,7 +15,7 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 //      Forwarding to `openclaw agent` against a non-OpenClaw sandbox triggers
 //      an in-sandbox binary that does not exist (or exists with incompatible
 //      flags), and would silently bypass the host-side guard intended to
-//      redirect Hermes callers to the OpenAI-compatible API on port 8642.
+//      redirect Hermes callers to the sandbox's OpenAI-compatible API port.
 //    - Source boundary: the registry and agent manifest allowlist are
 //      NemoClaw-owned. The in-sandbox invocation, its argv contract, and its
 //      streaming behaviour are owned by the selected upstream agent command.
@@ -105,6 +105,7 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
+import { resolveSandboxHermesApiPort } from "../../../onboard/hermes-api-port";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
@@ -117,8 +118,8 @@ import {
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import {
-  defaultGetOpenshellBinary,
   type AgentJsonPassthroughProcess,
+  defaultGetOpenshellBinary,
   runAgentJsonPassthrough,
 } from "./passthrough-json";
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
@@ -279,11 +280,14 @@ function rejectNonOpenclawAgent(
   proc.stderr.write(
     `  The \`sandbox agent\` wrapper cannot dispatch to sandbox '${sandboxName}' because it runs '${agent}'.\n`,
   );
-  proc.stderr.write("  Hermes exposes an OpenAI-compatible API on port 8642 inside the sandbox;\n");
+  const apiPort = resolveSandboxHermesApiPort(registry.getSandbox(sandboxName) ?? {});
   proc.stderr.write(
-    `  forward it with 'openshell forward start --background 8642 ${sandboxName}'\n`,
+    `  Hermes exposes an OpenAI-compatible API on port ${apiPort} inside the sandbox;\n`,
   );
-  proc.stderr.write("  and POST to http://127.0.0.1:8642/v1/chat/completions instead.\n");
+  proc.stderr.write(
+    `  forward it with 'openshell forward start --background ${apiPort} ${sandboxName}'\n`,
+  );
+  proc.stderr.write(`  and POST to http://127.0.0.1:${apiPort}/v1/chat/completions instead.\n`);
   return proc.exit(2);
 }
 

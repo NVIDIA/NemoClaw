@@ -259,6 +259,11 @@ function getRegistryOccupiedPorts(
   return occupied;
 }
 
+/**
+ * Cross-gateway occupancy view for dashboard ports, keyed by port. See
+ * {@link getRegistryOccupiedPorts} for why the registry supplements the
+ * per-gateway forward list.
+ */
 export function getRegistryOccupiedDashboardPorts(
   currentSandboxName: string,
   listSandboxesFn?: ListSandboxesFn,

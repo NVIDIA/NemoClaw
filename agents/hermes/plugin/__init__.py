@@ -1037,8 +1037,8 @@ def _hermes_api_port():
 
     NemoClaw allocates this port per sandbox so two Hermes sandboxes can serve
     inference on one host, and the entrypoint publishes it as a root-owned
-    read-only marker. Sandboxes built before the port became per-sandbox have
-    no marker and keep the original port.
+    read-only marker. A sandbox whose image predates the marker has none and
+    keeps the original port, which the sandbox user can bind.
     """
     try:
         with open("/run/nemoclaw/hermes-api-port") as f:

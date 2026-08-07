@@ -1201,7 +1201,8 @@ Host-side validation runs before the sandbox dispatch:
 
 The `agent` wrapper rejects Hermes sandboxes with guidance for the Hermes HTTP API.
 Hermes sandboxes expose an OpenAI-compatible API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
-A second Hermes sandbox on the same host receives the next free port in `8642`-`8652`; run `nemohermes <name> status` to read the port for a given sandbox.
+A second Hermes sandbox on the same host receives the next free port from `8642` through `8652`.
+Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
 
 Forward the port and POST chat completions directly:
 
@@ -1902,8 +1903,8 @@ nemohermes my-assistant dashboard-url
 nemohermes my-assistant dashboard-url --quiet
 ```
 
-The Hermes OpenAI-compatible API remains separate on port `8642` and uses `/v1` for OpenAI-compatible clients.
-Use `nemohermes my-assistant status` to see both the dashboard and API endpoints.
+The Hermes OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`.
+Use `openshell forward list` to see the host bind for the dashboard and API forwards.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -4141,12 +4142,15 @@ For OpenClaw, `NEMOCLAW_DASHBOARD_PORT` controls the OpenClaw dashboard forward.
 <AgentOnly variant="hermes">
 
 For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`.
-The Hermes OpenAI-compatible API remains separate on port `8642` and uses `/v1` for API clients.
+The OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`.
+If `8642` is already occupied by another sandbox, onboarding scans `8642` through `8652` and uses the next free API port.
+Set `NEMOCLAW_HERMES_API_PORT=<N>` to require a specific port.
 Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want Hermes' optional in-browser TUI tab.
 
 | Variable | Default | Service |
 |----------|---------|---------|
 | `NEMOCLAW_DASHBOARD_PORT` | 18789 | Hermes built-in dashboard forward port |
+| `NEMOCLAW_HERMES_API_PORT` | 8642 | Hermes OpenAI-compatible API forward port |
 | `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0 | Optional Hermes in-browser TUI tab |
 
 </AgentOnly>

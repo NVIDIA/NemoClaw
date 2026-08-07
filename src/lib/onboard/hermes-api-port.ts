@@ -76,25 +76,11 @@ export function resolveSandboxHermesApiPort(sandbox: { hermesApiPort?: number | 
 }
 
 /**
- * Resolve the API port for an onboarding sandbox and publish it to the
- * environment so every later consumer in the same run agrees on one value.
- *
- * Onboarding resolves this port in three places that never see each other's
- * result: the sandbox-create environment, the registry row, and the host
- * forward. Publishing through the environment is how the dashboard port already
- * reaches its later consumers (`ensureAgentDashboardForward` writes
- * `CHAT_UI_URL`), and it carries the value into the sandbox without threading
- * an argument through the onboarding entrypoint.
- *
- * Precedence matches `resolveCreateSandboxDashboardPort`: an explicit operator
- * value wins, then the sandbox's registered value, then a fresh allocation.
- */
-/**
  * Retarget a manifest-derived URL at the sandbox's own API port.
  *
  * Manifest URLs name the agent's default port. A probe that runs inside a
- * sandbox whose relay listens elsewhere would otherwise report the default
- * port as unreachable, or reach a sibling sandbox's relay through the host.
+ * sandbox whose relay listens elsewhere would otherwise target an unused port
+ * that the sandbox user can bind, instead of the port the relay listens on.
  * Only the default port is rewritten, so a manifest that already names a
  * different port is left alone.
  */
@@ -111,6 +97,27 @@ export function retargetHermesApiPortInUrl(url: string, apiPort: number): string
   return parsed.toString();
 }
 
+/**
+ * Resolve the API port for a sandbox and publish it to the environment so every
+ * later consumer in the same run agrees on one value.
+ *
+ * Onboarding resolves this port in places that never see each other's result:
+ * the sandbox-create environment, the registry row, the host forward, and the
+ * ready summary. Publishing through the environment is how the dashboard port
+ * already reaches its later consumers (`ensureAgentDashboardForward` writes
+ * `CHAT_UI_URL`), and it carries the value into the sandbox without threading an
+ * argument through the onboarding entrypoint. The ready summary instead reads
+ * the registry, which is equivalent because registration precedes it.
+ *
+ * Precedence matches `resolveCreateSandboxDashboardPort`: an explicit operator
+ * value wins, then the sandbox's registered value, then a fresh allocation.
+ *
+ * Only a sandbox with no registry row can take a fresh allocation. A registered
+ * sandbox without a port predates the per-sandbox port and already runs on the
+ * default, so allocating for it would rebind the sandbox away from the port its
+ * host forward still uses. Relaunch reaches this function through
+ * `buildSandboxRuntimeEnvArgs`, where that divergence would otherwise be silent.
+ */
 export function resolveOnboardHermesApiPort(
   sandboxName: string,
   options: {
@@ -128,8 +135,9 @@ export function resolveOnboardHermesApiPort(
     return port;
   };
   if (env[HERMES_API_PORT_ENV]?.trim()) return publish(requested);
-  const registeredPort = (options.getSandbox ?? registry.getSandbox)(sandboxName)?.hermesApiPort;
-  if (isValidHermesApiPort(registeredPort)) return publish(registeredPort);
+  const registered = (options.getSandbox ?? registry.getSandbox)(sandboxName);
+  if (isValidHermesApiPort(registered?.hermesApiPort)) return publish(registered.hermesApiPort);
+  if (registered) return publish(HERMES_OPENAI_API_PORT);
   const port = (options.findAvailablePort ?? findAvailableHermesApiPort)(
     sandboxName,
     HERMES_OPENAI_API_PORT,

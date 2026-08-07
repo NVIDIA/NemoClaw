@@ -38,7 +38,7 @@ vi.mock("../../onboard/hermes-api-port", async (importOriginal) => ({
 
 beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
-describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
+describe("runSandboxSnapshot restore: clone port identity", () => {
   it("allocates the auto-created clone its own dashboard port instead of inheriting the source's (#6746)", async () => {
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation(

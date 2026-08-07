@@ -3108,7 +3108,8 @@ After the rebuild, make the intended change through a supported command such as 
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
-`nemohermes onboard` forwards port `8642`, but Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
+`nemohermes onboard` forwards the sandbox's API port, which is `8642` for the first Hermes sandbox on a host.
+Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
 A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothing renderable.
 
 Confirm the agent is healthy with the API health endpoint instead:
@@ -3139,7 +3140,9 @@ curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint ans
 ```
 
 If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing.
-Recovery targets each sandbox's own ports. A second Hermes sandbox on the same host receives the next free API port, so check `nemohermes <name> status` before assuming a missing `8642` row belongs to the sandbox you are debugging.
+Recovery targets each sandbox's own ports.
+A second Hermes sandbox on the same host receives the next free API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging.
+A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`, so recreate it when a second Hermes sandbox needs its own API forward.
 
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 

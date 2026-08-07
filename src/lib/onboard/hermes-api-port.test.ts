@@ -62,6 +62,20 @@ describe("resolveOnboardHermesApiPort", () => {
     expect(env[HERMES_API_PORT_ENV]).toBe("8650");
   });
 
+  it("keeps a registered sandbox without a port on the default instead of allocating", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const findAvailablePort = vi.fn(() => 8643);
+    expect(
+      resolveOnboardHermesApiPort("beta", {
+        env,
+        getSandbox: () => ({}),
+        findAvailablePort,
+      }),
+    ).toBe(8642);
+    expect(findAvailablePort).not.toHaveBeenCalled();
+    expect(env[HERMES_API_PORT_ENV]).toBe("8642");
+  });
+
   it("prefers the registered port over a fresh allocation", () => {
     const env: NodeJS.ProcessEnv = {};
     const findAvailablePort = vi.fn(() => 8644);

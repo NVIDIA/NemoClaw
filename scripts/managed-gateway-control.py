@@ -1126,9 +1126,10 @@ def _hermes_api_port() -> int:
     """Read the per-sandbox port the OpenAI-compatible API is exposed on.
 
     The entrypoint publishes the allocated port as a root-owned read-only
-    marker so readiness probes target this sandbox's relay rather than a
-    sibling sandbox's. Sandboxes built before the port became per-sandbox have
-    no marker and keep the original port.
+    marker so the probe targets the port this sandbox's relay actually listens
+    on instead of an unused port the sandbox user could bind. A sandbox whose
+    image predates the marker has none and keeps the original port, which the
+    sandbox user can bind.
     """
     try:
         raw = Path("/run/nemoclaw/hermes-api-port").read_text(encoding="utf-8").strip()

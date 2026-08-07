@@ -282,11 +282,11 @@ function allocateCloneDashboardPort(
 
 // Allocate the clone's own API port. The source owns the host forward for its
 // port, and the sandbox exposes the API on the same number it is forwarded on,
-// so a clone that inherits the source's port gets no inference forward at all
-// and a gateway restart that can never converge. Sources on an agent without a
-// per-sandbox API port return null so the clone's field stays unset. Callers
-// must invoke this before any destructive step so range exhaustion aborts
-// before the mutation.
+// so a clone that inherits the source's port gets no inference forward, and its
+// gateway restart never converges. Returns null for an agent that has no
+// per-sandbox API port, so the clone's field stays unset. Callers must invoke
+// this before any destructive step so range exhaustion aborts before the
+// mutation.
 function allocateCloneHermesApiPort(
   dstName: string,
   srcEntry: { name?: string; agent?: string | null },

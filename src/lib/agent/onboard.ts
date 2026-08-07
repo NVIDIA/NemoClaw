@@ -12,7 +12,9 @@ import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
+import { resolveSandboxHermesApiPort } from "../onboard/hermes-api-port";
 import { redact, run } from "../runner";
+import * as registry from "../state/registry";
 import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
@@ -497,7 +499,12 @@ export function printDashboardUi(
       effectiveDashboardPort,
       redactUrl: dashboardUrlForDisplay,
     });
-    printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
+    printAdditionalForwardPorts(
+      agent,
+      effectiveDashboardPort,
+      deps.buildControlUiUrls,
+      sandboxName,
+    );
     return;
   }
 
@@ -522,7 +529,7 @@ export function printDashboardUi(
     effectiveDashboardPort,
     redactUrl: dashboardUrlForDisplay,
   });
-  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
+  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls, sandboxName);
 }
 
 /**
@@ -549,14 +556,25 @@ function printAdditionalForwardPorts(
   agent: AgentDefinition,
   primaryPort: number,
   buildControlUiUrls: (token: string | null, port: number) => string[],
+  sandboxName?: string,
 ): void {
   const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
   if (declared.length === 0) return;
-  const apiPort = agent.healthProbe?.port;
-  for (const port of declared) {
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) continue;
-    if (port === primaryPort || port === agent.forwardPort) continue;
-    const isApi = port === apiPort;
+  const declaredApiPort = agent.healthProbe?.port;
+  // The manifest names Hermes' default API port. This sandbox owns its own, so
+  // announce the port the operator actually has to forward. Only Hermes
+  // allocates a per-sandbox API port; every other agent keeps its declared one.
+  const sandboxApiPort =
+    agent.name === "hermes"
+      ? resolveSandboxHermesApiPort(
+          (sandboxName ? registry.getSandbox(sandboxName) : undefined) ?? {},
+        )
+      : 0;
+  for (const declaredPort of declared) {
+    if (!Number.isInteger(declaredPort) || declaredPort < 1024 || declaredPort > 65535) continue;
+    if (declaredPort === primaryPort || declaredPort === agent.forwardPort) continue;
+    const isApi = declaredPort === declaredApiPort;
+    const port = isApi && agent.name === "hermes" ? sandboxApiPort : declaredPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";
     console.log("");
     console.log(`  ${agent.displayName} ${sectionLabel}`);

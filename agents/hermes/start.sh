@@ -172,8 +172,8 @@ fi
 
 # The API port is a per-sandbox host resource: the host forwards the same
 # number it is exposed on here, so two sandboxes on one host need two values.
-# NemoClaw allocates the port and passes it in; the default keeps sandboxes
-# built before the port became per-sandbox on their original port.
+# NemoClaw allocates the port and passes it in; the default keeps a sandbox
+# whose create environment carries no value on the original port.
 _api_port_raw="${NEMOCLAW_HERMES_API_PORT:-}"
 if [ -z "$_api_port_raw" ]; then
   PUBLIC_PORT=8642
