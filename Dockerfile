@@ -1980,9 +1980,9 @@ RUN set -eu; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.
 
-# OpenShell rejects OCI images whose default user is root. The entrypoint
-# supports this non-root mode; deployments that require gateway/agent
-# privilege separation can still override the runtime user to root.
+# Stock builds use a non-root OCI default for OpenShell compatibility.
+# Deployments that require gateway and agent UID isolation can override
+# the runtime user to root.
 USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]

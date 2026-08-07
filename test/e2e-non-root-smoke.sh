@@ -58,9 +58,9 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
-# ── Test 0: Published OCI metadata defaults to non-root (#7882) ──
+# ── Test 0: Stock Dockerfile OCI metadata defaults to sandbox (#7882) ──
 
-info "0. Image defaults to the sandbox user"
+info "0. Stock Dockerfile image defaults to the sandbox user"
 IMAGE_USER="$(docker image inspect --format '{{.Config.User}}' "$IMAGE" 2>/dev/null || true)"
 if [ "$IMAGE_USER" = "sandbox" ]; then
   pass "image Config.User is sandbox"
@@ -102,14 +102,14 @@ fi
 
 # ── Test 3: Direct runtimes can opt into the root entrypoint path ──
 
-info "3. Explicit root override preserves the privileged entrypoint path"
+info "3. Explicit root override selects the root entrypoint path"
 ROOT_OUT=$(docker run --rm --user root "$IMAGE" \
   sh -c 'test "$(id -u)" = "$(id -u sandbox)" && echo ROOT_OVERRIDE_OK' 2>&1 || true)
 if echo "$ROOT_OUT" | grep -qF "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" \
   && echo "$ROOT_OUT" | grep -qF "ROOT_OVERRIDE_OK"; then
-  pass "root override entered the privileged path and stepped the command down to sandbox"
+  pass "root override selected root entrypoint mode and ran the command as sandbox"
 else
-  fail "root override did not preserve the privileged entrypoint path"
+  fail "root override did not select the root entrypoint path"
   echo "$ROOT_OUT" | tail -20 | sed 's/^/  /'
 fi
 
