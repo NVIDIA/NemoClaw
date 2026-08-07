@@ -121,6 +121,7 @@ function harness(
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
 
@@ -588,6 +589,14 @@ describe("persisted engine lifecycle", () => {
         "utf8",
       ),
     ).toBe(`${RESULT_SHA256}\n`);
+  });
+
+  it("rejects the file store when current user identity is unavailable", () => {
+    vi.stubGlobal("process", { ...process, getuid: undefined });
+
+    expect(() => createFilePersistedEngineLifecycleStore(temporaryRoot())).toThrow(
+      "current user identity is unavailable",
+    );
   });
 
   it("rejects malformed resources, noncanonical records, and symlinked phase state", () => {

@@ -391,8 +391,9 @@ function exactExecutionOwnerIsAlive(lease: PersistedEngineLifecycleExecutionLeas
   );
 }
 
-function currentUid(fallback: number | bigint): bigint {
-  return BigInt(typeof process.getuid === "function" ? process.getuid() : fallback);
+function currentUid(): bigint {
+  if (typeof process.getuid !== "function") fail("current user identity is unavailable");
+  return BigInt(process.getuid());
 }
 
 function verifyPrivateDirectory(directory: string): void {
@@ -400,7 +401,7 @@ function verifyPrivateDirectory(directory: string): void {
   if (
     !metadata.isDirectory() ||
     metadata.isSymbolicLink() ||
-    BigInt(metadata.uid) !== currentUid(metadata.uid) ||
+    BigInt(metadata.uid) !== currentUid() ||
     (metadata.mode & 0o077) !== 0
   ) {
     fail("ledger directory must be a private real directory owned by the current user");
@@ -444,7 +445,7 @@ function readPrivateFile(target: string): string | null {
     if (
       !before.isFile() ||
       before.nlink !== 1n ||
-      before.uid !== currentUid(before.uid) ||
+      before.uid !== currentUid() ||
       (before.mode & 0o077n) !== 0n ||
       before.size <= 0n ||
       before.size > BigInt(MAX_RECORD_BYTES)
