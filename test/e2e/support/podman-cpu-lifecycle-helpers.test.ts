@@ -128,6 +128,7 @@ describe("Podman CPU lifecycle helper", () => {
 
   test("escalates a rejected gateway child to SIGKILL before returning (#8497)", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-podman-gateway-test-"));
+    const artifactDir = path.join(root, "artifacts");
     const bootstrapPath = path.join(root, "gateway-bootstrap.cjs");
     const pidPath = path.join(root, "gateway.pid");
     const progress = testProgress([]);
@@ -137,23 +138,32 @@ describe("Podman CPU lifecycle helper", () => {
         'const fs = require("node:fs");',
         "fs.writeFileSync(process.env.TEST_GATEWAY_PID_PATH, String(process.pid));",
         'process.on("SIGTERM", () => undefined);',
-        'process.stdout.write("configuration error\\n");',
+        'process.stdout.write("configuration error\\nOPENAI_API_KEY=nvapi-gateway-secret\\n");',
         "setInterval(() => undefined, 1_000);",
       ].join("\n"),
       "utf8",
     );
 
     try {
-      await expect(
-        startPinnedGateway(
-          process.execPath,
-          {
-            NODE_OPTIONS: `--require=${bootstrapPath}`,
-            TEST_GATEWAY_PID_PATH: pidPath,
-          },
-          progress,
-        ),
-      ).rejects.toThrow("rejected the Podman configuration");
+      const rejected = startPinnedGateway(
+        process.execPath,
+        {
+          NODE_OPTIONS: `--require=${bootstrapPath}`,
+          TEST_GATEWAY_PID_PATH: pidPath,
+        },
+        progress,
+        artifactDir,
+      );
+      await expect(rejected).rejects.toThrow("rejected the Podman configuration");
+      await expect(rejected).rejects.not.toThrow("nvapi-gateway-secret");
+
+      const gatewayArtifact = await fs.readFile(
+        path.join(artifactDir, "openshell-podman-gateway.log"),
+        "utf8",
+      );
+      expect(gatewayArtifact).toContain("<REDACTED>");
+      expect(gatewayArtifact).not.toContain("nvapi-gateway-secret");
+      expect(gatewayArtifact.length).toBeLessThanOrEqual(32 * 1024);
 
       const pid = await processId(pidPath);
       expect(pid).not.toBeNull();

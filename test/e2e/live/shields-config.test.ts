@@ -266,6 +266,8 @@ async function findSandboxContainer(host: HostCliClient): Promise<string> {
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
       "-q",
     ],
     {

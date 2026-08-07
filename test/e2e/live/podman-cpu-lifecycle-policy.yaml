@@ -20,9 +20,10 @@ filesystem_policy:
 landlock:
   compatibility: best_effort
 
-# The pinned Ubuntu fixture intentionally omits OCI Config.User. OpenShell
-# v0.0.99 requires either that image metadata or an explicit non-root policy
-# identity, so keep this proof independent of mutable image metadata.
+# The immutable sandbox-base from the NemoClaw v0.0.89 fixture, which runs
+# OpenShell v0.0.85, omits OCI Config.User.
+# OpenShell v0.0.99 requires either that image metadata or an explicit non-root
+# policy identity, so keep this proof independent of mutable image metadata.
 process:
   run_as_user: "1000"
   run_as_group: "1000"

@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
+
+import type { ContainerEngine } from "../../../src/lib/adapters/container-engine.ts";
 
 import {
   PODMAN_MANAGED_LABEL,
@@ -12,12 +18,15 @@ import {
   PODMAN_SANDBOX_WORKSPACE,
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle.ts";
-import { readRepoText } from "../../helpers/e2e-workflow-contract";
 import { sanitizePodmanInspectArtifact } from "../live/podman-cpu-lifecycle-artifacts.ts";
+import { captureFailureContainerDiagnostics } from "../live/podman-cpu-lifecycle-helpers.ts";
 
 const SECRET = "nvapi-this-must-not-reach-artifacts";
 
-function inspectOutput(labelOverrides: Readonly<Record<string, string>> = {}): string {
+function inspectOutput(
+  labelOverrides: Readonly<Record<string, string>> = {},
+  status = "running",
+): string {
   return JSON.stringify([
     {
       Id: SECRET,
@@ -42,7 +51,7 @@ function inspectOutput(labelOverrides: Readonly<Record<string, string>> = {}): s
         Error: SECRET,
         Paused: false,
         Running: true,
-        Status: "running",
+        Status: status,
       },
     },
   ]);
@@ -79,12 +88,48 @@ describe("Podman CPU proof artifact sanitization", () => {
     expect(JSON.stringify(summary)).not.toContain(SECRET);
   });
 
-  it("keeps live cleanup diagnostics on the same sanitized summary boundary", () => {
-    const helper = readRepoText("test/e2e/live/podman-cpu-lifecycle-helpers.ts");
+  it("omits an unrecognized secret-shaped container status", () => {
+    const summary = sanitizePodmanInspectArtifact(inspectOutput({}, "token-secret_value"));
 
-    expect(helper).toContain("sanitizePodmanInspectArtifact(result.stdout)");
-    expect(helper).toContain("managed-container-summary.json");
-    expect(helper).not.toContain('["logs", containerId]');
-    expect(helper).not.toContain('["inspect.json"');
+    expect(summary.state.status).toBeNull();
+    expect(JSON.stringify(summary)).not.toContain("token-secret_value");
+  });
+
+  it("keeps live cleanup diagnostics on the same sanitized filesystem boundary", () => {
+    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "podman-proof-artifacts-"));
+    const containerId = "a".repeat(64);
+    const responses = [
+      { status: 0, stdout: `${containerId}\n`, stderr: "" },
+      { status: 0, stdout: inspectOutput(), stderr: "" },
+    ];
+    let responseIndex = 0;
+    const engine: ContainerEngine = {
+      operation: "sandbox-lifecycle",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test-podman-authority",
+      capture: () => responses[responseIndex++]!,
+      captureHost: () => {
+        throw new Error("captureHost is not used by failure diagnostics");
+      },
+    };
+
+    try {
+      captureFailureContainerDiagnostics(engine, ["podman-openclaw"], artifactDir);
+
+      const diagnosticDir = path.join(artifactDir, "failure-containers");
+      expect(fs.readdirSync(diagnosticDir)).toEqual(["managed-container-summary.json"]);
+      const artifact = fs.readFileSync(
+        path.join(diagnosticDir, "managed-container-summary.json"),
+        "utf8",
+      );
+      expect(JSON.parse(artifact)).toEqual({
+        schemaVersion: 1,
+        containers: [sanitizePodmanInspectArtifact(inspectOutput())],
+      });
+      expect(artifact).not.toContain(SECRET);
+    } finally {
+      fs.rmSync(artifactDir, { force: true, recursive: true });
+    }
   });
 });

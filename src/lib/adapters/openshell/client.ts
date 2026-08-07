@@ -246,9 +246,10 @@ export function captureOpenshellCommand(
     return handleSpawnError(binary, args, result.error, opts);
   }
   return {
-    status: result.status ?? 1,
+    status: result.status ?? (result.signal ? null : 1),
     output: captureOutput(result, opts),
     ...maybeCapturedStreams(result.stdout || "", result.stderr || "", opts),
+    ...(result.signal ? { signal: result.signal } : {}),
   };
 }
 

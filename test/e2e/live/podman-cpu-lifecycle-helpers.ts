@@ -16,6 +16,7 @@ import {
   PODMAN_SANDBOX_WORKSPACE,
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle";
+import { redactFull } from "../../../src/lib/security/redact";
 import { expect } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -36,6 +37,11 @@ export const OPENSHELL_VERSION = "0.0.99";
 export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/u;
+const MAX_GATEWAY_DIAGNOSTIC_CHARS = 32 * 1024;
+
+function gatewayDiagnostic(output: string): string {
+  return redactFull(stripAnsi(output)).slice(-MAX_GATEWAY_DIAGNOSTIC_CHARS);
+}
 
 interface ManagedContainerInspect {
   Config: {
@@ -128,6 +134,7 @@ export async function startPinnedGateway(
   gatewayBin: string,
   gatewayEnv: Record<string, string>,
   progress: TestProgress,
+  artifactDir = ARTIFACT_DIR,
 ): Promise<ChildProcess> {
   const child = spawnObservedChild(gatewayBin, [], {
     activityLabel: "command: pinned OpenShell 0.0.99 Podman gateway",
@@ -139,14 +146,14 @@ export async function startPinnedGateway(
   });
   let output = "";
   const recordOutput = (chunk: unknown) => {
-    const text = String(chunk);
-    output += text;
-    if (!ARTIFACT_DIR) return;
-    fs.mkdirSync(ARTIFACT_DIR, { recursive: true, mode: 0o700 });
-    fs.appendFileSync(path.join(ARTIFACT_DIR, "openshell-podman-gateway.log"), text, {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
+    output = `${output}${String(chunk)}`.slice(-MAX_GATEWAY_DIAGNOSTIC_CHARS * 2);
+    if (!artifactDir) return;
+    fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(artifactDir, "openshell-podman-gateway.log"),
+      gatewayDiagnostic(output),
+      { encoding: "utf-8", mode: 0o600 },
+    );
   };
   child.stdout?.on("data", recordOutput);
   child.stderr?.on("data", recordOutput);
@@ -156,13 +163,15 @@ export async function startPinnedGateway(
     const plainOutput = stripAnsi(output);
     if (/configuration error|invalid \[openshell[.]drivers[.]podman\] table/iu.test(plainOutput)) {
       await stopGateway(child);
-      throw new Error(`Pinned OpenShell rejected the Podman configuration:\n${output}`);
+      throw new Error(
+        `Pinned OpenShell rejected the Podman configuration:\n${gatewayDiagnostic(output)}`,
+      );
     }
     if (child.exitCode !== null || child.signalCode !== null) {
       await stopGateway(child);
       throw new Error(
         `Pinned OpenShell Podman gateway exited with ${String(child.exitCode)} ` +
-          `(signal ${String(child.signalCode)}):\n${output}`,
+          `(signal ${String(child.signalCode)}):\n${gatewayDiagnostic(output)}`,
       );
     }
     // This confirms that the pinned configuration was accepted. OpenShell logs
@@ -172,7 +181,9 @@ export async function startPinnedGateway(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await stopGateway(child);
-  throw new Error(`Pinned OpenShell Podman gateway did not initialize:\n${output}`);
+  throw new Error(
+    `Pinned OpenShell Podman gateway did not initialize:\n${gatewayDiagnostic(output)}`,
+  );
 }
 
 export async function waitForHealthyGateway(
@@ -275,12 +286,13 @@ export function inspectContainer(
   return entry;
 }
 
-function captureFailureContainerDiagnostics(
+export function captureFailureContainerDiagnostics(
   engine: ContainerEngine,
   sandboxNames: readonly string[],
+  artifactDir = ARTIFACT_DIR,
 ): void {
-  if (!ARTIFACT_DIR) return;
-  const diagnosticDir = path.join(ARTIFACT_DIR, "failure-containers");
+  if (!artifactDir) return;
+  const diagnosticDir = path.join(artifactDir, "failure-containers");
   fs.mkdirSync(diagnosticDir, { recursive: true, mode: 0o700 });
   const containers: PodmanContainerArtifactSummary[] = [];
   for (const sandboxName of sandboxNames) {

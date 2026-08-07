@@ -47,7 +47,11 @@ const AGENTS = [
   { agent: "langchain-deepagents-code", sandboxName: "podman-dcode" },
 ] as const;
 const BASE_IMAGE =
-  "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
+  // Keep the rootless proof on the immutable sandbox-base from the NemoClaw
+  // v0.0.89 fixture, which runs OpenShell v0.0.85. Unlike a minimal Ubuntu
+  // image, it includes the `ip` binary needed before workload startup and
+  // exercises the v0.0.85 image-to-v0.0.99 supervisor compatibility boundary.
+  "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1";
 const ACTIVATION_POLICY = path.join(REPO_ROOT, "test/e2e/live/podman-cpu-lifecycle-policy.yaml");
 const GATEWAY_PORT = 18_080;
 const SUPERVISOR_IMAGE =
@@ -215,6 +219,30 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
       const activated = inspectContainer(runtimeEngines.sandboxLifecycle, sandboxName);
       expect(activated.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
     }
+
+    expect(
+      await runCommand(
+        shellProbe,
+        openshellBin,
+        [
+          "sandbox",
+          "exec",
+          "--name",
+          AGENTS[0].sandboxName,
+          "-g",
+          GATEWAY_NAME,
+          "--",
+          "/bin/sh",
+          "-lc",
+          "command -v ip",
+        ],
+        {
+          artifactName: "podman-lifecycle-v085-ip-prerequisite",
+          env: cliEnv,
+          timeoutMs: 10_000,
+        },
+      ),
+    ).toMatch(/^\/(?:usr\/)?s?bin\/ip$/u);
 
     const openclawSandbox = AGENTS[0].sandboxName;
     const portableStateDir = path.join(root, "portable-lifecycle");

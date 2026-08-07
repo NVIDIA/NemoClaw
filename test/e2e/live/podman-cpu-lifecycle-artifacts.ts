@@ -17,7 +17,17 @@ const PODMAN_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 const PODMAN_SANDBOX_WORKSPACE = "default";
 const AGENT_LABEL = "nemoclaw.agent";
 const SAFE_IDENTITY_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
-const SAFE_STATE_VALUE = /^[a-z][a-z0-9_-]{0,31}$/u;
+const SAFE_STATE_VALUES = new Set([
+  "created",
+  "exited",
+  "initialized",
+  "paused",
+  "removing",
+  "running",
+  "stopped",
+  "stopping",
+  "unknown",
+]);
 const MAX_INSPECT_BYTES = 2 * 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
@@ -51,7 +61,7 @@ function booleanValue(value: unknown): boolean | null {
 function stateValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.toLowerCase();
-  return SAFE_STATE_VALUE.test(normalized) ? normalized : null;
+  return SAFE_STATE_VALUES.has(normalized) ? normalized : null;
 }
 
 /**
