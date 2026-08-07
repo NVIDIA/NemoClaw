@@ -777,7 +777,7 @@ export function assertGeneratedPolicyMutationSafe(
   if (state === "absent") return;
   if (!owned || state !== "match") {
     throw new McpBridgeError(
-      `Generated MCP policy '${entry.policyName}' is unowned, unreachable, or drifted. Refusing to mutate the adapter, provider, or same-key live policy until ownership is resolved.`,
+      `Generated MCP policy '${entry.policyName}' is unowned, unreachable, or drifted. Refusing to mutate the adapter, provider, or same-key live policy until ownership is resolved. The registry entry was preserved so cleanup can be retried.`,
     );
   }
 }

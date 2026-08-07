@@ -58,6 +58,15 @@ SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 MCP_DNS_LABEL_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
+MCP_ROUTED_PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    )
+)
 ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
@@ -313,8 +322,8 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
             "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85"
         )
     # Host preflight owns destination trust and binds every accepted endpoint to
-    # exact OpenShell address pins. Parse IP literals here only to distinguish a
-    # canonical address from an ambiguous numeric hostname.
+    # exact OpenShell address pins. This in-sandbox check revalidates canonical
+    # syntax and rejects IPv4 literals outside public or routed-private ranges.
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
@@ -332,6 +341,11 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
             raise ValueError(
                 "MCP mutation payload URL hostname must use canonical DNS labels"
             )
+    elif not (
+        (address.is_global and not address.is_multicast)
+        or any(address in network for network in MCP_ROUTED_PRIVATE_IPV4_NETWORKS)
+    ):
+        raise ValueError("MCP mutation payload URL uses a disallowed address")
     path = parsed.path or "/"
     path_segments = path.split("/")
     if (

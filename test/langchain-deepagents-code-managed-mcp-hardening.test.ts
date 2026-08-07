@@ -139,6 +139,7 @@ managed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(managed)
 
 accepted_urls = (
+    "https://8.8.8.8/mcp",
     "https://10.20.30.40/mcp",
     "https://mcp.corp.internal/mcp",
 )
@@ -147,6 +148,8 @@ rejected_urls = (
     "https://host.docker.internal/mcp",
     "https://host.containers.internal/mcp",
     "https://mcp..corp.internal/mcp",
+    "https://127.0.0.1/mcp",
+    "https://169.254.169.254/mcp",
     "https://0177.0.0.1/mcp",
     "https://[fc00::1]/mcp",
 )
@@ -163,12 +166,14 @@ print(json.dumps({"accepted": accepted, "rejected": rejected}))
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      accepted: ["https://10.20.30.40/mcp", "https://mcp.corp.internal/mcp"],
+      accepted: ["https://8.8.8.8/mcp", "https://10.20.30.40/mcp", "https://mcp.corp.internal/mcp"],
       rejected: [
         "https://host.openshell.internal/mcp",
         "https://host.docker.internal/mcp",
         "https://host.containers.internal/mcp",
         "https://mcp..corp.internal/mcp",
+        "https://127.0.0.1/mcp",
+        "https://169.254.169.254/mcp",
         "https://0177.0.0.1/mcp",
         "https://[fc00::1]/mcp",
       ],

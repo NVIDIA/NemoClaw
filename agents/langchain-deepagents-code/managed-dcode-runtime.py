@@ -155,6 +155,15 @@ _MCP_BLOCKED_ALIASES = {
     "host.docker.internal",
     "host.containers.internal",
 }
+_MCP_ROUTED_PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    )
+)
 _MANAGED_MCP_FD: int | None = None
 _MANAGED_MCP_BINDING: dict[str, int | str] | None = None
 _MANAGED_MCP_CHILD_BINDING: dict[str, int | str] | None = None
@@ -345,8 +354,8 @@ def _validate_managed_mcp_hostname(hostname: str) -> None:
     ):
         raise RuntimeError("managed MCP server URL hostname is invalid")
     # Host preflight owns destination trust and binds every accepted endpoint to
-    # exact OpenShell address pins. This runtime revalidates canonical syntax,
-    # but it does not classify an already-admitted IPv4 or DNS destination.
+    # exact OpenShell address pins. This runtime revalidates canonical syntax and
+    # rejects IPv4 literals outside public or routed-private ranges.
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
@@ -359,6 +368,11 @@ def _validate_managed_mcp_hostname(hostname: str) -> None:
         return
     if address.version != 4:
         raise RuntimeError("managed MCP server URL does not support IPv6 literals")
+    if not (
+        (address.is_global and not address.is_multicast)
+        or any(address in network for network in _MCP_ROUTED_PRIVATE_IPV4_NETWORKS)
+    ):
+        raise RuntimeError("managed MCP server URL address is not an admitted destination")
 
 
 def _validate_managed_mcp_url(value: object) -> str:

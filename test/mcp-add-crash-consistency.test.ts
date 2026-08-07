@@ -282,6 +282,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 
 policies.getPresetContentGatewayState = () => marked("policy") ? "match" : "absent";
+policies.getLiveSandboxPolicyEntryDigest = () => marked("policy") ? "present" : null;
 policies.removePreset = () => {
   fs.rmSync(marker("policy"), { force: true });
   return true;
