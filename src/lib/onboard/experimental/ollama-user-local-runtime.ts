@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { OLLAMA_PORT } from "../../core/ports";
-import { ensureConfigDir } from "../../state/config-io";
+import { ensureConfigDir, rejectSymlinksOnPath } from "../../state/config-io";
 
 export { OLLAMA_PORT };
 
@@ -59,7 +59,7 @@ function parseReceipt(
   return receipt as unknown as UserLocalOllamaOwnershipReceipt;
 }
 
-/** Record the fixed user-local binary only after NemoClaw starts it successfully. */
+/** Record ownership after installation or explicit operator re-enrollment validates the fixed binary. */
 export function recordUserLocalOllamaOwnership(
   binPath: string,
   deps: UserLocalOllamaOwnershipDeps = {},
@@ -69,6 +69,7 @@ export function recordUserLocalOllamaOwnership(
   }
   const target = receiptPath(deps);
   ensureConfigDir(path.dirname(target));
+  rejectSymlinksOnPath(path.dirname(target));
   let file;
   try {
     file = openRegularFileNoFollow(target, { writable: true });
@@ -88,9 +89,11 @@ export function recordUserLocalOllamaOwnership(
 export function loadUserLocalOllamaOwnership(
   deps: UserLocalOllamaOwnershipDeps = {},
 ): string | null {
+  const target = receiptPath(deps);
+  rejectSymlinksOnPath(path.dirname(target));
   let file;
   try {
-    file = openRegularFileNoFollow(receiptPath(deps));
+    file = openRegularFileNoFollow(target);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -110,8 +113,10 @@ export function loadUserLocalOllamaOwnership(
 
 /** Remove stale user-local ownership after a successful system installation. */
 export function removeUserLocalOllamaOwnership(deps: UserLocalOllamaOwnershipDeps = {}): void {
+  const target = receiptPath(deps);
+  rejectSymlinksOnPath(path.dirname(target));
   try {
-    fs.unlinkSync(receiptPath(deps));
+    fs.unlinkSync(target);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
