@@ -124,7 +124,10 @@ describe("OpenClaw final image layout", () => {
       "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts";
 
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(hasBuildKitRunMount(dockerfile)).toBe(false);
+    expect(hasBuildKitRunMount(finalStage)).toBe(true);
+    expect(finalStage.match(/^RUN[^\n]*--mount[^\n]*/gmu)).toEqual([
+      "RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \\",
+    ]);
     expectManagedBootstrapNativeImageContract(dockerfile);
     expect(finalStage).not.toMatch(/^\s*ENV\b[^\n]*(?:\\\n[^\n]*)*NODE_OPTIONS=/mu);
     expect(finalStage).toContain(

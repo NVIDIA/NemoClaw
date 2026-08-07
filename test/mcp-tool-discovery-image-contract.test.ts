@@ -337,7 +337,10 @@ describe("MCP tool discovery image contract", () => {
     );
 
     expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(4);
-    expect(openClawDockerfile.match(/^RUN --network=none\b/gmu)).toHaveLength(2);
+    expect(openClawDockerfile.match(/^RUN --network=none\b/gmu)).toHaveLength(3);
+    expect(openClawDockerfile).toContain(
+      "RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro",
+    );
     expect(openClawDockerfile).toContain("AS wechat-npm-cache");
     expect(openClawDockerfile).toContain("AS codex-acp-runtime");
     expect(hermesDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
