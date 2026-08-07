@@ -2644,6 +2644,7 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
+      lifecycleStartupCommand: intendedSandboxStartupCommand,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),

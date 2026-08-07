@@ -80,6 +80,7 @@ export interface SandboxGpuCreateFlowInput {
   createArgv: string[];
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
+  lifecycleStartupCommand: string[];
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
@@ -256,7 +257,7 @@ export async function runSandboxGpuCreateFlow(
     portableDashboardPort =
       (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
         input.sandboxName,
-        input.sandboxStartupCommand,
+        input.lifecycleStartupCommand,
       ) ?? null;
   } catch (error) {
     const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
