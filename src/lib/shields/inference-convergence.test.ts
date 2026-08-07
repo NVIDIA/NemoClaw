@@ -11,7 +11,7 @@ function probe(status: number, output: string) {
 
 describe("Hermes inference convergence after a Shields policy transition", () => {
   it("returns on the first healthy route probe", () => {
-    const run = vi.fn(() => probe(0, "OK 200"));
+    const run = vi.fn((_command: readonly string[], _options: object) => probe(0, "OK 200"));
     const sleep = vi.fn();
 
     const result = waitForHermesInferenceRouteConvergence("hermes-box", { run, sleep });
@@ -32,7 +32,7 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
 
   it("waits for a transient HTTP 503 to converge", () => {
     const run = vi
-      .fn()
+      .fn((_command: readonly string[], _options: object) => probe(0, "OK 200"))
       .mockReturnValueOnce(probe(0, "BROKEN 503"))
       .mockReturnValueOnce(probe(0, "OK 200"));
     const sleep = vi.fn();
@@ -49,7 +49,7 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
   });
 
   it("fails after the bounded probe budget instead of reporting Shields down ready", () => {
-    const run = vi.fn(() => probe(0, "BROKEN 503"));
+    const run = vi.fn((_command: readonly string[], _options: object) => probe(0, "BROKEN 503"));
     const sleep = vi.fn();
 
     const result = waitForHermesInferenceRouteConvergence("hermes-box", {
@@ -64,7 +64,11 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
   });
 
   it("does not accept untrusted or unavailable probe output as convergence", () => {
-    const run = vi.fn(() => ({ status: 1, stdout: "attacker preamble\nOK 200", stderr: "" }));
+    const run = vi.fn((_command: readonly string[], _options: object) => ({
+      status: 1,
+      stdout: "attacker preamble\nOK 200",
+      stderr: "",
+    }));
 
     const result = waitForHermesInferenceRouteConvergence("hermes-box", {
       maxAttempts: 1,
