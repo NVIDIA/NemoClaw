@@ -215,7 +215,7 @@ Only the reporter can confirm whether the original symptom is gone in their envi
 
    > @<UNANSWERED_MAINT_LOGIN> — your question above is still open; the verification below may answer it. @<reporter> — please test v0.0.<Z> or newer and reply with a reproducer if the symptom remains.
 
-   **Applies to `fixed-on-latest` and `by-design` only.** Still-reproduces has no closing reporter @-mention by design (see L174), so there's nothing to replace; its only nod to the unanswered maintainer is the lead paragraph from step 1.
+   **Applies to `fixed-on-latest` and `by-design` only.** Still-reproduces has no closing reporter mention, as defined in **Per-verdict length defaults**. Its only reference to the unanswered maintainer is the lead paragraph from step 1.
 
 The skill becomes the *unsticking voice* on a thread that has gone quiet — never a clueless interruption when discussion is fresh (Step 3 already filtered the within-7-day case).
 
@@ -285,7 +285,7 @@ The skill becomes the *unsticking voice* on a thread that has gone quiet — nev
 <!-- nemoclaw-verify-stale v1 verdict=verify-inconclusive YYYY-MM-DD -->
 ````
 
-**Comment template (still reproduces — Step 9 special case).** Keep this minimal — per L174 it caps at 30–80 words, drops transcripts (issue body has them), and omits the closing reporter @-mention (the reporter knows their own bug is real). Only the unanswered-question lead paragraph (when fired) adds an @-mention; no closing dual @-mention even then.
+**Comment template (still reproduces — Step 9 special case).** Keep this template to 30–80 words, as defined in **Per-verdict length defaults**. Do not include transcripts or a closing reporter mention. Only the unanswered-question lead paragraph adds a mention.
 
 ````markdown
 ## Stale-issue verification — still reproducible

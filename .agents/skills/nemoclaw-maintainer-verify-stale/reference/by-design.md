@@ -175,7 +175,7 @@ The new workflow is `<one-sentence: how to do what the user was trying to do>`.
 
 ### What's not literally the same bug
 
-`<one-sentence acknowledgement of the related failure mode found in Step 8.5b, with file:line>` — OR — `None. The symptom requires the removed symbol; no related code path produces it on latest.`
+`<one-sentence acknowledgement of the related failure mode found in Step 8.5b, with file:line>` — OR — `None. The symptom requires the removed symbol; no related code path produces it on the newest release tag.`
 
 ### Existing CI coverage
 

@@ -299,7 +299,10 @@ Latency and resource-growth reports (#2598, #2600, and #2733) cannot use the sta
 
    ```bash
    PERF_INCONCLUSIVE_REASON=""
-   PERF_EXITS=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf-exits.log")
+   if ! PERF_EXITS=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf-exits.log"); then
+     echo "ERROR: could not retrieve performance sample exit statuses"
+     exit 1
+   fi
    PERF_EXIT_COUNT=$(printf '%s\n' "$PERF_EXITS" | sed '/^$/d' | wc -l | tr -d ' ')
    if [ "$PERF_EXIT_COUNT" != "10" ] || printf '%s\n' "$PERF_EXITS" | grep -Ev '^0$' >/dev/null; then
      PERF_INCONCLUSIVE_REASON="performance samples did not produce exactly 10 successful exits"
@@ -307,7 +310,11 @@ Latency and resource-growth reports (#2598, #2600, and #2733) cannot use the sta
 
    PERF_SAMPLES=""
    if [ -z "$PERF_INCONCLUSIVE_REASON" ]; then
-     PERF_SAMPLES=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf.log" \
+     if ! PERF_LOG=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf.log"); then
+       echo "ERROR: could not retrieve performance samples"
+       exit 1
+     fi
+     PERF_SAMPLES=$(printf '%s\n' "$PERF_LOG" \
        | grep -E '^[0-9]+([.][0-9]+)?$' || true)
      if [ "$(printf '%s\n' "$PERF_SAMPLES" | sed '/^$/d' | wc -l | tr -d ' ')" != "10" ]; then
        PERF_INCONCLUSIVE_REASON="performance harness did not produce exactly 10 numeric samples"

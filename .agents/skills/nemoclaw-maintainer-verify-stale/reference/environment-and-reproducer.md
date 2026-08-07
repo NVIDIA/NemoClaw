@@ -36,7 +36,7 @@ CPU default keeps cost low. Only escalate to GPU when the reproducer needs one.
 | `log-only` | Body's symptom is logs-not-stdout: `see lots of error in <X> log`, `os.networkInterfaces guard errors`, anything pointing at a specific log file rather than the reproducer's stdout/stderr | Step 8b's match rubric extended with log-scraping |
 | `functional` (default) | Everything else — exit code + stdout/stderr matching | Step 8b standard rubric |
 
-Most bugs are `functional`. The other three classes need separate verification harnesses. One run without the symptom does not establish a percentile, and one onboarding run does not establish configuration persistence across a rebuild. Set `BUG_CLASS=<class>` so downstream steps use the applicable rubric.
+Most bugs are `functional`. The four other classes need separate verification harnesses. One run without the symptom does not establish a percentile, and one onboarding run does not establish configuration persistence across a rebuild. Set `BUG_CLASS=<class>` so downstream steps use the applicable rubric.
 
 **Agent runtime classification.** Set `NEMOCLAW_AGENT` before either install pass:
 
