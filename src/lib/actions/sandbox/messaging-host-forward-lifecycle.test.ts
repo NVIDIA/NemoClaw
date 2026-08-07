@@ -66,7 +66,7 @@ describe("ensureMessagingHostForwardAfterRebuild", () => {
     mocks.runDetachedForwardStartWithRetries.mockReturnValue({ ok: true, diagnostic: "" });
   });
 
-  it("skips cleanup stop when the messaging adapter cannot list forwards (#8522)", () => {
+  it("skips the sandbox-scoped stop when OpenShell cannot list forwards (#8522)", () => {
     mocks.captureOpenshell.mockReturnValue({ status: 1, output: "" });
 
     const result = ensureMessagingHostForwardAfterRebuild("alpha", makePlan());
@@ -82,7 +82,7 @@ describe("ensureMessagingHostForwardAfterRebuild", () => {
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("runs sandbox-scoped cleanup after a successful empty list (#8522)", () => {
+  it("runs the sandbox-scoped stop when OpenShell returns an empty forward list (#8522)", () => {
     mocks.captureOpenshell.mockReturnValue({ status: 0, output: "" });
 
     const result = ensureMessagingHostForwardAfterRebuild("alpha", makePlan());

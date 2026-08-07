@@ -74,7 +74,7 @@ describe("bestEffortForwardStopForSandbox", () => {
     });
   });
 
-  it("returns list-failed and skips stop when the capture seam returns null", () => {
+  it("returns list-failed and skips the stop when the forward-list runner returns null (#8522)", () => {
     const run = vi.fn();
     const fetch = vi.fn().mockReturnValue(null);
 
