@@ -167,6 +167,17 @@ describe("maintainer merge-gate contributor compliance", () => {
 
   it.each([
     { evidence: "the REST job has another name", run: { jobName: "unrelated job" } },
+    {
+      evidence: "the REST job status differs",
+      check: { status: "IN_PROGRESS", conclusion: undefined },
+      run: {
+        status: "in_progress",
+        conclusion: null,
+        jobStatus: "queued",
+        jobConclusion: null,
+      },
+    },
+    { evidence: "the REST job conclusion differs", run: { jobConclusion: "success" } },
     { evidence: "the workflow path differs", run: { path: ".github/workflows/other.yaml" } },
     { evidence: "the workflow path is missing", run: { path: undefined } },
     { evidence: "the workflow event differs", run: { event: "workflow_dispatch" } },
