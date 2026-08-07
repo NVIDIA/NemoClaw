@@ -103,7 +103,7 @@ than enabling optional upstream behavior implicitly.
 | --- | --- | --- |
 | `OS99-01` | Release/tag substitution | Exact source commit, archives, extracted binaries, formula, manifests, and supervisor index are pinned. |
 | `OS99-02` | Credential leakage or key-class expansion | Regenerated manifest shows no child-visible key-class expansion; expiry behavior is safer. |
-| `OS99-03` | Policy-first OCI image identity | Existing explicit-image and policy tests remain required. |
+| `OS99-03` | Policy-first OCI image identity | `Config.Image` may contain only the exact reviewed `repository@manifestDigest` or its exact immutable runtime content ID. Separate Docker image-inspect evidence must prove that the reviewed manifest digest resolves to that same content ID. |
 | `OS99-04` | Workspace authorization | No NemoClaw authority is inferred from the new workspace model. |
 | `OS99-05` | Supervisor middleware/egress | Optional middleware is not enabled by the selector update. |
 | `OS99-06` | Corporate proxy and consolidated egress | Existing endpoint and allowed-IP checks remain authoritative. |
@@ -115,6 +115,7 @@ than enabling optional upstream behavior implicitly.
 | `OS99-12` | Podman lifecycle changes | Podman exact-version live coverage remains an acceptance gate. |
 | `OS99-13` | Inference status heading changed from `Gateway inference:` to `Inference:` | The parser accepts both headings, with focused regression coverage for the exact v0.0.99 output. |
 | `OS99-14` | Routable sandbox names are capped at 19 characters | NemoClaw's canonical validation uses the same 19-character limit, and generated activation names fit it. Exact all-agent activation remains a final acceptance gate. |
+| `OS99-15` | The Docker driver records the immutable image content ID in `Config.Image` | Managed bootstrap accepts either the reviewed `repository@manifestDigest` or its exact runtime content ID, while separately requiring Docker to prove that the manifest resolves to that content ID. |
 
 An unresolved critical or high concern blocks the upgrade. Test selection cannot waive a concern;
 conditional skips and expected failures do not count as qualification evidence.
