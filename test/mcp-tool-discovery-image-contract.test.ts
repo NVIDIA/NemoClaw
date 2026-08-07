@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,26 +28,31 @@ function createCacheSeedFixture(): {
   const cache = path.join(fixture, "cache");
   const retryHelper = path.join(fixture, "npm-ci-locked.sh");
   const seedDirectory = path.join(fixture, "npm-cache-seed");
-  const seed = path.join(seedDirectory, "yoctocolors-2.1.2.tgz");
+  const seedNames = ["yallist-5.0.0.tgz", "yaml-2.8.3.tgz", "yoctocolors-2.1.2.tgz"];
+  const seed = path.join(seedDirectory, seedNames[0]);
   fs.mkdirSync(seedDirectory);
   fs.copyFileSync(
     path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
     retryHelper,
   );
   fs.chmodSync(retryHelper, 0o755);
-  fs.copyFileSync(
-    path.join(
-      repoRoot,
-      "tools",
-      "mcp-tool-discovery-runtime",
-      "npm-cache-seed",
-      "yoctocolors-2.1.2.tgz",
-    ),
-    seed,
-  );
+  for (const seedName of seedNames) {
+    fs.copyFileSync(
+      path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-cache-seed", seedName),
+      path.join(seedDirectory, seedName),
+    );
+  }
   fs.writeFileSync(
     path.join(fixture, "package.json"),
-    `${JSON.stringify({ name: "cache-seed-contract", private: true, dependencies: { yoctocolors: "2.1.2" } }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        name: "cache-seed-contract",
+        private: true,
+        dependencies: { yallist: "5.0.0", yaml: "2.8.3", yoctocolors: "2.1.2" },
+      },
+      null,
+      2,
+    )}\n`,
   );
   fs.writeFileSync(
     path.join(fixture, "package-lock.json"),
@@ -57,7 +63,23 @@ function createCacheSeedFixture(): {
         packages: {
           "": {
             name: "cache-seed-contract",
-            dependencies: { yoctocolors: "2.1.2" },
+            dependencies: {
+              yallist: "5.0.0",
+              yaml: "2.8.3",
+              yoctocolors: "2.1.2",
+            },
+          },
+          "node_modules/yallist": {
+            version: "5.0.0",
+            resolved: "https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz",
+            integrity:
+              "sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==",
+          },
+          "node_modules/yaml": {
+            version: "2.8.3",
+            resolved: "https://registry.npmjs.org/yaml/-/yaml-2.8.3.tgz",
+            integrity:
+              "sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==",
           },
           "node_modules/yoctocolors": {
             version: "2.1.2",
@@ -188,14 +210,45 @@ describe("MCP tool discovery image contract", () => {
         const installedModule = await import(
           pathToFileURL(path.join(fixture, "node_modules", "yoctocolors", "index.js")).href
         );
+        const installedYaml = await import(
+          pathToFileURL(path.join(fixture, "node_modules", "yaml", "dist", "index.js")).href
+        );
         expect(stripVTControlCharacters(installedModule.default.red("offline cache seed"))).toBe(
           "offline cache seed",
         );
+        expect(installedYaml.parse("enabled: true")).toEqual({ enabled: true });
+        expect(fs.existsSync(path.join(fixture, "node_modules", "yallist", "dist"))).toBe(true);
       } finally {
         fs.rmSync(fixture, { force: true, recursive: true });
       }
     },
   );
+
+  it("pins every terminal lockfile archive consumed by npm's exit-handler failure", () => {
+    const seedDirectory = path.join(
+      repoRoot,
+      "tools",
+      "mcp-tool-discovery-runtime",
+      "npm-cache-seed",
+    );
+    const seedNames = fs.readdirSync(seedDirectory).sort();
+    const lock = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "nemoclaw", "package-lock.json"), "utf8"),
+    );
+
+    expect(seedNames).toEqual(["yallist-5.0.0.tgz", "yaml-2.8.3.tgz", "yoctocolors-2.1.2.tgz"]);
+    for (const seedName of seedNames) {
+      const seed = fs.readFileSync(path.join(seedDirectory, seedName));
+      const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
+      const matches = Object.values(lock.packages).filter(
+        (entry) =>
+          entry.integrity === integrity &&
+          path.basename(new URL(entry.resolved).pathname) === seedName,
+      );
+
+      expect(matches).toHaveLength(1);
+    }
+  });
 
   it.skipIf(process.platform === "win32")(
     "rejects a cache seed that does not match the lockfile integrity",
