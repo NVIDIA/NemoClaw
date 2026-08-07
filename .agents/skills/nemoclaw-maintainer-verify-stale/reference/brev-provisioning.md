@@ -312,7 +312,7 @@ Without the reported-release result, a newest-release result without the symptom
 
 NemoClaw starts OpenShell sandboxes, runtime services, and listening processes. `rm -rf ~/.nemoclaw` does not remove those resources. Without the reset below, the newest-release install would inherit reported-release state and invalidate the comparison.
 
-The approval plan must name these reset effects before either install: registered sandboxes, containers whose names start with `openshell-` or `nemoclaw-`, processes whose paths contain `/nemoclaw` or `/openshell`, TCP ports `8080`, `18789`, and `9119`, user state directories, and system install paths.
+The approval plan must name these reset effects before either install: registered sandboxes; containers whose names start with `openshell-` or `nemoclaw-`; processes whose command lines contain `/nemoclaw` or `/openshell` immediately before whitespace or the end of the line; TCP ports `8080`, `18789`, and `9119`; user state directories; and system install paths.
 
 ```bash
 RESET=$(cat <<'SCRIPT'
