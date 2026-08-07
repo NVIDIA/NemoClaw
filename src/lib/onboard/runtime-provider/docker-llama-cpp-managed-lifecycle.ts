@@ -274,8 +274,9 @@ function parseLabels(value: unknown): Readonly<Record<string, string>> {
 function parseInspection(
   output: string,
   contract: LlamaCppHostLocalLaunchContract,
-  networkName: string,
+  bindings: DockerLlamaCppManagedLifecycleOptions["bindings"],
 ): DockerContainerInspection {
+  const networkName = bindings.network.name;
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -308,13 +309,16 @@ function parseInspection(
     throw new Error("Docker llama.cpp container has unexpected configured ports.");
   }
   const configuredPort = record(configuredBindings[0], "Docker llama.cpp configured port");
-  if (configuredPort.HostIp !== "127.0.0.1" || configuredPort.HostPort !== "") {
+  if (configuredPort.HostIp !== "127.0.0.1") {
     throw new Error("Docker llama.cpp configured host port is not loopback-only.");
   }
-  const bindings = ports[portKey];
+  if (configuredPort.HostPort !== String(bindings.hostPort)) {
+    throw new Error("Docker llama.cpp configured host port is not the bound host port.");
+  }
+  const publishedBindings = ports[portKey];
   const published =
-    Array.isArray(bindings) && bindings.length === 1
-      ? record(bindings[0], "Docker llama.cpp published port")
+    Array.isArray(publishedBindings) && publishedBindings.length === 1
+      ? record(publishedBindings[0], "Docker llama.cpp published port")
       : null;
   if (published !== null && published.HostIp !== "127.0.0.1") {
     throw new Error("Docker llama.cpp host port is not loopback-only.");
@@ -423,7 +427,7 @@ function inspectContainer(
   engine: ContainerEngine,
   target: string,
   contract: LlamaCppHostLocalLaunchContract,
-  networkName: string,
+  bindings: DockerLlamaCppManagedLifecycleOptions["bindings"],
 ): DockerContainerInspection | null {
   const result = engine.capture(["container", "inspect", target], INSPECT_TIMEOUT_MS);
   const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -434,7 +438,7 @@ function inspectContainer(
   if (!result.error && result.status === 1 && exactAbsent.test(result.stderr.trim())) {
     return null;
   }
-  return parseInspection(requireSuccess("container inspection", result), contract, networkName);
+  return parseInspection(requireSuccess("container inspection", result), contract, bindings);
 }
 
 function currentUid(): bigint {
@@ -915,12 +919,7 @@ function rollbackExact(
     return;
   }
   const target = record.runtimeId ?? record.containerName;
-  let container = inspectContainer(
-    options.engine,
-    target,
-    options.contract,
-    options.bindings.network.name,
-  );
+  let container = inspectContainer(options.engine, target, options.contract, options.bindings);
   if (container === null && record.phase === "creating" && uncertainRecoveryUnixMs !== undefined) {
     if (
       record.createIntentUnixMs === null ||
@@ -930,12 +929,7 @@ function rollbackExact(
       throw new Error("Docker llama.cpp uncertain create remains inside its absence grace period.");
     }
     options.journalStore.assertExecution(lease);
-    container = inspectContainer(
-      options.engine,
-      target,
-      options.contract,
-      options.bindings.network.name,
-    );
+    container = inspectContainer(options.engine, target, options.contract, options.bindings);
   }
   if (container !== null) {
     const owned = requireOwnedContainer(container, options, record);
@@ -943,14 +937,7 @@ function rollbackExact(
       "exact rollback",
       captureMutation(options, lease, execution, ["rm", "--force", owned.id], MUTATION_TIMEOUT_MS),
     );
-    if (
-      inspectContainer(
-        options.engine,
-        owned.id,
-        options.contract,
-        options.bindings.network.name,
-      ) !== null
-    ) {
+    if (inspectContainer(options.engine, owned.id, options.contract, options.bindings) !== null) {
       throw new Error("Docker llama.cpp exact rollback left the owned runtime present.");
     }
   }
@@ -1205,7 +1192,7 @@ export function createDockerLlamaCppManagedLifecycle(
       options.engine,
       authorized.receipt.runtime.runtimeId,
       options.contract,
-      options.bindings.network.name,
+      options.bindings,
     );
     if (inspected === null) throw new Error("Docker llama.cpp owned runtime is absent.");
     const container = requireOwnedContainer(inspected, options, authorized.journal);
@@ -1322,7 +1309,7 @@ export function createDockerLlamaCppManagedLifecycle(
         options.engine,
         normalized.runtime.runtimeId,
         options.contract,
-        options.bindings.network.name,
+        options.bindings,
       );
       const journal = options.journalStore.load(normalized.runtime.model.generation);
       if (existing !== null || journal !== null) authorizeReceipt(normalized, true);
@@ -1337,7 +1324,7 @@ export function createDockerLlamaCppManagedLifecycle(
         options.engine,
         normalized.runtime.runtimeId,
         options.contract,
-        options.bindings.network.name,
+        options.bindings,
       );
       if (existing === null) {
         const journal = options.journalStore.load(normalized.runtime.model.generation);
@@ -1376,7 +1363,7 @@ export function createDockerLlamaCppManagedLifecycle(
             options.engine,
             inspected.container.id,
             options.contract,
-            options.bindings.network.name,
+            options.bindings,
           ) !== null
         ) {
           throw new Error("Docker llama.cpp removal left the exact runtime present.");
@@ -1472,7 +1459,7 @@ export function createDockerLlamaCppManagedLifecycle(
             options.engine,
             options.bindings.containerName,
             options.contract,
-            options.bindings.network.name,
+            options.bindings,
           ) !== null
         ) {
           throw new Error("Docker llama.cpp container name is already in use.");
@@ -1553,7 +1540,7 @@ export function createDockerLlamaCppManagedLifecycle(
           options.engine,
           options.bindings.containerName,
           options.contract,
-          options.bindings.network.name,
+          options.bindings,
         );
         if (create.error || create.status !== 0 || created === null) {
           throw new Error(
@@ -1579,7 +1566,7 @@ export function createDockerLlamaCppManagedLifecycle(
           options.engine,
           created.id,
           options.contract,
-          options.bindings.network.name,
+          options.bindings,
         );
         if (started === null || !started.running) {
           throw new Error("Docker llama.cpp start did not leave the exact runtime running.");

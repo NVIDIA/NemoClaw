@@ -9,12 +9,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
+import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 /* Test-only reconstruction of the exact immutable command for recovery fixtures. */
 import {
   buildLlamaCppHostLocalServerArgv,
   type LlamaCppHostLocalLaunchContract,
-  type LlamaCppHostLocalRuntimeBindings,
 } from "../../inference/llama-cpp/host-local-runtime";
 import {
   createDockerLlamaCppManagedLifecycle,
@@ -32,6 +32,7 @@ import {
 } from "./host-local-inference";
 import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
 
+const HOST_PORT = String(LLAMA_CPP_PORT);
 const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
 const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;
@@ -231,10 +232,11 @@ function keyRootIdentitySha256(): string {
   });
 }
 
-function bindings(): LlamaCppHostLocalRuntimeBindings {
+function bindings(): DockerLlamaCppManagedLifecycleOptions["bindings"] {
   return {
     apiKeyHostPath: apiKeyPath,
     containerName: "nemoclaw-llama-cpp",
+    hostPort: LLAMA_CPP_PORT,
     imageReference: IMAGE,
     model: {
       digest: MODEL_DIGEST,
@@ -435,7 +437,7 @@ function dockerFixture(): DockerFixture {
       HostConfig: {
         NetworkMode: "nemoclaw-llama-cpp-internal",
         RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 },
-        PortBindings: { "8081/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }] },
+        PortBindings: { "8081/tcp": [{ HostIp: "127.0.0.1", HostPort: HOST_PORT }] },
         ReadonlyRootfs: !hardeningDrift,
         CapDrop: ["ALL"],
         SecurityOpt: ["no-new-privileges:true"],
@@ -463,7 +465,7 @@ function dockerFixture(): DockerFixture {
       NetworkSettings: {
         Networks: { "nemoclaw-llama-cpp-internal": { NetworkID: networkId } },
         Ports: {
-          "8081/tcp": startedOnce ? [{ HostIp: "127.0.0.1", HostPort: "49152" }] : null,
+          "8081/tcp": startedOnce ? [{ HostIp: "127.0.0.1", HostPort: HOST_PORT }] : null,
         },
       },
       Mounts: [
@@ -779,7 +781,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const receipt = lifecycle.start(writer);
     const serialized = serializeHostLocalInferenceReceipt(receipt);
 
-    expect(receipt.endpoint.port).toBe(49152);
+    expect(receipt.endpoint.port).toBe(LLAMA_CPP_PORT);
     expect(receipt.runtime).toMatchObject({
       kind: "container",
       runtimeId: RUNTIME_ID,
@@ -1401,6 +1403,13 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(() => lifecycle.runtime.preserveForRebuild(receipt)).toThrow(
       "internal network identity changed",
     );
+  });
+
+  it("rejects a container whose configured host port is not the bound host port", () => {
+    const lifecycle = createDockerLlamaCppManagedLifecycle(
+      options(dockerFixture(), journalStore(), { ...bindings(), hostPort: 18_081 }),
+    );
+    expect(() => lifecycle.start(receiptWriter())).toThrow("not the bound host port");
   });
 
   it("rejects effective hardening drift after creation (#8395)", () => {

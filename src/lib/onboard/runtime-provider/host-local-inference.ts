@@ -169,7 +169,7 @@ export interface HostLocalLlamaCppLifecycleInput {
   readonly authorityStore: PersistedEngineAuthorityStore;
   readonly apiKeyRootHostPath: string;
   readonly bindingSha256: string;
-  readonly bindings: LlamaCppHostLocalRuntimeBindings;
+  readonly bindings: LlamaCppHostLocalRuntimeBindings & { readonly hostPort: number };
   readonly cacheRootHostPath: string;
   readonly contract: LlamaCppHostLocalLaunchContract;
   readonly engine: ContainerEngine;
