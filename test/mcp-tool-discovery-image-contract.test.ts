@@ -342,8 +342,8 @@ describe("MCP tool discovery image contract", () => {
       "utf8",
     );
 
-    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(5);
-    expect(openClawDockerfile.match(/^RUN --network=none\b/gmu)).toHaveLength(3);
+    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(4);
+    expect(openClawDockerfile.match(/^RUN --network=none\b/gmu)).toHaveLength(4);
     expect(openClawDockerfile).toContain(
       "RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro",
     );
