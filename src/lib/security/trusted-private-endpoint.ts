@@ -99,7 +99,7 @@ export interface EndpointSsrfPreflightResult {
   /** Human-readable reason, present only when `ok === false`. */
   reason?: string;
   /** Stable failure classification for callers that must not parse `reason`. */
-  reasonCode?: "mixed-answer" | "private-answer" | "rejected" | "unresolved";
+  reasonCode?: "private-answer" | "rejected" | "unresolved";
   /** Exact rejected DNS answer when `reasonCode` identifies an address failure. */
   offendingAddress?: string;
   /**

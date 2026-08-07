@@ -400,12 +400,7 @@ export function parseMcpUrlWithValidatedTarget(
   }
   const trustedPrivateHost = authority.host;
 
-  let rawParsed: URL;
-  try {
-    rawParsed = new URL(rawUrl);
-  } catch {
-    return new URL(normalizeMcpServerUrl(rawUrl, { trustedPrivateHosts: [trustedPrivateHost] }));
-  }
+  const rawParsed = new URL(rawUrl);
   if (normalizeTrustedPrivateHost(rawParsed.hostname) !== trustedPrivateHost) {
     throw new McpBridgeError(
       `Validated private MCP target host '${trustedPrivateHost}' does not match URL host '${rawParsed.hostname}'.`,
