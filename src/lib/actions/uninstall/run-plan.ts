@@ -1574,11 +1574,11 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
         // `openshell-*` (cluster and sandbox) and `nemoclaw-*` (gateway compat
         // and managed inference), so that term only ever selected the separate
         // OpenClaw project's containers for `docker rm -f` (#8496).
-        // The whole `{{.ID}} {{.Image}} {{.Names}}` line is still matched
-        // rather than the name alone, because probe containers run with `--rm`
-        // and no `--name` (e.g. hermesBaseImageSupportsMcp) take a random
-        // Docker name; their NemoClaw image reference is the only way to
-        // reclaim one orphaned by an interrupted run.
+        // The whole `{{.ID}} {{.Image}} {{.Names}}` line is matched rather than
+        // the name alone. Probe containers that run with `--rm` and no
+        // `--name`, such as `hermesBaseImageSupportsMcp`, take a random Docker
+        // name. Their NemoClaw image reference is the only way to reclaim one
+        // that an interrupted run orphaned.
         return /openshell-cluster|openshell|nemoclaw/i.test(line);
       }
       return (
