@@ -119,6 +119,20 @@ describe("OpenAI validation keepalive sequence", () => {
   it("does not retry a transient HTTP failure after the larger-budget retry", async () => {
     let requestCount = 0;
     const observedBodies: Array<Record<string, unknown>> = [];
+    const replies = [
+      {
+        statusCode: 200,
+        body: '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+      },
+      {
+        statusCode: 503,
+        body: '{"error":{"message":"temporarily unavailable"}}',
+      },
+    ];
+    const unexpectedThirdReply = {
+      statusCode: 200,
+      body: '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
+    };
     const server = http.createServer((request, response) => {
       let body = "";
       request.setEncoding("utf8");
@@ -127,22 +141,11 @@ describe("OpenAI validation keepalive sequence", () => {
       });
       request.on("end", () => {
         observedBodies.push(JSON.parse(body));
+        const reply = replies[requestCount] ?? unexpectedThirdReply;
         requestCount += 1;
         response.setHeader("content-type", "application/json");
-        if (requestCount === 1) {
-          response.end(
-            '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
-          );
-          return;
-        }
-        if (requestCount === 2) {
-          response.statusCode = 503;
-          response.end('{"error":{"message":"temporarily unavailable"}}');
-          return;
-        }
-        response.end(
-          '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
-        );
+        response.statusCode = reply.statusCode;
+        response.end(reply.body);
       });
     });
     const port = await listen(server);
