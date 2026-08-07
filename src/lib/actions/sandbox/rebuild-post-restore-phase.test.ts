@@ -290,4 +290,39 @@ describe("rebuild post-restore phase", () => {
       "Shields were previously enabled but the recreated sandbox starts unlocked",
     );
   });
+
+  it("reports every incomplete recovery dimension in a fixed order (#8283)", async () => {
+    vi.mocked(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).mockReturnValue(false);
+    vi.mocked(shields.repairMutableConfigPerms).mockReturnValue({
+      applied: false,
+      reason: "config is unreadable",
+      skipReason: "unreadable",
+    } as never);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    const args = {
+      ...input(),
+      backupManifest: { backupPath: "/tmp/alpha-backup" } as never,
+      restoreSucceeded: false,
+      failedPresets: ["messaging-telegram"],
+      recoveryRecreate: true,
+      staleSandboxWasLocked: true,
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    const output = vi.mocked(console.log).mock.calls.flat().map(String).join("\n");
+    const ordered = [
+      "State restore was incomplete",
+      "Mutable config permissions were not verified",
+      "Mutable OpenClaw config hash was not refreshed",
+      "Messaging webhook forward was not verified",
+      "Policy presets failed to reapply: messaging-telegram",
+      "Shields were previously enabled",
+    ];
+    const offsets = ordered.map((fragment) => output.indexOf(fragment));
+    expect(offsets.every((offset) => offset >= 0)).toBe(true);
+    expect(offsets).toEqual([...offsets].sort((left, right) => left - right));
+  });
 });

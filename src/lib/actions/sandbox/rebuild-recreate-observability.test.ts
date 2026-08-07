@@ -425,15 +425,20 @@ describe("runRebuildRecreatePhase handoff", () => {
 });
 
 describe("rebuild recreate shields state", () => {
+  let session: Session;
+
   beforeEach(() => {
+    session = onboardSession.createSession({
+      sandboxName: "alpha",
+      observabilityEnabled: false,
+    });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(onboardSession, "loadSession").mockImplementation(() =>
-      onboardSession.createSession({ sandboxName: "alpha", observabilityEnabled: false }),
-    );
-    vi.spyOn(onboardSession, "updateSession").mockImplementation(
-      () => onboardSession.loadSession() as Session,
-    );
+    vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
+    vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
+      session = mutator(session) ?? session;
+      return session;
+    });
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockResolvedValue(undefined);
   });
 
@@ -456,5 +461,20 @@ describe("rebuild recreate shields state", () => {
     );
     expect(clearShieldsState).toHaveBeenCalledOnce();
     expect(clearShieldsState).toHaveBeenCalledWith("alpha");
+  });
+
+  it("keeps prior shields state when a recovery recreate fails (#8283)", async () => {
+    const clearShieldsState = vi
+      .spyOn(shields, "clearShieldsState")
+      .mockImplementation(() => undefined);
+    vi.mocked(rebuildOnboardDependencies.onboard).mockRejectedValue(
+      new Error("inner onboard failed"),
+    );
+
+    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: true }))).rejects.toThrow(
+      "bail: Recreate failed (stale-sandbox recovery).",
+    );
+
+    expect(clearShieldsState).not.toHaveBeenCalled();
   });
 });

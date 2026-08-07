@@ -109,6 +109,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
         files: [
           "src/lib/actions/sandbox/rebuild-flow-helpers.test.ts",
           "src/lib/actions/sandbox/rebuild-post-restore-phase.test.ts",
+          "src/lib/actions/sandbox/rebuild-recreate-observability.test.ts",
         ],
         project: "cli",
       },
