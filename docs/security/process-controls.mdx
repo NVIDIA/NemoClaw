@@ -103,7 +103,7 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 |---|---|
 | Default | 65536 open files, soft and hard (`ulimit -n 65536`), best-effort. |
 | What you can change | Increase or decrease the limit with `--ulimit nofile=N:N` in `docker run` or the `ulimits` section in Compose. The runtime-level ulimit takes precedence over the entrypoint's setting. |
-| Risk if relaxed | Without this cap, the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them, causing a denial of service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. Ref [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
+| Risk if relaxed | Without this cap, the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them, causing a denial of service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. For more information, refer to [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
 | Recommendation | Keep the default at 65536. If the agent legitimately keeps many connections or files open, raise it deliberately and monitor host file-descriptor usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
 
 <AgentOnly variant="deepagents">

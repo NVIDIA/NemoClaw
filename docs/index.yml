@@ -351,7 +351,7 @@ navigation:
                   - page: "Process Controls"
                     path: _build/agent-variants/security/process-controls.openclaw.generated.mdx
                     slug: process-controls
-                  - page: "Gateway Authentication"
+                  - page: "Gateway and Secret Controls"
                     path: _build/agent-variants/security/gateway-authentication-controls.openclaw.generated.mdx
                     slug: gateway-authentication-controls
               - page: "Configure Corporate CA Trust"
@@ -704,7 +704,7 @@ navigation:
                   - page: "Process Controls"
                     path: _build/agent-variants/security/process-controls.deepagents.generated.mdx
                     slug: process-controls
-                  - page: "Gateway Authentication"
+                  - page: "Gateway and Secret Controls"
                     path: _build/agent-variants/security/gateway-authentication-controls.deepagents.generated.mdx
                     slug: gateway-authentication-controls
               - page: "Configure Corporate CA Trust"
@@ -1096,7 +1096,7 @@ navigation:
                   - page: "Process Controls"
                     path: _build/agent-variants/security/process-controls.hermes.generated.mdx
                     slug: process-controls
-                  - page: "Gateway Authentication"
+                  - page: "Gateway and Secret Controls"
                     path: _build/agent-variants/security/gateway-authentication-controls.hermes.generated.mdx
                     slug: gateway-authentication-controls
               - page: "Configure Corporate CA Trust"

@@ -1,14 +1,22 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Understand Gateway Authentication Controls"
-sidebar-title: "Gateway Authentication"
-description: "Review NemoClaw gateway access, dashboard exposure, secret redaction, and memory-scanning controls."
-description-agent: "Explains NemoClaw gateway authentication and secret-handling controls. Use when reviewing dashboard exposure, device pairing, secret redaction, or memory scanning."
-keywords: ["nemoclaw gateway authentication", "dashboard security", "secret redaction"]
+title: "Understand Gateway and Secret Controls"
+sidebar-title: "Gateway and Secrets"
+description: "Review runtime-specific gateway access and the shared secret-redaction and memory-scanning controls."
+description-agent: "Explains runtime-specific gateway access and shared secret-handling controls. Use when reviewing dashboard exposure, device pairing, secret redaction, or memory scanning."
+keywords: ["nemoclaw gateway security", "dashboard security", "secret redaction"]
 content:
   type: "concept"
 ---
+NemoClaw applies gateway access controls when the selected agent runtime exposes an in-sandbox gateway or dashboard.
+CLI secret redaction and runtime-specific memory guidance apply across guide variants.
+
+<AgentOnly variant="deepagents">
+LangChain Deep Agents Code has no in-sandbox agent gateway or dashboard, so device pairing, bind, and dashboard controls do not apply.
+The shared secret-handling controls below still apply.
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
 
 The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
@@ -47,7 +55,7 @@ On Linux hosts whose glibc is older than the OpenShell gateway binary requires, 
 | Risk if relaxed | The Docker socket remains a privileged host API even when bind-mounted read-only. Treat this mode as equivalent to trusting the host user that can drive Docker, and do not enable it on untrusted shared hosts. |
 | Recommendation | Prefer a host with glibc 2.39 or newer, which OpenShell 0.0.99 supports directly, and use the compatibility container only as an explicit local bridge on an older trusted host. |
 
-See [OpenShell Gateway Compatibility Review](../openshell-0.0.72-compatibility-review) for the unchanged compatibility-container source-of-truth boundaries.
+Refer to [OpenShell Gateway Compatibility Review](../openshell-0.0.72-compatibility-review) for the unchanged compatibility-container source-of-truth boundaries.
 
 ## Insecure Auth Derivation
 
