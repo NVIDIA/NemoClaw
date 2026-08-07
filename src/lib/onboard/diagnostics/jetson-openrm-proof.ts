@@ -13,6 +13,7 @@ import type {
   DockerGpuPatchDeps,
   DockerGpuPatchResult,
 } from "../docker-gpu-patch-types";
+import { runJetsonOpenRmProcessProof } from "./jetson-openrm-process-proof";
 
 const CUDA_RESULT_PATTERN = /cuInit\(0\)=(-?\d+)/u;
 const PROOF_TIMEOUT_MS = 30_000;
@@ -335,5 +336,6 @@ export function maybeRunJetsonOpenRmPolicyProof(options: OpenRmProofOptions): vo
     );
     console.log(`  direct_process_status=${compactProcessStatus(directStatus.stdout)}`);
     console.log(`  openshell_process_status=${compactProcessStatus(openshellStatus.stdout)}`);
+    runJetsonOpenRmProcessProof(options.result.newContainerId, dockerRun);
   }
 }
