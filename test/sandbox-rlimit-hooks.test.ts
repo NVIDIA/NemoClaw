@@ -512,6 +512,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const initLib = path.join(localLib, "sandbox-init.sh");
     const validator = path.join(localLib, "validate-hermes-env-secret-boundary.py");
     const sessionListPreviewPatcher = path.join(localLib, "patch-hermes-session-list-preview.py");
+    const sqliteTempStorePatcher = path.join(localLib, "patch-hermes-sqlite-temp-store.py");
     const discordRecoveryPatcher = path.join(
       localLib,
       "patch-hermes-discord-recovery-permissions.py",
@@ -551,6 +552,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(initLib, "# init fixture\n");
       fs.writeFileSync(validator, "# validator fixture\n");
       fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
+      fs.writeFileSync(sqliteTempStorePatcher, "# SQLite temp store patcher fixture\n");
       fs.writeFileSync(discordRecoveryPatcher, "# Discord recovery patcher fixture\n");
       fs.writeFileSync(profilePolicyPatcher, "# profile policy patcher fixture\n");
       fs.writeFileSync(managedPolicyReader, "# managed policy reader fixture\n");
@@ -595,6 +597,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
           sessionListPreviewPatcher,
+        )
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
+          sqliteTempStorePatcher,
         )
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
