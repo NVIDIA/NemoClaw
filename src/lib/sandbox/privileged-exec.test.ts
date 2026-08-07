@@ -13,6 +13,11 @@ const portableLifecyclePath = require.resolve("../onboard/experimental/portable-
 const registryPath = require.resolve("../state/registry");
 const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
 
+function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void {
+  if (priorEntry) requireCache[modulePath] = priorEntry;
+  else delete requireCache[modulePath];
+}
+
 function withPrivilegedExecMocks<T>(
   deps: {
     dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
@@ -61,17 +66,10 @@ function withPrivilegedExecMocks<T>(
   try {
     return run(require(helperPath));
   } finally {
-    if (priorHelper) requireCache[helperPath] = priorHelper;
-    else delete requireCache[helperPath];
-
-    if (priorDockerRun) requireCache[dockerRunPath] = priorDockerRun;
-    else delete requireCache[dockerRunPath];
-
-    if (priorPortableLifecycle) requireCache[portableLifecyclePath] = priorPortableLifecycle;
-    else delete requireCache[portableLifecyclePath];
-
-    if (priorRegistry) requireCache[registryPath] = priorRegistry;
-    else delete requireCache[registryPath];
+    restoreRequireCacheEntry(helperPath, priorHelper);
+    restoreRequireCacheEntry(dockerRunPath, priorDockerRun);
+    restoreRequireCacheEntry(portableLifecyclePath, priorPortableLifecycle);
+    restoreRequireCacheEntry(registryPath, priorRegistry);
   }
 }
 
