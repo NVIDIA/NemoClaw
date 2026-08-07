@@ -237,7 +237,7 @@ The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the following publi
 | Repository | `NVIDIA/NemoClaw` |
 | Workflow | `Images / Base Images` |
 | Workflow path | `.github/workflows/base-image.yaml` |
-| Trigger | Push to `main` |
+| Trigger | `workflow_dispatch` from `fix/hermes-whatsapp-session-path` |
 | Producer run | `31031662054`, attempt 1, completed successfully |
 | Source commit | `a7a7f3e470a75c404d316d2054445e16bb63b48c` |
 | OCI index | `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27` |
