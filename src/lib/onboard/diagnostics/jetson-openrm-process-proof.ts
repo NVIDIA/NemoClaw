@@ -233,7 +233,7 @@ function runCase(containerId: string, mode: string, dockerRun: DockerRun): strin
 }
 
 /** Isolate the process controls that differ between direct Docker and OpenShell. */
-export function runJetsonOpenRmProcessProof(containerId: string, dockerRun: DockerRun): void {
+export function runJetsonOpenRmProcessProof(containerId: string, dockerRun: DockerRun): boolean {
   const fixedCases = [
     "baseline",
     "no-new-privs",
@@ -252,22 +252,22 @@ export function runJetsonOpenRmProcessProof(containerId: string, dockerRun: Dock
   );
   if (results.get("baseline") !== "0") {
     console.error("  INCONCLUSIVE: the direct-Docker process probe baseline did not pass.");
-    return;
+    return false;
   }
   const isolatedHardening = fixedCases.slice(1, 5).filter((mode) => results.get(mode) === "801");
   if (isolatedHardening.length > 0) {
     console.log(`  ISOLATED: cuInit fails after ${isolatedHardening.join(", ")}.`);
-    return;
+    return false;
   }
   if (results.get("allow-all-seccomp") === "801") {
     console.log("  ISOLATED: cuInit fails when any additional seccomp filter is installed.");
-    return;
+    return false;
   }
   if (results.get("openshell-hardening") === "801") {
     console.log(
       "  ISOLATED: cuInit fails only when the non-seccomp process controls are combined.",
     );
-    return;
+    return false;
   }
 
   const exactSeccomp = runCase(containerId, "openshell-seccomp", dockerRun);
@@ -293,7 +293,7 @@ export function runJetsonOpenRmProcessProof(containerId: string, dockerRun: Dock
     } else {
       console.log("  ISOLATED: CUDA requires a combination of OpenShell seccomp rules.");
     }
-    return;
+    return false;
   }
 
   const full = runCase(containerId, "hardening-plus-openshell-seccomp", dockerRun);
@@ -317,9 +317,10 @@ export function runJetsonOpenRmProcessProof(containerId: string, dockerRun: Dock
         ? `  ISOLATED: CUDA fails when OpenShell seccomp is combined with ${isolatedInteractions.join(", ")}.`
         : "  ISOLATED: CUDA requires the combined OpenShell hardening and seccomp state.",
     );
-    return;
+    return false;
   }
   console.error(
     "  INCONCLUSIVE: the complete OpenShell process-control model passes; Landlock or an unmodeled launch difference remains.",
   );
+  return true;
 }

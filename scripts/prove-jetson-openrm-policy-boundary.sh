@@ -13,6 +13,7 @@ fi
 printf 'Running the standalone Jetson OpenRM policy proof for sandbox %s.\n' "$sandbox_name"
 printf 'This bypasses onboarding and its resume checkpoints.\n'
 printf 'The current container is preserved as a rollback backup before the production recreation and policy matrix run.\n'
+printf 'The matrix briefly widens only the replacement sandbox policy, restores the baseline policy, then restores the original container.\n'
 
 npm run build:cli
 exec node - "$sandbox_name" <<'NODE'
