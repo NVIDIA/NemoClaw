@@ -445,7 +445,6 @@ const sandboxRegistration: typeof import("./onboard/sandbox-registration") =
   require("./onboard/sandbox-registration");
 const {
   RESERVED_SANDBOX_NAMES,
-  enforceCuaOnboardReconciliation,
   formatSandboxAgentName,
   getAgentInferenceProviderOptions,
   getDefaultSandboxNameForAgent,
@@ -2281,12 +2280,6 @@ async function createSandboxWithBaseImageResolution(
   const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
   const { messagingTokenDefs, hasMessagingTokens } = messagingCapabilities;
 
-  const existingCuaEntry = registry.getSandbox(sandboxName);
-  enforceCuaOnboardReconciliation(sandboxName, existingCuaEntry, cliName(), {
-    requireReconciliation: registry.requireCuaReconciliationBeforeSandboxMutation,
-    error: console.error,
-    exit: process.exit,
-  });
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -4433,6 +4426,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           skippedStepMessage,
           getSandboxInferenceSelection: registry.getSandbox,
           updateSandbox: registry.updateSandbox,
+          recordCuaRuntimeReadiness: registry.recordCuaRuntimeReadiness,
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
           selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,

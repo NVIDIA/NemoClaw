@@ -6,11 +6,7 @@ import { resolveLiveInferenceGatewayName } from "../inference/gateway-route-comp
 import { captureResolvedOpenshell, parseGatewayInference, stripAnsi } from "../inference/live";
 import { parseGatewayProviderMetadata } from "../onboard/gateway-provider-metadata";
 import type { SandboxEntry } from "../state/registry/types";
-import {
-  type CuaAppliedPolicyIdentity,
-  type CuaRuntimeReadiness,
-  getCuaRuntimeReadinessDigest,
-} from "./contract";
+import { type CuaAppliedPolicyIdentity, type CuaRuntimeReadiness } from "./contract";
 import { isCuaQualificationEnabled } from "./feature";
 import { getStoredCuaOpenshellDigest, snapshotCuaOpenshellExecutable } from "./openshell-authority";
 import { validateCurrentCuaRuntimeReadiness } from "./runtime-readiness";
@@ -298,9 +294,13 @@ export function requireCuaLifecycleReadiness(
 ): CuaRuntimeReadiness {
   if (!entry.cuaRuntimeReadiness) throw new Error("CUA runtime readiness is unavailable");
   const env = deps.env ?? process.env;
+  if (!isCuaQualificationEnabled(env)) {
+    throw new Error("CUA candidate readiness requires exact qualification authority");
+  }
   const live = deps.observeLiveInference
     ? deps.observeLiveInference(entry)
     : observeCuaLiveInference(entry, { env });
+  const appliedPolicy = requireCuaLiveAppliedPolicy(entry, deps);
   return (deps.validateRuntimeReadiness ?? validateCurrentCuaRuntimeReadiness)(
     entry.cuaRuntimeReadiness,
     {
@@ -308,34 +308,10 @@ export function requireCuaLifecycleReadiness(
       recordedInference: entry,
       liveInference: { ...entry, provider: live.provider, model: live.model },
       liveProviderAuthorityDigest: live.providerAuthorityDigest,
+      liveAppliedPolicy: appliedPolicy,
       ...(live.openshellDigest ? { expectedOpenshellDigest: live.openshellDigest } : {}),
-      acceptance: isCuaQualificationEnabled(env) ? "candidate-qualification" : "final",
+      acceptance: "candidate-qualification",
       env,
     },
   );
-}
-
-/** Re-observe route authority after an adapter call before its output can become durable. */
-export function assertCuaLifecycleReadinessUnchanged(
-  entry: SandboxEntry,
-  expectedDigest: string,
-  deps: CuaLifecycleReadinessDeps = {},
-  requireReadiness: typeof requireCuaLifecycleReadiness = requireCuaLifecycleReadiness,
-): void {
-  const current = requireReadiness(entry, deps);
-  if (getCuaRuntimeReadinessDigest(current) !== expectedDigest) {
-    throw new Error("CUA runtime readiness changed during lifecycle execution");
-  }
-}
-
-/** Re-observe policy authority after an adapter call and reject revision or digest drift. */
-export function assertCuaLiveAppliedPolicyUnchanged(
-  entry: SandboxEntry,
-  expected: CuaAppliedPolicyIdentity,
-  deps: CuaLifecycleReadinessDeps = {},
-): void {
-  const current = requireCuaLiveAppliedPolicy(entry, deps);
-  if (current.revision !== expected.revision || current.digest !== expected.digest) {
-    throw new Error("the live applied CUA policy changed during lifecycle execution");
-  }
 }

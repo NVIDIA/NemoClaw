@@ -15,13 +15,14 @@ import {
   type CuaLiveInferenceObservation,
   type CuaRuntimeReadiness,
   isCuaQualificationEnabled,
+  observeCuaLiveAppliedPolicy,
   observeCuaLiveInference,
   requireCurrentCuaRuntimeReadiness,
   resolveSandboxGatewayName,
   withGatewayRouteMutationLock,
 } from "../cua/onboard-runtime";
 import { getProviderSelectionConfig } from "../inference/config";
-import { type InferenceSelectionInput, normalizeInferenceSelection } from "../inference/selection";
+import { normalizeInferenceSelection } from "../inference/selection";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import { redact, run } from "../runner";
@@ -55,17 +56,23 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
-  getSandboxInferenceSelection?: (
-    sandboxName: string,
-  ) => InferenceSelectionInput & { gatewayName?: string | null; gatewayPort?: number | null };
+  getSandboxInferenceSelection?: (sandboxName: string) => SandboxEntry | null;
   updateSandbox?: (
     sandboxName: string,
     updates: { cuaRuntimeReadiness: CuaRuntimeReadiness },
+  ) => boolean;
+  recordCuaRuntimeReadiness?: (
+    sandboxName: string,
+    readiness: CuaRuntimeReadiness,
+    expectedEntry: SandboxEntry,
   ) => boolean;
   cuaRuntimeEnvironment?: NodeJS.ProcessEnv;
   cuaBuildIdentity?: CuaBuildIdentity;
   cuaRootDir?: string;
   cuaObserveLiveInference?: (entry: SandboxEntry) => CuaLiveInferenceObservation;
+  cuaObserveLiveAppliedPolicy?: (
+    entry: SandboxEntry,
+  ) => import("../cua/contract").CuaAppliedPolicyIdentity;
   cuaWithGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
@@ -154,6 +161,9 @@ export function resolveAgent({
 } = {}): AgentDefinition | null {
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
+  if (name === "nemocua" && !isCuaQualificationEnabled()) {
+    throw new Error("NemoCUA candidate onboarding requires exact qualification authority");
+  }
   return loadAgent(name);
 }
 
@@ -275,17 +285,20 @@ async function recordCuaRuntimeReadiness(
     | "getSandboxInferenceSelection"
     | "recordStepFailed"
     | "updateSandbox"
+    | "recordCuaRuntimeReadiness"
     | "cuaRuntimeEnvironment"
     | "cuaBuildIdentity"
     | "cuaRootDir"
     | "openshellBinary"
     | "cuaObserveLiveInference"
+    | "cuaObserveLiveAppliedPolicy"
     | "cuaWithGatewayRouteMutationLock"
   >,
 ): Promise<void> {
   if (agent.name !== "nemocua") return;
   try {
-    const recordedSandbox = context.getSandboxInferenceSelection?.(sandboxName) ?? {
+    const storedSandbox = context.getSandboxInferenceSelection?.(sandboxName);
+    const recordedSandbox = storedSandbox ?? {
       provider,
       model,
     };
@@ -295,19 +308,28 @@ async function recordCuaRuntimeReadiness(
       name: sandboxName,
       agent: agent.name,
       ...recordedInference,
-      ...(recordedSandbox.gatewayName !== undefined
-        ? { gatewayName: recordedSandbox.gatewayName }
+      ...(storedSandbox?.gatewayName !== undefined
+        ? { gatewayName: storedSandbox.gatewayName }
         : {}),
-      ...(recordedSandbox.gatewayPort !== undefined
-        ? { gatewayPort: recordedSandbox.gatewayPort }
+      ...(storedSandbox?.gatewayPort !== undefined
+        ? { gatewayPort: storedSandbox.gatewayPort }
         : {}),
     };
+    if (!isCuaQualificationEnabled(env)) {
+      throw new Error("NemoCUA candidate onboarding requires exact qualification authority");
+    }
     await (context.cuaWithGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
       resolveSandboxGatewayName(entry),
       () => {
         const live = context.cuaObserveLiveInference
           ? context.cuaObserveLiveInference(entry)
           : observeCuaLiveInference(entry, {
+              openshellBinary: context.openshellBinary,
+              env,
+            });
+        const liveAppliedPolicy = context.cuaObserveLiveAppliedPolicy
+          ? context.cuaObserveLiveAppliedPolicy(entry)
+          : observeCuaLiveAppliedPolicy(entry, {
               openshellBinary: context.openshellBinary,
               env,
             });
@@ -320,14 +342,23 @@ async function recordCuaRuntimeReadiness(
             model: live.model,
           },
           liveProviderAuthorityDigest: live.providerAuthorityDigest,
+          liveAppliedPolicy,
           ...(live.openshellDigest ? { expectedOpenshellDigest: live.openshellDigest } : {}),
-          acceptance: isCuaQualificationEnabled(env) ? "candidate-qualification" : "final",
+          acceptance: "candidate-qualification",
           env,
           openshellBinary: context.openshellBinary,
           ...(context.cuaBuildIdentity ? { buildIdentity: context.cuaBuildIdentity } : {}),
           ...(context.cuaRootDir ? { rootDir: context.cuaRootDir } : {}),
         });
-        if (!context.updateSandbox?.(sandboxName, { cuaRuntimeReadiness })) {
+        const recorded =
+          context.recordCuaRuntimeReadiness && storedSandbox && "name" in storedSandbox
+            ? context.recordCuaRuntimeReadiness(
+                sandboxName,
+                cuaRuntimeReadiness,
+                storedSandbox as SandboxEntry,
+              )
+            : context.updateSandbox?.(sandboxName, { cuaRuntimeReadiness });
+        if (!recorded) {
           throw new Error(`NemoCUA runtime readiness could not be recorded for '${sandboxName}'`);
         }
       },
@@ -382,10 +413,12 @@ export async function handleAgentSetup(
     skippedStepMessage,
     getSandboxInferenceSelection,
     updateSandbox,
+    recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
     cuaRuntimeEnvironment,
     cuaBuildIdentity,
     cuaRootDir,
     cuaObserveLiveInference,
+    cuaObserveLiveAppliedPolicy,
     cuaWithGatewayRouteMutationLock,
   } = ctx;
 
@@ -423,11 +456,13 @@ export async function handleAgentSetup(
             getSandboxInferenceSelection,
             recordStepFailed,
             updateSandbox,
+            recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
             cuaRuntimeEnvironment,
             cuaBuildIdentity,
             cuaRootDir,
             openshellBinary: openshellBin,
             cuaObserveLiveInference,
+            cuaObserveLiveAppliedPolicy,
             cuaWithGatewayRouteMutationLock,
           });
           skippedStepMessage("agent_setup", sandboxName);
@@ -497,11 +532,13 @@ export async function handleAgentSetup(
       getSandboxInferenceSelection,
       recordStepFailed,
       updateSandbox,
+      recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
       cuaRuntimeEnvironment,
       cuaBuildIdentity,
       cuaRootDir,
       openshellBinary: openshellBin,
       cuaObserveLiveInference,
+      cuaObserveLiveAppliedPolicy,
       cuaWithGatewayRouteMutationLock,
     });
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);

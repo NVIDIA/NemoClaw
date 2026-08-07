@@ -6,7 +6,11 @@ import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutatio
 import type { CuaBuildIdentity } from "./build-identity";
 import type { CuaRuntimeReadiness } from "./contract";
 import { isCuaQualificationEnabled } from "./feature";
-import { type CuaLiveInferenceObservation, observeCuaLiveInference } from "./lifecycle-readiness";
+import {
+  type CuaLiveInferenceObservation,
+  observeCuaLiveAppliedPolicy,
+  observeCuaLiveInference,
+} from "./lifecycle-readiness";
 import { requireCurrentCuaRuntimeReadiness } from "./runtime-readiness";
 
 /**
@@ -21,6 +25,7 @@ export {
   type CuaRuntimeReadiness,
   isCuaQualificationEnabled,
   observeCuaLiveInference,
+  observeCuaLiveAppliedPolicy,
   requireCurrentCuaRuntimeReadiness,
   resolveSandboxGatewayName,
   withGatewayRouteMutationLock,

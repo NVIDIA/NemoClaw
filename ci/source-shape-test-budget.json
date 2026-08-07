@@ -42,31 +42,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/brev-launchable-cua-gpu.test.ts",
-      "test": "pins the privileged interpreter and fixed host helpers outside caller PATH",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-launchable-cua-gpu.test.ts",
-      "test": "binds every qualification artifact execution to the exact source digest",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-launchable-cua-gpu.test.ts",
-      "test": "rejects a real Git replacement that conceals replacement-controlled source bytes",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-launchable-cua-gpu.test.ts",
-      "test": "accepts an exact checkout through the production verifier with real Git",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-launchable-cua-gpu.test.ts",
-      "test": "rejects real Git %s concealment in the production bootstrap verifier",
-      "category": "security"
-    },
-    {
       "file": "test/candidate-compat.test.ts",
       "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
       "category": "security"
@@ -149,11 +124,6 @@
     {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/cua-qualification-artifact-runner.test.ts",
-      "test": "declares the closed Noble-compatible service and command grammar",
       "category": "security"
     },
     {

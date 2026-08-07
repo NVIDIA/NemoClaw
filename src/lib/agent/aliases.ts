@@ -6,8 +6,6 @@ export const AGENT_ALIASES: Readonly<Record<string, string>> = Object.freeze({
   "nemo-claw": "openclaw",
   nemohermes: "hermes",
   "nemo-hermes": "hermes",
-  cua: "nemocua",
-  "nemo-cua": "nemocua",
   "nemo-deepagents": "langchain-deepagents-code",
   "nemo-deepagent": "langchain-deepagents-code",
   nemodeepagents: "langchain-deepagents-code",
@@ -74,7 +72,6 @@ export function agentAliasSummary(availableAgents: readonly string[]): string {
       "nemo-deepagents/dcode/deepagents/deepagents-code/langchain → langchain-deepagents-code",
     );
   }
-  if (availableAgents.includes("nemocua")) aliases.push("cua/nemo-cua → nemocua");
   return aliases.join("; ");
 }
 

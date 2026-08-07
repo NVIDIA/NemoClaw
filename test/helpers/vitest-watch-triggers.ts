@@ -106,28 +106,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/validate-managed-base-index.test.ts"),
   },
   {
-    pattern: /(?:^|\/)scripts\/cua-qualification-artifact-runner\.sh$/,
-    testsToRun: runTests(
-      "test/brev-launchable-cua-gpu.test.ts",
-      "test/e2e/support/cua-qualification-artifact-runner.test.ts",
-    ),
-  },
-  {
-    pattern: /(?:^|\/)test\/e2e\/support\/fixtures\/cua-qualification-artifact-boundary-probe\.sh$/,
-    testsToRun: runTests("test/e2e/support/cua-qualification-artifact-runner.test.ts"),
-  },
-  {
-    pattern: /(?:^|\/)scripts\/brev-launchable-cua-gpu\.sh$/,
-    testsToRun: runTests("test/brev-launchable-cua-gpu.test.ts"),
-  },
-  {
-    pattern: /(?:^|\/)scripts\/cua-qualification-target-channel-probe\.ts$/,
-    testsToRun: runTests(
-      "test/brev-launchable-cua-gpu.test.ts",
-      "test/cua-qualification-target-channel-probe.test.ts",
-    ),
-  },
-  {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
     testsToRun: runTests(
       "test/e2e/support/e2e-scorecard.test.ts",

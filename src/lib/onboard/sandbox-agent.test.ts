@@ -2,51 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  createPromptValidatedSandboxName,
-  enforceCuaOnboardReconciliation,
-  requiresCuaReconciliationBeforeOnboard,
-} from "./sandbox-agent";
-
-describe("CUA onboarding reconciliation", () => {
-  it("blocks reuse for an attached target or a durable uncertain-effect journal", () => {
-    expect(
-      requiresCuaReconciliationBeforeOnboard({
-        name: "alpha",
-        cuaTarget: { target: { identityDigest: "present" } } as never,
-      }),
-    ).toBe(true);
-    expect(
-      requiresCuaReconciliationBeforeOnboard({
-        name: "alpha",
-        cuaReconciliation: { phase: "required" } as never,
-      }),
-    ).toBe(true);
-    expect(requiresCuaReconciliationBeforeOnboard({ name: "alpha" })).toBe(false);
-  });
-
-  it("persists the gate and exits before onboarding can reuse or rebuild the worker", () => {
-    const requireReconciliation = vi.fn(() => true);
-    const error = vi.fn();
-    const exit = vi.fn((code: number): never => {
-      throw new Error(`exit ${String(code)}`);
-    });
-
-    expect(() =>
-      enforceCuaOnboardReconciliation(
-        "alpha",
-        {
-          name: "alpha",
-          cuaReconciliation: { phase: "required" } as never,
-        },
-        "nemoclaw",
-        { requireReconciliation, error, exit },
-      ),
-    ).toThrow("exit 1");
-    expect(requireReconciliation).toHaveBeenCalledWith("alpha", "readiness-change");
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("cannot be reused or rebuilt"));
-  });
-});
+import { createPromptValidatedSandboxName } from "./sandbox-agent";
 
 describe("sandbox name prompt", () => {
   it("checkpoints a validated name before returning it to onboarding (#6743)", async () => {

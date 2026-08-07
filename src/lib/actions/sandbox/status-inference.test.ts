@@ -315,4 +315,31 @@ describe("sandbox status inference.local route health (#6192)", () => {
       expect.stringContaining("super-secret"),
     );
   });
+
+  it("omits CUA state and probes while the private candidate gates are disabled (#7755)", async () => {
+    const originalEnabled = process.env.NEMOCLAW_CUA_ENABLED;
+    const originalQualification = process.env.NEMOCLAW_CUA_QUALIFICATION;
+    delete process.env.NEMOCLAW_CUA_ENABLED;
+    delete process.env.NEMOCLAW_CUA_QUALIFICATION;
+    const observeCuaLiveInference = vi.fn();
+    const observeCuaLiveAppliedPolicy = vi.fn();
+    const deps = {
+      ...snapshotDeps({ agent: "nemocua", routeHealth: null }),
+      observeCuaLiveInference,
+      observeCuaLiveAppliedPolicy,
+    };
+
+    try {
+      const report = await getSandboxStatusReport("alpha", deps);
+
+      expect(report).not.toHaveProperty("cuaRuntime");
+      expect(observeCuaLiveInference).not.toHaveBeenCalled();
+      expect(observeCuaLiveAppliedPolicy).not.toHaveBeenCalled();
+    } finally {
+      if (originalEnabled === undefined) delete process.env.NEMOCLAW_CUA_ENABLED;
+      else process.env.NEMOCLAW_CUA_ENABLED = originalEnabled;
+      if (originalQualification === undefined) delete process.env.NEMOCLAW_CUA_QUALIFICATION;
+      else process.env.NEMOCLAW_CUA_QUALIFICATION = originalQualification;
+    }
+  });
 });

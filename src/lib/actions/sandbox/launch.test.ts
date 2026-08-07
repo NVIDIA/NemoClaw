@@ -99,6 +99,25 @@ describe("launchSandbox", () => {
     expect(launchedCommand()).toEqual(["bash", "-lc", "hermes"]);
   });
 
+  it("runs the exact shell-free NemoCUA interactive vector only after readiness validation (#7755)", async () => {
+    const nemocua = {
+      ...loadAgent("hermes"),
+      name: "nemocua",
+      runtime: {
+        kind: "terminal" as const,
+        interactive_command: "nemocua interactive",
+        headless_command: "nemocua headless",
+      },
+    };
+    prepareSession("nemocua", nemocua);
+    const requireCuaReadiness = vi.fn();
+
+    await launchSandbox("alpha", { requireCuaReadiness });
+
+    expect(requireCuaReadiness).toHaveBeenCalledWith(expect.objectContaining({ agent: "nemocua" }));
+    expect(launchedCommand()).toEqual(["nemocua", "interactive"]);
+  });
+
   it("rejects an untrusted registry agent before starting an in-sandbox command (#6006)", async () => {
     prepareSession("mystery-agent; echo pwned", null);
 

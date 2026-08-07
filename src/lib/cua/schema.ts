@@ -8,11 +8,7 @@ import {
   CUA_CAPABILITIES,
   type CuaCapabilityIdentity,
   type CuaComponentIdentity,
-  type CuaLifecycleRecord,
   type CuaRuntimeReadiness,
-  type CuaSecurityAttestation,
-  type CuaTargetAttachment,
-  type CuaTaskResult,
   getCuaComponentIdentityErrors,
   getCuaCoordinateFreeSelectorErrors,
   getCuaLifecycleSemanticErrors,
@@ -44,8 +40,8 @@ function parseWithSchema<T>(value: unknown, validate: ValidateFunction, label: s
   return structuredClone(value) as T;
 }
 
-export function parseCuaLifecycleRecord(value: unknown): CuaLifecycleRecord {
-  const record = parseWithSchema<CuaLifecycleRecord>(
+export function parseCuaLifecycleRecord(value: unknown): CuaRuntimeReadiness {
+  const record = parseWithSchema<CuaRuntimeReadiness>(
     value,
     validateLifecycle,
     "CUA lifecycle record",
@@ -58,35 +54,7 @@ export function parseCuaLifecycleRecord(value: unknown): CuaLifecycleRecord {
 }
 
 export function parseCuaRuntimeReadiness(value: unknown): CuaRuntimeReadiness {
-  const record = parseCuaLifecycleRecord(value);
-  if (record.kind !== "runtime-readiness") {
-    throw new Error("CUA runtime state must be a runtime-readiness record");
-  }
-  return record;
-}
-
-export function parseCuaTargetAttachment(value: unknown): CuaTargetAttachment {
-  const record = parseCuaLifecycleRecord(value);
-  if (record.kind !== "target-attachment") {
-    throw new Error("CUA target state must be a target-attachment record");
-  }
-  return record;
-}
-
-export function parseCuaSecurityAttestation(value: unknown): CuaSecurityAttestation {
-  const record = parseCuaLifecycleRecord(value);
-  if (record.kind !== "security-attestation") {
-    throw new Error("CUA security state must be a security-attestation record");
-  }
-  return record;
-}
-
-export function parseCuaTaskResult(value: unknown): CuaTaskResult {
-  const record = parseCuaLifecycleRecord(value);
-  if (record.kind !== "task-result") {
-    throw new Error("CUA task result state must be a task-result record");
-  }
-  return record;
+  return parseCuaLifecycleRecord(value);
 }
 
 export function parseCuaTargetManifest(value: unknown): CuaTargetManifest {

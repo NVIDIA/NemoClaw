@@ -9,9 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getAgentChoices, listAgents, loadAgent } from "../agent/defs";
 import {
-  getCuaAdapterBindings,
   getCuaSandboxImageRef,
-  getCuaTargetArtifactBindings,
   loadCuaRuntimeManifest,
   stageCuaRuntimePayload,
   verifyCuaRuntimePayload,
@@ -128,26 +126,6 @@ describe("external NemoCUA runtime manifest", () => {
 
     expect(() => verifyCuaRuntimePayload(loaded)).not.toThrow();
     expect(getCuaSandboxImageRef(runtime.env)).toMatch(/@sha256:[0-9a-f]{64}$/);
-    const adapters = getCuaAdapterBindings(runtime.env);
-    expect(adapters.target.path).toBe(path.join(runtime.root, "target-adapter.sh"));
-    expect(adapters.task.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(adapters.security.sizeBytes).toBeGreaterThan(0);
-    expect(getCuaTargetArtifactBindings(runtime.env)).toEqual({
-      platform: "linux/amd64",
-      image: {
-        name: runtime.manifest.artifacts.targetImage.name,
-        version: runtime.manifest.artifacts.targetImage.version,
-        digest: runtime.manifest.artifacts.targetImage.digest,
-        owner: "NVIDIA",
-      },
-      serviceBundle: {
-        name: runtime.manifest.artifacts.targetServices.name,
-        version: runtime.manifest.artifacts.targetServices.version,
-        digest: `sha256:${runtime.manifest.artifacts.targetServices.sha256}`,
-        owner: "NVIDIA",
-      },
-    });
-
     const destination = path.join(runtime.root, "staged");
     stageCuaRuntimePayload(destination, runtime.env);
     expect(fs.readdirSync(destination).sort()).toEqual([

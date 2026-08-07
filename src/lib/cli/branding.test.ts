@@ -71,13 +71,6 @@ describe("getAgentBranding", () => {
     expect(branding.product).toBe("LangChain Deep Agents Code");
   });
 
-  it("uses NemoCUA product branding under the nemoclaw CLI (#7755)", () => {
-    const branding = getAgentBranding("nemocua");
-    expect(branding.cli).toBe("nemoclaw");
-    expect(branding.display).toBe("NemoCUA");
-    expect(branding.product).toBe("NemoCUA");
-  });
-
   it.each([
     "dcode",
     "langchain",

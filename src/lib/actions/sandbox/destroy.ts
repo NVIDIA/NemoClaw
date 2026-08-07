@@ -459,17 +459,6 @@ async function destroySandboxUnlocked(
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
-  if (
-    registry.requireCuaReconciliationBeforeSandboxMutation(sandboxName, "runtime-authority-change")
-  ) {
-    console.error(
-      `  Sandbox '${sandboxName}' has an attached or unverified CUA target and cannot be destroyed yet.`,
-    );
-    console.error(
-      `  Run '${CLI_NAME} sandbox cua target health ${sandboxName}', then cancel any observed task and run '${CLI_NAME} sandbox cua target destroy ${sandboxName}' before destroying the sandbox.`,
-    );
-    process.exit(1);
-  }
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);

@@ -78,8 +78,6 @@ const OPAQUE_INPUTS = [
   ".github/workflows/platform-vitest-main.yaml",
   "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
-  "scripts/cua-qualification-artifact-runner.sh",
-  "test/e2e/support/fixtures/cua-qualification-artifact-boundary-probe.sh",
 ] as const;
 
 function triggeredBy(relativePath: string): string[] {
@@ -140,20 +138,6 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/validate-managed-base-index.test.ts",
-    ]);
-    expect(triggeredBy("scripts/cua-qualification-artifact-runner.sh")).toEqual([
-      "test/brev-launchable-cua-gpu.test.ts",
-      "test/e2e/support/cua-qualification-artifact-runner.test.ts",
-    ]);
-    expect(
-      triggeredBy("test/e2e/support/fixtures/cua-qualification-artifact-boundary-probe.sh"),
-    ).toEqual(["test/e2e/support/cua-qualification-artifact-runner.test.ts"]);
-    expect(triggeredBy("scripts/brev-launchable-cua-gpu.sh")).toEqual([
-      "test/brev-launchable-cua-gpu.test.ts",
-    ]);
-    expect(triggeredBy("scripts/cua-qualification-target-channel-probe.ts")).toEqual([
-      "test/brev-launchable-cua-gpu.test.ts",
-      "test/cua-qualification-target-channel-probe.test.ts",
     ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",

@@ -13,11 +13,7 @@ import {
   getPublicCuaRuntimeReadiness,
   validateCurrentCuaRuntimeReadiness,
 } from "./runtime-readiness";
-import {
-  type CuaRuntimeTestFixture,
-  canonicalJsonSha256,
-  createCuaRuntimeTestFixture,
-} from "./runtime-test-fixture";
+import { type CuaRuntimeTestFixture, createCuaRuntimeTestFixture } from "./runtime-test-fixture";
 
 const fixtures: CuaRuntimeTestFixture[] = [];
 const inference = {
@@ -25,6 +21,7 @@ const inference = {
   model: "nvidia/nemotron-3-super-120b-a12b",
 };
 const providerAuthorityDigest = `sha256:${"8".repeat(64)}`;
+const liveAppliedPolicy = { revision: 7, digest: `sha256:${"9".repeat(64)}` };
 
 function fixture(input: Parameters<typeof createCuaRuntimeTestFixture>[0] = {}) {
   const value = createCuaRuntimeTestFixture(input);
@@ -46,6 +43,7 @@ describe("current CUA runtime readiness", () => {
       recordedInference: inference,
       liveInference: inference,
       liveProviderAuthorityDigest: providerAuthorityDigest,
+      liveAppliedPolicy,
       acceptance: "candidate-qualification" as const,
       env,
       buildIdentity: {
@@ -93,23 +91,24 @@ describe("current CUA runtime readiness", () => {
         recordedInference: inference,
         liveInference: inference,
         liveProviderAuthorityDigest: providerAuthorityDigest,
+        liveAppliedPolicy,
         acceptance: "candidate-qualification",
         env: { ...runtime.env, NEMOCLAW_CUA_QUALIFICATION: "1" },
         buildIdentity: {
           schemaVersion: 1,
-          sourceRevision: runtime.finalCommit,
+          sourceRevision: "b".repeat(40),
           sourceClean: true,
         },
       }),
     ).toThrow(/qualification environment/);
   });
 
-  it("rejects a candidate whose fixed target channel does not match the runtime manifest (#7755)", () => {
+  it("rejects a candidate environment bound to another runtime manifest (#7755)", () => {
     const runtime = fixture();
     const environment = JSON.parse(fs.readFileSync(runtime.environmentPath, "utf8")) as {
-      targetChannel: { serviceBundleDigest: string };
+      runtimeManifestSha256: string;
     };
-    environment.targetChannel.serviceBundleDigest = `sha256:${"f".repeat(64)}`;
+    environment.runtimeManifestSha256 = "f".repeat(64);
     fs.chmodSync(runtime.environmentPath, 0o644);
     fs.writeFileSync(runtime.environmentPath, JSON.stringify(environment));
     fs.chmodSync(runtime.environmentPath, 0o444);
@@ -120,6 +119,7 @@ describe("current CUA runtime readiness", () => {
         recordedInference: inference,
         liveInference: inference,
         liveProviderAuthorityDigest: providerAuthorityDigest,
+        liveAppliedPolicy,
         acceptance: "candidate-qualification",
         env: { ...runtime.env, NEMOCLAW_CUA_QUALIFICATION: "1" },
         buildIdentity: {
@@ -128,7 +128,7 @@ describe("current CUA runtime readiness", () => {
           sourceClean: true,
         },
       }),
-    ).toThrow(/target channel does not match the runtime manifest/);
+    ).toThrow(/qualification environment/);
   });
 
   it("rejects an unclean candidate even when every artifact digest matches (#7755)", () => {
@@ -140,6 +140,7 @@ describe("current CUA runtime readiness", () => {
         recordedInference: inference,
         liveInference: inference,
         liveProviderAuthorityDigest: providerAuthorityDigest,
+        liveAppliedPolicy,
         acceptance: "candidate-qualification",
         env: { ...runtime.env, NEMOCLAW_CUA_QUALIFICATION: "1" },
         buildIdentity: {
@@ -162,6 +163,7 @@ describe("current CUA runtime readiness", () => {
         recordedInference: inference,
         liveInference: inference,
         liveProviderAuthorityDigest: providerAuthorityDigest,
+        liveAppliedPolicy,
         acceptance: "candidate-qualification",
         env: {
           ...runtime.env,
@@ -181,7 +183,7 @@ describe("current CUA runtime readiness", () => {
   it("rejects an oversized candidate environment before parsing it (#7755)", () => {
     const runtime = fixture();
     fs.chmodSync(runtime.environmentPath, 0o644);
-    fs.truncateSync(runtime.environmentPath, 64 * 1024 + 1);
+    fs.truncateSync(runtime.environmentPath, 4097);
     fs.chmodSync(runtime.environmentPath, 0o444);
 
     expect(() =>
@@ -190,6 +192,7 @@ describe("current CUA runtime readiness", () => {
         recordedInference: inference,
         liveInference: inference,
         liveProviderAuthorityDigest: providerAuthorityDigest,
+        liveAppliedPolicy,
         acceptance: "candidate-qualification",
         env: { ...runtime.env, NEMOCLAW_CUA_QUALIFICATION: "1" },
         buildIdentity: {
@@ -198,7 +201,7 @@ describe("current CUA runtime readiness", () => {
           sourceClean: true,
         },
       }),
-    ).toThrow(/through 65536 bytes/);
+    ).toThrow(/through 4096 bytes/);
   });
 
   it("rejects live inference drift and credential-shaped public selectors (#7755)", () => {
@@ -209,6 +212,7 @@ describe("current CUA runtime readiness", () => {
       recordedInference: inference,
       liveInference: inference,
       liveProviderAuthorityDigest: providerAuthorityDigest,
+      liveAppliedPolicy,
       acceptance: "candidate-qualification",
       env,
       buildIdentity: {
@@ -224,6 +228,7 @@ describe("current CUA runtime readiness", () => {
         recordedInference: inference,
         liveInference: { ...inference, model: "nvidia/a-different-model" },
         liveProviderAuthorityDigest: providerAuthorityDigest,
+        liveAppliedPolicy,
         acceptance: "candidate-qualification",
         env,
         buildIdentity: {
@@ -240,6 +245,7 @@ describe("current CUA runtime readiness", () => {
         recordedInference: inference,
         liveInference: inference,
         liveProviderAuthorityDigest: `sha256:${"9".repeat(64)}`,
+        liveAppliedPolicy,
         acceptance: "candidate-qualification",
         env,
         buildIdentity: {
@@ -294,6 +300,7 @@ describe("current CUA runtime readiness", () => {
       recordedInference: inference,
       liveInference: inference,
       liveProviderAuthorityDigest: providerAuthorityDigest,
+      liveAppliedPolicy,
       acceptance: "candidate-qualification" as const,
       env: { ...runtime.env, NEMOCLAW_CUA_QUALIFICATION: "1" },
       buildIdentity: {
@@ -308,148 +315,5 @@ describe("current CUA runtime readiness", () => {
     expect(() => validateCurrentCuaRuntimeReadiness(readiness, context)).toThrow(
       /current runtime identity/,
     );
-  });
-
-  it("uses embedded immutable evidence on a fresh final host (#7755)", () => {
-    const route = getCuaInferenceRouteIdentity(inference);
-    const runtime = fixture({ qualified: true, routeDigest: route.routeDigest });
-    fs.rmSync(runtime.environmentPath);
-    const context = {
-      agentName: "nemocua",
-      recordedInference: inference,
-      liveInference: inference,
-      liveProviderAuthorityDigest: providerAuthorityDigest,
-      acceptance: "final" as const,
-      env: runtime.env,
-      buildIdentity: {
-        schemaVersion: 1 as const,
-        sourceRevision: runtime.finalCommit,
-        sourceClean: true,
-      },
-    };
-
-    const readiness = buildCurrentCuaRuntimeReadiness(context);
-
-    expect(readiness.status).toBe("available");
-    expect(readiness.sourceRevision).toBe(runtime.finalCommit);
-    expect(readiness.qualification).toMatchObject({
-      state: "qualified",
-      candidateSourceRevision: runtime.candidateCommit,
-    });
-    expect(validateCurrentCuaRuntimeReadiness(readiness, context)).toEqual(readiness);
-  });
-
-  it("accepts semantically identical final authority with reordered object keys (#7755)", () => {
-    const route = getCuaInferenceRouteIdentity(inference);
-    const runtime = fixture({ qualified: true, routeDigest: route.routeDigest });
-    const context = {
-      agentName: "nemocua",
-      recordedInference: inference,
-      liveInference: inference,
-      liveProviderAuthorityDigest: providerAuthorityDigest,
-      acceptance: "final" as const,
-      env: runtime.env,
-      buildIdentity: {
-        schemaVersion: 1 as const,
-        sourceRevision: runtime.finalCommit,
-        sourceClean: true,
-      },
-    };
-    const readiness = buildCurrentCuaRuntimeReadiness(context);
-    const reordered = {
-      ...readiness,
-      inference: {
-        routeDigest: readiness.inference.routeDigest,
-        model: readiness.inference.model,
-        provider: readiness.inference.provider,
-      },
-      components: Object.fromEntries(Object.entries(readiness.components).reverse()),
-    };
-
-    expect(validateCurrentCuaRuntimeReadiness(reordered, context)).toEqual(reordered);
-  });
-
-  it("rejects syntax-valid final evidence whose component tuple was promoted by hand (#7755)", () => {
-    const route = getCuaInferenceRouteIdentity(inference);
-    const runtime = fixture({ qualified: true, routeDigest: route.routeDigest });
-    runtime.rewriteManifest((record) => {
-      const qualification = record.qualificationEvidence as Record<string, unknown>;
-      const receipt = qualification.receipt as Record<string, unknown>;
-      const components = receipt.components as Record<string, unknown>;
-      components.targetImage = `sha256:${"f".repeat(64)}`;
-      const compatibility = record.compatibility as Record<string, unknown>;
-      compatibility.receiptSha256 = canonicalJsonSha256(receipt);
-    });
-
-    expect(() =>
-      buildCurrentCuaRuntimeReadiness({
-        agentName: "nemocua",
-        recordedInference: inference,
-        liveInference: inference,
-        liveProviderAuthorityDigest: providerAuthorityDigest,
-        acceptance: "final",
-        env: runtime.env,
-        buildIdentity: {
-          schemaVersion: 1,
-          sourceRevision: runtime.finalCommit,
-          sourceClean: true,
-        },
-      }),
-    ).toThrow(/targetImage/);
-  });
-
-  it("rejects internally consistent final evidence for a different fixed target channel (#7755)", () => {
-    const route = getCuaInferenceRouteIdentity(inference);
-    const runtime = fixture({ qualified: true, routeDigest: route.routeDigest });
-    runtime.rewriteManifest((record) => {
-      const qualification = record.qualificationEvidence as Record<string, unknown>;
-      const environment = qualification.environment as Record<string, unknown>;
-      const receipt = qualification.receipt as Record<string, unknown>;
-      const changedService = `sha256:${"f".repeat(64)}`;
-      (environment.targetChannel as Record<string, unknown>).serviceBundleDigest = changedService;
-      (receipt.targetChannel as Record<string, unknown>).serviceBundleDigest = changedService;
-      (receipt.components as Record<string, unknown>).serviceBundle = changedService;
-      const compatibility = record.compatibility as Record<string, unknown>;
-      compatibility.environmentSha256 = canonicalJsonSha256(environment);
-      compatibility.receiptSha256 = canonicalJsonSha256(receipt);
-    });
-
-    expect(() =>
-      buildCurrentCuaRuntimeReadiness({
-        agentName: "nemocua",
-        recordedInference: inference,
-        liveInference: inference,
-        liveProviderAuthorityDigest: providerAuthorityDigest,
-        acceptance: "final",
-        env: runtime.env,
-        buildIdentity: {
-          schemaVersion: 1,
-          sourceRevision: runtime.finalCommit,
-          sourceClean: true,
-        },
-      }),
-    ).toThrow(/target channel does not match the runtime manifest/);
-  });
-
-  it("rejects a final host whose selected OpenShell executable is not the qualified one (#7755)", () => {
-    const route = getCuaInferenceRouteIdentity(inference);
-    const runtime = fixture({ qualified: true, routeDigest: route.routeDigest });
-    fs.writeFileSync(runtime.openshellPath, "#!/bin/sh\nexit 9\n");
-
-    expect(() =>
-      buildCurrentCuaRuntimeReadiness({
-        agentName: "nemocua",
-        recordedInference: inference,
-        liveInference: inference,
-        liveProviderAuthorityDigest: providerAuthorityDigest,
-        acceptance: "final",
-        env: runtime.env,
-        buildIdentity: {
-          schemaVersion: 1,
-          sourceRevision: runtime.finalCommit,
-          sourceClean: true,
-        },
-      }),
-    ).toThrow(/components\.openshell/);
   });
 });

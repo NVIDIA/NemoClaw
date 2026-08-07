@@ -8,7 +8,7 @@ import {
   createCuaRuntimeTestFixture,
 } from "../cua/runtime-test-fixture";
 import { loadAgent } from "./defs";
-import { getAgentPolicyPath, handleAgentSetup, type OnboardContext } from "./onboard";
+import { getAgentPolicyPath, handleAgentSetup, type OnboardContext, resolveAgent } from "./onboard";
 
 const fixtures: CuaRuntimeTestFixture[] = [];
 
@@ -26,6 +26,19 @@ describe("NemoCUA agent onboarding", () => {
     vi.stubEnv("NEMOCLAW_CUA_ENABLED", "");
 
     expect(() => getAgentPolicyPath(agent)).toThrow("use the supported Brev Launchable activation");
+  });
+
+  it("refuses candidate onboarding before loading the agent without qualification authority (#7755)", () => {
+    const runtime = createCuaRuntimeTestFixture();
+    fixtures.push(runtime);
+    for (const [key, value] of Object.entries(runtime.env)) {
+      if (value !== undefined) vi.stubEnv(key, value);
+    }
+    vi.stubEnv("NEMOCLAW_CUA_QUALIFICATION", "");
+
+    expect(() => resolveAgent({ agentFlag: "nemocua" })).toThrow(
+      "candidate onboarding requires exact qualification authority",
+    );
   });
 
   it("records candidate readiness on the existing standalone sandbox after terminal checks (#7755)", async () => {
@@ -57,6 +70,8 @@ describe("NemoCUA agent onboarding", () => {
       recordStepFailed: vi.fn(async () => undefined),
       skippedStepMessage: vi.fn(),
       getSandboxInferenceSelection: () => ({
+        name: "existing-worker",
+        agent: "nemocua",
         provider: "provider-x",
         model: "model-x",
         gatewayName: "nemoclaw-18080",
@@ -73,6 +88,10 @@ describe("NemoCUA agent onboarding", () => {
         provider: "provider-x",
         model: "model-x",
         providerAuthorityDigest: `sha256:${"8".repeat(64)}`,
+      }),
+      cuaObserveLiveAppliedPolicy: () => ({
+        revision: 7,
+        digest: `sha256:${"9".repeat(64)}`,
       }),
       cuaWithGatewayRouteMutationLock: async (gatewayName, operation) => {
         expect(gatewayName).toBe("nemoclaw-18080");

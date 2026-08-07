@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as agentRuntime from "../../agent/runtime";
+import { requireCuaLifecycleReadiness } from "../../cua/lifecycle-readiness";
+import type { SandboxEntry } from "../../state/registry";
 import { prepareInteractiveSession } from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import { execSandbox } from "./exec";
@@ -13,9 +15,28 @@ import { execSandbox } from "./exec";
  * agent started over `exec` without process recovery renders a TUI that sits
  * disconnected because the gateway was never checked or restarted.
  */
-export async function launchSandbox(sandboxName: string): Promise<void> {
+interface LaunchSandboxDeps {
+  requireCuaReadiness?: (entry: SandboxEntry) => unknown;
+}
+
+export async function launchSandbox(
+  sandboxName: string,
+  deps: LaunchSandboxDeps = {},
+): Promise<void> {
   const { agent, sb } = await prepareInteractiveSession(sandboxName);
-  const agentCommand = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+  const isCua = sb?.agent === "nemocua";
+  if (isCua) {
+    (deps.requireCuaReadiness ?? requireCuaLifecycleReadiness)(sb);
+  }
+  const agentCommand = isCua
+    ? agentRuntime.getTerminalCommand(agent, "interactive")
+    : agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+  if (!agentCommand) {
+    throw new Error(`Cannot resolve an interactive command for sandbox '${sandboxName}'.`);
+  }
+  if (isCua && agentCommand !== "nemocua interactive") {
+    throw new Error("NemoCUA interactive command must be exactly 'nemocua interactive'");
+  }
 
   // `connect` runs this immediately before opening its SSH session. It is not
   // part of prepareInteractiveSession, so `launch` must call it too: without it
@@ -31,7 +52,8 @@ export async function launchSandbox(sandboxName: string): Promise<void> {
   // file through the profile. Passing bare argv here would silently start the
   // agent under a different auth mode than `connect` gives it, so `-l` is
   // load-bearing: do not flatten this to `bash -c` or to the split command.
-  await execSandbox(sandboxName, ["bash", "-lc", agentCommand], {
+  const command = isCua ? ["nemocua", "interactive"] : ["bash", "-lc", agentCommand];
+  await execSandbox(sandboxName, command, {
     tty: true,
     stdin: true,
     // 0 means no timeout. Any other value kills a long interactive session.

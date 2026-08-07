@@ -20,7 +20,7 @@
 
 import { resolveAgentNameAlias } from "../agent/aliases";
 
-const BRANDING_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code", "nemocua"] as const;
+const BRANDING_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 export interface AgentBranding {
   /**
@@ -60,11 +60,6 @@ const AGENT_PRODUCT_BRANDING: Record<string, ProductBranding> = {
     display: "NemoDeepAgents",
     product: "LangChain Deep Agents Code",
     uninstallGoodbye: "Deep Agents stood down. Until next time.",
-  },
-  nemocua: {
-    display: "NemoCUA",
-    product: "NemoCUA",
-    uninstallGoodbye: "NemoCUA stood down. Until next time.",
   },
 };
 

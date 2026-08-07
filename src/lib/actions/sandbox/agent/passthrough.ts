@@ -105,6 +105,7 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
+import { requireCuaLifecycleReadiness } from "../../../cua/lifecycle-readiness";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
@@ -117,8 +118,8 @@ import {
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import {
-  defaultGetOpenshellBinary,
   type AgentJsonPassthroughProcess,
+  defaultGetOpenshellBinary,
   runAgentJsonPassthrough,
 } from "./passthrough-json";
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
@@ -230,6 +231,7 @@ export interface AgentPassthroughDeps {
   execNonJson?: typeof runAgentNonJsonPassthrough;
   runOllamaRestartRecovery?: typeof runOllamaRestartRecovery;
   getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
+  requireCuaReadiness?: (entry: registry.SandboxEntry) => unknown;
   process?: {
     exit(code: number): never;
     stdout?: { write(s: string): unknown };
@@ -245,6 +247,7 @@ type RegistryReadResult =
       provider: string | null;
       model: string | null;
       endpointUrl: string | null;
+      entry: registry.SandboxEntry;
     }
   | { kind: "error"; message: string };
 type ResolvedRegistryReadResult = Exclude<RegistryReadResult, { kind: "error" }>;
@@ -265,6 +268,7 @@ function readSandboxAgentFromRegistry(
       provider: sandbox.provider ?? null,
       model: sandbox.model ?? null,
       endpointUrl: sandbox.endpointUrl ?? null,
+      entry: sandbox,
     };
   } catch (error) {
     return { kind: "error", message: (error as Error).message ?? String(error) };
@@ -340,8 +344,11 @@ function splitManifestCommand(command: string): TerminalCommandResult {
   return { kind: "command", argv: trimmed.split(/\s+/).filter(Boolean) };
 }
 
-function getTerminalInteractiveCommand(agent: AgentDefinition): TerminalCommandResult {
-  const command = agent.runtime?.interactive_command ?? agent.runtime?.headless_command ?? "";
+function getTerminalPassthroughCommand(agent: AgentDefinition): TerminalCommandResult {
+  const command =
+    agent.name === "nemocua"
+      ? (agent.runtime?.headless_command ?? "")
+      : (agent.runtime?.interactive_command ?? agent.runtime?.headless_command ?? "");
   return splitManifestCommand(command);
 }
 
@@ -379,7 +386,7 @@ function getPassthroughCommand(
     rejectNonOpenclawAgent(sandboxName, agentName, proc);
   }
 
-  const terminalCommand = getTerminalInteractiveCommand(agent);
+  const terminalCommand = getTerminalPassthroughCommand(agent);
   if (terminalCommand.kind === "unsupported") {
     rejectAgentResolutionError(sandboxName, agentName, terminalCommand.message, proc);
   }
@@ -517,7 +524,32 @@ export async function runAgentPassthrough(
   if (lookup.kind === "error") {
     rejectRegistryReadError(sandboxName, lookup.message, proc);
   }
+  if (lookup.kind === "agent" && lookup.agent === "nemocua") {
+    if (extraArgs.length > 0) {
+      rejectAgentResolutionError(
+        sandboxName,
+        lookup.agent,
+        "NemoCUA headless execution does not accept additional arguments",
+        proc,
+      );
+    }
+    try {
+      (deps.requireCuaReadiness ?? requireCuaLifecycleReadiness)(lookup.entry);
+    } catch (error) {
+      rejectAgentResolutionError(sandboxName, lookup.agent, (error as Error).message, proc);
+    }
+  }
   const command = getPassthroughCommand(sandboxName, lookup, extraArgs, proc);
+  if (lookup.kind === "agent" && lookup.agent === "nemocua") {
+    if (command?.length !== 2 || command[0] !== "nemocua" || command[1] !== "headless") {
+      rejectAgentResolutionError(
+        sandboxName,
+        lookup.agent,
+        "NemoCUA headless command must be exactly 'nemocua headless'",
+        proc,
+      );
+    }
+  }
   if (!command) return;
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   const state = await ensureLive(sandboxName, { allowNonReadyPhase: true });

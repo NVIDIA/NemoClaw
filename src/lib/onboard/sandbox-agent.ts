@@ -48,7 +48,6 @@ export function formatSandboxAgentName(agentName: string | null | undefined): st
   if (normalized === "openclaw") return "OpenClaw";
   if (normalized === "hermes") return "Hermes";
   if (normalized === "langchain-deepagents-code") return "LangChain Deep Agents Code";
-  if (normalized === "nemocua") return "NemoCUA";
   return normalized;
 }
 
@@ -56,7 +55,6 @@ export function getDefaultSandboxNameForAgent(agent: AgentDefinition | null | un
   const requestedAgent = getRequestedSandboxAgentName(agent);
   if (requestedAgent === "hermes") return "hermes";
   if (requestedAgent === "langchain-deepagents-code") return "deepagents-code";
-  if (requestedAgent === "nemocua") return "nemocua";
   return "my-assistant";
 }
 
@@ -140,37 +138,6 @@ export function getSandboxAgentDrift(
     existingAgentName,
     requestedAgentName,
   };
-}
-
-/** A worker must not be reused or rebuilt while an external CUA effect is unresolved. */
-export function requiresCuaReconciliationBeforeOnboard(
-  entry: SandboxEntry | null | undefined,
-): boolean {
-  return entry?.cuaReconciliation !== undefined || entry?.cuaTarget?.target != null;
-}
-
-export interface CuaOnboardReconciliationDeps {
-  requireReconciliation: (name: string, trigger: "readiness-change") => boolean;
-  error: (message: string) => void;
-  exit: (code: number) => never;
-}
-
-/** Stop before reuse/rebuild can orphan a separately managed CUA target or task. */
-export function enforceCuaOnboardReconciliation(
-  sandboxName: string,
-  entry: SandboxEntry | null | undefined,
-  cliName: string,
-  deps: CuaOnboardReconciliationDeps,
-): void {
-  if (!requiresCuaReconciliationBeforeOnboard(entry)) return;
-  deps.requireReconciliation(sandboxName, "readiness-change");
-  deps.error(
-    `  Sandbox '${sandboxName}' has an attached or unverified CUA target and cannot be reused or rebuilt.`,
-  );
-  deps.error(
-    `  Run '${cliName} sandbox cua target health ${sandboxName}', then cancel any observed task and run '${cliName} sandbox cua target destroy ${sandboxName}' before onboarding again.`,
-  );
-  deps.exit(1);
 }
 
 export interface PromptSandboxNameDeps {

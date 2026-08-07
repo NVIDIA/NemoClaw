@@ -6,19 +6,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { readBoundedRegularFile } from "./bounded-file";
-import type { CuaComponentIdentity } from "./contract";
 import {
   CUA_RUNTIME_MANIFEST_ENV,
   CUA_RUNTIME_MANIFEST_SHA256_ENV,
   CUA_SANDBOX_IMAGE_ENV,
   requireCuaFrameworkEnabled,
 } from "./feature";
-import {
-  type CuaQualificationEnvironment,
-  type CuaQualificationReceipt,
-  parseCuaQualificationEnvironment,
-  parseCuaQualificationReceipt,
-} from "./qualification-evidence";
 import { CUA_HOST_COORDINATE, CUA_SENSITIVE_VALUE } from "./shared-primitives";
 
 const yaml: { load(input: string): unknown } = require("js-yaml");
@@ -59,20 +52,11 @@ export interface CuaAdapterArtifactIdentity extends CuaPayloadFileIdentity {
   version: string;
 }
 
-export type CuaRuntimeCompatibility =
-  | {
-      status: "candidate";
-      issue: 7755;
-      candidateSourceRevision: string;
-    }
-  | {
-      status: "qualified";
-      issue: 7755;
-      candidateSourceRevision: string;
-      finalSourceRevision: string;
-      environmentSha256: string;
-      receiptSha256: string;
-    };
+export interface CuaRuntimeCompatibility {
+  status: "candidate";
+  issue: 7755;
+  candidateSourceRevision: string;
+}
 
 export interface CuaRuntimeManifest {
   schemaVersion: "1.0.0";
@@ -102,10 +86,7 @@ export interface CuaRuntimeManifest {
       security: CuaAdapterArtifactIdentity;
     };
   };
-  qualificationEvidence: null | {
-    environment: CuaQualificationEnvironment;
-    receipt: CuaQualificationReceipt;
-  };
+  qualificationEvidence: null;
 }
 
 export interface LoadedCuaRuntimeManifest {
@@ -120,24 +101,6 @@ export type CuaAuthorityFileOwnershipValidator = (filePath: string, label: strin
 
 export interface CuaRuntimeManifestValidationOptions {
   assertFileOwnership?: CuaAuthorityFileOwnershipValidator;
-}
-
-export interface CuaAdapterBinding {
-  path: string;
-  digest: string;
-  sizeBytes: number;
-}
-
-export interface CuaAdapterBindings {
-  target: CuaAdapterBinding;
-  task: CuaAdapterBinding;
-  security: CuaAdapterBinding;
-}
-
-export interface CuaTargetArtifactBindings {
-  platform: "linux/amd64";
-  image: CuaComponentIdentity;
-  serviceBundle: CuaComponentIdentity;
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {
@@ -309,35 +272,7 @@ function compatibility(value: unknown): CuaRuntimeCompatibility {
       candidateSourceRevision: exactCommit(record, "candidateSourceRevision", "compatibility"),
     };
   }
-  if (record.status === "qualified") {
-    exactKeys(
-      record,
-      [
-        "status",
-        "issue",
-        "candidateSourceRevision",
-        "finalSourceRevision",
-        "environmentSha256",
-        "receiptSha256",
-      ],
-      "compatibility",
-    );
-    if (record.issue !== 7755) throw new Error("compatibility.issue must be 7755");
-    const candidateSourceRevision = exactCommit(record, "candidateSourceRevision", "compatibility");
-    const finalSourceRevision = exactCommit(record, "finalSourceRevision", "compatibility");
-    if (candidateSourceRevision === finalSourceRevision) {
-      throw new Error("qualified compatibility requires a distinct exact final source revision");
-    }
-    return {
-      status: "qualified",
-      issue: 7755,
-      candidateSourceRevision,
-      finalSourceRevision,
-      environmentSha256: rawDigest(record, "environmentSha256", "compatibility"),
-      receiptSha256: rawDigest(record, "receiptSha256", "compatibility"),
-    };
-  }
-  throw new Error("compatibility.status must be candidate or qualified");
+  throw new Error("compatibility.status must be candidate");
 }
 
 export function parseCuaRuntimeManifest(value: unknown): CuaRuntimeManifest {
@@ -379,20 +314,8 @@ export function parseCuaRuntimeManifest(value: unknown): CuaRuntimeManifest {
   exactKeys(adapters, ["target", "task", "security"], "artifacts.adapters");
   const parsedCompatibility = compatibility(record.compatibility);
 
-  let qualificationEvidence: CuaRuntimeManifest["qualificationEvidence"] = null;
   if (record.qualificationEvidence !== null) {
-    const evidence = object(record.qualificationEvidence, "qualificationEvidence");
-    exactKeys(evidence, ["environment", "receipt"], "qualificationEvidence");
-    qualificationEvidence = {
-      environment: parseCuaQualificationEnvironment(evidence.environment),
-      receipt: parseCuaQualificationReceipt(evidence.receipt),
-    };
-  }
-  if (
-    (parsedCompatibility.status === "candidate" && qualificationEvidence !== null) ||
-    (parsedCompatibility.status === "qualified" && qualificationEvidence === null)
-  ) {
-    throw new Error("qualificationEvidence must be absent for candidate and present for qualified");
+    throw new Error("qualificationEvidence must be absent for candidate");
   }
 
   const result: CuaRuntimeManifest = {
@@ -427,7 +350,7 @@ export function parseCuaRuntimeManifest(value: unknown): CuaRuntimeManifest {
         security: adapterArtifact(adapters.security, "artifacts.adapters.security"),
       },
     },
-    qualificationEvidence,
+    qualificationEvidence: null,
   };
 
   for (const [field, actual, expected] of [
@@ -684,7 +607,18 @@ export function validateExternalCuaAgentManifest(raw: Buffer): void {
     throw new Error("External NemoCUA binary_path must be a canonical sandbox binary path");
   }
   const binary = path.basename(binaryPath);
-  manifestCommand(record, "version_command", "external NemoCUA agent manifest", binary);
+  if (binary !== "nemocua") {
+    throw new Error("External NemoCUA binary_path must name the canonical nemocua executable");
+  }
+  const versionCommand = manifestCommand(
+    record,
+    "version_command",
+    "external NemoCUA agent manifest",
+    binary,
+  );
+  if (versionCommand !== "nemocua version") {
+    throw new Error("External NemoCUA version_command must be exactly 'nemocua version'");
+  }
   manifestString(record, "expected_version", "external NemoCUA agent manifest");
   if (record.version_scheme !== "semver" || record.device_pairing !== false) {
     throw new Error("External NemoCUA must use semver and disable device pairing");
@@ -697,8 +631,15 @@ export function validateExternalCuaAgentManifest(raw: Buffer): void {
     "external NemoCUA runtime",
   );
   if (runtime.kind !== "terminal") throw new Error("External NemoCUA runtime must be terminal");
+  const exactRuntimeCommands = {
+    interactive_command: "nemocua interactive",
+    headless_command: "nemocua headless",
+  } as const;
   for (const key of ["interactive_command", "headless_command"] as const) {
-    manifestCommand(runtime, key, "external NemoCUA runtime", binary);
+    const command = manifestCommand(runtime, key, "external NemoCUA runtime", binary);
+    if (command !== exactRuntimeCommands[key]) {
+      throw new Error(`External NemoCUA ${key} must be exactly '${exactRuntimeCommands[key]}'`);
+    }
   }
   if (
     !Array.isArray(runtime.smoke_commands) ||
@@ -994,23 +935,6 @@ export function getCuaSandboxImageRef(
   return imageRef;
 }
 
-export function getCuaAdapterBindings(
-  env: NodeJS.ProcessEnv = process.env,
-  options: CuaRuntimeManifestValidationOptions = {},
-): CuaAdapterBindings {
-  const loaded = loadCuaRuntimeManifest(env, options);
-  const binding = (identity: CuaAdapterArtifactIdentity, label: string): CuaAdapterBinding => ({
-    path: verifyPayloadFile(loaded.root, identity, label, loaded.assertFileOwnership),
-    digest: `sha256:${identity.sha256}`,
-    sizeBytes: identity.sizeBytes,
-  });
-  return {
-    target: binding(loaded.manifest.artifacts.adapters.target, "target adapter"),
-    task: binding(loaded.manifest.artifacts.adapters.task, "task adapter"),
-    security: binding(loaded.manifest.artifacts.adapters.security, "security adapter"),
-  };
-}
-
 /** Revalidate the small authority-bearing files without rereading large release archives. */
 export function verifyCuaRuntimeAuthorityPayload(
   env: NodeJS.ProcessEnv = process.env,
@@ -1030,30 +954,6 @@ export function verifyCuaRuntimeAuthorityPayload(
   }
   getCuaExternalAgentManifestPath(env, options);
   return loaded;
-}
-
-/** Resolve the exact public target tuple authorized by the current runtime manifest. */
-export function getCuaTargetArtifactBindings(
-  env: NodeJS.ProcessEnv = process.env,
-  options: CuaRuntimeManifestValidationOptions = {},
-): CuaTargetArtifactBindings {
-  const loaded = verifyCuaRuntimeAuthorityPayload(env, options);
-  const { targetImage, targetServices } = loaded.manifest.artifacts;
-  return {
-    platform: targetImage.platform,
-    image: {
-      name: targetImage.name,
-      version: targetImage.version,
-      digest: targetImage.digest,
-      owner: "NVIDIA",
-    },
-    serviceBundle: {
-      name: targetServices.name,
-      version: targetServices.version,
-      digest: `sha256:${targetServices.sha256}`,
-      owner: "NVIDIA",
-    },
-  };
 }
 
 /** Copy only manifest-declared, verified files into the temporary Docker context. */

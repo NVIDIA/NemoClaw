@@ -14,6 +14,7 @@ import {
   CUA_SECURITY_OPERATIONS,
   CUA_TARGET_OPERATIONS,
   CUA_TASK_OPERATIONS,
+  type CuaAppliedPolicyIdentity,
   type CuaComponentIdentity,
   type CuaInferenceIdentity,
   type CuaRuntimeReadiness,
@@ -24,11 +25,7 @@ import {
   isCuaQualificationEnabled,
 } from "./feature";
 import { snapshotCuaOpenshellExecutable } from "./openshell-authority";
-import {
-  assertCuaQualificationBinding,
-  type CuaQualificationTargetChannelIdentity,
-  parseCuaQualificationEnvironment,
-} from "./qualification-evidence";
+import { parseCuaQualificationEnvironment } from "./qualification-evidence";
 import {
   assertCuaAuthorityFileOwnership,
   type CuaArchiveArtifactIdentity,
@@ -45,12 +42,11 @@ import {
   canonicalJsonSha256,
 } from "./shared-primitives";
 
-const COMMIT = /^[a-f0-9]{40}$/;
 const SAFE_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}){0,7}$/;
 const SAFE_ROUTE_VALUE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_CREDENTIAL_ENV = /^[A-Z][A-Z0-9_]{0,127}$/;
-const MAX_QUALIFICATION_ENVIRONMENT_BYTES = 64 * 1024;
+const MAX_QUALIFICATION_ENVIRONMENT_BYTES = 4096;
 
 export type CuaReadinessAcceptance = "final" | "candidate-qualification";
 
@@ -61,6 +57,7 @@ export interface CuaRuntimeReadinessContext {
   recordedInference: CuaInferenceRouteInput;
   liveInference?: CuaInferenceRouteInput;
   liveProviderAuthorityDigest?: string;
+  liveAppliedPolicy?: CuaAppliedPolicyIdentity;
   acceptance?: CuaReadinessAcceptance;
   env?: NodeJS.ProcessEnv;
   rootDir?: string;
@@ -294,73 +291,16 @@ function assertCandidateManifestBindings(
   env: NodeJS.ProcessEnv,
 ): void {
   const environment = qualificationEnvironment(env);
-  assertTargetChannelManifestBindings(environment.value.targetChannel, manifest);
   if (
     environment.value.nemoclawCommit !== readiness.sourceRevision ||
     environment.value.nemoclawCommit !== manifest.compatibility.candidateSourceRevision ||
     environment.value.bundleReceiptSha256 !== manifest.bundleReceipt.sha256 ||
+    environment.value.runtimeManifestSha256 !== readiness.runtimeManifestDigest.slice(7) ||
     readiness.qualification?.state !== "candidate" ||
     readiness.qualification.environmentDigest !== `sha256:${environment.sha256}` ||
     readiness.qualification.bundleReceiptDigest !== `sha256:${manifest.bundleReceipt.sha256}`
   ) {
     throw new Error("CUA candidate readiness does not match its qualification environment");
-  }
-}
-
-function assertTargetChannelManifestBindings(
-  targetChannel: CuaQualificationTargetChannelIdentity,
-  manifest: CuaRuntimeManifest,
-): void {
-  if (
-    targetChannel.serviceBundleDigest !== `sha256:${manifest.artifacts.targetServices.sha256}` ||
-    targetChannel.targetImageDigest !== manifest.artifacts.targetImage.digest
-  ) {
-    throw new Error("CUA qualification target channel does not match the runtime manifest");
-  }
-}
-
-function assertQualifiedManifestBindings(
-  readiness: CuaRuntimeReadiness,
-  manifest: CuaRuntimeManifest & {
-    compatibility: Extract<CuaRuntimeManifest["compatibility"], { status: "qualified" }>;
-    qualificationEvidence: NonNullable<CuaRuntimeManifest["qualificationEvidence"]>;
-  },
-): void {
-  const { environment, receipt } = manifest.qualificationEvidence;
-  assertCuaQualificationBinding(environment, receipt);
-  assertTargetChannelManifestBindings(receipt.targetChannel, manifest);
-  const environmentSha256 = digestJson(environment);
-  const receiptSha256 = digestJson(receipt);
-  if (
-    environmentSha256 !== manifest.compatibility.environmentSha256 ||
-    receiptSha256 !== manifest.compatibility.receiptSha256 ||
-    environment.nemoclawCommit !== manifest.compatibility.candidateSourceRevision ||
-    receipt.bundleReceiptSha256 !== manifest.bundleReceipt.sha256 ||
-    digestJson(receipt.inference) !== digestJson(readiness.inference) ||
-    readiness.qualification?.state !== "qualified" ||
-    readiness.qualification.candidateSourceRevision !==
-      manifest.compatibility.candidateSourceRevision ||
-    readiness.qualification.environmentDigest !== `sha256:${environmentSha256}` ||
-    readiness.qualification.receiptDigest !== `sha256:${receiptSha256}` ||
-    readiness.qualification.bundleReceiptDigest !== `sha256:${manifest.bundleReceipt.sha256}`
-  ) {
-    throw new Error("qualified CUA readiness does not match its immutable evidence");
-  }
-  const expected = {
-    openshell: readiness.components.openshell.digest,
-    runtime: readiness.components.runtime.digest,
-    sandboxImage: readiness.components.sandboxImage.digest,
-    targetAdapter: readiness.components.targetAdapter.digest,
-    targetImage: manifest.artifacts.targetImage.digest,
-    serviceBundle: `sha256:${manifest.artifacts.targetServices.sha256}`,
-    policy: readiness.components.policy.digest,
-    taskProtocol: readiness.components.taskProtocol.digest,
-    securityVerifier: readiness.components.securityVerifier.digest,
-  };
-  for (const [name, digest] of Object.entries(expected)) {
-    if (receipt.components[name as keyof typeof receipt.components] !== digest) {
-      throw new Error(`qualified CUA components.${name} does not match runtime readiness`);
-    }
   }
 }
 
@@ -386,6 +326,13 @@ function resolveContext(context: CuaRuntimeReadinessContext) {
   ) {
     throw new Error("CUA requires a live managed inference provider identity");
   }
+  if (
+    !context.liveAppliedPolicy ||
+    !Number.isSafeInteger(context.liveAppliedPolicy.revision) ||
+    !/^sha256:[a-f0-9]{64}$/.test(context.liveAppliedPolicy.digest)
+  ) {
+    throw new Error("CUA requires a live applied policy identity");
+  }
   const inference = getCuaInferenceRouteIdentity(context.recordedInference);
   if (!cuaInferenceRoutesMatch(inference, context.liveInference)) {
     throw new Error("CUA inference route no longer matches the live route");
@@ -398,6 +345,7 @@ function resolveContext(context: CuaRuntimeReadinessContext) {
     openshell,
     inference,
     providerAuthorityDigest: context.liveProviderAuthorityDigest,
+    appliedPolicy: context.liveAppliedPolicy,
   };
 }
 
@@ -406,7 +354,7 @@ export function validateCurrentCuaRuntimeReadiness(
   context: CuaRuntimeReadinessContext,
 ): CuaRuntimeReadiness {
   const readiness = parseCuaRuntimeReadiness(value);
-  const { env, build, loaded, openshell, inference, providerAuthorityDigest } =
+  const { env, build, loaded, openshell, inference, providerAuthorityDigest, appliedPolicy } =
     resolveContext(context);
   if (
     readiness.agent !== context.agentName ||
@@ -414,6 +362,7 @@ export function validateCurrentCuaRuntimeReadiness(
     readiness.sourceClean !== true ||
     readiness.runtimeManifestDigest !== `sha256:${loaded.sha256}` ||
     readiness.providerAuthorityDigest !== providerAuthorityDigest ||
+    digestJson(readiness.appliedPolicy) !== digestJson(appliedPolicy) ||
     digestJson(readiness.inference) !== digestJson(inference) ||
     digestJson(readiness.components) !== digestJson(expectedComponents(loaded.manifest, openshell))
   ) {
@@ -436,19 +385,6 @@ export function validateCurrentCuaRuntimeReadiness(
       },
       env,
     );
-  } else if (readiness.status === "available") {
-    if (
-      loaded.manifest.compatibility.status !== "qualified" ||
-      loaded.manifest.qualificationEvidence === null ||
-      loaded.manifest.compatibility.finalSourceRevision !== build.sourceRevision
-    ) {
-      throw new Error("available CUA readiness requires immutable qualified evidence");
-    }
-    assertQualifiedManifestBindings(readiness, {
-      ...loaded.manifest,
-      compatibility: loaded.manifest.compatibility,
-      qualificationEvidence: loaded.manifest.qualificationEvidence,
-    });
   }
   return readiness;
 }
@@ -456,7 +392,7 @@ export function validateCurrentCuaRuntimeReadiness(
 export function buildCurrentCuaRuntimeReadiness(
   context: CuaRuntimeReadinessContext,
 ): CuaRuntimeReadiness {
-  const { env, build, loaded, openshell, inference, providerAuthorityDigest } =
+  const { env, build, loaded, openshell, inference, providerAuthorityDigest, appliedPolicy } =
     resolveContext(context);
   const manifest = loaded.manifest;
   let status: CuaRuntimeReadiness["status"] = "unavailable";
@@ -467,18 +403,6 @@ export function buildCurrentCuaRuntimeReadiness(
     qualification = {
       state: "candidate",
       environmentDigest: `sha256:${environment.sha256}`,
-      bundleReceiptDigest: `sha256:${manifest.bundleReceipt.sha256}`,
-    };
-  } else if (
-    manifest.compatibility.status === "qualified" &&
-    manifest.qualificationEvidence !== null
-  ) {
-    status = "available";
-    qualification = {
-      state: "qualified",
-      candidateSourceRevision: manifest.compatibility.candidateSourceRevision,
-      environmentDigest: `sha256:${digestJson(manifest.qualificationEvidence.environment)}`,
-      receiptDigest: `sha256:${digestJson(manifest.qualificationEvidence.receipt)}`,
       bundleReceiptDigest: `sha256:${manifest.bundleReceipt.sha256}`,
     };
   }
@@ -492,6 +416,7 @@ export function buildCurrentCuaRuntimeReadiness(
     sourceClean: true,
     runtimeManifestDigest: `sha256:${loaded.sha256}`,
     providerAuthorityDigest,
+    appliedPolicy,
     qualification,
     components: expectedComponents(manifest, openshell),
     inference,
@@ -503,7 +428,7 @@ export function buildCurrentCuaRuntimeReadiness(
     securityOperations: [...CUA_SECURITY_OPERATIONS],
   };
   const parsed = parseCuaRuntimeReadiness(readiness);
-  if (parsed.status === "candidate" || parsed.status === "available") {
+  if (parsed.status === "candidate") {
     return validateCurrentCuaRuntimeReadiness(parsed, context);
   }
   return parsed;
@@ -513,10 +438,7 @@ export function requireCurrentCuaRuntimeReadiness(
   context: CuaRuntimeReadinessContext,
 ): CuaRuntimeReadiness {
   const readiness = buildCurrentCuaRuntimeReadiness(context);
-  if (
-    readiness.status !== "available" &&
-    !(readiness.status === "candidate" && context.acceptance === "candidate-qualification")
-  ) {
+  if (readiness.status !== "candidate" || context.acceptance !== "candidate-qualification") {
     throw new Error("CUA runtime artifacts are not qualified for the selected lifecycle mode");
   }
   return readiness;

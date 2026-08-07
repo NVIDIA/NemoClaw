@@ -65,12 +65,7 @@ function trimOutput(value: string | Buffer | null | undefined): string {
   return String(value ?? "").trim();
 }
 
-const UPDATE_BRANDING_AGENTS = [
-  "openclaw",
-  "hermes",
-  "langchain-deepagents-code",
-  "nemocua",
-] as const;
+const UPDATE_BRANDING_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
   const agent =
@@ -87,13 +82,6 @@ function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
       cliName: "nemo-deepagents",
       displayName: "NemoDeepAgents",
       maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=langchain-deepagents-code bash`,
-    };
-  }
-  if (agent === "nemocua") {
-    return {
-      cliName: "nemoclaw",
-      displayName: "NemoCUA",
-      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=nemocua bash`,
     };
   }
   return {

@@ -92,30 +92,6 @@ describe("runUpdateAction", () => {
     );
   });
 
-  it("renders NemoCUA branding and preserves the canonical agent during update checks", async () => {
-    const log = vi.fn();
-
-    const result = await runUpdateAction(
-      { check: true },
-      {
-        currentVersion: () => "0.1.0",
-        env: { ...process.env, NEMOCLAW_AGENT: "cua" },
-        getLatestVersion: () => "0.2.0",
-        isSourceCheckout: () => false,
-        log,
-        spawnSyncImpl: vi.fn(),
-      },
-    );
-
-    expect(result.status).toBe(0);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Current NemoCUA version: 0.1.0"));
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=nemocua bash",
-      ),
-    );
-  });
-
   it("does not run the installer for developer source checkouts", async () => {
     const error = vi.fn();
     const spawnSyncImpl = vi.fn();

@@ -10,9 +10,8 @@ import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agen
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
 import {
-  getCuaReconciliationForProjection,
   getObservedValidatedCuaState,
-  getValidatedCuaState,
+  isCuaPublicStateEnabled,
   type ObservedCuaInferenceRoute,
 } from "../../cua/state";
 import {
@@ -31,6 +30,7 @@ import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
 import type { BaselineExclusionRuntimeStatus } from "../../policy/baseline-exclusion";
 import { redact } from "../../security/redact";
@@ -39,7 +39,6 @@ import * as registry from "../../state/registry";
 import {
   buildGatewayInferenceGetArgs,
   canSandboxGatewayRouteRealign,
-  resolveLiveInferenceGatewayName as resolveSandboxGatewayName,
 } from "./connect-inference-gateway";
 import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -177,14 +176,8 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
-  /** Validated, content-free CUA runtime readiness projection. */
-  cuaRuntime: registry.SandboxEntry["cuaRuntimeReadiness"] | null;
-  /** Secret-free CUA target attachment and capability-health projection. */
-  cuaTarget: registry.SandboxEntry["cuaTarget"] | null;
-  /** Content-free proof that CUA policy and private-state boundaries were verified. */
-  cuaSecurity: registry.SandboxEntry["cuaSecurityAttestation"] | null;
-  /** Durable cleanup gate for an uncertain external CUA adapter effect. */
-  cuaReconciliation: registry.SandboxEntry["cuaReconciliation"] | null;
+  /** Current, validated, credential-free CUA candidate runtime readiness. */
+  cuaRuntime?: registry.SandboxEntry["cuaRuntimeReadiness"] | null;
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
   /** Observed enforcement state for each recorded baseline exclusion. */
@@ -300,9 +293,8 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
-  getValidatedCuaStateImpl?: typeof getValidatedCuaState;
-  observeCuaLiveInferenceImpl?: (entry: registry.SandboxEntry) => ObservedCuaInferenceRoute;
-  observeCuaLiveAppliedPolicyImpl?: (entry: registry.SandboxEntry) => CuaAppliedPolicyIdentity;
+  observeCuaLiveInference?: (entry: registry.SandboxEntry) => ObservedCuaInferenceRoute;
+  observeCuaLiveAppliedPolicy?: (entry: registry.SandboxEntry) => CuaAppliedPolicyIdentity;
   listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
@@ -313,22 +305,6 @@ interface CollectSandboxStatusSnapshotDeps {
   reconcile?: ReconcileSandboxGatewayState;
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
   getBaselineExclusionRuntimeStatus?: typeof getBaselineExclusionRuntimeStatus;
-}
-
-function getStatusCuaState(
-  sb: registry.SandboxEntry | null,
-  deps: CollectSandboxStatusSnapshotDeps,
-): ReturnType<typeof getValidatedCuaState> {
-  const observed = getObservedValidatedCuaState(sb, process.env, {
-    observeLiveInference: deps.observeCuaLiveInferenceImpl,
-    observeLiveAppliedPolicy: deps.observeCuaLiveAppliedPolicyImpl,
-    getValidatedState: deps.getValidatedCuaStateImpl,
-  });
-  return {
-    readiness: observed.readiness,
-    target: observed.target,
-    security: observed.security,
-  };
 }
 
 function sanitizedStatusDetail(error: unknown): string {
@@ -695,14 +671,10 @@ async function buildSandboxStatusReport(
       }
     : null;
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
-  const cua = getStatusCuaState(sb, deps);
-  let cuaReconciliation: registry.SandboxEntry["cuaReconciliation"] | null = null;
-  try {
-    cuaReconciliation = getCuaReconciliationForProjection(sb);
-  } catch {
-    // The registry loader normally replaces malformed journals with a closed
-    // recovery gate. Never project an unvalidated injected/raw record here.
-  }
+  const cua = getObservedValidatedCuaState(sb, process.env, {
+    observeLiveInference: deps.observeCuaLiveInference,
+    observeLiveAppliedPolicy: deps.observeCuaLiveAppliedPolicy,
+  });
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -734,10 +706,7 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
-    cuaRuntime: cua.readiness,
-    cuaTarget: cua.target,
-    cuaSecurity: cua.security,
-    cuaReconciliation,
+    ...(isCuaPublicStateEnabled() ? { cuaRuntime: cua.readiness } : {}),
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,

@@ -100,7 +100,7 @@ describe("agent definitions", () => {
   });
 
   it("resolves common user-facing agent aliases to canonical manifest names", () => {
-    const available = ["openclaw", "hermes", "langchain-deepagents-code", "nemocua"];
+    const available = ["openclaw", "hermes", "langchain-deepagents-code"];
 
     expect(resolveAgentNameAlias("nemohermes", available)).toBe("hermes");
     expect(resolveAgentNameAlias("NEMO_HERMES", available)).toBe("hermes");
@@ -111,8 +111,6 @@ describe("agent definitions", () => {
     expect(resolveAgentNameAlias("deepagentscode", available)).toBe("langchain-deepagents-code");
     expect(resolveAgentNameAlias("langchain", available)).toBe("langchain-deepagents-code");
     expect(resolveAgentNameAlias("nemoclaw", available)).toBe("openclaw");
-    expect(resolveAgentNameAlias("cua", available)).toBe("nemocua");
-    expect(resolveAgentNameAlias("nemo-cua", available)).toBe("nemocua");
   });
 
   it("resolves --agent and NEMOCLAW_AGENT aliases through resolveAgentName", () => {

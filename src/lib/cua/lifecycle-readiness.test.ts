@@ -151,11 +151,18 @@ describe("CUA lifecycle readiness authority", () => {
 
     expect(
       requireCuaLifecycleReadiness(entry(), {
-        env: { [CUA_FRAMEWORK_FEATURE_ENV]: "1" },
+        env: {
+          [CUA_FRAMEWORK_FEATURE_ENV]: "1",
+          [CUA_QUALIFICATION_FEATURE_ENV]: "1",
+        },
         observeLiveInference: () => ({
           provider: "live-provider",
           model: "live/model",
           providerAuthorityDigest: `sha256:${"a".repeat(64)}`,
+        }),
+        observeLiveAppliedPolicy: () => ({
+          revision: 17,
+          digest: `sha256:${"b".repeat(64)}`,
         }),
         validateRuntimeReadiness: validate,
       }),
@@ -165,7 +172,7 @@ describe("CUA lifecycle readiness authority", () => {
       readiness,
       expect.objectContaining({
         agentName: "nemocua",
-        acceptance: "final",
+        acceptance: "candidate-qualification",
         recordedInference: expect.objectContaining({
           provider: "recorded-provider",
           endpointUrl: "https://inference.example/v1",
@@ -194,6 +201,10 @@ describe("CUA lifecycle readiness authority", () => {
         provider: "recorded-provider",
         model: "recorded/model",
         providerAuthorityDigest: `sha256:${"a".repeat(64)}`,
+      }),
+      observeLiveAppliedPolicy: () => ({
+        revision: 17,
+        digest: `sha256:${"b".repeat(64)}`,
       }),
       validateRuntimeReadiness: validate,
     });

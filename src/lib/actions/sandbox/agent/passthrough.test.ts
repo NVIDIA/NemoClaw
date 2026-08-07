@@ -123,6 +123,51 @@ describe("runAgentPassthrough", () => {
     expect(writes.join("")).toMatch(/port 8642/);
   });
 
+  it("dispatches bare NemoCUA agent as the exact headless vector after readiness validation (#7755)", async () => {
+    const entry = { name: "alpha", agent: "nemocua" };
+    getSandboxMock.mockReturnValueOnce(entry as never);
+    listAgentsMock.mockReturnValueOnce([
+      "custom-terminal",
+      "hermes",
+      "langchain-deepagents-code",
+      "nemocua",
+      "openclaw",
+    ]);
+    loadAgentMock.mockReturnValueOnce({
+      name: "nemocua",
+      runtime: {
+        kind: "terminal",
+        interactive_command: "nemocua interactive",
+        headless_command: "nemocua headless",
+      },
+    });
+    const requireCuaReadiness = vi.fn();
+
+    await runAgentPassthrough("alpha", {}, { requireCuaReadiness });
+
+    expect(requireCuaReadiness).toHaveBeenCalledWith(entry);
+    expect(execMock).toHaveBeenCalledWith("alpha", ["nemocua", "headless"], { tty: false });
+  });
+
+  it("rejects added NemoCUA arguments before readiness probes or execution (#7755)", async () => {
+    getSandboxMock.mockReturnValueOnce({ name: "alpha", agent: "nemocua" } as never);
+    const requireCuaReadiness = vi.fn();
+    const { writes, proc } = makeProcMock();
+
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--help"] },
+        { process: proc, requireCuaReadiness },
+      ),
+    ).rejects.toThrow("__exit:2");
+
+    expect(writes.join("")).toContain("does not accept additional arguments");
+    expect(requireCuaReadiness).not.toHaveBeenCalled();
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
   it("forwards extraArgs verbatim to `openclaw agent` for OpenClaw sandboxes with --no-tty enforced", async () => {
     const execNonJson = vi.fn(((): never => {
       throw new Error("__exit:0");
