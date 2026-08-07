@@ -326,9 +326,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       buildDetachedForwardStartSpawn(
         deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
       ),
-      () =>
-        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ??
-          "") as string,
+      () => deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
       { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);

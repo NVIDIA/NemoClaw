@@ -527,6 +527,35 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     }
   });
 
+  it("does not accept a live port when the ownership lookup returns null (#8522)", () => {
+    const fetchList = vi.fn().mockReturnValue(null);
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(stderr, "ssh exited before local forward listener opened on 127.0.0.1:18789\n");
+      return { pid: 790 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 180_000, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("listener-start-failure");
+      expect(result.diagnostic).toMatch(/openshell forward list failed:.*no forward list result/i);
+      expect(isPortListening).not.toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(790, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
   it("rejects a live port without the established untracked-forward diagnostic (#7266)", () => {
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
