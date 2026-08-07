@@ -837,7 +837,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
     expect(store.list()).toEqual([]);
   });
-  it("fails closed on unsafe published bindings during port-drift rollback (#8544)", () => {
+  it("fails closed on non-loopback, malformed, or multiple published bindings during port-drift rollback (#8544)", () => {
     for (const args of [
       ["8081", "8082", "0.0.0.0", 1],
       ["8081", "invalid", "127.0.0.1", 1],
