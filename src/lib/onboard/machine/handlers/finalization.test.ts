@@ -216,6 +216,25 @@ describe("finalization handlers", () => {
     expect(result.stateResult.type).toBe("complete");
   });
 
+  it("keeps portable gateway verification without recreating or printing a host forward", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    try {
+      const { deps, calls } = createDeps();
+
+      const result = await runFinalizationHandlers(baseOptions(deps));
+
+      expect(calls.recoverProcesses).toHaveBeenCalledTimes(2);
+      expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
+      expect(calls.verify).toHaveBeenCalledOnce();
+      expect(calls.dashboard).not.toHaveBeenCalled();
+      expect(calls.log).toHaveBeenCalledWith("  ✓ OpenClaw gateway runtime is ready");
+      expect(calls.log).toHaveBeenCalledWith("  Connect: nemoclaw my-assistant connect");
+      expect(result.stateResult.type).toBe("complete");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("persists the dashboard port selected after final recovery (#8214)", async () => {
     const persistDashboardPort = vi.fn();
     const { deps } = createDeps({

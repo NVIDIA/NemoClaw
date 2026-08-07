@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../../cli/branding";
-import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
+import {
+  type DashboardRuntimeAgent,
+  shouldManageDashboardForAgent,
+  shouldManageDashboardForwardForAgent,
+} from "../../dashboard-runtime";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import {
   advanceTo,
@@ -136,6 +140,22 @@ function logTerminalReadyBlock(
   }
 }
 
+function logGatewayReadyBlock(
+  sandboxName: string,
+  agent: unknown,
+  log: (message?: string) => void,
+): void {
+  const runtimeAgent = agent as TerminalReadyAgent;
+  const displayName =
+    typeof runtimeAgent?.displayName === "string"
+      ? runtimeAgent.displayName
+      : typeof runtimeAgent?.name === "string"
+        ? runtimeAgent.name
+        : "OpenClaw";
+  log(`  ✓ ${displayName} gateway runtime is ready`);
+  log(`  Connect: ${CLI_NAME} ${sandboxName} connect`);
+}
+
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
   sandboxName,
   agent,
@@ -148,6 +168,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  const manageDashboardForward = shouldManageDashboardForwardForAgent(
+    agent as DashboardRuntimeAgent,
+  );
 
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
@@ -189,9 +212,11 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     // Reconcile after the final recovery because any restart above can
     // invalidate the forward created earlier in onboarding.
-    const dashboardPort = deps.ensureAgentDashboardForward(sandboxName, agent);
-    if (dashboardPort > 0) {
-      deps.persistDashboardPort(sandboxName, dashboardPort);
+    if (manageDashboardForward) {
+      const dashboardPort = deps.ensureAgentDashboardForward(sandboxName, agent);
+      if (dashboardPort > 0) {
+        deps.persistDashboardPort(sandboxName, dashboardPort);
+      }
     }
   }
 
@@ -218,6 +243,9 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   VerificationResult
 >): Promise<PostVerifyStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  const manageDashboardForward = shouldManageDashboardForwardForAgent(
+    agent as DashboardRuntimeAgent,
+  );
 
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
@@ -237,7 +265,11 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
       webSearchCredentialBoundarySafe && deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
-    deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    if (manageDashboardForward) {
+      deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    } else if (deploymentHealthy) {
+      logGatewayReadyBlock(sandboxName, agent, deps.log);
+    }
     deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
     logTerminalReadyBlock(sandboxName, agent, deps.log);

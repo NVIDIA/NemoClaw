@@ -179,6 +179,22 @@ describe("verifyDeployment", () => {
     expect(dashDiag?.hint).toContain("forward");
   });
 
+  it("stays healthy without probing a deliberately disabled host forward", async () => {
+    const probeHostPort = vi.fn(() => 0);
+    const result = await verifyDeployment("my-sandbox", chain, makeDeps({ probeHostPort }), {
+      ...NO_RETRY,
+      verifyDashboardForward: false,
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(result.verification.dashboardReachable).toBe(false);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.link === "dashboard")).toBe(false);
+    expect(probeHostPort).not.toHaveBeenCalled();
+    expect(formatVerificationDiagnostics(result)[0]).toContain(
+      "gateway and inference route are healthy",
+    );
+  });
+
   it("reports unhealthy when the inference route is unreachable (#6849)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {

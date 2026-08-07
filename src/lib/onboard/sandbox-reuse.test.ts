@@ -73,6 +73,7 @@ describe("applyReusedSandboxDashboardState", () => {
       sandboxGpuConfig,
     );
     expect(updateSandbox).toHaveBeenCalledWith("reuse-me", {
+      dashboardForwardEnabled: true,
       hermesDashboardEnabled: true,
       hermesDashboardPort: 9123,
       hermesDashboardInternalPort: 19123,
@@ -119,6 +120,7 @@ describe("applyReusedSandboxDashboardState", () => {
     });
 
     expect(updateSandbox).toHaveBeenCalledWith("reuse-me", {
+      dashboardForwardEnabled: true,
       hermesDashboardEnabled: undefined,
       hermesDashboardPort: undefined,
       hermesDashboardInternalPort: undefined,
@@ -181,6 +183,7 @@ describe("applyReusedSandboxDashboardState", () => {
       sandboxGpuConfig,
     );
     expect(updateSandbox).toHaveBeenCalledWith("terminal-box", {
+      dashboardForwardEnabled: false,
       hermesDashboardEnabled: undefined,
       hermesDashboardPort: undefined,
       hermesDashboardInternalPort: undefined,

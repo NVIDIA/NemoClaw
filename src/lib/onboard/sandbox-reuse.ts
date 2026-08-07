@@ -105,6 +105,7 @@ export function applyReusedSandboxDashboardState(
   );
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
+    dashboardForwardEnabled: manageDashboard,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });

@@ -8,6 +8,21 @@ import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
 describe("ensureAgentDashboardForward", () => {
   afterEach(() => {
     delete process.env.CHAT_UI_URL;
+    vi.unstubAllEnvs();
+  });
+
+  it("does not create a host dashboard forward for the portable profile", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const ensureDashboardForward = vi.fn(() => 18789);
+
+    expect(
+      ensureAgentDashboardForward({
+        sandboxName: "portable-box",
+        agent: { forwardPort: 18789 },
+        ensureDashboardForward,
+      }),
+    ).toBe(0);
+    expect(ensureDashboardForward).not.toHaveBeenCalled();
   });
 
   it("preserves additional host-forward ports during dashboard refresh", () => {

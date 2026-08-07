@@ -106,6 +106,7 @@ function setupFixture(opts: {
   forwardStartDelayPolls?: number;
   recoveryWaitMs?: string;
   port?: string;
+  dashboardForwardEnabled?: boolean;
 }): Fixture {
   const sandboxName = opts.sandboxName;
   const port = opts.port ?? String(nextFixturePort++);
@@ -131,6 +132,7 @@ function setupFixture(opts: {
           gpuEnabled: false,
           policies: [],
           dashboardPort: Number(port),
+          ...(opts.dashboardForwardEnabled === false ? { dashboardForwardEnabled: false } : {}),
         },
       },
     }),
@@ -405,5 +407,25 @@ describe("nemoclaw <name> recover", () => {
     const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
     expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
     expect(calls.some((l) => l.startsWith("forward start "))).toBe(false);
+  });
+
+  it("does not probe or recreate an intentionally disabled dashboard forward", () => {
+    const fixture = setupFixture({
+      sandboxName: "no-forward-sandbox",
+      gatewayProbe: "RUNNING",
+      forwardListStatus: "missing",
+      forwardStartHeals: false,
+      dashboardForwardEnabled: false,
+    });
+    const result = runRecover(fixture);
+    expect(result.status).toBe(0);
+
+    const combined = (result.stdout || "") + (result.stderr || "");
+    expect(combined).not.toContain("Dashboard port forward");
+    expect(combined).not.toContain("Re-establishing");
+
+    const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+    expect(calls.some((line) => line === "forward list")).toBe(false);
+    expect(calls.some((line) => line.startsWith("forward start "))).toBe(false);
   });
 });
