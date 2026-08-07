@@ -66,6 +66,7 @@ export const LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE =
   "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e" as const;
 export const LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION =
   "eb1d2f5700393892f227ac9fd56f485fc6718bce" as const;
+export const LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX = "nmc-lcpp-oc" as const;
 export const LLAMA_CPP_DGX_SPARK_OPENCLAW_NORMAL_PROMPT =
   "Reply with exactly one word: PONG" as const;
 export const LLAMA_CPP_DGX_SPARK_OPENCLAW_TOOL_PROMPT =
@@ -315,7 +316,7 @@ export type LlamaCppDgxSparkAgentQualificationPlan = {
   readonly runtimeProvider: "docker";
   readonly sandbox: {
     readonly gpuAccess: "disabled";
-    readonly name: "nemoclaw-llama-cpp-openclaw";
+    readonly name: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX;
   };
   readonly sessions: {
     readonly normal: "llama-cpp-openclaw-normal";
@@ -704,7 +705,7 @@ function parseAgentQualification(value: unknown): LlamaCppDgxSparkAgentQualifica
     route.api !== "openai-completions" ||
     route.routedBaseUrl !== "https://inference.local/v1" ||
     route.upstreamBaseUrl !== "http://host.openshell.internal:8081/v1" ||
-    sandbox.name !== "nemoclaw-llama-cpp-openclaw" ||
+    sandbox.name !== LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX ||
     sandbox.gpuAccess !== "disabled" ||
     sessions.normal !== "llama-cpp-openclaw-normal" ||
     sessions.tool !== "llama-cpp-openclaw-tool" ||
@@ -760,7 +761,7 @@ function parseAgentQualification(value: unknown): LlamaCppDgxSparkAgentQualifica
       upstreamBaseUrl: "http://host.openshell.internal:8081/v1",
     },
     runtimeProvider: "docker",
-    sandbox: { gpuAccess: "disabled", name: "nemoclaw-llama-cpp-openclaw" },
+    sandbox: { gpuAccess: "disabled", name: LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX },
     sessions: {
       normal: "llama-cpp-openclaw-normal",
       tool: "llama-cpp-openclaw-tool",

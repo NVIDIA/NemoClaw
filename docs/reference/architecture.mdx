@@ -238,7 +238,7 @@ The blueprint schema and runner enforce these name constraints before the runner
 
 | Field | Constraint |
 |---|---|
-| `components.sandbox.name` | Use 1–63 lowercase letters, numbers, or internal hyphens, starting with a letter and ending with a letter or number. |
+| `components.sandbox.name` | Use 1–19 lowercase letters, numbers, or single internal hyphens, starting with a letter and ending with a letter or number. Consecutive hyphens (`--`) are not allowed. |
 | `components.inference.profiles.<profile>.provider_name` | Use 1–128 letters, numbers, dots, underscores, or hyphens, starting with a letter. |
 
 <AgentOnly variant="openclaw">

@@ -181,7 +181,11 @@ jobs:
           image_id="$(podman --url "$endpoint" image inspect --format '{{.Id}}' "$image_ref")"
           test -n "$image_id"
           for agent in openclaw hermes langchain-deepagents-code; do
-            sandbox_name="podman-$agent"
+            case "$agent" in
+              openclaw) sandbox_name="podman-openclaw" ;;
+              hermes) sandbox_name="podman-hermes" ;;
+              langchain-deepagents-code) sandbox_name="podman-dcode" ;;
+            esac
             podman --url "$endpoint" create \
               --name "openshell-sandbox-$sandbox_name" \
               --label "openshell.managed=true" \
@@ -213,8 +217,8 @@ jobs:
         run: |
           set -euo pipefail
           endpoint="unix://${E2E_PODMAN_SOCKET:-/run/user/$(id -u)/podman/podman.sock}"
-          for agent in openclaw hermes langchain-deepagents-code; do
-            podman --url "$endpoint" rm --force "openshell-sandbox-podman-$agent" || true
+          for sandbox_name in podman-openclaw podman-hermes podman-dcode; do
+            podman --url "$endpoint" rm --force "openshell-sandbox-$sandbox_name" || true
           done
           service_pid="${E2E_PODMAN_SERVICE_PID:-}"
           if [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]; then

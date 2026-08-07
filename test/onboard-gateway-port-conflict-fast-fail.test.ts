@@ -32,13 +32,15 @@ describe("onboard gateway port conflict fast-fail (#6752)", () => {
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           `printf '%s\\n' "$*" >> ${JSON.stringify(openshellCallLog)}`,
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.85\\n" "${0##*/}"; exit 0;;',
+          '  --version|-V) printf "%s 0.0.99\\n" "${0##*/}"; exit 0;;',
           '  status|"gateway info"|"gateway info -g nemoclaw"*) sleep 20; exit 0;;',
           "esac",
           "exit 1",
         ].join("\n"),
       );
     }
+
+    workspace.writeExecutable("brew", "#!/usr/bin/env bash\nexit 1\n");
 
     workspace.writeExecutable(
       "docker",
@@ -86,6 +88,7 @@ describe("onboard gateway port conflict fast-fail (#6752)", () => {
             NEMOCLAW_OPENSHELL_CHANNEL: "stable",
             NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(workspace.binDir, "openshell-gateway"),
             NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(workspace.binDir, "openshell-sandbox"),
+            NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
             NEMOCLAW_TEST_NO_SLEEP: "1",
           }),
         },
