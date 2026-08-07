@@ -246,6 +246,9 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     expect(npmBootstrap).toContain('crypto.createHash("sha512")');
     expect(npmBootstrap).toContain('if [ "$actual_integrity" != "$expected_integrity" ]');
     expect(npmBootstrap).toContain('npm install --global "$archive"');
+    expect(
+      npmBootstrap.indexOf('if [ "$actual_integrity" != "$expected_integrity" ]'),
+    ).toBeLessThan(npmBootstrap.indexOf('npm install --global "$archive"'));
     expect(npmBootstrap).toContain("--ignore-scripts --no-audit --no-fund --offline");
     expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT");
     expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR");
