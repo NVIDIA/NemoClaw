@@ -63,6 +63,11 @@ describe("doctor inference checks", () => {
         ? { hint: "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime" }
         : {}),
     });
+    expect(checks[1]?.hint).toBe(
+      hinted
+        ? "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime"
+        : undefined,
+    );
   });
 
   it("makes a broken inference.local route authoritative over a healthy upstream (#6192)", async () => {
