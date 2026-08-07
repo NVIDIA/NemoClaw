@@ -111,8 +111,10 @@ describe("external NemoCUA runtime manifest", () => {
     expect(agent.agentDir).toBe(runtime.root);
     expect(agent.configPaths.dir).toBe("/sandbox/.nemocua");
 
-    for (const [name, value] of Object.entries(runtime.env)) {
-      if (value !== undefined) vi.stubEnv(name, value);
+    for (const [name, value] of Object.entries(runtime.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    )) {
+      vi.stubEnv(name, value);
     }
     expect(getAgentChoices()).toContainEqual(
       expect.objectContaining({ name: "nemocua", displayName: "NemoCUA" }),

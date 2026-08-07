@@ -47,8 +47,9 @@ async function loadRegistryWithOpaqueReadiness(options: { frameworkOnly?: boolea
     { mode: 0o600 },
   );
   process.env.HOME = home;
-  if (options.frameworkOnly) process.env.NEMOCLAW_CUA_ENABLED = "1";
-  else delete process.env.NEMOCLAW_CUA_ENABLED;
+  options.frameworkOnly
+    ? (process.env.NEMOCLAW_CUA_ENABLED = "1")
+    : delete process.env.NEMOCLAW_CUA_ENABLED;
   delete process.env.NEMOCLAW_CUA_QUALIFICATION;
   vi.resetModules();
   return {
@@ -59,10 +60,12 @@ async function loadRegistryWithOpaqueReadiness(options: { frameworkOnly?: boolea
 
 afterEach(() => {
   process.env.HOME = originalHome;
-  if (originalCuaEnabled === undefined) delete process.env.NEMOCLAW_CUA_ENABLED;
-  else process.env.NEMOCLAW_CUA_ENABLED = originalCuaEnabled;
-  if (originalCuaQualification === undefined) delete process.env.NEMOCLAW_CUA_QUALIFICATION;
-  else process.env.NEMOCLAW_CUA_QUALIFICATION = originalCuaQualification;
+  originalCuaEnabled === undefined
+    ? delete process.env.NEMOCLAW_CUA_ENABLED
+    : (process.env.NEMOCLAW_CUA_ENABLED = originalCuaEnabled);
+  originalCuaQualification === undefined
+    ? delete process.env.NEMOCLAW_CUA_QUALIFICATION
+    : (process.env.NEMOCLAW_CUA_QUALIFICATION = originalCuaQualification);
   parseCuaRuntimeReadiness.mockReset();
   vi.resetModules();
   for (const home of temporaryHomes.splice(0)) {

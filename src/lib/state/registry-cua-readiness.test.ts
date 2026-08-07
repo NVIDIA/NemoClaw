@@ -76,10 +76,12 @@ async function loadRegistry(document: unknown = { defaultSandbox: null, sandboxe
 
 afterEach(() => {
   process.env.HOME = originalHome;
-  if (originalCuaEnabled === undefined) delete process.env.NEMOCLAW_CUA_ENABLED;
-  else process.env.NEMOCLAW_CUA_ENABLED = originalCuaEnabled;
-  if (originalCuaQualification === undefined) delete process.env.NEMOCLAW_CUA_QUALIFICATION;
-  else process.env.NEMOCLAW_CUA_QUALIFICATION = originalCuaQualification;
+  originalCuaEnabled === undefined
+    ? delete process.env.NEMOCLAW_CUA_ENABLED
+    : (process.env.NEMOCLAW_CUA_ENABLED = originalCuaEnabled);
+  originalCuaQualification === undefined
+    ? delete process.env.NEMOCLAW_CUA_QUALIFICATION
+    : (process.env.NEMOCLAW_CUA_QUALIFICATION = originalCuaQualification);
   vi.resetModules();
   for (const home of temporaryHomes.splice(0)) {
     fs.rmSync(home, { recursive: true, force: true });

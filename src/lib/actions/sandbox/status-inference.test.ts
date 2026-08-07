@@ -336,10 +336,12 @@ describe("sandbox status inference.local route health (#6192)", () => {
       expect(observeCuaLiveInference).not.toHaveBeenCalled();
       expect(observeCuaLiveAppliedPolicy).not.toHaveBeenCalled();
     } finally {
-      if (originalEnabled === undefined) delete process.env.NEMOCLAW_CUA_ENABLED;
-      else process.env.NEMOCLAW_CUA_ENABLED = originalEnabled;
-      if (originalQualification === undefined) delete process.env.NEMOCLAW_CUA_QUALIFICATION;
-      else process.env.NEMOCLAW_CUA_QUALIFICATION = originalQualification;
+      originalEnabled === undefined
+        ? delete process.env.NEMOCLAW_CUA_ENABLED
+        : (process.env.NEMOCLAW_CUA_ENABLED = originalEnabled);
+      originalQualification === undefined
+        ? delete process.env.NEMOCLAW_CUA_QUALIFICATION
+        : (process.env.NEMOCLAW_CUA_QUALIFICATION = originalQualification);
     }
   });
 });

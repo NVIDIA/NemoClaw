@@ -56,10 +56,9 @@ describe("bounded regular file reads", () => {
     let changed = false;
     vi.spyOn(fs, "readSync").mockImplementation(((...args: unknown[]) => {
       const bytesRead = Reflect.apply(originalReadSync, fs, args) as number;
-      if (!changed) {
-        changed = true;
-        fs.writeFileSync(filePath, "abcdefgh");
-      }
+      const mutateAfterRead = !changed;
+      changed = true;
+      mutateAfterRead ? fs.writeFileSync(filePath, "abcdefgh") : undefined;
       return bytesRead;
     }) as typeof fs.readSync);
 

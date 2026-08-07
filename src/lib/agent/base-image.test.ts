@@ -66,8 +66,10 @@ describe("agent base image provisioning", () => {
   it("validates the complete external NemoCUA payload before resolving or building an image (#7755)", () => {
     const runtime = createCuaRuntimeTestFixture();
     try {
-      for (const [name, value] of Object.entries(runtime.env)) {
-        if (value !== undefined) vi.stubEnv(name, value);
+      for (const [name, value] of Object.entries(runtime.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      )) {
+        vi.stubEnv(name, value);
       }
       const agent = loadAgent("nemocua");
       const dockerfile = agent.dockerfileBasePath!;
@@ -106,8 +108,10 @@ describe("agent base image provisioning", () => {
   it("uses the exact manifest-bound NemoCUA sandbox image without a nested base build (#7755)", () => {
     const runtime = createCuaRuntimeTestFixture();
     try {
-      for (const [name, value] of Object.entries(runtime.env)) {
-        if (value !== undefined) vi.stubEnv(name, value);
+      for (const [name, value] of Object.entries(runtime.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      )) {
+        vi.stubEnv(name, value);
       }
       const agent = loadAgent("nemocua");
 
@@ -128,8 +132,10 @@ describe("agent base image provisioning", () => {
     const runtime = createCuaRuntimeTestFixture();
     let buildContext: string | undefined;
     try {
-      for (const [name, value] of Object.entries(runtime.env)) {
-        if (value !== undefined) vi.stubEnv(name, value);
+      for (const [name, value] of Object.entries(runtime.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      )) {
+        vi.stubEnv(name, value);
       }
       const agent = loadAgent("nemocua");
 
@@ -158,7 +164,7 @@ describe("agent base image provisioning", () => {
         );
       });
     } finally {
-      if (buildContext) fs.rmSync(buildContext, { recursive: true, force: true });
+      buildContext ? fs.rmSync(buildContext, { recursive: true, force: true }) : undefined;
       runtime.cleanup();
     }
   });

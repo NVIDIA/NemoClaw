@@ -204,8 +204,10 @@ describe("CUA build identity", () => {
       const stat = Reflect.apply(originalFstat, fs, [handle, ...args]) as fs.BigIntStats;
       return new Proxy(stat, {
         get(target, property) {
-          if (property === "mode") return target.mode | bit;
-          const value = Reflect.get(target, property, target) as unknown;
+          const value =
+            property === "mode"
+              ? target.mode | bit
+              : (Reflect.get(target, property, target) as unknown);
           return typeof value === "function" ? value.bind(target) : value;
         },
       });

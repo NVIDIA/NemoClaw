@@ -33,8 +33,10 @@ describe("NemoCUA agent onboarding", () => {
   it("refuses candidate onboarding before loading the agent without qualification authority (#7755)", () => {
     const runtime = createCuaRuntimeTestFixture();
     fixtures.push(runtime);
-    for (const [key, value] of Object.entries(runtime.env)) {
-      if (value !== undefined) vi.stubEnv(key, value);
+    for (const [key, value] of Object.entries(runtime.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    )) {
+      vi.stubEnv(key, value);
     }
     vi.stubEnv("NEMOCLAW_CUA_QUALIFICATION", "");
 
@@ -52,14 +54,16 @@ describe("NemoCUA agent onboarding", () => {
     const runCaptureOpenshell = vi.fn((args: string[]) => {
       calls.push(args);
       const command = args.at(-1) ?? "";
-      if (command.includes("NEMOCLAW_AGENT_BINARY_CHECK")) {
-        return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
+      switch (true) {
+        case command.includes("NEMOCLAW_AGENT_BINARY_CHECK"):
+          return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
+        case args.at(-2) === "nemoclaw-agent-smoke":
+          return "nemocua 1.0.0\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+        case command === "nemocua version":
+          return "nemocua 1.0.0";
+        default:
+          return "";
       }
-      if (args.at(-2) === "nemoclaw-agent-smoke") {
-        return "nemocua 1.0.0\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
-      }
-      if (command === "nemocua version") return "nemocua 1.0.0";
-      return "";
     });
     const updateSandbox = vi.fn(() => true);
     const context: OnboardContext = {
