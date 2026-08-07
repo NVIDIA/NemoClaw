@@ -290,28 +290,36 @@ Latency and resource-growth reports (#2598, #2600, and #2733) cannot use the sta
    seconds, so multiply by 1000 in the awk:
 
    ```bash
-   # p50 = mean of the 5th and 6th values (standard median for even N), in ms.
-
+   PERF_INCONCLUSIVE_REASON=""
    PERF_EXITS=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf-exits.log")
    PERF_EXIT_COUNT=$(printf '%s\n' "$PERF_EXITS" | sed '/^$/d' | wc -l | tr -d ' ')
    if [ "$PERF_EXIT_COUNT" != "10" ] || printf '%s\n' "$PERF_EXITS" | grep -Ev '^0$' >/dev/null; then
-     echo "VERDICT=verify-inconclusive: performance samples did not all exit 0"
-     exit 1
+     PERF_INCONCLUSIVE_REASON="performance samples did not produce exactly 10 successful exits"
    fi
-   PERF_SAMPLES=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf.log" \
-     | grep -E '^[0-9]+([.][0-9]+)?$' || true)
-   [ "$(printf '%s\n' "$PERF_SAMPLES" | sed '/^$/d' | wc -l | tr -d ' ')" = "10" ] || {
-     echo "ERROR: expected exactly ten numeric timing samples"
-     exit 1
-   }
-   P50_MS=$(printf '%s\n' "$PERF_SAMPLES" | sort -n \
-     | awk 'NR==5||NR==6 {sum+=$1; n++} END {printf "%d", (sum/n)*1000}')
-   # p90 = 9th value (nearest-rank / NIST method for N=10), in ms.
-   P90_MS=$(printf '%s\n' "$PERF_SAMPLES" | sort -n | awk 'NR==9 {printf "%d", $1*1000}')
-   echo "[perf] ${PERF_SIDE} p50=${P50_MS}ms p90=${P90_MS}ms"
+
+   PERF_SAMPLES=""
+   if [ -z "$PERF_INCONCLUSIVE_REASON" ]; then
+     PERF_SAMPLES=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf.log" \
+       | grep -E '^[0-9]+([.][0-9]+)?$' || true)
+     if [ "$(printf '%s\n' "$PERF_SAMPLES" | sed '/^$/d' | wc -l | tr -d ' ')" != "10" ]; then
+       PERF_INCONCLUSIVE_REASON="performance harness did not produce exactly 10 numeric samples"
+     fi
+   fi
+
+   if [ -n "$PERF_INCONCLUSIVE_REASON" ]; then
+     VERDICT=verify-inconclusive
+     echo "VERDICT=$VERDICT: $PERF_INCONCLUSIVE_REASON"
+   else
+     # p50 = mean of the 5th and 6th values for 10 samples, in ms.
+     P50_MS=$(printf '%s\n' "$PERF_SAMPLES" | sort -n \
+       | awk 'NR==5||NR==6 {sum+=$1; n++} END {printf "%d", (sum/n)*1000}')
+     # p90 = 9th value for 10 samples, in ms.
+     P90_MS=$(printf '%s\n' "$PERF_SAMPLES" | sort -n | awk 'NR==9 {printf "%d", $1*1000}')
+     echo "[perf] ${PERF_SIDE} p50=${P50_MS}ms p90=${P90_MS}ms"
+   fi
    ```
 
-   Save the values as `BASELINE_P50_MS` / `BASELINE_P90_MS` or `LATEST_P50_MS` / `LATEST_P90_MS` according to `PERF_SIDE`.
+   Save percentile values only when `PERF_INCONCLUSIVE_REASON` is empty. When it is non-empty, skip percentile scoring and continue to the approved `verify-inconclusive` comment path.
 4. **Match rubric (p50 fires first; p90 is the regression backstop):**
    - Newest-release p50 is within `$SLA_P50_MS`, and reported-release p50 is outside → candidate for fixed scoring.
    - Newest-release p50 is outside `$SLA_P50_MS` → `still-reproduces`.

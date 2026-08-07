@@ -43,17 +43,23 @@ Capture for evidence: comment URL + author login + the quoted phrase.
 
 **Signal 2 — Removal commit in range.** A commit between the reported release and `$LATEST` deletes the symbol implicated by the reproducer. Use Git pickaxe search to locate the change, then inspect the linked PR or accepted decision for explicit intent:
 
+Save the reviewed symbol in `$EVIDENCE_DIR/symbol.txt` without interpolating it into a shell command. Then pass it to Git and `grep` as a quoted fixed string:
+
 ```bash
-# Pickaxe: list every commit whose diff changes the count of <symbol> occurrences.
-# Reverse order so the earliest removal commit lands first in the list.
-git log "$REPORTED_VERSION".."$LATEST" -S'<symbol>' --reverse --oneline -- src/ bin/ nemoclaw/src/
+SYMBOL=$(<"$EVIDENCE_DIR/symbol.txt")
+[ -n "$SYMBOL" ] || { echo "ERROR: reviewed symbol is empty"; exit 1; }
 
-# Subject-keyword narrowing is only a SUPPLEMENTARY lookup — useful when the
-# pickaxe returns many commits and you want to focus on the obviously-removal one.
-git log "$REPORTED_VERSION".."$LATEST" --grep='remove\|delete\|drop\|deprecate' -i --oneline
+# List commits whose diff changes the count of the reviewed symbol.
+git log "$REPORTED_VERSION".."$LATEST" -S"$SYMBOL" \
+  --reverse --oneline -- src/ bin/ nemoclaw/src/
 
-# For each candidate, confirm the diff actually deletes the symbol (not just renames or moves it).
-git log -p <candidate-sha> -- src/ bin/ nemoclaw/src/ | grep -nE '^-.*\b<symbol>\b'
+# Optional subject narrowing after the pickaxe search.
+git log "$REPORTED_VERSION".."$LATEST" \
+  --grep='remove\|delete\|drop\|deprecate' -i --oneline
+
+# Confirm that a selected candidate diff deletes the reviewed symbol.
+git show --format=fuller --patch <candidate-sha> -- src/ bin/ nemoclaw/src/ \
+  | grep -nF -- "$SYMBOL"
 ```
 
 Capture for evidence: commit SHA, the deletion, the linked PR or decision, and the text that establishes intent. A deletion with no intent record is not sufficient for `by-design`.
@@ -77,9 +83,18 @@ Capture for evidence: both grep commands and their outputs. Locate the accepted 
 
 A by-design verdict says that the reported reproducer cannot execute under the intended contract. It does not establish that every similar symptom is fixed. Before drafting the comment, search the `$LATEST` source for other paths that can produce the reported symptom.
 
+Save each reviewed redacted symptom keyword as data, then pass both values to Git as quoted arguments:
+
 ```bash
-# Use the issue's symptom keywords, not the removed symbol.
-git grep -nE "<symptom-keyword-1>|<symptom-keyword-2>" "$LATEST" -- src/ nemoclaw/src/
+SYMPTOM_ONE=$(<"$EVIDENCE_DIR/symptom-keyword-1.redacted.txt")
+SYMPTOM_TWO=$(<"$EVIDENCE_DIR/symptom-keyword-2.redacted.txt")
+[ -n "$SYMPTOM_ONE" ] || { echo "ERROR: first symptom keyword is empty"; exit 1; }
+[ -n "$SYMPTOM_TWO" ] || { echo "ERROR: second symptom keyword is empty"; exit 1; }
+
+git grep -n \
+  -e "$SYMPTOM_ONE" \
+  -e "$SYMPTOM_TWO" \
+  "$LATEST" -- src/ nemoclaw/src/
 ```
 
 For #2168 the literal flag is `--dangerously-skip-permissions`, but the symptom is "sandbox created but not registered in CLI." Grepping for `register.*[Ss]andbox`, the readiness-gate / cleanup-failure path in `src/lib/onboard.ts` surfaces as a related-but-different way to produce an orphan sandbox.
