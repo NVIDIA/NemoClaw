@@ -27,7 +27,7 @@ import {
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
-import { ROOT, redact, run, runCapture, runCaptureEx } from "../runner";
+import { ROOT, run, runCapture } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import * as registry from "../state/registry";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
@@ -641,58 +641,62 @@ function policyDocumentsMatch(left: string, right: string): boolean {
   }
 }
 
-function isPolicySetH2TransportReset(stdout: string, stderr: string): boolean {
-  const diagnostic = `${stdout}\n${stderr}`;
-  return /h2 protocol error/i.test(diagnostic) && /PROTOCOL_ERROR/i.test(diagnostic);
-}
+const PERSONAL_OPEN_INTERNET_POLICY_KEY = "personal_open_internet";
+const PERSONAL_OPEN_INTERNET_PORTS = new Set([80, 443]);
 
-function activePolicyMatches(sandboxName: string, expectedPolicy: string): boolean {
-  const result = runCaptureEx(buildPolicyGetCommand(sandboxName));
-  if (result.exitCode !== 0) return false;
-  const activePolicy = parseCurrentPolicyOrEmpty(result.stdout);
-  return Boolean(activePolicy) && policyDocumentsMatch(activePolicy, expectedPolicy);
+function endpointOverlapsPersonalOpenInternet(endpoint: PolicyValue): boolean {
+  if (!isPolicyObject(endpoint)) return false;
+  const ports = Array.isArray(endpoint.ports) ? endpoint.ports : [endpoint.port];
+  return ports.some((port) => {
+    const numericPort = typeof port === "number" ? port : Number(port);
+    return Number.isInteger(numericPort) && PERSONAL_OPEN_INTERNET_PORTS.has(numericPort);
+  });
 }
 
 /**
- * OpenShell can commit a policy update and then lose the HTTP/2 response while
- * `policy set --wait` is polling the sandbox. Reconcile against a fresh
- * effective-policy read before retrying the same idempotent update. This keeps
- * the requested policy intact; it does not fall back to a smaller policy.
+ * OpenShell 0.0.99 rejects a hostless endpoint when a named endpoint selects
+ * the same port with different L4/L7 metadata. Personal's hostless 80/443
+ * route is the authoritative selector for those ports, so retain it and only
+ * the non-overlapping endpoints from the baseline and other selected presets.
  */
-function setPolicyFileWithH2Recovery(
-  policyFile: string,
-  sandboxName: string,
-  expectedPolicy: string,
-): boolean {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const result = runCaptureEx(buildPolicySetCommand(policyFile, sandboxName));
-    if (result.exitCode === 0) return true;
-
-    if (!isPolicySetH2TransportReset(result.stdout, result.stderr || "")) {
-      const detail = redact([result.stdout, result.stderr].filter(Boolean).join("\n")).trim();
-      console.error(`  Failed to update policy for sandbox '${sandboxName}'.`);
-      if (detail) console.error(`  ${detail}`);
-      return false;
-    }
-
-    if (activePolicyMatches(sandboxName, expectedPolicy)) {
-      console.warn(
-        "  OpenShell lost the policy-set response, but a fresh read verified the complete policy is active.",
-      );
-      return true;
-    }
-
-    if (attempt === 0) {
-      console.warn(
-        "  OpenShell reset the policy-set HTTP/2 stream before the policy became active; retrying once.",
-      );
-    }
+function makePersonalOpenInternetAuthoritative(policy: string): string {
+  let document: PolicyDocument | null = null;
+  try {
+    const parsed = YAML.parse(policy);
+    document = isPolicyDocument(parsed) ? parsed : null;
+  } catch {
+    document = null;
+  }
+  if (!document || !isPresetPolicyMap(document.network_policies)) {
+    throw new Error(
+      "Cannot compose Personal policy: the merged policy is not a valid network policy mapping.",
+    );
   }
 
-  console.error(
-    `  OpenShell reset the policy-set stream twice and the complete policy is not active for sandbox '${sandboxName}'.`,
-  );
-  return false;
+  const networkPolicies = document.network_policies;
+  if (!Object.hasOwn(networkPolicies, PERSONAL_OPEN_INTERNET_POLICY_KEY)) return policy;
+  if (!isPolicyObject(networkPolicies[PERSONAL_OPEN_INTERNET_POLICY_KEY])) {
+    throw new Error("Cannot compose Personal policy: its open-internet entry is malformed.");
+  }
+
+  const compatiblePolicies: PolicyObject = {};
+  for (const [key, value] of Object.entries(networkPolicies)) {
+    if (key === PERSONAL_OPEN_INTERNET_POLICY_KEY) {
+      compatiblePolicies[key] = value;
+      continue;
+    }
+    if (!isPolicyObject(value) || !Array.isArray(value.endpoints)) {
+      compatiblePolicies[key] = value;
+      continue;
+    }
+    const endpoints = value.endpoints.filter(
+      (endpoint) => !endpointOverlapsPersonalOpenInternet(endpoint),
+    );
+    if (endpoints.length > 0) compatiblePolicies[key] = { ...value, endpoints };
+  }
+
+  document.network_policies = compatiblePolicies;
+  return YAML.stringify(document);
 }
 
 function logPresetNoNewEgress(
@@ -1010,7 +1014,11 @@ function mergePresetNamesIntoPolicy(
       policyHasNetworkPolicy(currentPolicy, OPENCLAW_NPM_PRESET_KEY),
     ).policy;
   }
-  return { policy, appliedPresets, missingPresets };
+  return {
+    policy: makePersonalOpenInternetAuthoritative(policy),
+    appliedPresets,
+    missingPresets,
+  };
 }
 
 /**
@@ -2077,6 +2085,7 @@ function applyPresetContent(
       return false;
     }
   }
+  merged = makePersonalOpenInternetAuthoritative(merged);
 
   const presetState = classifyPresetEntries(currentPolicy, presetEntries);
   const disclosedPresetState =
@@ -2280,6 +2289,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       return false;
     }
   }
+  merged = makePersonalOpenInternetAuthoritative(merged);
 
   for (const preset of presetContents) {
     const disclosedPresetState =
@@ -2304,7 +2314,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
     try {
-      if (!setPolicyFileWithH2Recovery(tmpFile, sandboxName, merged)) return false;
+      run(buildPolicySetCommand(tmpFile, sandboxName));
 
       for (const preset of presetContents.filter((entry) => entry.state !== "match")) {
         console.log(`  Applied preset: ${preset.name}`);
