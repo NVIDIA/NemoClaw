@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
 const RUNNER_PATH = require.resolve("../../runner");
 const childProcess = require("node:child_process");
+const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
 
 function commandText(command: string | string[]): string {
   return Array.isArray(command) ? command.join(" ") : String(command);
@@ -62,9 +63,8 @@ describe("Windows Ollama helper", () => {
         stopCommands.push(cmd);
         return "";
       }
-      if (cmd.includes("host.docker.internal:11434/api/tags")) {
-        return Array.isArray(command) &&
-          command[0] === "docker" &&
+      if (Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL) {
+        return command[0] === "docker" &&
           launchScripts.some((script) => script.includes(installedPath))
           ? JSON.stringify({ models: [] })
           : "";

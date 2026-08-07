@@ -6,6 +6,7 @@
 // Detection lives in onboard.ts; this module owns the action side.
 
 const { spawn, spawnSync } = require("child_process");
+const { dockerCapture } = require("../../adapters/docker/command");
 const { run, runCapture } = require("../../runner");
 const {
   getWindowsHostOllamaDockerReachabilityArgs,
@@ -115,7 +116,7 @@ function awaitWindowsOllamaReady(): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
   for (let attempt = 0; attempt < 15; attempt++) {
     sleep(2);
-    const probe = runCapture(["docker", ...getWindowsHostOllamaDockerReachabilityArgs()], {
+    const probe = dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
       ignoreError: true,
     });
     if (probe) {
