@@ -28,8 +28,8 @@ It also improves Shields recovery, uninstall ownership, Hermes operations, netwo
 - Hermes now keeps legacy dashboard startup inside its prepared, privilege-separated profile and avoids unintended re-execution into the machine-level dashboard.
   The `nemohermes <sandbox> sessions delete <id>` command also uses in-memory SQLite temporary storage so session deletion works inside the restricted sandbox process context.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands) and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
-- OpenClaw, Hermes, and Deep Agents Code sandboxes now allow read-only `dpkg-query` access to installed package metadata while package-management writes remain denied.
-  An interactive `policy restore` refusal now reports `Cancelled.`, and a non-interactive refusal prints the complete usage line without changing the policy.
+- An interactive `policy restore` refusal now reports `Cancelled.`, and a non-interactive refusal prints the complete usage line.
+  Both refusal paths stop before policy mutation.
   For more information, refer to [Network Policies Reference](/user-guide/openclaw/reference/network-policies) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - When an SSH operator needs a port forward for a running OpenClaw or Hermes dashboard, `status` now points to the tokenized URL from `dashboard-url`.
   The hint remains absent for non-SSH sessions, stopped gateways, routable dashboards, and Deep Agents Code sandboxes.
