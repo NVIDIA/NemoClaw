@@ -78,7 +78,6 @@ function runReconcile(scenario: Scenario): {
   spawnSync("bash", [generator], { encoding: "utf-8" });
 
   const setup = [
-    "set -e",
     scenario.preset
       ? `${scenario.preset.readonly ? "readonly " : ""}OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.preset.value)}`
       : "",
@@ -91,7 +90,8 @@ function runReconcile(scenario: Scenario): {
   ].filter(Boolean);
   const sourceAndPrint = [
     `. ${shellQuote(envFile)}`,
-    `printf 'TOKEN=[%s] PRIVATE=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}"`,
+    "_nemoclaw_test_source_status=$?",
+    `case "$_nemoclaw_test_source_status" in 0) /usr/bin/printf 'TOKEN=[%s] PRIVATE=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}" ;; *) /usr/bin/false ;; esac`,
   ];
   const commands = scenario.repeatSources
     ? [...setup, ...sourceAndPrint, ...sourceAndPrint]
