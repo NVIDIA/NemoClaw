@@ -144,7 +144,7 @@ describe("OpenClaw voice gateway client", () => {
     expect(events).toEqual([{ type: "started" }, { type: "text", text: "hello" }]);
     const connect = socket.sent.find((request) => request.method === "connect");
     expect(connect?.params).toMatchObject({
-      client: { id: "openclaw-cli", mode: "cli" },
+      client: { id: "gateway-client", mode: "backend" },
       scopes: ["operator.read", "operator.write"],
       auth: { token: "openclaw-credential-must-not-cross" },
     });
@@ -239,10 +239,10 @@ describe("OpenClaw voice gateway client", () => {
   });
 
   it.each([
-    ["sequence", { state: "delta", deltaText: "message-only", message: assistantMessage("text") }],
-    ["delta text", { seq: 0, state: "delta", message: assistantMessage("text") }],
-    ["boolean replacement", { seq: 0, state: "delta", deltaText: "text", replace: "yes" }],
-  ])("rejects a delta without a valid required %s field (#8482)", async (_name, frame) => {
+    ["seq field", { state: "delta", deltaText: "message-only", message: assistantMessage("text") }],
+    ["deltaText field", { seq: 0, state: "delta", message: assistantMessage("text") }],
+    ["replace field", { seq: 0, state: "delta", deltaText: "text", replace: "yes" }],
+  ])("rejects a delta with an invalid %s (#8482)", async (_name, frame) => {
     const { result, events } = await runTurn(replyHandlers([frame]));
 
     expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });

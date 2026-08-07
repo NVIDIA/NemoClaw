@@ -281,11 +281,11 @@ export class OpenClawVoiceClient implements AgentTurnClient {
         minProtocol: OPENCLAW_PROTOCOL_VERSION,
         maxProtocol: OPENCLAW_PROTOCOL_VERSION,
         client: {
-          id: "openclaw-cli",
+          id: "gateway-client",
           displayName: "NemoClaw voice gateway",
           version: "1",
           platform: process.platform,
-          mode: "cli",
+          mode: "backend",
           instanceId: randomUUID(),
         },
         caps: [],

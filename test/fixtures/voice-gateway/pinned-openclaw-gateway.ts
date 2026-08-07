@@ -26,6 +26,17 @@ export class PinnedOpenClawGateway {
     this.sent.push(request);
     queueMicrotask(() => {
       if (request.method === "connect") {
+        const client = request.params.client;
+        if (
+          client === null ||
+          typeof client !== "object" ||
+          Array.isArray(client) ||
+          (client as Record<string, unknown>).id !== "gateway-client" ||
+          (client as Record<string, unknown>).mode !== "backend"
+        ) {
+          this.reject(request.id);
+          return;
+        }
         this.respond(request.id, {});
       } else if (request.method === "chat.send") {
         this.respond(request.id, { runId: "pinned-openclaw-run" });
@@ -40,6 +51,12 @@ export class PinnedOpenClawGateway {
 
   private respond(id: string, payload: Record<string, unknown>): void {
     this.onmessage?.({ data: JSON.stringify({ type: "res", id, ok: true, payload }) });
+  }
+
+  private reject(id: string): void {
+    this.onmessage?.({
+      data: JSON.stringify({ type: "res", id, ok: false, error: "invalid client identity" }),
+    });
   }
 
   private emitRecoveredTurn(sessionKey: string): void {
