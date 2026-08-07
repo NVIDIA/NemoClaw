@@ -27,7 +27,6 @@ import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provide
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
-import { LLAMA_CPP_PORT } from "./contract";
 import {
   inspectManagedLlamaCppRuntimeExact,
   installManagedLlamaCpp,
@@ -736,7 +735,7 @@ describe("managed llama.cpp installer", () => {
     expect(createLifecycle).toHaveBeenCalledWith(
       expect.objectContaining({
         bindings: expect.objectContaining({
-          hostPort: LLAMA_CPP_PORT,
+          hostPort: selected.recipe.spec.serve.port,
           imageReference: selected.recipe.spec.runtime.image,
         }),
         contract: expect.objectContaining({

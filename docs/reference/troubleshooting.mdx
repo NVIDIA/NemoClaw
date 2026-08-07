@@ -831,8 +831,27 @@ The wizard cleans up stale port forwards and waits for gateway readiness automat
 
 ### GPU setup fails with a placeholder GPU name
 
-On Windows or WSL hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
+On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
+
+When the primary memory-query probe reports a placeholder name on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload.
+NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
+Remove the native ARM64 proof exception when every supported host that uses it exposes a stable value through one of these signals and `detectNvidiaPlatform()` recognizes that value.
+Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits.
+The workload uses this command:
+
+```bash
+docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41
+```
+
+The run is bounded to 3 minutes.
+Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive millisecond value to change that bound.
+Increase the value on slow links.
+A passing workload qualifies the detected GPU for GPU passthrough.
+A failed or timed-out workload leaves the GPU unproven and does not enable GPU passthrough.
+The names-only unified-memory fallback does not run this workload and rejects denylisted names.
+WSL hosts that are not Docker Desktop-backed do not run the workload and continue to report the GPU as unavailable.
+
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.
@@ -2712,7 +2731,7 @@ nvidia-ctk cdi list
 On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
 
 ```bash
-docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark
+docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.

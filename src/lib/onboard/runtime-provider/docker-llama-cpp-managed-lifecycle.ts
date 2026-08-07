@@ -321,14 +321,23 @@ function parseInspection(
       throw new Error("Docker llama.cpp configured host port is not the bound host port.");
     }
     const publishedBindings = ports[portKey];
+    if (
+      publishedBindings !== null &&
+      (!Array.isArray(publishedBindings) || publishedBindings.length !== 1)
+    ) {
+      throw new Error("Docker llama.cpp container has unexpected published ports.");
+    }
     const published =
-      Array.isArray(publishedBindings) && publishedBindings.length === 1
-        ? record(publishedBindings[0], "Docker llama.cpp published port")
-        : null;
+      publishedBindings === null
+        ? null
+        : record(publishedBindings[0], "Docker llama.cpp published port");
     if (published !== null && published.HostIp !== "127.0.0.1") {
       throw new Error("Docker llama.cpp host port is not loopback-only.");
     }
     hostPort = published === null ? null : exactPort(published.HostPort);
+    if (hostPort !== null && hostPort !== bindings.hostPort) {
+      throw new Error("Docker llama.cpp published host port differs from its declared binding.");
+    }
   }
   if (!Array.isArray(source.Mounts)) {
     throw new Error("Docker llama.cpp inspection returned malformed mounts.");
@@ -958,8 +967,13 @@ function rollbackExact(
       captureMutation(options, lease, execution, ["rm", "--force", owned.id], MUTATION_TIMEOUT_MS),
     );
     if (
-      inspectContainer(options.engine, owned.id, options.contract, options.bindings, "cleanup") !==
-      null
+      inspectContainer(
+        options.engine,
+        owned.id,
+        options.contract,
+        options.bindings,
+        "cleanup",
+      ) !== null
     ) {
       throw new Error("Docker llama.cpp exact rollback left the owned runtime present.");
     }
