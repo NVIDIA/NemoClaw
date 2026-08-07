@@ -204,7 +204,7 @@ describe("release E2E evidence", () => {
 
   it("reports a failed matrix row without collapsing its successful siblings", () => {
     const plan = preflight();
-    const failedId = 'hermes-gpu-startup[scenario="fallback"]';
+    const failedId = 'hermes-gpu-startup[scenario="fallback",sandbox_name="e2e-hgpu-fallback"]';
     const ledger = buildReleaseE2eLedger(plan, [
       runEvidence(plan, "default", {
         conclusion: (execution) => (execution.id === failedId ? "failure" : "success"),
@@ -218,7 +218,9 @@ describe("release E2E evidence", () => {
     });
     expect(
       ledger.entries.find(
-        (entry) => entry.id === 'hermes-gpu-startup[scenario="compatibility-only"]',
+        (entry) =>
+          entry.id ===
+          'hermes-gpu-startup[scenario="compatibility-only",sandbox_name="e2e-hgpu-compat"]',
       ),
     ).toMatchObject({ status: "successful" });
   });

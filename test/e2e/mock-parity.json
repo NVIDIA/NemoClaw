@@ -491,7 +491,8 @@
       "live": "test/e2e/live/shields-config.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/shields-failed-startup.test.ts"
       ]
     },
     {
