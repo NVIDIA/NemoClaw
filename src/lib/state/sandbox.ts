@@ -36,7 +36,7 @@ import { spawnSync } from "child_process";
 
 import {
   captureSandboxSshConfigCommand,
-  openshellSandboxSshHost,
+  resolveOpenshellSandboxSshHost,
 } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
@@ -655,6 +655,12 @@ export function getSshConfig(sandboxName: string): string | null {
 }
 
 export function sshArgs(configFile: string, sandboxName: string): string[] {
+  const sshHost = resolveOpenshellSandboxSshHost(sandboxName, readFileSync(configFile, "utf8"));
+  if (sshHost === null) {
+    throw new Error(
+      `OpenShell SSH config does not declare an exact host alias for sandbox '${sandboxName}'`,
+    );
+  }
   return [
     "-F",
     configFile,
@@ -666,7 +672,7 @@ export function sshArgs(configFile: string, sandboxName: string): string[] {
     "ConnectTimeout=10",
     "-o",
     "LogLevel=ERROR",
-    openshellSandboxSshHost(sandboxName),
+    sshHost,
   ];
 }
 

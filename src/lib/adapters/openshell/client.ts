@@ -13,7 +13,10 @@ import {
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
-export { openshellSandboxSshHost } from "./sandbox-ssh-host";
+export {
+  openshellSandboxSshHost,
+  resolveOpenshellSandboxSshHost,
+} from "./sandbox-ssh-host";
 
 export type OpenshellSpawnSync = (
   command: string,
