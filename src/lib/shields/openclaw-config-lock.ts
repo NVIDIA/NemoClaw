@@ -19,6 +19,11 @@ export const OPENCLAW_CONFIG_HASH_PATH = `${OPENCLAW_CONFIG_DIR}/.config-hash`;
 const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const HOST_HELPER = path.resolve(__dirname, "../../../scripts/openclaw-config-guard.py");
 const CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "5m"];
+// Must exceed STATE_DIR_GUARD_TIMEOUT_SECONDS (22m) in
+// scripts/openclaw-config-guard.py, which is the guard's whole-action budget
+// for the unseal and its rollback together. The outer docker client timeout in
+// shields/index.ts must exceed this timeout plus its termination grace.
+const RECOVERY_CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "25m"];
 const SCHEMA_VALIDATION_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "30s"];
 const MAX_SCHEMA_CANDIDATE_BYTES = 16 * 1024 * 1024;
 // OpenClaw resolves relative includes from the config file's directory.
@@ -41,12 +46,15 @@ export type OpenClawConfigGuardAction =
   | "write-config"
   | "recover"
   | "revoke-startup-ready"
-  | "publish-startup-ready";
+  | "publish-startup-ready"
+  | "unlock-failed-startup";
 
 export type OpenClawConfigGuardOptions = {
   expectedConfigSha256?: string;
   input?: string;
   startupOwner?: boolean;
+  /** Agent state lock plan, required by `unlock-failed-startup`. */
+  planJson?: string;
 };
 
 type GuardIssue = {
@@ -72,6 +80,7 @@ type GuardSummary = {
 
 export type OpenClawConfigGuardResult = {
   issues: string[];
+  issueCodes?: string[];
   chattrApplied: boolean;
   configSha256?: string;
   hashSynthesized?: boolean;
@@ -91,6 +100,7 @@ const GUARD_ACTIONS = new Set<OpenClawConfigGuardAction>([
   "recover",
   "revoke-startup-ready",
   "publish-startup-ready",
+  "unlock-failed-startup",
 ]);
 
 function executionFailure(label: string, result: PrivilegedExecResult): string {
@@ -308,6 +318,9 @@ export function parseOpenClawConfigGuardOutput(
       ),
       ...contractIssues,
     ],
+    ...(issues.length > 0
+      ? { issueCodes: issues.map((issue) => printableExcerpt(issue.code, 64)) }
+      : {}),
     chattrApplied: summary?.status === "ok" && summary.chattrApplied === true,
     ...(summary?.status === "ok" && summary.configSha256
       ? { configSha256: summary.configSha256 }
@@ -351,13 +364,21 @@ export function runOpenClawConfigGuard(
       chattrApplied: false,
     };
   }
+  if (action === "unlock-failed-startup" && !options.planJson) {
+    return {
+      issues: ["OpenClaw config guard unlock-failed-startup requires planJson"],
+      chattrApplied: false,
+    };
+  }
 
   const capability = privileged.run(["test", "-r", CONTAINER_HELPER]);
+  const timeoutPrefix =
+    action === "unlock-failed-startup" ? RECOVERY_CONTAINER_TIMEOUT : CONTAINER_TIMEOUT;
   let command: string[];
   let input: string | undefined;
   if (capability.status === 0 && capability.signal === null && !capability.error) {
     command = [
-      ...CONTAINER_TIMEOUT,
+      ...timeoutPrefix,
       "python3",
       "-I",
       CONTAINER_HELPER,
@@ -378,6 +399,16 @@ export function runOpenClawConfigGuard(
         chattrApplied: false,
       };
     }
+    if (action === "unlock-failed-startup") {
+      // Needs the in-image state guard and the installed helper. An injected
+      // copy satisfies neither, so refuse instead of half-running it.
+      return {
+        issues: [
+          "OpenClaw config guard is absent in the sandbox; rebuild before recovering a failed startup",
+        ],
+        chattrApplied: false,
+      };
+    }
     try {
       input = readHostHelper();
     } catch (error) {
@@ -389,15 +420,7 @@ export function runOpenClawConfigGuard(
         chattrApplied: false,
       };
     }
-    command = [
-      ...CONTAINER_TIMEOUT,
-      "python3",
-      "-I",
-      "-",
-      action,
-      "--config-dir",
-      OPENCLAW_CONFIG_DIR,
-    ];
+    command = [...timeoutPrefix, "python3", "-I", "-", action, "--config-dir", OPENCLAW_CONFIG_DIR];
   } else {
     return {
       issues: [executionFailure("OpenClaw config guard capability probe failed", capability)],
@@ -409,6 +432,7 @@ export function runOpenClawConfigGuard(
     command.push("--expected-config-sha256", options.expectedConfigSha256);
   }
   if (options.startupOwner) command.push("--startup-owner");
+  if (options.planJson) command.push("--plan-json", options.planJson);
 
   return parseOpenClawConfigGuardOutput(action, privileged.run(command, input));
 }
