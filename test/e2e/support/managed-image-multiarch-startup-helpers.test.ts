@@ -23,11 +23,11 @@ beforeEach(() => {
   vi.stubEnv("GITHUB_RUN_ATTEMPT", "1");
   vi.stubEnv("GITHUB_RUN_ID", "123");
   vi.stubEnv("GITHUB_WORKSPACE", temporaryRoot);
-  vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", sha);
   vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA", sha);
   vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT", "protected-123-1");
   vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT", path.join(artifacts, "contract.json"));
   vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE", path.join(artifacts, "evidence.json"));
+  vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA", sha);
   vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM", "linux/amd64");
   vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA", sha);
 });
@@ -54,6 +54,15 @@ describe("protected managed-image startup helpers", () => {
     vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT", "other-123-1");
     expect(() => protectedManagedImageDispatchEnvironment()).toThrow(
       "protected managed-image dispatch identity is invalid",
+    );
+  });
+
+  it("requires an explicit protected candidate head independent of PR risk signals", () => {
+    vi.stubEnv("NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA", "");
+    vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", sha);
+
+    expect(() => protectedManagedImageDispatchEnvironment()).toThrow(
+      "NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA is required",
     );
   });
 

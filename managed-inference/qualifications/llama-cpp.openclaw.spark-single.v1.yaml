@@ -8,14 +8,14 @@ metadata:
   id: llama-cpp.openclaw.spark-single.v1
 
 spec:
-  execution: disabled
+  execution: enabled
   agent: openclaw
   image:
     reference: ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e
     sourceRevision: eb1d2f5700393892f227ac9fd56f485fc6718bce
   runtimeProvider: docker
   sandbox:
-    name: nemoclaw-llama-cpp-openclaw
+    name: nmc-lcpp-oc
     gpuAccess: disabled
   route:
     provider: llama-cpp-local
