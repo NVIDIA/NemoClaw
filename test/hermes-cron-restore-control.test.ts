@@ -187,20 +187,55 @@ try:
         module.validate_restore(41, 902, token)
         status.payload["pid"] = 77
         status.payload["start_time"] = 903
-        module.complete_replacement(41, 902, token)
+        module.observe_replacement(41, 902, token)
+        module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "complete-same-identity":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
-        module.complete_replacement(41, 902, token)
+        module.complete_replacement(41, 902, 41, 902, token)
     elif scenario == "complete-validation-failure":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         status.payload["pid"] = 77
         status.payload["start_time"] = 903
+        module.observe_replacement(41, 902, token)
         def fail_validation():
             raise module.ControlError("replacement cron tree is invalid")
         module.validate_cron_tree = fail_validation
-        module.complete_replacement(41, 902, token)
+        module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "complete-substitution":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.observe_replacement(41, 902, token)
+        status.payload["pid"] = 88
+        status.payload["start_time"] = 904
+        module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "complete-release-substitution":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.observe_replacement(41, 902, token)
+        validate_cron_tree = module.validate_cron_tree
+        def substitute_after_validation():
+            counts = validate_cron_tree()
+            status.payload["pid"] = 88
+            status.payload["start_time"] = 904
+            return counts
+        module.validate_cron_tree = substitute_after_validation
+        module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "complete-release-failure":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.observe_replacement(41, 902, token)
+        def fail_release(*_args, **_kwargs):
+            raise module.ControlError("simulated replacement release failure")
+        module._wait_for_release_disposition = fail_release
+        module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "recover":
         module.begin_drain()
         status.payload["pid"] = 77
@@ -291,6 +326,9 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "complete"
       | "complete-same-identity"
       | "complete-validation-failure"
+      | "complete-substitution"
+      | "complete-release-substitution"
+      | "complete-release-failure"
       | "recover"
       | "recover-operator"
       | "recover-noop",
@@ -529,7 +567,12 @@ describe("Hermes in-sandbox cron restore validator", () => {
       .split("\n")
       .filter((line) => line.startsWith(RECEIPT_PREFIX))
       .map((line) => JSON.parse(line.slice(RECEIPT_PREFIX.length)));
-    expect(receipts.map((receipt) => receipt.action)).toEqual(["begin", "validate", "complete"]);
+    expect(receipts.map((receipt) => receipt.action)).toEqual([
+      "begin",
+      "validate",
+      "observe",
+      "complete",
+    ]);
     expect(receipts.at(-1)).toEqual(
       expect.objectContaining({
         active_jobs: 1,
@@ -556,6 +599,30 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("replacement cron tree is invalid");
+    expect(result.stdout).toContain("OWN_MARKER:present");
+  });
+
+  it("keeps dispatch drained when the health-bound replacement is substituted (#8472)", () => {
+    const result = runLifecycle("complete-substitution");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("gateway identity changed during cron restore");
+    expect(result.stdout).toContain("OWN_MARKER:present");
+  });
+
+  it("keeps the drain marker when substitution races final release (#8472)", () => {
+    const result = runLifecycle("complete-release-substitution");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("gateway identity changed during cron restore");
+    expect(result.stdout).toContain("OWN_MARKER:present");
+  });
+
+  it("restores the drain marker when replacement release verification fails (#8472)", () => {
+    const result = runLifecycle("complete-release-failure");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("simulated replacement release failure");
     expect(result.stdout).toContain("OWN_MARKER:present");
   });
 

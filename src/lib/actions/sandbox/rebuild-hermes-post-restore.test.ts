@@ -7,7 +7,10 @@ import {
   resetRebuildFlowTestEnvironment,
   restoreRebuildFlowTestEnvironment,
 } from "../../../../test/helpers/rebuild-flow-harness";
-import { ensureHermesGatewayAfterStateRestore } from "./rebuild-hermes-post-restore";
+import {
+  ensureHermesGatewayAfterStateRestore,
+  ensureHermesGatewayAfterStateRestoreForCronGate,
+} from "./rebuild-hermes-post-restore";
 
 const RESTART_SUCCEEDED = {
   ok: true,
@@ -84,6 +87,58 @@ describe("binding the Hermes gateway to restored state", () => {
     expect(state).toBe("not-applicable");
     expect(restartSandboxGateway).not.toHaveBeenCalled();
     expect(checkAndRecoverSandboxProcesses).not.toHaveBeenCalled();
+  });
+
+  it("binds managed health to one observed replacement identity (#8472)", () => {
+    const order: string[] = [];
+    const replacement = { pid: 77, start_time: 903, drain_token: "restore-token" };
+    const verification = ensureHermesGatewayAfterStateRestoreForCronGate(
+      "alpha",
+      "hermes",
+      { pid: 41, start_time: 902, drain_token: "restore-token" },
+      {
+        restartSandboxGateway: () => {
+          order.push("restart");
+          return RESTART_SUCCEEDED;
+        },
+        observeHermesCronReplacement: () => {
+          order.push("observe");
+          return replacement;
+        },
+        checkAndRecoverSandboxProcesses: () => {
+          order.push("health");
+          return { checked: true, wasRunning: true, recovered: false };
+        },
+      },
+    );
+
+    expect(verification).toEqual({ state: "healthy", replacementIdentity: replacement });
+    expect(order).toEqual(["restart", "observe", "health", "observe"]);
+  });
+
+  it("fails closed when another gateway replaces the process during health verification (#8472)", () => {
+    const observeHermesCronReplacement = vi
+      .fn()
+      .mockReturnValueOnce({ pid: 77, start_time: 903, drain_token: "restore-token" })
+      .mockReturnValueOnce({ pid: 88, start_time: 904, drain_token: "restore-token" });
+
+    expect(
+      ensureHermesGatewayAfterStateRestoreForCronGate(
+        "alpha",
+        "hermes",
+        { pid: 41, start_time: 902, drain_token: "restore-token" },
+        {
+          restartSandboxGateway: () => RESTART_SUCCEEDED,
+          observeHermesCronReplacement,
+          checkAndRecoverSandboxProcesses: () => ({
+            checked: true,
+            wasRunning: true,
+            recovered: false,
+          }),
+        },
+      ),
+    ).toEqual({ state: "unverified" });
+    expect(observeHermesCronReplacement).toHaveBeenCalledTimes(2);
   });
 });
 

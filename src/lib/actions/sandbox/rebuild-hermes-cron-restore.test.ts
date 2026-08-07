@@ -30,6 +30,7 @@ vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
 import {
   beginHermesCronRestore,
   completeHermesCronRestoreAfterGatewayReplacement,
+  observeHermesCronReplacement,
   recoverHermesCronRestore,
   releaseHermesCronRestore,
   runHermesCronRestoreTransaction,
@@ -48,7 +49,7 @@ function writeScript(target: string): void {
   writeFileSync(target, "print('ok')\n", { mode: 0o600 });
 }
 
-type ReceiptAction = "begin" | "validate" | "complete" | "release" | "recover";
+type ReceiptAction = "begin" | "validate" | "observe" | "complete" | "release" | "recover";
 
 function receipt(
   action: ReceiptAction,
@@ -69,6 +70,11 @@ function receipt(
       operator_drain_active: false,
       profiles: 1,
       script_jobs: 1,
+    },
+    observe: {
+      active_agents: 0,
+      disposition: "replacement-observed",
+      operator_drain_active: false,
     },
     complete: {
       active_agents: 0,
@@ -292,11 +298,15 @@ describe("Hermes cron rebuild restore contract", () => {
     });
 
     expect(
-      completeHermesCronRestoreAfterGatewayReplacement("alpha", {
-        pid: 41,
-        start_time: 902,
-        drain_token: "restore-token",
-      }),
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+          drain_token: "restore-token",
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
     ).toEqual({ pid: 77, start_time: 903, drain_token: "restore-token" });
     expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
       "alpha",
@@ -311,6 +321,10 @@ describe("Hermes cron rebuild restore contract", () => {
         "902",
         "--drain-token",
         "restore-token",
+        "--replacement-pid",
+        "77",
+        "--replacement-start-time",
+        "903",
       ],
       false,
       true,
@@ -325,21 +339,40 @@ describe("Hermes cron rebuild restore contract", () => {
     });
 
     expect(() =>
-      completeHermesCronRestoreAfterGatewayReplacement("alpha", {
-        pid: 41,
-        start_time: 902,
-        drain_token: "restore-token",
-      }),
-    ).toThrow("did not bind to the replacement gateway identity");
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+          drain_token: "restore-token",
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toThrow("changed the verified replacement gateway identity");
   });
 
   it("rejects completion without the held drain token before transport (#8472)", () => {
     expect(() =>
-      completeHermesCronRestoreAfterGatewayReplacement("alpha", {
-        pid: 41,
-        start_time: 902,
-      }),
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
     ).toThrow("requires the held drain token");
+    expect(processMocks.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replacement observation with a different drain token (#8472)", () => {
+    expect(() =>
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        { pid: 41, start_time: 902, drain_token: "restore-token" },
+        { pid: 77, start_time: 903, drain_token: "different-token" },
+      ),
+    ).toThrow("changed the held drain token");
     expect(processMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
 
@@ -351,12 +384,44 @@ describe("Hermes cron rebuild restore contract", () => {
     });
 
     expect(() =>
-      completeHermesCronRestoreAfterGatewayReplacement("alpha", {
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+          drain_token: "restore-token",
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toThrow("receipt failed validation");
+  });
+
+  it("observes the replacement identity without releasing the held gate (#8472)", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: receipt("observe", 77, 903),
+      stderr: "",
+    });
+
+    expect(
+      observeHermesCronReplacement("alpha", {
         pid: 41,
         start_time: 902,
         drain_token: "restore-token",
       }),
-    ).toThrow("receipt failed validation");
+    ).toEqual({ pid: 77, start_time: 903, drain_token: "restore-token" });
+    expect(processMocks.privilegedSandboxExecArgv.mock.calls[0]?.[1]).toEqual([
+      "/opt/hermes/.venv/bin/python",
+      "-I",
+      "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+      "observe",
+      "--pid",
+      "41",
+      "--start-time",
+      "902",
+      "--drain-token",
+      "restore-token",
+    ]);
   });
 
   it.each([

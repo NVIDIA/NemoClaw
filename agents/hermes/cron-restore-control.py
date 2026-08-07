@@ -5,7 +5,8 @@
 Cron restore control is the rebuild-time gate that keeps dispatch disabled until
 backed-up scripts and job definitions are valid and the replacement gateway is
 ready. The initial gateway identity is pinned across begin and validate. The
-complete action requires a different live identity before releasing the gate. A
+replacement identity is observed around managed health verification, and the
+complete action requires that same live identity before releasing the gate. A
 drain token is the client-side secret proving ownership of the server-side
 persisted drain marker.
 """
@@ -481,6 +482,7 @@ def _complete_release(
     drain_token: str,
     **fields: Any,
 ) -> None:
+    _require_drained_idle(status_module, pid, start_time)
     _remove_owned_drain(drain_token)
     try:
         payload, operator_drain_active, disposition = _wait_for_release_disposition(
@@ -570,11 +572,44 @@ def release_drain(pid: int, start_time: int, drain_token: str) -> None:
         )
 
 
-def complete_replacement(pid: int, start_time: int, drain_token: str) -> None:
+def observe_replacement(pid: int, start_time: int, drain_token: str) -> None:
     with _control_lock():
         drain_control, status_module = _load_gateway_modules()
         _require_owned_drain(drain_token)
         _, replacement_pid, replacement_start_time = _gateway_identity(status_module)
+        if replacement_pid == pid and replacement_start_time == start_time:
+            raise ControlError("Hermes gateway identity did not change during cron restore")
+        payload = _wait_for_state(
+            status_module,
+            pid=replacement_pid,
+            start_time=replacement_start_time,
+            state="draining",
+            require_idle=True,
+            timeout_seconds=BEGIN_TIMEOUT_SECONDS,
+        )
+        _receipt(
+            "observe",
+            replacement_pid,
+            replacement_start_time,
+            drain_token,
+            active_agents=status_module.parse_active_agents(
+                payload.get("active_agents")
+            ),
+            disposition="replacement-observed",
+            operator_drain_active=_operator_drain_active(drain_control),
+        )
+
+
+def complete_replacement(
+    pid: int,
+    start_time: int,
+    replacement_pid: int,
+    replacement_start_time: int,
+    drain_token: str,
+) -> None:
+    with _control_lock():
+        drain_control, status_module = _load_gateway_modules()
+        _require_owned_drain(drain_token)
         if replacement_pid == pid and replacement_start_time == start_time:
             raise ControlError("Hermes gateway identity did not change during cron restore")
         _wait_for_state(
@@ -642,11 +677,16 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="action", required=True)
     subparsers.add_parser("begin")
     subparsers.add_parser("recover")
-    for action in ("validate", "complete", "release"):
+    for action in ("validate", "observe", "complete", "release"):
         subparser = subparsers.add_parser(action)
         subparser.add_argument("--pid", required=True, type=int)
         subparser.add_argument("--start-time", required=True, type=int)
         subparser.add_argument("--drain-token", required=True)
+        if action == "complete":
+            subparser.add_argument("--replacement-pid", required=True, type=int)
+            subparser.add_argument(
+                "--replacement-start-time", required=True, type=int
+            )
     tree = subparsers.add_parser("validate-tree")
     tree.add_argument("--home", required=True, type=Path)
     tree.add_argument("--sandbox-home", required=True, type=Path)
@@ -662,8 +702,16 @@ def main() -> int:
             recover_drain()
         elif args.action == "validate":
             validate_restore(args.pid, args.start_time, args.drain_token)
+        elif args.action == "observe":
+            observe_replacement(args.pid, args.start_time, args.drain_token)
         elif args.action == "complete":
-            complete_replacement(args.pid, args.start_time, args.drain_token)
+            complete_replacement(
+                args.pid,
+                args.start_time,
+                args.replacement_pid,
+                args.replacement_start_time,
+                args.drain_token,
+            )
         elif args.action == "release":
             release_drain(args.pid, args.start_time, args.drain_token)
         else:

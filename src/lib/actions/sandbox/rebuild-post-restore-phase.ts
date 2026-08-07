@@ -20,6 +20,7 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   ensureHermesGatewayAfterStateRestore,
+  ensureHermesGatewayAfterStateRestoreForCronGate,
   type HermesCronRestoreIdentity,
   printHermesGatewayRestoreRecovery,
 } from "./rebuild-hermes-post-restore";
@@ -54,11 +55,13 @@ function bailWithHeldHermesCronRestore(
   detail: string,
   bailMessage: string,
   bail: RebuildBail,
+  beforeCronRecovery?: () => void,
 ): never {
   console.error(detail);
   if (backupManifest) {
     console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
   }
+  beforeCronRecovery?.();
   printHermesCronRestoreRecoveryCommand(sandboxName);
   return bail(bailMessage);
 }
@@ -280,13 +283,25 @@ export async function runRebuildPostRestorePhase(
   }
 
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
-  const hermesGatewayRestoreState = ensureHermesGatewayAfterStateRestore(
-    sandboxName,
-    targetAgentName,
-  );
+  const hermesGatewayVerification = hermesCronRestoreIdentity
+    ? ensureHermesGatewayAfterStateRestoreForCronGate(
+        sandboxName,
+        targetAgentName,
+        hermesCronRestoreIdentity,
+      )
+    : {
+        state: ensureHermesGatewayAfterStateRestore(sandboxName, targetAgentName),
+        replacementIdentity: undefined,
+      };
+  const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   if (hermesCronRestoreIdentity) {
-    if (hermesGatewayRestoreUnverified || hermesGatewayRestoreState === "not-applicable") {
+    const replacementIdentity = hermesGatewayVerification.replacementIdentity;
+    if (
+      hermesGatewayRestoreUnverified ||
+      hermesGatewayRestoreState === "not-applicable" ||
+      !replacementIdentity
+    ) {
       return bailWithHeldHermesCronRestore(
         sandboxName,
         backupManifest,
@@ -295,11 +310,22 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
     }
-    let replacementIdentity: HermesCronRestoreIdentity;
+    if (mcpBridgeRestoreUnverified) {
+      return bailWithHeldHermesCronRestore(
+        sandboxName,
+        backupManifest,
+        "  Hermes cron dispatch remains drained because managed MCP restoration was not verified.",
+        "Hermes MCP restoration failed; cron dispatch was not re-enabled.",
+        bail,
+        () => printMcpRestoreRecovery(sandboxName, true),
+      );
+    }
+    let completedIdentity: HermesCronRestoreIdentity;
     try {
-      replacementIdentity = completeHermesCronRestoreAfterGatewayReplacement(
+      completedIdentity = completeHermesCronRestoreAfterGatewayReplacement(
         sandboxName,
         hermesCronRestoreIdentity,
+        replacementIdentity,
       );
     } catch (error) {
       return bailWithHeldHermesCronRestore(
@@ -311,7 +337,7 @@ export async function runRebuildPostRestorePhase(
       );
     }
     log(
-      `Hermes cron restore gate released: pid=${String(replacementIdentity.pid)}, startTime=${String(replacementIdentity.start_time)}`,
+      `Hermes cron restore gate released: pid=${String(completedIdentity.pid)}, startTime=${String(completedIdentity.start_time)}`,
     );
   }
   if (hermesGatewayRestoreState === "healthy") {
