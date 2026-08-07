@@ -56,6 +56,9 @@ describe("native Podman CPU proof workflow", () => {
     expect(namedStep("Checkout").with).toMatchObject({
       ref: "${{ github.event.pull_request.head.sha }}",
     });
+    expect(namedStep("Build shared sandbox-name contract").run).toBe(
+      "npm run build:policy-boundary",
+    );
     const installPodman = namedStep("Install Podman 5 runtime").run ?? "";
     expect(installPodman).toContain("apt-get install --yes");
     expect(installPodman).toContain("passt");
