@@ -19,6 +19,7 @@ import {
 } from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import { createDockerManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/docker.ts";
 import { createDockerManagedBootstrapSurface } from "../../src/lib/onboard/managed-bootstrap/docker-runtime.ts";
+import { managedImageRuntimeIdentity } from "../../src/lib/onboard/managed-image/contract.ts";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupAgent,
@@ -809,7 +810,7 @@ async function run(input: Inputs): Promise<void> {
             authorityStore: createProtectedAuthorityStore(stateDir),
             request: launch.managedStartupRootApplyRequest,
             image,
-            agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+            agentIdentity: managedImageRuntimeIdentity(input.agent),
             intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
             expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
           },

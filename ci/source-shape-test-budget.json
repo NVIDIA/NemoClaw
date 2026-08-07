@@ -553,7 +553,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps Docker llama.cpp lifecycle authority dormant (#8395)",
+      "test": "activates Docker llama.cpp only through its durable lifecycle controller (#8433)",
       "category": "security"
     },
     {

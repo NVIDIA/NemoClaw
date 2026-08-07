@@ -114,6 +114,10 @@ export function createPodmanRuntimeProviderBundle(
       profile: DORMANT_WORKLOAD_PROFILE,
       acceptsReceipt: () => false,
     },
+    hostLocalInference: unsupported(
+      providerId,
+      "Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
+    ),
     lifecycle: {
       providerId,
       supported: true,
