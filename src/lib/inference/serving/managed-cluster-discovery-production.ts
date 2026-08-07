@@ -17,6 +17,7 @@ import { managedVllmStateDir } from "../vllm-api-key.js";
 import { buildLocalManagedVllmDockerEnv, buildVllmSshTransportEnv } from "../vllm-docker-env.js";
 import type {
   ManagedClusterCommandResult,
+  ManagedClusterConnectivityFailure,
   ManagedClusterConnectivityRequest,
   ManagedClusterDiscoveryDeps,
   ManagedClusterHostObservation,
@@ -960,7 +961,11 @@ function isRecordArray(value: unknown): value is Record<string, unknown>[] {
 function connectivityCheck(
   transport: ManagedClusterReadOnlyHostTransport,
   request: ManagedClusterConnectivityRequest,
-): boolean {
+): ManagedClusterConnectivityFailure | null {
+  const failed = (check: "route" | "jumbo" | "neighbor"): ManagedClusterConnectivityFailure => ({
+    check,
+    netdev: request.netdev,
+  });
   const routeResult = transport.execute([
     "ip",
     "-j",
@@ -976,9 +981,9 @@ function connectivityCheck(
   try {
     routeValue = parseJsonCommandResult(routeResult, "DGX Spark direct route probe");
   } catch {
-    return false;
+    return failed("route");
   }
-  if (!isRecordArray(routeValue) || routeValue.length !== 1) return false;
+  if (!isRecordArray(routeValue) || routeValue.length !== 1) return failed("route");
   const route = routeValue[0]!;
   const routeSource = route.prefsrc ?? route.src;
   if (
@@ -987,7 +992,7 @@ function connectivityCheck(
     route.gateway !== undefined ||
     (route.scope !== undefined && String(route.scope).toLowerCase() !== "link")
   ) {
-    return false;
+    return failed("route");
   }
   const ping = transport.execute([
     "ping",
@@ -1003,7 +1008,7 @@ function connectivityCheck(
     request.sourceAddress,
     request.peerAddress,
   ]);
-  if (!commandSucceeded(ping)) return false;
+  if (!commandSucceeded(ping)) return failed("jumbo");
   const neighborResult = transport.execute([
     "ip",
     "-j",
@@ -1018,28 +1023,30 @@ function connectivityCheck(
   try {
     neighborValue = parseJsonCommandResult(neighborResult, "DGX Spark neighbor probe");
   } catch {
-    return false;
+    return failed("neighbor");
   }
-  if (!isRecordArray(neighborValue) || neighborValue.length !== 1) return false;
+  if (!isRecordArray(neighborValue) || neighborValue.length !== 1) return failed("neighbor");
   const neighbor = neighborValue[0]!;
   const states = Array.isArray(neighbor.state) ? neighbor.state : [neighbor.state];
-  return (
+  // `ip` applies the `dev` filter itself and then omits `dev` from the JSON, so an
+  // absent `dev` already means the entry belongs to the requested netdev.
+  const matched =
     String(neighbor.dst ?? "") === request.peerAddress &&
-    String(neighbor.dev ?? "") === request.netdev &&
+    String(neighbor.dev ?? request.netdev) === request.netdev &&
     String(neighbor.lladdr ?? "").toLowerCase() === request.expectedPeerMac &&
     states.length > 0 &&
     states.every(
       (state) =>
         typeof state === "string" &&
         /^(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP)$/i.test(state),
-    )
-  );
+    );
+  return matched ? null : failed("neighbor");
 }
 
 function probeConnectivity(
   transport: ManagedClusterReadOnlyHostTransport,
   requests: readonly ManagedClusterConnectivityRequest[],
-): boolean {
+): ManagedClusterConnectivityFailure | null {
   if (
     requests.length !== 2 ||
     new Set(requests.map(({ netdev }) => netdev)).size !== 2 ||
@@ -1051,9 +1058,13 @@ function probeConnectivity(
         !MAC_PATTERN.test(expectedPeerMac),
     )
   ) {
-    return false;
+    return { check: "rails" };
   }
-  return requests.every((request) => connectivityCheck(transport, request));
+  for (const request of requests) {
+    const failure = connectivityCheck(transport, request);
+    if (failure) return failure;
+  }
+  return null;
 }
 
 function createCanonicalReadiness(

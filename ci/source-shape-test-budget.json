@@ -353,7 +353,7 @@
     },
     {
       "file": "test/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins reviewed packages and retains the production audit command (#8177)",
+      "test": "pins reviewed packages and audits their lock outside image builds (#8253)",
       "category": "security"
     },
     {
