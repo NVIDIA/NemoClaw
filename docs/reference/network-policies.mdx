@@ -37,11 +37,14 @@ Deep Agents uses strict Landlock compatibility, so sandbox startup fails when Op
 | Path | Access |
 |---|---|
 | `/sandbox`, `/tmp`, `/dev/null`, `/dev/pts` | Read-write |
-| `/usr`, `/lib`, `/proc`, `/dev/urandom`, `/app`, `/etc`, `/var/log` | Read-only |
+| `/usr`, `/lib`, `/proc`, `/dev/urandom`, `/app`, `/etc`, `/var/log`, `/var/lib/dpkg` | Read-only |
 
 `/dev/pts` is the pseudo-terminal (devpts) directory.
 It is writable so PTY-based tools (`tmux`, `script`, and interactive shells) can allocate a terminal.
 Without it, those tools fail with `fork failed: Permission denied`.
+
+Read-only access to `/var/lib/dpkg` lets `dpkg-query` inspect installed package metadata.
+The filesystem policy does not grant write access to the package database.
 
 The sandbox process runs as a dedicated `sandbox` user and group.
 <AgentOnly variant="openclaw">

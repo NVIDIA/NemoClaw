@@ -22,6 +22,7 @@ on:
       # takes effect immediately after merge instead of waiting for another tag.
       - ".github/workflows/base-image.yaml"
       - ".github/workflows/managed-images.yaml"
+      - ".github/actions/ci-reviewed-npm-audit/**"
       - ".dockerignore"
       # Complete managed-image inputs. Keep these reviewed families synchronized
       # with tools/e2e/base-image-publication.mts.
@@ -55,6 +56,7 @@ on:
       - "agents/openclaw/mcporter-runtime/package.json"
       - "agents/openclaw/mcporter-runtime/package-lock.json"
       - "ci/npm-audit-exceptions.json"
+      - "ci/reviewed-npm-audit.json"
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
       - "scripts/lib/openclaw-npm-remediation.mts"
@@ -88,12 +90,32 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  reviewed-npm-audit:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit reviewed production npm graphs
+        uses: ./.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/reviewed-npm-audit
+
   # The complete Perl suite approaches the image-job timeout under QEMU arm64 emulation.
   # Build OpenClaw on native runners and publish only immutable per-platform digests here.
   # The dependent manifest job updates user-facing tags atomically.
   build-openclaw-platforms:
     name: Build OpenClaw base image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -212,6 +234,8 @@ jobs:
   build-hermes-platforms:
     name: Build ${{ matrix.display_name }} base image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -325,6 +349,8 @@ jobs:
   build-dcode-platforms:
     name: Build ${{ matrix.display_name }} base image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -438,7 +464,9 @@ jobs:
   build-and-push-hermes:
     name: Build and push Hermes base image
     if: github.repository == 'NVIDIA/NemoClaw'
-    needs: build-hermes-platforms
+    needs:
+      - build-hermes-platforms
+      - reviewed-npm-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -605,7 +633,9 @@ jobs:
   build-and-push-dcode:
     name: Build and push Deep Agents Code base image
     if: github.repository == 'NVIDIA/NemoClaw'
-    needs: build-dcode-platforms
+    needs:
+      - build-dcode-platforms
+      - reviewed-npm-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -774,7 +804,9 @@ jobs:
   build-and-push-openclaw:
     name: Build and push OpenClaw base image
     if: github.repository == 'NVIDIA/NemoClaw'
-    needs: build-openclaw-platforms
+    needs:
+      - build-openclaw-platforms
+      - reviewed-npm-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -951,6 +983,7 @@ jobs:
       - build-and-push-hermes
       - build-and-push-dcode
       - build-and-push-openclaw
+      - reviewed-npm-audit
     permissions:
       contents: read
       packages: write

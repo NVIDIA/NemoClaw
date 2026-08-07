@@ -25,6 +25,8 @@ function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaL
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
     fileExistsImpl: vi.fn().mockReturnValue(false),
     readFileImpl: vi.fn().mockReturnValue(""),
+    recordUserLocalOllamaOwnershipImpl: vi.fn(),
+    removeUserLocalOllamaOwnershipImpl: vi.fn(),
     log: vi.fn(),
     errorLog: vi.fn(),
     ...overrides,

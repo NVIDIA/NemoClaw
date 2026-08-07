@@ -12,7 +12,6 @@ import { prepareInitialSandboxCreatePolicy } from "../src/lib/onboard/initial-po
 
 import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture.ts";
 import {
-  makeStartScriptFixture,
   runStartScriptProxyProbe,
   TRUSTED_FETCH_PROXY_ENV_NAME,
 } from "./helpers/langchain-deepagents-code-headless.ts";
@@ -21,6 +20,7 @@ import {
   createPackageFixture,
   patchFixture,
 } from "./helpers/langchain-deepagents-code-patch-fixture.ts";
+import { dcodeStateDir, makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
@@ -37,7 +37,9 @@ describe("LangChain Deep Agents Code managed fetch proxy", () => {
   it("persists the root-owned proxy as the explicit fetch_url delegation", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-fetch-proxy-"));
     try {
-      const { envFile, scriptPath } = makeStartScriptFixture(tempDir, readAgentFile("start.sh"));
+      const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
+        markerDir: dcodeStateDir(tempDir),
+      });
       const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {});
       const managedProxy = "http://10.200.0.1:3128";
       const outputLines = output.trimEnd().split("\n");
