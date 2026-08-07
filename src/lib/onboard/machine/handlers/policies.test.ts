@@ -3,14 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 import { createSession } from "../../../state/onboard-session";
 import { mergePolicyMessagingChannels } from "../../messaging-policy-presets";
 import { handlePoliciesState } from "./policies";
 import {
   basePolicyHandlerOptions as baseOptions,
   createPolicyHandlerDeps,
-  makeMessagingPlan,
-} from "./policies-test-fixtures";
+} from "./policies-test-fixture";
 
 function createDeps(overrides: Parameters<typeof createPolicyHandlerDeps>[0] = {}) {
   return createPolicyHandlerDeps({
@@ -63,7 +63,7 @@ describe("handlePoliciesState", () => {
   });
 
   it("uses recorded messaging channels when no active selection exists", async () => {
-    const session = createSession({ messagingPlan: makeMessagingPlan("my-assistant", ["slack"]) });
+    const session = createSession({ messagingPlan: makeMessagingPlan({ channels: ["slack"] }) });
     const { deps, calls, setSession } = createDeps({
       getActiveSandbox: vi.fn(() => ({ messaging: null })),
     });
