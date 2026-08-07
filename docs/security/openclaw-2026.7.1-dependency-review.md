@@ -5,7 +5,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-08-03
+Last updated: 2026-08-06
 
 ## Decision
 
@@ -448,8 +448,12 @@ An unrecognized compiled shape fails the image build instead of silently skippin
 
 Reviewed behavior:
 
-- Failure-only.
-  A 2xx response returns untouched and emits nothing, so normal traffic produces no per-request logging.
+- Failure-only by default.
+  A 2xx response returns untouched and emits nothing unless the OpenClaw gateway process has `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`.
+- The opt-in shadow mode attempts to emit successful-request `managed_transport_shadow` timing events without reading their response bodies.
+  It does not change a timeout, retry a request, alter a response, or persist samples across an OpenClaw process restart.
+  Identifier generation, serialization, or standard-error output failure can omit an event without blocking the request or changing its response.
+  Sandbox creation forwards only the literal value `1`, and only for OpenClaw.
 - The wrapper never retries, never alters the request, never changes proxy selection, and never weakens TLS verification.
   It rethrows a transport error unchanged.
 - `route=proxy_configured` means that `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` was configured.
@@ -478,8 +482,22 @@ Reviewed behavior:
   That diagnostic has no response headers or `http_status` because `fetch` did not return a response.
 - A returned non-2xx response sets `transport_phase=response_headers`.
   It carries `http_status` and any allowlisted response headers that are present.
-- The fetch boundary does not expose the JSON-RPC operation, so the diagnostic records the endpoint without an `operation` field.
-- Each emitted diagnostic receives a local 32-character hexadecimal `diagnostic_id`.
+- The wrapper parses only a string request body of at most 16,384 characters to report a validated JSON-RPC method.
+  It never reports JSON-RPC parameters, tool names, tool arguments, or successful response bodies.
+  An unsupported request shape reports `rpc/unknown`, and known GET and DELETE transport actions report `transport/listen` and `transport/close`.
+- Each event reports the configured server name as `mcp_server` when validation and redaction retain it.
+  It also reports the transport generation, the request sequence, and the resolved connection, request, catalog-list, and effective timeout budgets.
+- Shadow recommendations apply only to `tools/list`.
+  The wrapper retains up to 64 successful elapsed-time samples per target host and port and reports p95 after five samples.
+  Different MCP URL paths on the same target host and port share this sample set because the wrapper does not retain URL paths.
+  It proposes p95 times 1.5, rounded up to 100 ms, with a 1,500 ms floor and a 10,000 ms ceiling.
+  A proposal cannot be less than the active catalog-list budget.
+  The wrapper emits no recommendation when that active budget already exceeds 10,000 ms.
+  A near-budget abort proposes twice the effective budget under the same constraints.
+  An explicit HTTP 503 produces no timeout recommendation.
+- The wrapper attempts to create a local 32-character hexadecimal `diagnostic_id` for each request before `fetch` starts.
+  If identifier generation fails, the wrapper omits the field and continues the request.
+  The wrapper does not add that identifier to the request.
 - The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
 
 `diagnostic_id` is not a distributed trace identifier and does not correlate with an OpenShell audit event.
@@ -494,7 +512,7 @@ The two patches compose independently.
 The injected helper in `scripts/patch-openclaw-managed-transport-diagnostics.mts` is the shipped runtime source of truth.
 `test/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
 It pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
-It also covers failure-only emission, no-retry and unchanged-response contracts, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
+It also covers default failure-only emission, opt-in successful timing events, bounded shadow recommendations, explicit 503 exclusion, no-retry and unchanged-response contracts, validated operation reporting, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
 A reusable source schema is deferred until a production consumer requires one.
 
 Removal criterion: drop this patch when the reviewed OpenClaw release emits redacted diagnostics classified by transport phase for remote MCP fetch failures.
