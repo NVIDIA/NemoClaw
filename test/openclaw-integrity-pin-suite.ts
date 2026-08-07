@@ -627,6 +627,10 @@ function runOptionalOpenClawPluginBlock(
     "  return 1",
     "}",
     command
+      .replace(
+        "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
+        "unset NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR;",
+      )
       .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationFixture),
   ].join("\n");
@@ -1548,6 +1552,8 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         const currentPinArgNames = declaredProductionPinArgNames();
         expect(currentPinArgNames).toEqual([
           "CODEX_ACP_0_11_1_INTEGRITY",
+          "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY",
+          "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY",
           "HERMES_NPM_INTEGRITY",
           "MCPORTER_0_7_3_INTEGRITY",
           "MCPORTER_0_7_3_TARBALL",
@@ -1730,6 +1736,59 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(block).not.toContain("npm view");
         expect(block).not.toContain("npm pack");
+      });
+
+      it("keeps optional OpenClaw plugins checksum-sourced, SRI-verified, and offline", () => {
+        const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+        const archiveBlock = dockerfile.slice(
+          dockerfile.indexOf("FROM scratch AS openclaw-optional-plugin-archives"),
+          dockerfile.indexOf("FROM codex-acp-${TARGETARCH}-archive"),
+        );
+        const installBlock = extractRunBlock(
+          DOCKERFILE,
+          "# Install non-messaging OpenClaw plugins that need to match the runtime.",
+          "# The reviewed cache stays root-owned and immutable to the sandbox user.",
+        );
+        const installSource = dockerfile.slice(
+          dockerfile.indexOf(
+            "# Install non-messaging OpenClaw plugins that need to match the runtime.",
+          ),
+          dockerfile.indexOf(
+            "# The reviewed cache stays root-owned and immutable to the sandbox user.",
+          ),
+        );
+        const remediation = fs.readFileSync(
+          path.join(REPO_ROOT, "scripts", "lib", "openclaw-npm-remediation.mts"),
+          "utf-8",
+        );
+
+        expect(archiveBlock).toContain(
+          "ADD --checksum=sha256:a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6",
+        );
+        expect(archiveBlock).toContain(
+          "ADD --checksum=sha256:f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
+        );
+        expect(archiveBlock).toContain(
+          "ADD --checksum=sha256:2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61",
+        );
+        expect(archiveBlock).toContain(
+          "ADD --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab",
+        );
+        expect(installSource).toContain("RUN --network=none");
+        expect(installSource).toContain("--mount=from=openclaw-optional-plugin-archives");
+        expect(installBlock).toContain(
+          "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives",
+        );
+        expect(installBlock).toContain('actual="sha512-"+crypto.createHash("sha512")');
+        expect(installBlock).toContain(
+          'plugin_work_root="$(mktemp -d /tmp/nemoclaw-openclaw-plugin.XXXXXX)"',
+        );
+        expect(installBlock).toContain('--working-directory "$plugin_work_root"');
+        expect(installBlock).toContain('rm -rf "$plugin_work_root"');
+        expect(installBlock).not.toContain('--working-directory "$plugin_source_root"');
+        expect(remediation).toContain("NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR");
+        expect(remediation).toContain("constants.O_RDONLY | constants.O_NOFOLLOW");
+        expect(remediation).toContain("actualIntegrity !== expectedIntegrity");
       });
 
       it("fails closed before npm install for unpinned base Dockerfile overrides", () => {

@@ -151,6 +151,13 @@ FROM scratch AS codex-acp-arm64-archive
 
 ADD --checksum=sha256:0ec75f1cd0bd6011b687d0aac25478f3123ffa81ec299281bcb1747dd3162e2a https://registry.npmjs.org/@zed-industries/codex-acp-linux-arm64/-/codex-acp-linux-arm64-0.11.1.tgz /codex-acp-platform.tgz
 
+FROM scratch AS openclaw-optional-plugin-archives
+
+ADD --checksum=sha256:a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz /diagnostics-otel-2026.7.1.tgz
+ADD --checksum=sha256:f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz /brave-plugin-2026.7.1.tgz
+ADD --checksum=sha256:2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61 https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz /propagator-jaeger-2.9.0.tgz
+ADD --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz /core-2.9.0.tgz
+
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
@@ -1417,40 +1424,51 @@ RUN set -eu; \
 # records npm provenance; bare archive-path installs record archive
 # provenance, which fails the trusted-official-install check gating
 # openKeyedStore on OpenClaw >= 2026.6.10.
-# hadolint ignore=DL3059,DL4006
-RUN set -eu; \
+# hadolint ignore=DL3059,DL4006,SC2016
+RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \
+    export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives; \
     managed_image_union="${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION:-0}"; \
     verify_openclaw_plugin_integrity() { \
         plugin_spec="$1"; \
         expected_integrity=""; \
         expected_tarball=""; \
+        archive_name=""; \
         case "$plugin_spec" in \
-            "@openclaw/diagnostics-otel@2026.7.1") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz" ;; \
-            "@openclaw/brave-plugin@2026.7.1") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz" ;; \
+            "@openclaw/diagnostics-otel@2026.7.1") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz"; archive_name="diagnostics-otel-2026.7.1.tgz" ;; \
+            "@openclaw/brave-plugin@2026.7.1") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz"; archive_name="brave-plugin-2026.7.1.tgz" ;; \
         esac; \
         if [ -z "$expected_integrity" ]; then \
             echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1; \
         fi; \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
-            --package-spec "$plugin_spec" --integrity "$expected_integrity" \
-            --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}"; \
+        if [ -n "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then \
+            plugin_archive="$NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR/$archive_name"; \
+            node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); const actual="sha512-"+crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"); if(actual!==process.argv[2]) { console.error(`integrity mismatch for ${process.argv[1]}`); process.exit(1); }' \
+                "$plugin_archive" "$expected_integrity"; \
+            printf '%s\n' "$plugin_archive"; \
+        else \
+            node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+                --package-spec "$plugin_spec" --integrity "$expected_integrity" \
+                --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}"; \
+        fi; \
     }; \
     install_reviewed_openclaw_plugin() { \
         plugin_spec="${1}@${OPENCLAW_VERSION}"; \
         plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
-        plugin_root="$(dirname "$plugin_archive")"; \
+        plugin_source_root="$(dirname "$plugin_archive")"; \
+        plugin_work_root="$(mktemp -d /tmp/nemoclaw-openclaw-plugin.XXXXXX)"; \
         plugin_install_archive="$plugin_archive"; \
         case "$plugin_spec" in \
             "@openclaw/diagnostics-otel@2026.7.1") \
                 remediation_json="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
                     --archive "$plugin_archive" --package-spec "$plugin_spec" \
-                    --working-directory "$plugin_root")"; \
+                    --working-directory "$plugin_work_root")"; \
                 plugin_install_archive="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$remediation_json")" \
                 ;; \
         esac; \
         NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
             openclaw plugins install "npm-pack:${plugin_install_archive}"; \
-        rm -rf "$plugin_root"; \
+        rm -rf "$plugin_work_root"; \
+        if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi; \
     }; \
     if [ "$managed_image_union" = "1" ] || [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         test -n "$OPENCLAW_VERSION"; \
