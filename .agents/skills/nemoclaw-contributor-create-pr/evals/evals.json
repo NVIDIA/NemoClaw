@@ -14,11 +14,12 @@
     "id": "positive-triage-permission-absent",
     "question": "Open a NemoClaw pull request for my branch. I am in the NVIDIA organization but I am not a collaborator on the repository.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "Assignment and labels are triage writes. Without triage permission the workflow creates the pull request without those flags and reports that a maintainer must apply them.",
+    "ground_truth": "Self-assignment is a triage write. Without triage permission the workflow creates the pull request without `--assignee`. Label selection and application always belong to the repository triage workflow.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Omits `--assignee` and `--label` from `gh pr create`.",
-      "Reports that assignment and labels need a maintainer instead of retrying the rejected write."
+      "Omits `--assignee` from `gh pr create` because the contributor has no triage permission.",
+      "Does not select or add labels and leaves them to the repository triage workflow.",
+      "Reports that assignment needs a maintainer instead of retrying the rejected write."
     ]
   },
   {

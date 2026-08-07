@@ -246,12 +246,12 @@ gh pr create \
 For work that is not ready for review, complete Step 4 and add `--draft` to whichever `gh pr create` command you run.
 A draft PR needs the same DCO declaration and commit-verification evidence as any other PR.
 
-### Assignment and Labels
+### Assignment
 
-Assignment and labels are triage writes.
+Assignment is a triage write.
 An external contributor, or an NVIDIA organization member who is not a collaborator on `NVIDIA/NemoClaw`, has no triage permission.
 
-Run this command before deciding whether to add `--assignee` or `--label`:
+Run this command before deciding whether to add `--assignee`:
 
 ```bash
 gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
@@ -263,17 +263,18 @@ Only when it reports `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`, run this command
 gh pr create \
   --title "<type>(<scope>): <description>" \
   --body-file /tmp/nemoclaw-pr-body.md \
-  --assignee "@me" \
-  --label "<label>"
+  --assignee "@me"
 ```
 
-Add `--label "area: docs"` for a doc-only or doc-inclusive PR and `--label "topic:security"` for a security change.
-Add only the labels that apply.
-
-Otherwise create the PR without `--assignee` and `--label`.
-Report that the PR needs a maintainer to assign and label it.
+Otherwise create the PR without `--assignee`.
+Report that the PR needs a maintainer to assign it.
 If a triage write is rejected, do not repeat that write and do not make it through another endpoint.
 Confirm whether the PR exists before you run `gh pr create` again.
+
+### Labels
+
+Do not select or add labels during PR publication.
+Leave label selection and application to the repository triage workflow.
 
 ### Reviewers
 

@@ -297,7 +297,7 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("sensitive paths, or CI waivers");
   });
 
-  it("keeps test selection and triage-only flags out of PR creation (#8364)", () => {
+  it("keeps test and label selection out of PR creation (#8364)", () => {
     const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-create-pr");
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
     const evals = JSON.parse(
@@ -319,10 +319,17 @@ describe("repo skill markdown files", () => {
     expect(skill).not.toContain(
       "The current user states that they can assign or label pull requests",
     );
+    expect(skill).toContain("Do not select or add labels during PR publication");
+    expect(skill).toContain(
+      "Leave label selection and application to the repository triage workflow",
+    );
+    expect(skill).not.toContain('--label "<label>"');
+    expect(skill).not.toContain('--label "area: docs"');
+    expect(skill).not.toContain('--label "topic:security"');
     expect(skill).toContain("If a triage write is rejected, do not repeat that write");
     expect(skill).toContain("Confirm whether the PR exists before you run `gh pr create` again");
     expect(skill.indexOf("--body-file /tmp/nemoclaw-pr-body.md")).toBeLessThan(
-      skill.indexOf("### Assignment and Labels"),
+      skill.indexOf("### Assignment"),
     );
 
     expect(evals.map(({ id }) => id)).toEqual([
