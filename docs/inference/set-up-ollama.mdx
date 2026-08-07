@@ -210,7 +210,7 @@ The following settings control non-interactive selection:
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `ollama`. |
 | `NEMOCLAW_MODEL` | Optional Ollama model tag. |
-| `NEMOCLAW_PROVIDER_MODEL` | Compatibility fallback for the external NVIDIA QA non-interactive Ollama invocation recorded in [#6869](https://github.com/NVIDIA/NemoClaw/issues/6869), the only identified consumer. Its configuration is not stored in this repository, so changes here cannot migrate or verify the invocation. `NEMOCLAW_MODEL` takes precedence, and non-interactive re-onboarding ignores this fallback when the requested provider differs from the recorded provider. Remove the fallback after the QA owner confirms that the invocation uses `NEMOCLAW_MODEL` or is retired. |
+| `NEMOCLAW_PROVIDER_MODEL` | Compatibility fallback for an external NVIDIA QA non-interactive Ollama invocation. `NEMOCLAW_MODEL` takes precedence. Non-interactive re-onboarding ignores this fallback when the requested provider differs from the recorded provider. |
 | `NEMOCLAW_YES` | Optional model download authorization when set to `1`. |
 
 Under `--non-interactive`, include `--yes` or set `NEMOCLAW_YES=1` to authorize a model download.
