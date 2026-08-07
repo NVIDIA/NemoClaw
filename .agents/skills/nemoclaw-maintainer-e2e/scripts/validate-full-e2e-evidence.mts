@@ -26,6 +26,8 @@ export interface FullE2eEvidenceSummary {
     workspaceName: string;
   };
   dispatch: {
+    allowDgxSparkRunnerQueue: false;
+    allowJetsonRunnerQueue: false;
     emptySelectors: true;
     includeStagingBrevLaunchable: true;
   };
@@ -121,6 +123,8 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
     true,
     "dispatch.includeStagingBrevLaunchable",
   );
+  requireEqual(dispatch.allowJetsonRunnerQueue, false, "dispatch.allowJetsonRunnerQueue");
+  requireEqual(dispatch.allowDgxSparkRunnerQueue, false, "dispatch.allowDgxSparkRunnerQueue");
   requireEqual(dispatch.emptySelectors, true, "dispatch.emptySelectors");
 
   const matchingJobs = jobRecords(input.jobs).filter(
@@ -186,6 +190,8 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
       workspaceName,
     },
     dispatch: {
+      allowDgxSparkRunnerQueue: false,
+      allowJetsonRunnerQueue: false,
       emptySelectors: true,
       includeStagingBrevLaunchable: true,
     },

@@ -15,7 +15,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. On trusted main runs, empty jobs and targets select every workflow E2E except Exact staging Brev Launchable; set include_staging_brev_launchable to include it. PR revision runs use the trusted controller target matrix and exclude Launchable."
+        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for Launchable. Jetson and DGX Spark require their queue flags. PR revisions use the trusted controller matrix."
         required: false
         default: ""
         type: string
@@ -34,7 +34,12 @@ on:
           - internal-nvidia
           - public-nvidia
       allow_jetson_runner_queue:
-        description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
+        description: "Before setting true for jetson-nvmap-gpu, obtain repository administrator confirmation of an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
+        required: false
+        default: false
+        type: boolean
+      allow_dgx_spark_runner_queue:
+        description: "Before setting true for llama-cpp-dgx-spark-qualification, obtain repository administrator confirmation of an online DGX Spark runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
         default: false
         type: boolean
@@ -563,6 +568,7 @@ jobs:
       - name: Record trusted E2E dispatch receipt
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
           ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           DISPATCH_JOBS: ${{ inputs.jobs }}
@@ -576,6 +582,7 @@ jobs:
           set -euo pipefail
           install -d -m 0700 "$DISPATCH_RECEIPT_DIR"
           jq -n \
+            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
             --arg candidateSha "$CANDIDATE_SHA" \
             --arg eventName "$EVENT_NAME" \
             --arg jobs "$DISPATCH_JOBS" \
@@ -592,6 +599,7 @@ jobs:
               workflowRunAttempt: $workflowRunAttempt,
               jobs: $jobs,
               targets: $targets,
+              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
               emptySelectors: ($jobs == "" and $targets == "")
@@ -2292,7 +2300,7 @@ jobs:
   llama-cpp-dgx-spark-plan:
     name: Compile protected llama.cpp DGX Spark plan
     needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) }}
+    if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2374,12 +2382,12 @@ jobs:
             scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts \
             --source-root "$CANDIDATE_ROOT"
 
-  # Every main push evaluates the trusted llama.cpp plan. Qualification runs
-  # only when that plan reports execution=enabled.
+  # The opt-in flag prevents assignment to an unavailable DGX Spark runner.
+  # Qualification runs only when the trusted plan reports execution=enabled.
   llama-cpp-dgx-spark-qualification:
     name: Protected llama.cpp on NVIDIA DGX Spark
     needs: [generate-matrix, llama-cpp-dgx-spark-plan]
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
+    if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
     runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
     environment:
       name: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
@@ -4803,11 +4811,9 @@ jobs:
 
   jetson-nvmap-gpu:
     needs: generate-matrix
-    # Every main push queues the repository-owned Jetson runner. GitHub starts
-    # timeout-minutes only after runner assignment. Maintainers must keep the
-    # configured runner label online.
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
-    runs-on: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}
+    # The opt-in flag prevents assignment to an unavailable Jetson runner.
+    if: ${{ inputs.allow_jetson_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
+    runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -4827,18 +4833,6 @@ jobs:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
-
-      - name: Guard Jetson runner dispatch
-        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.jobs != '' || inputs.targets != '') && !inputs.allow_jetson_runner_queue }}
-        env:
-          JETSON_E2E_RUNNER_LABEL: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
-        run: |
-          set -euo pipefail
-          echo "::error::jetson-nvmap-gpu was selected without allow_jetson_runner_queue=true."
-          echo "::error::GitHub Actions does not apply timeout-minutes while a self-hosted job is queued before runner assignment."
-          echo "::error::A repository administrator must confirm the runner is online in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory before enabling queueing."
-          echo "::error::Confirm an online runner with label ${JETSON_E2E_RUNNER_LABEL}, then re-run with allow_jetson_runner_queue=true."
-          exit 1
 
       - *dockerhub-auth
 
