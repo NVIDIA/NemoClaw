@@ -144,6 +144,7 @@ describe("OpenClaw final image layout", () => {
       dependencyCopy,
       "COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/",
       "COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh",
+      "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/",
       pluginCopy,
       patchCopy,
       runtimeCopy,

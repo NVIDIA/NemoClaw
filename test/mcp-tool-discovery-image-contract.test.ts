@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
@@ -163,7 +164,12 @@ describe("MCP tool discovery image contract", () => {
     expect(installer).toContain('export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"');
     const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     expect(openClawDockerfile).toContain("FROM builder AS mcp-tool-discovery-runtime");
-    expect(openClawDockerfile).toContain("target=/opt/nemoclaw-build-tools/npm-cache-seed,ro");
+    expect(openClawDockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /opt/nemoclaw-build-tools/npm-cache-seed/",
+    );
+    expect(openClawDockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/",
+    );
   });
 
   it.skipIf(process.platform === "win32")(
@@ -182,7 +188,9 @@ describe("MCP tool discovery image contract", () => {
         const installedModule = await import(
           pathToFileURL(path.join(fixture, "node_modules", "yoctocolors", "index.js")).href
         );
-        expect(installedModule.default.red("offline cache seed")).toBe("offline cache seed");
+        expect(stripVTControlCharacters(installedModule.default.red("offline cache seed"))).toBe(
+          "offline cache seed",
+        );
       } finally {
         fs.rmSync(fixture, { force: true, recursive: true });
       }
