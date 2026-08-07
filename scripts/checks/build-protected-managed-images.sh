@@ -224,9 +224,9 @@ build_agent() {
     cache_args+=(--cache-from "type=local,src=${cache_source}" --network none)
     if [[ "$agent" == "openclaw" ]]; then
       # The exported cache is produced before the locked npm seeds are overlaid.
-      # Rebuild the two seed-consuming stages so BuildKit cannot reuse their
-      # empty-seed COPY layers during the network-disabled GPU qualification.
-      cache_args+=(--no-cache-filter "builder,openclaw-managed-messaging-npm-cache-1")
+      # Rebuild OpenClaw without cached source layers so BuildKit cannot reuse
+      # empty-seed COPY results during the network-disabled GPU qualification.
+      cache_args+=(--no-cache)
     fi
   fi
 

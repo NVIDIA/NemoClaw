@@ -366,11 +366,11 @@ describe("protected managed-image build-cache boundary", () => {
       );
       expect(recordedBuildInvocation(agent)).toContain("--network none");
     }
-    expect(recordedBuildInvocation("openclaw")).toContain(
-      "--no-cache-filter builder,openclaw-managed-messaging-npm-cache-1",
+    expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
+    expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
+    expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(
+      "--no-cache",
     );
-    expect(recordedBuildInvocation("hermes")).not.toContain("--no-cache-filter");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).not.toContain("--no-cache-filter");
     expect(readFileSync(seedLog, "utf8")).toContain(
       `materialize-locked-npm-cache-seed.mts copy --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --seed ${realpathSync(cacheRoot)}/npm-cache-seed`,
     );

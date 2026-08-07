@@ -264,7 +264,6 @@ function authorityStore(): PersistedEngineAuthorityStore {
     record: (next) => (authority = next),
   };
 }
-
 interface TestJournalStore extends HostLocalCreateJournalStore {
   readonly abandonExecution: () => void;
   readonly hasExecution: () => boolean;
