@@ -271,6 +271,14 @@ function parseLabels(value: unknown): Readonly<Record<string, string>> {
   return Object.freeze(labels);
 }
 
+function parsePublishedPortBinding(value: unknown): Record<string, unknown> | null {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length !== 1) {
+    throw new Error("Docker llama.cpp container has unexpected published ports.");
+  }
+  return record(value[0], "Docker llama.cpp published port");
+}
+
 function parseInspection(
   output: string,
   contract: LlamaCppHostLocalLaunchContract,
@@ -318,11 +326,7 @@ function parseInspection(
   if (portValidation === "exact" && configuredHostPort !== (hostPort ?? null)) {
     throw new Error("Docker llama.cpp configured host port does not match its loopback binding.");
   }
-  const bindings = ports[portKey];
-  const published =
-    Array.isArray(bindings) && bindings.length === 1
-      ? record(bindings[0], "Docker llama.cpp published port")
-      : null;
+  const published = parsePublishedPortBinding(ports[portKey]);
   if (published !== null && published.HostIp !== "127.0.0.1") {
     throw new Error("Docker llama.cpp host port is not loopback-only.");
   }
