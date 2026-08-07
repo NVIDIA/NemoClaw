@@ -369,23 +369,22 @@ Compare only `local-transcript.redacted.log` to the issue's reported symptom usi
 Run this section only after the local path does not confirm `still-reproduces` and before presenting the Brev plan.
 
 ```bash
-for cmd in brev curl; do
+for cmd in brev git; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: missing required dependency: $cmd"; exit 1; }
 done
+
+if command -v sha256sum >/dev/null 2>&1; then
+  VERIFY_STALE_SHA256_TOOL=sha256sum
+elif command -v shasum >/dev/null 2>&1; then
+  VERIFY_STALE_SHA256_TOOL=shasum
+else
+  echo "ERROR: missing required SHA-256 tool: sha256sum or shasum"
+  exit 1
+fi
 
 brev ls --json >/dev/null 2>&1 || {
   echo "ERROR: Brev authentication failed. Run 'brev login' in a separate terminal, complete the browser flow, and rerun."
   echo "If no browser opens, use 'brev login --skip-browser' and open the printed URL."
-  exit 1
-}
-
-INSTALL_URL=${NEMOCLAW_INSTALL_URL:-https://www.nvidia.com/nemoclaw.sh}
-[ "$INSTALL_URL" = "https://www.nvidia.com/nemoclaw.sh" ] || {
-  echo "ERROR: custom installer URLs are outside this skill's reviewed command path"
-  exit 1
-}
-curl -fsI "$INSTALL_URL" >/dev/null 2>&1 || {
-  echo "ERROR: install URL not reachable: $INSTALL_URL"
   exit 1
 }
 ```

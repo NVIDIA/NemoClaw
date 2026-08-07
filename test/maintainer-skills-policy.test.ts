@@ -436,6 +436,42 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(stale).not.toContain("NEMOCLAW_MODEL=${NEMOCLAW_MODEL:-nemotron-3-nano:4b}");
   });
 
+  it("verifies release-tag installer archives before either Brev install", () => {
+    const provisioning = read(
+      ".agents/skills/nemoclaw-maintainer-verify-stale/reference/brev-provisioning.md",
+    );
+    const rubrics = read(
+      ".agents/skills/nemoclaw-maintainer-verify-stale/reference/reproduction-rubrics.md",
+    );
+    const stale = readMarkdownTree(".agents/skills/nemoclaw-maintainer-verify-stale");
+
+    expect(provisioning).toContain("prepare_release_installer() {");
+    expect(provisioning).toContain('prepare_release_installer "$REPORTED_VERSION" baseline');
+    expect(rubrics).toContain('prepare_release_installer "$LATEST" latest');
+    expect(provisioning).toContain("https://github.com/NVIDIA/NemoClaw.git");
+    expect(provisioning).toContain('"refs/tags/${release_tag}:refs/tags/${release_tag}"');
+    expect(provisioning).toContain("git fsck --strict");
+    expect(provisioning).toContain("git archive --format=tar");
+    expect(provisioning).toContain("checksum mismatch; refusing to execute");
+    const remoteHashGate = provisioning.indexOf(
+      '[ \\"\\$ACTUAL_SHA256\\" = \\"\\$EXPECTED_SHA256\\" ] || {',
+    );
+    const remoteExtract = provisioning.indexOf('tar -xf \\"\\$ARCHIVE\\"');
+    expect(remoteHashGate).toBeGreaterThanOrEqual(0);
+    expect(remoteExtract).toBeGreaterThan(remoteHashGate);
+    expect(provisioning).toContain(
+      "NEMOCLAW_REPO_ROOT=\\$HOME/.verify-stale-evidence/baseline-release/source",
+    );
+    expect(rubrics).toContain(
+      "NEMOCLAW_REPO_ROOT=\\$HOME/.verify-stale-evidence/latest-release/source",
+    );
+    expect(provisioning).toContain("NEMOCLAW_INSTALL_REF=$REPORTED_VERSION");
+    expect(rubrics).toContain("NEMOCLAW_INSTALL_REF=$LATEST");
+    const verifiedTreeExecution = 'cd "\\$NEMOCLAW_REPO_ROOT" && exec bash ./install.sh';
+    expect(stale.split(verifiedTreeExecution)).toHaveLength(3);
+    expect(stale).not.toMatch(/\bcurl\b[^\n]*\|[^\n]*\b(?:bash|sh)\b/u);
+  });
+
   it("exits nonzero and requires rotation when credential copy and cleanup cannot be confirmed", () => {
     const stale = readMarkdownTree(".agents/skills/nemoclaw-maintainer-verify-stale");
     const cleanupFunction = stale.match(

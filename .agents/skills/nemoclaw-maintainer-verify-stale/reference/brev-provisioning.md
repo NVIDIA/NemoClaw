@@ -21,7 +21,8 @@ Use when the isolated local path does not settle the issue and a Brev run is app
 Reuse a matching `verify-stale-*` instance only when it has no active verification sentinel or registered NemoClaw sandbox. A credential-bearing run must create a dedicated instance instead of reusing one. Before remote execution or a cost-bearing action, present the exact instance, type, hourly price, 60-minute execution budget, 120-second cleanup grace, third-party-software acceptance, credential plan, and cleanup action. For a credential-bearing run, the plan must approve instance deletion and immediate credential rotation if deletion cannot be confirmed. Wait for explicit maintainer approval.
 
 ```bash
-# Auth + install URL already verified by Step 6.8 — no need to re-check or auto-login here.
+# Brev authentication, Git, and a local SHA-256 tool were verified by Step 6.8.
+# Do not re-check or auto-login here.
 
 # Determine class from Step 5: "cpu" or "gpu"
 INSTANCE_CLASS="cpu"   # or "gpu"
@@ -316,6 +317,133 @@ Two-pass design.
 
 Without the reported-release result, a newest-release result without the symptom is inconclusive. The reproducer might never have exposed the reported symptom.
 
+Prepare each installer from the exact release tag before its install pass. The fixed repository URL
+is the only accepted source. Historical NemoClaw release tags are annotated but unsigned, so this
+workflow verifies the annotated tag object and its complete reachable object graph. It then derives
+the archive checksum locally before the archive crosses the Brev trust boundary.
+
+```bash
+NEMOCLAW_RELEASE_REPOSITORY=https://github.com/NVIDIA/NemoClaw.git
+INSTALLER_GIT_DIR="$EVIDENCE_DIR/nemoclaw-release.git"
+
+local_sha256() {
+  case "$VERIFY_STALE_SHA256_TOOL" in
+    sha256sum) sha256sum -- "$1" | awk '{print $1}' ;;
+    shasum) shasum -a 256 -- "$1" | awk '{print $1}' ;;
+    *) echo "ERROR: unsupported local SHA-256 tool" >&2; return 1 ;;
+  esac
+}
+
+prepare_release_installer() {
+  local release_tag=$1
+  local pass_label=$2
+  local archive expected_sha256 tag_type tag_name tagged_commit
+
+  [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "ERROR: release tag must be an exact vX.Y.Z value"
+    return 1
+  }
+  case "$pass_label" in
+    baseline|latest) ;;
+    *) echo "ERROR: installer pass label must be baseline or latest"; return 1 ;;
+  esac
+
+  if [ ! -d "$INSTALLER_GIT_DIR" ]; then
+    git init --bare "$INSTALLER_GIT_DIR" >/dev/null || {
+      echo "ERROR: could not initialize the release object store"
+      return 1
+    }
+  fi
+  if ! git --git-dir="$INSTALLER_GIT_DIR" fetch --no-tags \
+    "$NEMOCLAW_RELEASE_REPOSITORY" \
+    "refs/tags/${release_tag}:refs/tags/${release_tag}"; then
+    echo "ERROR: could not fetch exact release tag $release_tag"
+    return 1
+  fi
+
+  tag_type=$(git --git-dir="$INSTALLER_GIT_DIR" cat-file -t "refs/tags/$release_tag") || return 1
+  [ "$tag_type" = tag ] || {
+    echo "ERROR: release ref $release_tag is not an annotated tag"
+    return 1
+  }
+  tag_name=$(git --git-dir="$INSTALLER_GIT_DIR" cat-file tag "refs/tags/$release_tag" \
+    | sed -n 's/^tag //p' | head -1) || return 1
+  [ "$tag_name" = "$release_tag" ] || {
+    echo "ERROR: annotated tag names '$tag_name', expected '$release_tag'"
+    return 1
+  }
+  if ! GIT_DIR="$INSTALLER_GIT_DIR" git fsck --strict --no-dangling; then
+    echo "ERROR: release object verification failed for $release_tag"
+    return 1
+  fi
+  tagged_commit=$(git --git-dir="$INSTALLER_GIT_DIR" rev-parse \
+    --verify "refs/tags/$release_tag^{commit}") || {
+    echo "ERROR: release tag $release_tag does not resolve to a commit"
+    return 1
+  }
+
+  archive="$EVIDENCE_DIR/${pass_label}-release.tar"
+  if ! GIT_DIR="$INSTALLER_GIT_DIR" git archive --format=tar --prefix=source/ \
+    --output="$archive" "$tagged_commit"; then
+    echo "ERROR: could not archive release tag $release_tag"
+    return 1
+  fi
+  expected_sha256=$(local_sha256 "$archive") || return 1
+  [[ "$expected_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "ERROR: local release archive checksum is invalid"
+    return 1
+  }
+
+  if ! run_bounded brev copy "$archive" \
+    "$INSTANCE_NAME":~/.verify-stale-evidence/"${pass_label}-release.tar"; then
+    echo "ERROR: could not copy the verified release archive"
+    return 1
+  fi
+
+  if ! run_bounded brev exec "$INSTANCE_NAME" "
+    set -euo pipefail
+    ARCHIVE=~/.verify-stale-evidence/${pass_label}-release.tar
+    RELEASE_ROOT=~/.verify-stale-evidence/${pass_label}-release
+    EXPECTED_SHA256='$expected_sha256'
+    command -v tar >/dev/null 2>&1 || { echo 'ERROR: remote tar is unavailable'; exit 1; }
+    if command -v sha256sum >/dev/null 2>&1; then
+      ACTUAL_SHA256=\$(sha256sum -- \"\$ARCHIVE\" | awk '{print \$1}')
+    elif command -v shasum >/dev/null 2>&1; then
+      ACTUAL_SHA256=\$(shasum -a 256 -- \"\$ARCHIVE\" | awk '{print \$1}')
+    else
+      echo 'ERROR: remote SHA-256 verifier is unavailable'
+      exit 1
+    fi
+    [ \"\$ACTUAL_SHA256\" = \"\$EXPECTED_SHA256\" ] || {
+      echo 'ERROR: checksum mismatch; refusing to execute'
+      exit 1
+    }
+    rm -rf -- \"\$RELEASE_ROOT\"
+    mkdir -m 700 \"\$RELEASE_ROOT\"
+    tar -xf \"\$ARCHIVE\" -C \"\$RELEASE_ROOT\"
+    INSTALLER=\"\$RELEASE_ROOT/source/install.sh\"
+    [ -f \"\$INSTALLER\" ] && [ ! -L \"\$INSTALLER\" ] && [ -s \"\$INSTALLER\" ] \\
+      || { echo 'ERROR: verified release has no nonempty regular root install.sh'; exit 1; }
+    IFS= read -r SHEBANG < \"\$INSTALLER\"
+    case \"\$SHEBANG\" in
+      '#!/bin/sh'|'#!/bin/bash'|'#!/usr/bin/bash'|'#!/usr/bin/env sh'|'#!/usr/bin/env bash') ;;
+      *) echo 'ERROR: verified root install.sh has no accepted shell shebang'; exit 1 ;;
+    esac
+  "; then
+    echo "ERROR: release archive verification or extraction failed"
+    return 1
+  fi
+}
+```
+
+A checksum mismatch, fetch failure, object failure, tag-type or tag-name failure, copy failure,
+missing verifier or `tar`, extraction failure, or installer-shape failure is an infrastructure
+failure. Stop the workflow. Never execute a file that did not complete this verification.
+Each install sets `NEMOCLAW_REPO_ROOT` to the verified extracted source tree and sets
+`NEMOCLAW_INSTALL_REF` to the exact release tag. The installer builds from that tree and performs
+no later repository lookup. Run the installer from that directory as well so historical installers
+that detect a source checkout from the current working directory use the same verified tree.
+
 ### Reset (run before each install)
 
 NemoClaw starts OpenShell sandboxes, runtime services, and listening processes. `rm -rf ~/.nemoclaw` does not remove those resources. Without the reset below, the newest-release install would inherit reported-release state and invalidate the comparison.
@@ -435,6 +563,7 @@ if ! run_bounded brev exec "$INSTANCE_NAME" "$RESET"; then
   echo "ERROR: baseline reset failed or exceeded the execution budget"
   exit 1
 fi
+prepare_release_installer "$REPORTED_VERSION" baseline || exit 1
 BASELINE_INSTALL_FAILED=0
 RESOLVED_TAG_MISMATCH=0
 
@@ -475,15 +604,16 @@ INSTALL_TIMEOUT=$(remaining_seconds) || exit 1
 if run_bounded brev exec "$INSTANCE_NAME" "
   $CREDENTIAL_EXPORT
   timeout ${INSTALL_TIMEOUT}s env \
-    NEMOCLAW_INSTALL_REF= \
+    NEMOCLAW_INSTALL_REF=$REPORTED_VERSION \
     NEMOCLAW_INSTALL_TAG=$REPORTED_VERSION \
+    NEMOCLAW_REPO_ROOT=\$HOME/.verify-stale-evidence/baseline-release/source \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw} \
     NEMOCLAW_PROVIDER=${BUG_PROVIDER:-ollama} \
     NEMOCLAW_MODEL=$VERIFY_MODEL \
     NEMOCLAW_SANDBOX_NAME=verify-stale-install \
-    bash -o pipefail -c 'curl -fsSL $INSTALL_URL | bash'
+    bash -c 'cd "\$NEMOCLAW_REPO_ROOT" && exec bash ./install.sh'
 " >"$EVIDENCE_DIR/baseline-install.log" 2>&1; then
   BASELINE_INSTALL_FAILED=0
 else

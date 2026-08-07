@@ -124,20 +124,22 @@ if ! run_bounded brev exec "$INSTANCE_NAME" "$RESET"; then
   echo "ERROR: newest-release reset failed or exceeded the execution budget"
   exit 1
 fi
+prepare_release_installer "$LATEST" latest || exit 1
 LATEST_INSTALL_FAILED=0
 INSTALL_TIMEOUT=$(remaining_seconds) || exit 1
 if run_bounded brev exec "$INSTANCE_NAME" "
   $CREDENTIAL_EXPORT
   timeout ${INSTALL_TIMEOUT}s env \
-    NEMOCLAW_INSTALL_REF= \
+    NEMOCLAW_INSTALL_REF=$LATEST \
     NEMOCLAW_INSTALL_TAG=$LATEST \
+    NEMOCLAW_REPO_ROOT=\$HOME/.verify-stale-evidence/latest-release/source \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw} \
     NEMOCLAW_PROVIDER=${BUG_PROVIDER:-ollama} \
     NEMOCLAW_MODEL=$VERIFY_MODEL \
     NEMOCLAW_SANDBOX_NAME=verify-stale-install \
-    bash -o pipefail -c 'curl -fsSL $INSTALL_URL | bash'
+    bash -c 'cd "\$NEMOCLAW_REPO_ROOT" && exec bash ./install.sh'
 " >"$EVIDENCE_DIR/latest-install.log" 2>&1; then
   LATEST_INSTALL_FAILED=0
 else
