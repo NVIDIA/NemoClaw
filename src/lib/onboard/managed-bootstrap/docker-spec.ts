@@ -168,6 +168,8 @@ const NULLABLE_HOST_CONFIG_ARRAY_KEYS = [
   "VolumesFrom",
 ] as const;
 
+const DOCKER_DEFAULT_TMPFS_OPTIONS = new Set(["noexec", "nosuid", "nodev"]);
+
 // Docker derives ConsoleSize, MaskedPaths, and ReadonlyPaths when it creates a
 // container. They have no corresponding create flags, but the adapter inspects
 // the stopped replacement and compares its complete normalized spec before it
@@ -301,6 +303,45 @@ function normalizedConfig(config: Record<string, unknown>): Record<string, unkno
   return normalized;
 }
 
+function normalizedStructuredMounts(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return entry;
+    const mount = { ...(entry as Record<string, unknown>) };
+    if (mount.Type !== "tmpfs") return mount;
+    if (
+      typeof mount.TmpfsOptions !== "object" ||
+      mount.TmpfsOptions === null ||
+      Array.isArray(mount.TmpfsOptions)
+    ) {
+      return mount;
+    }
+    const tmpfsOptions = { ...(mount.TmpfsOptions as Record<string, unknown>) };
+    const options = tmpfsOptions.Options;
+    if (
+      options === undefined ||
+      options === null ||
+      (Array.isArray(options) && options.length === 0) ||
+      (Array.isArray(options) &&
+        options.every(
+          (parts) =>
+            Array.isArray(parts) &&
+            parts.length === 1 &&
+            typeof parts[0] === "string" &&
+            DOCKER_DEFAULT_TMPFS_OPTIONS.has(parts[0]),
+        ))
+    ) {
+      // Docker enforces these tmpfs security options by default, but Engine
+      // inspect inconsistently reports an explicitly requested default after
+      // recreation. Bind the effective size/mode/read-only state while
+      // treating an explicit Docker default and its omission as equivalent.
+      delete tmpfsOptions.Options;
+    }
+    mount.TmpfsOptions = tmpfsOptions;
+    return mount;
+  });
+}
+
 function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
@@ -319,6 +360,7 @@ function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<strin
   for (const key of ["CapAdd", "CapDrop"] as const) {
     if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
   }
+  if ("Mounts" in normalized) normalized.Mounts = normalizedStructuredMounts(normalized.Mounts);
   return normalized;
 }
 

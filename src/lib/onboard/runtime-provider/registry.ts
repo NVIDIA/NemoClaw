@@ -18,6 +18,11 @@ import {
   type RuntimeProviderSnapshotRestoreReceipt,
   type RuntimeProviderSnapshotRestoreSource,
 } from "./contract";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceOperationInput,
+  HostLocalInferenceService,
+} from "./host-local-inference";
 
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
 const RESERVED_PROVIDER_IDS = new Set(["constructor", "prototype"]);
@@ -27,6 +32,7 @@ const BUNDLE_SURFACES = [
   "preflightDoctor",
   "gateway",
   "workload",
+  "hostLocalInference",
   "lifecycle",
   "mutationAuthority",
   "bootstrap",
@@ -69,8 +75,15 @@ const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
 const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperation>([
   "host-doctor",
   "gateway-inspection",
+  "host-local-inference",
   "sandbox-lifecycle",
   "workload-cleanup",
+]);
+const HOST_LOCAL_INFERENCE_SERVICES = new Set<HostLocalInferenceService>([
+  "ollama",
+  "nim",
+  "vllm",
+  "llama-cpp",
 ]);
 
 export class RuntimeProviderRegistrationError extends Error {
@@ -343,6 +356,26 @@ function validateWorkloadSurface(providerId: string, surface: Record<string, unk
   validateWorkloadProfile(providerId, surface);
 }
 
+function validateHostLocalInferenceSurface(
+  providerId: string,
+  surface: Record<string, unknown>,
+): void {
+  if (surface.supported !== true) return;
+  if (
+    !Array.isArray(surface.services) ||
+    surface.services.length === 0 ||
+    surface.services.some(
+      (service) => !HOST_LOCAL_INFERENCE_SERVICES.has(String(service) as HostLocalInferenceService),
+    ) ||
+    new Set(surface.services).size !== surface.services.length
+  ) {
+    throw new RuntimeProviderRegistrationError(
+      `hostLocalInference for '${providerId}' must list unique valid services`,
+    );
+  }
+  requireFunction(surface, "createOperation", "hostLocalInference");
+}
+
 function validateLifecycleSurface(providerId: string, surface: Record<string, unknown>): void {
   if (surface.supported === true) {
     if (!CHANNEL_STOP_TRANSPORTS.has(String(surface.channelStopTransport))) {
@@ -468,6 +501,7 @@ function validateSupportedSurfaceSchemas(
   validatePreflightDoctorSurface(surfaces.preflightDoctor);
   validateGatewaySurface(providerId, surfaces.gateway);
   validateWorkloadSurface(providerId, surfaces.workload);
+  validateHostLocalInferenceSurface(providerId, surfaces.hostLocalInference);
   validateLifecycleSurface(providerId, surfaces.lifecycle);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
   validateBootstrapSurface(surfaces.bootstrap);
@@ -482,6 +516,7 @@ function validateSupportedSurfaceSchemas(
     );
   }
   if (
+    surfaces.capabilities.hostLocalInference !== (surfaces.hostLocalInference.supported === true) ||
     surfaces.capabilities.directLifecycle !== (surfaces.lifecycle.supported === true) ||
     surfaces.capabilities.workloadImageCleanup !== (surfaces.cleanup.supported === true) ||
     surfaces.capabilities.legacyGatewayContainerInspection !==
@@ -654,6 +689,43 @@ export function runtimeProviderContainerEngineIdentity(
     (candidate) => candidate.operation === operation,
   );
   return identity ? { engineId: identity.engineId, displayName: identity.displayName } : null;
+}
+
+export function requireRuntimeProviderHostLocalInferenceOperation(
+  bundle: RuntimeProviderBundle,
+  service: HostLocalInferenceService,
+  input: HostLocalInferenceOperationInput,
+): HostLocalInferenceOperation {
+  const surface = bundle.hostLocalInference;
+  if (
+    bundle.capabilities.hostLocalInference !== true ||
+    surface.supported !== true ||
+    !surface.services.includes(service)
+  ) {
+    const detail =
+      surface.supported === true ? `service '${service}' is not enabled` : surface.reason;
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' does not provide the host-local-inference capability required for ${service}: ${detail}`,
+    );
+  }
+  const expectedEngine = runtimeProviderContainerEngineIdentity(bundle, "host-local-inference");
+  if (expectedEngine === null) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' does not provide an operation-scoped host-local-inference engine for ${service}.`,
+    );
+  }
+  const operation = surface.createOperation(input);
+  if (
+    operation.providerId !== bundle.identity.id ||
+    operation.engine.operation !== "host-local-inference" ||
+    operation.engine.engineId !== expectedEngine.engineId ||
+    operation.engine.displayName !== expectedEngine.displayName
+  ) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' returned mismatched host-local-inference authority for ${service}.`,
+    );
+  }
+  return operation;
 }
 
 function boundedString(value: unknown, maxBytes: number): value is string {
