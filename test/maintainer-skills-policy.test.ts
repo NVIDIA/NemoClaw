@@ -629,6 +629,61 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(triage).toContain("present an updated proposal for acceptance");
   });
 
+  it("requires PR guidance to collect complete review evidence", () => {
+    const followUp = read(".agents/skills/_shared/pr-follow-up.md");
+
+    expect(followUp).toContain("Bind every read to `NVIDIA/NemoClaw` and one PR number");
+    expect(followUp).toContain("Initial and final PR `headRefOid`");
+    expect(followUp).toContain("Local candidate `HEAD`");
+    expect(followUp).toContain("Page counts and terminal pagination status");
+    expect(followUp).toContain("Every required check and the commit it evaluates");
+    expect(followUp).toContain("Report the collection as `blocked`");
+    expect(followUp).toContain(
+      "remove that exact artifact after classification, and verify its absence",
+    );
+  });
+
+  it("requires PR guidance to group findings and model sensitive failures", () => {
+    const followUp = read(".agents/skills/_shared/pr-follow-up.md");
+    const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
+
+    expect(followUp).toContain("Collect One Complete Review Cycle");
+    expect(followUp).toContain("Group findings by root cause");
+    expect(followUp).toContain("Do not create a separate commit or push for each finding");
+    expect(followUp).toContain("Sensitive-Workflow State Matrix");
+    expect(followUp).toContain("location, access, lifetime, and removal");
+
+    expect(followUp).toContain("Bind every read to `NVIDIA/NemoClaw`");
+    expect(followUp).toContain("Record each page count and terminal pagination signal");
+    expect(followUp).toContain("including pending, cancelled, and skipped results");
+    expect(followUp).toContain("retained evidence: none");
+    expect(followUp).toContain("Assume a possible write and re-read external state");
+    expect(followUp).toContain("stop without further edits, commits, or pushes");
+    expect(createPr).toContain("Apply one coherent change set");
+  });
+
+  it("requires PR guidance to review the final commit before push", () => {
+    const followUp = read(".agents/skills/_shared/pr-follow-up.md");
+    const writingReview = read(".agents/skills/_shared/documentation-writing-review.md");
+    const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
+
+    expect(createPr).toContain(
+      "Push after the independent documentation writer review covers the final `HEAD`",
+    );
+    expect(createPr).toContain("rerun the review against the new `HEAD`");
+    expect(createPr).toContain("receipt identifies that commit");
+
+    expect(followUp).toContain("Run a final complete, head-stable collection");
+
+    expect(followUp).toContain("If the collection contains a new actionable finding, do not push");
+    expect(followUp).toContain("Deferral does not authorize a push with an unresolved blocking");
+    expect(createPr).toContain("The user may defer only a non-blocking suggestion");
+    expect(followUp).toContain("Push once when the receipt identifies the reviewed `HEAD`");
+    expect(writingReview).toContain("Do not stop after the first blocking finding");
+    expect(writingReview).toContain("Report all evidence-backed findings in one review result");
+    expect(writingReview).toContain("A blocker does not end the review pass");
+  });
+
   it("resolves security-review issue inputs to one verified PR", () => {
     const securityReview = read(".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md");
 
