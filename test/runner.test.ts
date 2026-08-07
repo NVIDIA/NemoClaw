@@ -12,14 +12,14 @@ import { redact, runCapture } from "../src/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "522c963f9515c7325b978e89022de76227ac245eefe1371292af1424434e2067",
-  cliLinuxArm64: "3cf353e7994d5835a233fe0641f9a860779190b054d0f90a04c897be782734b8",
-  cliLinuxX64: "078fa086f506832c3d47d992e6109f26074bdd55916ce268e47c3971423459eb",
-  gatewayDarwinArm64: "5de3e08ad1bdb0cdd01373999f537edca3d8aca22ae1c29bc9926969fe401e45",
-  gatewayLinuxArm64: "09f2823f6e9c5f70f4482b200206eac455d789618da4ebe4acff042d794e7162",
-  gatewayLinuxX64: "718cc9f942f88565cacb13c39717b128d6acc8d336212d42d26243f36ab19ece",
-  sandboxLinuxArm64: "2c52b2971aecf125e41ed160d8d2f2addf04031906ca88f120ae3d436dd6b8f7",
-  sandboxLinuxX64: "94306f057d862cd5c34a0daa7692491733bc5ca528a7b92f9f62f717fb70a9be",
+  cliDarwinArm64: "e31cac5360e2adf3c971d5742a516626c58acf2fd3db4dcb0e45804def3dc844",
+  cliLinuxArm64: "d00cbf0d8779c01ddea6453ead2ad4db3d89a1f14eb6f0785f7919f42813a279",
+  cliLinuxX64: "35725a358e42ef7f0f0393035536da317706b0febcc459a2011e0555f6c2b71c",
+  gatewayDarwinArm64: "4340619292ecb565f90eb2250db504baa37dd410361b366b42e174d34512cb6c",
+  gatewayLinuxArm64: "3a5d3092ae34356beb0ff2a920f9a87af4233c7a1086a53cd9429d48358f5c09",
+  gatewayLinuxX64: "640d204dc3c6bc28bffa1f3d870897fc23bbc5ec0151a6c642083e958455cb49",
+  sandboxLinuxArm64: "c758e7dc2b8c904baa01e2ccce0f08daf96ede0c648478b23346d8c4dd16f432",
+  sandboxLinuxX64: "84caed3dec4390e0938e89b38b1256d31e8970b4bfd85437bf92ed79f5b1ff05",
 };
 
 type SpawnCallOptions = {
@@ -352,7 +352,7 @@ describe("validateName", () => {
     const { validateName } = require(runnerPath);
     expect(() => validateName("test; whoami")).toThrow(/Invalid/);
     expect(() => validateName("test`id`")).toThrow(/Invalid/);
-    expect(() => validateName("test$(cat /etc/passwd)")).toThrow(/Invalid/);
+    expect(() => validateName("a$(id)")).toThrow(/Invalid/);
     expect(() => validateName("../etc/passwd")).toThrow(/Invalid/);
   });
 
@@ -365,9 +365,12 @@ describe("validateName", () => {
 
   it("rejects excessively long valid-looking names before spawning OpenShell", () => {
     const { validateName } = require(runnerPath);
-    expect(validateName("a".repeat(63))).toBe("a".repeat(63));
+    expect(validateName("a".repeat(19))).toBe("a".repeat(19));
+    expect(() => validateName("a".repeat(20), "sandbox name")).toThrow(
+      /sandbox name too long \(max 19 chars\)/,
+    );
     expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
-      /sandbox name too long \(max 63 chars\)/,
+      /sandbox name too long \(max 19 chars\)/,
     );
   });
 
@@ -397,7 +400,7 @@ describe("validateName", () => {
       message = (error as Error).message;
     }
 
-    expect(message).toContain("sandbox name too long (max 63 chars)");
+    expect(message).toContain("sandbox name too long (max 19 chars)");
     expect(message).not.toContain(escapeByte);
     expect(message).toContain('..."');
   });
@@ -796,7 +799,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.85"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.99"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -898,7 +901,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.85"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.99"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;

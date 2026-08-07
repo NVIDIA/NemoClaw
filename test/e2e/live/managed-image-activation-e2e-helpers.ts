@@ -35,9 +35,9 @@ const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
-  openclaw: "managed-activation-openclaw",
-  hermes: "managed-activation-hermes",
-  "langchain-deepagents-code": "managed-activation-dcode",
+  openclaw: "mi-act-openclaw",
+  hermes: "mi-act-hermes",
+  "langchain-deepagents-code": "mi-act-dcode",
 };
 type RuntimeFixtures = {
   readonly artifacts: ArtifactSink;

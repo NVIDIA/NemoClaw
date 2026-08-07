@@ -15,7 +15,7 @@ spec:
     sourceRevision: eb1d2f5700393892f227ac9fd56f485fc6718bce
   runtimeProvider: docker
   sandbox:
-    name: nemoclaw-llama-cpp-openclaw
+    name: nmc-lcpp-oc
     gpuAccess: disabled
   route:
     provider: llama-cpp-local

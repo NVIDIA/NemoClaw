@@ -261,7 +261,7 @@ const NETWORK_POLICY_SCENARIO_MATRIX = {
     {
       scenario: "live-probes",
       selector: "^network-policy:.+probes$",
-      sandbox: "e2e-net-policy-live-probes",
+      sandbox: "e2e-net-policy",
     },
   ],
 } as const;
@@ -2020,8 +2020,8 @@ function validateRebuildHermesJob(
     if (jobEnv.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E !== "1") {
       errors.push(`${jobName} job must enable NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1`);
     }
-    if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes-base") {
-      errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes-base`);
+    if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-base") {
+      errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-base`);
     }
   } else if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes") {
     errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes`);
@@ -2832,8 +2832,8 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
   if (jobEnv.NEMOCLAW_FRESH !== "1") {
     errors.push("spark-install job must set NEMOCLAW_FRESH=1");
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-spark-install-ci") {
-    errors.push("spark-install job must use the stable e2e-spark-install-ci sandbox name");
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-spark-install") {
+    errors.push("spark-install job must use the stable e2e-spark-install sandbox name");
   }
   if (jobEnv.NEMOCLAW_PROVIDER !== "cloud") {
     errors.push("spark-install job must use the cloud provider");
@@ -3320,8 +3320,8 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("channels-add-remove job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-channels-add-remove") {
-    errors.push("channels-add-remove job must set NEMOCLAW_SANDBOX_NAME=e2e-channels-add-remove");
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-ch-add-remove") {
+    errors.push("channels-add-remove job must set NEMOCLAW_SANDBOX_NAME=e2e-ch-add-remove");
   }
   if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
     errors.push("channels-add-remove job must set NEMOCLAW_NON_INTERACTIVE=1");
@@ -3564,8 +3564,15 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-stop-start strategy.fail-fast must be false");
   }
   const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
-    errors.push("channels-stop-start matrix.agent must be openclaw,hermes");
+  if (
+    !isDeepStrictEqual(matrix, {
+      include: [
+        { agent: "openclaw", sandbox_name: "e2e-oc-ch-cycle" },
+        { agent: "hermes", sandbox_name: "e2e-hm-ch-cycle" },
+      ],
+    })
+  ) {
+    errors.push("channels-stop-start matrix must bind canonical per-agent sandbox names");
   }
 
   const jobEnv = asRecord(job.env);
@@ -3583,9 +3590,9 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("channels-stop-start job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-channels-stop-start-${{ matrix.agent }}") {
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "${{ matrix.sandbox_name }}") {
     errors.push(
-      "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
+      "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
     );
   }
   if (jobEnv.NEMOCLAW_AGENT !== "${{ matrix.agent }}") {
@@ -3753,7 +3760,7 @@ function validateDashboardRemoteBindJob(errors: string[], jobs: WorkflowRecord):
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/dashboard-remote-bind",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
-    NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind",
+    NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-bind",
   };
   for (const [key, value] of Object.entries(expectedEnv)) {
     if (jobEnv[key] !== value) {
@@ -3814,8 +3821,17 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     errors.push("bedrock-runtime-compatible-anthropic strategy.fail-fast must be false");
   }
   const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
-    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw,hermes");
+  if (
+    !isDeepStrictEqual(matrix, {
+      include: [
+        { agent: "openclaw", sandbox_name: "e2e-oc-bedrock" },
+        { agent: "hermes", sandbox_name: "e2e-hm-bedrock" },
+      ],
+    })
+  ) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic matrix must bind canonical per-agent sandbox names",
+    );
   }
 
   const jobEnv = asRecord(job.env);
@@ -3859,9 +3875,9 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
       "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
     );
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-bedrock-${{ matrix.agent }}") {
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "${{ matrix.sandbox_name }}") {
     errors.push(
-      "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent",
+      "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
     );
   }
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {

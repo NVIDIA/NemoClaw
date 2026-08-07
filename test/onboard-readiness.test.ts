@@ -1,12 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const policySideEffects = vi.hoisted(() => ({
+  run: vi.fn(),
+  runCapture: vi.fn(),
+}));
+
+vi.mock("../src/lib/runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/runner")>()),
+  run: policySideEffects.run,
+  runCapture: policySideEffects.runCapture,
+}));
+
 import {
+  applyPermissivePolicy,
   applyPreset,
+  applyPresetContent,
+  applyPresets,
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
+  removePreset,
 } from "../src/lib/policy";
 
 type OnboardReadinessInternals = {
@@ -33,6 +49,11 @@ if (!isOnboardReadinessInternals(onboardReadinessInternals)) {
   throw new Error("Expected onboard readiness internals to be available");
 }
 const { hasStaleGateway, isSandboxReady, parseSandboxStatus } = onboardReadinessInternals;
+
+beforeEach(() => {
+  policySideEffects.run.mockReset();
+  policySideEffects.runCapture.mockReset();
+});
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -158,6 +179,25 @@ describe("WSL sandbox name handling", () => {
     expect(() => applyPreset("My-Assistant", "npm")).toThrow(/Invalid or truncated sandbox name/);
     // Name starting with hyphen
     expect(() => applyPreset("-broken", "npm")).toThrow(/Invalid or truncated sandbox name/);
+  });
+
+  it("accepts an exact 19-character sandbox name before a no-op policy batch (#8497)", () => {
+    expect(applyPresets("a".repeat(19), [])).toBe(true);
+    expect(policySideEffects.runCapture).not.toHaveBeenCalled();
+    expect(policySideEffects.run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["removePreset", (name: string) => removePreset(name, "npm")],
+    ["applyPresetContent", (name: string) => applyPresetContent(name, "npm", "")],
+    ["applyPresets", (name: string) => applyPresets(name, ["npm"])],
+    ["applyPermissivePolicy", (name: string) => applyPermissivePolicy(name)],
+  ])("%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)", (_entrypoint, invoke) => {
+    for (const name of ["a".repeat(20), "legacy--box"]) {
+      expect(() => invoke(name)).toThrow(/Allowed format: 1-19 characters/);
+    }
+    expect(policySideEffects.runCapture).not.toHaveBeenCalled();
+    expect(policySideEffects.run).not.toHaveBeenCalled();
   });
 
   it("readiness check uses exact match preventing truncated name false-positive", () => {

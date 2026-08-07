@@ -338,7 +338,7 @@ NEMOCLAW_DASHBOARD_BIND=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 Use `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` again on later `$$nemoclaw <sandbox> connect` calls.
 If the sandbox was originally created without remote bind, recreate it with the same onboard command plus `--recreate-sandbox` before connecting remotely.
 
-Docker-driver gateways on OpenShell 0.0.85 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
+NemoClaw rejects `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` for Docker-driver gateways while gateway JWT auth is active.
 
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and only when other hosts on the network should be able to reach the gateway.
 
@@ -346,7 +346,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.85 directly supports Linux hosts with glibc 2.28 or newer.
+OpenShell 0.0.99 directly supports Linux hosts with glibc 2.39 or newer.
 On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
 Leave it unset on supported hosts.
 
@@ -806,7 +806,9 @@ $$nemoclaw <name> rebuild --yes
 
 ### Invalid sandbox name
 
-Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Sandbox names must contain 1 to 19 characters.
+They must be lowercase, start with a letter, contain only letters, numbers, and single internal hyphens, and end with a letter or number.
+Consecutive hyphens (`--`) are not allowed.
 The CLI rejects names that do not match these rules.
 It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
@@ -1688,7 +1690,7 @@ The reminder is shown once per top-level interactive session, and only when all 
 Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
 The reminder names the sandbox when NemoClaw receives a valid sandbox name during sandbox creation.
 If no valid name is available, it shows `<name>`; run `$$nemoclaw list` to see your sandbox names.
-If the reported sandbox name contains characters that are not valid in a sandbox name (uppercase letters, underscores, control characters, and similar) or exceeds 63 characters, the reminder shows the `<name>` placeholder for safety rather than echoing the untrusted value.
+If the reported sandbox name contains characters that are not valid in a sandbox name (uppercase letters, underscores, control characters, and similar) or exceeds 19 characters, the reminder shows the `<name>` placeholder for safety rather than echoing the untrusted value.
 The reminder is intentionally proactive: the denial itself is surfaced by the OpenShell proxy, so the `curl`/`git` error text is left unchanged and the reminder points you to the logs instead.
 
 To see which rule denied the request, read the merged logs from the host:

@@ -41,12 +41,10 @@ import { stripAnsi } from "./json-envelope.ts";
 // one bash script, not a new shared e2e framework.
 
 const OPENCLAW_BALANCED_SANDBOX =
-  process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_BALANCED_SANDBOX ??
-  "e2e-common-egress-openclaw-balanced";
+  process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_BALANCED_SANDBOX ?? "e2e-oc-bal";
 const OPENCLAW_OPEN_SANDBOX =
-  process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_OPEN_SANDBOX ?? "e2e-common-egress-openclaw-open";
-const HERMES_SANDBOX =
-  process.env.NEMOCLAW_COMMON_EGRESS_HERMES_SANDBOX ?? "e2e-common-egress-hermes-open";
+  process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_OPEN_SANDBOX ?? "e2e-oc-open";
+const HERMES_SANDBOX = process.env.NEMOCLAW_COMMON_EGRESS_HERMES_SANDBOX ?? "e2e-hm-open";
 const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const TEST_TIMEOUT_MS = 40 * 60_000;

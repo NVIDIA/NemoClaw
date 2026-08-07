@@ -73,12 +73,12 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   const expectedMatrix = [
     {
       agent: "openclaw",
-      sandbox_name: "e2e-openclaw-security-posture",
+      sandbox_name: "e2e-oc-security",
       test_file: "test/e2e/live/full-e2e.test.ts",
     },
     {
       agent: "hermes",
-      sandbox_name: "e2e-hermes-security-posture",
+      sandbox_name: "e2e-hm-security",
       test_file: "test/e2e/live/hermes-e2e.test.ts",
     },
   ];
