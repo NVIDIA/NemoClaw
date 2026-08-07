@@ -175,12 +175,12 @@ function extractRunBlock(file: string, startMarker: string, endMarker: string): 
   return source
     .slice(runIndex, end)
     .trim()
-    .replace(/^RUN\s+--mount=[^\n]+\\\n\s*/, "")
-    .replace(/^RUN\s+/, "")
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")
-    .replace(/\\\n/g, " ")
+    .replace(/\\\n\s*/g, " ")
+    .replace(/^RUN\s+/, "")
+    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
     .replace(/\\\s*$/, "");
 }
 
