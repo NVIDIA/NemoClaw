@@ -91,7 +91,9 @@ RUN go test ./... \
       -ldflags='-s -w -buildid=' \
       -o /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard . \
     && mkdir -p /opt/llama.cpp/licenses/go \
-    && cp /usr/share/doc/golang-1.22-go/copyright /opt/llama.cpp/licenses/go/copyright \
+    && set -- /usr/share/doc/golang-[0-9]*-go/copyright \
+    && test "$#" -eq 1 \
+    && cp "$1" /opt/llama.cpp/licenses/go/copyright \
     && chmod 0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard \
     && chmod 0555 /opt/llama.cpp/licenses/go \
     && chmod 0444 /opt/llama.cpp/licenses/go/copyright

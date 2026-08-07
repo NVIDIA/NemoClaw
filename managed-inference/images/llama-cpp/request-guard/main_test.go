@@ -178,25 +178,55 @@ func TestParseConfigRejectsABypassableLlamaServerCommand(t *testing.T) {
 		"--no-ui", "--no-slots", "--no-mmproj", "--no-agent",
 	}
 	for _, mutation := range []struct {
-		from string
-		to   string
+		name        string
+		option      string
+		replacement string
+		marker      bool
 	}{
-		{from: llamaServerPath, to: "/bin/sh"},
-		{from: "127.0.0.1", to: "0.0.0.0"},
-		{from: llamaServerAPIKeyPath, to: "/tmp/key"},
-		{from: "4096", to: "4097"},
-		{from: "--no-ui", to: "--metrics"},
+		{name: "executable", replacement: "/bin/sh"},
+		{name: "host", option: "--host", replacement: "0.0.0.0"},
+		{name: "api key", option: "--api-key-file", replacement: "/tmp/key"},
+		{name: "token bound", option: "--n-predict", replacement: "4097"},
+		{name: "disabled route", option: "--no-ui", replacement: "--metrics", marker: true},
 	} {
-		candidate := append([]string(nil), base...)
-		for index, value := range candidate {
-			if value == mutation.from {
-				candidate[index] = mutation.to
-				break
+		t.Run(mutation.name, func(t *testing.T) {
+			candidate := append([]string(nil), base...)
+			separator := -1
+			for index, value := range candidate {
+				if value == "--" {
+					separator = index
+					break
+				}
 			}
-		}
-		if _, _, err := parseConfig(candidate); err == nil {
-			t.Fatalf("bypass mutation %q to %q was accepted", mutation.from, mutation.to)
-		}
+			if separator < 0 || separator+1 >= len(candidate) {
+				t.Fatal("base command has no child command")
+			}
+			if mutation.option == "" {
+				candidate[separator+1] = mutation.replacement
+			} else {
+				target := -1
+				for index := separator + 2; index < len(candidate); index++ {
+					if candidate[index] == mutation.option {
+						target = index
+						break
+					}
+				}
+				if target < 0 {
+					t.Fatalf("child option %s is absent", mutation.option)
+				}
+				if mutation.marker {
+					candidate[target] = mutation.replacement
+				} else {
+					if target+1 >= len(candidate) {
+						t.Fatalf("child option %s has no value", mutation.option)
+					}
+					candidate[target+1] = mutation.replacement
+				}
+			}
+			if _, _, err := parseConfig(candidate); err == nil {
+				t.Fatalf("child %s bypass was accepted", mutation.name)
+			}
+		})
 	}
 }
 
@@ -457,6 +487,14 @@ func TestGuardRejectsEncodedOrMislabeledChatBodiesBeforeUpstream(t *testing.T) {
 }
 
 func TestGuardStreamsAllowedResponses(t *testing.T) {
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
 	guard, _ := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		flusher, ok := writer.(http.Flusher)
 		if !ok {
@@ -466,22 +504,39 @@ func TestGuardStreamsAllowedResponses(t *testing.T) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(writer, "data: first\n\n")
 		flusher.Flush()
+		<-release
 		_, _ = io.WriteString(writer, "data: second\n\n")
 	}))
-	response := request(
-		t,
+	req, err := http.NewRequest(
 		http.MethodPost,
 		guard.URL+"/v1/chat/completions",
-		"application/json",
 		strings.NewReader(`{"model":"test","stream":true,"max_tokens":32}`),
 	)
-	body, err := io.ReadAll(response.Body)
-	response.Body.Close()
 	if err != nil {
-		t.Fatalf("read stream: %v", err)
+		t.Fatalf("create stream request: %v", err)
 	}
-	if string(body) != "data: first\n\ndata: second\n\n" {
-		t.Fatalf("stream body = %q", string(body))
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("receive streamed response headers: %v", err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	first := make([]byte, len("data: first\n\n"))
+	if _, err := io.ReadFull(reader, first); err != nil {
+		t.Fatalf("read first event before upstream completes: %v", err)
+	}
+	if string(first) != "data: first\n\n" {
+		t.Fatalf("first event = %q", string(first))
+	}
+	close(release)
+	rest, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read remaining stream: %v", err)
+	}
+	if string(rest) != "data: second\n\n" {
+		t.Fatalf("remaining stream = %q", string(rest))
 	}
 }
 
@@ -543,6 +598,21 @@ func TestGuardBlocksUnsupportedServerSurfaces(t *testing.T) {
 		response := request(t, http.MethodPost, guard.URL+target, "application/json", bytes.NewReader([]byte(`{}`)))
 		if response.StatusCode != http.StatusNotFound {
 			t.Fatalf("target %s status = %d", target, response.StatusCode)
+		}
+		response.Body.Close()
+	}
+	for _, probe := range []struct {
+		method string
+		target string
+	}{
+		{method: http.MethodGet, target: "/v1/chat/completions"},
+		{method: http.MethodPost, target: "/health"},
+		{method: http.MethodPost, target: "/v1/models"},
+		{method: http.MethodDelete, target: "/props"},
+	} {
+		response := request(t, probe.method, guard.URL+probe.target, "", nil)
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s %s status = %d", probe.method, probe.target, response.StatusCode)
 		}
 		response.Body.Close()
 	}

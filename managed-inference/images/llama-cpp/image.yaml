@@ -138,8 +138,8 @@ spec:
     entrypoint: /usr/local/bin/llama-server
     requiredPaths:
       - /opt/llama.cpp/lib/libggml-cuda.so
-      - /usr/local/bin/nemoclaw-llama-cpp-request-guard
       - /usr/local/bin/llama-server
+      - /usr/local/bin/nemoclaw-llama-cpp-request-guard
       - /usr/local/share/licenses/go/copyright
       - /usr/local/share/licenses/llama.cpp/AUTHORS
       - /usr/local/share/licenses/llama.cpp/LICENSE
