@@ -444,6 +444,7 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_PRESETS: "previous-preset",
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     };
@@ -463,6 +464,7 @@ describe("onboard command options", () => {
           "NEMOCLAW_MODEL",
           "NEMOCLAW_OLLAMA_NO_AUTOSTART",
           "NEMOCLAW_POLICY_MODE",
+          "NEMOCLAW_POLICY_PRESETS",
           "NEMOCLAW_POLICY_TIER",
           "NEMOCLAW_TOOL_DISCLOSURE",
         ]) {
@@ -476,7 +478,8 @@ describe("onboard command options", () => {
       NEMOCLAW_PROVIDER: "custom",
       NEMOCLAW_MODEL: "example/model-1",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
-      NEMOCLAW_POLICY_MODE: "suggested",
+      NEMOCLAW_POLICY_MODE: "custom",
+      NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
       NEMOCLAW_POLICY_TIER: "personal",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });
@@ -486,6 +489,7 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_PRESETS: "previous-preset",
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     });
