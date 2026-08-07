@@ -560,13 +560,16 @@ describe("portable demo sandbox lifecycle", () => {
     const binPath = createManagedOllamaBinary(stateDir);
     let ollamaStarted = false;
     const captureHost = vi.fn((command: string) => {
-      if (command === "pgrep") return { status: 1 };
-      if (command === "curl") {
-        return ollamaStarted
-          ? { status: 0, stdout: JSON.stringify({ models: [] }) }
-          : { status: 7, stderr: "connection refused" };
+      switch (command) {
+        case "pgrep":
+          return { status: 1 };
+        case "curl":
+          return ollamaStarted
+            ? { status: 0, stdout: JSON.stringify({ models: [] }) }
+            : { status: 7, stderr: "connection refused" };
+        default:
+          throw new Error(`Unexpected host command: ${command}`);
       }
-      throw new Error(`Unexpected host command: ${command}`);
     });
     const launchHost = vi.fn(() => {
       ollamaStarted = true;
