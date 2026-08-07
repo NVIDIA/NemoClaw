@@ -21,6 +21,7 @@ export const MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES = 320 * 1024;
 const MAX_CORPORATE_CA_ENCODED_BYTES = 4 * Math.ceil((128 * 1024) / 3);
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const STANDARD_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const MCP_SHADOW_DIAGNOSTICS_ENV = "NEMOCLAW_MCP_SHADOW_DIAGNOSTICS";
 
 export const MANAGED_STARTUP_APPLICATION_RUNTIME_ENV_KEYS = Object.freeze(
   MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS.openclaw
@@ -37,6 +38,10 @@ export function selectManagedStartupApplicationRuntimeEnvironment(
   const selected: Record<string, string> = {};
   for (const name of MANAGED_STARTUP_APPLICATION_RUNTIME_ENV_KEYS) {
     const value = environment[name];
+    if (name === MCP_SHADOW_DIAGNOSTICS_ENV) {
+      if (value?.trim() === "1") selected[name] = "1";
+      continue;
+    }
     if (value !== undefined) selected[name] = value;
   }
   return Object.freeze(selected);

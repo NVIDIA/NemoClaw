@@ -3014,7 +3014,6 @@ const { setupNim } = require(${onboardPath});
         validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
       }),
     );
-
     try {
       const { result, lines } = await captureConsoleOutput(() =>
         validateSelectedRemoteModel({
@@ -4308,6 +4307,7 @@ const { setupNim } = require(${onboardPath});
           exitCode: 0,
           timedOut: false,
         }),
+        recordUserLocalOllamaOwnershipImpl: () => {},
         runShellImpl,
         waitForHttpImpl: () => true,
       }),

@@ -5,10 +5,14 @@
 
 ## v0.0.104
 
-NemoClaw v0.0.104 adds trusted private endpoint configuration and a selectable Personal network policy tier.
+NemoClaw v0.0.104 adds an experimental managed llama.cpp option for DGX Spark, trusted private endpoint configuration, and a selectable Personal network policy tier.
 It makes agent manifests authoritative for persistent state and strengthens gateway, rebuild, registry, and uninstall recovery.
 It also improves Hermes configuration safety, MCP diagnostics, credential isolation, and host installation guidance.
 
+- DGX Spark users can now opt into an experimental managed llama.cpp path backed by one repository-owned NVIDIA Nemotron recipe.
+  NemoClaw acquires and verifies the exact GGUF through the shared Hugging Face cache, publishes an authenticated loopback runtime, and uses owner, receipt, and journal state for onboarding, status, doctor, recovery, destroy, and uninstall.
+  This path remains experimental and does not establish a supported agent, model, and runtime tuple until its protected qualification and activation gates pass.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Understand Host Files and State](/user-guide/openclaw/reference/host-files-and-state).
 - Custom inference endpoints, MCP servers, and custom policy presets can now opt in to explicitly trusted private hosts.
   NemoClaw keeps exact host allowlists, pins generated `allowed_ips`, preserves those pins across restart and rebuild, and applies configured certificate authority trust without widening the endpoint policy.
   For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Create Custom Policy Presets](/user-guide/openclaw/network-policy/configure-policies/create-custom-policy-presets), and [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust).
