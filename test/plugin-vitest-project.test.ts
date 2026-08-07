@@ -58,6 +58,10 @@ describe("plugin Vitest project contract", () => {
     expect(pluginVitestProjectOptions.test.include).toEqual(["nemoclaw/src/**/*.test.ts"]);
     expect(policyAliases).toEqual([
       {
+        find: /^.*banner-boundary\.cjs$/,
+        replacement: path.join(repositoryRoot, "nemoclaw/src/shared/banner-boundary.cts"),
+      },
+      {
         find: /^.*openshell-policy-boundary\.cjs$/,
         replacement: path.join(repositoryRoot, "nemoclaw/src/shared/openshell-policy-boundary.cts"),
       },
