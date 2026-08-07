@@ -480,6 +480,27 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("probe-only mode exits before reporting success when inference.local returns no trusted result (#8502)", async () => {
+    const harness = createConnectHarness({
+      registryEntry: {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      },
+      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceProbeResponses: ["route probe unavailable"],
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Probe complete");
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "inference route is not known healthy",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("probe-only mode reports an ordinary running gateway for an already-running completion (#7919)", async () => {
     const harness = createConnectHarness({
       processCheck: {

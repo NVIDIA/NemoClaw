@@ -1020,9 +1020,20 @@ Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `$$nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
 
-`connect` does not pull or serve a model itself, but it does inspect managed-vLLM install variables such as `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` if you exported them in the same shell.
+`connect` does not pull a model itself, but it does inspect managed-vLLM install variables such as `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` if you exported them in the same shell.
 An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the managed-vLLM variable, or fix the value, before retrying.
+
+<AgentOnly variant="openclaw">
+For a portable experimental-profile sandbox with the recorded `ollama-local` provider, `connect --probe-only` probes `http://127.0.0.1:11434/api/tags` before it decides whether to start Ollama.
+If the API is unhealthy and the ownership receipt is valid, it starts the fixed user-local Ollama executable with `serve`.
+It refuses to launch a duplicate when another `ollama` process exists but the API remains unhealthy.
+After a launch, it waits up to 30 seconds for valid `/api/tags` JSON with a `models` array.
+It then requires the existing sandbox `inference.local` route probe to return a trusted reachable result before it exits successfully.
+When route repair needs the local Ollama dependency check, it verifies or recovers the authenticated proxy before it retries `inference.local`.
+If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+The command does not take over a system service or an unrelated user-managed Ollama daemon.
+</AgentOnly>
 
 Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
 When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
@@ -1375,6 +1386,12 @@ Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when
 ```bash
 $$nemoclaw my-assistant recover
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+For a portable experimental-profile sandbox with the recorded `ollama-local` provider, `recover` also runs the ownership-bound Ollama and `inference.local` route reachability checks described for [`connect --probe-only`](#$$nemoclaw-name-connect).
 
 </AgentOnly>
 
