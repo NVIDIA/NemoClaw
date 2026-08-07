@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
+
 // Use a temp dir so tests don't touch real ~/.nemoclaw.
 // HOME must be set before loading registry (it reads HOME at require time),
 // so we use createRequire instead of a static import.
@@ -17,38 +19,6 @@ const require = createRequire(import.meta.url);
 const registry = require("../src/lib/state/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
-
-function makeMessagingPlan(
-  name: string,
-  channels: string[] = ["telegram"],
-  disabledChannels: string[] = [],
-) {
-  const disabled = new Set<string>(disabledChannels);
-  return {
-    schemaVersion: 1,
-    sandboxName: name,
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: channels.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: !disabled.has(channelId),
-      selected: true,
-      configured: true,
-      disabled: disabled.has(channelId),
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels,
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
 
 beforeEach(() => {
   if (fs.existsSync(regFile)) fs.unlinkSync(regFile);
@@ -827,7 +797,7 @@ describe("registry", () => {
   });
 
   it("stores messaging plan state at registration time", () => {
-    const basePlan = makeMessagingPlan("messaging", ["telegram"]);
+    const basePlan = makeMessagingPlan({ sandboxName: "messaging", channels: ["telegram"] });
     const plan = {
       ...basePlan,
       channels: [
@@ -922,7 +892,7 @@ describe("registry", () => {
   });
 
   it("drops legacy providerCredentialHashes when rewriting messaging rows (#3631)", () => {
-    const basePlan = makeMessagingPlan("messaging", ["telegram"]);
+    const basePlan = makeMessagingPlan({ sandboxName: "messaging", channels: ["telegram"] });
     const binding = {
       channelId: "telegram",
       credentialId: "telegramBotToken",
@@ -1053,7 +1023,10 @@ describe("registry", () => {
   it("setChannelDisabled toggles a channel on and off for a sandbox", () => {
     registry.registerSandbox({
       name: "s1",
-      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram", "discord"]) },
+      messaging: {
+        schemaVersion: 1,
+        plan: makeMessagingPlan({ sandboxName: "s1", channels: ["telegram", "discord"] }),
+      },
     });
     expect(registry.getDisabledChannels("s1")).toEqual([]);
 
@@ -1070,7 +1043,10 @@ describe("registry", () => {
   it("setChannelDisabled clears plan.disabledChannels when empty", () => {
     registry.registerSandbox({
       name: "s1",
-      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram"]) },
+      messaging: {
+        schemaVersion: 1,
+        plan: makeMessagingPlan({ sandboxName: "s1", channels: ["telegram"] }),
+      },
     });
     registry.setChannelDisabled("s1", "telegram", true);
     registry.setChannelDisabled("s1", "telegram", false);
@@ -1082,7 +1058,10 @@ describe("registry", () => {
   it("setChannelDisabled returns false when the channel is not configured in the plan", () => {
     registry.registerSandbox({
       name: "s1",
-      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram"]) },
+      messaging: {
+        schemaVersion: 1,
+        plan: makeMessagingPlan({ sandboxName: "s1", channels: ["telegram"] }),
+      },
     });
     expect(registry.setChannelDisabled("s1", "discord", true)).toBe(false);
     expect(registry.getDisabledChannels("s1")).toEqual([]);
@@ -1095,7 +1074,10 @@ describe("registry", () => {
   it("registerSandbox preserves disabledChannels when re-registering", () => {
     registry.registerSandbox({
       name: "s1",
-      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram"]) },
+      messaging: {
+        schemaVersion: 1,
+        plan: makeMessagingPlan({ sandboxName: "s1", channels: ["telegram"] }),
+      },
     });
     registry.setChannelDisabled("s1", "telegram", true);
     registry.registerSandbox({
