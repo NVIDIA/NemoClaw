@@ -4,9 +4,39 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { NAME_ALLOWED_FORMAT, getNameValidationGuidance } from "../name-validation";
 import { sleepSeconds } from "../core/wait";
+import {
+  diagnosticPreview,
+  getNameValidationGuidance,
+  NAME_ALLOWED_FORMAT,
+} from "../name-validation";
+
+const DEPLOY_INSTANCE_NAME_MAX_LENGTH = 63;
+const DEPLOY_INSTANCE_NAME_PATTERN = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+const DEPLOY_INSTANCE_NAME_ALLOWED_FORMAT =
+  "1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number";
+
+// Brev instance names are not OpenShell sandbox identities. Preserve their
+// established RFC-compatible 63-character boundary while sandbox names use
+// the stricter OpenShell 0.0.99 contract through the injected validator.
+export function validateDeployInstanceName(name: string): string {
+  if (!name || typeof name !== "string") {
+    throw new Error(
+      `instance name is required. Allowed format: ${DEPLOY_INSTANCE_NAME_ALLOWED_FORMAT}.`,
+    );
+  }
+  if (name.length > DEPLOY_INSTANCE_NAME_MAX_LENGTH) {
+    throw new Error(
+      `instance name too long (max ${DEPLOY_INSTANCE_NAME_MAX_LENGTH} chars): ${diagnosticPreview(name)}. Allowed format: ${DEPLOY_INSTANCE_NAME_ALLOWED_FORMAT}.`,
+    );
+  }
+  if (!DEPLOY_INSTANCE_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid instance name: ${diagnosticPreview(name)}. Allowed format: ${DEPLOY_INSTANCE_NAME_ALLOWED_FORMAT}.`,
+    );
+  }
+  return name;
+}
 
 type ExecLikeValue =
   | string
@@ -291,7 +321,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     );
   }
 
-  const name = validateName(instanceName, "instance name");
+  const name = validateDeployInstanceName(instanceName);
   const gpu = env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
   const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")
     .trim()

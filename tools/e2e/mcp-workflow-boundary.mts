@@ -23,15 +23,15 @@ const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge,') || contains(format(',{0},', inputs.targets), ',mcp-bridge,') || contains(format(',{0},', inputs.jobs), ',openshell-credential-generation-window,') || contains(format(',{0},', inputs.targets), ',openshell-credential-generation-window,') }}";
-const STABLE_RELEASE_SOURCE_SHA = "3dee5570a46076a57a3b056f35f35ebc0861ac85";
+const STABLE_RELEASE_SOURCE_SHA = "8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9";
+  "ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6";
 const STABLE_RELEASE_IDENTITY_TOKENS = [
-  'releaseTag: "v0.0.85"',
+  'releaseTag: "v0.0.99"',
   STABLE_RELEASE_SOURCE_SHA,
-  "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8",
-  "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f",
-  "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2",
+  "5c0dabb90152a3cfae9005731771da99f00a22403080c81952c7be8ba4b5728f",
+  "05bd6c982dd72b73364b91ab694487c026bc56d0cd869f4289b44cc392a5c2ba",
+  "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214",
 ] as const;
 const STABLE_RELEASE_PROVENANCE_TOKENS = [
   ...STABLE_RELEASE_IDENTITY_TOKENS,

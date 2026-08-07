@@ -4,7 +4,7 @@
 import { isObjectRecord } from "../core/json-types";
 import { isBlockedMcpUrlTargetHost, MCP_SERVER_URL_MAX_LENGTH } from "../security/mcp-url-target";
 import {
-  isOperatorTrustablePrivateIp,
+  canonicalizeTrustedPrivateEndpointPins,
   normalizeTrustedPrivateHost,
 } from "../security/trusted-private-endpoint";
 
@@ -157,26 +157,24 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
   let allowedIps: string[] | undefined;
   const rawAllowedIps = value.allowedIps;
   if (trustedPrivateHost) {
+    if (!Array.isArray(rawAllowedIps)) return null;
+    let canonicalPins: readonly string[];
+    try {
+      canonicalPins = canonicalizeTrustedPrivateEndpointPins(
+        trustedPrivateHost,
+        rawAllowedIps as readonly string[],
+        { requireAllPrivate: true },
+      ).addresses;
+    } catch {
+      return null;
+    }
     if (
-      !Array.isArray(rawAllowedIps) ||
-      rawAllowedIps.length === 0 ||
-      !rawAllowedIps.every(
-        (address): address is string =>
-          typeof address === "string" &&
-          address === address.toLowerCase() &&
-          isOperatorTrustablePrivateIp(address),
-      )
+      canonicalPins.length !== rawAllowedIps.length ||
+      canonicalPins.some((address, index) => address !== rawAllowedIps[index])
     ) {
       return null;
     }
-    const validatedAllowedIps = rawAllowedIps as string[];
-    allowedIps = [...new Set(validatedAllowedIps)].sort();
-    if (
-      allowedIps.length !== validatedAllowedIps.length ||
-      allowedIps.some((address, index) => address !== validatedAllowedIps[index])
-    ) {
-      return null;
-    }
+    allowedIps = [...canonicalPins];
   } else if (rawAllowedIps !== undefined) {
     return null;
   }
