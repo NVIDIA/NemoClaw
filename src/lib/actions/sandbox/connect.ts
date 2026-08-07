@@ -108,6 +108,7 @@ type SandboxListProbe = {
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
+  httpStatus?: number;
   detail: string;
 };
 
@@ -412,6 +413,7 @@ function probeSandboxInferenceRoute(
     lastProbe = {
       healthy: parsed.healthy,
       broken: parsed.broken,
+      httpStatus: parsed.httpStatus,
       detail: parsed.detail,
     };
     if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
@@ -462,13 +464,17 @@ export function repairSandboxInferenceRouteWithDeps(
 ): SandboxInferenceRouteRepairResult {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
-  if (deps.isRepairDisabled?.()) {
-    return { healthy: true, repairAttempted: false, detail: "route repair disabled" };
-  }
   deps.assertRouteCompatible?.(sandboxName, sb);
   const initialProbe = deps.probe(sandboxName);
   if (initialProbe.healthy) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
+  }
+  if (deps.isRepairDisabled?.()) {
+    return {
+      healthy: false,
+      repairAttempted: false,
+      detail: `route repair disabled; ${initialProbe.detail}`,
+    };
   }
   if (!initialProbe.broken) {
     return { healthy: false, repairAttempted: false, detail: initialProbe.detail };
@@ -809,14 +815,37 @@ function ensureSandboxInferenceRouteUnlocked(
       }
       return { sandbox: sb, routeHealthy: false };
     }
-    if (!repairResult.healthy && repairResult.repairAttempted) {
-      const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
+    let routeReady = repairResult.healthy;
+    if (!routeReady && repairResult.repairAttempted) {
+      routeReady = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
         detail: repairResult.detail,
         quiet,
       });
-      return { sandbox: sb, routeHealthy: resetResult };
+      if (!routeReady) return { sandbox: sb, routeHealthy: false };
     }
-    return { sandbox: sb, routeHealthy: repairResult.healthy };
+    if (provider === "ollama-local") {
+      if (!verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+        return { sandbox: sb, routeHealthy: false };
+      }
+      const finalProbe = probeSandboxInferenceRoute(sandboxName, agent);
+      const strictRouteHealthy =
+        finalProbe.healthy &&
+        finalProbe.httpStatus !== undefined &&
+        finalProbe.httpStatus >= 200 &&
+        finalProbe.httpStatus < 300;
+      if (!strictRouteHealthy) {
+        if (!quiet) {
+          printUnrecoverableInferenceRoute(
+            sandboxName,
+            `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`,
+            `inference.local/v1/models must return HTTP 2xx; ${finalProbe.detail}`,
+            { repairAttempted: repairResult.repairAttempted },
+          );
+        }
+        return { sandbox: sb, routeHealthy: false };
+      }
+    }
+    return { sandbox: sb, routeHealthy: routeReady };
   } catch (error) {
     if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
     if (error instanceof OpenShellGatewayEndpointOverrideError) {
