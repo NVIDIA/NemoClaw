@@ -39,6 +39,9 @@ readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.85|openshell-checksums-sha256.txt|6554b3f96c04006d661519786d40d17e34c7860b7aac8fd35259ef2aea01567f"
   "0.0.85|openshell-gateway-checksums-sha256.txt|cc4f32afed376ebe9b43cccdb4d2a77b2524b57132a6b56bb88d705e02420f86"
   "0.0.85|openshell-sandbox-checksums-sha256.txt|b6ac353c933fa4cf9a3ef11d66cce6635f39ecc2e928d9c8ff1783ca797308b3"
+  "0.0.99|openshell-checksums-sha256.txt|ea3e2c1a583e5ea00332c3b65a18068bd1f9b090f7ff0f5e24b29762cfc3b4c7"
+  "0.0.99|openshell-gateway-checksums-sha256.txt|7f84f728412548720c8ef51993c58414c4f04598451c282b26ead233185e40c5"
+  "0.0.99|openshell-sandbox-checksums-sha256.txt|9e67af6bab9f975432a1045fcfea5ab182ab585b17886c8c290c1eb77232b87a"
 )
 
 case "${1:-}" in
