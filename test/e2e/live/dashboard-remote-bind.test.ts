@@ -17,7 +17,7 @@ import { parseJsonFromText } from "./json-envelope.ts";
 
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-remote-bind";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-bind";
 const TEST_TIMEOUT_MS = 50 * 60_000;
 
 function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {

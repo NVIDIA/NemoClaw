@@ -43,37 +43,58 @@ class FakeWebSocket {
     });
   }
 
-  event(sessionKey: string, runId: string, state: string, text: string): void {
+  chat(payload: Record<string, unknown>): void {
     this.onmessage?.({
       data: JSON.stringify({
         type: "event",
         event: "chat",
-        payload: {
-          sessionKey,
-          runId,
-          state,
-          message: { content: [{ type: "text", text }] },
-          nativeSecret: "must-not-cross",
-        },
+        payload: { ...payload, nativeSecret: "must-not-cross" },
       }),
     });
   }
 }
 
-function orderedReplyHandlers(firstReply = "hel", finalReply = "hello"): Record<string, Handler> {
+function assistantMessage(text: string): Record<string, unknown> {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    timestamp: 1_786_032_000_000,
+  };
+}
+
+type DeliverReply = (emit: () => void, respond: () => void) => void;
+
+function replyHandlersWithDelivery(
+  frames: ReadonlyArray<Record<string, unknown>>,
+  deliver: DeliverReply,
+): Record<string, Handler> {
   return {
     connect: (request, socket) => socket.respond(request.id, {}),
     "chat.send": (request, socket) => {
       const sessionKey = String(request.params.sessionKey);
-      socket.respond(request.id, { runId: "expected-run" });
-      queueMicrotask(() => {
-        socket.event(sessionKey, "other-run", "delta", "discarded run");
-        socket.event("other-session", "expected-run", "delta", "discarded session");
-        socket.event(sessionKey, "expected-run", "delta", firstReply);
-        socket.event(sessionKey, "expected-run", "final", finalReply);
-      });
+      const emit = () => {
+        for (const frame of frames) socket.chat({ sessionKey, runId: "expected-run", ...frame });
+      };
+      const respond = () => socket.respond(request.id, { runId: "expected-run" });
+      deliver(emit, respond);
     },
   };
+}
+
+function replyHandlers(frames: ReadonlyArray<Record<string, unknown>>): Record<string, Handler> {
+  return replyHandlersWithDelivery(frames, (emit, respond) => {
+    respond();
+    queueMicrotask(emit);
+  });
+}
+
+function replyBeforeResponseHandlers(
+  frames: ReadonlyArray<Record<string, unknown>>,
+): Record<string, Handler> {
+  return replyHandlersWithDelivery(frames, (emit, respond) => {
+    emit();
+    respond();
+  });
 }
 
 function activeTurnHandlers(): Record<string, Handler> {
@@ -87,37 +108,60 @@ function oversizedFrameHandlers(): Record<string, Handler> {
   return {
     connect: (request, socket) => {
       socket.respond(request.id, {});
-      socket.onmessage?.({ data: `{\"padding\":\"${"x".repeat(3 * 1024 * 1024)}\"}` });
+      socket.onmessage?.({ data: `{"padding":"${"x".repeat(3 * 1024 * 1024)}"}` });
     },
   };
 }
 
-describe("OpenClaw voice gateway client", () => {
-  it("uses bounded operator scopes and emits only ordered normalized text for the expected session and run (#8378)", async () => {
-    const socket = new FakeWebSocket(orderedReplyHandlers());
-    const events: AgentTurnEvent[] = [];
-    const client = new OpenClawVoiceClient({
-      gatewayUrl: "ws://127.0.0.1:18789/ws",
-      credential: "openclaw-credential-must-not-cross",
-      webSocketFactory: () => socket,
-    });
+async function runTurn(handlers: Record<string, Handler>): Promise<{
+  readonly result: Awaited<ReturnType<OpenClawVoiceClient["runTurn"]>>;
+  readonly events: AgentTurnEvent[];
+  readonly socket: FakeWebSocket;
+}> {
+  const socket = new FakeWebSocket(handlers);
+  const events: AgentTurnEvent[] = [];
+  const client = new OpenClawVoiceClient({
+    gatewayUrl: "ws://127.0.0.1:18789/ws",
+    credential: "openclaw-credential-must-not-cross",
+    webSocketFactory: () => socket,
+  });
+  const result = await client.runTurn({
+    sessionKey: "agent:main:nemoclaw-voice:session",
+    idempotencyKey: "generated-turn-id",
+    message: "repository status",
+    onEvent: (event) => events.push(event),
+  });
+  return { result, events, socket };
+}
 
-    const result = await client.runTurn({
-      sessionKey: "agent:main:nemoclaw-voice:session",
-      idempotencyKey: "generated-turn-id",
-      message: "repository status",
-      onEvent: (event) => events.push(event),
-    });
+describe("OpenClaw voice gateway client", () => {
+  it("uses bounded operator scopes and returns only the expected session and run projection (#8482)", async () => {
+    const handlers = replyHandlers([
+      {
+        sessionKey: "other-session",
+        seq: 50,
+        state: "delta",
+        deltaText: "discarded session",
+        message: assistantMessage("discarded session"),
+      },
+      {
+        runId: "other-run",
+        seq: 50,
+        state: "delta",
+        deltaText: "discarded run",
+        message: assistantMessage("discarded run"),
+      },
+      { seq: 0, state: "delta", deltaText: "hel", message: assistantMessage("hel") },
+      { seq: 1, state: "final", message: assistantMessage("hello") },
+    ]);
+
+    const { result, events, socket } = await runTurn(handlers);
 
     expect(result).toEqual({ outcome: "completed" });
-    expect(events).toEqual([
-      { type: "started" },
-      { type: "text", text: "hel" },
-      { type: "text", text: "lo" },
-    ]);
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "hello" }]);
     const connect = socket.sent.find((request) => request.method === "connect");
     expect(connect?.params).toMatchObject({
-      client: { id: "openclaw-cli", mode: "cli" },
+      client: { id: "gateway-client", mode: "backend" },
       scopes: ["operator.read", "operator.write"],
       auth: { token: "openclaw-credential-must-not-cross" },
     });
@@ -133,22 +177,152 @@ describe("OpenClaw voice gateway client", () => {
     expect(JSON.stringify(events)).not.toContain("must-not-cross");
   });
 
-  it("fails closed when ordered response text changes its prior prefix (#8378)", async () => {
-    const socket = new FakeWebSocket(orderedReplyHandlers("first", "different"));
-    const client = new OpenClawVoiceClient({
-      gatewayUrl: "ws://127.0.0.1:18789/ws",
-      credential: "openclaw-credential-must-not-cross",
-      webSocketFactory: () => socket,
-    });
+  it("recovers an omitted earlier delta from a later cumulative message (#8482)", async () => {
+    const { result, events } = await runTurn(
+      replyHandlers([
+        {
+          seq: 2,
+          state: "delta",
+          deltaText: "world",
+          message: assistantMessage("Hello world"),
+        },
+        { seq: 3, state: "final", message: assistantMessage("Hello world") },
+      ]),
+    );
 
-    await expect(
-      client.runTurn({
-        sessionKey: "agent:main:nemoclaw-voice:session",
-        idempotencyKey: "generated-turn-id",
-        message: "repository status",
-        onEvent: () => {},
-      }),
-    ).resolves.toEqual({ outcome: "failed", reason: "agent_protocol_error" });
+    expect(result).toEqual({ outcome: "completed" });
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "Hello world" }]);
+  });
+
+  it("reconciles a recognized final message before completion (#8482)", async () => {
+    const { result, events } = await runTurn(
+      replyHandlers([
+        { seq: 0, state: "delta", deltaText: "Hello" },
+        { seq: 1, state: "final", message: assistantMessage("Hello world") },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "completed" });
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "Hello world" }]);
+  });
+
+  it("accepts schema-minimum deltas without optional messages (#8482)", async () => {
+    const { result, events } = await runTurn(
+      replyHandlers([
+        { seq: 0, state: "delta", deltaText: "hel" },
+        { seq: 1, state: "delta", deltaText: "lo" },
+        { seq: 2, state: "final" },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "completed" });
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "hello" }]);
+  });
+
+  it("returns the replacement projection without exposing superseded text (#8482)", async () => {
+    const { result, events } = await runTurn(
+      replyHandlers([
+        { seq: 0, state: "delta", deltaText: "superseded" },
+        { seq: 1, state: "delta", deltaText: "final", replace: true },
+        { seq: 2, state: "final", message: assistantMessage("final") },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "completed" });
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "final" }]);
+  });
+
+  it("falls back to canonical deltas when optional messages are unrecognized (#8482)", async () => {
+    const { result, events } = await runTurn(
+      replyHandlers([
+        {
+          seq: 0,
+          state: "delta",
+          deltaText: "hel",
+          message: { role: "user", content: [{ type: "text", text: "untrusted" }] },
+        },
+        {
+          seq: 1,
+          state: "delta",
+          deltaText: "lo",
+          message: { role: "assistant", content: [{ type: "text", text: 7 }] },
+        },
+        { seq: 2, state: "final", message: { role: "assistant", content: "unrecognized" } },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "completed" });
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "hello" }]);
+  });
+
+  it.each([
+    ["seq field", { state: "delta", deltaText: "message-only", message: assistantMessage("text") }],
+    ["deltaText field", { seq: 0, state: "delta", message: assistantMessage("text") }],
+    ["replace field", { seq: 0, state: "delta", deltaText: "text", replace: "yes" }],
+  ])("rejects a delta with an invalid %s (#8482)", async (_name, frame) => {
+    const { result, events } = await runTurn(replyHandlers([frame]));
+
+    expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
+    expect(events).toEqual([{ type: "started" }]);
+  });
+
+  it.each([
+    ["duplicate", 1],
+    ["decreasing", 0],
+  ])("rejects a %s sequence before returning response text (#8482)", async (_name, sequence) => {
+    const { result, events } = await runTurn(
+      replyHandlers([
+        { seq: 1, state: "delta", deltaText: "first" },
+        { seq: sequence, state: "delta", deltaText: "second" },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
+    expect(events).toEqual([{ type: "started" }]);
+  });
+
+  it("discards malformed frames for another session or run before projection checks (#8482)", async () => {
+    const { result, events } = await runTurn(
+      replyHandlers([
+        { sessionKey: "other-session", state: "delta", message: assistantMessage("discarded") },
+        { runId: "other-run", state: "delta", message: assistantMessage("discarded") },
+        { seq: 0, state: "delta", deltaText: "kept" },
+        { seq: 1, state: "final" },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "completed" });
+    expect(events).toEqual([{ type: "started" }, { type: "text", text: "kept" }]);
+  });
+
+  it("rejects a reconciled projection that exceeds the response bound (#8482)", async () => {
+    const chunk = "x".repeat(VOICE_CHUNK_BYTES);
+    const { result, events } = await runTurn(
+      replyHandlers([
+        { seq: 0, state: "delta", deltaText: chunk },
+        {
+          seq: 1,
+          state: "delta",
+          deltaText: "x",
+          message: assistantMessage(`${chunk}${chunk}`),
+        },
+      ]),
+    );
+
+    expect(result).toEqual({ outcome: "failed", reason: "response_too_large" });
+    expect(events).toEqual([{ type: "started" }]);
+  });
+
+  it("rejects too many queued chat events before the run ID is admitted (#8482)", async () => {
+    const frames = Array.from({ length: 129 }, (_, seq) => ({
+      seq,
+      state: "delta",
+      deltaText: "x",
+    }));
+    const { result, events } = await runTurn(replyBeforeResponseHandlers(frames));
+
+    expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
+    expect(events).toEqual([]);
   });
 
   it("closes the direct WebSocket connection when the session owner revokes it (#8378)", async () => {
@@ -178,23 +352,12 @@ describe("OpenClaw voice gateway client", () => {
   });
 
   it("rejects an oversized native frame before sending agent work (#8378)", async () => {
-    const socket = new FakeWebSocket(oversizedFrameHandlers());
-    const client = new OpenClawVoiceClient({
-      gatewayUrl: "ws://127.0.0.1:18789/ws",
-      credential: "openclaw-credential-must-not-cross",
-      webSocketFactory: () => socket,
-    });
+    const { result, socket } = await runTurn(oversizedFrameHandlers());
 
-    await expect(
-      client.runTurn({
-        sessionKey: "agent:main:nemoclaw-voice:session",
-        idempotencyKey: "generated-turn-id",
-        message: "must-not-send",
-        onEvent: () => {},
-      }),
-    ).resolves.toEqual({ outcome: "failed", reason: "agent_protocol_error" });
-
+    expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
     expect(socket.sent.some((request) => request.method === "chat.send")).toBe(false);
     expect(socket.closed).toBe(true);
   });
 });
+
+const VOICE_CHUNK_BYTES = 1024 * 1024 + 1;

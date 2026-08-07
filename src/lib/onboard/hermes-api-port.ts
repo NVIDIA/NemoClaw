@@ -117,6 +117,10 @@ export function retargetHermesApiPortInUrl(url: string, apiPort: number): string
  * default, so allocating for it would rebind the sandbox away from the port its
  * host forward still uses. Relaunch reaches this function through
  * `buildSandboxRuntimeEnvArgs`, where that divergence would otherwise be silent.
+ *
+ * A recreate keeps its source row, so a sandbox that predates the feature also
+ * keeps the default across `--recreate-sandbox`. Destroy it and onboard again to
+ * allocate one.
  */
 export function resolveOnboardHermesApiPort(
   sandboxName: string,

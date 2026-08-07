@@ -294,7 +294,7 @@ async function assertDashboardHome(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
-    "Hermes dashboard profile was not seeded with sandbox-owned 0700/0600 allowlisted config",
+    "Hermes dashboard profile did not preserve ownership, file modes, or the API credential boundary",
     String.raw`
 set -eu
 for _ in $(seq 1 30); do
@@ -313,7 +313,6 @@ from pathlib import Path
 allowed = {
     "API_SERVER_HOST",
     "API_SERVER_PORT",
-    "API_SERVER_KEY",
     "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
     "FIRECRAWL_GATEWAY_URL",
     "OPENAI_AUDIO_GATEWAY_URL",
@@ -330,8 +329,10 @@ for raw_line in env_path.read_text(encoding="utf-8").splitlines():
     if line.startswith("export "):
         line = line[len("export "):].lstrip()
     keys.add(line.split("=", 1)[0].strip())
+if "API_SERVER_KEY" in keys:
+    raise SystemExit("dashboard .env contains API_SERVER_KEY")
 extra = sorted(keys - allowed)
-missing = sorted({"API_SERVER_HOST", "API_SERVER_PORT", "API_SERVER_KEY"} - keys)
+missing = sorted({"API_SERVER_HOST", "API_SERVER_PORT"} - keys)
 if extra or missing:
     raise SystemExit(f"dashboard .env allowlist mismatch extra={extra} missing={missing}")
 config_text = Path("/sandbox/.hermes/profiles/dashboard-home/config.yaml").read_text(encoding="utf-8")
@@ -478,7 +479,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       "gateway.pid is stored as a regular file below the writable runtime directory",
       "gateway user cannot remove config.yaml from sticky config root",
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
-      "dashboard profile is sandbox-owned 0700 with 0600 allowlisted config/env",
+      "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
       "legacy gateway.pid symlink/state shape is repaired and booted",
       "legacy dashboard profile state is moved into profiles/dashboard-home",
     ],
