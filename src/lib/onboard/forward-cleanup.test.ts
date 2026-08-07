@@ -69,7 +69,7 @@ describe("bestEffortForwardStopForSandbox", () => {
 
   it("returns no-entry and runs a sandbox-scoped stop when no live forward is on that port", () => {
     const run = vi.fn();
-    const fetch = vi.fn().mockReturnValue(forwardListWith([]));
+    const fetch = vi.fn().mockReturnValue("");
 
     const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
 
@@ -78,6 +78,16 @@ describe("bestEffortForwardStopForSandbox", () => {
       ignoreError: true,
       suppressOutput: true,
     });
+  });
+
+  it("returns list-failed and skips stop when the capture seam returns null", () => {
+    const run = vi.fn();
+    const fetch = vi.fn().mockReturnValue(null);
+
+    const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
+
+    expect(outcome).toBe("list-failed");
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("skips the stop entirely when `forward list` itself throws (owner unknown)", () => {

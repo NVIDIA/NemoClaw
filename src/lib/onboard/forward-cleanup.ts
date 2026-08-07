@@ -13,7 +13,7 @@ export type ForwardStopRunner = (
 export type ForwardListRunner = (
   args: string[],
   opts: { ignoreError?: boolean; timeout?: number },
-) => string;
+) => string | null;
 
 /**
  * `openshell forward stop <port>` — port-scoped, kills whatever forward is
@@ -64,12 +64,12 @@ export function bestEffortForwardStopForSandbox(
   port: string | number,
   sandboxName: string,
 ): "stopped" | "owned-other" | "no-entry" | "list-failed" {
-  // Let runCaptureOpenshell throw on failure/timeout so the catch branch
-  // returns "list-failed". With ignoreError: true the runner would swallow
-  // the error and return "", which getOccupiedPorts parses as an empty map
-  // and the "no-entry" branch below would still run the stop — exactly the
+  // Let runCaptureOpenshell throw on failure/timeout, or return null, so the
+  // failure branch returns "list-failed". Treating either failure signal as
+  // an empty string would make getOccupiedPorts return an empty map and let
+  // the "no-entry" branch run a stop without ownership data — exactly the
   // collateral-damage case this helper exists to avoid.
-  let listOutput = "";
+  let listOutput: string | null;
   try {
     listOutput = runCaptureOpenshell(["forward", "list"], {
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
@@ -77,6 +77,7 @@ export function bestEffortForwardStopForSandbox(
   } catch {
     return "list-failed";
   }
+  if (listOutput === null) return "list-failed";
   const owner = getOccupiedPorts(listOutput).get(String(port)) ?? null;
   if (owner && owner !== sandboxName) {
     return "owned-other";
