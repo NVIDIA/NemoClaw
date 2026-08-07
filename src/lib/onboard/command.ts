@@ -404,7 +404,7 @@ function applyPortableEnvironment(
     NEMOCLAW_MODEL: hostedInference.model,
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
     NEMOCLAW_POLICY_MODE: "custom",
-    NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
+    NEMOCLAW_POLICY_PRESETS: "personal-open-internet,weather,public-reference,github",
     NEMOCLAW_POLICY_TIER: "personal",
     COMPATIBLE_API_KEY: hostedInference.apiKey,
     NEMOCLAW_ENDPOINT_URL: hostedInference.baseUrl,
