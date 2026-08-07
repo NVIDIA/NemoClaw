@@ -24,6 +24,20 @@ const NVIDIA_DRIVER_PROC_PATH = "/proc/driver/nvidia";
 export function isDenylistedNvidiaGpuName(name: string): boolean {
   return NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name);
 }
+/** Escape untrusted GPU names without allowing terminal-control sequences. */
+export function escapeGpuNameForTerminal(value: string): string {
+  return [...value]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      const isC0 = codePoint <= 0x1f;
+      const isDeleteOrC1 = codePoint >= 0x7f && codePoint <= 0x9f;
+      const isLineSeparator = codePoint === 0x2028 || codePoint === 0x2029;
+      const isFormatControl = /^\p{Cf}$/u.test(character);
+      if (!isC0 && !isDeleteOrC1 && !isLineSeparator && !isFormatControl) return character;
+      return "\\u{" + codePoint.toString(16).padStart(4, "0") + "}";
+    })
+    .join("");
+}
 
 // Result of a bounded Docker `--gpus` CUDA proof. `passed` is true only when a
 // real CUDA workload (not just nvidia-smi) succeeded — that is the signal that

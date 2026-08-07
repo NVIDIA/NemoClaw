@@ -4,7 +4,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import { dockerInfoFormat as defaultDockerInfoFormat } from "../adapters/docker";
-import type { Arm64WslDockerDesktopGpuProver, DockerGpuProofResult } from "../inference/gpu-trust";
+import {
+  escapeGpuNameForTerminal,
+  type Arm64WslDockerDesktopGpuProver,
+  type DockerGpuProofResult,
+} from "../inference/gpu-trust";
 
 const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
 // This prover only ever runs on ARM64 (see `createArm64WslDockerDesktopGpuProver`),
@@ -246,19 +250,6 @@ export function createArm64WslDockerDesktopGpuProver(
   };
 }
 
-function escapeGpuNameForTerminal(value: string): string {
-  return [...value]
-    .map((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      const isC0 = codePoint <= 0x1f;
-      const isDeleteOrC1 = codePoint >= 0x7f && codePoint <= 0x9f;
-      const isLineSeparator = codePoint === 0x2028 || codePoint === 0x2029;
-      const isFormatControl = /^\p{Cf}$/u.test(character);
-      if (!isC0 && !isDeleteOrC1 && !isLineSeparator && !isFormatControl) return character;
-      return "\\u{" + codePoint.toString(16).padStart(4, "0") + "}";
-    })
-    .join("");
-}
 export function wslDockerDesktopGpuCompatibilityAction(): WslDockerDesktopGpuCompatibilityAction {
   return {
     id: "wsl_docker_desktop_gpu_compatibility",

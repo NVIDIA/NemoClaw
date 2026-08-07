@@ -721,16 +721,13 @@ describe("nim", () => {
       }
     });
 
-    // #4565: a real Windows-ARM N1X + WSL2 + Docker Desktop host reports the
-    // same `JMJWOA-Generic-*` placeholder as the Snapdragon shim, but it can
-    // pass a bounded Docker `--gpus` CUDA proof. When the injected prover
-    // confirms the proof, the denylisted name is accepted and the detection is
-    // tagged so the sandbox preflight reaches the Docker Desktop WSL branch.
-    it("accepts a denylisted ARM64 GPU when the bounded Docker GPU proof passes (#4565)", () => {
+    // A passing proof accepts the raw name, but terminal formatting must escape it.
+    it("escapes terminal controls after a denylisted ARM64 GPU proof passes (#4565)", () => {
+      const gpuName = "JMJWOA-Generic-\u001b\u0085\u200d\u2028\u2029GPU";
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
-          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+          return `${gpuName}, 65471, 65000\n`;
         }
         return "";
       });
@@ -740,12 +737,15 @@ describe("nim", () => {
           const result = nimModule.detectGpu({ proveArm64WslDockerDesktopGpu });
           expect(result).toMatchObject({
             type: "nvidia",
-            name: "JMJWOA-Generic-GPU",
+            name: gpuName,
             count: 1,
             totalMemoryMB: 65471,
             wslDockerDesktopGpuProofPassed: true,
           });
-          expect(proveArm64WslDockerDesktopGpu).toHaveBeenCalledWith(["JMJWOA-Generic-GPU"]);
+          expect(proveArm64WslDockerDesktopGpu).toHaveBeenCalledWith([gpuName]);
+          expect(nimModule.formatNvidiaGpuPreflightLines(result)).toEqual([
+            "NVIDIA GPU detected (JMJWOA-Generic-\\u{001b}\\u{0085}\\u{200d}\\u{2028}\\u{2029}GPU, 65471 MB)",
+          ]);
         });
       } finally {
         restore();

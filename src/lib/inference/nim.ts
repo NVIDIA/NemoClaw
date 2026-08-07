@@ -26,6 +26,7 @@ import { isSafeModelId } from "../validation";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
 import {
   type Arm64WslDockerDesktopGpuProver,
+  escapeGpuNameForTerminal,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
@@ -164,7 +165,8 @@ export function groupGpusByName(gpus: readonly NimGpu[]): GpuGroup[] {
 // See #2669 for the multi-GPU case the previous fix missed.
 export function formatNvidiaGpuPreflightLines(gpu: GpuDetection): string[] {
   if (gpu.name) {
-    const detail = gpu.count > 1 ? `${gpu.count}x ${gpu.name}` : gpu.name;
+    const name = escapeGpuNameForTerminal(gpu.name);
+    const detail = gpu.count > 1 ? `${gpu.count}x ${name}` : name;
     return [`NVIDIA GPU detected (${detail}, ${gpu.totalMemoryMB} MB)`];
   }
   if (gpu.gpus && gpu.gpus.length > 0) {
@@ -174,7 +176,7 @@ export function formatNvidiaGpuPreflightLines(gpu: GpuDetection): string[] {
       const anyDuplicate = groups.some((grp) => grp.count > 1);
       for (const grp of groups) {
         const prefix = anyDuplicate ? `${grp.count}x ` : "";
-        lines.push(`    - ${prefix}${grp.name} (${grp.memoryMB} MB)`);
+        lines.push(`    - ${prefix}${escapeGpuNameForTerminal(grp.name)} (${grp.memoryMB} MB)`);
       }
       return lines;
     }
@@ -468,9 +470,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // A denylisted `JMJWOA-Generic-*` placeholder. Both real Windows-ARM
           // N1X (WSL2 + Docker Desktop) and the Snapdragon nvidia-smi shim emit
           // this name, so the name and `/proc/driver/nvidia` are insufficient.
-          // Give the host one bounded Docker `--gpus` CUDA proof: only the real
-          // GPU can run the workload, so a pass safely accepts N1X while the
-          // shim keeps failing closed (#4565 without reopening #3988/#4424).
+          // A bounded Docker `--gpus` workload proves that the single reported
+          // row has a usable CUDA device. The Snapdragon shim cannot pass it
+          // (#4565 without reopening #3988/#4424).
           const prover =
             deps.proveArm64WslDockerDesktopGpu === undefined
               ? defaultArm64WslDockerDesktopGpuProver()
