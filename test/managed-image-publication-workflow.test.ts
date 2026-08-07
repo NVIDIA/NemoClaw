@@ -406,6 +406,11 @@ describe("complete managed-image publication workflow", () => {
       expect(manifest.run).toContain('reference="$IMAGE@$digest"');
       expect(manifest.run).toContain('.["containerimage.descriptor"].digest');
       expect(manifest.run).toContain('--metadata-file "$candidate_metadata"');
+      expect(manifestRun).toContain('scripts/checks/retry-docker-imagetools-inspect.sh "$source"');
+      expect(manifestRun).toContain(
+        'scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw',
+      );
+      expect(manifestRun).not.toContain("docker buildx imagetools inspect");
       expect(manifest.run).toContain("scripts/checks/validate-managed-base-index.sh");
       expect(manifest.run).toContain("declare -A source_digests=()");
       expect(manifest.run).toContain('"${source_digests[linux/amd64]}"');

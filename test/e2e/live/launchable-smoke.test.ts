@@ -32,7 +32,7 @@ const BOOTSTRAP_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 const MODEL =
   process.env.NEMOCLAW_MODEL ?? process.env.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 const EXPECTED_ROUTE_PROVIDER = HOSTED_INFERENCE_PROVIDER_NAME;
-const DEFAULT_SANDBOX_NAME = `e2e-bootstrap-${randomUUID().slice(0, 8)}`;
+const DEFAULT_SANDBOX_NAME = `e2e-boot-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_TIMEOUT_MS = 30 * 60_000;

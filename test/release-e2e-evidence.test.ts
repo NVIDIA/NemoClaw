@@ -41,6 +41,7 @@ function runEvidence(
   const selectors: string[] = [];
   return {
     dispatch: {
+      allowDgxSparkRunnerQueue: false,
       allowJetsonRunnerQueue: false,
       candidateSha,
       emptySelectors: true,
@@ -88,6 +89,13 @@ describe("release E2E evidence", () => {
     });
     expect(plan.launchableE2eJobId).toBe("staging-brev-launchable");
     expect(plan.exceptionsRequired).toEqual([]);
+    expect(plan.executions.map((execution) => execution.jobId)).not.toEqual(
+      expect.arrayContaining([
+        "jetson-nvmap-gpu",
+        "llama-cpp-dgx-spark-plan",
+        "llama-cpp-dgx-spark-qualification",
+      ]),
+    );
   });
 
   it("rejects a missing activation path for a default E2E", () => {
@@ -183,9 +191,20 @@ describe("release E2E evidence", () => {
     );
   });
 
+  it.each([
+    ["allowJetsonRunnerQueue", "runs[0].dispatch.allowJetsonRunnerQueue must equal false"],
+    ["allowDgxSparkRunnerQueue", "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false"],
+  ])("rejects release evidence that opts into %s", (field, message) => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    (evidence.dispatch as Record<string, unknown>)[field] = true;
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
+  });
+
   it("reports a failed matrix row without collapsing its successful siblings", () => {
     const plan = preflight();
-    const failedId = 'hermes-gpu-startup[scenario="fallback"]';
+    const failedId = 'hermes-gpu-startup[scenario="fallback",sandbox_name="e2e-hgpu-fallback"]';
     const ledger = buildReleaseE2eLedger(plan, [
       runEvidence(plan, "default", {
         conclusion: (execution) => (execution.id === failedId ? "failure" : "success"),
@@ -199,7 +218,9 @@ describe("release E2E evidence", () => {
     });
     expect(
       ledger.entries.find(
-        (entry) => entry.id === 'hermes-gpu-startup[scenario="compatibility-only"]',
+        (entry) =>
+          entry.id ===
+          'hermes-gpu-startup[scenario="compatibility-only",sandbox_name="e2e-hgpu-compat"]',
       ),
     ).toMatchObject({ status: "successful" });
   });

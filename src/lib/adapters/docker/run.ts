@@ -1,19 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { run, runCapture } from "../../runner";
+import {
+  dockerArgv as commandDockerArgv,
+  dockerCapture as commandDockerCapture,
+  dockerRun as commandDockerRun,
+  type DockerCaptureOptions,
+  type DockerRunOptions,
+  type DockerRunResult,
+} from "./command";
 
-export type DockerRunOptions = Parameters<typeof run>[1];
-export type DockerCaptureOptions = Parameters<typeof runCapture>[1];
-export type DockerRunResult = ReturnType<typeof run>;
+export type { DockerCaptureOptions, DockerRunOptions, DockerRunResult };
+
+// Keep own exports so CommonJS consumers can replace these functions.
 export function dockerArgv(args: readonly string[]): string[] {
-  return ["docker", ...args];
+  return commandDockerArgv(args);
 }
 
 export function dockerRun(args: readonly string[], opts: DockerRunOptions = {}): DockerRunResult {
-  return run(dockerArgv(args), opts);
+  return commandDockerRun(args, opts);
 }
 
 export function dockerCapture(args: readonly string[], opts: DockerCaptureOptions = {}): string {
-  return runCapture(dockerArgv(args), opts);
+  return commandDockerCapture(args, opts);
 }

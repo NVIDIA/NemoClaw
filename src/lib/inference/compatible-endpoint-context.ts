@@ -47,7 +47,7 @@ export type CompatibleEndpointModelsFetcher = (
    * fakes can ignore it.
    */
   pinnedAddresses?: string[],
-  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
+  /** Non-forgeable proof of the exact host and complete pins admitted by SSRF preflight. */
   trustedPrivateCapability?: TrustedPrivateEndpointCapability,
 ) => unknown | null;
 

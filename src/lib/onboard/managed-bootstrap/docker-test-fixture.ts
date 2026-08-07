@@ -44,7 +44,7 @@ const CONFIG_ID = `sha256:${"4".repeat(64)}`;
 const MANIFEST = `sha256:${"5".repeat(64)}` as const;
 const REPOSITORY = "registry.example/nemoclaw/hermes";
 const IMAGE = `${REPOSITORY}@${MANIFEST}`;
-const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "supervise"] as const;
+const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "--workdir", "/sandbox"] as const;
 export const SUPPORTED_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 type FixtureCommandResult = {

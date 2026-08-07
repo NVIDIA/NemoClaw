@@ -17,6 +17,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
+import type { MessagingAgentId } from "../src/lib/messaging";
+import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
+
 const repoRoot = path.join(import.meta.dirname, "..");
 
 // Strip messaging-channel env vars from the parent process before spawning
@@ -71,13 +74,21 @@ function buildPreamble({
   sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
 }: {
   presetNamesApplied?: string[];
-  sandboxAgent?: string;
+  sandboxAgent?: MessagingAgentId;
   channelInRegistry?: string;
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
   sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
 } = {}): string {
   const j = (p: string) =>
     JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
+  const messagingPlanLiteral = () =>
+    JSON.stringify(
+      makeMessagingPlan({
+        sandboxName: "test-sb",
+        agent: sandboxAgent,
+        channels: channelInRegistry ? [channelInRegistry] : [],
+      }),
+    );
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -113,35 +124,6 @@ credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + ms
 const onboard = require(${j("onboard.js")});
 onboard.isNonInteractive = () => true;
 
-const initialChannel = ${JSON.stringify(channelInRegistry)};
-function makeMessagingPlan(channelIds = initialChannel ? [initialChannel] : [], disabledChannels = []) {
-  const disabled = new Set(disabledChannels);
-  return {
-    schemaVersion: 1,
-    sandboxName: "test-sb",
-    agent: ${JSON.stringify(sandboxAgent)},
-    workflow: "onboard",
-    channels: channelIds.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste",
-      active: !disabled.has(channelId),
-      selected: true,
-      configured: true,
-      disabled: disabled.has(channelId),
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels,
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
 const onboardSession = require(${j("state/onboard-session.js")});
 const sessionStore = {
   sandboxName: "test-sb",
@@ -159,7 +141,7 @@ const sessionStore = {
   routerPid: null,
   routerCredentialHash: null,
   policyTier: null,
-  messagingPlan: makeMessagingPlan(),
+  messagingPlan: ${messagingPlanLiteral()},
   hermesToolGateways: [],
   wechatConfig: null,
 };
@@ -171,7 +153,7 @@ const registryUpdates = [];
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: ${JSON.stringify(sandboxAgent)},
-  messaging: { schemaVersion: 1, plan: makeMessagingPlan() },
+  messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral()} },
   policies: ${JSON.stringify(presetNamesApplied)},
 });
 registry.updateSandbox = (name, updates) => {

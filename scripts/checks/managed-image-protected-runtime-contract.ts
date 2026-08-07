@@ -16,6 +16,31 @@ export const MANAGED_IMAGE_LOCAL_INFERENCE_KINDS = ["llama-cpp", "ollama", "nim"
 
 export type ManagedImageLocalInferenceKind = (typeof MANAGED_IMAGE_LOCAL_INFERENCE_KINDS)[number];
 
+export type ManagedImageProtectedRouteKind = ManagedImageLocalInferenceKind | "rollback";
+
+// OpenShell 0.0.99 caps routable sandbox names at 19 characters. Keep the
+// protected-runtime ownership prefix and every agent/route discriminator
+// explicit so the qualification matrix remains deterministic and collision
+// free without relying on truncation.
+export const MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX = "nmc-mi-";
+
+const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ManagedStartupAgent, string>> = Object.freeze(
+  {
+    openclaw: "oc",
+    hermes: "he",
+    "langchain-deepagents-code": "dc",
+  },
+);
+
+const PROTECTED_SANDBOX_ROUTE_TOKENS: Readonly<Record<ManagedImageProtectedRouteKind, string>> =
+  Object.freeze({
+    "llama-cpp": "lc",
+    ollama: "ol",
+    nim: "ni",
+    vllm: "vl",
+    rollback: "rb",
+  });
+
 export type ManagedImageLocalInferenceRoute = {
   readonly kind: ManagedImageLocalInferenceKind;
   readonly providerName: "llama-cpp-local" | "ollama-local" | "vllm-local";
@@ -95,9 +120,7 @@ export function withManagedImageLocalInferenceProfile(
 
 export function managedImageProtectedSandboxName(
   agent: ManagedStartupAgent,
-  routeKind: ManagedImageLocalInferenceKind | "rollback",
+  routeKind: ManagedImageProtectedRouteKind,
 ): string {
-  const agentToken =
-    agent === "langchain-deepagents-code" ? "dcode" : agent.replace(/[^a-z0-9-]+/gu, "-");
-  return `nemoclaw-managed-${agentToken}-${routeKind}`;
+  return `${MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX}${PROTECTED_SANDBOX_AGENT_TOKENS[agent]}-${PROTECTED_SANDBOX_ROUTE_TOKENS[routeKind]}`;
 }

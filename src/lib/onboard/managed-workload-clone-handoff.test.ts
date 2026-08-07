@@ -377,7 +377,7 @@ describe("prepareManagedWorkloadCloneHandoff", () => {
       tools: { disclosure: "direct", enabledGateways: ["nous-web"] },
     });
     const entry = source("hermes", "docker", profile);
-    const longestSandboxName = `a${"b".repeat(62)}`;
+    const longestSandboxName = `a${"b".repeat(18)}`;
 
     expect(() => prepare(entry, provider("docker"), undefined, longestSandboxName)).not.toThrow();
     expect(() => prepare(entry, provider("docker"), undefined, "1destination")).toThrow(
