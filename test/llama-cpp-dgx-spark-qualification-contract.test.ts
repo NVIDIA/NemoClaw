@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  LLAMA_CPP_DGX_SPARK_AGENT_PROBES,
   LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE,
   LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
   LLAMA_CPP_DGX_SPARK_DIGEST_PATTERN,
@@ -14,6 +15,8 @@ import {
   LLAMA_CPP_DGX_SPARK_MODEL_DIGEST,
   LLAMA_CPP_DGX_SPARK_MODEL_ID,
   LLAMA_CPP_DGX_SPARK_MODEL_PATH_PATTERN,
+  LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE,
+  LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION,
   LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
   LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
@@ -34,7 +37,7 @@ import {
   parseLlamaCppDgxSparkQualificationActivation,
   parseLlamaCppDgxSparkQualificationEvidenceIdentity,
   parseLlamaCppDgxSparkQualificationPlan,
-  parseLlamaCppDgxSparkQualificationReceipt,
+  parseLlamaCppDgxSparkQualificationReceipt as parseQualificationReceiptWithPlan,
   verifyLlamaCppDgxSparkExecutionPlanSha256,
 } from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
 
@@ -66,6 +69,48 @@ function activation() {
     jobId: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
     platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
     profile: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
+  };
+}
+
+function agentQualification() {
+  return {
+    agent: "openclaw",
+    bounds: {
+      commandTimeoutSeconds: 420,
+      maxResponseBytes: 16777216,
+      maxStreamEvents: 512,
+      maxTokens: 32,
+    },
+    execution: "disabled",
+    expectations: { normal: "PONG" },
+    fixture: {
+      path: "/tmp/nemoclaw-llama-cpp-tool.txt",
+      value: "LLAMA_CPP_OPENCLAW_TOOL_OK",
+    },
+    image: {
+      reference: LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE,
+      sourceRevision: LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION,
+    },
+    probes: LLAMA_CPP_DGX_SPARK_AGENT_PROBES,
+    prompts: {
+      continuation:
+        "Repeat the exact value LLAMA_CPP_OPENCLAW_TOOL_OK from the file you read in the prior turn.",
+      normal: "Reply with exactly one word: PONG",
+      tool: "Use the read tool to read /tmp/nemoclaw-llama-cpp-tool.txt. Reply with exactly the file contents: LLAMA_CPP_OPENCLAW_TOOL_OK",
+    },
+    route: {
+      api: "openai-completions",
+      provider: "llama-cpp-local",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamBaseUrl: "http://host.openshell.internal:8081/v1",
+    },
+    runtimeProvider: "docker",
+    sandbox: { gpuAccess: "disabled", name: "nemoclaw-llama-cpp-openclaw" },
+    sessions: {
+      normal: "llama-cpp-openclaw-normal",
+      tool: "llama-cpp-openclaw-tool",
+    },
+    tool: { name: "read" },
   };
 }
 
@@ -111,6 +156,7 @@ function evidenceIdentity() {
 
 function receipt() {
   return {
+    agentQualification: { execution: "disabled" },
     baseSha: BASE_SHA,
     cleanup: {
       containerRemoved: true,
@@ -217,6 +263,7 @@ function executionPlan() {
       },
     },
     qualification: {
+      agentQualification: agentQualification(),
       probeBounds: probeBounds(),
       probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
     },
@@ -308,6 +355,10 @@ function executionPlan() {
       },
     },
   };
+}
+
+function parseLlamaCppDgxSparkQualificationReceipt(value: unknown, identity: unknown) {
+  return parseQualificationReceiptWithPlan(value, identity, executionPlan());
 }
 
 describe("llama.cpp DGX Spark qualification contract", () => {
@@ -590,6 +641,65 @@ describe("llama.cpp DGX Spark qualification contract", () => {
     expect(parseLlamaCppDgxSparkQualificationReceipt(receipt(), evidenceIdentity())).toEqual(
       receipt(),
     );
+  });
+
+  it("binds enabled OpenClaw evidence to the exact YAML-authored tuple", () => {
+    const plan = executionPlan();
+    plan.qualification.agentQualification.execution = "enabled";
+    const value = {
+      ...receipt(),
+      agentQualification: {
+        agent: "openclaw",
+        cleanup: {
+          gatewayRemoved: true,
+          networkRemoved: true,
+          sandboxRemoved: true,
+          stateRemoved: true,
+        },
+        execution: "enabled",
+        image: {
+          reference: LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE,
+          sourceRevision: LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION,
+        },
+        model: {
+          chatTemplate: "nemotron-v3-embedded",
+          id: LLAMA_CPP_DGX_SPARK_MODEL_ID,
+          quantization: "UD-Q4_K_XL",
+          servedName: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+        },
+        platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
+        probes: {
+          agentMultiTurn: true,
+          agentNormalTurn: true,
+          agentToolCall: { argumentsValid: true, name: "read" },
+          agentToolResultContinuation: true,
+          streamingChat: { done: true, events: 7 },
+          synchronousChat: true,
+        },
+        route: plan.qualification.agentQualification.route,
+        runtimeProvider: "docker",
+      },
+    };
+
+    expect(
+      parseQualificationReceiptWithPlan(value, evidenceIdentity(), plan).agentQualification,
+    ).toEqual(value.agentQualification);
+    expect(() =>
+      parseQualificationReceiptWithPlan(value, evidenceIdentity(), executionPlan()),
+    ).toThrow(/without declarative activation/u);
+    expect(() =>
+      parseQualificationReceiptWithPlan(
+        {
+          ...value,
+          agentQualification: {
+            ...value.agentQualification,
+            route: { ...value.agentQualification.route, provider: "vllm-local" },
+          },
+        },
+        evidenceIdentity(),
+        plan,
+      ),
+    ).toThrow(/evidence is invalid/u);
   });
 
   it("rejects stale workflow identity and extra sensitive receipt fields (#8260)", () => {

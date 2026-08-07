@@ -15,6 +15,7 @@ import {
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
   selectReviewedLockSha256,
+  verifyMaterializedLockedGraph,
 } from "../scripts/audit-reviewed-npm-graph.mts";
 import { verifyInstalledNpmLock } from "../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../scripts/lib/reviewed-npm-audit.mts";
@@ -430,6 +431,38 @@ esac
       expect(fs.readFileSync(path.join(destination, "package-lock.json"), "utf-8")).toBe(
         lockSource,
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an omitted development-only package in a locked production install (#8394)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-locked-production-"));
+    const lockfilePath = path.join(root, "package-lock.json");
+    const lockSource = `${JSON.stringify(
+      {
+        lockfileVersion: 3,
+        packages: {
+          "": {
+            devDependencies: { "@types/node": "25.5.2" },
+            name: "locked-production-fixture",
+            version: "1.0.0",
+          },
+          "node_modules/@types/node": { dev: true, version: "25.5.2" },
+        },
+      },
+      null,
+      2,
+    )}\n`;
+    try {
+      fs.writeFileSync(lockfilePath, lockSource);
+      expect(
+        verifyMaterializedLockedGraph({
+          destination: root,
+          expectedLockSha256: createHash("sha256").update(lockSource).digest("hex"),
+          label: "locked production fixture",
+        }),
+      ).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

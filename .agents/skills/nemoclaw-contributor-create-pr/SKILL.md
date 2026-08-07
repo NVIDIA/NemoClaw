@@ -56,6 +56,20 @@ Before creating a PR, verify the branch.
 Do not rerun a local gate when Git hooks already gave the required evidence.
 Select checks that apply to the diff.
 
+### Review-Driven Repair Closure
+
+When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step.
+
+- Classify every finding in the latest completed head-stable collection before editing.
+- Group findings by root cause and inspect adjacent paths.
+- Apply one coherent change set instead of one commit or push per finding.
+- Run targeted validation after the complete change set.
+- Commit the candidate change set and run the required independent documentation writer review against that commit.
+- If the review identifies valid findings, apply them, rerun affected validation, commit the result, and rerun the review against the new `HEAD`.
+- Push after the independent documentation writer review covers the final `HEAD`, all blocking findings are resolved, and the receipt identifies that commit.
+
+Immediately before pushing, repeat the complete head-stable collection. Do not push while that collection contains an unclassified or actionable finding. Remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. If the user tells you to stop, stop without pushing. The user may defer only a non-blocking suggestion; record that disposition before pushing.
+
 ### Hook Evidence
 
 If the commits and push used the installed hooks, use the hook results as verification:
@@ -108,7 +122,7 @@ In the PR body, select only verification boxes that have hook, command, or CI ev
 
 ## Step 3: Push the Branch
 
-Push the branch to the remote.
+Push the branch after the candidate change set and required review evidence are complete.
 
 ```bash
 git push -u origin HEAD

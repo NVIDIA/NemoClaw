@@ -153,6 +153,14 @@ export interface ManagedClusterConnectivityRequest {
   readonly expectedPeerMac: string;
 }
 
+/**
+ * Which connectivity probe rejected the fabric. `rails` means the candidate rail
+ * set itself was unusable, so no per-rail probe ran.
+ */
+export type ManagedClusterConnectivityFailure =
+  | { readonly check: "rails" }
+  | { readonly check: "route" | "jumbo" | "neighbor"; readonly netdev: string };
+
 export interface ManagedClusterDiscoveryDeps {
   now(): Date;
   currentUid(): number | null;
@@ -169,10 +177,11 @@ export interface ManagedClusterDiscoveryDeps {
     buildIdentity: BuildIdentity,
     now: Date,
   ): SystemReadinessReport;
+  /** Null means every rail passed every probe. */
   probeConnectivity(
     transport: ManagedClusterReadOnlyHostTransport,
     requests: readonly ManagedClusterConnectivityRequest[],
-  ): boolean;
+  ): ManagedClusterConnectivityFailure | null;
   /** Atomically claim a new binding root. False means an existing owner won. */
   claimBinding(statePath: string): boolean;
   writeBinding(statePath: string, identity: QualifiedManagedVllmSshIdentity): ManagedVllmSshBinding;
@@ -928,6 +937,21 @@ function topologyFailureReason(result: ReturnType<typeof qualifyManagedClusterTo
   return result.outcome === "qualified" ? "" : result.message;
 }
 
+const CONNECTIVITY_CHECK_LABELS = {
+  route: "route",
+  jumbo: "jumbo-frame",
+  neighbor: "neighbor",
+} as const;
+
+function connectivityFailureReason(
+  hostname: string,
+  failure: ManagedClusterConnectivityFailure,
+): string {
+  return failure.check === "rails"
+    ? `Managed cluster connectivity needs exactly two direct ConnectX-7 rails on ${hostname}.`
+    : `The ${CONNECTIVITY_CHECK_LABELS[failure.check]} check failed on ${hostname} rail ${failure.netdev}.`;
+}
+
 function sameHostIdentity(
   left: ManagedClusterHostObservation,
   right: ManagedClusterHostObservation,
@@ -1120,15 +1144,14 @@ export function probeManagedClusterManagedServingCapability(
       ...selectedPeers.map(({ host, transport }) => [host.nodeId, transport] as const),
     ]);
     for (const node of cluster.nodes) {
-      if (
-        !deps.probeConnectivity(
-          transportByNodeId.get(node.host.nodeId)!,
-          cluster.connectivity.get(node.host.nodeId)!,
-        )
-      ) {
+      const connectivityFailure = deps.probeConnectivity(
+        transportByNodeId.get(node.host.nodeId)!,
+        cluster.connectivity.get(node.host.nodeId)!,
+      );
+      if (connectivityFailure) {
         return disposition(selection, {
           code: "connectivity-unavailable",
-          reason: `Direct route, neighbor, or jumbo connectivity failed on ${node.host.hostname}.`,
+          reason: connectivityFailureReason(node.host.hostname, connectivityFailure),
         });
       }
     }
