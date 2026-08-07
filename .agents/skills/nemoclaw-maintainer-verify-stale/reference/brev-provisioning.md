@@ -1,14 +1,14 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# verify-stale — Brev Provisioning and Install Reference
+# verify-stale — Brev Instance Creation and Install Reference
 
-Use when the local-first path does not settle the issue and a Brev run is approved. Covers instance reuse/provisioning, reset, baseline/latest installs, dependency bootstrap, and `brev exec` footguns.
+Use when the isolated local path does not settle the issue and a Brev run is approved. Covers instance reuse or creation, reset, reported-release and newest-release installs, dependency bootstrap, and `brev exec` command constraints.
 
 ## Contents
 
-- [Step 7: Reuse or Provision a Brev Instance](#step-7-reuse-or-provision-a-brev-instance)
-- [Step 8: Validate on Baseline, Verify on Latest](#step-8-validate-on-baseline-verify-on-latest)
+- [Step 7: Reuse or Create a Brev Instance](#step-7-reuse-or-create-a-brev-instance)
+- [Step 8: Validate the Reported Release and Verify the Newest Release Tag](#step-8-validate-the-reported-release-and-verify-the-newest-release-tag)
 - [Reset](#reset-run-before-each-install)
 - [Step 8a: Install reported version](#step-8a-install-reported-version)
 - [Step 8a.5: Bootstrap reproducer dependencies](#step-8a5-bootstrap-reproducer-dependencies)
@@ -16,9 +16,9 @@ Use when the local-first path does not settle the issue and a Brev run is approv
 
 ---
 
-## Step 7: Reuse or Provision a Brev Instance
+## Step 7: Reuse or Create a Brev Instance
 
-Prefer reuse over provisioning only when the matching `verify-stale-*` instance has no active verification sentinel or registered NemoClaw sandbox. Before remote execution or a cost-bearing action, present the exact instance, type, hourly price, 60-minute execution budget, 120-second cleanup grace, third-party-software acceptance, credential plan, and cleanup action. Wait for explicit maintainer approval.
+Reuse a matching `verify-stale-*` instance only when it has no active verification sentinel or registered NemoClaw sandbox. A credential-bearing run must create a dedicated instance instead of reusing one. Before remote execution or a cost-bearing action, present the exact instance, type, hourly price, 60-minute execution budget, 120-second cleanup grace, third-party-software acceptance, credential plan, and cleanup action. For a credential-bearing run, the plan must approve instance deletion and immediate credential rotation if deletion cannot be confirmed. Wait for explicit maintainer approval.
 
 ```bash
 # Auth + install URL already verified by Step 6.8 — no need to re-check or auto-login here.
@@ -26,17 +26,39 @@ Prefer reuse over provisioning only when the matching `verify-stale-*` instance 
 # Determine class from Step 5: "cpu" or "gpu"
 INSTANCE_CLASS="cpu"   # or "gpu"
 
-INSTANCES=$(brev ls --json)
+normalize_brev_instances() {
+  jq -c '
+    if type == "array" then .
+    elif type == "object" and has("workspaces") and .workspaces == null then []
+    elif type == "object" and (.workspaces | type) == "array" then .workspaces
+    else error("unexpected brev ls --json shape") end
+    | map(. + {
+        verifyStaleName: ((.name // .workspaceName // .instanceName // "") | tostring)
+      })'
+}
+
+if ! RAW_INSTANCES=$(brev ls --json); then
+  echo "ERROR: could not read Brev instance inventory"
+  exit 1
+fi
+if ! INSTANCES=$(printf '%s' "$RAW_INSTANCES" | normalize_brev_instances); then
+  echo "ERROR: Brev instance inventory has an unsupported JSON shape"
+  exit 1
+fi
+unset RAW_INSTANCES
 
 # Look for an existing running verify-stale-* instance matching the required class.
 # CPU instances have no .gpu field set; GPU instances do.
-EXISTING=$(echo "$INSTANCES" | jq -r --arg class "$INSTANCE_CLASS" '
+EXISTING=$(printf '%s' "$INSTANCES" | jq -r --arg class "$INSTANCE_CLASS" '
   .[]?
-  | select(.name | startswith("verify-stale-"))
+  | select(.verifyStaleName | startswith("verify-stale-"))
   | select(.status == "RUNNING")
   | select(($class == "gpu" and (.gpu // "" != ""))
         or ($class == "cpu" and (.gpu // "" == "")))
-  | .name' | head -1)
+  | .verifyStaleName' | head -1)
+
+# Do not place a provider credential on a reused instance.
+[ -z "${PROVIDER_CREDENTIAL_ENV:-}" ] || EXISTING=""
 
 PROVISIONED_NEW=0
 
@@ -45,17 +67,16 @@ if [ -n "$EXISTING" ]; then
   echo "Candidate for reuse: $INSTANCE_NAME"
   echo "The approved plan will atomically acquire the instance, then verify that ~/.verify-stale-running is absent and 'nemoclaw list --json' has no sandboxes before reuse."
 else
-  # Concurrency cap: count running, starting, provisioning, and failed-but-still-
-  # allocated verification instances. Only explicitly stopped instances are excluded.
-  ACTIVE=$(echo "$INSTANCES" | jq '[.[]? | select(.name | startswith("verify-stale-")) | select(.status != "STOPPED")] | length')
+  # Concurrency cap: count instances that are not explicitly stopped.
+  ACTIVE=$(printf '%s' "$INSTANCES" | jq '[.[]? | select(.verifyStaleName | startswith("verify-stale-")) | select(.status != "STOPPED")] | length')
   if [ "$ACTIVE" -ge 2 ]; then
-    echo "ERROR: 2 verify-stale instances are already active. Wait, reuse, or clean up a stale allocation."
+    echo "ERROR: 2 verify-stale instances are already active. Wait, reuse, or remove a stale allocation."
     exit 1
   fi
 
   INSTANCE_NAME="verify-stale-${ISSUE_NUMBER}-$(date +%s)-$$"
-  if echo "$INSTANCES" | jq -e --arg name "$INSTANCE_NAME" 'any(.[]?; .name == $name)' >/dev/null; then
-    echo "ERROR: refusing to create or clean up a pre-existing instance named $INSTANCE_NAME"
+  if printf '%s' "$INSTANCES" | jq -e --arg name "$INSTANCE_NAME" 'any(.[]?; .verifyStaleName == $name)' >/dev/null; then
+    echo "ERROR: refusing to create or remove a pre-existing instance named $INSTANCE_NAME"
     exit 1
   fi
 
@@ -144,14 +165,21 @@ run_bounded() {
   command_budget=$(remaining_seconds) || return 124
   run_with_timeout "$command_budget" "$@"
 }
+instance_is_absent() {
+  local raw current
+  raw=$(run_with_timeout 30 brev ls --json) || return 1
+  current=$(printf '%s' "$raw" | normalize_brev_instances) || return 1
+  printf '%s' "$current" \
+    | jq -e --arg name "$INSTANCE_NAME" 'all(.[]?; .verifyStaleName != $name)' >/dev/null
+}
 cleanup_verification() {
-  # The execution budget can be exhausted when cleanup starts. Give control-
-  # plane cleanup a separate bounded grace period and report failures.
+  local cleanup_failed=0
+  # The execution budget can be exhausted when cleanup starts. Give control-plane
+  # cleanup a separate bounded grace period and report failures.
   if [ "$PROVISIONED_NEW" = "1" ] && [ "$KEEP_INSTANCE" != "1" ]; then
-    # Deleting a newly provisioned instance removes its remote evidence and lock too;
-    # prioritize deletion so the total cleanup grace remains 120 seconds.
-    run_with_timeout 120 brev delete "$INSTANCE_NAME" >/dev/null 2>&1 || \
-      echo "WARNING: bounded delete did not complete for $INSTANCE_NAME; check Brev billing state now" >&2
+    # Reserve 30 seconds to confirm that the instance is absent.
+    run_with_timeout 90 brev delete "$INSTANCE_NAME" >/dev/null 2>&1 || cleanup_failed=1
+    instance_is_absent || cleanup_failed=1
   elif [ "$REMOTE_STATE_CREATED" = "1" ]; then
     CLEANUP_COMMAND="
       test \"\$(cat ~/.verify-stale-owner/token 2>/dev/null)\" = \"$VERIFY_STALE_RUN_ID\" || exit 0
@@ -160,8 +188,8 @@ cleanup_verification() {
       rm -rf ~/.verify-stale-running
       rm -rf ~/.verify-stale-owner
     "
-    run_with_timeout 120 brev exec "$INSTANCE_NAME" "$CLEANUP_COMMAND" >/dev/null 2>&1 || \
-      echo "WARNING: bounded remote cleanup did not complete for $INSTANCE_NAME" >&2
+    run_with_timeout 120 brev exec "$INSTANCE_NAME" "$CLEANUP_COMMAND" >/dev/null 2>&1 \
+      || cleanup_failed=1
   else
     # Acquisition can succeed remotely even if SSH drops before acknowledgement.
     # Remove only a lock carrying this run's unique local identifier.
@@ -169,16 +197,24 @@ cleanup_verification() {
       test \"\$(cat ~/.verify-stale-owner/token 2>/dev/null)\" = \"$VERIFY_STALE_RUN_ID\" || exit 0
       rm -rf ~/.verify-stale-owner
     "
-    run_with_timeout 120 brev exec "$INSTANCE_NAME" "$RELEASE_COMMAND" >/dev/null 2>&1 || true
+    run_with_timeout 120 brev exec "$INSTANCE_NAME" "$RELEASE_COMMAND" >/dev/null 2>&1 \
+      || cleanup_failed=1
+  fi
+  if [ "$cleanup_failed" = "1" ]; then
+    echo "ERROR: cleanup was not confirmed for $INSTANCE_NAME; do not reuse this instance" >&2
+    if [ "${PROVIDER_CREDENTIAL_COPIED:-0}" = "1" ]; then
+      echo "ERROR: rotate $PROVIDER_CREDENTIAL_ENV immediately because provider-key might remain" >&2
+    fi
   fi
   cleanup_local_evidence
+  [ "$cleanup_failed" = "0" ]
 }
 trap cleanup_verification EXIT
 
 if [ -z "$EXISTING" ]; then
   PROVISIONED_NEW=1
   if ! run_bounded brev create "${CREATE_ARGS[@]}"; then
-    echo "ERROR: provisioning failed or exceeded the approved execution budget"
+    echo "ERROR: instance creation failed or exceeded the approved execution budget"
     exit 1
   fi
 fi
@@ -225,9 +261,9 @@ REMOTE_STATE_CREATED=1
 
 # Cleanup runs on success, error, and SIGINT. Reset verification state and remove
 # copied credentials, scripts, logs, and the sentinel from every instance. Delete
-# only what we provisioned; reused instances stay available without run artifacts.
+# only what this run created; reused instances stay available without run artifacts.
 # `brev delete` is non-interactive by default — there is no --yes flag, and passing one errors.
-echo ">>> Brev instance: $INSTANCE_NAME (provisioned_new=$PROVISIONED_NEW; approved cleanup: reset verification state, remove credentials/scripts/logs, and brev delete $INSTANCE_NAME when newly provisioned)"
+echo ">>> Brev instance: $INSTANCE_NAME (created_by_run=$PROVISIONED_NEW; approved cleanup: reset verification state, remove credentials/scripts/logs, and brev delete $INSTANCE_NAME when created by this run)"
 ```
 
 Do not set `KEEP_INSTANCE=1` unless the maintainer separately approves the retention cost, names the cleanup owner, and accepts an exact deletion deadline. Before reuse or retention, remove `~/.verify-stale-evidence` and confirm the verification sentinel is absent.
@@ -240,7 +276,7 @@ The previous design used a 25-minute default and a 60-minute extension for time-
 
 ---
 
-## Step 8: Validate on Baseline, Verify on Latest
+## Step 8: Validate the Reported Release and Verify the Newest Release Tag
 
 Two-pass design.
 
@@ -296,6 +332,7 @@ if ! run_bounded brev exec "$INSTANCE_NAME" "$RESET"; then
   exit 1
 fi
 BASELINE_INSTALL_FAILED=0
+RESOLVED_TAG_MISMATCH=0
 
 # Pass the provider env vars through so install.sh's bundled onboarding step
 # does not fall back to the default `build` provider. The installer owns any
@@ -352,22 +389,19 @@ python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.
   "$EVIDENCE_DIR/baseline-install.log" >"$EVIDENCE_DIR/baseline-install.redacted.log"
 tail -40 "$EVIDENCE_DIR/baseline-install.redacted.log"
 
-# Verify the resolved install version matches the requested version. This guards against the
-# `VAR=val curl ... | bash` shell-scoping footgun where the env var binds to curl, not the
-# downstream bash, and the install silently falls through to "latest". Surfaced during a
-# rot-debugging investigation where v0.0.36 was silently installed when v0.0.26 was requested
-# and several minutes of "convincing" output ran before anyone noticed. Always print the
-# resolved state, never trust the requested state.
-RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
-RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
-RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
-echo "[verify-stale] baseline requested: $REPORTED_VERSION; resolved: $RESOLVED"
-if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$REPORTED_VERSION" ]; then
-    echo "ERROR: baseline install resolved to '$RESOLVED' but $REPORTED_VERSION was requested."
-    echo "  Common cause: env-var scoping in the install command. Verify the env vars are on"
-    echo "  the BASH side of the curl|bash pipe, not the curl side. Setting"
-    echo "  BASELINE_INSTALL_FAILED=1 to prevent verifying against the wrong version."
-    BASELINE_INSTALL_FAILED=1
+# After a successful install, verify that the resolved release tag matches the requested tag.
+# This rejects shell-scoping errors that apply the variable to `curl` instead of `bash`.
+if [ "$BASELINE_INSTALL_FAILED" = "0" ]; then
+  RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
+  RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+  RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
+  echo "[verify-stale] baseline requested: $REPORTED_VERSION; resolved: $RESOLVED"
+  if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$REPORTED_VERSION" ]; then
+    RESOLVED_TAG_MISMATCH=1
+    echo "ERROR: resolved release tag '$RESOLVED_TAG' does not match requested release tag $REPORTED_VERSION"
+    echo "Do not assign a verdict, score the run, or propose a GitHub comment."
+    exit 1
+  fi
 fi
 
 # The bundled onboard creates a sandbox name we do not want carrying through to the reproducer.
@@ -377,9 +411,9 @@ if ! run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$P
 fi
 ```
 
-If the baseline install or build fails, set `BASELINE_INSTALL_FAILED=1` and select `verify-inconclusive`. Do not run latest to infer a fixed verdict. The baseline gate cannot establish that the reviewed reproducer exposed the reported bug. Check this flag before dependency bootstrap or reproducer execution.
+If the baseline install or build fails after the resolved release tag matches `$REPORTED_VERSION`, set `BASELINE_INSTALL_FAILED=1` and select `verify-inconclusive`. Do not verify the newest release tag to infer a fixed verdict. The baseline gate cannot establish that the reviewed reproducer exposed the reported bug. Check this flag before dependency bootstrap or reproducer execution. A missing or different resolved release tag is a hard infrastructure failure, not an inconclusive verdict.
 
-**The reproducer's own `nemoclaw onboard` (Step 8b) must pass `--fresh`.** If install.sh's bundled onboard was in an in-progress or failed state when we destroyed the install sandbox, the reproducer's onboard would error with `Previous onboarding session failed. Re-run with --fresh to discard it`. `--fresh` ensures a clean start.
+**The reproducer's own `nemoclaw onboard` (Step 8b) must pass `--fresh`.** If the installer's onboarding step left an incomplete session before the verification sandbox was destroyed, the reproducer would report `Previous onboarding session failed. Re-run with --fresh to discard it`. `--fresh` discards that saved session before onboarding starts.
 
 ### Step 8a.5: Bootstrap reproducer dependencies
 
@@ -394,7 +428,7 @@ Brev's stock CPU images ship with NemoClaw installable but not the broader ecosy
 **When substitution cannot establish `fixed-on-latest`:**
 
 - Provider requires a credential the approved run does not supply. Substitution cannot establish a fixed provider-specific bug. Select `verify-inconclusive` and document the mismatch.
-- The bug is *provably* independent of the dependency (e.g., a CLI argument-parsing bug that errors before any provider runs). Note this explicitly in the comment.
+- If the reviewed bug path fails before the dependency runs, record that evidence in the comment.
 
 **Canonical bootstraps:**
 
@@ -422,7 +456,7 @@ BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
 run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -c 'sleep 30 && curl -fsS http://127.0.0.1:8000/v1/models'" || exit 1
 ```
 
-Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest run. Record the exact dependency and model versions. If the dependency itself is implicated, reproduce the reported version; when no version is reported, select `verify-inconclusive` or obtain maintainer direction. A current dependency is acceptable only when the reviewed bug path is independent of its version, and the plan must say so. Do not reset Ollama/vLLM state between baseline and latest because model downloads are expensive and unrelated to the NemoClaw install.
+Bootstrap once before Step 8b's reported-release run and reuse the dependency for Step 8d's newest-release run. Record the exact dependency and model versions. If the dependency itself is implicated, reproduce the reported version. When the issue reports no dependency version, select `verify-inconclusive` or obtain maintainer direction. A dependency version selected at run time is acceptable only when the reviewed bug path is independent of its version, and the plan must state that condition. Do not reset Ollama or vLLM state between release installs because model downloads are expensive and unrelated to the NemoClaw install.
 
 **If bootstrap fails** (network issue pulling the model, service won't start, etc.), this is an infra failure — abort to Step 11. Do not silently substitute; the user opted into faithfulness for a reason.
 

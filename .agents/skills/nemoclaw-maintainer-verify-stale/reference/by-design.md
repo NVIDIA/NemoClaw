@@ -37,11 +37,11 @@ printf '%s' "$COMMENTS" \
            evidence: (.body | match("removed in (pr )?#\\d+|by design|wontfix|won.?t fix|not a bug|intentional"; "i").string)}'
 ```
 
-Use the complete paginated `$COMMENTS` value from candidate selection. `gh issue view --json comments` can truncate older comments and miss the load-bearing decision.
+Use the complete paginated `$COMMENTS` value from candidate selection. `gh issue view --json comments` can truncate older comments and miss the decision that controls the verdict.
 
 Capture for evidence: comment URL + author login + the quoted phrase.
 
-**Signal 2 — Removal commit in range.** A commit between the reported version and `$LATEST` deletes the symbol implicated by the reproducer. Use git's pickaxe to locate the change, then inspect the linked PR or accepted decision for explicit intent:
+**Signal 2 — Removal commit in range.** A commit between the reported release and `$LATEST` deletes the symbol implicated by the reproducer. Use Git pickaxe search to locate the change, then inspect the linked PR or accepted decision for explicit intent:
 
 ```bash
 # Pickaxe: list every commit whose diff changes the count of <symbol> occurrences.
@@ -58,7 +58,7 @@ git log -p <candidate-sha> -- src/ bin/ nemoclaw/src/ | grep -nE '^-.*\b<symbol>
 
 Capture for evidence: commit SHA, the deletion, the linked PR or decision, and the text that establishes intent. A deletion with no intent record is not sufficient for `by-design`.
 
-**Signal 3 — Symbol absent in both reported version and latest.** The implicated symbol is not present in either tag's source tree. This can mean the issue used an obsolete command, but it can also mean the search term is wrong or the implementation moved.
+**Signal 3 — Symbol absent in both release tags.** The implicated symbol is not present in either tag's source tree. This can mean the issue used an obsolete command, but it can also mean the search term is wrong or the implementation moved.
 
 ```bash
 git grep -n "<symbol>" "$REPORTED_VERSION" -- src/ bin/ nemoclaw/   # expect: zero matches (or shim-only — see sub-case)
@@ -67,11 +67,11 @@ git grep -n "<symbol>" "$LATEST"            -- src/ bin/ nemoclaw/   # expect: z
 
 Capture for evidence: both grep commands and their outputs. Locate the accepted decision or merged PR that defines the replacement before selecting `by-design`.
 
-**Sub-case for signals 2 and 3 — vestigial deprecation shims.** It's common for a removed symbol to survive in latest *only* as a deprecation message (e.g., a CLI subcommand that prints `"--<flag> was removed; use <X> instead"` and exits non-zero). When a grep returns matches in latest, inspect each `file:line`. If every match is a deprecation stub with no functional effect on the bug-as-filed, signal 2 or 3 still fires; record the shim locations and behavior as a separate evidence block. Do not silently treat shims as functional code, and do not silently treat them as absence.
+**Sub-case for signals 2 and 3 — vestigial deprecation shims.** A removed symbol can remain in `$LATEST` only as a deprecation message, such as a command that reports `--<flag> was removed; use <X> instead` and exits non-zero. Inspect every match. If every match is a deprecation stub with no functional effect on the reported bug, signal 2 or 3 still applies. Record the shim locations and behavior as a separate evidence block. Do not treat a shim as functional code or as absence.
 
 ### Step 8.5b: Pre-check related failure modes
 
-A by-design verdict says "the bug *as filed* can't reproduce." It does NOT say "every bug shaped like this is fixed." Before drafting the comment, search latest's source for code paths that could still produce the issue's described **symptom** (not the literal removed flag/symbol — the symptom).
+A by-design verdict says that the reported reproducer cannot execute under the intended contract. It does not establish that every similar symptom is fixed. Before drafting the comment, search the `$LATEST` source for other paths that can produce the reported symptom.
 
 ```bash
 # Use the issue's symptom keywords, not the removed symbol.
@@ -105,7 +105,7 @@ The cost of an incorrect "I checked and X is gone" claim in a public comment, or
 ### Step 8.5e: If explicit intent evidence exists
 
 - **Skip the Step 9 score table** entirely. The "exit 0 + expected output" axis doesn't apply when the expected output is no longer the contract.
-- **Skip Brev provisioning** only if explicit intent evidence is established before Step 7 — a remote run would only reconfirm behavior whose intended replacement or removal is already documented. Signals 2 and 3 can start the investigation as soon as the reported version is parsed, but cannot short-circuit Brev by themselves.
+- **Skip Brev instance creation** only if explicit intent evidence is established before Step 7. A remote run would only reconfirm behavior whose intended replacement or removal is already documented. Signals 2 and 3 can start the investigation after parsing the reported version, but cannot skip Brev by themselves.
 - **Prepare a dry run** containing Project Status `Won't Fix`, the public comment, the durable `by-design` marker, and `human_review_required: true`.
 - **Request explicit maintainer approval** for that write set. Do not substitute a status label or write before approval.
 - **On approval, update Project Status first, then post the accepted comment.** If approval is withheld, report the evidence without mutating GitHub.
@@ -137,7 +137,7 @@ The Step 8.5d self-verification pass MUST resolve at least one rendered link (e.
 
 **Reported on:** v0.0.<X>
 **Verified on:** v0.0.<Y> (PR #<NNNN> first shipped in v0.0.<Z>)
-**Verification mode:** static analysis at the verified-on tag — no runtime reproduction. Step 8.5 by-design short-circuits Brev provisioning because the responsible code change is already proven by the diff between `$REPORTED_VERSION` and `$LATEST`.
+**Verification mode:** static analysis at the verified release tag; no runtime reproduction. Step 8.5 skips Brev instance creation because explicit intent evidence establishes the intended removal or replacement.
 **Outcome:** the reproducer invokes behavior that an accepted decision or merged change intentionally removed or replaced.
 
 ### What's structurally fixed

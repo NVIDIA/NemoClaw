@@ -102,13 +102,13 @@ gh api "repos/NVIDIA/NemoClaw/issues/$ISSUE_NUMBER/comments?per_page=100" \
 COMMENTS=$(<"$EVIDENCE_DIR/comments.json")
 ```
 
-In batch mode, work through items one at a time. Present each verification plan and wait for approval before any Brev provisioning.
+In batch mode, work through items one at a time. Present each verification plan and wait for approval before any Brev instance creation.
 
 ---
 
 ## Step 2: Detect the Newest Exact NemoClaw Release Tag
 
-Select the highest `vX.Y.Z` tag from the GitHub API. Do not use the installer's default selector: current installs follow the maintainer-promoted `lkg` tag, which can lag the newest exact release tag. Use `gh api` rather than `git ls-remote` so the skill reuses the authenticated GitHub session.
+Select the highest `vX.Y.Z` release tag from the GitHub API. Do not use the installer's default selector: the default follows the maintainer-promoted `lkg` tag, which can lag the newest exact release tag. Use `gh api` rather than `git ls-remote` so the skill reuses the authenticated GitHub session.
 
 ```bash
 LATEST=$(gh api repos/NVIDIA/NemoClaw/tags --paginate --jq '.[].name' \
@@ -121,7 +121,7 @@ if tags:
 
 [ -n "$LATEST" ] || { echo "ERROR: no exact vX.Y.Z release tag found"; exit 1; }
 
-echo "Latest tag: $LATEST"
+echo "Newest release tag: $LATEST"
 ```
 
 This is the exact version the skill will verify against. Record it. Every install and comment must cite it.
@@ -143,6 +143,8 @@ Apply these rules in order. Drop any issue that fails a rule.
 **TUI / interactive-UI skip:** drop if the issue title contains `TUI`, `dashboard UI`, `chat UI`, `keystroke`, or `key press`, OR if the body describes interactive UI behavior (key sequences, mouse interactions, browser-side UI state) without a non-interactive reproducer (no `NEMOCLAW_NON_INTERACTIVE=1` or equivalent env var pattern). `brev exec` does not allocate a real TTY by default, so TUI reproducers hang or silently fail at the first prompt; v1 documents this as out-of-scope rather than emitting a wrong verdict. v1.1 may add a `script(1)` / `expect` / `tmux send-keys` harness to lift this skip.
 
 **Credential-bound integration skip (deferred to v2):** drop `integration: slack`, `integration: discord`, `integration: telegram`, and `integration: wechat`. These need third-party credentials that a fresh Brev instance cannot provide. Do not drop `integration: openclaw` or `integration: hermes` solely for the runtime label; Step 5 selects the matching agent runtime.
+
+**Agent-runtime skip:** drop an issue labeled `integration: dcode` or whose reproducer is specific to LangChain Deep Agents Code. The v1 verification allowlist covers OpenClaw and Hermes only. Do not default a LangChain Deep Agents Code reproducer to OpenClaw.
 
 Do not require retired component labels. Native Issue Type, version evidence, canonical routing labels, and reproducer suitability determine eligibility.
 

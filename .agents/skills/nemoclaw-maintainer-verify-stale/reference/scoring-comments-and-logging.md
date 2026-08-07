@@ -23,12 +23,12 @@ Start at 0. Apply each rule that fires.
 
 | Signal | Delta |
 |---|---|
-| The baseline-validated reproducer ran cleanly on **latest** (8d), with the expected exit and no bug symptom | +50 |
-| Baseline was mixed across the Step 8b flake retry and latest was clean | +25 instead of the +50 latest-clean signal |
+| The baseline-validated reproducer produced the expected exit and no reported symptom on the newest release tag | +50 |
+| The reported-release retry had mixed results, and the newest-release run did not show the symptom | +25 instead of the +50 newest-release signal |
 | A reviewed diff between the tags changes the implicated behavior in a way that addresses the symptom | +25 |
 | A merged PR explicitly states that it fixes this issue or the reproduced symptom | +25 |
-| Reproducer was LLM-synthesized at any point (Step 8b synth or Step 8c retry) | −30 |
-| Any partial error, warning, or flaky behavior in the latest run (8d) | −50 |
+| Reproducer received the −30 confidence penalty after an LLM introduced a command or state change that affects the reproduced behavior | −30 |
+| Any partial error, warning, or intermittent behavior in the newest-release run | −50 |
 
 Total is clamped to `[0, 100]`.
 
@@ -77,7 +77,7 @@ If neither query returns anything, **skip the +25 signal**.
 
 **Baseline-validation gate.** `fixed-on-latest` requires the same reviewed reproducer to expose the reported symptom on `$REPORTED_VERSION`. If the baseline install or build fails, or the baseline result does not match, select `verify-inconclusive`. Commit or PR evidence can explain the result but cannot replace the runtime baseline gate. The static by-design branch remains separate because it requires explicit intent evidence.
 
-**Action (when latest run was clean — bug not reproduced):**
+**Action when the newest-release run has the expected result and does not show the bug:**
 
 | Score | Verdict | Proposed Project action | Comment |
 |---|---|---|---|
@@ -87,11 +87,11 @@ If neither query returns anything, **skip the +25 signal**.
 
 Verdict names are comment and log vocabulary, not GitHub labels. Prepare the comment, Project update, assignment, and durable verdict marker as a dry run with `human_review_required: true`; apply only the accepted write set.
 
-**Special case: latest output matches the issue symptom (bug still reproduces on latest).**
+**Special case: the newest-release output matches the reported symptom.**
 
-This is not a flake — the skill positively confirmed the bug is still live. Don't apply the +50 weight (the bug isn't fixed) and skip the score table entirely.
+This result confirms that the bug still reproduces on the newest release tag. Do not apply the +50 weight. Skip the score table.
 
-- Post a 30–80 word "still reproduces on latest" comment without transcripts. Keep the baseline/latest transcripts as local ephemeral evidence; the optional activity log stores only the structured summary from Step 12.
+- Post a 30–80 word comment that states the bug still reproduces on the newest release tag. Do not include transcripts. Keep the reported-release and newest-release transcripts as temporary local evidence; the optional activity log stores only the structured summary from Step 12.
 - Make no Project field or label change.
 - Include the marker `<!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->` with today's date so the candidate filter applies the 7-day TTL (Step 3 idempotency).
 - A later scheduled or manual run can pick the issue back up after the TTL and catch a newly landed fix.
@@ -102,7 +102,7 @@ The skill **never closes issues** in any branch. Project fields, assignments, an
 
 ## Step 10: Compose and Post the Comment
 
-**Redaction pass before inspection or posting.** Run the bundled helper on every chunk of evidence: issue body excerpts, baseline/latest transcripts, log captures, and synthesized scripts. Inspect and quote only the redacted output. Keep raw evidence in the owner-only `$EVIDENCE_DIR` and let the cleanup trap remove it.
+**Redaction pass before inspection or posting.** Run the bundled helper on every evidence excerpt, including issue body excerpts, reported-release and newest-release transcripts, log captures, and synthesized scripts. Inspect and quote only the redacted output. Keep raw evidence in the owner-only `$EVIDENCE_DIR` and let the cleanup trap remove it.
 
 ```bash
 REDACTOR=.agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py
@@ -186,15 +186,15 @@ The helper implements the patterns below in this order. Update the helper and it
 - Redundant verbal framing of what the evidence already shows ("the table above proves…").
 - "Verification mode" pleasantries beyond one factual line.
 
-**Mandatory hardware-substitution caveat.** When the issue carries `platform: dgx-spark` or `platform: gb10` and Step 7 provisioned a Brev SKU that is not the same silicon, the rendered comment must include a one-line "Hardware substitution" note. Name both the actual Brev SKU and the reported hardware, and state that performance, memory-architecture, and driver results require confirmation on the real target.
+**Mandatory hardware-substitution caveat.** When the issue carries `platform: dgx-spark` or `platform: gb10` and Step 7 created a Brev instance with different silicon, the rendered comment must include a one-line `Hardware substitution` note. Name the Brev SKU and reported hardware. State that performance, memory-architecture, and driver results require confirmation on the reported hardware.
 
-**Mandatory `Verification mode` header line.** All three templates below include a `**Verification mode:**` line in the metadata block, naming what we did and didn't actually run (e.g., "runtime reproduction on Brev <SKU>; baseline + latest both installed and run" for the standard template; "static analysis at the verified-on tag — no runtime reproduction" for the by-design template; "runtime reproduction on Brev <SKU>; bug confirmed live on latest" for still-reproduces). Reader should never have to guess whether the verdict came from real install logs or from static analysis.
+**Mandatory `Verification mode` header line.** Each template must name what ran. Use `runtime reproduction on Brev <SKU>; reported release and newest release tag both installed and run` for the standard template, `static analysis at the verified release tag; no runtime reproduction` for the by-design template, and `runtime reproduction on Brev <SKU>; reported symptom observed on the newest release tag` for still-reproduces. The reader must not have to infer whether the verdict came from runtime evidence or static analysis.
 
 **Link-pass self-verification (all templates).** Same rule as Step 8.5d's link pass, applied to every template. Resolve at least one rendered Markdown link from each section that has links via `gh api repos/NVIDIA/NemoClaw/contents/<path>?ref=<tag>` or `curl -fsI <blob-url>`. If any link fails, fix it or select `verify-inconclusive`.
 
 **Mandatory closing block — reporter @-mention with confirmation language.** Every template below **except `Still-reproduces`** ends with this @-mention of the original reporter:
 
-> @\<reporter\> — please test a recent build (≥ v0.0.\<Z\>) and reply with a fresh reproducer if the symptom remains.
+> @<reporter> — please test v0.0.<Z> or newer and reply with a reproducer if the symptom remains.
 
 Only the reporter can confirm whether the original symptom is gone in their environment. The @-mention converts a verification result into actionable confirmation work for QA. Customize `<Z>` per case (the version that shipped the fix or `$LATEST`), but never omit the line.
 
@@ -210,13 +210,13 @@ Only the reporter can confirm whether the original symptom is gone in their envi
 
 2. **Replace the closing reporter-only @-mention with a dual @-mention** that names BOTH the maintainer (acknowledging the open question) and the reporter (per the standard confirmation pattern):
 
-   > @\<UNANSWERED_MAINT_LOGIN\> — flagging that your question above is still open; the verification below may answer it. @\<reporter\> — please test a recent build (≥ v0.0.\<Z\>) and reply with a fresh reproducer if the symptom remains.
+   > @<UNANSWERED_MAINT_LOGIN> — your question above is still open; the verification below may answer it. @<reporter> — please test v0.0.<Z> or newer and reply with a reproducer if the symptom remains.
 
    **Applies to `fixed-on-latest` and `by-design` only.** Still-reproduces has no closing reporter @-mention by design (see L174), so there's nothing to replace; its only nod to the unanswered maintainer is the lead paragraph from step 1.
 
 The skill becomes the *unsticking voice* on a thread that has gone quiet — never a clueless interruption when discussion is fresh (Step 3 already filtered the within-7-day case).
 
-**Comment template (fixed / inconclusive — bug not reproduced on latest):**
+**Comment template (fixed or inconclusive — bug not reproduced on the newest release tag):**
 
 ````markdown
 ## Stale-issue verification — automated
@@ -228,11 +228,11 @@ The skill becomes the *unsticking voice* on a thread that has gone quiet — nev
 
 ### Baseline (reported version)
 
-- Install: exact tag resolved
-- Reproducer: reconstructed from reported steps · synthesized and reviewed (−30 penalty)
+- Install: requested release tag resolved
+- Reproducer: reconstructed from reported steps · synthesized and reviewed (−30 confidence penalty)
 - Result: matched `<one redacted symptom line or state comparison>` (exit `<code>`)
 
-### Latest
+### Newest Release
 
 - Install: succeeded
 - Result: expected behavior observed; `<one redacted diagnostic line or state comparison>` (exit `<code>`)
@@ -266,14 +266,14 @@ For a score below 60, use the same evidence structure only as far as needed for 
 
 **Reported on:** v0.0.31
 **Verified on:** v0.0.34
-**Verification mode:** runtime reproduction on Brev `<instance-class>` — bug confirmed live on latest.
+**Verification mode:** runtime reproduction on Brev `<instance-class>` — reported symptom observed on the newest release tag.
 
 The skill ran the reviewed reproducer on v0.0.34 and observed the same symptom. No Project field or label change proposed; eligible for re-verification after the seven-day marker TTL.
 
 <!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->
 ````
 
-If Step 8c introduced a behavior-bearing command or state transition, replace `reviewed reproducer` with `synthesized and reviewed reproducer`.
+If Step 8c introduced a command or state change that affects the reproduced behavior, replace `reviewed reproducer` with `synthesized and reviewed reproducer`.
 
 If a partial-fix PR is in flight that targets the same surface, add one sentence naming it between the verification line and the marker: `Partial fix tracked in #NNNN (not yet released).` Keep the total under 80 words.
 
@@ -316,7 +316,7 @@ GitHub does not make these calls transactional. If a Project update succeeds and
 
 Two different failure types, two different responses.
 
-**Latest-install failure** (Step 8d) or reuse-check / provisioning / harness errors: hard infra failure.
+**Install failure on the newest release tag**, reuse-check failure, instance-creation failure, or harness error: hard infrastructure failure.
 
 - Print the error.
 - Apply no Project field or label change — infra failures must not pollute the verification record.
@@ -325,10 +325,17 @@ Two different failure types, two different responses.
 
 A later scheduled or manual run retries naturally.
 
-**Baseline-install failure** (Step 8a, reported version does not install on a modern image): inconclusive verification.
+**Resolved release tag mismatch:** hard infrastructure failure.
+
+- Set `RESOLVED_TAG_MISMATCH=1`.
+- Do not assign a verdict or score.
+- Do not propose or post a GitHub comment.
+- Report the requested and resolved release tags in local task output.
+
+**Baseline-install failure** after confirming `$REPORTED_VERSION` (the reported release does not install on the selected image): inconclusive verification.
 
 - Set `BASELINE_INSTALL_FAILED=1` and select `verify-inconclusive`.
-- Do not run latest solely to produce a fixed verdict. The baseline gate cannot establish that the reviewed script ever exposed the bug.
+- Do not verify the newest release tag solely to produce a fixed verdict. The baseline gate cannot establish that the reviewed script exposed the bug.
 - Keep PR and commit findings as local context. Include only a concise, redacted explanation if the maintainer approves an inconclusive comment.
 
 **Baseline-build failure** (Step 8a binary install succeeded, but the in-image `Dockerfile` build failed): inconclusive verification, distinct from binary install failure.
@@ -339,7 +346,7 @@ A later scheduled or manual run retries naturally.
 
 Old releases can fail because installer assets, base-image dependencies, or build layers have changed. That is evidence about reproducibility, not evidence that the reported bug is fixed.
 
-**Instance cleanup on inconclusive results.** Keep the approved cleanup trap active. Do not change `PROVISIONED_NEW` to bypass deletion. Retain a provisioned instance only after separate maintainer approval that names the cost, cleanup owner, and deletion deadline; set `KEEP_INSTANCE=1` only for that accepted plan.
+**Instance cleanup on inconclusive results.** Keep the approved cleanup trap active. Do not change `PROVISIONED_NEW` to bypass deletion. Retain an instance created by the run only after separate maintainer approval that names the cost, cleanup owner, and deletion deadline; set `KEEP_INSTANCE=1` only for that accepted plan.
 
 ---
 
@@ -353,11 +360,11 @@ After each issue, append to `$VERIFY_STALE_LOG_DIR/nemoclaw-verify-stale-log.md`
 **Reported on:** v0.0.31
 **Verified on:** v0.0.34
 **Environment:** CPU | GPU (<instance type>)
-**Brev instance:** reused <name> | provisioned <name> | local (no Brev — Step 6.7 short-circuit)
+**Brev instance:** reused <name> | created <name> | local (no Brev instance created)
 **Baseline install:** succeeded | failed (verify-inconclusive)
 **Baseline match:** validated (reconstructed) | validated (synth) | failed (verify-inconclusive) | skipped
-**Latest install:** succeeded | failed (infra error)
-**Latest result:** not-reproduced (clean) | still-reproduces | partial / flake | n/a (skipped 8d)
+**Newest-release install:** succeeded | failed (infrastructure error)
+**Newest-release result:** expected result, no symptom | still-reproduces | partial | intermittent | n/a (Step 8d skipped)
 **Confidence:** 88 / 100 | n/a (still-reproduces)
 **Verdict marker:** fixed-on-latest | verify-inconclusive | by-design | still-reproduces | none (infra)
 **Project Status:** moved to Needs Review | moved to Won't Fix | unchanged | update failed

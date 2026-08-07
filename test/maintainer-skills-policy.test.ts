@@ -386,6 +386,16 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(stale).toContain("mkdir ~/.verify-stale-owner");
     expect(stale).toContain("select `verify-inconclusive`");
     expect(stale).toContain("documentation-writing-review.md");
+
+    expect(stale).toContain('if type == "array" then .');
+    expect(stale).toContain('(.workspaces | type) == "array"');
+    expect(stale).toContain(".name // .workspaceName // .instanceName");
+    expect(stale).toContain("integration: dcode");
+    expect(stale).toContain("Do not default a LangChain Deep Agents Code reproducer to OpenClaw");
+    expect(stale).toContain("PROVIDER_CREDENTIAL_COPIED=1");
+    expect(stale).toContain("rotate $PROVIDER_CREDENTIAL_ENV immediately");
+    expect(stale).toContain("RESOLVED_TAG_MISMATCH=1");
+    expect(stale).toContain("Do not propose or post a GitHub comment");
     expect(stale).not.toMatch(/gh issue edit[^\n]*--add-label/u);
     expect(stale).not.toContain("--label bug");
     expect(stale).not.toContain("nemoclaw destroy --all");
@@ -400,7 +410,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
       ".agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py",
     );
     const sensitive = [
-      "safe diagnostic line",
+      "ordinary diagnostic line",
       `github_pat_${"a".repeat(30)}`,
       `Authorization: Bearer ${"b".repeat(40)}`,
       `Cookie: session=${"c".repeat(40)}`,
@@ -414,7 +424,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     const redacted = spawnSync("python3", [redactor], { encoding: "utf8", input: sensitive });
 
     expect(redacted.status, redacted.stderr).toBe(0);
-    expect(redacted.stdout).toContain("safe diagnostic line");
+    expect(redacted.stdout).toContain("ordinary diagnostic line");
     expect(redacted.stdout).toContain("[REDACTED]");
     for (const secret of [
       "github_pat_",

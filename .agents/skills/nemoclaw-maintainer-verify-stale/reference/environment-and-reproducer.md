@@ -20,11 +20,11 @@ Use after a candidate passes selection. Classify the environment, review the rep
 **CPU vs GPU:** GPU if any of these signals are present, else CPU.
 
 - Labels: `platform: gb10`, `platform: dgx-spark`.
-- Body keywords (whole-word, case-insensitive): `nvidia-smi`, `cuda`, `H100`, `A100`, `L40S`, `L4`, `T4`, `GB10`, `DGX`, `vllm`, `tensorrt`. Match as whole words — `inference` and `model serving` are too noisy (e.g. `models.providers.inference.baseUrl` is a config path on CPU bugs, not a GPU need) and intentionally excluded.
+- Body keywords (whole-word, case-insensitive): `nvidia-smi`, `cuda`, `H100`, `A100`, `L40S`, `L4`, `T4`, `GB10`, `DGX`, `vllm`, `tensorrt`. Match as whole words — `inference` and `model serving` are too noisy (for example, `models.providers.inference.baseUrl` is a configuration path on CPU bugs, not a GPU requirement) and intentionally excluded.
 
 CPU default keeps cost low. Only escalate to GPU when the reproducer needs one.
 
-**CPU architecture:** use `x86_64` unless the issue explicitly reports `arm64` or `aarch64`. Set `INSTANCE_ARCH` from that evidence and preserve it in Step 7's CPU search. Do not let the cheapest-SKU search silently substitute ARM for an x86 report; installer and dependency behavior can differ by architecture. If the architecture is load-bearing and Brev has no matching SKU, select `verify-inconclusive`.
+**CPU architecture:** use `x86_64` unless the issue explicitly reports `arm64` or `aarch64`. Set `INSTANCE_ARCH` from that evidence and preserve it in Step 7's CPU search. Do not let the cheapest-SKU search silently substitute ARM for an x86 report; installer and dependency behavior can differ by architecture. If matching architecture is required to reproduce the symptom and Brev has no matching SKU, select `verify-inconclusive`.
 
 **Bug class classification.** In addition to CPU/GPU, classify the bug's verification shape so Step 8 routes to the right rubric. Classes are mutually exclusive — pick the first that matches:
 
@@ -36,7 +36,7 @@ CPU default keeps cost low. Only escalate to GPU when the reproducer needs one.
 | `log-only` | Body's symptom is logs-not-stdout: `see lots of error in <X> log`, `os.networkInterfaces guard errors`, anything pointing at a specific log file rather than the reproducer's stdout/stderr | Step 8b's match rubric extended with log-scraping |
 | `functional` (default) | Everything else — exit code + stdout/stderr matching | Step 8b standard rubric |
 
-Most bugs are `functional`. The other three classes need verification harnesses that the standard rubric can't produce honestly — e.g., one clean run of a perf reproducer doesn't tell you the p50 budget was met; one onboard run doesn't tell you a config survives a rebuild. Set `BUG_CLASS=<class>` so downstream steps can branch.
+Most bugs are `functional`. The other three classes need separate verification harnesses. One run without the symptom does not establish a percentile, and one onboarding run does not establish configuration persistence across a rebuild. Set `BUG_CLASS=<class>` so downstream steps use the applicable rubric.
 
 **Agent runtime classification.** Set `NEMOCLAW_AGENT` before either install pass:
 
@@ -44,9 +44,9 @@ Most bugs are `functional`. The other three classes need verification harnesses 
 |---|---|
 | `integration: hermes` label or a Hermes-specific reproducer | `hermes` |
 | `integration: openclaw` label or an OpenClaw-specific reproducer | `openclaw` |
-| No runtime-specific signal | `openclaw` |
+| No runtime-specific signal after Step 3 filters | `openclaw` |
 
-Do not substitute one agent runtime for another. If the signal is ambiguous, select `verify-inconclusive` or ask the maintainer before Brev use.
+Do not substitute one agent runtime for another. If the issue mentions LangChain Deep Agents Code, stop and select `verify-inconclusive`; do not set `NEMOCLAW_AGENT` or use Brev. If another runtime signal is ambiguous, select `verify-inconclusive` or ask the maintainer before Brev use.
 
 **Provider classification.** Some bugs are tied to a specific inference provider and do not reproduce faithfully under Ollama substitution. Classify the provider so downstream steps use the exact credential variable or select an inconclusive path:
 
@@ -78,11 +78,13 @@ Amazon Bedrock can require a profile, region, session token, or workload identit
 The reporter's reproducer uses <provider> and requires <credential-variable>.
 Choose one option:
 
-  1. Approve a temporary 0600 credential file. The skill reads the value with
-     hidden input, copies the file to the approved Brev instance, and deletes
-     the local copy immediately after a successful copy. The remote wrapper
-     reads the value inside the process that needs it. The value never appears
-     in a command string or process argument.
+  1. Approve a temporary 0600 credential file and a dedicated Brev instance.
+     The skill reads the value with hidden input, copies the file to that instance,
+     and deletes the local copy immediately after a successful copy. The remote
+     wrapper reads the value inside the process that needs it. The value never
+     appears in a command string or process argument. The approval includes
+     instance deletion and immediate credential rotation if deletion cannot be
+     confirmed.
 
   2. Substitute Ollama only when the behavior is provider-independent. Record
      the mismatch and select `verify-inconclusive`; provider substitution cannot
@@ -124,6 +126,8 @@ if ! run_bounded brev copy "$PROVIDER_KEY_FILE" "$INSTANCE_NAME":~/.verify-stale
   echo "ERROR: credential copy failed; abort this verification"
   exit 1
 fi
+
+PROVIDER_CREDENTIAL_COPIED=1
 rm -f "$PROVIDER_KEY_FILE"
 unset PROVIDER_KEY_FILE
 if ! run_bounded brev exec "$INSTANCE_NAME" 'chmod 600 ~/.verify-stale-evidence/provider-key'; then
@@ -141,7 +145,7 @@ run_bounded brev exec "$INSTANCE_NAME" "
 " || exit 1
 ```
 
-Never interpolate the value into `bash -c`, `sg docker -c`, `ssh`, or another command string. Delete the remote file before retaining or reusing an instance. Instance deletion also removes it. If a credential previously appeared in a command argument, treat it as exposed and rotate it.
+Never interpolate the value into `bash -c`, `sg docker -c`, `ssh`, or another command string. A credential-bearing run uses a dedicated instance, and the cleanup trap must confirm deletion. If deletion cannot be confirmed, mark the instance unavailable for reuse and rotate the provider credential immediately. If a credential previously appeared in a command argument, treat it as exposed and rotate it.
 
 **Pure-CLI / pure-sandbox-build bugs are exempt** — those don't actually exercise inference, so the provider doesn't matter even if the issue body mentions one. Heuristic: if Step 6.7's local-first predicate would have fired (no sandbox state, no model server interaction), skip the prompt.
 
@@ -178,9 +182,9 @@ NV QA files most bugs through an HTML form, so issue bodies are typically a mix 
    - Uses a destructive path.
    - Accesses an unrelated network destination.
 
-   Permit a documented NemoClaw setup action only when its exact effect appears in the approved Brev plan.
+   Permit a documented NemoClaw action only when its exact effect appears in the approved Brev plan.
 3. **Reconstruct:** create `$EVIDENCE_DIR/reproducer.sh` with the smallest understood steps. Use fixed arguments and a dedicated working directory. Add timeouts and cleanup. Do not copy shell structure that is not required to expose the symptom.
-4. **Approve:** show the complete reviewed script and its expected effects before any execution. If the local predicate can fire, obtain explicit approval for the exact local commands and their read effects. Otherwise include the script in the Brev plan. Any later script or stdin change invalidates this approval and must be reviewed and approved again. A reconstruction avoids the −30 synthesis penalty only when every behavior-bearing command and state transition comes from the reported steps. Fixed paths, quoting, timeouts, logging, and cleanup wrappers do not trigger the penalty. A script that introduces a behavior-bearing command or state transition receives the Step 8 penalty.
+4. **Approve:** show the complete reviewed script and its expected effects before any execution. If the local predicate applies, obtain explicit approval for the exact local commands and their read effects. Otherwise include the script in the Brev plan. Any later script or stdin change invalidates this approval and must be reviewed and approved again. Apply no −30 confidence penalty only when every command and state change that affects the reproduced behavior comes from the reported steps. Fixed paths, quoting, timeouts, logging, and cleanup wrappers do not trigger the penalty. Apply the Step 8 penalty when the script introduces a command or state change that affects the reproduced behavior.
 
 A robust extractor handles both shapes with the body fetched as JSON. The "anchor word" — what marks a block as a reproducer — must include `nemoclaw`, `openclaw`, AND `openshell`. Issue #2592 surfaced this gap: its reproducer was `openclaw channels add telegram` run inside the sandbox; a `nemoclaw`-only regex would have missed the verbatim block and forced the run through Step 8c synth-repro with a -30 penalty:
 
@@ -241,14 +245,14 @@ gh auth status 2>&1 | grep -q "'project'" || {
 
 ## Step 6.7: Try Isolated Local Reproduction
 
-Use the local path only for read-only CLI behavior. A local positive match can establish `still-reproduces`; a clean local result cannot establish `fixed-on-latest` because the reproducer has not passed the reported-release baseline gate.
+Use the local path only for read-only CLI behavior. A local positive match can establish `still-reproduces`. A local result without the reported symptom cannot establish `fixed-on-latest` because the reproducer has not passed the reported-release baseline gate.
 
 **Predicate** — local-first applies if **all** of these hold:
 
 - Every step is one literal `nemoclaw` invocation with no shell operator, expansion, redirection, environment read, or command substitution.
 - Every invocation is read-only: `--version`, `--help`, `list`, or `status`. A subcommand with `--help` is also read-only. Reject `onboard`, `update`, `uninstall`, `destroy`, `rebuild`, `recover`, `start`, `stop`, `upload`, `download`, `snapshot`, and every write flag.
 - Issue has no `area: sandbox` or `platform: container` label and no GPU signal from Step 5.
-- `command -v nemoclaw` resolves and `nemoclaw --version` matches `$LATEST` exactly. A source build ahead of the tag does not prove behavior on the release tag.
+- `command -v nemoclaw` resolves and `nemoclaw --version` matches `$LATEST` exactly. A source build ahead of the release tag does not establish behavior on that release tag.
 - Maintainer is on Linux or macOS. Windows local repros are out of scope (per Step 3 platform skip rules).
 
 **If the predicate fires:**
@@ -280,7 +284,7 @@ with open(transcript_path, "w", encoding="utf-8") as transcript:
             continue
         argv = shlex.split(raw, posix=True)
         if not argv or argv[0] != "nemoclaw":
-            raise SystemExit(f"unsafe local reproducer line: {raw}")
+            raise SystemExit(f"disallowed local reproducer line: {raw}")
         if len(argv) < 2 or (argv[1] not in allowed_roots and "--help" not in argv[1:] and "-h" not in argv[1:]):
             raise SystemExit(f"non-read-only local reproducer line: {raw}")
         try:
@@ -302,14 +306,14 @@ PY
     "$LOCAL_TRANSCRIPT" >"$EVIDENCE_DIR/local-transcript.redacted.log"
   echo "Local: $LOCAL_VERSION, exit $LOCAL_EXIT"
 else
-  echo "Skip local path: installed '$LOCAL_VERSION'; expected exact tag $LATEST"
+  echo "Skip local path: installed '$LOCAL_VERSION'; expected release tag $LATEST"
 fi
 ```
 
 Compare only `local-transcript.redacted.log` to the issue's reported symptom using the Step 8b rubric. Keep the raw local transcript in the evidence directory until the cleanup trap removes it:
 
-- **Local matches the reported-bug symptom** (same exit code + same diagnostic output as the issue's "Actual Result") → route to `still-reproduces`. Use the local transcript as the verified-on-latest evidence. Step 10's comment must say `Environment: local install (<version>) — Brev provisioning skipped, bug confirmed live on latest from CLI surface alone`.
-- **Local is clean or differs from the symptom** → continue to the baseline/latest Brev path. Do not select `fixed-on-latest` from a latest-only local run.
+- **Local matches the reported symptom** (same exit code and diagnostic output as the issue's "Actual Result") → route to `still-reproduces`. Use the local transcript as evidence for `$LATEST`. Step 10's comment must say `Environment: local install (<version>) — no Brev instance created; the CLI result on <release-tag> matches the reported symptom`.
+- **Local does not show the reported symptom** → continue to the reported-release and newest-release Brev path. Do not select `fixed-on-latest` from a run only on `$LATEST`.
 - **Local repro errors out for environmental reasons** (`nemoclaw: command not found`, npm link broken) → continue to Step 7. Treat as inconclusive locally, not a verification failure.
 
 **If the predicate does not fire:** proceed to Step 7 normally. Most sandbox-touching bugs need Brev.
