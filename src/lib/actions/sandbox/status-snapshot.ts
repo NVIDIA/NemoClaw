@@ -10,6 +10,7 @@ import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agen
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
 import {
+  type CuaStateValidationDeps,
   getObservedValidatedCuaState,
   isCuaPublicStateEnabled,
   type ObservedCuaInferenceRoute,
@@ -295,6 +296,7 @@ interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
   observeCuaLiveInference?: (entry: registry.SandboxEntry) => ObservedCuaInferenceRoute;
   observeCuaLiveAppliedPolicy?: (entry: registry.SandboxEntry) => CuaAppliedPolicyIdentity;
+  validateCuaRuntimeReadiness?: CuaStateValidationDeps["validateRuntimeReadiness"];
   listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
@@ -674,6 +676,9 @@ async function buildSandboxStatusReport(
   const cua = getObservedValidatedCuaState(sb, process.env, {
     observeLiveInference: deps.observeCuaLiveInference,
     observeLiveAppliedPolicy: deps.observeCuaLiveAppliedPolicy,
+    ...(deps.validateCuaRuntimeReadiness
+      ? { validation: { validateRuntimeReadiness: deps.validateCuaRuntimeReadiness } }
+      : {}),
   });
   return {
     schemaVersion: 1,

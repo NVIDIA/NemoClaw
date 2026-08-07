@@ -11,7 +11,11 @@ import { getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
-import { getObservedValidatedCuaState, isCuaPublicStateEnabled } from "../../cua/state";
+import {
+  type CuaStateObservationDeps,
+  getObservedValidatedCuaState,
+  isCuaPublicStateEnabled,
+} from "../../cua/state";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
@@ -488,9 +492,12 @@ function collectRegisteredSandboxChecks(
 }
 
 /** Report candidate install readiness only while both exact CUA gates are enabled. */
-export function collectCuaRuntimeDoctorChecks(sb: SandboxEntry | null | undefined): DoctorCheck[] {
+export function collectCuaRuntimeDoctorChecks(
+  sb: SandboxEntry | null | undefined,
+  deps: CuaStateObservationDeps = {},
+): DoctorCheck[] {
   if (!isCuaPublicStateEnabled() || sb?.agent !== "nemocua") return [];
-  const observed = getObservedValidatedCuaState(sb);
+  const observed = getObservedValidatedCuaState(sb, process.env, deps);
   if (!observed.readiness) {
     return [
       {
