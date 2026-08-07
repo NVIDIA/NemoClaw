@@ -62,7 +62,7 @@ When this workflow pushes an update to an open PR, first follow [Follow Up on PR
 
 Route each valid code-changing finding to `nemoclaw-contributor-implement-issue`. That workflow owns the repair, its validation, and its evidence.
 
-This workflow owns the push gate. Follow steps 1 through 8 of [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) for validation, the commit, the independent documentation writer review, and the final collection. Push only after that review covers the final `HEAD`, every blocking finding is resolved, and the receipt identifies that commit.
+This workflow owns the push gate. After the routed repair returns, follow the numbered steps under `After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for validation, the commit, the independent documentation writer review, the final collection, evidence removal, and the push. Push only after that review covers the final `HEAD`, every blocking finding is resolved, and the receipt identifies that commit.
 
 Immediately before pushing, repeat the complete head-stable collection. Do not push while that collection contains an unclassified or actionable finding. Remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. If the user tells you to stop, stop without pushing. The user may defer only a non-blocking suggestion; record that disposition before pushing.
 
@@ -235,7 +235,7 @@ Run this command only after Step 4 passes.
 Assemble the whole command before you run it. Decide each optional flag in the sections below first.
 Do not add a flag that the authenticated `gh` account cannot use.
 
-Every contributor can run this base command:
+Run exactly one `gh pr create` command. Every contributor can run this base command:
 
 ```bash
 gh pr create \
@@ -243,7 +243,7 @@ gh pr create \
   --body-file /tmp/nemoclaw-pr-body.md
 ```
 
-Add `--draft` to that command when the contributor does not want review of the change set yet.
+Add `--draft` to whichever `gh pr create` command you run when the contributor does not want review of the change set yet.
 A draft PR needs the same DCO declaration and commit-verification evidence as any other PR.
 
 ### Assignment and Labels
@@ -260,18 +260,18 @@ Add `--assignee` and `--label` when one of these conditions is true:
   gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
   ```
 
-Then create the PR with the self-assignment and each label that describes the change:
+If a condition above is true, run this command instead of the base command:
 
 ```bash
 gh pr create \
   --title "<type>(<scope>): <description>" \
   --body-file /tmp/nemoclaw-pr-body.md \
   --assignee "@me" \
-  --label "area: docs" \
-  --label "topic:security"
+  --label "<label>"
 ```
 
-Use `area: docs` for a doc-only or doc-inclusive PR and `topic:security` for a security change.
+Add `--label "area: docs"` for a doc-only or doc-inclusive PR and `--label "topic:security"` for a security change.
+Add only the labels that apply.
 
 Otherwise create the PR without `--assignee` and `--label`.
 Report that the PR needs a maintainer to assign and label it.

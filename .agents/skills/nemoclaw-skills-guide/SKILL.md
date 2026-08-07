@@ -38,7 +38,8 @@ Each stage has one owner: `nemoclaw-contributor-plan-issue` refines an issue int
 `nemoclaw-contributor-implement-issue` implements a slice and owns its tests, and
 `nemoclaw-contributor-create-pr` publishes the branch and follows CI and automated review.
 Load `nemoclaw-contributor-update-dependencies` for a dependency upgrade and
-`nemoclaw-contributor-update-docs` for documentation catch-up. Both run inside the implementation stage.
+`nemoclaw-contributor-update-docs` for documentation catch-up.
+The dependency workflow runs inside the implementation stage. The documentation workflow also runs during pre-tag release preparation.
 Component-specific guidance lives with the package it describes, not in a skill.
 
 ## Skill Catalog

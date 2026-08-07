@@ -76,7 +76,7 @@ Do not install or invoke a global Pi binary.
 
 ## Hand Off to the Contributor Lifecycle
 
-This workflow ends after `./scripts/dev-setup.sh --doctor` reports that every contributor-readiness check passes.
+This workflow ends after the doctor reports that every contributor-readiness check passes and every approved CLI-exposure, runtime-onboarding, or pinned-agent step is complete.
 Name the workflow that owns the next stage instead of restating its rules:
 
 - `nemoclaw-contributor-plan-issue` refines an issue into capability slices.
