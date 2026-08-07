@@ -16,7 +16,7 @@ ENV NPM_CONFIG_AUDIT=false \
 WORKDIR /opt/mcp-tool-discovery-runtime
 COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/npm-ci-locked.sh tools/mcp-tool-discovery-runtime/*.ts ./
 # hadolint ignore=DL4006
-RUN set -eu; \
+RUN --network=default set -eu; \
     if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
       { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.pem 2>/dev/null \
         || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; }; \

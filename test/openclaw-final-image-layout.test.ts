@@ -126,7 +126,9 @@ describe("OpenClaw final image layout", () => {
     expect(hasBuildKitRunMount(dockerfile)).toBe(false);
     expectManagedBootstrapNativeImageContract(dockerfile);
     expect(finalStage).not.toMatch(/^\s*ENV\b[^\n]*(?:\\\n[^\n]*)*NODE_OPTIONS=/mu);
-    expect(finalStage).toContain("RUN NODE_OPTIONS=--dns-result-order=ipv4first \\");
+    expect(finalStage).toContain(
+      "RUN --network=default NODE_OPTIONS=--dns-result-order=ipv4first \\",
+    );
     expect(entrypoint).toContain('export NODE_OPTIONS="--dns-result-order=ipv4first"');
     expect(
       indexOfRequired(entrypoint, 'export NODE_OPTIONS="--dns-result-order=ipv4first"'),
@@ -182,7 +184,7 @@ describe("OpenClaw final image layout", () => {
     );
     const pluginInstall = indexOfRequired(
       finalStage,
-      "RUN NODE_OPTIONS=--dns-result-order=ipv4first \\",
+      "RUN --network=default NODE_OPTIONS=--dns-result-order=ipv4first \\",
     );
     const managedMessagingUnionInstall = indexOfRequired(
       finalStage,
@@ -202,7 +204,7 @@ describe("OpenClaw final image layout", () => {
     );
     const wechatInstall = indexOfRequired(
       finalStage,
-      "RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime",
+      "RUN --network=default npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime",
     );
     const patchChmod = indexOfRequired(
       finalStage,

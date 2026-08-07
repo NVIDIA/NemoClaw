@@ -377,6 +377,11 @@
       "category": "security"
     },
     {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins dependency-materialization RUN cache identity",
+      "category": "compatibility"
+    },
+    {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
       "category": "compatibility"

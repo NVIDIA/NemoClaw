@@ -26,7 +26,7 @@ ENV NPM_CONFIG_AUDIT=false \
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /opt/nemoclaw-build-tools/npm-ci-locked.sh
 WORKDIR /opt/nemoclaw
-RUN /opt/nemoclaw-build-tools/npm-ci-locked.sh
+RUN --network=default /opt/nemoclaw-build-tools/npm-ci-locked.sh
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 RUN npm run build \
@@ -56,7 +56,7 @@ ENV AWS_EC2_METADATA_DISABLED=true \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 WORKDIR /opt/mcp-tool-discovery-runtime
 COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/npm-ci-locked.sh tools/mcp-tool-discovery-runtime/*.ts ./
-RUN ./install-reviewed-runtime.sh \
+RUN --network=default ./install-reviewed-runtime.sh \
     && rm -f ./install-reviewed-runtime.sh ./npm-ci-locked.sh
 
 # Bundle the driver-neutral startup-profile applicator into one CommonJS file.
@@ -345,7 +345,7 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
     NPM_CONFIG_FETCH_TIMEOUT=60000
-RUN NODE_OPTIONS=--dns-result-order=ipv4first \
+RUN --network=default NODE_OPTIONS=--dns-result-order=ipv4first \
         /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev \
     && rm -f /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 
@@ -372,7 +372,7 @@ RUN test -f /usr/local/bin/node \
 # seeds resolver metadata, the shared helper re-packs every locked archive
 # offline from the final cache and verifies its registry origin, committed SRI,
 # and contained filename before the cache becomes immutable.
-RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime \
+RUN --network=default npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime \
         --ignore-scripts --omit=dev --legacy-peer-deps \
         --userconfig /dev/null --registry https://registry.npmjs.org/ \
         --cache /usr/local/share/nemoclaw/wechat-npm-cache \
@@ -423,7 +423,7 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 # basename in a fresh directory, local-archive-only install, and cleanup.
 #
 # hadolint ignore=DL3059,DL4006,DL3016
-RUN set -eu; \
+RUN --network=default set -eu; \
     CODEX_ACP_SPEC='@zed-industries/codex-acp@0.11.1'; \
     CODEX_ACP_TARBALL='https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz'; \
     CODEX_ACP_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
@@ -451,7 +451,7 @@ RUN set -eu; \
 # Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
 # basename in a fresh directory, local-archive-only install, and cleanup.
 # hadolint ignore=DL3059,DL4006,DL3016
-RUN set -eu; \
+RUN --network=default set -eu; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
         || { echo "ERROR: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)" >&2; exit 1; }; \
     MIN_VER=$(grep -m 1 'min_openclaw_version' /opt/nemoclaw-blueprint/blueprint.yaml | awk '{print $2}' | tr -d '"'); \

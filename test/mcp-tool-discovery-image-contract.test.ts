@@ -14,7 +14,6 @@ const dockerfiles = [
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
 ] as const;
-
 describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact package pins and the production audit command protect the shipped runtime graph
   it("pins reviewed packages and retains the production audit command (#8177)", () => {
@@ -93,7 +92,26 @@ describe("MCP tool discovery image contract", () => {
     expect(installer).toContain('export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"');
     const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     expect(openClawDockerfile).toContain("FROM builder AS mcp-tool-discovery-runtime");
-    expect(openClawDockerfile).toContain("RUN /opt/nemoclaw-build-tools/npm-ci-locked.sh");
+    expect(openClawDockerfile).toContain(
+      "RUN --network=default /opt/nemoclaw-build-tools/npm-ci-locked.sh",
+    );
+  });
+
+  // source-shape-contract: compatibility -- Protected offline rebuilds must reuse the hosted dependency layers instead of changing their implicit network cache key
+  it("pins dependency-materialization RUN cache identity", () => {
+    const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const hermesDockerfile = fs.readFileSync(
+      path.join(repoRoot, "agents/hermes/Dockerfile"),
+      "utf8",
+    );
+    const dcodeDockerfile = fs.readFileSync(
+      path.join(repoRoot, "agents/langchain-deepagents-code/Dockerfile"),
+      "utf8",
+    );
+
+    expect(openClawDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(6);
+    expect(hermesDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
+    expect(dcodeDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
   });
 
   it.each(
