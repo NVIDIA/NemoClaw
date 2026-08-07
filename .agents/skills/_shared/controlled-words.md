@@ -159,6 +159,7 @@ other literal identifiers.
 | `host-side` | Adjective | Runs or exists on the host, outside a sandbox. | local, external |
 | `in-sandbox` | Adjective | Runs or exists inside a sandbox. | internal, container-side |
 | `lifecycle authority` | Technical noun | The component that owns create, start, stop, update, and delete decisions for a resource. | owner without the lifecycle responsibility |
+| `locked npm cache seed` | Technical noun | The complete, integrity-verified set of registry archives reachable from one npm lockfile for a selected platform. | BuildKit cache, npm cache when the verified archive set is intended |
 | `OpenShell gateway` | Technical noun | The host service that owns credentials, coordinates sandbox lifecycle, and proxies approved traffic. | agent gateway, gateway when the type is unclear |
 | `port forward` | Technical noun or verb | A connection that maps a host port to a service inside a sandbox, or the act of creating that connection. | tunnel when no general tunnel exists |
 | `provider profile` | Technical noun | An OpenShell declaration of one service provider's credentials, endpoints, allowed binaries, and access policy. | inference profile, provider settings |

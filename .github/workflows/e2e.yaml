@@ -2547,7 +2547,7 @@ jobs:
   # PR qualification requires the exact candidate activation contract. Its
   # hosted amd64 prerequisite exports the exact candidate build cache.
   # This GPU lane imports the exact candidate build cache and its complete
-  # lock-pinned npm archive seed.
+  # locked npm cache seed, then rebuilds with BuildKit networking disabled.
   # invalidState: Cold managed-image builds on the protected GPU runner can
   # stall in npm and terminate with "Exit handler never called!" before any
   # GPU, Ollama, NIM, or vLLM assertion executes.
@@ -2556,13 +2556,15 @@ jobs:
   # lockfile to the same-run cache artifact. The GPU lane verifies the manifest,
   # lock digest, archive set, and
   # each SHA-512 integrity before the candidate build can consume the seed.
-  # BuildKit records can accelerate the rebuild but are not its only source.
+  # BuildKit records can accelerate the rebuild, while the seed makes a missing
+  # npm layer reproducible without weakening the fail-closed network boundary.
   # whyNotBuildCacheOnly: Protected runs 31156103003, 31158136234, and
   # 31159822518 proved that network-key drift and incomplete local cache exports
   # can miss the npm layer before runtime qualification.
   # regressionTest: The materializer and build-script behavior tests reject an
-  # incomplete, substituted, unexpected, or symlinked archive handoff. Workflow
-  # boundary tests pin the same-run cache artifact.
+  # incomplete, substituted, unexpected, or symlinked archive handoff and pin
+  # exact --cache-from/--network none arguments. Workflow boundary tests pin the
+  # same-run cache artifact.
   # lifecycleDecision: PR #8261 owns removal after three consecutive protected
   # GPU cold builds of all three images reach GPU, Ollama, NIM, and vLLM
   # assertions without the hosted cache.

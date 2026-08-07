@@ -303,7 +303,7 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("imports each agent cache without changing RUN network cache identity", () => {
+  it("imports each agent cache and disables RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
     const originalSeedNames = readdirSync(sourceSeed).sort();
@@ -318,7 +318,7 @@ describe("protected managed-image build-cache boundary", () => {
       expect(recordedBuildInvocation(agent)).toContain(
         `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
       );
-      expect(recordedBuildInvocation(agent)).not.toContain("--network");
+      expect(recordedBuildInvocation(agent)).toContain("--network none");
     }
     expect(readFileSync(seedLog, "utf8")).toContain(
       `materialize-locked-npm-cache-seed.mts copy --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --seed ${realpathSync(cacheRoot)}/npm-cache-seed`,

@@ -189,7 +189,7 @@ build_agent() {
   fi
   if [[ -n "$cache_from" ]]; then
     local cache_source="$cache_from/$agent"
-    cache_args+=(--cache-from "type=local,src=${cache_source}")
+    cache_args+=(--cache-from "type=local,src=${cache_source}" --network none)
   fi
 
   local base_digest="${base_reference##*@}"
