@@ -28,6 +28,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
@@ -314,21 +315,19 @@ async function waitForChildlessStartup(
     ["exec", "--user", "0", containerId, "kill", "-TERM", String(startupPid)],
     { artifactName: "phase-12-terminate-startup-child", timeoutMs: 30_000 },
   );
-  if (terminate.exitCode !== 0 && !/no such process/i.test(resultText(terminate))) {
-    expect(terminate.exitCode, resultText(terminate)).toBe(0);
-  }
+  expect(
+    terminate.exitCode === 0 || /no such process/i.test(resultText(terminate)),
+    resultText(terminate),
+  ).toBe(true);
 
-  let lastCensus: StartupCensus | undefined;
-  for (let attempt = 1; attempt <= 20; attempt += 1) {
-    lastCensus = await installedStartupCensus(
-      host,
-      containerId,
-      `phase-12-childless-census-${attempt}`,
-    );
-    if (lastCensus.count === 0) return;
-    await delay(500);
-  }
-  throw new Error(`startup child remained live after termination: ${JSON.stringify(lastCensus)}`);
+  await pollUntil({
+    artifactPrefix: "phase-12-childless-census",
+    attempts: 20,
+    delayMs: 500,
+    probe: async (_attempt, artifactName) =>
+      await installedStartupCensus(host, containerId, artifactName),
+    accept: (census) => census.count === 0,
+  });
 }
 
 async function readOriginalConfig(
@@ -982,7 +981,8 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     "phase-12-live-startup-census",
   );
   expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
-  if (liveCensus.pid === null) throw new Error("live startup census did not return its process ID");
+  expect(liveCensus.pid).not.toBeNull();
+  const liveStartupPid = liveCensus.pid ?? 0;
   const liveChildRefusal = await runInstalledFailedStartupUnlock(
     host,
     recoveryContainerId,
@@ -995,7 +995,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     owner: "root:root",
   });
 
-  await waitForChildlessStartup(host, recoveryContainerId, liveCensus.pid);
+  await waitForChildlessStartup(host, recoveryContainerId, liveStartupPid);
   const childlessUnlock = await runInstalledFailedStartupUnlock(
     host,
     recoveryContainerId,
