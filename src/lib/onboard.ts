@@ -995,10 +995,9 @@ const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawRea
   });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
+const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox, webSearchProviderForConfig } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
-
 // Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
@@ -3485,13 +3484,14 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
 }
 export type SetupNimDeps = import("./onboard/setup-nim-flow").SetupNimFlowDeps;
 export type SetupNim = import("./onboard/setup-nim-flow").SetupNim;
-
 function getSetupNimDeps(): SetupNimDeps {
   return {
     remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
     experimental: EXPERIMENTAL,
     ollamaPort: OLLAMA_PORT,
     vllmPort: VLLM_PORT,
+    getGatewayPort: () => GATEWAY_PORT,
+    getRuntimeProvider: () => setupNimFlow.resolveCurrentRuntimeProviderBundle(),
     step,
     isNonInteractive,
     getNonInteractiveProvider,
@@ -3537,7 +3537,6 @@ function getSetupNimDeps(): SetupNimDeps {
       }),
   };
 }
-
 const setupNim = setupNimFlow.createSetupNim(getSetupNimDeps());
 // ── Step 4: Inference provider ───────────────────────────────────
 
@@ -4235,7 +4234,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential },
+      resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential, resumeManagedLlamaCppRuntime: (sandboxName) => setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, { gatewayPort: GATEWAY_PORT, runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle() }) },
       providerInference: {
         gatewayName: GATEWAY_NAME,
         forceProviderSelection: forceProviderSelectionForAgentChange,
@@ -4463,6 +4462,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         stagedLegacyKeys,
         migratedLegacyKeys,
         webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
+        webSearchProvider: (config) => webSearchProviderForConfig(config),
       },
       finalizationDeps: {
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.

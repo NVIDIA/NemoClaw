@@ -9,6 +9,11 @@ import type {
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "../managed-bootstrap/runtime-create";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceOperationInput,
+  HostLocalInferenceService,
+} from "./host-local-inference";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
@@ -30,6 +35,7 @@ export type RuntimeProviderMutationOperation =
 export type RuntimeProviderContainerEngineOperation =
   | "host-doctor"
   | "gateway-inspection"
+  | "host-local-inference"
   | "sandbox-lifecycle"
   | "workload-cleanup";
 
@@ -253,6 +259,13 @@ export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
   acceptsReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean;
 }>;
 
+export type RuntimeProviderHostLocalInferenceSurface =
+  | RuntimeProviderSupportedSurface<{
+      readonly services: readonly HostLocalInferenceService[];
+      createOperation(input: HostLocalInferenceOperationInput): HostLocalInferenceOperation;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
@@ -370,6 +383,7 @@ export interface RuntimeProviderBundle {
   readonly preflightDoctor: RuntimeProviderPreflightDoctorSurface;
   readonly gateway: RuntimeProviderGatewaySurface;
   readonly workload: RuntimeProviderWorkloadSurface;
+  readonly hostLocalInference: RuntimeProviderHostLocalInferenceSurface;
   readonly lifecycle: RuntimeProviderLifecycleSurface;
   readonly mutationAuthority: RuntimeProviderMutationAuthoritySurface;
   readonly bootstrap: RuntimeProviderBootstrapSurface;

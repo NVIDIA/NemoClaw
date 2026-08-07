@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-
+import {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
+} from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
 
 // The root TypeScript package is exposed as CJS under the exact
@@ -18,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 16 as const;
+export const RISK_PLAN_VERSION = 17 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -96,7 +99,6 @@ const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
   "src/lib/onboard/workload/",
   "test/e2e/live/managed-image-protected-runtime.",
 ] as const;
-const LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
 const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualification" as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
@@ -315,7 +317,10 @@ export function focusedPrE2eJobsForChangedFiles(
           },
         ]
       : []),
-    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
+    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: managedStartupFiles,
+    })),
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCliAdapterFiles,
@@ -550,7 +555,9 @@ export const RISK_RULES: readonly RiskRule[] = [
     // The trusted workflow and validators land while dormant. A later YAML-only
     // activation candidate selects this protected lane after the Spark runner,
     // approval environment, and verified local model path are provisioned.
-    matches: (file) => file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION,
+    matches: (file) =>
+      file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH ||
+      file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   },
   {
     id: "sandbox-boundary",

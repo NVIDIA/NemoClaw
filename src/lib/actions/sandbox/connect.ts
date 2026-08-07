@@ -72,7 +72,11 @@ import {
 } from "./connect-inference-route-probe";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
+import {
+  ensureLiveSandboxOrExit,
+  printGatewayLifecycleHint,
+  recoverPortableDemoSandboxLifecycleForConnect,
+} from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
@@ -104,6 +108,7 @@ type SandboxListProbe = {
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
+  httpStatus?: number;
   detail: string;
 };
 
@@ -280,7 +285,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     );
   }
   if (processCheck.wasRunning) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
@@ -295,7 +300,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     return;
   }
   if (processCheck.recovered) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
     const managedControlCompletion =
@@ -309,7 +314,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     }
     return;
   }
-  await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+  await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
@@ -408,6 +413,7 @@ function probeSandboxInferenceRoute(
     lastProbe = {
       healthy: parsed.healthy,
       broken: parsed.broken,
+      httpStatus: parsed.httpStatus,
       detail: parsed.detail,
     };
     if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
@@ -458,13 +464,17 @@ export function repairSandboxInferenceRouteWithDeps(
 ): SandboxInferenceRouteRepairResult {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
-  if (deps.isRepairDisabled?.()) {
-    return { healthy: true, repairAttempted: false, detail: "route repair disabled" };
-  }
   deps.assertRouteCompatible?.(sandboxName, sb);
   const initialProbe = deps.probe(sandboxName);
   if (initialProbe.healthy) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
+  }
+  if (deps.isRepairDisabled?.()) {
+    return {
+      healthy: false,
+      repairAttempted: false,
+      detail: `route repair disabled; ${initialProbe.detail}`,
+    };
   }
   if (!initialProbe.broken) {
     return { healthy: false, repairAttempted: false, detail: initialProbe.detail };
@@ -805,14 +815,37 @@ function ensureSandboxInferenceRouteUnlocked(
       }
       return { sandbox: sb, routeHealthy: false };
     }
-    if (!repairResult.healthy && repairResult.repairAttempted) {
-      const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
+    let routeReady = repairResult.healthy;
+    if (!routeReady && repairResult.repairAttempted) {
+      routeReady = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
         detail: repairResult.detail,
         quiet,
       });
-      return { sandbox: sb, routeHealthy: resetResult };
+      if (!routeReady) return { sandbox: sb, routeHealthy: false };
     }
-    return { sandbox: sb, routeHealthy: repairResult.healthy };
+    if (provider === "ollama-local") {
+      if (!verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+        return { sandbox: sb, routeHealthy: false };
+      }
+      const finalProbe = probeSandboxInferenceRoute(sandboxName, agent);
+      const strictRouteHealthy =
+        finalProbe.healthy &&
+        finalProbe.httpStatus !== undefined &&
+        finalProbe.httpStatus >= 200 &&
+        finalProbe.httpStatus < 300;
+      if (!strictRouteHealthy) {
+        if (!quiet) {
+          printUnrecoverableInferenceRoute(
+            sandboxName,
+            `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`,
+            `inference.local/v1/models must return HTTP 2xx; ${finalProbe.detail}`,
+            { repairAttempted: repairResult.repairAttempted },
+          );
+        }
+        return { sandbox: sb, routeHealthy: false };
+      }
+    }
+    return { sandbox: sb, routeHealthy: routeReady };
   } catch (error) {
     if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
     if (error instanceof OpenShellGatewayEndpointOverrideError) {
@@ -1072,17 +1105,21 @@ async function runConnectEntryPreflight(
         `Sandbox '${sandboxName}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before connecting.`,
       );
     }
-    if (registered && registry.getSandboxEntryInference(registered).kind === "configured") {
+    if (registered) {
       const gatewayName = resolveSandboxGatewayName(registered);
-      assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
+      if (registry.getSandboxEntryInference(registered).kind === "configured") {
+        assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
+      }
+      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
-  // probe-only / recover never install or serve a model, so skip the
-  // express-vLLM model preflight for them (it only steers the install path
-  // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).
+  // probe-only / recover can restart receipt-owned local inference, but they
+  // never select, install, or pull a model. Skip the express-vLLM model
+  // preflight because it only steers installation and can reject recovery on
+  // a stale NEMOCLAW_VLLM_MODEL.
   if (!probeOnly) preflightVllmModelEnvOrExit();
   const live = await ensureLiveSandboxOrExit(sandboxName, {
     allowNonReadyPhase: true,

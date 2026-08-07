@@ -989,12 +989,11 @@ describe("registry", () => {
     expect(registry.getSandbox("updatable").imageTag).toBe("openshell/sandbox-from:9999");
   });
 
-  it("handles corrupt registry file gracefully", () => {
+  it("reports a registry file that is not JSON instead of reading it as empty", () => {
     fs.mkdirSync(path.dirname(regFile), { recursive: true });
     fs.writeFileSync(regFile, "NOT JSON");
-    // Should not throw, returns empty
-    const { sandboxes } = registry.listSandboxes();
-    expect(sandboxes.length).toBe(0);
+
+    expect(() => registry.listSandboxes()).toThrow(/not valid JSON/);
   });
 
   it("rejects an invalid workload receipt while loading the registry", () => {
@@ -1397,5 +1396,88 @@ describe("advisory file locking", () => {
     const { sandboxes, defaultSandbox } = registry.listSandboxes();
     expect(sandboxes).toHaveLength(0);
     expect(defaultSandbox).toBe(null);
+  });
+
+  describe("malformed sandboxes.json", () => {
+    const malformed = '{"sandboxes":{"keep-me":{"name":"keep-me"}},"defaultSandbox":"keep-me",}';
+
+    function writeMalformedRegistry() {
+      fs.mkdirSync(path.dirname(regFile), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(regFile, malformed, { mode: 0o600 });
+    }
+
+    it("reading reports the damage instead of an empty registry", () => {
+      writeMalformedRegistry();
+
+      expect(() => registry.listSandboxes()).toThrow(/not valid JSON/);
+    });
+
+    it("registerSandbox refuses to replace it and keeps the original bytes", () => {
+      writeMalformedRegistry();
+
+      expect(() => registry.registerSandbox({ name: "new-sandbox" })).toThrow(/not valid JSON/);
+
+      expect(fs.readFileSync(regFile, "utf-8")).toBe(malformed);
+      expect(fs.existsSync(`${regFile}.lock`)).toBe(false);
+      expect(
+        fs.readdirSync(path.dirname(regFile)).filter((name) => name.includes(".tmp.")),
+      ).toEqual([]);
+    });
+
+    it("keeps failing for every reader process until the file is repaired", () => {
+      const { spawnSync } = require("child_process");
+      writeMalformedRegistry();
+
+      const registryPath = path.resolve(
+        path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
+      );
+      const homeDir = path.dirname(path.dirname(regFile));
+      const orchestrator = `
+        const { spawn } = require("child_process");
+        const workerScript = \`
+          process.env.HOME = ${JSON.stringify(homeDir)};
+          const reg = require(${JSON.stringify(registryPath)});
+          try {
+            reg.listSandboxes();
+          } catch (error) {
+            process.exit(error && error.code === "ECONFIGCORRUPT" ? 0 : 2);
+          }
+          process.exit(3);
+        \`;
+        const workers = [];
+        for (let w = 0; w < 4; w++) {
+          workers.push(spawn(process.execPath, ["-e", workerScript, "w" + w]));
+        }
+        let exitCount = 0;
+        let allOk = true;
+        for (const child of workers) {
+          child.on("exit", (code) => {
+            if (code !== 0) allOk = false;
+            exitCount++;
+            if (exitCount === workers.length) {
+              process.exit(allOk ? 0 : 1);
+            }
+          });
+        }
+      `;
+      const result = spawnSync(process.execPath, ["-e", orchestrator], {
+        encoding: "utf-8",
+        timeout: 30_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(regFile, "utf-8")).toBe(malformed);
+    });
+
+    it("recovers once the file holds valid JSON again", () => {
+      writeMalformedRegistry();
+      expect(() => registry.listSandboxes()).toThrow(/not valid JSON/);
+
+      fs.writeFileSync(regFile, '{"sandboxes":{"keep-me":{"name":"keep-me"}}}', { mode: 0o600 });
+      registry.registerSandbox({ name: "new-sandbox" });
+
+      const names = registry.listSandboxes().sandboxes.map((entry: { name: string }) => entry.name);
+      expect(names.sort()).toEqual(["keep-me", "new-sandbox"]);
+    });
   });
 });

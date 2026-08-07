@@ -682,6 +682,27 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   return null;
 }
 
+/** Return one consistent NVIDIA driver version from the read-only host GPU inventory. */
+export function detectNvidiaDriverVersion(): string | undefined {
+  const output = runCapture(
+    ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
+    { ignoreError: true },
+  );
+  if (!output) return undefined;
+  const versions = output
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (
+    versions.length === 0 ||
+    versions.some((value) => !/^[0-9]{3,4}\.[0-9]{1,3}\.[0-9]{1,3}$/u.test(value)) ||
+    new Set(versions).size !== 1
+  ) {
+    return undefined;
+  }
+  return versions[0];
+}
+
 // Check if Docker has stored credentials for nvcr.io.
 // Docker Desktop (macOS/Windows/WSL) stores creds in the OS keychain and
 // leaves an empty marker entry { "nvcr.io": {} } in auths after a successful

@@ -99,7 +99,7 @@ describe("Hermes base-image resolver integration", () => {
       (inspectOutputByKey.get(`${format}\0${ref}`) ?? "").trim(),
     );
     dockerMocks.capture.mockImplementation(
-      (args: string[]) => captureByEntrypoint.get(args[3]) ?? "",
+      (args: string[]) => captureByEntrypoint.get(args[args.indexOf("--entrypoint") + 1]) ?? "",
     );
   });
 

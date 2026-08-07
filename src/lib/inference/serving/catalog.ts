@@ -250,11 +250,6 @@ function validateRecipeSemantics(
       );
     }
     const { serve } = recipe.spec;
-    if (serve.limits.maxPromptTokens + serve.limits.maxCompletionTokens > serve.contextSize) {
-      throw new ServingCatalogValidationError(
-        `Recipe ${recipe.metadata.id} request token limits exceed serve.contextSize.`,
-      );
-    }
     if (serve.microBatchSize > serve.batchSize) {
       throw new ServingCatalogValidationError(
         `Recipe ${recipe.metadata.id} serve.microBatchSize cannot exceed serve.batchSize.`,

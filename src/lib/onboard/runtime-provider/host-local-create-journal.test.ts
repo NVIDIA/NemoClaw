@@ -103,6 +103,23 @@ function executionSource(transactionId: string, ownerId: string, ownerPid: numbe
 }
 
 describe("host-local create journal", () => {
+  it("durably records network intent before accepting its exact immutable ID", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    const intent = {
+      ...prepared(),
+      phase: "network-creating" as const,
+      networkId: null,
+      createIntentUnixMs: CREATE_INTENT_UNIX_MS,
+    };
+
+    expect(store.create(intent)).toEqual(intent);
+    expect(store.recordNetworkCreated(TRANSACTION_ID, "e".repeat(64))).toMatchObject({
+      phase: "prepared",
+      networkId: "e".repeat(64),
+      createIntentUnixMs: null,
+    });
+  });
+
   it("durably resumes every create and receipt-publication phase without secrets (#8414)", () => {
     const fsync = vi.spyOn(fs, "fsyncSync");
     const first = createHostLocalCreateJournalStore(stateDirectory);
@@ -161,6 +178,30 @@ describe("host-local create journal", () => {
 
     expect(() => store.prepareReceipt(TRANSACTION_ID, serializedReceipt().trim())).toThrow(
       "Host-local create journal is invalid: prepared receipt is invalid",
+    );
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("started");
+  });
+
+  it("rejects a canonical receipt that differs from create authority before publication (#8414)", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    store.create(prepared());
+    store.recordCreating(TRANSACTION_ID, CREATE_INTENT_UNIX_MS);
+    store.recordCreated(TRANSACTION_ID, RUNTIME_ID);
+    store.recordStarted(TRANSACTION_ID);
+    const receipt = JSON.parse(serializedReceipt());
+    const mismatchedReceipt = serializeHostLocalInferenceReceipt({
+      ...receipt,
+      runtime: {
+        ...receipt.runtime,
+        model: {
+          ...receipt.runtime.model,
+          generation: "c".repeat(64),
+        },
+      },
+    });
+
+    expect(() => store.prepareReceipt(TRANSACTION_ID, mismatchedReceipt)).toThrow(
+      "prepared receipt differs from create authority",
     );
     expect(store.load(TRANSACTION_ID)?.phase).toBe("started");
   });
