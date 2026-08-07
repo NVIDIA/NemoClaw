@@ -232,25 +232,43 @@ afterEach(() => {
 });
 
 describe("portable demo sandbox lifecycle", () => {
-  it("does not inspect Podman unless the portable profile is explicit (#8441)", () => {
-    const podman = vi.fn();
+  it("removes a stale receipt without inspecting Podman for a non-portable replacement (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
 
-    installPortableDemoSandboxLifecycle("alpha", STARTUP_ARGV, {}, { podman });
+    installPortableDemoSandboxLifecycle(
+      "alpha",
+      STARTUP_ARGV,
+      {},
+      {
+        podman: runtime.podman,
+        stateDir,
+      },
+    );
 
-    expect(podman).not.toHaveBeenCalled();
+    expect(fs.existsSync(filePath)).toBe(false);
+    expect(runtime.podman).not.toHaveBeenCalled();
   });
 
-  it("does not install an OpenClaw demo receipt for another startup contract (#8441)", () => {
-    const podman = vi.fn();
+  it("removes a stale receipt for another startup contract (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
 
     installPortableDemoSandboxLifecycle(
       "alpha",
       ["env", "NEMOCLAW_OBSERVABILITY=0", "/usr/local/bin/nemoclaw-start"],
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-      { platform: "linux", podman },
+      { platform: "linux", podman: runtime.podman, stateDir },
     );
 
-    expect(podman).not.toHaveBeenCalled();
+    expect(fs.existsSync(filePath)).toBe(false);
+    expect(runtime.podman).not.toHaveBeenCalled();
   });
 
   it("ignores an installed receipt for another agent (#8441)", () => {

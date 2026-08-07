@@ -22,6 +22,7 @@ import {
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
 import { cleanupManagedLlamaCppRuntimeForSandbox } from "../../inference/local-model-profile/cleanup";
+import { removePortableDemoSandboxLifecycleReceipt } from "../../onboard/experimental/portable-demo-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -611,6 +612,9 @@ async function destroySandboxUnlocked(
       console.warn(`  ${YW}⚠${R}${message}`),
     );
     process.exit(1);
+  }
+  if (removed) {
+    removePortableDemoSandboxLifecycleReceipt(sandboxName);
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -104,14 +105,19 @@ describe("Podman socket authority", () => {
 
   it.runIf(process.platform !== "win32")(
     "hardens the current-user socket directory without following unsafe parents (#8584)",
-    () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-socket-"));
+    async () => {
+      const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "nc-p-"));
+      const server = net.createServer();
       try {
-        const socketDirectory = path.join(root, "podman");
+        const socketDirectory = path.join(root, "p");
         fs.mkdirSync(socketDirectory);
         fs.chmodSync(socketDirectory, 0o755);
-        const socketPath = path.join(socketDirectory, "podman.sock");
+        const socketPath = path.join(socketDirectory, "s");
         const uid = process.getuid?.() ?? -1;
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(socketPath, resolve);
+        });
 
         hardenPodmanSocketDirectory(socketPath, uid);
         expect(fs.statSync(socketDirectory).mode & 0o777).toBe(0o700);
@@ -128,7 +134,17 @@ describe("Podman socket authority", () => {
         expect(() =>
           hardenPodmanSocketDirectory(path.join(linkedDirectory, "podman.sock"), uid),
         ).toThrow();
+
+        const missingSocketDirectory = path.join(root, "missing");
+        fs.mkdirSync(missingSocketDirectory, { mode: 0o755 });
+        expect(() =>
+          hardenPodmanSocketDirectory(path.join(missingSocketDirectory, "missing.sock"), uid),
+        ).toThrow();
+        expect(fs.statSync(missingSocketDirectory).mode & 0o777).toBe(0o755);
       } finally {
+        if (server.listening) {
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
         fs.rmSync(root, { force: true, recursive: true });
       }
     },

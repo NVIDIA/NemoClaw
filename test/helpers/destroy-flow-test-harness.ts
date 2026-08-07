@@ -30,6 +30,7 @@ export type DestroyHarness = {
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
   promptSpy: MockInstance;
+  removePortableDemoLifecycleReceiptSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
@@ -123,6 +124,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const runtime = requireDist("../../adapters/openshell/runtime.js");
   const destroyGateway = requireDist("./destroy-gateway.js");
   const credentialStore = requireDist("../../credentials/store.js");
+  const portableDemoLifecycle = requireDist(
+    "../../onboard/experimental/portable-demo-lifecycle.js",
+  );
   const sandboxProviderCleanup = requireDist("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireDist("../../inference/nim.js");
   const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
@@ -178,6 +182,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
     return true;
   });
+  const removePortableDemoLifecycleReceiptSpy = vi
+    .spyOn(portableDemoLifecycle, "removePortableDemoSandboxLifecycleReceipt")
+    .mockImplementation(() => undefined);
   const revokeHttpsPinRuntimeAdapterRouteSpy = vi
     .spyOn(httpsPinRuntimeAdapter, "revokeHttpsPinRuntimeAdapterRoute")
     .mockResolvedValue(true);
@@ -353,6 +360,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
     promptSpy,
+    removePortableDemoLifecycleReceiptSpy,
     removeSandboxSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,

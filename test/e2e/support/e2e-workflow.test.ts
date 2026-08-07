@@ -718,6 +718,10 @@ describe("e2e workflow boundary", () => {
       path.join(process.cwd(), ".github", "workflows", "portable-profile-e2e.yaml"),
       "utf8",
     );
+    const fullE2eSource = fs.readFileSync(
+      path.join(process.cwd(), "test", "e2e", "live", "full-e2e.test.ts"),
+      "utf8",
+    );
     const portableWorkflow = YAML.parse(portableWorkflowSource) as {
       on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } };
     };
@@ -739,6 +743,7 @@ describe("e2e workflow boundary", () => {
     expect(portableWorkflowSource).toContain(
       "NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     );
+    expect(fullE2eSource.match(/id: FULL_E2E_TARGET_ID,/gu)).toHaveLength(2);
     expect(inventory.allowedJobs).not.toHaveLength(0);
     expect(inventory.targetToJob.size).toBeGreaterThan(0);
     expect(inventory.workflowJobs.every((job) => workflowJobs.has(job))).toBe(true);

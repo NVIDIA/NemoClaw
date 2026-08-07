@@ -82,6 +82,26 @@ function normalizedSocketPath(socketPath: string): string {
 export function hardenPodmanSocketDirectory(socketPath: string, configuredUid?: number): void {
   const normalized = normalizedSocketPath(socketPath);
   const uid = currentUid(configuredUid);
+  const lstat = (filePath: string): PodmanSocketStat => fs.lstatSync(filePath, { bigint: true });
+  const socketBefore = lstat(normalized);
+  if (!socketBefore.isSocket()) {
+    throw new Error("Podman socket authority path is not a Unix socket.");
+  }
+  const socketOwnerUid = integerIdentity(socketBefore.uid, "owner");
+  if (socketOwnerUid !== String(uid)) {
+    throw new Error(
+      `Podman socket authority is owned by uid ${socketOwnerUid}; expected current uid ${String(uid)}.`,
+    );
+  }
+  const socketMode = integerValue(socketBefore.mode, "mode");
+  if ((socketMode & 0o002n) !== 0n) {
+    throw new Error("Podman socket authority is writable by another user or group.");
+  }
+  const directoryChainBefore = captureDirectoryChain(normalized, uid, lstat);
+  const socketParentBefore = directoryChainBefore[0];
+  if (!socketParentBefore) {
+    throw new Error("Podman socket authority has no parent directory.");
+  }
   const directory = path.dirname(normalized);
   const descriptor = fs.openSync(
     directory,
@@ -100,6 +120,14 @@ export function hardenPodmanSocketDirectory(socketPath: string, configuredUid?: 
     if ((before.mode & 0o022n) !== 0n) {
       throw new Error("Podman socket directory is writable by another user or group.");
     }
+    if (
+      integerIdentity(before.dev, "directory device") !== socketParentBefore.device ||
+      integerIdentity(before.ino, "directory inode") !== socketParentBefore.inode ||
+      integerIdentity(before.uid, "directory owner") !== socketParentBefore.ownerUid ||
+      integerValue(before.mode, "directory mode").toString(10) !== socketParentBefore.mode
+    ) {
+      throw new Error("Podman socket directory changed before it was secured.");
+    }
 
     fs.fchmodSync(descriptor, 0o700);
     const after = fs.fstatSync(descriptor, { bigint: true });
@@ -113,6 +141,36 @@ export function hardenPodmanSocketDirectory(socketPath: string, configuredUid?: 
     }
   } finally {
     fs.closeSync(descriptor);
+  }
+
+  const authority = capturePodmanSocketAuthority(normalized, { lstat, uid });
+  const socketChanged =
+    authority.device !== integerIdentity(socketBefore.dev, "device") ||
+    authority.inode !== integerIdentity(socketBefore.ino, "inode") ||
+    authority.mode !== socketMode.toString(10) ||
+    authority.ownerUid !== socketOwnerUid;
+  const directoryChanged = authority.directoryChain.some((component, index) => {
+    const before = directoryChainBefore[index];
+    const componentMode = BigInt(component.mode);
+    const beforeMode = before ? BigInt(before.mode) : 0n;
+    return (
+      !before ||
+      component.device !== before.device ||
+      component.inode !== before.inode ||
+      component.ownerUid !== before.ownerUid ||
+      component.path !== before.path ||
+      (index === 0
+        ? (componentMode & ~0o777n) !== (beforeMode & ~0o777n) ||
+          (componentMode & 0o777n) !== 0o700n
+        : component.mode !== before.mode)
+    );
+  });
+  if (
+    socketChanged ||
+    authority.directoryChain.length !== directoryChainBefore.length ||
+    directoryChanged
+  ) {
+    throw new Error("Podman socket authority changed while its directory was secured.");
   }
 }
 

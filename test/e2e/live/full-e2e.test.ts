@@ -46,6 +46,7 @@ import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
+const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
 const USE_PREINSTALLED_LAUNCHABLE = SETUP_MODE === "preinstalled-launchable";
 const PORTABLE_PROFILE = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";
@@ -374,7 +375,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
   await artifacts.target.declare({
-    id: process.env.E2E_TARGET_ID ?? "full-e2e",
+    id: FULL_E2E_TARGET_ID,
     sandboxName: SANDBOX_NAME,
     endpointUrl: hosted.endpointUrl,
     model: hosted.model,
@@ -597,7 +598,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(registryText).not.toContain(SANDBOX_NAME);
 
   await artifacts.target.complete({
-    id: "full-e2e",
+    id: FULL_E2E_TARGET_ID,
     securityPosture,
     status: "passed",
   });

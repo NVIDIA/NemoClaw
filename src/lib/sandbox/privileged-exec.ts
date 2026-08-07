@@ -211,6 +211,10 @@ function privilegedSandboxExecArgv(
 ): string[] {
   const entry = readSandboxEntry(sandboxName);
   if (!entry) throw missingRegistryEntryError(sandboxName);
+  const driver = normalizeDriver(entry.openshellDriver);
+  if (driver !== null && driver !== "docker" && driver !== "vm") {
+    throw unsupportedDirectDriverError(sandboxName, driver);
+  }
   const portableTarget = resolvePortableDemoPrivilegedExecTarget(sandboxName);
   if (portableTarget) {
     if (expectedContainerId !== undefined && portableTarget.containerId !== expectedContainerId) {
@@ -235,11 +239,6 @@ function privilegedSandboxExecArgv(
       ...cmd,
     ];
   }
-  const driver = normalizeDriver(entry?.openshellDriver);
-  if (driver !== null && driver !== "docker" && driver !== "vm") {
-    throw unsupportedDirectDriverError(sandboxName, driver);
-  }
-
   // Docker/direct-container is the only supported privileged mutation path.
   // Try it even when older registry entries do not record a driver, then fail
   // clearly if no matching sandbox container is running.

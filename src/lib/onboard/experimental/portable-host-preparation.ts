@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { hardenPodmanSocketDirectory } from "../../adapters/podman";
+import { hardenPodmanSocketDirectory, localPodmanEnvironment } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
 
@@ -227,7 +227,7 @@ export function preparePortableExperimentalHost(
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
   const dockerHost = resolvePodmanDockerHost(
-    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env),
+    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], localPodmanEnvironment(env)),
   );
   const socketPath = dockerHost.slice("unix://".length);
   (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));

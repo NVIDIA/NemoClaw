@@ -336,10 +336,16 @@ describe("privileged sandbox exec routing", () => {
 
   it("rejects a Kubernetes registry owner before stale local-container discovery", () => {
     let dockerPsCalls = 0;
+    const resolvePortableDemoPrivilegedExecTarget = vi.fn(() => ({
+      assertRuntimeAuthority: vi.fn(),
+      containerId: "a".repeat(64),
+      dockerHost: "unix:///run/user/1001/podman/podman.sock",
+    }));
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "kubernetes" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        resolvePortableDemoPrivilegedExecTarget,
         dockerCapture: () => {
           dockerPsCalls += 1;
           return "stale-id\topenshell-alpha-stale\n";
@@ -352,6 +358,7 @@ describe("privileged sandbox exec routing", () => {
       },
     );
     expect(dockerPsCalls).toBe(0);
+    expect(resolvePortableDemoPrivilegedExecTarget).not.toHaveBeenCalled();
   });
 
   it("fails before docker discovery when registry disambiguation is unavailable", () => {

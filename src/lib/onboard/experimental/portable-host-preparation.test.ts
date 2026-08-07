@@ -49,6 +49,9 @@ describe("preparePortableExperimentalHost", () => {
     const podman = vi.fn(() => result(0, "/run/user/1001/custom/podman.sock\n"));
     const hardenSocketDirectory = vi.fn();
     const env: NodeJS.ProcessEnv = {
+      CONTAINER_CONNECTION: "remote-test",
+      CONTAINER_HOST: "ssh://example.test/run/user/1001/podman/podman.sock",
+      CONTAINER_SSHKEY: "/tmp/remote-test-key",
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
     };
 
@@ -77,7 +80,19 @@ describe("preparePortableExperimentalHost", () => {
       ["--user", "try-restart", "podman.service"],
       ["--user", "enable", "--now", "podman.socket"],
     ]);
-    expect(podman).toHaveBeenCalledWith(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
+    expect(podman).toHaveBeenCalledWith(
+      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
+      expect.not.objectContaining({
+        CONTAINER_CONNECTION: expect.anything(),
+        CONTAINER_HOST: expect.anything(),
+        CONTAINER_SSHKEY: expect.anything(),
+      }),
+    );
+    expect(podman.mock.calls[0]?.[1]).toMatchObject({
+      CONTAINERS_CONF: path.join(home, ".config/nemoclaw/portable/containers.conf"),
+      NETAVARK_FW: "iptables",
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    });
     expect(hardenSocketDirectory).toHaveBeenCalledWith("/run/user/1001/custom/podman.sock", 1001);
     expect(docker.mock.calls[0]?.[0]).toEqual(["--version"]);
     expect(docker.mock.calls[2]?.[0]).toEqual([

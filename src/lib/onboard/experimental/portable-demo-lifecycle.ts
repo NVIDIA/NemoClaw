@@ -14,6 +14,7 @@ import {
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
   hardenPodmanSocketDirectory,
+  localPodmanEnvironment,
   type PodmanSocketAuthorityDeps,
 } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
@@ -275,6 +276,13 @@ function removeReceipt(sandboxName: string, stateDir: string): void {
   }
 }
 
+export function removePortableDemoSandboxLifecycleReceipt(
+  sandboxName: string,
+  stateDir = defaultStateDir(process.env),
+): void {
+  removeReceipt(sandboxName, stateDir);
+}
+
 function startupEnvValue(startupArgv: readonly string[], name: string): string | null {
   const prefix = `${name}=`;
   for (let index = startupArgv.length - 2; index >= 1; index -= 1) {
@@ -373,14 +381,6 @@ function discoverPodmanContainer(
     );
   }
   return inspectPodmanContainer(matches[0]!, sandboxName, podman);
-}
-
-function localPodmanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const local = { ...env };
-  delete local.CONTAINER_CONNECTION;
-  delete local.CONTAINER_HOST;
-  delete local.CONTAINER_SSHKEY;
-  return local;
 }
 
 function podmanSocketPath(
@@ -709,11 +709,13 @@ export function installPortableDemoSandboxLifecycle(
   env: NodeJS.ProcessEnv = process.env,
   deps: PortableDemoLifecycleDeps = {},
 ): void {
-  if (!isPortableExperimentalProfile(env)) return;
+  const stateDir = deps.stateDir ?? defaultStateDir(env);
   if (
+    !isPortableExperimentalProfile(env) ||
     createdStartupArgv[createdStartupArgv.length - 1] !== "/usr/local/bin/nemoclaw-start" ||
     startupEnvValue(createdStartupArgv, "OPENCLAW_HOME") === null
   ) {
+    removeReceipt(sandboxName, stateDir);
     return;
   }
   if ((deps.platform ?? process.platform) !== "linux") {
@@ -733,7 +735,7 @@ export function installPortableDemoSandboxLifecycle(
     podman(["update", "--restart=unless-stopped", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
-  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
+  writeReceipt(receipt, stateDir);
 }
 
 /**
