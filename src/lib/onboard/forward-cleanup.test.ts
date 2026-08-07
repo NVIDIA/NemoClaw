@@ -95,6 +95,16 @@ describe("bestEffortForwardStopForSandbox", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("skips the stop entirely when `forward list` reports failure as null (owner unknown)", () => {
+    const run = vi.fn();
+    const fetch = vi.fn().mockReturnValue(null);
+
+    const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
+
+    expect(outcome).toBe("list-failed");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("ignores forwards with non-live status when deciding ownership", () => {
     // `getOccupiedPorts` filters by `isLiveForwardStatus`, so a "stopped"
     // entry on the requested port should be treated as no-entry (not as a

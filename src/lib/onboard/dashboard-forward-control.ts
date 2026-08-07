@@ -32,13 +32,7 @@ export function createSandboxForwardStopper(deps: {
     if (stoppedPorts.has(portKey)) return null;
     const result = bestEffortForwardStopForSandbox(
       deps.runOpenshell,
-      (args, opts) => {
-        const output = deps.runCaptureOpenshell(args, opts);
-        if (output === null) {
-          throw new Error("Failed to list OpenShell forwards before stopping dashboard forward");
-        }
-        return output;
-      },
+      (args, opts) => deps.runCaptureOpenshell(args, opts),
       port,
       deps.sandboxName,
     );

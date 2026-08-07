@@ -29,7 +29,7 @@ export function ensureAgentFixedForward(
   const stopForwardForSandbox = (portToStop: string | number) =>
     bestEffortForwardStopForSandbox(
       deps.runOpenshell,
-      (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
+      (args, opts) => deps.runCaptureOpenshell(args, opts),
       portToStop,
       sandboxName,
     );
