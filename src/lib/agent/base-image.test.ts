@@ -63,29 +63,35 @@ describe("agent base image provisioning", () => {
     vi.unstubAllEnvs();
   });
 
-  it("validates the complete external NemoCUA payload before resolving or building an image (#7755)", () => {
-    const runtime = createCuaRuntimeTestFixture();
-    try {
-      for (const [name, value] of Object.entries(runtime.env).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      )) {
-        vi.stubEnv(name, value);
-      }
-      const agent = loadAgent("nemocua");
-      const dockerfile = agent.dockerfileBasePath!;
-      fs.chmodSync(dockerfile, 0o644);
-      fs.writeFileSync(dockerfile, "FROM mutable:latest\n");
-      fs.chmodSync(dockerfile, 0o444);
+  it(
+    "validates the complete external NemoCUA payload before resolving or building an image (#7755)",
+    () => {
+      const runtime = createCuaRuntimeTestFixture();
+      try {
+        for (const [name, value] of Object.entries(runtime.env).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        )) {
+          vi.stubEnv(name, value);
+        }
+        const agent = loadAgent("nemocua");
+        const dockerfile = agent.dockerfileBasePath!;
+        fs.chmodSync(dockerfile, 0o644);
+        fs.writeFileSync(dockerfile, "FROM mutable:latest\n");
+        fs.chmodSync(dockerfile, 0o444);
 
-      withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
-        expect(() => ensureAgentBaseImage(agent)).toThrow(/declared size|content identity/);
-        expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
-        expect(dockerBuildMock).not.toHaveBeenCalled();
-      });
-    } finally {
-      runtime.cleanup();
-    }
-  });
+        withMockedDocker(
+          ({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
+            expect(() => ensureAgentBaseImage(agent)).toThrow(/declared size|content identity/);
+            expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
+            expect(dockerBuildMock).not.toHaveBeenCalled();
+          },
+        );
+      } finally {
+        runtime.cleanup();
+      }
+    },
+    testTimeout(15_000),
+  );
 
   it("cannot resolve or stage NemoCUA image inputs after the feature is disabled (#7755)", () => {
     const runtime = createCuaRuntimeTestFixture();

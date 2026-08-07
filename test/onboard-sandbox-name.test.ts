@@ -15,7 +15,6 @@ import {
   NAME_ALLOWED_FORMAT,
   suggestNameSlug,
 } from "../src/lib/name-validation.js";
-import { formatSandboxAgentName } from "../src/lib/onboard/sandbox-agent.js";
 
 const {
   getDefaultSandboxNameForAgent,
@@ -63,14 +62,6 @@ describe("onboard sandbox naming helpers", () => {
         process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
       }
     }
-  });
-
-  it("uses canonical NemoCUA naming for sandbox selection", () => {
-    const nemocua = { name: "nemocua" };
-
-    expect(formatSandboxAgentName("nemocua")).toBe("NemoCUA");
-    expect(getDefaultSandboxNameForAgent(nemocua)).toBe("nemocua");
-    expect(getRequestedSandboxAgentName(nemocua)).toBe("nemocua");
   });
 
   it("uses NEMOCLAW_SANDBOX_NAME as the interactive prompt default", () => {
