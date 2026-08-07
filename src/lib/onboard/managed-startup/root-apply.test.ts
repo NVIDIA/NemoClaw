@@ -21,4 +21,8 @@ describe("managed startup root application environment", () => {
       }),
     ).toEqual({});
   });
+
+  it("omits an unset MCP shadow diagnostics value", () => {
+    expect(selectManagedStartupApplicationRuntimeEnvironment({})).toEqual({});
+  });
 });
