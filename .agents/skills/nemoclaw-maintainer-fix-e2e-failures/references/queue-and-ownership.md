@@ -34,9 +34,9 @@ For each group, retain:
 
 Do not paste secrets or unredacted credential-bearing logs into the queue or PR.
 
-When downloading a log or artifact, use a unique `mktemp -d` directory outside the repository and set its mode to `0700` before download. Record the exact directory path. Do not put that path or unredacted contents in the shared queue, a PR, or another public GitHub surface. Share the path only in a private maintainer handoff with the named cleanup actor.
+When downloading a log or artifact, use a unique `mktemp -d` directory outside the repository and set its mode to `0700` before download. Record the exact directory path. Do not put that path or unredacted contents in the shared queue, a PR, or another public GitHub surface. Share the path only in a private continuity handoff with the named cleanup actor.
 
-Delete the directory immediately after extracting the redacted failure evidence, and no later than the cutoff. Before deletion, confirm that the exact path belongs to this drain session and is outside the repository. After deletion, verify that the path does not exist. If access restriction or removal fails, stop using the artifact. Record the exact path and required action only in the private maintainer handoff without copying its contents.
+Delete the directory immediately after extracting the redacted failure evidence, and before transferring ownership. Before deletion, confirm that the exact path belongs to this loop session and is outside the repository. After deletion, verify that the path does not exist. If access restriction or removal fails, stop using the artifact. Record the exact path and required action only in the private continuity handoff without copying its contents.
 
 ## Search Before Editing
 
@@ -62,7 +62,7 @@ Treat an open PR as ownership when its body or diff addresses the same root caus
 Make the draft PR the shared claim. Its body must include a compact block like:
 
 ```text
-Drain root cause: <root-cause-key>
+E2E root cause: <root-cause-key>
 Source run: <workflow-url> (run <id>, attempt <n>)
 Failed jobs: <name> (<job-id-and-url>), ...
 Signature: <redacted stable signature>
@@ -73,7 +73,7 @@ Follow the repository PR template. Include the contributor's `Signed-off-by:` de
 
 If no legitimate root-cause-only diagnostic or test can be added before the fix, mark the group `blocked` and do not edit product code. Record why the claim cannot yet exist and the required next actor. Do not add an empty documentation change or unrelated placeholder merely to create a claim.
 
-Do not treat an existing draft with an empty or unrelated placeholder diff as a valid claim. Before the cutoff, the drain author closes its own invalid draft under the GitHub write-reconciliation rule, explains why, and preserves its local worktree for handoff. For another author's draft, or after the cutoff, do not mutate it. Record the noncompliant claim, owner, and required next actor as a blocker.
+Do not treat an existing draft with an empty or unrelated placeholder diff as a valid claim. Before transferring ownership, the loop author closes its own invalid draft under the GitHub write-reconciliation rule, explains why, and preserves its local worktree for handoff. For another author's draft, do not mutate it. Record the noncompliant claim, owner, and required next actor as a blocker.
 
 ## Interpret One Active Fix
 

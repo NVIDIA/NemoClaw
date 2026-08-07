@@ -304,20 +304,23 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(skillsGuide).toContain("`nemoclaw-maintainer-e2e`");
   });
 
-  it("coordinates continuous E2E draining without duplicate runs or stale merge evidence", () => {
-    const skillRoot = ".agents/skills/nemoclaw-maintainer-e2e-drain";
+  it("runs a persistent E2E failure-fixing loop without duplicate runs or stale merge evidence", () => {
+    const skillRoot = ".agents/skills/nemoclaw-maintainer-fix-e2e-failures";
     const skill = read(`${skillRoot}/SKILL.md`);
     const ownership = read(`${skillRoot}/references/queue-and-ownership.md`);
     const review = read(`${skillRoot}/references/review-and-merge.md`);
-    const handoff = read(`${skillRoot}/references/cutoff-handoff.md`);
+    const handoff = read(`${skillRoot}/references/continuity-handoff.md`);
     const guide = read(".agents/skills/nemoclaw-skills-guide/SKILL.md");
     const evals = JSON.parse(read(`${skillRoot}/evals/evals.json`)) as Array<{
       expected_skill: string | null;
       id: string;
     }>;
-
     expect(skill.split("\n").length).toBeLessThan(120);
-    expect(skill).toContain("Do not stop or declare success before the cutoff");
+    expect(skill).toContain("Start without a scheduled endpoint");
+    expect(skill).toContain(
+      "Do not declare success or end because the queue is empty or the newest run passes",
+    );
+    expect(skill).toContain("Repeat these steps continuously while the loop remains authorized");
     expect(skill).toContain("Never change, retag, publish, or otherwise touch `v0.0.104`");
     expect(skill).toContain("git show origin/main:.github/workflows/pr-limit.yaml");
     expect(skill).toContain("For a non-exempt author");
@@ -329,9 +332,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(skill).toContain("Fix exactly one root cause in that PR");
     expect(skill).toContain("only one fix actively edited at a time");
-    expect(skill).toContain(
-      "Perform the required read-only reconciliation for each ambiguous GitHub write",
-    );
+    expect(skill).toContain("continue monitoring until the receiving agent acknowledges ownership");
+    expect(skill).toContain("Before leaving after a transfer or cancellation");
+    expect(skill).toContain("A passing automatic run verifies only its tested `main` SHA");
     expect(skill).toContain("Never approve your own PR");
     expect(skill).toContain("Never use `gh run rerun`");
     expect(skill).toContain("Do not freeze `main`");
@@ -348,12 +351,13 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(ownership).toContain(
       "Do not treat an existing draft with an empty or unrelated placeholder diff",
     );
-    expect(ownership).toContain("only in a private maintainer handoff");
+    expect(ownership).toContain("only in the private continuity handoff");
 
     expect(review).toContain("current-head approval");
     expect(review).toContain("Reconcile Every GitHub Write");
     expect(review).toContain("do not retry immediately");
-    expect(review).toContain("Do not retry the write after the cutoff");
+    expect(review).toContain("If ownership transfers or the operator cancels");
+    expect(review).toContain("does not retry the write after transfer or cancellation starts");
     expect(review).toContain("actions/runs/<run-id>/approve");
     expect(review).toContain("ordinary untrusted-fork CI path");
     expect(review).toContain("An environment deployment approval is not this operation");
@@ -365,6 +369,14 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(handoff).toContain("Verified fixes");
     expect(handoff).toContain("Merged, awaiting verification");
+    expect(handoff).toContain("Ownership acknowledgement");
+    expect(handoff).toContain(
+      "Unless the operator cancels the loop, do not leave monitoring unowned",
+    );
+    expect(handoff).toContain("Monitoring state");
+    expect(handoff).toContain(
+      "Next scan: <trigger, scheduled check, or none when operator-cancelled>",
+    );
     expect(handoff).toContain("Manual duplicate E2E runs: none");
     expect(handoff).toContain("v0.0.104 touched: no");
     expect(handoff).toContain("uses a descendant of the merge commit");
@@ -374,37 +386,43 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(handoff).toContain("Next actor/action");
     expect(handoff).toContain("Do not reset, stash, delete, or otherwise discard source edits");
     expect(handoff).toContain("State `inconclusive` instead of passing");
+    expect(handoff).toContain(
+      "continues monitoring until the receiving agent acknowledges ownership",
+    );
+    expect(handoff).toContain("A passing snapshot does not complete the loop");
 
     expect(guide).toContain("`nemoclaw-maintainer-*` (16 skills)");
-    expect(guide).toContain("`nemoclaw-maintainer-e2e-drain`");
+    expect(guide).toContain("`nemoclaw-maintainer-fix-e2e-failures`");
     expect(guide).toContain("| Maintainer | All skills | 23 |");
 
     expect(evals.map(({ id }) => id)).toEqual([
-      "positive-overnight-drain",
+      "positive-continuous-fix-loop",
+      "positive-green-loop-continues",
       "positive-multi-agent-review",
       "positive-approve-fork-workflow",
       "positive-final-branch-refresh",
       "positive-no-unnecessary-refresh",
       "positive-duplicate-claim",
       "positive-obsolete-fix",
-      "positive-cutoff-pending",
+      "positive-continuity-handoff",
       "negative-manual-e2e-dispatch",
       "negative-single-pr-ci-fix",
       "protected-release-exclusion",
     ]);
     for (const id of [
-      "positive-overnight-drain",
+      "positive-continuous-fix-loop",
+      "positive-green-loop-continues",
       "positive-multi-agent-review",
       "positive-approve-fork-workflow",
       "positive-final-branch-refresh",
       "positive-no-unnecessary-refresh",
       "positive-duplicate-claim",
       "positive-obsolete-fix",
-      "positive-cutoff-pending",
+      "positive-continuity-handoff",
       "protected-release-exclusion",
     ]) {
       expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
-        "nemoclaw-maintainer-e2e-drain",
+        "nemoclaw-maintainer-fix-e2e-failures",
       );
     }
     expect(evals.find(({ id }) => id === "negative-manual-e2e-dispatch")?.expected_skill).toBe(

@@ -1,13 +1,18 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Cutoff Handoff
+# Continuity Handoff
 
-Capture one final read-only snapshot at the cutoff. Report:
+Use this handoff only when responsibility moves to another active agent or the operator cancels the loop. Unless the operator cancels the loop, do not leave monitoring unowned. Capture a read-only snapshot and report:
 
 ```markdown
-## Cutoff
+## Transfer
 - Time: <absolute timestamp and timezone>
+- Outgoing agent: <account or agent>
+- Receiving agent: <account or agent, or operator-cancelled>
+- Ownership acknowledgement: <message or coordination link>
+- Monitoring state: active | operator-cancelled
+- Next scan: <trigger, scheduled check, or none when operator-cancelled>
 - Current main: <full SHA>
 - Newest relevant E2E: <run URL, attempt, status, conclusion>
 - Overall state: passing | failing | pending | inconclusive
@@ -47,6 +52,8 @@ Do not count these as fixes:
 - a CI-only cleanup unrelated to the product E2E cause;
 - an obsolete PR closed after another merge.
 
-Before handoff, record each active worktree's absolute path, branch, local HEAD, last pushed SHA, and `git status --short` changed paths. Do not reset, stash, delete, or otherwise discard source edits. Name the owner and next actor for every local or remote item. Put a failed evidence-cleanup path only in this private maintainer handoff, never on GitHub.
+Before handoff, record each active worktree's absolute path, branch, local HEAD, last pushed SHA, and `git status --short` changed paths. Do not reset, stash, delete, or otherwise discard source edits. Name the owner and next actor for every local or remote item. Put a failed evidence-cleanup path only in this private continuity handoff, never on GitHub.
 
 Link every PR, run, and job. State `inconclusive` instead of passing when the newest current-`main` evidence has not completed.
+
+For a transfer, the outgoing agent continues monitoring until the receiving agent acknowledges ownership. A passing snapshot does not complete the loop. If no receiving agent accepts ownership, keep the loop active unless the operator explicitly cancels it.

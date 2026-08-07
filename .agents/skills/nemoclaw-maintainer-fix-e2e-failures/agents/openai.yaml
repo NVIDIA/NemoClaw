@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw E2E Fix Loop"
+  short_description: "Run the continuous E2E failure-fixing loop"
+  default_prompt: "Use $nemoclaw-maintainer-fix-e2e-failures to keep fixing automatic main E2E failures and monitoring for new results."

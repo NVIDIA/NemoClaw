@@ -11,7 +11,7 @@ Re-read the exact remote run, PR, review, branch head, or merge state by its sta
 
 Apply this rule to workflow approval, draft creation, push, branch update, review submission, merge, and PR closure. Never use a different write or bypass to resolve transport ambiguity.
 
-If the cutoff arrives while a write remains ambiguous, perform one read-only reconciliation. Do not retry the write after the cutoff. Record the observed remote state, captured identities, owner, and next actor in the handoff.
+If ownership transfers or the operator cancels while a write remains ambiguous, perform one read-only reconciliation. The outgoing agent does not retry the write after transfer or cancellation starts. Record the observed remote state, captured identities, owner, and next actor in the continuity handoff.
 
 ## Separate Roles
 
@@ -84,7 +84,7 @@ node --experimental-strip-types --no-warnings \
   .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
 ```
 
-Also read the effective rules for `main` immediately before the decision. Treat every active required-status and pull-request-review rule as authoritative even when it changed during the drain:
+Also read the effective rules for `main` immediately before the decision. Treat every active required-status and pull-request-review rule as authoritative even when it changed during the loop:
 
 ```bash
 gh api --paginate "repos/NVIDIA/NemoClaw/rules/branches/main"

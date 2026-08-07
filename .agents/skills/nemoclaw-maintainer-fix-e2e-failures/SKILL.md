@@ -1,24 +1,24 @@
 ---
-name: nemoclaw-maintainer-e2e-drain
-description: Continuously drains failures from automatic NemoClaw E2E runs on main. Groups failures by root cause, coordinates one claimed fix per PR across maintainers, reviews and approves peer fixes, satisfies current GitHub merge gates, merges eligible fixes, and hands off at a cutoff. Use for an overnight E2E drain, continuous main E2E failure fixing, or coordinated multi-agent E2E maintenance. Do not use to dispatch manual E2E; use nemoclaw-maintainer-e2e instead.
+name: nemoclaw-maintainer-fix-e2e-failures
+description: Runs a persistent loop that fixes failures from automatic NemoClaw E2E runs on main. Groups failures by root cause, coordinates one claimed fix per PR across maintainers, reviews and approves peer fixes, satisfies current GitHub merge gates, merges eligible fixes, and keeps monitoring for new results. Use for continuous main E2E failure fixing, an always-running E2E fix loop, or coordinated multi-agent E2E maintenance. Do not use to dispatch manual E2E; use nemoclaw-maintainer-e2e instead.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Drain Main E2E Failures
+# Fix Main E2E Failures Continuously
 
-Run a continuous, multi-maintainer repair loop against automatic `main` E2E results. Use GitHub as the shared ownership and merge authority.
+Run a persistent, multi-maintainer loop against automatic `main` E2E results. Use GitHub as the shared ownership and merge authority.
 
-## Set the Session Contract
+## Set the Loop Contract
 
-1. Resolve the cutoff from the request. For an overnight drain without another cutoff, use 8:00 AM in `America/Los_Angeles`. Record the absolute timestamp.
+1. Start without a scheduled endpoint. Do not infer an endpoint from local time, a shift boundary, a passing run, or an empty queue.
 2. Record repository exclusions. Never change, retag, publish, or otherwise touch `v0.0.104` during this workflow.
-3. Confirm maintainer authority. Merge only when the invocation grants it; otherwise stop when the PR is approval-ready.
+3. Confirm maintainer authority. Merge only when the invocation grants it; otherwise leave the PR approval-ready and continue the loop.
 4. Check Git and GitHub access. Follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) on access failure.
 5. Fetch trusted `origin/main`. Read its PR-limit policy with `git show origin/main:.github/workflows/pr-limit.yaml`. For a non-exempt author, do not create a claim that would exceed the 10-open-PR limit.
 
-Do not stop or declare success before the cutoff. An empty queue means monitor, not finish.
+Do not declare success or end because the queue is empty or the newest run passes. Wait for the next automatic `main` result and continue.
 
 ## Keep the Queue
 
@@ -33,13 +33,13 @@ Track each observed workflow run by run ID, attempt, status, conclusion, and job
 
 ## Run the Loop
 
-Repeat these steps until the cutoff:
+Repeat these steps continuously while the loop remains authorized:
 
 1. Fetch current `origin/main` and list automatic E2E runs for that SHA and newer `main` SHAs.
 2. Inspect only new or changed runs. Read failed job logs and artifacts far enough to identify the earliest actionable product, test, workflow, runner, or cleanup failure.
 3. Group failures that share the same causal signature. Do not equate a job name with a root cause.
 4. Reconcile each group with open PRs before editing. If another maintainer owns it, record that PR and take the next unowned group.
-5. Prefer a peer drain PR that needs review or a final merge decision before starting another fix.
+5. Prefer a peer loop PR that needs review or a final merge decision before starting another fix.
 6. Select one unowned root cause. Claim it before the product fix with a draft PR whose initial diff contains evidence for only that root cause.
 7. Work on only that root cause. Add the diagnostic or regression evidence that should have caught an escaped defect.
 8. When the PR is waiting on CI or peer review, it is no longer active editing work. Review a peer PR or take the next unowned root cause, while keeping only one fix actively edited at a time.
@@ -64,7 +64,7 @@ Do not begin a second active fix for the same agent. Waiting PRs may accumulate 
 
 ## Review and Merge as an Ecosystem
 
-Read [Review and Merge](references/review-and-merge.md) before reviewing, approving, refreshing, or merging a drain PR.
+Read [Review and Merge](references/review-and-merge.md) before reviewing, approving, refreshing, or merging a loop PR.
 
 - Never approve your own PR. After an independent current-head approval, either the author or another maintainer may perform the final gated merge.
 - Review another maintainer's exact PR head independently. Do not exchange approvals without reviewing correctness, security, tests, and scope.
@@ -77,7 +77,7 @@ Read [Review and Merge](references/review-and-merge.md) before reviewing, approv
 
 ## Do Not Duplicate E2E
 
-Observe automatic push runs and workflow-owned replacement attempts. Never use `gh run rerun`, `gh workflow run .github/workflows/e2e.yaml`, or local live E2E to duplicate a drain run.
+Observe automatic push runs and workflow-owned replacement attempts. Never use `gh run rerun`, `gh workflow run .github/workflows/e2e.yaml`, or local live E2E to duplicate an automatic run.
 
 Approving a first-time contributor's ordinary `pull_request` workflow after trust review is not a manual E2E dispatch. Environment approval for a secret-bearing or hardware E2E job is different: follow `nemoclaw-maintainer-e2e` only when the maintainer explicitly requests that run.
 
@@ -90,10 +90,12 @@ Before each fix push and merge decision, check whether `main` or another PR alre
 1. Verify the superseding change against the original failure signature.
 2. Stop editing the obsolete fix.
 3. Close its PR with the superseding PR or commit and the verification evidence. Re-read the PR after the write.
-4. Mark the queue item `obsolete`; do not count it as this drain's verified fix.
+4. Mark the queue item `obsolete`; do not count it as this loop's verified fix.
 
-## Stop at the Cutoff
+## Transfer Without Ending the Loop
 
-At or after the cutoff, do not claim another failure. Finish a non-destructive read already in progress. Perform the required read-only reconciliation for each ambiguous GitHub write, but start no other read. Preserve source edits. Delete each owned temporary-evidence directory and verify its absence, then produce the handoff in [Cutoff Handoff](references/cutoff-handoff.md).
+The loop has no scheduled endpoint. An agent may leave only after the operator cancels the loop or another active agent acknowledges ownership of monitoring and every open item.
 
-Distinguish verified root-cause fixes from merged corrective changes that still lack a later automatic `main` result. Do not report `main` as passing when its newest relevant E2E run is queued, running, cancelled, stale, or failing.
+Before leaving after a transfer or cancellation, finish only a non-destructive read already in progress. Perform the required read-only reconciliation for each ambiguous GitHub write, but start no other read. Preserve source edits. Delete each owned temporary-evidence directory and verify its absence. Produce the [Continuity Handoff](references/continuity-handoff.md). For a transfer, continue monitoring until the receiving agent acknowledges ownership.
+
+A passing automatic run verifies only its tested `main` SHA. It does not complete the loop. Do not report `main` as passing when its newest relevant E2E run is queued, running, cancelled, stale, or failing.
