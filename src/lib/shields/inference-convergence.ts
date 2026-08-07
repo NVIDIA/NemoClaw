@@ -47,6 +47,10 @@ export interface InferenceRouteConvergenceOptions {
  * active, but the inference proxy can briefly continue returning HTTP 503
  * after that acknowledgement. Shields down must not report completion during
  * that gap because callers immediately resume agent work.
+ * OpenShell owns both the activation acknowledgement and proxy convergence;
+ * NemoClaw can only verify the postcondition here. Remove this wait once every
+ * supported OpenShell release makes `policy set --wait` guarantee that the
+ * sandbox inference route is usable before it returns.
  */
 export function waitForHermesInferenceRouteConvergence(
   sandboxName: string,
