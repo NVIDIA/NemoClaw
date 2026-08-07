@@ -938,8 +938,8 @@ function topologyFailureReason(result: ReturnType<typeof qualifyManagedClusterTo
 }
 
 const CONNECTIVITY_CHECK_LABELS = {
-  route: "direct route",
-  jumbo: "jumbo frame",
+  route: "route",
+  jumbo: "jumbo-frame",
   neighbor: "neighbor",
 } as const;
 
