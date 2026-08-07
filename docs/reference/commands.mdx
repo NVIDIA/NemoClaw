@@ -2475,7 +2475,8 @@ For an OpenClaw WhatsApp sandbox, `--channel whatsapp` probes the sandbox to sep
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
 For a Hermes WhatsApp sandbox, `--channel whatsapp` probes only whether the default gateway session path and the `profiles/dashboard-home` session path contain `creds.json`.
-If the dashboard path has credentials and the gateway path is empty, the report prints the supported `config set` command for the `platforms.whatsapp.extra.session_path` configuration key, including the new-configuration-key opt-in when generated configs do not already contain that key.
+If the Dashboard path has credentials and the gateway path is empty, the report recommends updating or rebuilding the sandbox.
+It also tells you to pair again from Dashboard so credentials use `/sandbox/.hermes/platforms/whatsapp/session`, then rerun `channels status`.
 NemoClaw does not treat a Hermes session file as live inbound-health evidence.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison.
