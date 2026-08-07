@@ -33,8 +33,8 @@ function payload(account: Record<string, unknown>): string {
 
 function reportOf(result: MessagingHookResult | Promise<MessagingHookResult>): ChannelHealthReport {
   const output = (result as MessagingHookResult).outputs?.channelHealth;
-  if (!output) throw new Error("missing Slack channel health output");
-  const value = output.value as unknown as { report: ChannelHealthReport };
+  expect(output).toBeDefined();
+  const value = output?.value as unknown as { report: ChannelHealthReport };
   return value.report;
 }
 
@@ -154,6 +154,50 @@ describe("slack.statusHealth hook", () => {
         severity: "fail",
       }),
     );
+  });
+
+  it("classifies a Slack plugin probe failure as terminal (#7383)", () => {
+    const execute = vi.fn(() => ({
+      status: 0,
+      stdout: payload({
+        enabled: true,
+        configured: true,
+        running: true,
+        connected: true,
+        probe: { ok: false, error: "plugin failed to load" },
+      }),
+      stderr: "",
+    }));
+    const report = reportOf(
+      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
+    );
+
+    expect(report.readiness).toMatchObject({
+      state: "terminal",
+      category: "plugin",
+      reason: "plugin_probe_failed",
+      retryable: false,
+    });
+  });
+
+  it("returns a null transition time for an out-of-range Slack timestamp (#7383)", () => {
+    const execute = vi.fn(() => ({
+      status: 0,
+      stdout: payload({
+        enabled: true,
+        configured: true,
+        running: true,
+        connected: true,
+        lastProbeAt: Number.MAX_SAFE_INTEGER,
+        probe: { ok: true },
+      }),
+      stderr: "",
+    }));
+    const report = reportOf(
+      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
+    );
+
+    expect(report.readiness?.lastTransitionAt).toBeNull();
   });
 
   it("keeps an unreachable live status probe retryable until the caller timeout (#7383)", () => {

@@ -97,7 +97,9 @@ function classifySlackReadiness(input: SlackReadinessInput): ChannelReadiness {
   if (input.probeOk === false) {
     return input.probeFailureCategory === "credential"
       ? terminal("credential", "credential_probe_failed", input)
-      : waiting(input.probeFailureCategory ?? "network", "account_probe_retryable", input);
+      : input.probeFailureCategory === "plugin"
+        ? terminal("plugin", "plugin_probe_failed", input)
+        : waiting(input.probeFailureCategory ?? "network", "account_probe_retryable", input);
   }
   if (input.probeOk !== true) {
     return waiting("runtime", "account_probe_pending", input);

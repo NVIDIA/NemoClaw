@@ -76,6 +76,23 @@ describe("SandboxChannelsStatusCommand readiness flags", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it.each([
+    "terminal",
+    "timeout",
+  ] as const)("sets exit code 1 for a non-ready %s JSON result (#7383)", async (state) => {
+    showSandboxChannelStatusMock.mockResolvedValue({
+      schemaVersion: 1,
+      readiness: { state },
+    });
+
+    await SandboxChannelsStatusCommand.run(
+      ["alpha", "--channel", "slack", "--wait", "--json"],
+      rootDir,
+    );
+
+    expect(process.exitCode).toBe(1);
+  });
+
   it("rejects --wait without one channel (#7383)", async () => {
     await expect(SandboxChannelsStatusCommand.run(["alpha", "--wait"], rootDir)).rejects.toThrow(
       /channel/i,

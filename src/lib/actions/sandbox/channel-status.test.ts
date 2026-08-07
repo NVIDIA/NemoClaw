@@ -360,18 +360,19 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
         probe: { ok: true },
       }),
     ];
+    const nextSlackStatus = () => {
+      const stdout = states[Math.min(readinessProbe, states.length - 1)];
+      readinessProbe += 1;
+      return { status: 0, stdout, stderr: "" };
+    };
     const { deps } = makeDeps({
       sandbox: entry(["slack"]),
       appliedPresets: ["slack"],
       gatewayPresets: ["slack"],
-      exec: (_sandbox, command) => {
-        if (command.startsWith("openclaw channels status")) {
-          const stdout = states[Math.min(readinessProbe, states.length - 1)];
-          readinessProbe += 1;
-          return { status: 0, stdout, stderr: "" };
-        }
-        return { status: 0, stdout: "{}", stderr: "" };
-      },
+      exec: (_sandbox, command) =>
+        command.startsWith("openclaw channels status")
+          ? nextSlackStatus()
+          : { status: 0, stdout: "{}", stderr: "" },
       nowMs: () => clock,
       sleep: async (milliseconds) => {
         clock += milliseconds;

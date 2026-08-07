@@ -129,7 +129,8 @@ function latestTimestamp(account: Record<string, unknown> | null): string | null
       (value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
     );
   if (candidates.length === 0) return null;
-  return new Date(Math.max(...candidates)).toISOString();
+  const latest = new Date(Math.max(...candidates));
+  return Number.isNaN(latest.getTime()) ? null : latest.toISOString();
 }
 
 function hasUnavailableCredential(account: Record<string, unknown> | null): boolean {
