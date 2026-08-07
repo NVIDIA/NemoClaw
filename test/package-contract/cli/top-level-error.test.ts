@@ -60,9 +60,7 @@ function expectCleanLauncherFailure(env: NodeJS.ProcessEnv, expectedMessage: str
 
   expect(result.status).toBe(1);
   expect(result.stdout).toBe("");
-  expect(result.stderr).toContain(expectedMessage);
-  expect(result.stderr).not.toMatch(/\n\s+at /m);
-  expect(result.stderr).not.toContain("Node.js v");
+  expect(result.stderr.split(/\r?\n/).filter(Boolean)).toEqual([expectedMessage]);
 }
 
 describe("compiled CLI top-level errors", () => {
@@ -90,7 +88,7 @@ describe("compiled CLI top-level errors", () => {
   it("prints a module-load reserved-port error without a Node.js stack (#8202)", () => {
     expectCleanLauncherFailure(
       { NEMOCLAW_GATEWAY_PORT: "8081" },
-      'Error: Invalid port: NEMOCLAW_GATEWAY_PORT="8081"',
+      'Error: Invalid port: NEMOCLAW_GATEWAY_PORT="8081" — must not overlap the llama.cpp inference default port (8081)',
     );
   });
 });
