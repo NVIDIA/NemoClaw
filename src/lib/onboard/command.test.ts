@@ -529,7 +529,7 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "example/model-1",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
     });
-    expect(env).toMatchObject({
+    expect(env).toEqual({
       S3_BUCKET: "portable-inference",
       S3_KEY: "path/credential.b64",
       COMPATIBLE_API_KEY: "previous-compatible-key",

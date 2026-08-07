@@ -24,6 +24,7 @@ const VALID_FIELDS = {
 };
 
 const tempDirectories: string[] = [];
+const noActivatedDescriptor = (): null => null;
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) {
@@ -35,7 +36,7 @@ describe("portable hosted inference source", () => {
   it("does not read object storage when the portable source is not configured", () => {
     const readObject = vi.fn();
 
-    expect(resolvePortableInferenceSource({}, readObject)).toBeNull();
+    expect(resolvePortableInferenceSource({}, readObject, noActivatedDescriptor)).toBeNull();
     expect(readObject).not.toHaveBeenCalled();
   });
 
@@ -114,7 +115,7 @@ describe("portable hosted inference source", () => {
     const readObject = vi.fn(() => descriptor(VALID_FIELDS));
     const env = { S3_BUCKET: "portable-inference", S3_KEY: "/path/credential.b64" };
 
-    expect(resolvePortableInferenceSource(env, readObject)).toEqual({
+    expect(resolvePortableInferenceSource(env, readObject, noActivatedDescriptor)).toEqual({
       apiKey: VALID_FIELDS.apiKey,
       baseUrl: VALID_FIELDS.url,
       model: VALID_FIELDS.model,
@@ -139,6 +140,7 @@ describe("portable hosted inference source", () => {
       resolvePortableInferenceSource(
         { S3_BUCKET: "portable-inference", S3_PREFIX: "/tenant/session/" },
         readObject,
+        noActivatedDescriptor,
       ),
     ).toEqual({
       apiKey: VALID_FIELDS.apiKey,
@@ -160,6 +162,7 @@ describe("portable hosted inference source", () => {
       resolvePortableInferenceSource(
         { S3_BUCKET: "portable-inference", S3_KEY: "path/credential.b64" },
         readObject,
+        noActivatedDescriptor,
       );
     } catch (error) {
       caught = error;
@@ -180,7 +183,9 @@ describe("portable hosted inference source", () => {
     [{ S3_BUCKET: "bad/bucket", S3_KEY: "credential.b64" }, "invalid S3_BUCKET"],
     [{ S3_BUCKET: "portable-inference", S3_PREFIX: "/" }, "invalid S3_PREFIX"],
   ])("rejects incomplete or ambiguous source configuration", (env, message) => {
-    expect(() => resolvePortableInferenceSource(env, vi.fn())).toThrow(message);
+    expect(() => resolvePortableInferenceSource(env, vi.fn(), noActivatedDescriptor)).toThrow(
+      message,
+    );
   });
 
   it.each([
