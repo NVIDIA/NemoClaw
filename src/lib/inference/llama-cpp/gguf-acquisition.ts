@@ -26,6 +26,8 @@ type HuggingFaceExecutionRequest = Omit<
 >;
 
 export interface LlamaCppGgufAcquisitionRequest {
+  /** Revalidate the exact Docker endpoint before and after forwarding credentials. */
+  readonly assertDockerAuthority?: () => void;
   readonly execution: HuggingFaceExecutionRequest;
   readonly observer: HuggingFaceModelAcquisitionObserver;
   readonly plan: LlamaCppGgufCachePlan;
@@ -237,15 +239,21 @@ export async function acquireVerifiedLlamaCppGguf(
   validatePlanSource(request.plan);
   const acquire = dependencies.acquireHuggingFaceModel ?? acquireHuggingFaceModel;
   const { file, repository, revision } = request.plan.acquisition.source;
-  const result = await acquire(
-    {
-      ...request.execution,
-      filename: file.path,
-      repository,
-      revision,
-    },
-    request.observer,
-  );
+  request.assertDockerAuthority?.();
+  let result: Awaited<ReturnType<typeof acquire>>;
+  try {
+    result = await acquire(
+      {
+        ...request.execution,
+        filename: file.path,
+        repository,
+        revision,
+      },
+      request.observer,
+    );
+  } finally {
+    request.assertDockerAuthority?.();
+  }
   if (!result.ok) fail(`Hugging Face model acquisition failed: ${result.reason}`);
   return verifyLlamaCppGgufCacheEntry(request.plan, request.execution.hostCacheDir);
 }

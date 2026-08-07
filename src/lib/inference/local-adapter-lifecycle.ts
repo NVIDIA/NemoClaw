@@ -27,7 +27,14 @@ export type RunFn = (
 
 export type LocalAdapterProcessMatcher = string | RegExp | ((commandLine: string) => boolean);
 
-export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = nemoclawStateRoot(os.homedir(), GATEWAY_PORT);
+export function resolveLocalAdapterStateRoot(
+  homeDir: string = os.homedir(),
+  gatewayPort: number = GATEWAY_PORT,
+): string {
+  return nemoclawStateRoot(homeDir, gatewayPort);
+}
+
+export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = resolveLocalAdapterStateRoot();
 export const LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES = 64 * 1024;
 
 export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {

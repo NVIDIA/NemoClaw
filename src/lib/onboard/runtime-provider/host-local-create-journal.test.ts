@@ -103,6 +103,23 @@ function executionSource(transactionId: string, ownerId: string, ownerPid: numbe
 }
 
 describe("host-local create journal", () => {
+  it("durably records network intent before accepting its exact immutable ID", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    const intent = {
+      ...prepared(),
+      phase: "network-creating" as const,
+      networkId: null,
+      createIntentUnixMs: CREATE_INTENT_UNIX_MS,
+    };
+
+    expect(store.create(intent)).toEqual(intent);
+    expect(store.recordNetworkCreated(TRANSACTION_ID, "e".repeat(64))).toMatchObject({
+      phase: "prepared",
+      networkId: "e".repeat(64),
+      createIntentUnixMs: null,
+    });
+  });
+
   it("durably resumes every create and receipt-publication phase without secrets (#8414)", () => {
     const fsync = vi.spyOn(fs, "fsyncSync");
     const first = createHostLocalCreateJournalStore(stateDirectory);

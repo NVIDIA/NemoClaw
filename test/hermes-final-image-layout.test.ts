@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
-import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween, runDockerShell } from "./helpers/dockerfile-run-shell";
 import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -18,6 +18,11 @@ const HERMES_INTEGRITY_FILES = [
     arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
     source: "agents/hermes/image-build-probes.py",
     target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
+    source: "agents/hermes/patch-hermes-sqlite-temp-store.py",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
   },
   {
     arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
@@ -277,6 +282,7 @@ describe("Hermes final image layout", () => {
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
           "COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
+          "COPY agents/hermes/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
           "COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
           "COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
           "COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py",

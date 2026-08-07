@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween, runDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
@@ -141,6 +141,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
+        path.join(libDir, "patch-hermes-sqlite-temp-store.py"),
         discordRecoveryPatcherPath,
         profilePolicyPatcherPath,
         managedPolicyReaderPath,

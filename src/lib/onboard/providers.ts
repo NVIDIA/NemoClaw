@@ -65,6 +65,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "hermesProvider",
   "ollama",
   "llama-cpp",
+  "install-llama-cpp",
   "custom",
   "nim-local",
   "vllm",
@@ -75,7 +76,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, install-llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
