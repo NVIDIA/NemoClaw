@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { constants } from "node:fs";
 import {
   chmod,
   copyFile,
   lstat,
   mkdtemp,
+  open,
   readdir,
-  readFile,
   realpath,
   rename,
   rm,
@@ -251,11 +252,18 @@ async function exactFileSource(file: string, label: string): Promise<Buffer> {
   if (!path.isAbsolute(file) || file.includes("\n")) {
     throw new Error(`${label} must be an absolute path`);
   }
-  const status = await lstat(file);
-  if (!status.isFile() || status.isSymbolicLink()) {
+  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => {
     throw new Error(`${label} must be one regular non-symlink file`);
+  });
+  try {
+    const status = await handle.stat();
+    if (!status.isFile()) {
+      throw new Error(`${label} must be one regular non-symlink file`);
+    }
+    return await handle.readFile();
+  } finally {
+    await handle.close();
   }
-  return readFile(file);
 }
 
 async function exactDirectory(directory: string, label: string): Promise<string> {
