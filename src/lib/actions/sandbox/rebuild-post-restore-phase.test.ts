@@ -186,7 +186,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");
     expect(output).toContain(
-      "Resolve the preceding OpenShell or port error, then run `nemoclaw alpha connect`.",
+      "Correct the preceding OpenShell error or port conflict. Then run `nemoclaw alpha connect`.",
     );
     expect(output).not.toContain("after resolving the port conflict");
     expect(output).toContain("Hermes API bearer token changed during rebuild");

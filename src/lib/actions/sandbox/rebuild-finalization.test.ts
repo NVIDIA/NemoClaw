@@ -126,7 +126,7 @@ describe("finalizeRebuildPostRestore", () => {
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
     expect(output).toContain("Messaging webhook forward was not verified");
     expect(output).toContain(
-      "Resolve the preceding OpenShell or port error, then run `nemoclaw alpha connect`.",
+      "Correct the preceding OpenShell error or port conflict. Then run `nemoclaw alpha connect`.",
     );
     expect(output).not.toContain("after resolving the port conflict");
     expect(output).toContain("Policy presets failed to reapply: messaging-telegram");

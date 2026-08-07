@@ -326,7 +326,7 @@ export async function runRebuildPostRestorePhase(
     }
     if (messagingHostForwardUnverified) {
       console.log(
-        `    Messaging webhook forward was not verified. Resolve the preceding OpenShell or port error, then run \`${CLI_NAME} ${sandboxName} connect\`.`,
+        `    Messaging webhook forward was not verified. Correct the preceding OpenShell error or port conflict. Then run \`${CLI_NAME} ${sandboxName} connect\`.`,
       );
     }
     printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
