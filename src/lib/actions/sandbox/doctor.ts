@@ -40,6 +40,7 @@ import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import {
   collectInferenceChecks,
+  collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
@@ -566,6 +567,7 @@ async function collectDoctorChecks(
     })),
     ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
     ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
+    ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
   ];
