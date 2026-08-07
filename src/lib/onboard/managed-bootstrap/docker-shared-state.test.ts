@@ -69,6 +69,10 @@ function expectCleanRunNodeHelper(args: readonly string[]): void {
   );
 }
 
+function expectCopiedReceiptVerifierCapability(args: readonly string[]): void {
+  expect(args).toEqual(expect.arrayContaining(["--cap-drop", "ALL", "--cap-add", "DAC_OVERRIDE"]));
+}
+
 function expectCleanExecNodeHelper(args: readonly string[]): void {
   expectPreEntrypointEnvironmentNeutralized(args);
   const nodeIndex = args.indexOf("/usr/local/bin/node");
@@ -100,6 +104,9 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
         .filter((args) => args.includes("--shared-state-transaction-status"))
         .every((args) => args.at(-1) === "--read-only-receipt"),
     ).toBe(true);
+    helpers
+      .filter((args) => args.includes("--shared-state-transaction-status"))
+      .forEach(expectCopiedReceiptVerifierCapability);
     helpers.filter((args) => args[0] === "run").forEach(expectCleanRunNodeHelper);
     helpers.filter((args) => args[0] === "exec").forEach(expectCleanExecNodeHelper);
   });
@@ -125,6 +132,9 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
         .filter((args) => args.includes("--shared-state-transaction-status"))
         .every((args) => args.at(-1) === "--read-only-receipt"),
     ).toBe(true);
+    helpers
+      .filter((args) => args.includes("--shared-state-transaction-status"))
+      .forEach(expectCopiedReceiptVerifierCapability);
     helpers.forEach(expectCleanRunNodeHelper);
   });
 
