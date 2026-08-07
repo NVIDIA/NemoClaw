@@ -333,6 +333,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-mcp-reliability.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-mcp-tools-list-timeout.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-mcp-tools-list-timeout.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.mts"),
   );

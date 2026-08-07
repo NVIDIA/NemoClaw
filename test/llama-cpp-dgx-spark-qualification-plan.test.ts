@@ -97,6 +97,17 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
     ).toMatchObject({ contractVersion: 1 });
   });
 
+  it("exports the checked-in main qualification as enabled", () => {
+    const output = exportLlamaCppDgxSparkQualificationPlan(repoRoot);
+
+    expect(output).toMatchObject({
+      environment: "approve-dgx-spark-image-qualification",
+      execution: "enabled",
+      model_host_path: "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
+      runner: "linux-arm64-gpu-dgx-spark-gb10-protected-1",
+    });
+  });
+
   it("rejects a dormant image even when an activation file exists", () => {
     expect(() => exportLlamaCppDgxSparkQualificationPlan(candidateRoot({ activation }))).toThrow(
       "protected llama.cpp DGX Spark qualification is not enabled",

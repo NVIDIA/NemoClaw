@@ -5,13 +5,17 @@ import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
 
-import { OLLAMA_PORT } from "../core/ports";
 import { sleepSeconds, waitForHttp } from "../core/wait";
 import {
   MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
   resolveOllamaContextWindowFloor,
 } from "../inference/ollama-runtime-context";
 import { cliName } from "./branding";
+import {
+  OLLAMA_PORT,
+  recordUserLocalOllamaOwnership,
+  removeUserLocalOllamaOwnership,
+} from "./experimental/ollama-user-local-runtime";
 import {
   decideInstallOllamaLinuxMode,
   hostCommandExists,
@@ -71,6 +75,10 @@ export type InstallOllamaLinuxOptions = InstallOllamaLinuxModeOptions & {
   readFileImpl?: (path: string) => string;
   /** Test seam: redirect log output. */
   log?: (message: string) => void;
+  /** Test seam: override the durable user-local ownership write. */
+  recordUserLocalOllamaOwnershipImpl?: typeof recordUserLocalOllamaOwnership;
+  /** Test seam: override removal after a successful system installation. */
+  removeUserLocalOllamaOwnershipImpl?: typeof removeUserLocalOllamaOwnership;
 };
 
 /**
@@ -365,6 +373,24 @@ export function installOllamaOnLinux(opts: InstallOllamaLinuxOptions): InstallOl
   const result = mode === "user-local" ? installOllamaUserLocal(opts) : installOllamaSystem(opts);
   // Pin to local loopback so a cached `host.docker.internal` from an
   // earlier WSL probe cannot route validation/pull at the Windows host.
-  if (result.ok) setResolvedOllamaHost("127.0.0.1");
+  if (result.ok) {
+    setResolvedOllamaHost("127.0.0.1");
+    const ownershipDeps = { homeDir: (opts.homedir ?? (() => os.homedir()))() };
+    try {
+      if (result.mode === "user-local") {
+        (opts.recordUserLocalOllamaOwnershipImpl ?? recordUserLocalOllamaOwnership)(
+          result.binPath,
+          ownershipDeps,
+        );
+      } else {
+        (opts.removeUserLocalOllamaOwnershipImpl ?? removeUserLocalOllamaOwnership)(ownershipDeps);
+      }
+    } catch (error) {
+      (opts.errorLog ?? ((message: string) => console.error(message)))(
+        `  Ollama install could not update its NemoClaw ownership receipt: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { ...result, ok: false };
+    }
+  }
   return result;
 }

@@ -194,25 +194,25 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to the default suite or protected managed-runtime qualification", () => {
+  it("limits manual PR runs to empty selectors or protected managed-runtime qualification", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only the default suite or managed-image-protected-runtime",
+      "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only the default suite or managed-image-protected-runtime",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
     );
   });
 
   it.each([
     ["maintain", "", 0, ""],
     ["maintain", "managed-image-protected-runtime", 0, ""],
-    ["maintain", "gpu-e2e", 1, "accepts only the default suite or managed-image-protected-runtime"],
+    ["maintain", "gpu-e2e", 1, "accepts only empty selectors or managed-image-protected-runtime"],
     ["write", "", 1, "requires a repository maintainer or administrator"],
   ])("requires a maintainer role and bounded selector before manual PR E2E for %s with %s", (role, jobs, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();
@@ -248,7 +248,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           INCLUDE_LAUNCHABLE: "false",
           JOBS: jobs,
           PR_NUMBER: "42",
-          REVIEW_REASON: "Reviewed exact PR revision",
+          REVIEW_REASON: "Reviewed PR head revision",
           RUN_ATTEMPT: "1",
           TARGETS: "",
           TRIGGERING_ACTOR: "maintainer",
@@ -281,7 +281,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("accepts the default target matrix for an exact-revision manual PR run", () => {
+  it("accepts the controller target matrix for the current PR head", () => {
     const workflow = readE2eOperationsWorkflow();
     const generateMatrix = workflow.jobs["generate-matrix"];
     const controller = generateMatrix.steps!.find(

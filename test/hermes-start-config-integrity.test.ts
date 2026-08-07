@@ -115,6 +115,7 @@ function runHermesDashboardHomePrepAsRoot() {
       `HERMES_DASHBOARD_HOME=${shellQuote(dashboardHome)}`,
       `_HERMES_PYTHON=${shellQuote(fakePython)}`,
       `_HERMES_DASHBOARD_CONFIG_SEEDER=${shellQuote(path.join(tmpDir, "seed-dashboard-config.py"))}`,
+      `_HERMES_MANAGED_POLICY=${shellQuote(path.join(tmpDir, "managed-policy.json"))}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
       "prepare_hermes_dashboard_home sandbox:sandbox",
       `if [ -e ${shellQuote(path.join(dashboardHome, "gateway_state.json"))} ]; then echo gateway_state_exists=1; else echo gateway_state_exists=0; fi`,
@@ -203,7 +204,9 @@ describe("agents/hermes/start.sh config integrity", () => {
     expect(result.stdout).toContain("cmd=rm stepped=1");
     expect(result.stdout).toContain("cmd=python stepped=1");
     expect(result.stdout).not.toContain("cmd=chown");
-    expect(result.stdout).toContain("/config.yaml");
+    expect(result.stdout).toMatch(
+      /seed-dashboard-config[.]py\s+[^\s]*managed-policy[.]json\s+[^\s]*config[.]yaml/u,
+    );
     expect(result.stdout).toContain("/.env");
   });
 

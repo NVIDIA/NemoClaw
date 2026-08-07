@@ -159,11 +159,13 @@ function requireTrustedEnvironment(
   runAttempt: string,
   workflowSha?: string,
 ): void {
+  const actor = environment.GITHUB_ACTOR ?? "";
   if (
     environment.GITHUB_REPOSITORY !== "NVIDIA/NemoClaw" ||
     environment.GITHUB_REF !== "refs/heads/main" ||
-    environment.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
-    environment.GITHUB_ACTOR !== "github-actions[bot]" ||
+    (environment.GITHUB_EVENT_NAME !== "push" &&
+      environment.GITHUB_EVENT_NAME !== "workflow_dispatch") ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/u.test(actor) ||
     environment.GITHUB_RUN_ID !== runId ||
     environment.GITHUB_RUN_ATTEMPT !== runAttempt ||
     !/^[1-9][0-9]*$/u.test(environment.GITHUB_ACTOR_ID ?? "") ||
