@@ -3469,7 +3469,7 @@ GATEWAYURLENVEOF
         "" | 0 | 1 | true | TRUE | false | FALSE) ;;
         [!a-z]* | *- | *[!a-z0-9-]*) ;;
         *)
-          if [ "${#_sandbox_label_src}" -le 63 ]; then
+          if [ "${#_sandbox_label_src}" -le 19 ]; then
             _sandbox_label="$_sandbox_label_src"
           fi
           ;;
@@ -3942,7 +3942,7 @@ _nemoclaw_valid_sandbox_label() {
   # The candidates are untrusted input interpolated into a copyable `nemoclaw …`
   # command, so allowlist rather than merely strip: only render a value that is
   # a valid sandbox name. This mirrors NAME_VALID_PATTERN in
-  # src/lib/name-validation.ts (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts
+  # src/lib/name-validation.ts (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 19): starts
   # with a lowercase letter, then lowercase alphanumerics/hyphens, no trailing
   # hyphen. Anything else (digit-leading labels, control characters, ANSI
   # escapes, shell metacharacters, whitespace) is rejected, and the caller falls
@@ -3961,7 +3961,7 @@ _nemoclaw_valid_sandbox_label() {
     "" | 0 | 1 | true | TRUE | false | FALSE) ;;
     [!a-z]* | *- | *[!a-z0-9-]*) ;;
     *)
-      if [ "${#1}" -le 63 ]; then
+      if [ "${#1}" -le 19 ]; then
         printf '%s' "$1"
       fi
       ;;
