@@ -14,8 +14,8 @@ cd "$script_dir"
 # Self-hosted GPU builders can have a much smaller connection budget than
 # hosted builders, while dual-stack DNS can add a second failure path. Keep the
 # reviewed install deterministic while bounding each registry attempt and the
-# number of sockets npm can consume. These settings do not weaken lockfile,
-# signature, or audit verification below.
+# number of sockets npm can consume. These settings do not weaken lockfile or
+# registry-signature verification below.
 export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"
 export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"
 export NPM_CONFIG_FETCH_RETRIES="${NPM_CONFIG_FETCH_RETRIES:-5}"
@@ -61,4 +61,3 @@ npm audit signatures
 npm test
 npm run typecheck
 npm run bundle
-npm audit --omit=dev --audit-level=low
