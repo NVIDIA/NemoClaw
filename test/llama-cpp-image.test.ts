@@ -20,6 +20,12 @@ const recipePath = path.join(
   "recipes",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
 );
+const agentQualificationPath = path.join(
+  repoRoot,
+  "managed-inference",
+  "qualifications",
+  "llama-cpp.openclaw.spark-single.v1.yaml",
+);
 const exporterPath = path.join(repoRoot, "scripts", "checks", "export-llama-cpp-image-config.mts");
 
 type ImageManifest = {
@@ -68,6 +74,7 @@ type ImageManifest = {
         gpu?: { cpuFallback?: string; fullOffload?: boolean; vendor?: string };
         model?: { digest?: string; hostPath?: string | null; id?: string };
         platform?: string;
+        probeBounds?: Record<string, unknown>;
         probes?: string[];
         profile?: string;
         recipeRef?: string;
@@ -135,7 +142,10 @@ function configureQualification(
 }
 
 function enablePublication(source: string): string {
-  return configureQualification(source, { execution: "enabled", publicationEnabled: true });
+  return configureQualification(source, {
+    execution: "enabled",
+    publicationEnabled: true,
+  });
 }
 
 describe("declarative llama.cpp server image", () => {
@@ -216,6 +226,24 @@ describe("declarative llama.cpp server image", () => {
       imageBuild: {
         platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
         source: { revision: manifest.spec?.source?.revision },
+      },
+      qualification: {
+        agentQualification: {
+          execution: "disabled",
+          image: {
+            reference:
+              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e",
+            sourceRevision: "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+          },
+          probes: [
+            "synchronous-chat",
+            "streaming-chat",
+            "agent-normal-turn",
+            "agent-tool-call",
+            "agent-tool-result-continuation",
+            "agent-multi-turn",
+          ],
+        },
       },
       recipe: {
         id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
@@ -408,6 +436,40 @@ describe("declarative llama.cpp server image", () => {
     expect(reordered.publication_qualification_plan_sha256).toBe(
       baseline.publication_qualification_plan_sha256,
     );
+  });
+
+  it("uses only the strict agent-qualification YAML to activate OpenClaw probes", () => {
+    const recipeSource = fs.readFileSync(recipePath, "utf8");
+    const qualificationSource = fs.readFileSync(agentQualificationPath, "utf8");
+    const enabled = loadLlamaCppImageConfig(
+      manifestSource,
+      recipeSource,
+      undefined,
+      qualificationSource.replace("execution: disabled", "execution: enabled"),
+    );
+
+    expect(JSON.parse(enabled.publication_qualification_plan)).toMatchObject({
+      qualification: { agentQualification: { execution: "enabled" } },
+    });
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource,
+        undefined,
+        qualificationSource.replace("provider: llama-cpp-local", "provider: vllm-local"),
+      ),
+    ).toThrow(/agent qualification is invalid/u);
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource,
+        undefined,
+        qualificationSource.replace(
+          "kind: AgentQualification",
+          "kind: AgentQualification\nextra: true",
+        ),
+      ),
+    ).toThrow(/agent qualification document fields/u);
   });
 
   it("rejects YAML parser warnings in image and recipe inputs (#8260)", () => {

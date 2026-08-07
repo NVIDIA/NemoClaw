@@ -5,10 +5,13 @@ import { createHash } from "node:crypto";
 
 import YAML from "yaml";
 
+export {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
+} from "./llama-cpp-dgx-spark-qualification-paths.mts";
+
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID =
   "llama-cpp-dgx-spark-qualification" as const;
-export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH =
-  "ci/llama-cpp-dgx-spark-qualification-v1.yaml" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND =
   "nemoclaw-llama-cpp-dgx-spark-qualification-v1" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE = "dgx-spark-gb10-single" as const;
@@ -51,8 +54,29 @@ export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "cancellation",
   "client-timeout",
 ] as const;
+export const LLAMA_CPP_DGX_SPARK_AGENT_PROBES = [
+  "synchronous-chat",
+  "streaming-chat",
+  "agent-normal-turn",
+  "agent-tool-call",
+  "agent-tool-result-continuation",
+  "agent-multi-turn",
+] as const;
+export const LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE =
+  "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e" as const;
+export const LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION =
+  "eb1d2f5700393892f227ac9fd56f485fc6718bce" as const;
+export const LLAMA_CPP_DGX_SPARK_OPENCLAW_NORMAL_PROMPT =
+  "Reply with exactly one word: PONG" as const;
+export const LLAMA_CPP_DGX_SPARK_OPENCLAW_TOOL_PROMPT =
+  "Use the read tool to read /tmp/nemoclaw-llama-cpp-tool.txt. Reply with exactly the file contents: LLAMA_CPP_OPENCLAW_TOOL_OK" as const;
+export const LLAMA_CPP_DGX_SPARK_OPENCLAW_CONTINUATION_PROMPT =
+  "Repeat the exact value LLAMA_CPP_OPENCLAW_TOOL_OK from the file you read in the prior turn." as const;
 
-const LLAMA_CPP_DGX_SPARK_CLIENT_TIMEOUT_RANGE = { maximum: 10_000, minimum: 10 } as const;
+const LLAMA_CPP_DGX_SPARK_CLIENT_TIMEOUT_RANGE = {
+  maximum: 10_000,
+  minimum: 10,
+} as const;
 const LLAMA_CPP_DGX_SPARK_CONTEXT_SIZE_RANGE = {
   maximum: 1024 * 1024,
   minimum: 1024,
@@ -148,6 +172,7 @@ export type LlamaCppDgxSparkExecutionPlan = {
     };
   };
   readonly qualification: {
+    readonly agentQualification: LlamaCppDgxSparkAgentQualificationPlan;
     readonly probeBounds: LlamaCppDgxSparkQualificationPlan["probeBounds"];
     readonly probes: typeof LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES;
   };
@@ -255,7 +280,97 @@ export type LlamaCppDgxSparkExecutionPlan = {
   };
 };
 
+export type LlamaCppDgxSparkAgentQualificationPlan = {
+  readonly agent: "openclaw";
+  readonly bounds: {
+    readonly commandTimeoutSeconds: number;
+    readonly maxResponseBytes: number;
+    readonly maxStreamEvents: number;
+    readonly maxTokens: number;
+  };
+  readonly execution: "disabled" | "enabled";
+  readonly fixture: {
+    readonly path: "/tmp/nemoclaw-llama-cpp-tool.txt";
+    readonly value: "LLAMA_CPP_OPENCLAW_TOOL_OK";
+  };
+  readonly image: {
+    readonly reference: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE;
+    readonly sourceRevision: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION;
+  };
+  readonly expectations: {
+    readonly normal: "PONG";
+  };
+  readonly probes: typeof LLAMA_CPP_DGX_SPARK_AGENT_PROBES;
+  readonly prompts: {
+    readonly continuation: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_CONTINUATION_PROMPT;
+    readonly normal: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_NORMAL_PROMPT;
+    readonly tool: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_TOOL_PROMPT;
+  };
+  readonly route: {
+    readonly api: "openai-completions";
+    readonly provider: "llama-cpp-local";
+    readonly routedBaseUrl: "https://inference.local/v1";
+    readonly upstreamBaseUrl: "http://host.openshell.internal:8081/v1";
+  };
+  readonly runtimeProvider: "docker";
+  readonly sandbox: {
+    readonly gpuAccess: "disabled";
+    readonly name: "nemoclaw-llama-cpp-openclaw";
+  };
+  readonly sessions: {
+    readonly normal: "llama-cpp-openclaw-normal";
+    readonly tool: "llama-cpp-openclaw-tool";
+  };
+  readonly tool: {
+    readonly name: "read";
+  };
+};
+
 export type LlamaCppDgxSparkQualificationReceipt = {
+  readonly agentQualification:
+    | { readonly execution: "disabled" }
+    | {
+        readonly agent: "openclaw";
+        readonly cleanup: {
+          readonly gatewayRemoved: true;
+          readonly networkRemoved: true;
+          readonly sandboxRemoved: true;
+          readonly stateRemoved: true;
+        };
+        readonly execution: "enabled";
+        readonly image: {
+          readonly reference: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE;
+          readonly sourceRevision: typeof LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION;
+        };
+        readonly model: {
+          readonly chatTemplate: "nemotron-v3-embedded";
+          readonly id: typeof LLAMA_CPP_DGX_SPARK_MODEL_ID;
+          readonly quantization: "UD-Q4_K_XL";
+          readonly servedName: typeof LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID;
+        };
+        readonly platform: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM;
+        readonly probes: {
+          readonly agentMultiTurn: true;
+          readonly agentNormalTurn: true;
+          readonly agentToolCall: {
+            readonly argumentsValid: true;
+            readonly name: "read";
+          };
+          readonly agentToolResultContinuation: true;
+          readonly streamingChat: {
+            readonly done: true;
+            readonly events: number;
+          };
+          readonly synchronousChat: true;
+        };
+        readonly route: {
+          readonly api: "openai-completions";
+          readonly provider: "llama-cpp-local";
+          readonly routedBaseUrl: "https://inference.local/v1";
+          readonly upstreamBaseUrl: "http://host.openshell.internal:8081/v1";
+        };
+        readonly runtimeProvider: "docker";
+      };
   readonly baseSha: string;
   readonly cleanup: {
     readonly containerRemoved: true;
@@ -402,7 +517,10 @@ function parseActivationYaml(source: string): unknown {
       "llama.cpp DGX Spark activation YAML is empty, exceeds 4096 bytes, or contains control characters",
     );
   }
-  const document = YAML.parseDocument(source, { strict: true, uniqueKeys: true });
+  const document = YAML.parseDocument(source, {
+    strict: true,
+    uniqueKeys: true,
+  });
   if (document.errors.length > 0 || document.warnings.length > 0) {
     throw new Error("llama.cpp DGX Spark activation YAML is invalid");
   }
@@ -503,6 +621,154 @@ function parseProtocolProbeBounds(
   };
 }
 
+function boundedText(value: unknown, label: string, maximum: number): string {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maximum ||
+    /[\0\r\n]/u.test(value)
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+function parseAgentQualification(value: unknown): LlamaCppDgxSparkAgentQualificationPlan {
+  const qualification = record(value, "llama.cpp DGX Spark agent qualification");
+  requireExactKeys(
+    qualification,
+    [
+      "agent",
+      "bounds",
+      "execution",
+      "expectations",
+      "fixture",
+      "image",
+      "probes",
+      "prompts",
+      "route",
+      "runtimeProvider",
+      "sandbox",
+      "sessions",
+      "tool",
+    ],
+    "llama.cpp DGX Spark agent qualification",
+  );
+  const bounds = record(qualification.bounds, "agent qualification bounds");
+  requireExactKeys(
+    bounds,
+    ["commandTimeoutSeconds", "maxResponseBytes", "maxStreamEvents", "maxTokens"],
+    "agent qualification bounds",
+  );
+  const fixture = record(qualification.fixture, "agent qualification fixture");
+  requireExactKeys(fixture, ["path", "value"], "agent qualification fixture");
+  const expectations = record(qualification.expectations, "agent qualification expectations");
+  requireExactKeys(expectations, ["normal"], "agent qualification expectations");
+  const image = record(qualification.image, "agent qualification image");
+  requireExactKeys(image, ["reference", "sourceRevision"], "agent qualification image");
+  const prompts = record(qualification.prompts, "agent qualification prompts");
+  requireExactKeys(prompts, ["continuation", "normal", "tool"], "agent qualification prompts");
+  const route = record(qualification.route, "agent qualification route");
+  requireExactKeys(
+    route,
+    ["api", "provider", "routedBaseUrl", "upstreamBaseUrl"],
+    "agent qualification route",
+  );
+  const sandbox = record(qualification.sandbox, "agent qualification sandbox");
+  requireExactKeys(sandbox, ["gpuAccess", "name"], "agent qualification sandbox");
+  const sessions = record(qualification.sessions, "agent qualification sessions");
+  requireExactKeys(sessions, ["normal", "tool"], "agent qualification sessions");
+  const tool = record(qualification.tool, "agent qualification tool");
+  requireExactKeys(tool, ["name"], "agent qualification tool");
+
+  const execution = qualification.execution;
+  const normalPrompt = boundedText(prompts.normal, "agent qualification normal prompt", 512);
+  const toolPrompt = boundedText(prompts.tool, "agent qualification tool prompt", 1024);
+  const continuationPrompt = boundedText(
+    prompts.continuation,
+    "agent qualification continuation prompt",
+    512,
+  );
+  if (
+    (execution !== "disabled" && execution !== "enabled") ||
+    qualification.agent !== "openclaw" ||
+    qualification.runtimeProvider !== "docker" ||
+    image.reference !== LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE ||
+    image.sourceRevision !== LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION ||
+    JSON.stringify(qualification.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_AGENT_PROBES) ||
+    fixture.path !== "/tmp/nemoclaw-llama-cpp-tool.txt" ||
+    fixture.value !== "LLAMA_CPP_OPENCLAW_TOOL_OK" ||
+    expectations.normal !== "PONG" ||
+    tool.name !== "read" ||
+    route.provider !== "llama-cpp-local" ||
+    route.api !== "openai-completions" ||
+    route.routedBaseUrl !== "https://inference.local/v1" ||
+    route.upstreamBaseUrl !== "http://host.openshell.internal:8081/v1" ||
+    sandbox.name !== "nemoclaw-llama-cpp-openclaw" ||
+    sandbox.gpuAccess !== "disabled" ||
+    sessions.normal !== "llama-cpp-openclaw-normal" ||
+    sessions.tool !== "llama-cpp-openclaw-tool" ||
+    normalPrompt !== LLAMA_CPP_DGX_SPARK_OPENCLAW_NORMAL_PROMPT ||
+    toolPrompt !== LLAMA_CPP_DGX_SPARK_OPENCLAW_TOOL_PROMPT ||
+    continuationPrompt !== LLAMA_CPP_DGX_SPARK_OPENCLAW_CONTINUATION_PROMPT
+  ) {
+    throw new Error("compiled llama.cpp DGX Spark agent qualification is invalid");
+  }
+  return {
+    agent: "openclaw",
+    bounds: {
+      commandTimeoutSeconds: boundedInteger(
+        bounds.commandTimeoutSeconds,
+        "agent qualification command timeout",
+        30,
+        900,
+      ),
+      maxResponseBytes: boundedInteger(
+        bounds.maxResponseBytes,
+        "agent qualification response bound",
+        64 * 1024,
+        64 * 1024 * 1024,
+      ),
+      maxStreamEvents: boundedInteger(
+        bounds.maxStreamEvents,
+        "agent qualification stream event bound",
+        8,
+        4096,
+      ),
+      maxTokens: boundedInteger(bounds.maxTokens, "agent qualification token bound", 1, 512),
+    },
+    execution,
+    expectations: { normal: "PONG" },
+    fixture: {
+      path: "/tmp/nemoclaw-llama-cpp-tool.txt",
+      value: "LLAMA_CPP_OPENCLAW_TOOL_OK",
+    },
+    image: {
+      reference: LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE,
+      sourceRevision: LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION,
+    },
+    probes: LLAMA_CPP_DGX_SPARK_AGENT_PROBES,
+    prompts: {
+      continuation: LLAMA_CPP_DGX_SPARK_OPENCLAW_CONTINUATION_PROMPT,
+      normal: LLAMA_CPP_DGX_SPARK_OPENCLAW_NORMAL_PROMPT,
+      tool: LLAMA_CPP_DGX_SPARK_OPENCLAW_TOOL_PROMPT,
+    },
+    route: {
+      api: "openai-completions",
+      provider: "llama-cpp-local",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamBaseUrl: "http://host.openshell.internal:8081/v1",
+    },
+    runtimeProvider: "docker",
+    sandbox: { gpuAccess: "disabled", name: "nemoclaw-llama-cpp-openclaw" },
+    sessions: {
+      normal: "llama-cpp-openclaw-normal",
+      tool: "llama-cpp-openclaw-tool",
+    },
+    tool: { name: "read" },
+  };
+}
+
 function requiredSha(value: unknown, label: string): string {
   if (typeof value !== "string" || !LLAMA_CPP_DGX_SPARK_SHA_PATTERN.test(value)) {
     throw new Error(`${label} is invalid`);
@@ -530,7 +796,11 @@ function driverVersionAtLeast(actual: string, minimum: string): boolean {
 function parseInfrastructure(
   value: Record<string, unknown>,
   execution: "disabled" | "enabled",
-): { environment: string | null; hostPath: string | null; runner: string | null } {
+): {
+  environment: string | null;
+  hostPath: string | null;
+  runner: string | null;
+} {
   const environment = value.environment;
   const runner = value.runner;
   const model = record(value.model, "llama.cpp DGX Spark qualification model");
@@ -660,13 +930,18 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   }
 
   const qualification = record(plan.qualification, "compiled protocol qualification");
-  requireExactKeys(qualification, ["probeBounds", "probes"], "compiled protocol qualification");
+  requireExactKeys(
+    qualification,
+    ["agentQualification", "probeBounds", "probes"],
+    "compiled protocol qualification",
+  );
   if (
     JSON.stringify(qualification.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
   ) {
     throw new Error("compiled llama.cpp DGX Spark protocol probes are invalid");
   }
   const protocolProbeBounds = parseProtocolProbeBounds(qualification.probeBounds);
+  const agentQualification = parseAgentQualification(qualification.agentQualification);
 
   const imageBuild = record(plan.imageBuild, "compiled qualification image build");
   requireExactKeys(
@@ -1021,6 +1296,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
       },
     },
     qualification: {
+      agentQualification,
       probeBounds: protocolProbeBounds,
       probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
     },
@@ -1070,7 +1346,12 @@ export function parseLlamaCppDgxSparkExecutionPlan(
           baseImage: LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
           minimumDriverVersion: recipeCuda.minimumDriverVersion,
         },
-        gpu: { vendor: "nvidia", count: 1, offload: "full", cpuFallback: "reject" },
+        gpu: {
+          vendor: "nvidia",
+          count: 1,
+          offload: "full",
+          cpuFallback: "reject",
+        },
         resources: { memoryBytes, writableStorageBytes, pidsLimit },
       },
       serve: {
@@ -1157,12 +1438,15 @@ export function parseLlamaCppDgxSparkQualificationEvidenceIdentity(
 export function parseLlamaCppDgxSparkQualificationReceipt(
   value: unknown,
   expectedValue: unknown,
+  expectedPlanValue: unknown,
 ): LlamaCppDgxSparkQualificationReceipt {
   const expected = parseLlamaCppDgxSparkQualificationEvidenceIdentity(expectedValue);
+  const expectedPlan = parseLlamaCppDgxSparkExecutionPlan(expectedPlanValue);
   const receipt = record(value, "llama.cpp DGX Spark qualification receipt");
   requireExactKeys(
     receipt,
     [
+      "agentQualification",
       "baseSha",
       "cleanup",
       "execution",
@@ -1189,6 +1473,141 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
     !LLAMA_CPP_DGX_SPARK_SHA_PATTERN.test(String(receipt.workflowSha))
   ) {
     throw new Error("llama.cpp DGX Spark qualification receipt identity is invalid");
+  }
+
+  const agentQualification = record(
+    receipt.agentQualification,
+    "llama.cpp DGX Spark agent qualification receipt",
+  );
+  let parsedAgentQualification: LlamaCppDgxSparkQualificationReceipt["agentQualification"];
+  if (expectedPlan.qualification.agentQualification.execution === "disabled") {
+    if (agentQualification.execution !== "disabled") {
+      throw new Error("llama.cpp DGX Spark agent qualification ran without declarative activation");
+    }
+    requireExactKeys(agentQualification, ["execution"], "agent qualification receipt");
+    parsedAgentQualification = { execution: "disabled" };
+  } else {
+    requireExactKeys(
+      agentQualification,
+      [
+        "agent",
+        "cleanup",
+        "execution",
+        "image",
+        "model",
+        "platform",
+        "probes",
+        "route",
+        "runtimeProvider",
+      ],
+      "agent qualification receipt",
+    );
+    const agentImage = record(agentQualification.image, "agent qualification receipt image");
+    requireExactKeys(agentImage, ["reference", "sourceRevision"], "agent receipt image");
+    const agentModel = record(agentQualification.model, "agent qualification receipt model");
+    requireExactKeys(
+      agentModel,
+      ["chatTemplate", "id", "quantization", "servedName"],
+      "agent receipt model",
+    );
+    const agentRoute = record(agentQualification.route, "agent qualification receipt route");
+    requireExactKeys(
+      agentRoute,
+      ["api", "provider", "routedBaseUrl", "upstreamBaseUrl"],
+      "agent receipt route",
+    );
+    const agentProbes = record(agentQualification.probes, "agent qualification receipt probes");
+    requireExactKeys(
+      agentProbes,
+      [
+        "agentMultiTurn",
+        "agentNormalTurn",
+        "agentToolCall",
+        "agentToolResultContinuation",
+        "streamingChat",
+        "synchronousChat",
+      ],
+      "agent receipt probes",
+    );
+    const agentToolCall = record(agentProbes.agentToolCall, "agent tool-call probe");
+    requireExactKeys(agentToolCall, ["argumentsValid", "name"], "agent tool-call probe");
+    const agentStreaming = record(agentProbes.streamingChat, "agent streaming probe");
+    requireExactKeys(agentStreaming, ["done", "events"], "agent streaming probe");
+    const agentStreamingEvents = boundedInteger(
+      agentStreaming.events,
+      "agent streaming event count",
+      2,
+      expectedPlan.qualification.agentQualification.bounds.maxStreamEvents,
+    );
+    const agentCleanup = record(agentQualification.cleanup, "agent qualification cleanup");
+    requireExactKeys(
+      agentCleanup,
+      ["gatewayRemoved", "networkRemoved", "sandboxRemoved", "stateRemoved"],
+      "agent qualification cleanup",
+    );
+    const configured = expectedPlan.qualification.agentQualification;
+    if (
+      agentQualification.execution !== "enabled" ||
+      agentQualification.agent !== configured.agent ||
+      agentQualification.runtimeProvider !== configured.runtimeProvider ||
+      agentQualification.platform !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM ||
+      agentImage.reference !== configured.image.reference ||
+      agentImage.sourceRevision !== configured.image.sourceRevision ||
+      agentModel.id !== expectedPlan.recipe.model.id ||
+      agentModel.servedName !== expectedPlan.recipe.model.servedName ||
+      agentModel.quantization !== expectedPlan.recipe.model.file.quantization ||
+      agentModel.chatTemplate !== expectedPlan.recipe.serve.chatTemplate ||
+      agentRoute.provider !== configured.route.provider ||
+      agentRoute.api !== configured.route.api ||
+      agentRoute.routedBaseUrl !== configured.route.routedBaseUrl ||
+      agentRoute.upstreamBaseUrl !== configured.route.upstreamBaseUrl ||
+      agentProbes.synchronousChat !== true ||
+      agentProbes.agentNormalTurn !== true ||
+      agentProbes.agentMultiTurn !== true ||
+      agentProbes.agentToolResultContinuation !== true ||
+      agentStreaming.done !== true ||
+      agentToolCall.name !== configured.tool.name ||
+      agentToolCall.argumentsValid !== true ||
+      Object.values(agentCleanup).some((entry) => entry !== true)
+    ) {
+      throw new Error("llama.cpp DGX Spark agent qualification evidence is invalid");
+    }
+    parsedAgentQualification = {
+      agent: "openclaw",
+      cleanup: {
+        gatewayRemoved: true,
+        networkRemoved: true,
+        sandboxRemoved: true,
+        stateRemoved: true,
+      },
+      execution: "enabled",
+      image: {
+        reference: LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE,
+        sourceRevision: LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION,
+      },
+      model: {
+        chatTemplate: "nemotron-v3-embedded",
+        id: LLAMA_CPP_DGX_SPARK_MODEL_ID,
+        quantization: "UD-Q4_K_XL",
+        servedName: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+      },
+      platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
+      probes: {
+        agentMultiTurn: true,
+        agentNormalTurn: true,
+        agentToolCall: { argumentsValid: true, name: "read" },
+        agentToolResultContinuation: true,
+        streamingChat: { done: true, events: agentStreamingEvents },
+        synchronousChat: true,
+      },
+      route: {
+        api: "openai-completions",
+        provider: "llama-cpp-local",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamBaseUrl: "http://host.openshell.internal:8081/v1",
+      },
+      runtimeProvider: "docker",
+    };
   }
 
   const run = record(receipt.run, "llama.cpp DGX Spark qualification receipt run");
@@ -1408,6 +1827,7 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
   }
 
   return {
+    agentQualification: parsedAgentQualification,
     baseSha: expected.baseSha,
     cleanup: {
       containerRemoved: true,

@@ -153,7 +153,11 @@ function mockOnboardRunCapture(command, options = {}) {
   if (isOpenClawSecurityInventoryProbe(command)) {
     return "nemoclaw-security-inventory-ok";
   }
-  if (/^docker run --rm --entrypoint \/usr\/bin\/ldd \S+ --version$/.test(normalized)) {
+  if (
+    normalized.startsWith("docker run ") &&
+    normalized.includes(" --entrypoint /usr/bin/ldd ") &&
+    normalized.endsWith(" --version")
+  ) {
     return "ldd (GNU libc) 2.41";
   }
   return mockSandboxExecCurl(command, options);
