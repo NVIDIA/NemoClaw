@@ -30,7 +30,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "e7073ef09d9017cc619f60178ed92f7f2ea2374a";
+const promptAssetRevision = "4394858b3bae38b04768619f99b9614161f1b565";
 
 type PromptAsset = {
   path: string;
