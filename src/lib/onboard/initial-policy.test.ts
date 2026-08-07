@@ -383,7 +383,7 @@ filesystem_policy:
 network_policies: {}
 `,
       {
-        jetsonGpuDevicePaths: ["/dev/nvmap", "/dev/nvhost-gpu", "/dev/nvmap"],
+        jetsonGpuDevicePaths: ["/dev/nvmap", "/dev/nvsciipc", "/dev/nvhost-gpu", "/dev/nvmap"],
       },
     );
     const gpuDoc = YAML.parse(gpuPolicy);
@@ -391,6 +391,7 @@ network_policies: {}
     expect(gpuDoc.filesystem_policy.read_only).toContain("/opt/nvidia");
     expect(gpuDoc.filesystem_policy.read_only).not.toContain("/dev/nvmap");
     expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/dev/nvmap");
+    expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/dev/nvsciipc");
     expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/dev/nvhost-gpu");
   });
 

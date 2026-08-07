@@ -24,6 +24,28 @@ describe("detectTegraGpuDevicePaths", () => {
     ).toEqual(["/dev/nvmap"]);
   });
 
+  it("includes nvSci IPC in default policy paths and group discovery (#7610)", () => {
+    expect(
+      detectTegraGpuDevicePaths({
+        statDevicePath: (devicePath) =>
+          devicePath === "/dev/nvmap" || devicePath === "/dev/nvsciipc"
+            ? { isCharacterDevice: true, isSymbolicLink: false }
+            : null,
+      }),
+    ).toEqual(["/dev/nvmap", "/dev/nvsciipc"]);
+
+    expect(
+      detectTegraDeviceGroupGids({
+        statDeviceAccess: (devicePath) =>
+          devicePath === "/dev/nvmap"
+            ? { gid: 44, mode: 0o660 }
+            : devicePath === "/dev/nvsciipc"
+              ? { gid: 995, mode: 0o660 }
+              : null,
+      }),
+    ).toEqual(["44", "995"]);
+  });
+
   it("requires a character device at /dev/nvmap before returning DRI render devices (#7610)", () => {
     expect(
       detectTegraGpuDevicePaths({

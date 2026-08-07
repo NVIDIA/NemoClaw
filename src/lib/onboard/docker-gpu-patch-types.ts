@@ -41,7 +41,7 @@ export type DockerGpuPatchDeps = {
   probeContainerDns?: ContainerDnsProbeFn;
   /**
    * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes
-   * (`/dev/nvmap`, `/dev/nvhost-*`, and `/dev/dri/renderD*`). Used by the
+   * (`/dev/nvmap`, `/dev/nvsciipc`, `/dev/nvhost-*`, and `/dev/dri/renderD*`). Used by the
    * Jetson recreate to grant the sandbox user matching `--group-add`
    * membership so CUDA can open them (#4231, #7610). Injectable so the Jetson
    * permission path is testable without Tegra hardware.
