@@ -34,21 +34,26 @@ function runInstallerMain(args: readonly string[], env: NodeJS.ProcessEnv = {}) 
 }
 
 describe("local model installer gate", () => {
-  it.each(["vllm", "llama-cpp"])("selects the dedicated %s onboarding path", (runtime) => {
-    const result = runInstallerMain([`--local-model-runtime=${runtime}`]);
+  it("selects the dedicated vLLM onboarding path", () => {
+    const result = runInstallerMain(["--local-model-runtime=vllm"]);
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain(`HARNESS_REACHED runtime=${runtime} gate=1 no_express=1`);
+    expect(output).toContain("HARNESS_REACHED runtime=vllm gate=1 no_express=1");
     expect(output).toContain("non_interactive=1 source=the --local-model-runtime flag");
   });
 
-  it("rejects an unknown serving runtime before installer work", () => {
-    const result = runInstallerMain(["--local-model-runtime=unknown"]);
+  it.each([
+    "llama-cpp",
+    "unknown",
+  ])("rejects the unsupported %s local model runtime before installer work", (runtime) => {
+    const result = runInstallerMain([`--local-model-runtime=${runtime}`]);
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status).not.toBe(0);
-    expect(output).toContain("--local-model-runtime must be vllm or llama-cpp");
+    expect(output).toContain(
+      "--local-model-runtime must be vllm; select install-llama-cpp with NEMOCLAW_PROVIDER",
+    );
     expect(output).not.toContain("HARNESS_REACHED");
   });
 

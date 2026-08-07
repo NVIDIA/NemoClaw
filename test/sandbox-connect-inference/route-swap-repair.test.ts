@@ -26,7 +26,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
       );
 
       const result = runConnect(tmpDir, sandboxName);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout || ""}${result.stderr || ""}`).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       expect(state.inferenceGetCalls).toEqual([["-g", "nemoclaw"]]);
@@ -69,6 +69,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
             "OK 200",
+            "OK 200",
           ],
         },
       );
@@ -80,7 +81,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
         http_proxy: "http://127.0.0.1:9",
         no_proxy: "",
       });
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout || ""}${result.stderr || ""}`).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const curlCalls = state.curlCalls as string[][];
@@ -138,6 +139,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
             "OK 200",
+            "OK 200",
           ],
           writeOllamaProxyState: false,
         },
@@ -158,7 +160,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
         WSL_DISTRO_NAME: "Ubuntu",
         no_proxy: "",
       });
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout || ""}${result.stderr || ""}`).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const curlCalls = state.curlCalls as string[][];

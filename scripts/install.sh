@@ -822,7 +822,7 @@ usage() {
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
-  printf "                                  | hermes-provider | llama-cpp\n"
+  printf "                                  | hermes-provider | llama-cpp | install-llama-cpp\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -2239,6 +2239,31 @@ verify_nemoclaw() {
       warn "Found ${_CLI_BIN} at $npm_bin/$_CLI_BIN but it is not the real ${_CLI_DISPLAY} CLI."
       npm uninstall -g nemoclaw 2>/dev/null || true
     fi
+  fi
+
+  # The active npm prefix can differ from the CLI installation prefix. The
+  # user-local shim can remain executable when the active prefix has no CLI.
+  # Probe the shim before reporting that installation failed (#8311).
+  if [[ -x "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" ]] \
+    && is_real_nemoclaw_cli "$NEMOCLAW_SHIM_DIR/$_CLI_BIN" "$_CLI_BIN"; then
+    _CLI_PATH="$NEMOCLAW_SHIM_DIR/$_CLI_BIN"
+    record_cli_resolution_state "$_CLI_PATH" "$npm_bin"
+
+    # record_cli_resolution_state clears the refresh flag when the shim
+    # directory is on the initial PATH. A different command can resolve first.
+    # In that case, NEMOCLAW_READY_NOW must remain false.
+    if [[ "$(command -v "$_CLI_BIN" 2>/dev/null)" -ef "$_CLI_PATH" ]]; then
+      NEMOCLAW_READY_NOW=true
+      info "Verified: ${_CLI_BIN} is available at $_CLI_PATH"
+      return 0
+    fi
+
+    NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=true
+    NEMOCLAW_RECOVERY_EXPORT_DIR="${NEMOCLAW_RECOVERY_EXPORT_DIR:-$NEMOCLAW_SHIM_DIR}"
+    NEMOCLAW_RECOVERY_PROFILE="${NEMOCLAW_RECOVERY_PROFILE:-$(detect_shell_profile)}"
+    warn "Found ${_CLI_BIN} at $_CLI_PATH but this shell's PATH does not yet resolve it."
+    warn "Running onboarding via the absolute path; refresh your shell PATH afterwards (commands below)."
+    return 0
   fi
 
   # Single warn header, then plain printf for each bullet. warn() prefixes
@@ -4996,8 +5021,8 @@ main() {
       --local-model-runtime=*)
         LOCAL_MODEL_RUNTIME="${arg#--local-model-runtime=}"
         case "$LOCAL_MODEL_RUNTIME" in
-          vllm | llama-cpp) ;;
-          *) error "--local-model-runtime must be vllm or llama-cpp" ;;
+          vllm) ;;
+          *) error "--local-model-runtime must be vllm; select install-llama-cpp with NEMOCLAW_PROVIDER" ;;
         esac
         NON_INTERACTIVE=1
         NON_INTERACTIVE_SOURCE="the --local-model-runtime flag"
@@ -5040,8 +5065,8 @@ main() {
     export NEMOCLAW_NO_EXPRESS=1
   elif [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ]; then
     case "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" in
-      vllm | llama-cpp) ;;
-      *) error "NEMOCLAW_LOCAL_MODEL_RUNTIME must be vllm or llama-cpp" ;;
+      vllm) ;;
+      *) error "NEMOCLAW_LOCAL_MODEL_RUNTIME must be vllm; select install-llama-cpp with NEMOCLAW_PROVIDER" ;;
     esac
     NON_INTERACTIVE=1
     NON_INTERACTIVE_SOURCE="NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1"

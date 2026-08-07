@@ -2853,9 +2853,11 @@ function fetchFinalPrSnapshot(
   const [owner, name, extra] = repo.split("/");
   if (!owner || !name || extra) return null;
 
-  const response = ghJson([
+  const args = [
     "api",
     "graphql",
+    "--paginate",
+    "--slurp",
     "-F",
     `owner=${owner}`,
     "-F",
@@ -2863,7 +2865,7 @@ function fetchFinalPrSnapshot(
     "-F",
     `number=${number}`,
     "-f",
-    `query=query FinalPrSnapshot($owner: String!, $name: String!, $number: Int!) {
+    `query=query FinalPrSnapshot($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
           title
@@ -2885,9 +2887,9 @@ function fetchFinalPrSnapshot(
               commit {
                 oid
                 statusCheckRollup {
-                  contexts(first: 100) {
+                  contexts(first: 100, after: $endCursor) {
                     totalCount
-                    pageInfo { hasNextPage }
+                    pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
                       ... on CheckRun {
@@ -2913,45 +2915,143 @@ function fetchFinalPrSnapshot(
         }
       }
     }`,
-  ]) as {
-    data?: { repository?: { pullRequest?: Record<string, unknown> } };
-  } | null;
-  const record = response?.data?.repository?.pullRequest;
-  if (!record) return null;
+  ];
+  const firstPages = ghJson(args);
+  const finalPages = ghJson(args);
+  if (!isDeepStrictEqual(firstPages, finalPages)) return null;
+  return parseFinalPrSnapshotPages(finalPages);
+}
 
-  const headRepository = parseHeadRepository(record.headRepository, record.headRepositoryOwner);
-  const baseRef =
-    typeof record.baseRef === "object" && record.baseRef !== null && !Array.isArray(record.baseRef)
-      ? (record.baseRef as Record<string, unknown>)
-      : null;
-  const target =
-    typeof baseRef?.target === "object" && baseRef.target !== null && !Array.isArray(baseRef.target)
-      ? (baseRef.target as Record<string, unknown>)
-      : null;
-  const currentBaseSha = target?.oid;
-  if (
-    typeof record.title !== "string" ||
-    typeof record.body !== "string" ||
-    typeof record.state !== "string" ||
-    typeof record.isDraft !== "boolean" ||
-    typeof record.mergeable !== "string" ||
-    typeof record.mergeStateStatus !== "string" ||
-    typeof record.headRefOid !== "string" ||
-    !/^[0-9a-f]{40}$/iu.test(record.headRefOid) ||
-    typeof record.baseRefOid !== "string" ||
-    !/^[0-9a-f]{40}$/iu.test(record.baseRefOid) ||
-    typeof record.headRefName !== "string" ||
-    typeof record.baseRefName !== "string" ||
-    typeof currentBaseSha !== "string" ||
-    !/^[0-9a-f]{40}$/iu.test(currentBaseSha) ||
-    !headRepository
-  ) {
-    return null;
-  }
-  const statusCheckRollup = parseFinalStatusCheckRollup(record.commits, record.headRefOid);
-  if (!statusCheckRollup) return null;
-  return {
-    revision: {
+function parseFinalPrSnapshotPages(
+  pagesValue: unknown,
+): { revision: PrRevisionSnapshot; currentBaseSha: string } | null {
+  if (!Array.isArray(pagesValue) || pagesValue.length === 0) return null;
+
+  let canonicalIdentity: Record<string, unknown> | null = null;
+  let canonicalRecord: Record<string, unknown> | null = null;
+  let contextTotalCount: number | null = null;
+  const contextNodes: unknown[] = [];
+  const seenEndCursors = new Set<string>();
+
+  for (const [pageIndex, pageValue] of pagesValue.entries()) {
+    if (typeof pageValue !== "object" || pageValue === null || Array.isArray(pageValue)) {
+      return null;
+    }
+    const dataValue = (pageValue as Record<string, unknown>).data;
+    if (typeof dataValue !== "object" || dataValue === null || Array.isArray(dataValue))
+      return null;
+    const repositoryValue = (dataValue as Record<string, unknown>).repository;
+    if (
+      typeof repositoryValue !== "object" ||
+      repositoryValue === null ||
+      Array.isArray(repositoryValue)
+    ) {
+      return null;
+    }
+    const recordValue = (repositoryValue as Record<string, unknown>).pullRequest;
+    if (typeof recordValue !== "object" || recordValue === null || Array.isArray(recordValue)) {
+      return null;
+    }
+    const record = recordValue as Record<string, unknown>;
+
+    const headRepository = parseHeadRepository(record.headRepository, record.headRepositoryOwner);
+    const baseRef =
+      typeof record.baseRef === "object" &&
+      record.baseRef !== null &&
+      !Array.isArray(record.baseRef)
+        ? (record.baseRef as Record<string, unknown>)
+        : null;
+    const target =
+      typeof baseRef?.target === "object" &&
+      baseRef.target !== null &&
+      !Array.isArray(baseRef.target)
+        ? (baseRef.target as Record<string, unknown>)
+        : null;
+    const currentBaseSha = target?.oid;
+    if (
+      typeof record.title !== "string" ||
+      typeof record.body !== "string" ||
+      typeof record.state !== "string" ||
+      typeof record.isDraft !== "boolean" ||
+      typeof record.mergeable !== "string" ||
+      typeof record.mergeStateStatus !== "string" ||
+      typeof record.headRefOid !== "string" ||
+      !/^[0-9a-f]{40}$/iu.test(record.headRefOid) ||
+      typeof record.baseRefOid !== "string" ||
+      !/^[0-9a-f]{40}$/iu.test(record.baseRefOid) ||
+      typeof record.headRefName !== "string" ||
+      typeof record.baseRefName !== "string" ||
+      typeof currentBaseSha !== "string" ||
+      !/^[0-9a-f]{40}$/iu.test(currentBaseSha) ||
+      !headRepository
+    ) {
+      return null;
+    }
+
+    const commitsValue = record.commits;
+    if (typeof commitsValue !== "object" || commitsValue === null || Array.isArray(commitsValue)) {
+      return null;
+    }
+    const commits = commitsValue as Record<string, unknown>;
+    if (
+      typeof commits.totalCount !== "number" ||
+      !Number.isInteger(commits.totalCount) ||
+      commits.totalCount < 1 ||
+      !Array.isArray(commits.nodes) ||
+      commits.nodes.length !== 1
+    ) {
+      return null;
+    }
+    const commitNode = commits.nodes[0];
+    if (typeof commitNode !== "object" || commitNode === null || Array.isArray(commitNode)) {
+      return null;
+    }
+    const commitValue = (commitNode as Record<string, unknown>).commit;
+    if (typeof commitValue !== "object" || commitValue === null || Array.isArray(commitValue)) {
+      return null;
+    }
+    const commit = commitValue as Record<string, unknown>;
+    if (commit.oid !== record.headRefOid) return null;
+    const rollupValue = commit.statusCheckRollup;
+    if (typeof rollupValue !== "object" || rollupValue === null || Array.isArray(rollupValue)) {
+      return null;
+    }
+    const contextsValue = (rollupValue as Record<string, unknown>).contexts;
+    if (
+      typeof contextsValue !== "object" ||
+      contextsValue === null ||
+      Array.isArray(contextsValue)
+    ) {
+      return null;
+    }
+    const contexts = contextsValue as Record<string, unknown>;
+    const pageInfoValue = contexts.pageInfo;
+    if (
+      typeof contexts.totalCount !== "number" ||
+      !Number.isInteger(contexts.totalCount) ||
+      contexts.totalCount < 0 ||
+      !Array.isArray(contexts.nodes) ||
+      typeof pageInfoValue !== "object" ||
+      pageInfoValue === null ||
+      Array.isArray(pageInfoValue)
+    ) {
+      return null;
+    }
+    const pageInfo = pageInfoValue as Record<string, unknown>;
+    const isLastPage = pageIndex === pagesValue.length - 1;
+    if (pageInfo.hasNextPage !== !isLastPage) return null;
+    if (!isLastPage) {
+      if (
+        typeof pageInfo.endCursor !== "string" ||
+        pageInfo.endCursor.length === 0 ||
+        seenEndCursors.has(pageInfo.endCursor)
+      ) {
+        return null;
+      }
+      seenEndCursors.add(pageInfo.endCursor);
+    }
+
+    const identity = {
       title: record.title,
       body: record.body,
       state: record.state,
@@ -2963,9 +3063,58 @@ function fetchFinalPrSnapshot(
       headRefName: record.headRefName,
       baseRefName: record.baseRefName,
       headRepository,
+      currentBaseSha,
+      commitTotalCount: commits.totalCount,
+      contextTotalCount: contexts.totalCount,
+    };
+    if (canonicalIdentity && !isDeepStrictEqual(canonicalIdentity, identity)) return null;
+    canonicalIdentity = identity;
+    canonicalRecord ??= record;
+    contextTotalCount ??= contexts.totalCount;
+    contextNodes.push(...contexts.nodes);
+  }
+
+  if (!canonicalIdentity || !canonicalRecord || contextTotalCount !== contextNodes.length) {
+    return null;
+  }
+  const aggregateCommits = {
+    totalCount: canonicalIdentity.commitTotalCount,
+    nodes: [
+      {
+        commit: {
+          oid: canonicalIdentity.headRefOid,
+          statusCheckRollup: {
+            contexts: {
+              totalCount: contextTotalCount,
+              pageInfo: { hasNextPage: false },
+              nodes: contextNodes,
+            },
+          },
+        },
+      },
+    ],
+  };
+  const statusCheckRollup = parseFinalStatusCheckRollup(
+    aggregateCommits,
+    canonicalIdentity.headRefOid as string,
+  );
+  if (!statusCheckRollup) return null;
+  return {
+    revision: {
+      title: canonicalRecord.title as string,
+      body: canonicalRecord.body as string,
+      state: canonicalRecord.state as string,
+      isDraft: canonicalRecord.isDraft as boolean,
+      mergeable: canonicalRecord.mergeable as string,
+      mergeStateStatus: canonicalRecord.mergeStateStatus as string,
+      headRefOid: canonicalRecord.headRefOid as string,
+      baseRefOid: canonicalRecord.baseRefOid as string,
+      headRefName: canonicalRecord.headRefName as string,
+      baseRefName: canonicalRecord.baseRefName as string,
+      headRepository: canonicalIdentity.headRepository as string,
       statusCheckRollup,
     },
-    currentBaseSha,
+    currentBaseSha: canonicalIdentity.currentBaseSha as string,
   };
 }
 
