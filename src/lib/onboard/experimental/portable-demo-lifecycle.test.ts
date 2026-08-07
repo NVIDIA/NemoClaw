@@ -696,6 +696,36 @@ describe("portable demo sandbox lifecycle", () => {
     expect(fs.existsSync(path.join(stateDir, "ollama", "user-local-ownership.json"))).toBe(false);
   });
 
+  it("rejects a symlinked receipt directory during explicit Ollama re-enrollment (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    createManagedOllamaBinary(stateDir);
+    const plantedDirectory = path.join(stateDir, "planted-ollama-state");
+    const receiptDirectory = path.join(stateDir, "ollama");
+    fs.mkdirSync(plantedDirectory, { mode: 0o700 });
+    fs.symlinkSync(plantedDirectory, receiptDirectory);
+    vi.stubEnv("HOME", stateDir);
+    const launchHost = vi.fn();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          env: { HOME: stateDir, NEMOCLAW_PORTABLE_OLLAMA_REENROLL: "1" },
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: () => ({ status: 0 }),
+          launchHost,
+        },
+      ),
+    ).toThrow("is a symbolic link");
+    expect(fs.existsSync(path.join(plantedDirectory, "user-local-ownership.json"))).toBe(false);
+    expect(launchHost).not.toHaveBeenCalled();
+  });
+
   it("does not inspect ownership or launch Ollama when the local API is already healthy (#8502)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman();

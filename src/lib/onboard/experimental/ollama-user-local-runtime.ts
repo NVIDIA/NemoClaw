@@ -69,6 +69,7 @@ export function recordUserLocalOllamaOwnership(
   }
   const target = receiptPath(deps);
   ensureConfigDir(path.dirname(target));
+  rejectSymlinksOnPath(path.dirname(target));
   let file;
   try {
     file = openRegularFileNoFollow(target, { writable: true });
