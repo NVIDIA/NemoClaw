@@ -62,20 +62,96 @@ describe("managed bootstrap Docker launch spec", () => {
     expect(observed.hash).not.toBe(expected.hash);
   });
 
-  it("hash-binds reproducible Docker attach streams", () => {
+  it("excludes Docker client attachment metadata while preserving durable stdin state", () => {
     const first = createDockerGpuInspectFixture();
-    Object.assign(first.Config!, { AttachStdout: true, AttachStderr: true });
+    Object.assign(first.Config!, {
+      AttachStdin: false,
+      AttachStdout: false,
+      AttachStderr: false,
+      OpenStdin: false,
+    });
     const second = structuredClone(first);
-    Object.assign(second.Config!, { AttachStderr: false });
+    Object.assign(second.Config!, {
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const changed = structuredClone(first);
+    Object.assign(changed.Config!, { OpenStdin: true });
 
     const expected = normalizeDockerManagedBootstrapLaunchSpec(first);
     const observed = normalizeDockerManagedBootstrapLaunchSpec(second);
 
-    expect(expected.spec.inspect.Config).toMatchObject({
-      AttachStdout: true,
-      AttachStderr: true,
+    expect(expected.spec.inspect.Config).not.toHaveProperty("AttachStdin");
+    expect(expected.spec.inspect.Config).not.toHaveProperty("AttachStdout");
+    expect(expected.spec.inspect.Config).not.toHaveProperty("AttachStderr");
+    expect(observed.hash).toBe(expected.hash);
+    expect(normalizeDockerManagedBootstrapLaunchSpec(changed).hash).not.toBe(expected.hash);
+  });
+
+  it("canonicalizes absent Docker port bindings without hiding active bindings", () => {
+    const apiInspect = createDockerGpuInspectFixture();
+    Object.assign(apiInspect.HostConfig!, { PortBindings: null });
+    const cliInspect = structuredClone(apiInspect);
+    Object.assign(cliInspect.HostConfig!, { PortBindings: {} });
+    const active = structuredClone(apiInspect);
+    Object.assign(active.HostConfig!, {
+      PortBindings: {
+        "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "18080" }],
+      },
     });
-    expect(observed.hash).not.toBe(expected.hash);
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(apiInspect);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(cliInspect);
+
+    expect(expected.spec.inspect.HostConfig).toMatchObject({
+      PortBindings: {},
+    });
+    expect(observed.hash).toBe(expected.hash);
+    expect(normalizeDockerManagedBootstrapLaunchSpec(active).hash).not.toBe(expected.hash);
+  });
+
+  it("canonicalizes explicitly reported Docker-default tmpfs options", () => {
+    const explicitDefaults = createDockerGpuInspectFixture();
+    explicitDefaults.HostConfig!.Mounts = [
+      {
+        Type: "tmpfs",
+        Target: "/run/nemoclaw-dcode-mcp",
+        TmpfsOptions: {
+          SizeBytes: 1_048_576,
+          Mode: 0o1777,
+          Options: [["noexec"]],
+        },
+      },
+    ];
+    const omittedDefaults = structuredClone(explicitDefaults);
+    delete omittedDefaults.HostConfig!.Mounts![0]!.TmpfsOptions!.Options;
+
+    const expected = normalizeDockerManagedBootstrapLaunchSpec(explicitDefaults);
+    const observed = normalizeDockerManagedBootstrapLaunchSpec(omittedDefaults);
+
+    expect(expected.spec.inspect.HostConfig?.Mounts?.[0]?.TmpfsOptions).toEqual({
+      SizeBytes: 1_048_576,
+      Mode: 0o1777,
+    });
+    expect(observed.hash).toBe(expected.hash);
+  });
+
+  it("keeps non-default tmpfs options hash-bound", () => {
+    const expected = createDockerGpuInspectFixture();
+    expected.HostConfig!.Mounts = [
+      {
+        Type: "tmpfs",
+        Target: "/run/nemoclaw-dcode-mcp",
+        TmpfsOptions: { Options: [["exec"]] },
+      },
+    ];
+    const observed = structuredClone(expected);
+    delete observed.HostConfig!.Mounts![0]!.TmpfsOptions!.Options;
+
+    expect(normalizeDockerManagedBootstrapLaunchSpec(observed).hash).not.toBe(
+      normalizeDockerManagedBootstrapLaunchSpec(expected).hash,
+    );
   });
 
   it("canonicalizes Docker API and CLI host-list representations", () => {

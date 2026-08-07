@@ -19,11 +19,12 @@
 // in those modules, and a later decomposition must preserve the transition and
 // timer-bound lock tests before this facade can shrink safely.
 
+import { run, runCapture, validateName } from "../runner";
+
 const fs = require("fs");
 const path = require("path");
 const { fork } = require("child_process");
 const { randomBytes } = require("crypto");
-const { run, runCapture, validateName } = require("../runner");
 const { CLI_NAME }: typeof import("../cli/branding") = require("../cli/branding");
 const { isObjectRecord }: typeof import("../core/json-types") = require("../core/json-types");
 const {

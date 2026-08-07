@@ -3,9 +3,9 @@
 
 name: Automation / Approve Maintainer PR Workflow Runs
 
-# pull_request_target loads this workflow from the trusted base branch. The
-# pinned action reads repository metadata and approves exact workflow-run IDs.
-# Do not add a checkout or execute pull-request code in this workflow.
+# pull_request_target loads this workflow from the base branch. The only
+# checkout is the helper at the event's exact base SHA; PR-head code is never
+# checked out or executed with actions: write.
 on:
   # Keep every target branch eligible so maintainer-owned stacked PRs receive
   # the same exact-head approval policy as PRs that target main.
@@ -27,232 +27,77 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - name: Validate trusted helper revision
+        env:
+          TRUSTED_HELPER_ROOT: ${{ github.workspace }}/.trusted-maintainer-approval
+          TRUSTED_HELPER_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_HELPER_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::PR base SHA must be a lowercase 40-character commit SHA"
+            exit 1
+          }
+          case "$TRUSTED_HELPER_ROOT" in
+            "$GITHUB_WORKSPACE"/*) ;;
+            *) echo "::error::Trusted helper root must stay inside the workflow workspace"; exit 1 ;;
+          esac
+          [[ ! -e "$TRUSTED_HELPER_ROOT" && ! -L "$TRUSTED_HELPER_ROOT" ]] || {
+            echo "::error::Trusted helper root already exists"
+            exit 1
+          }
+
+      - name: Check out trusted approval helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-maintainer-approval
+          sparse-checkout: |
+            tools/ci/approve-maintainer-pr-workflow-runs.mts
+          sparse-checkout-cone-mode: "false"
+          persist-credentials: "false"
+          fetch-depth: "1"
+
+      - name: Verify trusted approval helper
+        env:
+          TRUSTED_HELPER_RELATIVE_PATH: tools/ci/approve-maintainer-pr-workflow-runs.mts
+          TRUSTED_HELPER_ROOT: ${{ github.workspace }}/.trusted-maintainer-approval
+          TRUSTED_HELPER_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -d "$TRUSTED_HELPER_ROOT" && ! -L "$TRUSTED_HELPER_ROOT" ]] || {
+            echo "::error::Trusted helper checkout must be a non-symlink directory"
+            exit 1
+          }
+          [[ "$(git -C "$TRUSTED_HELPER_ROOT" rev-parse --verify HEAD)" == "$TRUSTED_HELPER_SHA" ]] || {
+            echo "::error::Trusted helper checkout does not match the PR base SHA"
+            exit 1
+          }
+          helper="$TRUSTED_HELPER_ROOT/$TRUSTED_HELPER_RELATIVE_PATH"
+          [[ -f "$helper" && ! -L "$helper" ]] || {
+            echo "::error::Trusted approval helper is missing or is not a regular file"
+            exit 1
+          }
+
       - name: Approve exact-head maintainer workflow runs
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_HELPER_PATH: ${{ github.workspace }}/.trusted-maintainer-approval/tools/ci/approve-maintainer-pr-workflow-runs.mts
+          TRUSTED_HELPER_SHA: ${{ github.event.pull_request.base.sha }}
         with:
           github-token: ${{ github.token }}
           script: |
-            // Keeping this policy inline prevents a write-capable
-            // pull_request_target job from checking out repository files.
-            const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-            const TRUSTED_BASE_PERMISSIONS = new Set(['write', 'admin']);
-            const POLL_ATTEMPTS = 12;
-            const POLL_INTERVAL_MS = 5000;
-            const { owner, repo } = context.repo;
-
-            function validateEventPullRequest(value) {
-              if (!value || typeof value !== 'object') {
-                throw new Error('Invalid pull_request_target payload: pull_request is missing');
-              }
-              if (!Number.isInteger(value.number) || value.number <= 0) {
-                throw new Error(`Invalid pull request number: ${value.number}`);
-              }
-              if (typeof value.head?.sha !== 'string' || !SHA_PATTERN.test(value.head.sha)) {
-                throw new Error(`Invalid event head SHA for PR #${value.number}`);
-              }
-              return { number: value.number, headSha: value.head.sha.toLowerCase() };
+            const { pathToFileURL } = require('node:url');
+            const helperPath = process.env.TRUSTED_HELPER_PATH;
+            const helperSha = process.env.TRUSTED_HELPER_SHA;
+            if (!helperPath || !helperSha) {
+              throw new Error('Trusted approval helper identity is missing');
             }
-
-            function liveHeadSha(pullRequest, prNumber) {
-              const headSha = pullRequest?.head?.sha;
-              if (typeof headSha !== 'string' || !SHA_PATTERN.test(headSha)) {
-                throw new Error(`Invalid live head SHA for PR #${prNumber}`);
-              }
-              return headSha.toLowerCase();
+            const helperUrl = pathToFileURL(helperPath).href;
+            const helper = await import(`${helperUrl}?sha=${encodeURIComponent(helperSha)}`);
+            if (typeof helper.approveMaintainerPrWorkflowRuns !== 'function') {
+              throw new Error('Trusted approval helper does not export its entrypoint');
             }
-
-            function repositoryName(value) {
-              return typeof value === 'string' ? value.toLowerCase() : '';
-            }
-
-            function isSameRepositoryHead(pullRequest) {
-              return (
-                repositoryName(pullRequest?.head?.repo?.full_name) ===
-                repositoryName(`${owner}/${repo}`)
-              );
-            }
-
-            async function loadLivePullRequest(prNumber) {
-              const response = await github.rest.pulls.get({
-                owner,
-                repo,
-                pull_number: prNumber,
-              });
-              const pullRequest = response.data;
-              if (pullRequest?.number !== prNumber || pullRequest?.state !== 'open') {
-                throw new Error(`PR #${prNumber} is not an open pull request`);
-              }
-              const baseRepository = pullRequest.base?.repo?.full_name;
-              if (
-                typeof baseRepository !== 'string' ||
-                baseRepository.toLowerCase() !== `${owner}/${repo}`.toLowerCase()
-              ) {
-                throw new Error(`PR #${prNumber} does not target ${owner}/${repo}`);
-              }
-              return pullRequest;
-            }
-
-            async function loadAuthorPermission(author) {
-              try {
-                const response = await github.rest.repos.getCollaboratorPermissionLevel({
-                  owner,
-                  repo,
-                  username: author,
-                });
-                const responseLogin = response.data.user?.login;
-                if (
-                  typeof responseLogin !== 'string' ||
-                  responseLogin.toLowerCase() !== author.toLowerCase()
-                ) {
-                  throw new Error(`Permission response did not match PR author ${author}`);
-                }
-                return response.data;
-              } catch (error) {
-                if (error?.status === 404) return null;
-                throw error;
-              }
-            }
-
-            function hasWritePermission(permission) {
-              const basePermission = String(permission?.permission ?? '').toLowerCase();
-              // GitHub maps maintain to the write base permission. role_name can
-              // contain an arbitrary custom-role label, so it is not authority.
-              return TRUSTED_BASE_PERMISSIONS.has(basePermission);
-            }
-
-            function belongsToExactPullRequest(run, prNumber, headSha) {
-              if (
-                !Number.isInteger(run?.id) ||
-                run.id <= 0 ||
-                run.event !== 'pull_request' ||
-                run.status !== 'completed' ||
-                run.conclusion !== 'action_required' ||
-                String(run.head_sha ?? '').toLowerCase() !== headSha ||
-                repositoryName(run.head_repository?.full_name) !==
-                  repositoryName(`${owner}/${repo}`)
-              ) {
-                return false;
-              }
-              return (
-                Array.isArray(run.pull_requests) &&
-                run.pull_requests.some(
-                  (pullRequest) =>
-                    pullRequest?.number === prNumber &&
-                    String(pullRequest.head?.sha ?? '').toLowerCase() === headSha,
-                )
-              );
-            }
-
-            const eventPullRequest = validateEventPullRequest(context.payload.pull_request);
-            const initialPullRequest = await loadLivePullRequest(eventPullRequest.number);
-            const expectedHeadSha = liveHeadSha(initialPullRequest, eventPullRequest.number);
-            if (expectedHeadSha !== eventPullRequest.headSha) {
-              core.info(
-                `PR #${eventPullRequest.number} moved from event head ${eventPullRequest.headSha} to ${expectedHeadSha}; no workflow runs approved`,
-              );
-              return;
-            }
-            if (!isSameRepositoryHead(initialPullRequest)) {
-              core.info(
-                `PR #${eventPullRequest.number} head repository is not ${owner}/${repo}; workflow runs remain gated`,
-              );
-              return;
-            }
-
-            const author = initialPullRequest.user?.login;
-            if (typeof author !== 'string' || author.length === 0) {
-              throw new Error(`PR #${eventPullRequest.number} has no live author`);
-            }
-            const permission = await loadAuthorPermission(author);
-            if (!permission || !hasWritePermission(permission)) {
-              core.info(
-                `PR #${eventPullRequest.number} author ${author} does not have write, maintain, or admin permission; workflow runs remain gated`,
-              );
-              return;
-            }
-
-            const approvedRunIds = new Set();
-            for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
-              const currentPullRequest = await loadLivePullRequest(eventPullRequest.number);
-              if (liveHeadSha(currentPullRequest, eventPullRequest.number) !== expectedHeadSha) {
-                core.warning(
-                  `PR #${eventPullRequest.number} head changed during workflow-run discovery; no further runs approved`,
-                );
-                return;
-              }
-
-              const runs = await github.paginate(
-                github.rest.actions.listWorkflowRunsForRepo,
-                {
-                  owner,
-                  repo,
-                  event: 'pull_request',
-                  head_sha: expectedHeadSha,
-                  status: 'action_required',
-                  per_page: 100,
-                },
-              );
-
-              for (const run of runs) {
-                if (
-                  approvedRunIds.has(run?.id) ||
-                  !belongsToExactPullRequest(
-                    run,
-                    eventPullRequest.number,
-                    expectedHeadSha,
-                  )
-                ) {
-                  continue;
-                }
-
-                const liveBeforeApproval = await loadLivePullRequest(eventPullRequest.number);
-                if (
-                  liveHeadSha(liveBeforeApproval, eventPullRequest.number) !==
-                  expectedHeadSha
-                ) {
-                  core.warning(
-                    `PR #${eventPullRequest.number} head changed before workflow-run approval; no further runs approved`,
-                  );
-                  return;
-                }
-                if (!isSameRepositoryHead(liveBeforeApproval)) {
-                  core.warning(
-                    `PR #${eventPullRequest.number} head repository changed; no further runs approved`,
-                  );
-                  return;
-                }
-                if (
-                  String(liveBeforeApproval.user?.login ?? '').toLowerCase() !==
-                  author.toLowerCase()
-                ) {
-                  throw new Error(
-                    `PR #${eventPullRequest.number} author changed during workflow-run discovery`,
-                  );
-                }
-                const livePermission = await loadAuthorPermission(author);
-                if (!livePermission || !hasWritePermission(livePermission)) {
-                  core.warning(
-                    `PR #${eventPullRequest.number} author ${author} no longer has write, maintain, or admin permission; no further runs approved`,
-                  );
-                  return;
-                }
-
-                await github.rest.actions.approveWorkflowRun({
-                  owner,
-                  repo,
-                  run_id: run.id,
-                });
-                approvedRunIds.add(run.id);
-                core.info(
-                  `Approved pull_request workflow run ${run.id} for PR #${eventPullRequest.number} at ${expectedHeadSha}`,
-                );
-              }
-
-              if (attempt + 1 < POLL_ATTEMPTS) {
-                await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-              }
-            }
-
-            core.info(
-              `Approved ${approvedRunIds.size} exact-head workflow run(s) for PR #${eventPullRequest.number}`,
-            );
+            await helper.approveMaintainerPrWorkflowRuns({ github, context, core });

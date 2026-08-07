@@ -305,7 +305,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "Manual PR E2E requires a repository maintainer or administrator",
-    "Manual PR E2E accepts only the default suite or managed-image-protected-runtime",
+    "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
@@ -357,17 +357,17 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
         step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha }}";
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedLlamaCppPlanCheckout =
         jobName === "llama-cpp-dgx-spark-plan" &&
         step.name === "Checkout trusted llama.cpp plan compiler" &&
         step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha }}";
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedLlamaCppQualificationCheckout =
         jobName === "llama-cpp-dgx-spark-qualification" &&
         step.name === "Checkout trusted llama.cpp qualification" &&
         step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha }}";
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -717,7 +717,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   if (
     generate.env?.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
   ) {
-    errors.push("scorecard generator must derive explicit-only jobs from workflow inventory");
+    errors.push(
+      "scorecard generator must derive jobs omitted from the manual run from workflow inventory",
+    );
   }
   if (generate.env?.RUNTIME_ARTIFACTS !== "${{ runner.temp }}/e2e-runtime-audit") {
     errors.push("scorecard generator must read the downloaded runtime audit directory");

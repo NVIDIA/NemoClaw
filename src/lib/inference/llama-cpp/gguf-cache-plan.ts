@@ -12,6 +12,7 @@ export interface LlamaCppGgufCachePlan {
   readonly recipeId: string;
   readonly acquisition: {
     readonly ref: "hugging-face-exact-file/v1";
+    readonly downloaderImage: string;
     readonly url: string;
     readonly authentication: {
       readonly mode: "optional";
@@ -28,17 +29,12 @@ export interface LlamaCppGgufCachePlan {
     };
   };
   readonly cache: {
-    readonly ref: "llama-cpp.gguf-content-addressed/v1";
-    readonly receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1";
+    readonly ref: "hugging-face-shared-cache/v1";
     readonly root: "user-cache";
     readonly key: string;
-    readonly quotaBytes: number;
-    readonly stagingHeadroomBytes: number;
-    readonly staging: "same-filesystem";
-    readonly publication: "atomic-no-clobber";
-    readonly reuse: "verified-only-offline";
-    readonly sharing: "owner-only";
-    readonly cleanup: "receipt-owner-only";
+    readonly reuse: "verify-exact-file";
+    readonly sharing: "host-user";
+    readonly cleanup: "preserve";
   };
   readonly planDigest: string;
 }
@@ -88,20 +84,18 @@ function assertDeclarativeContract(recipe: LlamaCppServingRecipe): void {
   }
   if (
     acquisition.ref !== "hugging-face-exact-file/v1" ||
+    !/@sha256:[0-9a-f]{64}$/u.test(acquisition.downloaderImage) ||
     acquisition.authentication.mode !== "optional" ||
     acquisition.authentication.environment !== "HF_TOKEN"
   ) {
     throw new LlamaCppGgufCachePlanError("The recipe has an unsupported acquisition contract.");
   }
   if (
-    cache.ref !== "llama-cpp.gguf-content-addressed/v1" ||
-    cache.receiptRef !== "llama-cpp.gguf-cache-entry.receipt/v1" ||
+    cache.ref !== "hugging-face-shared-cache/v1" ||
     cache.root !== "user-cache" ||
-    cache.staging !== "same-filesystem" ||
-    cache.publication !== "atomic-no-clobber" ||
-    cache.reuse !== "verified-only-offline" ||
-    cache.sharing !== "owner-only" ||
-    cache.cleanup !== "receipt-owner-only"
+    cache.reuse !== "verify-exact-file" ||
+    cache.sharing !== "host-user" ||
+    cache.cleanup !== "preserve"
   ) {
     throw new LlamaCppGgufCachePlanError("The recipe has an unsupported cache contract.");
   }
@@ -117,19 +111,6 @@ function assertDeclarativeContract(recipe: LlamaCppServingRecipe): void {
   }
 }
 
-function requiredStorageBytes(modelSizeBytes: number, stagingHeadroomBytes: number): number {
-  if (
-    !Number.isSafeInteger(modelSizeBytes) ||
-    modelSizeBytes < 1 ||
-    !Number.isSafeInteger(stagingHeadroomBytes) ||
-    stagingHeadroomBytes < 1 ||
-    modelSizeBytes > Number.MAX_SAFE_INTEGER - stagingHeadroomBytes
-  ) {
-    throw new LlamaCppGgufCachePlanError("The GGUF storage requirement is not a safe integer.");
-  }
-  return modelSizeBytes + stagingHeadroomBytes;
-}
-
 function huggingFaceExactFileUrl(repository: string, revision: string, path: string): string {
   const [namespace, name] = repository.split("/");
   if (!namespace || !name || repository.split("/").length !== 2) {
@@ -142,13 +123,6 @@ export function compileLlamaCppGgufCachePlan(recipe: LlamaCppServingRecipe): Lla
   assertDeclarativeContract(recipe);
   const file = recipe.spec.model.files[0]!;
   const { acquisition, cache } = recipe.spec.model;
-  const requiredBytes = requiredStorageBytes(file.sizeBytes, cache.stagingHeadroomBytes);
-  if (!Number.isSafeInteger(cache.quotaBytes) || cache.quotaBytes < requiredBytes) {
-    throw new LlamaCppGgufCachePlanError(
-      `The cache quota must be at least ${String(requiredBytes)} bytes for the GGUF file and staging headroom.`,
-    );
-  }
-
   const source = {
     repository: recipe.spec.model.id,
     revision: recipe.spec.model.revision,
@@ -164,19 +138,15 @@ export function compileLlamaCppGgufCachePlan(recipe: LlamaCppServingRecipe): Lla
     recipeId: recipe.metadata.id,
     acquisition: {
       ref: acquisition.ref,
+      downloaderImage: acquisition.downloaderImage,
       url: huggingFaceExactFileUrl(source.repository, source.revision, source.file.path),
       authentication: acquisition.authentication,
       source,
     },
     cache: {
       ref: cache.ref,
-      receiptRef: cache.receiptRef,
       root: cache.root,
       key: cacheKey,
-      quotaBytes: cache.quotaBytes,
-      stagingHeadroomBytes: cache.stagingHeadroomBytes,
-      staging: cache.staging,
-      publication: cache.publication,
       reuse: cache.reuse,
       sharing: cache.sharing,
       cleanup: cache.cleanup,

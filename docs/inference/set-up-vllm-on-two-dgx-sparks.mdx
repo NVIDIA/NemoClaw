@@ -169,13 +169,6 @@ The explicit target still must match the exact reciprocal rail topology.
 
 ## Understand the Distributed Runtime
 
-The compiled managed inference catalog reads cluster size, profile selection, artifacts, runtime resources, serving arguments, preparation, and readiness checks from preset and recipe YAML.
-Maintainers can add another compatible profile that uses the registered managed-cluster adapters by adding preset and recipe YAML.
-The YAML `nodeCount` declares the required cardinality.
-The TypeScript adapters validate the qualified topology against it and materialize every ranked topology node.
-The build compiles those YAML definitions into the packaged runtime catalog automatically.
-A profile that needs a different execution contract requires a registered adapter.
-
 The compiled profile pins these artifacts:
 
 - The image is `ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8`.
@@ -234,7 +227,8 @@ $$nemoclaw uninstall
 
 Full uninstall revalidates every exact container ID before it removes the containers.
 It then retires the receipt, copied SSH bindings, and exact temporary discovery claims recorded by that receipt.
-If revalidation, removal, or safe claim retirement fails, uninstall stops before other cleanup and preserves the receipt for a retry.
+If NemoClaw cannot revalidate or remove a receipt-owned container, uninstall stops before other cleanup and preserves the receipt so you can rerun `$$nemoclaw uninstall`.
+Uninstall also stops and preserves the receipt when NemoClaw cannot retire an exact temporary discovery claim recorded by that receipt.
 A gateway-scoped uninstall preserves the host-global cluster, receipt, SSH bindings, and API key while another gateway remains.
 Cluster cleanup does not delete the Hugging Face model cache.
 

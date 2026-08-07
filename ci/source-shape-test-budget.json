@@ -112,26 +112,6 @@
       "category": "security"
     },
     {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "execs an explicitly supplied command instead of idling",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "refuses to launch when effective rlimits fail verification (#6545)",
-      "category": "security"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "refuses to launch when the required rlimit helper is missing (#6545)",
-      "category": "security"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "stays alive as a long-running process when invoked with no command",
-      "category": "compatibility"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
@@ -373,7 +353,7 @@
     },
     {
       "file": "test/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins reviewed packages and retains the production audit command (#8177)",
+      "test": "pins reviewed packages and audits their lock outside image builds (#8253)",
       "category": "security"
     },
     {
@@ -553,7 +533,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps Docker llama.cpp lifecycle authority dormant (#8395)",
+      "test": "activates Docker llama.cpp only through its durable lifecycle controller (#8433)",
       "category": "security"
     },
     {
@@ -774,6 +754,31 @@
     {
       "file": "test/wechat-runtime-audit-workflow.test.ts",
       "test": "makes the trusted audit required in PR and main workflows",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "subscribes only to completed E2E workflow runs",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "accepts only trusted main push attempts one through three",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "uses one source-run concurrency identity and least privileges",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "checks out trusted controller code and invokes the bounded helper",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-main-retry-workflow.test.ts",
+      "test": "runs the bounded evidence-upload step after evaluation failure",
       "category": "security"
     }
   ]

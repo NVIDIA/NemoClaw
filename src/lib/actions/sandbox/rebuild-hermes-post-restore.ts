@@ -11,6 +11,7 @@ const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
 const BEGIN_TIMEOUT_MS = 70_000;
 const CONTROL_TIMEOUT_MS = 25_000;
 const RECOVERY_TIMEOUT_MS = BEGIN_TIMEOUT_MS + CONTROL_TIMEOUT_MS * 2 + 10_000;
+const HERMES_GATEWAY_RECHECK_ATTEMPTS = 2;
 
 type HermesCronRestoreAction = "begin" | "validate" | "release" | "recover";
 type HermesCronRestoreDisposition =
@@ -91,17 +92,19 @@ export function ensureHermesGatewayAfterStateRestore(
   if (agentName !== "hermes") return "not-applicable";
   const checkAndRecover =
     deps.checkAndRecoverSandboxProcesses ?? processRecovery.checkAndRecoverSandboxProcesses;
-  const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, { quiet: true });
-  if (
-    !observation.checked ||
-    observation.forwardRecoveryFailed === true ||
-    observation.secretBoundaryRefused === true ||
-    observation.mcpReconciliationRefused === true
-  ) {
-    return "unverified";
+  for (let attempt = 1; attempt <= HERMES_GATEWAY_RECHECK_ATTEMPTS; attempt += 1) {
+    const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, { quiet: true });
+    if (
+      observation.forwardRecoveryFailed === true ||
+      observation.secretBoundaryRefused === true ||
+      observation.mcpReconciliationRefused === true
+    ) {
+      return "unverified";
+    }
+    if (!observation.checked) continue;
+    if (observation.wasRunning === true) return "healthy";
+    if (observation.recovered) return "recovered";
   }
-  if (observation.wasRunning === true) return "healthy";
-  if (observation.recovered) return "recovered";
   return "unverified";
 }
 
