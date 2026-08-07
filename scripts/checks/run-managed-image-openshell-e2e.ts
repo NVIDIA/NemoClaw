@@ -20,6 +20,7 @@ import {
 import { managedImageRuntimeIdentity } from "../../src/lib/onboard/managed-image/contract.ts";
 import { createDockerManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/docker.ts";
 import { createDockerManagedBootstrapSurface } from "../../src/lib/onboard/managed-bootstrap/docker-runtime.ts";
+import { managedImageRuntimeIdentity } from "../../src/lib/onboard/managed-image/contract.ts";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupAgent,

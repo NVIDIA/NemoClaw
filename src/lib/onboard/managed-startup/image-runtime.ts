@@ -1685,12 +1685,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (
-    (argv.length === 7 || argv.length === 8) &&
+    argv.length === 8 &&
     argv[0] === "--shared-state-transaction-status" &&
-    (argv.length === 7 || argv[7] === "--read-only-receipt")
+    argv[7] === "--read-only-receipt"
   ) {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, argv.length));
+    const agent = exactAgent(readCliAgent(argv, 8));
     const profileFingerprint = readCliFingerprint(argv);
     const bootstrapIdentity = readCliBootstrapIdentity(argv);
     process.stdout.write(
@@ -1700,7 +1700,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
           profileFingerprint,
           bootstrapIdentity,
         },
-        argv.length === 8 ? { readOnlyReceipt: true } : {},
+        { readOnlyReceipt: true },
       )}\n`,
     );
     return;

@@ -8,6 +8,7 @@ import {
 } from "./managed-cluster-topology.js";
 import type {
   HostLocalInferenceServingRecipe,
+  LlamaCppServingRecipe,
   ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
@@ -129,6 +130,16 @@ export function isHostLocalInferenceServingRecipe(
   return recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF;
 }
 
+export function isLlamaCppServingRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): recipe is LlamaCppServingRecipe {
+  return (
+    recipe.spec.backend === "install-llama-cpp" &&
+    recipe.spec.execution.materializerRef === LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF &&
+    recipe.spec.execution.lifecycleRef === LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF
+  );
+}
+
 function managedClusterTopologyBinding(
   recipe: ManagedInferenceServingRecipe,
 ): ManagedInferenceServingRecipe["spec"]["bindings"][string] | undefined {
@@ -136,7 +147,7 @@ function managedClusterTopologyBinding(
 }
 
 function positiveIntegerArgument(
-  recipe: ManagedInferenceRuntimeServingRecipe,
+  recipe: ManagedInferenceServingRecipe | HostLocalInferenceServingRecipe,
   name: string,
   maximum = Number.MAX_SAFE_INTEGER,
 ): number | undefined {
@@ -673,6 +684,7 @@ export function getManagedInferencePreparationDescriptor(
 export function getManagedInferenceRecipeRegistrationError(
   recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
+  if (isLlamaCppServingRecipe(recipe)) return undefined;
   const materializer = getManagedInferenceMaterializerDescriptor(
     recipe.spec.execution.materializerRef,
   );

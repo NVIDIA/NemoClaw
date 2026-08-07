@@ -75,11 +75,11 @@ export function serializeManagedBootstrapEnvelope(input: {
 }
 
 /**
- * Serialize one root-owned request as a minimal POSIX ustar stream for
- * a provider's stdin archive-copy operation. A path-based copy may preserve
- * the host caller's numeric ownership on some engines; the tar header makes
- * the in-container root:root 0400 boundary explicit without starting the
- * stopped replacement before its authenticated bootstrap entrypoint.
+ * Serialize one root-owned request as a minimal POSIX ustar stream for a
+ * provider's archive-copy operation. Path-based container copies can preserve
+ * the host caller's numeric ownership; the tar header makes the in-container
+ * root:root 0400 boundary explicit without starting the stopped replacement
+ * before its authenticated bootstrap entrypoint.
  */
 export function serializeManagedBootstrapEnvelopeTar(input: {
   readonly bootstrapIdentity: string;

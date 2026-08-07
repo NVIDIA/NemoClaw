@@ -27,6 +27,7 @@ import {
   LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256,
   LLAMA_CPP_DGX_SPARK_SOURCE_REPOSITORY,
   LLAMA_CPP_DGX_SPARK_SOURCE_REVISION,
+  LLAMA_CPP_DGX_SPARK_TOOL_IMAGE,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
   parseLlamaCppDgxSparkQualificationActivation,
@@ -156,6 +157,7 @@ function executionPlan() {
     recipe: {
       id: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
       model: {
+        acquisition: { downloaderImage: LLAMA_CPP_DGX_SPARK_TOOL_IMAGE },
         file: {
           path: "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
           digest: LLAMA_CPP_DGX_SPARK_MODEL_DIGEST,
@@ -177,9 +179,11 @@ function executionPlan() {
         contractRef: "llama-cpp.server-readiness/v1",
         timeoutSeconds: 1800,
         expectedModel: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+        probeImage: LLAMA_CPP_DGX_SPARK_TOOL_IMAGE,
         probes: { models: true, health: true, properties: true, metrics: true },
       },
       runtime: {
+        restartPolicy: "unless-stopped",
         cuda: {
           baseImage: LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
           minimumDriverVersion: "580.65.06",
@@ -205,9 +209,6 @@ function executionPlan() {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes: 16777216,
-          maxPromptTokens: 253952,
-          maxCompletionTokens: 8192,
           requestTimeoutSeconds: 900,
         },
       },
@@ -405,9 +406,6 @@ describe("llama.cpp DGX Spark qualification contract", () => {
           microBatchSize: 256,
           kvCache: { key: "q8_0", value: "q8_0" },
           limits: {
-            maxRequestBodyBytes: 8388608,
-            maxPromptTokens: 120000,
-            maxCompletionTokens: 4096,
             requestTimeoutSeconds: 600,
           },
         },

@@ -117,7 +117,7 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
-  it("preserves signed Docker ulimits before cutover", async () => {
+  it("preserves signed and accepts Docker-normalized required ulimits before cutover", async () => {
     const fake = fixture();
     fake.original!.HostConfig!.Ulimits = [
       { Name: "nofile", Soft: 65_536, Hard: 65_536 },
@@ -150,6 +150,34 @@ describe("Docker managed bootstrap adapter", () => {
       { Name: "memlock", Soft: -1, Hard: -1 },
       { Name: "nproc", Soft: 512, Hard: 512 },
     ]);
+  });
+
+  it("accepts equivalent Engine API and Docker CLI create metadata before cutover", async () => {
+    const fake = fixture({ dockerCliSerializationDefaults: true });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority();
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: { values: {} },
+      }),
+    ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
+    expect(fake.replacement?.Config).toMatchObject({
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    expect(fake.replacement?.HostConfig).toMatchObject({ PortBindings: {} });
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
   it("rejects replacement environment value drift before cutover", async () => {

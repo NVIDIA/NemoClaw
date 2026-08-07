@@ -102,14 +102,17 @@ NemoClaw computes versions (`v1`, `v2`, through `vN`) from timestamp order, so `
 `snapshot create` requires shields to be down.
 Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
 
-If a timed shields-down window expires during snapshot work, auto-restore closes the per-sandbox lifecycle deadline gate.
-The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation.
-NemoClaw does not signal the snapshot process.
-If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
-If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
-A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
-Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
-If the command reports exact-generation recovery guidance, stop all NemoClaw processes for the sandbox, then follow that guidance before you retry the snapshot.
+If a timed shields-down window expires during snapshot work, the deadline gate blocks new mutations and waits for the exact snapshot owner to finish without signaling it.
+Snapshot work does not bypass recovery for an expired shields-down window.
+<AgentOnly variant="openclaw,hermes">
+Follow [Timed Shields Windows](../configure-sandboxes/understand-runtime-changes#timed-shields-windows) to correct state-directory failures or complete exact-generation recovery before you rerun `$$nemoclaw <name> snapshot create`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If a state-directory failure prevents gate publication, normal mutation-lock acquisition also fails.
+If recovery reports a state-directory failure, correct it and run `$$nemoclaw <name> shields status`.
+Durable containment or retained exact gates keep new mutations blocked until you complete exact-generation recovery.
+If the command reports exact-generation recovery guidance, stop all NemoClaw processes for the sandbox and follow that guidance before you rerun `$$nemoclaw <name> snapshot create`.
+</AgentOnly>
 
 Tag a snapshot with a human-readable label:
 
