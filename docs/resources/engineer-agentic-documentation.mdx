@@ -4,8 +4,8 @@
 title: "Engineer Documentation for AI Agents"
 sidebar-title: "Engineer Agentic Docs"
 description: "A practical architecture and operating model for making technical documentation reliable for both people and AI agents."
-description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, review receipts, adoption metrics, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, or docs-as-code automation."
-keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
+description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, review receipts, accuracy assurance, adoption metrics, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, documentation accuracy tests, or docs-as-code automation."
+keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation accuracy tests", "documentation source of truth", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
 content:
   type: "how_to"
 ---
@@ -184,6 +184,10 @@ Product behavior may be authoritative in code, schemas, command metadata, or sup
 Generate structured reference content from product sources when practical and use parity tests when prose must remain hand-written.
 
 NemoClaw uses MDX under `docs/` as its user-facing source of truth and generates agent-specific pages during the docs build.
+Inside that corpus, use parity-checked reference pages as the canonical documentation owners for facts that many task pages reuse.
+Code and product metadata remain the behavior authority.
+After generation or parity tests align a reference page with those inputs, treat that page as the documentation source of truth for downstream pages and agent-authored guidance.
+Authoring agents and task pages should consult and link to that reference instead of copying inventories of commands, flags, configuration keys, or support data.
 
 Apply these source rules:
 
@@ -485,6 +489,45 @@ Syntax validation alone does not catch behavioral drift.
 Run the narrowest checks on every relevant change and keep broader checks at integration or release boundaries.
 Tests should derive routes and behavior from the same source models used by the product instead of maintaining a second hard-coded catalog.
 
+### Test Documentation Accuracy in Layers
+
+A passing docs build does not establish that every statement is true.
+It establishes that the source parses, generated pages match their inputs, published routes and checked route-style links resolve, and the site can render.
+
+Treat generated-output fidelity and factual accuracy as separate problems.
+A generated page must match its authoritative inputs and transformation rules.
+Agent-authored prose must match current product behavior and product scope established by an accepted issue or accepted design decision.
+
+Use the following assurance layers:
+
+| Layer | Coverage | Evidence |
+|---|---|---|
+| Source-derived parity tests | Structured facts such as commands, flags, configuration keys, provider choices, support tables, and guide variant membership. | Generate the facts from product-owned data, or compare the documentation with the compiled help, schema, manifest, or other product source. |
+| Executable journey tests | Priority and high-risk procedures, including their prerequisites, state changes, safety boundaries, and acceptance criteria. | Run the documented flow or exercise the same behavior through an integration or end-to-end test. Add a documentation regression test that keeps the validated command sequence and expected observation in the owning page. |
+| Evidence-based review and sampling | Explanations, tradeoffs, support claims, and other prose that does not have a stable machine-readable contract. | Compare each changed claim with checked-in source and tests, verify support against an accepted issue or accepted design decision, run an independent documentation writer review, and sample published outcomes. |
+
+The first layer proves fidelity to the selected inputs, not the accuracy of those inputs.
+Prefer product-owned source models so the product and its documentation do not maintain separate hard-coded facts.
+
+NemoClaw compares documented CLI commands and flags with compiled help, checks installer provider choices, and audits `NEMOCLAW_*` reads in CLI source against the command reference.
+The [NemoClaw CLI Commands Reference](../reference/commands) is the canonical documentation owner for public CLI commands, flags, arguments, and exit codes.
+The compiled CLI contract checks public command headings and long-form flags in both directions against the shipped CLI.
+Its routing metadata directs agents there for subcommand, flag, argument, and exit-code lookups.
+Task pages can rely on and link to that reference for syntax while keeping procedure-specific context and verification in the owning task page.
+NemoClaw generates platform support tables from `ci/platform-matrix.json` and tests guide variant selection against shared source pages.
+Targeted documentation regression tests preserve credential-rotation commands, authenticated endpoint verification, and variant-specific procedures.
+Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
+
+NemoClaw also performs the judgment-based layer before final handoff, not as a separate post-publication audit.
+On hosts that support subagents, the repository-wide `AGENTS.md` tells the implementation agent to run an independent documentation writer subagent after completing development changes.
+The subagent reviews the completed change for documentation impact and checks changed explanatory text for accuracy, grounding, completeness, usability, and style.
+The pull request then records the review against the current commit and instruction version.
+
+<Note>
+No single automated gate establishes corpus-wide semantic accuracy.
+Name the contract that each test covers, and treat remaining claims as review and sampling coverage instead of tested behavior.
+</Note>
+
 ## Govern What Agents May Publish
 
 Fast documentation automation needs a stronger scope gate, not a weaker one.
@@ -563,9 +606,9 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Concern | NemoClaw implementation |
 |---|---|
 | Canonical content | `docs/**/*.mdx`. |
-| Repository-wide documentation contract | `AGENTS.md`. |
+| Repository-wide documentation contract and development-time review | `AGENTS.md`. |
 | Agent documentation workflow | `AGENTS.md` and `docs/AGENTS.md`. |
-| Public documentation rules and validation | `docs/CONTRIBUTING.md`. |
+| Public documentation authoring, review policy, and validation | `docs/CONTRIBUTING.md`. |
 | Navigation and published guide variants | `docs/index.yml`. |
 | Intentional partial guide variant scope | Source `agent-variants` frontmatter validated by `scripts/sync-agent-variant-docs.mts`. |
 | Site and redirect configuration | `fern/docs.yml` and `fern/fern.config.json`. |
@@ -573,8 +616,10 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Routing skill | `.agents/skills/nemoclaw-user-guide/SKILL.md`. |
 | Starter prompt | `docs/resources/starter-prompt.md` and `scripts/generate-starter-prompt.mts`. |
 | Product-owned generated facts | `ci/platform-matrix.json` and `scripts/generate-platform-docs.py`. |
+| Canonical CLI documentation | `docs/reference/commands.mdx`, checked against compiled public command and flag help and linked from task pages. |
 | Guide variant generation | `scripts/sync-agent-variant-docs.mts`. |
 | Route validation | `scripts/check-docs-published-routes.mts`. |
+| Documentation accuracy tests | Compiled CLI and installer parity, environment-variable coverage, generated platform documentation, and targeted procedure and guide variant regression tests under `test/`. |
 | Update workflow | `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
 | Documentation review receipt | `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/docs-review-receipt.yaml`, and `scripts/docs-review-receipt.mts`. |
 | Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
@@ -593,11 +638,14 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Every priority task has routing metadata, a stable machine-readable route, and a verification step.
 - Search, the docs index, and rendered navigation resolve to the same release and canonical owner.
 - Routing prompts and skills point to the source instead of copying it.
+- Reusable structured facts have a parity-checked reference owner that task pages and agent workflows consult instead of copying.
 - Guide variant generation is deterministic, partial scope declarations match published routes, and guide variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
+- Every completed development change receives an independent documentation writer review before handoff.
 - Code-changing and documentation-only pull requests record a documentation-review result tied to the current head and instruction version.
 - New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
+- Documentation accuracy claims identify their source-derived parity test, executable journey test, or evidence-based review coverage.
 - Release publication uses an approved immutable revision.
 - Retrieval, citation, task, guide variant, safety, and freshness regressions have repeatable evaluations.
 

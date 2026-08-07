@@ -38,16 +38,49 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
 ] as const;
 
+const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
+const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
+const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
+
 function appendOpenClawAutoPairRuntimeEnvArgs(
   envArgs: string[],
   agent: AgentDefinition | null,
   env: NodeJS.ProcessEnv,
 ): void {
+  // A null definition is the legacy OpenClaw path; keep this aligned with
+  // appendOpenClawRuntimeEnvArgs and the auto-pair compatibility settings.
   if (agent && agent.name !== "openclaw") return;
   for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
     const value = env[key]?.trim();
     if (value) envArgs.push(formatEnvAssignment(key, value));
   }
+}
+
+function appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  const raw = env[OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV];
+  if (raw === undefined || raw.trim() === "") return;
+  const value = raw.trim();
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(
+      `${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS} to ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds.`,
+    );
+  }
+  const timeoutMs = Number(value);
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS ||
+    timeoutMs > OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS
+  ) {
+    throw new Error(
+      `${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS} to ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds.`,
+    );
+  }
+  envArgs.push(formatEnvAssignment(OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV, String(timeoutMs)));
 }
 
 export interface SandboxCreateLaunchInput {
@@ -170,6 +203,7 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
 
   appendOpenClawRuntimeEnvArgs(envArgs, agent);
   appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
+  appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   appendHostProxyEnvArgs(envArgs, env, {
     dropCredentialBearingProxyUrls:

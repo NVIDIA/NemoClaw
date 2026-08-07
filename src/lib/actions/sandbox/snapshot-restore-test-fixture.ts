@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import type { SandboxWorkloadReceipt } from "../../state/registry/types";
 import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
@@ -153,14 +154,7 @@ export const removePresetMock = vi.fn((_sandbox: string, _preset: string) => tru
 export const getPresetContentGatewayStateMock = vi.fn<
   (_sandbox: string, _content: string, _policyKey?: string) => "match" | "absent" | "drift" | null
 >(() => "absent");
-export const resolveAgentBaselinePolicyMock = vi.fn((agent: string) => ({
-  agent,
-  policyPath:
-    agent === "openclaw"
-      ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
-      : `/repo/agents/${agent}/policy-additions.yaml`,
-  content: "version: 1\nnetwork_policies: {}\n",
-}));
+export const resolveAgentBaselinePolicyMock = vi.fn(resolveTestAgentBaselinePolicy);
 export const builtinObservabilityPolicy =
   "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: host.openshell.internal\n";
 export const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string) =>
@@ -372,14 +366,7 @@ export function resetSnapshotRestoreMocks(): void {
     name,
     policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
   }));
-  resolveAgentBaselinePolicyMock.mockImplementation((agent: string) => ({
-    agent,
-    policyPath:
-      agent === "openclaw"
-        ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
-        : `/repo/agents/${agent}/policy-additions.yaml`,
-    content: "version: 1\nnetwork_policies: {}\n",
-  }));
+  resolveAgentBaselinePolicyMock.mockImplementation(resolveTestAgentBaselinePolicy);
   prepareInitialSandboxCreatePolicyMock.mockImplementation((policyPath: string) => ({
     policyPath,
     appliedPresets: [],
