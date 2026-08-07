@@ -168,7 +168,9 @@ describe("declarative llama.cpp server image", () => {
           port: 8081,
           requiredPaths: expect.arrayContaining([
             "/opt/llama.cpp/lib/libggml-cuda.so",
+            "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
             "/usr/local/bin/llama-server",
+            "/usr/local/share/licenses/go/copyright",
             "/usr/local/share/licenses/llama.cpp/LICENSE",
           ]),
           writablePaths: ["/tmp"],
@@ -659,6 +661,11 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("USER ${RUNTIME_UID}:${RUNTIME_GID}");
     expect(dockerfile).toContain('SHELL ["/bin/bash", "-o", "pipefail", "-c"]');
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/llama-server"]');
+    expect(dockerfile).toContain("go test ./...");
+    expect(dockerfile).toContain("CGO_ENABLED=0 go build");
+    expect(dockerfile).toContain(
+      "COPY --from=build --chmod=0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard /usr/local/bin/nemoclaw-llama-cpp-request-guard",
+    );
     expect(dockerfile).toContain("ENV CC=${C_COMPILER}");
     expect(dockerfile).toContain("CXX=${CXX_COMPILER}");
     expect(dockerfile).toContain("CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}");

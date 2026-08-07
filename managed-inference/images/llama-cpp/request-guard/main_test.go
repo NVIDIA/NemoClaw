@@ -1,0 +1,552 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+)
+
+func testConfig() guardConfig {
+	return guardConfig{
+		listenHost:            "0.0.0.0",
+		listenPort:            8081,
+		upstreamHost:          "127.0.0.1",
+		upstreamPort:          0,
+		maxRequestBodyBytes:   1024,
+		maxRequestHeaderBytes: 4096,
+		maxOutputTokens:       32,
+		requestTimeout:        10 * time.Second,
+		shutdownTimeout:       5 * time.Second,
+	}
+}
+
+func configForServer(t *testing.T, upstream *httptest.Server) guardConfig {
+	t.Helper()
+	address := strings.TrimPrefix(upstream.URL, "http://")
+	host, portText, found := strings.Cut(address, ":")
+	if !found {
+		t.Fatal("test upstream has no port")
+	}
+	var port int
+	if _, err := fmt.Sscanf(portText, "%d", &port); err != nil {
+		t.Fatalf("parse test upstream port: %v", err)
+	}
+	config := testConfig()
+	config.upstreamHost = host
+	config.upstreamPort = port
+	return config
+}
+
+func guardedServer(t *testing.T, upstream http.Handler) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		upstream.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(backend.Close)
+	handler, err := newGuardHandler(configForServer(t, backend))
+	if err != nil {
+		t.Fatalf("create guard: %v", err)
+	}
+	guard := httptest.NewServer(handler)
+	t.Cleanup(guard.Close)
+	return guard, &calls
+}
+
+func request(t *testing.T, method, endpoint, contentType string, body io.Reader) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	return response
+}
+
+func responseCode(t *testing.T, response *http.Response) string {
+	t.Helper()
+	defer response.Body.Close()
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return payload.Error.Code
+}
+
+func TestParseConfigRequiresEveryDeclaredValue(t *testing.T) {
+	valid := []string{
+		"--listen-host", "0.0.0.0",
+		"--listen-port", "8081",
+		"--upstream-host", "127.0.0.1",
+		"--upstream-port", "8082",
+		"--max-request-body-bytes", "1048576",
+		"--max-request-header-bytes", "32768",
+		"--max-output-tokens", "4096",
+		"--request-timeout-seconds", "900",
+		"--shutdown-timeout-seconds", "25",
+		"--", llamaServerPath,
+		"--model", "/models/model.gguf",
+		"--host", "127.0.0.1",
+		"--port", "8082",
+		"--api-key-file", llamaServerAPIKeyPath,
+		"--n-predict", "4096",
+		"--no-ui",
+		"--no-slots",
+		"--no-mmproj",
+		"--no-agent",
+	}
+	config, command, err := parseConfig(valid)
+	if err != nil {
+		t.Fatalf("parse valid config: %v", err)
+	}
+	if config.maxRequestBodyBytes != 1048576 ||
+		config.maxOutputTokens != 4096 ||
+		config.shutdownTimeout != 25*time.Second {
+		t.Fatalf("declared bounds were not retained: %+v", config)
+	}
+	if len(command) < 3 || command[0] != llamaServerPath {
+		t.Fatalf("unexpected command: %v", command)
+	}
+
+	for _, remove := range []string{
+		"--listen-host",
+		"--listen-port",
+		"--upstream-host",
+		"--upstream-port",
+		"--max-request-body-bytes",
+		"--max-request-header-bytes",
+		"--max-output-tokens",
+		"--request-timeout-seconds",
+		"--shutdown-timeout-seconds",
+	} {
+		candidate := append([]string(nil), valid...)
+		for index, value := range candidate {
+			if value == remove {
+				candidate = append(candidate[:index], candidate[index+2:]...)
+				break
+			}
+		}
+		if _, _, err := parseConfig(candidate); err == nil {
+			t.Fatalf("configuration without %s was accepted", remove)
+		}
+	}
+}
+
+func TestParseConfigRejectsABypassableLlamaServerCommand(t *testing.T) {
+	base := []string{
+		"--listen-host", "0.0.0.0",
+		"--listen-port", "8081",
+		"--upstream-host", "127.0.0.1",
+		"--upstream-port", "8082",
+		"--max-request-body-bytes", "1048576",
+		"--max-request-header-bytes", "32768",
+		"--max-output-tokens", "4096",
+		"--request-timeout-seconds", "900",
+		"--shutdown-timeout-seconds", "25",
+		"--", llamaServerPath,
+		"--host", "127.0.0.1",
+		"--port", "8082",
+		"--api-key-file", llamaServerAPIKeyPath,
+		"--n-predict", "4096",
+		"--no-ui", "--no-slots", "--no-mmproj", "--no-agent",
+	}
+	for _, mutation := range []struct {
+		from string
+		to   string
+	}{
+		{from: llamaServerPath, to: "/bin/sh"},
+		{from: "127.0.0.1", to: "0.0.0.0"},
+		{from: llamaServerAPIKeyPath, to: "/tmp/key"},
+		{from: "4096", to: "4097"},
+		{from: "--no-ui", to: "--metrics"},
+	} {
+		candidate := append([]string(nil), base...)
+		for index, value := range candidate {
+			if value == mutation.from {
+				candidate[index] = mutation.to
+				break
+			}
+		}
+		if _, _, err := parseConfig(candidate); err == nil {
+			t.Fatalf("bypass mutation %q to %q was accepted", mutation.from, mutation.to)
+		}
+	}
+}
+
+func TestServerUsesTheDeclaredHeaderAndTimeBounds(t *testing.T) {
+	config := testConfig()
+	server := newHTTPServer(config, http.NotFoundHandler())
+	if server.MaxHeaderBytes != config.maxRequestHeaderBytes {
+		t.Fatalf("header limit = %d", server.MaxHeaderBytes)
+	}
+	for name, actual := range map[string]time.Duration{
+		"read-header": server.ReadHeaderTimeout,
+		"read":        server.ReadTimeout,
+		"write":       server.WriteTimeout,
+		"idle":        server.IdleTimeout,
+	} {
+		if actual != config.requestTimeout {
+			t.Fatalf("%s timeout = %s", name, actual)
+		}
+	}
+}
+
+func TestRequestGuardChildHelper(t *testing.T) {
+	if os.Getenv("NEMOCLAW_REQUEST_GUARD_CHILD_HELPER") != "1" {
+		return
+	}
+	signal.Ignore(syscall.SIGTERM)
+	_, _ = fmt.Fprintln(os.Stdout, "ready")
+	select {}
+}
+
+func TestStopChildKillsAtTheDeclaredDeadline(t *testing.T) {
+	child := exec.Command(os.Args[0], "-test.run=TestRequestGuardChildHelper")
+	child.Env = append(os.Environ(), "NEMOCLAW_REQUEST_GUARD_CHILD_HELPER=1")
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatalf("create child stdout: %v", err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	ready := bufio.NewScanner(stdout)
+	if !ready.Scan() || ready.Text() != "ready" {
+		_ = child.Process.Kill()
+		t.Fatalf("child did not become ready: %v", ready.Err())
+	}
+	exited := make(chan *os.ProcessState, 1)
+	go func() {
+		_ = child.Wait()
+		exited <- child.ProcessState
+	}()
+
+	started := time.Now()
+	code := stopChildWithin(child, exited, syscall.SIGTERM, 50*time.Millisecond)
+	if elapsed := time.Since(started); elapsed < 40*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("declared stop deadline elapsed = %s", elapsed)
+	}
+	if code == 0 {
+		t.Fatal("force-killed child exited successfully")
+	}
+}
+
+func TestGuardRejectsOversizedBodiesBeforeUpstream(t *testing.T) {
+	guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+
+	declared := strings.NewReader(strings.Repeat("x", 1025))
+	response := request(t, http.MethodPost, guard.URL+"/v1/chat/completions", "application/json", declared)
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("declared body status = %d", response.StatusCode)
+	}
+	if code := responseCode(t, response); code != "request_body_too_large" {
+		t.Fatalf("declared body code = %q", code)
+	}
+
+	chunkedRequest, err := http.NewRequest(
+		http.MethodPost,
+		guard.URL+"/v1/chat/completions",
+		bufio.NewReader(strings.NewReader(strings.Repeat("y", 1025))),
+	)
+	if err != nil {
+		t.Fatalf("create chunked request: %v", err)
+	}
+	chunkedRequest.ContentLength = -1
+	chunkedRequest.Header.Set("Content-Type", "application/json")
+	chunkedResponse, err := http.DefaultClient.Do(chunkedRequest)
+	if err != nil {
+		t.Fatalf("send chunked request: %v", err)
+	}
+	if chunkedResponse.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("chunked body status = %d", chunkedResponse.StatusCode)
+	}
+	if code := responseCode(t, chunkedResponse); code != "request_body_too_large" {
+		t.Fatalf("chunked body code = %q", code)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("upstream received %d oversized requests", calls.Load())
+	}
+}
+
+func TestGuardRejectsEveryOutputTokenBypass(t *testing.T) {
+	guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	for _, body := range []string{
+		`{"model":"test","max_tokens":33}`,
+		`{"model":"test","max_completion_tokens":33}`,
+		`{"model":"test","n_predict":33}`,
+		`{"model":"test","max_tokens":-1}`,
+		`{"model":"test","max_tokens":1.5}`,
+		`{"model":"test","max_tokens":"32"}`,
+		`{"model":"test","max_tokens":32,"max_tokens":1}`,
+	} {
+		response := request(
+			t,
+			http.MethodPost,
+			guard.URL+"/v1/chat/completions",
+			"application/json",
+			strings.NewReader(body),
+		)
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("body %s status = %d", body, response.StatusCode)
+		}
+		response.Body.Close()
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("upstream received %d denied token requests", calls.Load())
+	}
+}
+
+func TestGuardInjectsTheDeclaredLimitAndPreservesAuthorization(t *testing.T) {
+	var seenAuthorization string
+	var seenBody map[string]any
+	guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		seenAuthorization = request.Header.Get("Authorization")
+		if err := json.NewDecoder(request.Body).Decode(&seenBody); err != nil {
+			t.Errorf("decode upstream body: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"ok":true}`)
+	}))
+	req, err := http.NewRequest(
+		http.MethodPost,
+		guard.URL+"/v1/chat/completions",
+		strings.NewReader(`{"model":"test","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer opaque-test-value")
+	req.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	if calls.Load() != 1 || seenBody["max_tokens"] != float64(32) {
+		t.Fatalf("upstream calls/body = %d/%v", calls.Load(), seenBody)
+	}
+	if seenAuthorization != "Bearer opaque-test-value" {
+		t.Fatalf("authorization header changed: %q", seenAuthorization)
+	}
+}
+
+func TestGuardPreservesBackendAuthenticationFailure(t *testing.T) {
+	guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") == "" {
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	response := request(
+		t,
+		http.MethodPost,
+		guard.URL+"/v1/chat/completions",
+		"application/json",
+		strings.NewReader(`{"model":"test","max_tokens":8}`),
+	)
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d", response.StatusCode)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("backend authentication calls = %d", calls.Load())
+	}
+}
+
+func TestGuardSanitizesUpstreamFailures(t *testing.T) {
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	config := configForServer(t, upstream)
+	upstream.Close()
+	handler, err := newGuardHandler(config)
+	if err != nil {
+		t.Fatalf("create guard: %v", err)
+	}
+	guard := httptest.NewServer(handler)
+	defer guard.Close()
+
+	response := request(t, http.MethodGet, guard.URL+"/health", "", nil)
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	if strings.Contains(string(body), config.upstreamHost) ||
+		strings.Contains(string(body), fmt.Sprintf("%d", config.upstreamPort)) {
+		t.Fatalf("upstream address leaked: %s", body)
+	}
+	if !strings.Contains(string(body), `"code":"upstream_unavailable"`) {
+		t.Fatalf("unexpected error body: %s", body)
+	}
+}
+
+func TestGuardRejectsEncodedOrMislabeledChatBodiesBeforeUpstream(t *testing.T) {
+	guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	encoded, err := http.NewRequest(
+		http.MethodPost,
+		guard.URL+"/v1/chat/completions",
+		strings.NewReader(`{"model":"test","max_tokens":8}`),
+	)
+	if err != nil {
+		t.Fatalf("create encoded request: %v", err)
+	}
+	encoded.Header.Set("Content-Encoding", "gzip")
+	encoded.Header.Set("Content-Type", "application/json")
+	encodedResponse, err := http.DefaultClient.Do(encoded)
+	if err != nil {
+		t.Fatalf("send encoded request: %v", err)
+	}
+	if encodedResponse.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("encoded status = %d", encodedResponse.StatusCode)
+	}
+	encodedResponse.Body.Close()
+
+	mislabeled := request(
+		t,
+		http.MethodPost,
+		guard.URL+"/v1/chat/completions",
+		"text/plain",
+		strings.NewReader(`{"model":"test","max_tokens":8}`),
+	)
+	if mislabeled.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("mislabeled status = %d", mislabeled.StatusCode)
+	}
+	mislabeled.Body.Close()
+	if calls.Load() != 0 {
+		t.Fatalf("upstream received %d encoded or mislabeled requests", calls.Load())
+	}
+}
+
+func TestGuardStreamsAllowedResponses(t *testing.T) {
+	guard, _ := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		flusher, ok := writer.(http.Flusher)
+		if !ok {
+			t.Error("upstream response writer cannot flush")
+			return
+		}
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: first\n\n")
+		flusher.Flush()
+		_, _ = io.WriteString(writer, "data: second\n\n")
+	}))
+	response := request(
+		t,
+		http.MethodPost,
+		guard.URL+"/v1/chat/completions",
+		"application/json",
+		strings.NewReader(`{"model":"test","stream":true,"max_tokens":32}`),
+	)
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if string(body) != "data: first\n\ndata: second\n\n" {
+		t.Fatalf("stream body = %q", string(body))
+	}
+}
+
+func TestGuardPropagatesCancellation(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	guard, _ := guardedServer(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-request.Context().Done()
+		close(cancelled)
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		guard.URL+"/v1/chat/completions",
+		strings.NewReader(`{"model":"test","max_tokens":8}`),
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	result := make(chan error, 1)
+	go func() {
+		response, err := http.DefaultClient.Do(req)
+		if response != nil {
+			response.Body.Close()
+		}
+		result <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	cancel()
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream request was not cancelled")
+	}
+	if err := <-result; err == nil {
+		t.Fatal("cancelled client request succeeded")
+	}
+}
+
+func TestGuardBlocksUnsupportedServerSurfaces(t *testing.T) {
+	guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	for _, target := range []string{
+		"/",
+		"/slots",
+		"/v1/completions",
+		"/v1/responses",
+		"/v1/embeddings",
+		"/v1/chat/completions?debug=true",
+	} {
+		response := request(t, http.MethodPost, guard.URL+target, "application/json", bytes.NewReader([]byte(`{}`)))
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("target %s status = %d", target, response.StatusCode)
+		}
+		response.Body.Close()
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("upstream received %d unsupported requests", calls.Load())
+	}
+}

@@ -607,6 +607,7 @@ export function loadLlamaCppImageConfig(
     curl: "8.5.0-2ubuntu10.11",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
     "gcc-14": "14.2.0-4ubuntu2~24.04.1",
+    "golang-go": "2:1.22~2build1",
     "libcurl4-openssl-dev": "8.5.0-2ubuntu10.11",
     "libssl-dev": "3.0.13-0ubuntu3.12",
   };
@@ -622,7 +623,9 @@ export function loadLlamaCppImageConfig(
   };
   const expectedRequiredPaths = [
     "/opt/llama.cpp/lib/libggml-cuda.so",
+    "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
     "/usr/local/bin/llama-server",
+    "/usr/local/share/licenses/go/copyright",
     "/usr/local/share/licenses/llama.cpp/AUTHORS",
     "/usr/local/share/licenses/llama.cpp/LICENSE",
   ];
