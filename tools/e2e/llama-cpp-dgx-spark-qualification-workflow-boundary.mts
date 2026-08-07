@@ -113,6 +113,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   }
   const expectedOutputs = Object.fromEntries(
     [
+      "agent_qualification_execution",
       "environment",
       "execution",
       "model_host_path",
@@ -327,6 +328,34 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
       `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must use trusted no-build preparation`,
     );
   }
+  const installOpenShell = requireStep(
+    errors,
+    LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
+    qualificationSteps,
+    "Install OpenShell CLI for declarative OpenClaw qualification",
+  );
+  if (
+    installOpenShell?.if !==
+    `\${{ needs.${PLAN_JOB_ID}.outputs.agent_qualification_execution == 'enabled' }}`
+  ) {
+    errors.push(
+      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must gate OpenShell installation on the declarative agent qualification`,
+    );
+  }
+  requireFragments(errors, LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID, installOpenShell, [
+    "env -u DOCKER_CONFIG",
+    "-u DOCKERHUB_USERNAME",
+    "-u DOCKERHUB_TOKEN",
+    "-u NVIDIA_API_KEY",
+    "-u NVIDIA_INFERENCE_API_KEY",
+    "-u GITHUB_TOKEN",
+    "bash scripts/install-openshell.sh",
+  ]);
+  if (text(installOpenShell?.run).includes(".candidate-llama-cpp/scripts")) {
+    errors.push(
+      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must install OpenShell only from trusted helper code`,
+    );
+  }
   const materialize = requireStep(
     errors,
     LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
@@ -408,6 +437,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     "Checkout trusted llama.cpp qualification",
     "Checkout exact llama.cpp qualification candidate",
     "Prepare E2E workspace",
+    "Install OpenShell CLI for declarative OpenClaw qualification",
     "Materialize trusted llama.cpp qualification plan",
     "Build and qualify exact llama.cpp candidate",
     "Remove protected llama.cpp qualification resources",

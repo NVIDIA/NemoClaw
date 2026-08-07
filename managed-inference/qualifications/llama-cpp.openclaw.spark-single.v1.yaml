@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: AgentQualification
+
+metadata:
+  id: llama-cpp.openclaw.spark-single.v1
+
+spec:
+  execution: disabled
+  agent: openclaw
+  image:
+    reference: ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e
+    sourceRevision: eb1d2f5700393892f227ac9fd56f485fc6718bce
+  runtimeProvider: docker
+  sandbox:
+    name: nemoclaw-llama-cpp-openclaw
+    gpuAccess: disabled
+  route:
+    provider: llama-cpp-local
+    api: openai-completions
+    routedBaseUrl: https://inference.local/v1
+    upstreamBaseUrl: http://host.openshell.internal:8081/v1
+  probes:
+    - synchronous-chat
+    - streaming-chat
+    - agent-normal-turn
+    - agent-tool-call
+    - agent-tool-result-continuation
+    - agent-multi-turn
+  bounds:
+    commandTimeoutSeconds: 420
+    maxResponseBytes: 16777216
+    maxStreamEvents: 512
+    maxTokens: 32
+  expectations:
+    normal: PONG
+  sessions:
+    normal: llama-cpp-openclaw-normal
+    tool: llama-cpp-openclaw-tool
+  prompts:
+    normal: "Reply with exactly one word: PONG"
+    tool: "Use the read tool to read /tmp/nemoclaw-llama-cpp-tool.txt. Reply with exactly the file contents: LLAMA_CPP_OPENCLAW_TOOL_OK"
+    continuation: "Repeat the exact value LLAMA_CPP_OPENCLAW_TOOL_OK from the file you read in the prior turn."
+  fixture:
+    path: /tmp/nemoclaw-llama-cpp-tool.txt
+    value: LLAMA_CPP_OPENCLAW_TOOL_OK
+  tool:
+    name: read
