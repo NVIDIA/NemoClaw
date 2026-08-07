@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween, runDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
@@ -114,6 +114,7 @@ describe("Hermes doctor and config hash boundary", () => {
       "patch-hermes-discord-recovery-permissions.py",
     );
     const profilePolicyPatcherPath = path.join(libDir, "patch-hermes-profile-policy-defaults.py");
+    const managedPolicyReaderPath = path.join(libDir, "managed_policy.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
       "openshell-child-visible-credentials.v0.0.85.json",
@@ -140,8 +141,10 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
+        path.join(libDir, "patch-hermes-sqlite-temp-store.py"),
         discordRecoveryPatcherPath,
         profilePolicyPatcherPath,
+        managedPolicyReaderPath,
         langfuseCredentialPatcherPath,
         path.join(libDir, "seed-hermes-dashboard-config.py"),
         path.join(libDir, "hermes-runtime-config-guard.py"),
@@ -199,6 +202,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(mcpConfigTransactionPath)).toBe("755");
       expect(mode(discordRecoveryPatcherPath)).toBe("755");
       expect(mode(profilePolicyPatcherPath)).toBe("755");
+      expect(mode(managedPolicyReaderPath)).toBe("444");
       expect(mode(langfuseCredentialPatcherPath)).toBe("444");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");

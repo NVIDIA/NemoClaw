@@ -29,14 +29,31 @@ homes. It also fixes independent config copies and loaders that bypass
 Every input file is bound to the exact upstream v2026.7.20 source hash before
 any edit. A Hermes upgrade must deliberately refresh these hashes and source
 shapes instead of silently carrying the patch forward.
+
+Delete this compatibility patch only when the pinned Hermes release applies
+the managed-policy values to a config-less named profile across
+``DEFAULT_CONFIG`` and every independent fallback listed above. The unmodified
+upstream files must then pass the ``profile-policy`` image probe and
+``test/hermes-profile-policy-defaults.test.ts``.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import sys
 from pathlib import Path
 from typing import Iterable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from managed_policy import (  # noqa: E402
+    MANAGED_POLICY_PATH,
+    ManagedPolicyError,
+    load_managed_policy,
+    profile_default_values,
+)
 
 EXPECTED_SOURCE_SHA256 = {
     "config": "172b78ecb923048859ca177d96f5b010b44ec74bb1d13553577ff49bde1a071d",
@@ -48,130 +65,17 @@ EXPECTED_SOURCE_SHA256 = {
     "main": "d6bf89a33fb708376a7ab354cff8081a3c3726dbfb91d84bbb679cd667db596c",
 }
 
-CONFIG_REPLACEMENTS = (
-    (
-        '"restrict_evaluate": False',
-        "# NemoClaw compatibility override: retain the outgoing denylist default.\n"
-        '        "restrict_evaluate": True',
-    ),
-    (
-        '"show_reasoning": True',
-        "# NemoClaw compatibility override: reasoning remains hidden by default.\n"
-        '        "show_reasoning": False',
-    ),
-    (
-        '"show_commentary": True',
-        "# NemoClaw compatibility override: commentary remains hidden by default.\n"
-        '        "show_commentary": False',
-    ),
-    (
-        '"mode": "smart"',
-        "# NemoClaw compatibility override: flagged commands require manual approval.\n"
-        '        "mode": "manual"',
-    ),
-    (
-        '"pre_update_backup": "quick"',
-        "# NemoClaw compatibility override: immutable images own update state.\n"
-        '        "pre_update_backup": False',
-    ),
-    (
-        '"refresh_cua_driver": True',
-        "# NemoClaw compatibility override: immutable images do not fetch CUA updates.\n"
-        '        "refresh_cua_driver": False',
-    ),
-)
 CONFIG_REQUIRED_UNCHANGED = ('"allow_unsafe_evaluate": False',)
 
-BROWSER_REPLACEMENTS = (
-    (
-        'return is_truthy_value(cfg_get(cfg, "browser", "restrict_evaluate"), '
-        "default=False)",
-        "# NemoClaw compatibility override: missing raw YAML stays restricted.\n"
-        '        return is_truthy_value(cfg_get(cfg, "browser", "restrict_evaluate"), '
-        "default=True)",
-    ),
-    (
-        'logger.debug("Could not read browser.restrict_evaluate from config: %s", e)\n'
-        "        return False",
-        'logger.debug("Could not read browser.restrict_evaluate from config: %s", e)\n'
-        "        # NemoClaw compatibility override: config errors fail restricted.\n"
-        "        return True",
-    ),
-)
 
-GATEWAY_REPLACEMENTS = (
-    (
-        'mode: str = "none"  # "daily", "idle", "both", or "none"',
-        "# NemoClaw compatibility override: retain bounded daily and idle reset.\n"
-        '    mode: str = "both"  # "daily", "idle", "both", or "none"',
-    ),
-    (
-        'mode=mode if mode is not None else "none"',
-        "# NemoClaw compatibility override: missing config keeps bounded reset.\n"
-        '            mode=mode if mode is not None else "both"',
-    ),
-)
-
-CLI_REPLACEMENTS = (
-    (
-        '"show_reasoning": True',
-        "# NemoClaw compatibility override: reasoning remains hidden by default.\n"
-        '            "show_reasoning": False',
-    ),
-)
-
-TUI_REPLACEMENTS = (
-    (
-        "# Fallback True — keep in sync with DEFAULT_CONFIG display.show_reasoning\n"
-        "    # (this loader reads the raw user YAML without the DEFAULT_CONFIG merge).\n"
-        '    return bool((_load_cfg().get("display") or {}).get("show_reasoning", True))',
-        "# NemoClaw compatibility override: missing raw YAML keeps reasoning hidden.\n"
-        '    return bool((_load_cfg().get("display") or {}).get("show_reasoning", False))',
-        1,
-    ),
-    (
-        'if bool((cfg.get("display") or {}).get("show_reasoning", True))',
-        "# NemoClaw compatibility override: missing raw YAML stays hidden.\n"
-        '            if bool((cfg.get("display") or {}).get("show_reasoning", False))',
-        1,
-    ),
-)
-
-AGENT_REPLACEMENTS = (
-    (
-        "# Codex commentary visibility (display.show_commentary, default true).\n",
-        "# Codex commentary visibility. NemoClaw keeps the missing/error fallback off.\n",
-    ),
-    (
-        "agent.show_commentary = True",
-        "agent.show_commentary = False  # NemoClaw compatibility override: fail hidden.",
-    ),
-    (
-        'agent.show_commentary = bool(_display_section.get("show_commentary", True))',
-        "# NemoClaw compatibility override: a missing key keeps commentary hidden.\n"
-        "            agent.show_commentary = bool(\n"
-        '                _display_section.get("show_commentary", False)\n'
-        "            )",
-    ),
-)
-
-MAIN_REPLACEMENTS = (
-    (
-        'raw = updates_cfg.get("pre_update_backup", "quick")',
-        "# NemoClaw compatibility override: missing/error config skips state duplication.\n"
-        '    raw = updates_cfg.get("pre_update_backup", False)',
-    ),
-    (
-        "refresh_cua_driver = True",
-        "# NemoClaw compatibility override: config errors do not fetch mutable CUA updates.\n"
-        "            refresh_cua_driver = False",
-    ),
-    (
-        '_update_cfg.get("refresh_cua_driver", True)',
-        '_update_cfg.get("refresh_cua_driver", False)  '
-        "# NemoClaw compatibility override: missing keys stay off.",
-    ),
-)
+def _literal(value: object) -> str:
+    if value is True:
+        return "True"
+    if value is False:
+        return "False"
+    if isinstance(value, str):
+        return json.dumps(value)
+    raise ValueError(f"unsupported managed policy literal type: {type(value).__name__}")
 
 
 def _sha256(source: str) -> str:
@@ -198,7 +102,7 @@ def _replace_exact(
     return patched
 
 
-def patch_config_source(source: str) -> str:
+def patch_config_source(source: str, values: dict[str, object]) -> str:
     for shape in CONFIG_REQUIRED_UNCHANGED:
         count = source.count(shape)
         if count != 1:
@@ -206,24 +110,106 @@ def patch_config_source(source: str) -> str:
                 "Hermes config source shape changed for "
                 f"{shape!r}: expected one occurrence, found {count}"
             )
-    return _replace_exact(source, CONFIG_REPLACEMENTS, label="Hermes config")
+    replacements = (
+        (
+            '"restrict_evaluate": False',
+            "# NemoClaw compatibility override: generated policy restricts sensitive evaluation.\n"
+            f'        "restrict_evaluate": {_literal(values["browser.restrict_evaluate"])}',
+        ),
+        (
+            '"show_reasoning": True',
+            "# NemoClaw compatibility override: generated policy keeps reasoning hidden.\n"
+            f'        "show_reasoning": {_literal(values["display.show_reasoning"])}',
+        ),
+        (
+            '"show_commentary": True',
+            "# NemoClaw compatibility override: generated policy keeps commentary hidden.\n"
+            f'        "show_commentary": {_literal(values["display.show_commentary"])}',
+        ),
+        (
+            '"mode": "smart"',
+            "# NemoClaw compatibility override: generated policy requires manual approval.\n"
+            f'        "mode": {_literal(values["approvals.mode"])}',
+        ),
+        (
+            '"pre_update_backup": "quick"',
+            "# NemoClaw compatibility override: generated policy leaves image state unchanged.\n"
+            f'        "pre_update_backup": {_literal(values["updates.pre_update_backup"])}',
+        ),
+        (
+            '"refresh_cua_driver": True',
+            "# NemoClaw compatibility override: generated policy disables mutable CUA updates.\n"
+            f'        "refresh_cua_driver": {_literal(values["updates.refresh_cua_driver"])}',
+        ),
+    )
+    return _replace_exact(source, replacements, label="Hermes config")
 
 
-def patch_browser_source(source: str) -> str:
-    return _replace_exact(source, BROWSER_REPLACEMENTS, label="Hermes browser policy")
+def patch_browser_source(source: str, values: dict[str, object]) -> str:
+    expected = _literal(values["browser.restrict_evaluate"])
+    replacements = (
+        (
+            'return is_truthy_value(cfg_get(cfg, "browser", "restrict_evaluate"), default=False)',
+            "# NemoClaw compatibility override: missing raw YAML stays restricted.\n"
+            f'        return is_truthy_value(cfg_get(cfg, "browser", "restrict_evaluate"), default={expected})',
+        ),
+        (
+            'logger.debug("Could not read browser.restrict_evaluate from config: %s", e)\n'
+            "        return False",
+            'logger.debug("Could not read browser.restrict_evaluate from config: %s", e)\n'
+            "        # NemoClaw compatibility override: config errors fail restricted.\n"
+            f"        return {expected}",
+        ),
+    )
+    return _replace_exact(source, replacements, label="Hermes browser policy")
 
 
-def patch_gateway_source(source: str) -> str:
-    return _replace_exact(source, GATEWAY_REPLACEMENTS, label="Hermes gateway policy")
+def patch_gateway_source(source: str, values: dict[str, object]) -> str:
+    expected = _literal(values["session_reset.mode"])
+    replacements = (
+        (
+            'mode: str = "none"  # "daily", "idle", "both", or "none"',
+            "# NemoClaw compatibility override: generated policy bounds daily and idle reset.\n"
+            f'    mode: str = {expected}  # "daily", "idle", "both", or "none"',
+        ),
+        (
+            'mode=mode if mode is not None else "none"',
+            "# NemoClaw compatibility override: missing config keeps bounded reset.\n"
+            f"            mode=mode if mode is not None else {expected}",
+        ),
+    )
+    return _replace_exact(source, replacements, label="Hermes gateway policy")
 
 
-def patch_cli_source(source: str) -> str:
-    return _replace_exact(source, CLI_REPLACEMENTS, label="Hermes CLI policy")
+def patch_cli_source(source: str, values: dict[str, object]) -> str:
+    replacements = ((
+        '"show_reasoning": True',
+        "# NemoClaw compatibility override: generated policy keeps reasoning hidden.\n"
+        f'            "show_reasoning": {_literal(values["display.show_reasoning"])}',
+    ),)
+    return _replace_exact(source, replacements, label="Hermes CLI policy")
 
 
-def patch_tui_source(source: str) -> str:
+def patch_tui_source(source: str, values: dict[str, object]) -> str:
+    expected = _literal(values["display.show_reasoning"])
+    replacements = (
+        (
+            "# Fallback True — keep in sync with DEFAULT_CONFIG display.show_reasoning\n"
+            "    # (this loader reads the raw user YAML without the DEFAULT_CONFIG merge).\n"
+            '    return bool((_load_cfg().get("display") or {}).get("show_reasoning", True))',
+            "# NemoClaw compatibility override: missing raw YAML keeps reasoning hidden.\n"
+            f'    return bool((_load_cfg().get("display") or {{}}).get("show_reasoning", {expected}))',
+            1,
+        ),
+        (
+            'if bool((cfg.get("display") or {}).get("show_reasoning", True))',
+            "# NemoClaw compatibility override: missing raw YAML stays hidden.\n"
+            f'            if bool((cfg.get("display") or {{}}).get("show_reasoning", {expected}))',
+            1,
+        ),
+    )
     patched = source
-    for old, new, expected_count in TUI_REPLACEMENTS:
+    for old, new, expected_count in replacements:
         old_count = patched.count(old)
         new_count = patched.count(new)
         if old_count != expected_count or new_count != 0:
@@ -236,9 +222,27 @@ def patch_tui_source(source: str) -> str:
     return patched
 
 
-def patch_agent_source(source: str) -> str:
+def patch_agent_source(source: str, values: dict[str, object]) -> str:
+    expected = _literal(values["display.show_commentary"])
+    replacements = (
+        (
+            "# Codex commentary visibility (display.show_commentary, default true).\n",
+            "# Codex commentary visibility is generated from NemoClaw's managed policy.\n",
+        ),
+        (
+            "agent.show_commentary = True",
+            f"agent.show_commentary = {expected}  # NemoClaw config-error fallback.",
+        ),
+        (
+            'agent.show_commentary = bool(_display_section.get("show_commentary", True))',
+            "# NemoClaw compatibility override: a missing key keeps commentary hidden.\n"
+            "            agent.show_commentary = bool(\n"
+            f'                _display_section.get("show_commentary", {expected})\n'
+            "            )",
+        ),
+    )
     patched = source
-    for old, new in AGENT_REPLACEMENTS:
+    for old, new in replacements:
         expected_count = 2 if old == "agent.show_commentary = True" else 1
         old_count = patched.count(old)
         new_count = patched.count(new)
@@ -252,11 +256,30 @@ def patch_agent_source(source: str) -> str:
     return patched
 
 
-def patch_main_source(source: str) -> str:
-    return _replace_exact(source, MAIN_REPLACEMENTS, label="Hermes update policy")
+def patch_main_source(source: str, values: dict[str, object]) -> str:
+    backup = _literal(values["updates.pre_update_backup"])
+    refresh = _literal(values["updates.refresh_cua_driver"])
+    replacements = (
+        (
+            'raw = updates_cfg.get("pre_update_backup", "quick")',
+            "# NemoClaw compatibility override: missing config skips state duplication.\n"
+            f'    raw = updates_cfg.get("pre_update_backup", {backup})',
+        ),
+        (
+            "refresh_cua_driver = True",
+            "# NemoClaw compatibility override: config errors do not fetch CUA updates.\n"
+            f"            refresh_cua_driver = {refresh}",
+        ),
+        (
+            '_update_cfg.get("refresh_cua_driver", True)',
+            f'_update_cfg.get("refresh_cua_driver", {refresh})  '
+            "# NemoClaw missing-key fallback.",
+        ),
+    )
+    return _replace_exact(source, replacements, label="Hermes update policy")
 
 
-def patch_file(path: Path, kind: str) -> None:
+def patch_file(path: Path, kind: str, values: dict[str, object]) -> None:
     source = path.read_text(encoding="utf-8")
     actual_sha256 = _sha256(source)
     expected_sha256 = EXPECTED_SOURCE_SHA256[kind]
@@ -276,7 +299,7 @@ def patch_file(path: Path, kind: str) -> None:
         "main": patch_main_source,
     }[kind]
     try:
-        patched = patcher(source)
+        patched = patcher(source, values)
     except ValueError as exc:
         raise SystemExit(f"ERROR: {exc}") from exc
     path.write_text(patched, encoding="utf-8")
@@ -284,6 +307,12 @@ def patch_file(path: Path, kind: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--policy",
+        type=Path,
+        default=MANAGED_POLICY_PATH,
+        help="NemoClaw managed Hermes policy manifest",
+    )
     parser.add_argument(
         "--config",
         default="/opt/hermes/hermes_cli/config.py",
@@ -320,14 +349,18 @@ def main() -> int:
         help="Pinned Hermes main/update module",
     )
     args = parser.parse_args()
+    try:
+        values = profile_default_values(load_managed_policy(args.policy))
+    except ManagedPolicyError as exc:
+        raise SystemExit(f"ERROR: {args.policy}: {exc}") from exc
 
-    patch_file(Path(args.config), "config")
-    patch_file(Path(args.browser), "browser")
-    patch_file(Path(args.gateway), "gateway")
-    patch_file(Path(args.cli), "cli")
-    patch_file(Path(args.tui), "tui")
-    patch_file(Path(args.agent), "agent")
-    patch_file(Path(args.main), "main")
+    patch_file(Path(args.config), "config", values)
+    patch_file(Path(args.browser), "browser", values)
+    patch_file(Path(args.gateway), "gateway", values)
+    patch_file(Path(args.cli), "cli", values)
+    patch_file(Path(args.tui), "tui", values)
+    patch_file(Path(args.agent), "agent", values)
+    patch_file(Path(args.main), "main", values)
     return 0
 
 

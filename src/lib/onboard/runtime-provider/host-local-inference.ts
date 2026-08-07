@@ -1,9 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { spawn } from "node:child_process";
+
+import type { ContainerEngine } from "../../adapters/container-engine";
+import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
+import type {
+  LlamaCppHostLocalLaunchContract,
+  LlamaCppHostLocalRuntimeBindings,
+} from "../../inference/llama-cpp/host-local-runtime";
+import type { HostLocalCreateJournalStore } from "./host-local-create-journal";
 import {
   normalizePersistedEngineAuthority,
   type PersistedEngineAuthority,
+  type PersistedEngineAuthorityStore,
 } from "./persisted-engine-authority";
 
 export const HOST_LOCAL_INFERENCE_RECEIPT_SCHEMA_VERSION = 1 as const;
@@ -140,6 +150,65 @@ export interface HostLocalInferenceReceiptWriter {
   /** Path- and value-free identity of the one external state target. */
   readonly targetSha256: string;
   readonly writeExact: (serializedReceipt: string) => string;
+}
+
+export interface HostLocalInferenceRecoveryResult {
+  readonly recovered: readonly string[];
+  readonly failures: readonly {
+    readonly transactionId: string;
+    readonly message: string;
+  }[];
+}
+
+/**
+ * Provider-neutral inputs for the existing managed llama.cpp lifecycle. Every
+ * runtime, model, probe, and launch value is compiled from the selected YAML
+ * recipe before this provider boundary is entered.
+ */
+export interface HostLocalLlamaCppLifecycleInput {
+  readonly authorityStore: PersistedEngineAuthorityStore;
+  readonly apiKeyRootHostPath: string;
+  readonly bindingSha256: string;
+  readonly bindings: LlamaCppHostLocalRuntimeBindings;
+  readonly cacheRootHostPath: string;
+  readonly contract: LlamaCppHostLocalLaunchContract;
+  readonly engine: ContainerEngine;
+  readonly journalStore: HostLocalCreateJournalStore;
+  readonly plan: LlamaCppGgufCachePlan;
+  readonly probeImageReference: string;
+  readonly readinessTimeoutSeconds: number;
+}
+
+export interface HostLocalLlamaCppLifecycle {
+  readonly runtime: HostLocalInferenceRuntime;
+  start(writer: HostLocalInferenceReceiptWriter): HostLocalInferenceReceipt;
+  resume(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
+  recoverUnfinished(writer: HostLocalInferenceReceiptWriter): HostLocalInferenceRecoveryResult;
+}
+
+export type HostLocalInferenceCommandSpawner = (
+  args: readonly string[],
+  options?: Parameters<typeof spawn>[2],
+) => ReturnType<typeof spawn>;
+
+export interface HostLocalInferenceOperationInput {
+  readonly env: NodeJS.ProcessEnv;
+}
+
+/**
+ * One provider-owned host-local-inference operation. The engine authority and
+ * lifecycle factory are immutable for this invocation and never consult a
+ * process-global runtime selector.
+ */
+export interface HostLocalInferenceOperation {
+  readonly providerId: string;
+  readonly engine: ContainerEngine;
+  readonly bindingSha256: string;
+  readonly assertAuthority: () => void;
+  readonly spawn: HostLocalInferenceCommandSpawner;
+  readonly createLlamaCppLifecycle: (
+    input: HostLocalLlamaCppLifecycleInput,
+  ) => HostLocalLlamaCppLifecycle;
 }
 
 export interface HostLocalInferenceRuntime {

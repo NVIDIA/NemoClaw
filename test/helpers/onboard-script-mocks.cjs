@@ -153,7 +153,11 @@ function mockOnboardRunCapture(command, options = {}) {
   if (isOpenClawSecurityInventoryProbe(command)) {
     return "nemoclaw-security-inventory-ok";
   }
-  if (/^docker run --rm --entrypoint \/usr\/bin\/ldd \S+ --version$/.test(normalized)) {
+  if (
+    normalized.startsWith("docker run ") &&
+    normalized.includes(" --entrypoint /usr/bin/ldd ") &&
+    normalized.endsWith(" --version")
+  ) {
     return "ldd (GNU libc) 2.41";
   }
   return mockSandboxExecCurl(command, options);
@@ -175,8 +179,40 @@ function mockStandaloneGatewayTeardownAuthority() {
   });
 }
 
+function mockManagedImageFallback() {
+  const catalog = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
+  );
+  catalog.resolveManagedImageCatalogFromGhcr = async () => {
+    throw new catalog.ManagedImageCatalogUnavailableError(
+      "integration fixture intentionally exercises the trusted Dockerfile fallback",
+    );
+  };
+
+  const dockerProvider = require(
+    path.resolve(__dirname, "../../src/lib/onboard/runtime-provider/docker.ts"),
+  );
+  const createDockerRuntimeProviderBundle = dockerProvider.createDockerRuntimeProviderBundle;
+  dockerProvider.createDockerRuntimeProviderBundle = (...args) => {
+    const bundle = createDockerRuntimeProviderBundle(...args);
+    return {
+      ...bundle,
+      workload: {
+        ...bundle.workload,
+        profile: {
+          ...bundle.workload.profile,
+          managedImageSelectionPolicy: "prefer-managed",
+        },
+      },
+    };
+  };
+}
+
+process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFallback();
+
 module.exports = {
   isOpenClawSecurityInventoryProbe,
+  mockManagedImageFallback,
   mockOnboardRunCapture,
   mockSandboxExecCurl,
   mockStandaloneGatewayTeardownAuthority,

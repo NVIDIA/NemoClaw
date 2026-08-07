@@ -40,6 +40,7 @@ describe("OpenClaw final image layout", () => {
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
+    const entrypoint = fs.readFileSync(path.join(ROOT, "scripts", "nemoclaw-start.sh"), "utf-8");
     const payloads = [
       {
         stage: "openclaw-dependency-payload",
@@ -74,6 +75,7 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts",
           "COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts",
           "COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts",
+          "COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts",
           "COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts",
           "COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts",
           "COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts",
@@ -124,6 +126,12 @@ describe("OpenClaw final image layout", () => {
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(hasBuildKitRunMount(dockerfile)).toBe(false);
     expectManagedBootstrapNativeImageContract(dockerfile);
+    expect(finalStage).not.toMatch(/^\s*ENV\b[^\n]*(?:\\\n[^\n]*)*NODE_OPTIONS=/mu);
+    expect(finalStage).toContain("RUN NODE_OPTIONS=--dns-result-order=ipv4first \\");
+    expect(entrypoint).toContain('export NODE_OPTIONS="--dns-result-order=ipv4first"');
+    expect(
+      indexOfRequired(entrypoint, 'export NODE_OPTIONS="--dns-result-order=ipv4first"'),
+    ).toBeLessThan(indexOfRequired(entrypoint, "# managed-entrypoint-env-wrapper begin"));
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
       expect(stage?.match(/^COPY\b.*$/gmu)).toEqual(payload.copies);
@@ -133,6 +141,7 @@ describe("OpenClaw final image layout", () => {
       "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
       dependencyCopy,
       "COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/",
+      "COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh",
       pluginCopy,
       patchCopy,
       runtimeCopy,
@@ -172,7 +181,10 @@ describe("OpenClaw final image layout", () => {
       finalStage,
       "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
     );
-    const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
+    const pluginInstall = indexOfRequired(
+      finalStage,
+      "RUN NODE_OPTIONS=--dns-result-order=ipv4first \\",
+    );
     const managedMessagingUnionInstall = indexOfRequired(
       finalStage,
       "--agent openclaw --phase managed-image-capability-union",

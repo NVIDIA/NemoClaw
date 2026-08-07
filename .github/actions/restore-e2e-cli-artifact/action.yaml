@@ -58,8 +58,12 @@ runs:
           { echo "::error::consumer checkout does not match the producer candidate SHA"; exit 1; }
         [[ "$workflow_sha" == "$CALLER_WORKFLOW_SHA" ]] ||
           { echo "::error::consumer and producer workflow SHAs differ"; exit 1; }
-        [[ "$run_id" == "$GITHUB_RUN_ID" && "$run_attempt" == "$GITHUB_RUN_ATTEMPT" ]] ||
-          { echo "::error::consumer and producer workflow run identities differ"; exit 1; }
+        [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] ||
+          { echo "::error::consumer workflow run attempt is invalid"; exit 1; }
+        [[ "$run_id" == "$GITHUB_RUN_ID" ]] ||
+          { echo "::error::consumer and producer workflow run IDs differ"; exit 1; }
+        (( run_attempt <= GITHUB_RUN_ATTEMPT )) ||
+          { echo "::error::producer workflow attempt is newer than the consumer attempt"; exit 1; }
 
         remote_url="$(git remote get-url origin)"
         case "$remote_url" in
@@ -78,10 +82,12 @@ runs:
           "candidate_repository=" + .candidateRepository,
           "candidate_sha=" + .candidateSha,
           "payload_sha256=" + .payloadSha256,
+          "producer_run_attempt=" + .runAttempt,
           "run_attempt=" + .runAttempt,
           "run_id=" + .runId,
           "workflow_sha=" + .workflowSha
         ' <<<"$PROVENANCE_JSON" >>"$GITHUB_OUTPUT"
+        printf 'consumer_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >>"$GITHUB_OUTPUT"
 
     - name: Download exact-commit CLI artifact
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -96,7 +102,7 @@ runs:
         CANDIDATE_REPOSITORY: ${{ steps.identity.outputs.candidate_repository }}
         CANDIDATE_SHA: ${{ steps.identity.outputs.candidate_sha }}
         PAYLOAD_SHA256: ${{ steps.identity.outputs.payload_sha256 }}
-        RUN_ATTEMPT: ${{ steps.identity.outputs.run_attempt }}
+        PRODUCER_RUN_ATTEMPT: ${{ steps.identity.outputs.producer_run_attempt }}
         RUN_ID: ${{ steps.identity.outputs.run_id }}
         WORKFLOW_SHA: ${{ steps.identity.outputs.workflow_sha }}
       shell: bash
@@ -117,7 +123,7 @@ runs:
           --arg candidateSha "$CANDIDATE_SHA" \
           --arg lockfileSha256 "$lockfile_sha256" \
           --arg payloadSha256 "$PAYLOAD_SHA256" \
-          --arg runAttempt "$RUN_ATTEMPT" \
+          --arg runAttempt "$PRODUCER_RUN_ATTEMPT" \
           --arg runId "$RUN_ID" \
           --arg sourceTree "$source_tree" \
           --arg workflowSha "$WORKFLOW_SHA" \

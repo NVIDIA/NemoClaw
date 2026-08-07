@@ -166,11 +166,15 @@ describe("onboard command options", () => {
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
+    const managedCatalogPath = path.join(tmpDir, "managed-catalog.json");
     fs.writeFileSync(dockerfilePath, "FROM scratch\n");
+    fs.writeFileSync(managedCatalogPath, "{}\n");
 
     expect(
       resolve(
         {
+          "temp-managed-runtime": true,
+          "temp-managed-runtime-catalog": managedCatalogPath,
           "non-interactive": true,
           resume: true,
           "recreate-sandbox": true,
@@ -190,6 +194,8 @@ describe("onboard command options", () => {
         { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
       ),
     ).toEqual({
+      tempManagedRuntime: true,
+      tempManagedRuntimeCatalog: managedCatalogPath,
       nonInteractive: true,
       resume: true,
       fresh: false,
@@ -216,6 +222,8 @@ describe("onboard command options", () => {
 
   it("uses explicit false/null defaults when flags are absent", () => {
     expect(resolve({})).toEqual({
+      tempManagedRuntime: false,
+      tempManagedRuntimeCatalog: null,
       nonInteractive: false,
       resume: false,
       fresh: false,
