@@ -120,6 +120,7 @@ echo
 After the instance exists, copy and remove the local file:
 
 ```bash
+PROVIDER_CREDENTIAL_MAY_BE_REMOTE=1
 if ! run_bounded brev copy "$PROVIDER_KEY_FILE" "$INSTANCE_NAME":~/.verify-stale-evidence/provider-key; then
   rm -f "$PROVIDER_KEY_FILE"
   unset PROVIDER_KEY_FILE
@@ -127,7 +128,6 @@ if ! run_bounded brev copy "$PROVIDER_KEY_FILE" "$INSTANCE_NAME":~/.verify-stale
   exit 1
 fi
 
-PROVIDER_CREDENTIAL_COPIED=1
 rm -f "$PROVIDER_KEY_FILE"
 unset PROVIDER_KEY_FILE
 if ! run_bounded brev exec "$INSTANCE_NAME" 'chmod 600 ~/.verify-stale-evidence/provider-key'; then

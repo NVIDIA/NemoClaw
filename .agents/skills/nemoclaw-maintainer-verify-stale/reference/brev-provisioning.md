@@ -225,7 +225,7 @@ cleanup_verification() {
   fi
   if [ "$cleanup_failed" = "1" ]; then
     echo "ERROR: cleanup was not confirmed for $INSTANCE_NAME; do not reuse this instance" >&2
-    if [ "${PROVIDER_CREDENTIAL_COPIED:-0}" = "1" ]; then
+    if [ "${PROVIDER_CREDENTIAL_MAY_BE_REMOTE:-0}" = "1" ]; then
       echo "ERROR: rotate $PROVIDER_CREDENTIAL_ENV immediately because the provider credential might remain on $INSTANCE_NAME" >&2
     fi
   fi

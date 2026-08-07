@@ -392,7 +392,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(stale).toContain(".name // .workspaceName // .instanceName");
     expect(stale).toContain("integration: dcode");
     expect(stale).toContain("Do not default a LangChain Deep Agents Code reproducer to OpenClaw");
-    expect(stale).toContain("PROVIDER_CREDENTIAL_COPIED=1");
+    expect(stale).toContain("PROVIDER_CREDENTIAL_MAY_BE_REMOTE=1");
     expect(stale).toContain("rotate $PROVIDER_CREDENTIAL_ENV immediately");
     expect(stale).toContain("RESOLVED_TAG_MISMATCH=1");
     expect(stale).toContain("Do not propose or post a GitHub comment");
@@ -406,7 +406,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(stale).not.toContain("NEMOCLAW_MODEL=${NEMOCLAW_MODEL:-nemotron-3-nano:4b}");
   });
 
-  it("exits nonzero and requires credential rotation when cleanup cannot be confirmed", () => {
+  it("exits nonzero and requires rotation when credential copy and cleanup cannot be confirmed", () => {
     const stale = readMarkdownTree(".agents/skills/nemoclaw-maintainer-verify-stale");
     const cleanupFunction = stale.match(
       /(cleanup_verification\(\) \{[\s\S]*?\n\})\nfinish_verification/u,
@@ -414,8 +414,14 @@ describe("maintainer skills follow canonical workflow policy", () => {
     const finishFunction = stale.match(
       /(finish_verification\(\) \{[\s\S]*?\n\})\ntrap finish_verification EXIT/u,
     );
+
+    const copyBlock = stale.match(
+      /(PROVIDER_CREDENTIAL_MAY_BE_REMOTE=1\nif ! run_bounded brev copy[\s\S]*?\nfi)/u,
+    );
     expect(cleanupFunction).not.toBeNull();
     expect(finishFunction).not.toBeNull();
+
+    expect(copyBlock).not.toBeNull();
 
     const cleanupResult = spawnSync("bash", [], {
       encoding: "utf8",
@@ -423,19 +429,22 @@ describe("maintainer skills follow canonical workflow policy", () => {
 ${cleanupFunction?.[1] ?? ""}
 ${finishFunction?.[1] ?? ""}
 run_with_timeout() { return 1; }
+run_bounded() { return 1; }
 instance_is_absent() { return 1; }
 cleanup_local_evidence() { :; }
 PROVISIONED_NEW=1
 KEEP_INSTANCE=0
 REMOTE_STATE_CREATED=1
-PROVIDER_CREDENTIAL_COPIED=1
 PROVIDER_CREDENTIAL_ENV=OPENAI_API_KEY
 INSTANCE_NAME=verify-stale-test
+PROVIDER_KEY_FILE=$(mktemp)
 trap finish_verification EXIT
-true
+${copyBlock?.[1] ?? ""}
 `,
     });
     expect(cleanupResult.status, cleanupResult.stderr).toBe(1);
+
+    expect(cleanupResult.stdout).toContain("credential copy failed; abort this verification");
     expect(cleanupResult.stderr).toContain(
       "cleanup was not confirmed for verify-stale-test; do not reuse this instance",
     );
