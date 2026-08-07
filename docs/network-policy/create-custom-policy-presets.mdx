@@ -99,6 +99,9 @@ NemoClaw combines the environment list with any `--trusted-private-host` options
 It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
 
 After schema validation, NemoClaw resolves each declared endpoint and inserts every validated address as an exact `allowed_ips` value in memory.
+An exact trusted host can return both public and supported private addresses.
+NemoClaw pins every canonical answer.
+If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the preset instead of discarding that answer.
 The dry-run output shows the generated pins for review.
 NemoClaw applies and records the transformed preset instead of the unpinned source file.
 Rebuild replays recorded pins from the sandbox registry without depending on the ambient environment.
