@@ -231,10 +231,14 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 
 Apply presets only when the agent's task requires the integration.
 Review the preset's YAML file before applying to understand the endpoints, methods, and binary restrictions it adds.
-The OpenClaw baseline npm route remains GET-only until the `npm` preset is active. Adding that
-preset temporarily gives the overlapping baseline route the same L4 transport while preserving its
-`openclaw`-only binary scope; removing the preset restores the reviewed GET-only baseline entry.
+<AgentOnly variant="openclaw">
+If the OpenClaw baseline includes `npm_registry`, that route remains GET-only until the `npm` preset is active.
+Adding that preset temporarily gives the overlapping baseline route the same L4 transport while preserving its `openclaw`-only binary scope.
+Removing the preset restores the exact reviewed GET-only baseline entry.
+If you excluded `npm_registry`, adding or removing `npm` preserves that exclusion and does not recreate the baseline route.
+When no exclusion exists, NemoClaw refuses the npm change if the live baseline differs from the reviewed GET-only entry or compatibility overlay.
 The preset separately grants that registry transport to its listed npm, Yarn, and Node executables.
+</AgentOnly>
 
 <Warning title="Personal Tier">
 The Personal tier selects `personal-open-internet` and every maintained preset supported by the active agent.

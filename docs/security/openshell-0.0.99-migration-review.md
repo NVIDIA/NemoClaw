@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# OpenShell 0.0.85 to 0.0.99 migration review
+# OpenShell 0.0.85 to 0.0.99 Migration Review
 
-## Status and decision
+## Status and Decision
 
 This review covers the complete public source boundary from the previously supported OpenShell
 `v0.0.85` commit `3dee5570a46076a57a3b056f35f35ebc0861ac85` through the published
@@ -16,7 +16,7 @@ exact pinned artifacts passing NemoClaw's managed activation and live E2E lanes.
 the previously observed `0.0.85` activation mismatch is part of this upgrade's completion, not a
 waived unrelated failure.
 
-## Audit method and exact boundary
+## Audit Method and Exact Boundary
 
 The repository-owned release-ledger collector enumerated every adjacent tag, commit, and changed
 path from a full clone of the canonical `NVIDIA/OpenShell` repository. All 14 adjacent source ranges
@@ -57,7 +57,7 @@ The complete audited commit set, grouped by adjacent range, is:
 - `97->98`: 704880e5 0a3ec7a1 83284129
 - `98->99`: b9818619 0e9a44cf 4d55265f d063751c 53780556 490f66f4 8c7dd148
 
-## Consumed release artifacts
+## Consumed Release Artifacts
 
 NemoClaw consumes only the published `v0.0.99` release and pins both archive and extracted-binary
 identities. Archive SHA-256 values are:
@@ -82,7 +82,7 @@ its amd64 and arm64 child digests are respectively
 `sha256:4adea8392a81ef34b3cc3284e693ac3cc6c13362fad84a492d95b53b3eb403b9`
 and `sha256:b548fd939331d830cd9197f20fca9a5d95383c5e67f64929d632a37403115f38`.
 
-## Credential and policy boundary
+## Credential and Policy Boundary
 
 The reviewed credential sources are `google_cloud.rs`, `provider_credentials.rs`, and
 `secrets.rs`. The only credential-relevant behavioral delta is safer expiry handling: expired
@@ -97,7 +97,7 @@ listener negotiation, proxy consolidation, Landlock changes, and system CA mode 
 security boundary. NemoClaw retains its stricter explicit policy and runtime validation rather
 than enabling optional upstream behavior implicitly.
 
-## Downstream concern ledger
+## Downstream Concern Ledger
 
 | ID | Concern | Disposition |
 | --- | --- | --- |
@@ -117,42 +117,45 @@ than enabling optional upstream behavior implicitly.
 | `OS99-14` | Routable sandbox names are capped at 19 characters | NemoClaw's canonical validation uses the same 19-character limit, and generated activation names fit it. Exact all-agent activation remains a final acceptance gate. |
 | `OS99-15` | The Docker driver records the immutable image content ID in `Config.Image` | Managed bootstrap accepts either the reviewed `repository@manifestDigest` or its exact runtime content ID, while separately requiring Docker to prove that the manifest resolves to that content ID. |
 | `OS99-16` | The Docker driver appends `--workdir /sandbox` to the supervisor command | Managed bootstrap requires that exact v0.0.99 supervisor argv before replacing the held workload. |
-| `OS99-17` | Overlapping endpoint selectors with conflicting connection or request metadata are rejected before policy activation | The OpenClaw baseline npm route remains GET-only in Restricted and temporarily adopts the reviewed npm preset's L4 metadata while that preset is active. Homebrew's overlapping GitHub routes use automatic TLS, and Outlook matches Teams' request-body credential-rewrite setting on shared Microsoft endpoints. Focused composition coverage protects each compatibility decision. |
+| `OS99-17` | Overlapping endpoint selectors with conflicting connection or request metadata are rejected before policy activation | The OpenClaw baseline npm route remains GET-only in Restricted and temporarily adopts the reviewed npm preset's L4 metadata while that preset is active. An approved baseline exclusion remains absent, and unexpected live drift stops the npm change. Homebrew's overlapping GitHub routes use automatic TLS, and Outlook matches Microsoft Teams' request-body credential-rewrite setting on shared Microsoft endpoints. Focused composition coverage protects each compatibility decision. |
 
 An unresolved critical or high concern blocks the upgrade. Test selection cannot waive a concern;
 conditional skips and expected failures do not count as qualification evidence.
 
-## The 0.0.85 activation failure
+## The 0.0.85 Activation Failure
 
 The failing activation compared Docker inspect output produced through different clients. The
 OpenShell API-created held workload serialized `AttachStdout=false`, `AttachStderr=false`, and
 `PortBindings=null`; the Docker CLI-created equivalent serialized `true`, `true`, and `{}`. Those
 values are creation-client markers or equivalent empty defaults, not durable workload identity.
 NemoClaw now normalizes them before hashing. It still refuses any non-empty port binding because
-the managed clone cannot reproduce that behavior exactly. Unit coverage proves both equivalence
-and the rejection path; exact `0.0.85 -> 0.0.99` live activation remains required.
+the managed clone cannot reproduce that behavior exactly. Unit tests prove both equivalence and
+the rejection path; exact `0.0.85 -> 0.0.99` live activation remains required.
 
 OpenShell 0.0.99 also validates the complete effective network policy before activation. Several
 previously accepted overlaps used incompatible metadata: the OpenClaw baseline and npm preset
 selected different TLS/L7 handling for `registry.npmjs.org`; Homebrew conflicted with agent routes
-on `github.com` and `raw.githubusercontent.com`; and Teams and Outlook disagreed on credential-body
-rewriting for shared Microsoft endpoints. NemoClaw preserves the GET-only npm baseline in
-Restricted, temporarily applies the npm preset's reviewed L4 metadata to that baseline route while
-the preset is active, and restores the exact baseline on removal. Homebrew's overlapping GitHub
-routes remain plain L4 endpoints with automatic TLS, while Outlook now matches Teams' rewrite
-setting. The npm baseline keeps its OpenClaw-only binary scope, but its GET-only method/path
-inspection is intentionally unavailable until npm is removed; the other routes retain their
-separate binary allowlists and authorization rules.
+on `github.com` and `raw.githubusercontent.com`; and Microsoft Teams and Outlook disagreed on
+request-body credential rewriting for shared Microsoft endpoints. NemoClaw preserves the GET-only
+npm baseline in Restricted. While the preset is active, NemoClaw temporarily applies the npm
+preset's reviewed L4 metadata to that baseline route and restores the exact baseline on removal.
+An approved `npm_registry` baseline exclusion remains absent through both operations. NemoClaw
+refuses the change if the live baseline differs from its reviewed GET-only entry, compatibility
+overlay, or approved excluded state. Homebrew's overlapping GitHub routes remain plain L4 endpoints
+with automatic TLS, while Outlook now matches Microsoft Teams' rewrite setting. The npm baseline
+keeps its OpenClaw-only binary scope, but its GET method and path inspection is intentionally
+unavailable until npm is removed. The other routes retain their separate binary allowlists and
+authorization rules.
 
-## Final acceptance gates
+## Final Acceptance Gates
 
 - All active CLI, blueprint, installer, Brev, workflow, supervisor, and sandbox selectors agree on
   `0.0.99` and exact reviewed identities.
 - The `v0.0.99` credential-boundary manifest is the active manifest and its source commit is exact.
-- Static checks, focused lifecycle tests, CLI/plugin builds, and documentation checks pass.
+- Static checks, focused lifecycle tests, CLI and plugin builds, and documentation checks pass.
 - Default OpenClaw policy composition activates without endpoint-metadata ambiguity while retaining
   the reviewed binary scopes for npm, Homebrew, and pricing traffic.
 - Managed Docker and Podman activation, lifecycle, policy, credential, inference, and MCP E2E run
   against the exact pinned release without conditional skips or expected failures.
-- A supported host with no prior NemoClaw state demonstrates the `0.0.85 -> 0.0.99` activation transition, including the
-  previously failing Docker-spec comparison.
+- On a supported host that starts with no NemoClaw state, the activation lane creates the `0.0.85`
+  state and completes its `0.0.99` transition, including the previously failing Docker-spec comparison.
