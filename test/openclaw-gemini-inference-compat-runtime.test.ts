@@ -88,7 +88,8 @@ const suite = dockerProbe.status === 0 ? describe : describe.skip;
 
 let contextDir: string;
 let imageTag: string;
-let imageBuilt = false;
+let cleanupContext = () => {};
+let cleanupImage = () => {};
 
 function generateConfig(): string {
   const homeDir = path.join(contextDir, "home");
@@ -120,6 +121,7 @@ function generateConfig(): string {
 suite("OpenClaw Gemini managed-route runtime compatibility", () => {
   beforeAll(() => {
     contextDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gemini-runtime-"));
+    cleanupContext = () => fs.rmSync(contextDir, { recursive: true, force: true });
     imageTag = `nemoclaw-gemini-runtime-${process.pid}-${Date.now()}`;
 
     fs.cpSync(
@@ -149,19 +151,17 @@ suite("OpenClaw Gemini managed-route runtime compatibility", () => {
       timeout: 120_000,
     });
     expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
-    imageBuilt = true;
-  }, 130_000);
-
-  afterAll(() => {
-    if (imageBuilt) {
+    cleanupImage = () => {
       dockerSpawnSync(["image", "rm", "--force", imageTag], {
         stdio: "ignore",
         timeout: 30_000,
       });
-    }
-    if (contextDir) {
-      fs.rmSync(contextDir, { recursive: true, force: true });
-    }
+    };
+  }, 130_000);
+
+  afterAll(() => {
+    cleanupImage();
+    cleanupContext();
   });
 
   it("loads the generated plugin and classifies managed inference as Google Generative AI (#8474)", () => {
