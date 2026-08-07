@@ -4390,6 +4390,25 @@ Then open `http://localhost:16686` and select the `openclaw-gateway` service.
 The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` (and subpaths) to `host.openshell.internal:4318` from `openclaw` and `node`.
 For a remote collector, create a custom preset for the collector host and port instead of using the local host-gateway preset.
 
+### OpenClaw MCP Tool Discovery Timeout
+
+Set `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` before onboarding or rebuilding an OpenClaw sandbox to override its `tools/list` timeout.
+The setting accepts an integer from `1500` through `10000` milliseconds.
+When unset or blank, NemoClaw adds no override; OpenClaw uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
+The override applies to catalog `tools/list` requests for every MCP server in that sandbox and takes precedence over a server-specific request timeout.
+It does not change connection timeouts or the separate MCP tool-call request timeout, which defaults to 60,000 ms.
+NemoClaw rejects an invalid value before the sandbox create step, including the replacement create step during rebuild.
+
+For an existing sandbox, apply a 3,000 ms timeout:
+
+```bash
+export NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000
+$$nemoclaw <sandbox> rebuild
+```
+
+OpenClaw writes `mcp_tools_list_timeout_override_ms=3000` when the MCP runtime loads.
+Refer to [Troubleshoot MCP Servers](troubleshoot-mcp-servers#adjust-the-tool-discovery-timeout) for the incremental test and rollback procedure.
+
 </AgentOnly>
 
 ### Probe Timeouts
