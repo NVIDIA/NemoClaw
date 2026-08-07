@@ -296,6 +296,47 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it.each([
+    401, 403, 404,
+  ])("rejects HTTP %i from inference.local for an Ollama recovery path (#8502)", async (httpStatus) => {
+    const response = `OK ${String(httpStatus)}`;
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+      inferenceProbeResponses: [response, response],
+      registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "inference.local/v1/models must return HTTP 2xx",
+    );
+    expect(harness.probeLocalProviderHealthSpy).toHaveBeenCalledWith("ollama-local", {
+      skipOllamaAuthProxySubprobe: true,
+    });
+    expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalledTimes(1);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("rechecks HTTP 2xx after repairing an Ollama inference route (#8502)", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+      inferenceProbeResponses: ["BROKEN 503", "OK 401", "OK 401"],
+      registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runSetupDnsProxySpy).toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "inference.local/v1/models must return HTTP 2xx",
+    );
+  });
+
   it("fails closed with actionable diagnostics when the initial route probe is inconclusive (#6192)", async () => {
     const longProbeDetail = `route probe unavailable NVIDIA_API_KEY=super-secret ${"x".repeat(400)}`;
     const harness = createConnectHarness({

@@ -22,7 +22,7 @@ NemoClaw detects Ollama on the host and can install, start, or upgrade it on sup
 
 ## Install or Upgrade Ollama
 
-If Ollama is installed but not started, NemoClaw starts it for you.
+During onboarding, if Ollama is installed but not started, NemoClaw starts it for you.
 On macOS and Linux, the wizard can offer to install Ollama when it is not present.
 
 When either the Ollama CLI or running daemon is below the minimum version for the starter models, currently `0.7.0`, the wizard displays an explicit **Upgrade Ollama** entry.
@@ -57,10 +57,12 @@ For ordinary user-local installs, restart the daemon manually after a reboot.
 For a sandbox created with the portable experimental profile, `$$nemoclaw <name> connect --probe-only` and `$$nemoclaw <name> recover` can restart the user-local daemon that NemoClaw installed.
 Before it decides whether to start Ollama, recovery probes `http://127.0.0.1:11434/api/tags`.
 If the API is unhealthy, recovery starts Ollama only when the sandbox records `ollama-local` and a valid ownership receipt names the fixed regular executable.
+NemoClaw releases that predate this receipt do not claim an existing executable after an upgrade.
+To authorize recovery for a previous NemoClaw user-local install, first verify that `${HOME}/.local/bin/ollama` is the executable you want NemoClaw to manage, then run `NEMOCLAW_PORTABLE_OLLAMA_REENROLL=1 nemoclaw <name> recover` once.
+The command rejects a symlink or non-executable file before it records ownership.
 It refuses to launch a duplicate when another `ollama` process exists but the API is unhealthy.
 After it launches the daemon, it waits up to 30 seconds for `/api/tags` to return valid JSON with a `models` array.
-Recovery then requires a trusted reachable result from the sandbox `inference.local` route.
-When route repair needs the local Ollama dependency check, it verifies or recovers the authenticated proxy before it retries `inference.local`.
+Recovery then verifies the authenticated proxy and requires HTTP 2xx from the sandbox `inference.local/v1/models` route.
 If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
 The command exits non-zero with recovery guidance when startup or route validation fails.
 It does not start, stop, or replace a system service or another user-managed Ollama daemon.
