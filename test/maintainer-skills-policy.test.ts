@@ -404,15 +404,24 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(stale).not.toContain("/tmp/nemoclaw-tags.txt");
     expect(stale).not.toContain('touch "$SENTINEL"');
     expect(stale).not.toContain("NEMOCLAW_MODEL=${NEMOCLAW_MODEL:-nemotron-3-nano:4b}");
+  });
 
+  it("exits nonzero and requires credential rotation when cleanup cannot be confirmed", () => {
+    const stale = readMarkdownTree(".agents/skills/nemoclaw-maintainer-verify-stale");
     const cleanupFunction = stale.match(
-      /(cleanup_verification\(\) \{[\s\S]*?\n\})\ntrap cleanup_verification EXIT/u,
+      /(cleanup_verification\(\) \{[\s\S]*?\n\})\nfinish_verification/u,
+    );
+    const finishFunction = stale.match(
+      /(finish_verification\(\) \{[\s\S]*?\n\})\ntrap finish_verification EXIT/u,
     );
     expect(cleanupFunction).not.toBeNull();
+    expect(finishFunction).not.toBeNull();
+
     const cleanupResult = spawnSync("bash", [], {
       encoding: "utf8",
       input: `
 ${cleanupFunction?.[1] ?? ""}
+${finishFunction?.[1] ?? ""}
 run_with_timeout() { return 1; }
 instance_is_absent() { return 1; }
 cleanup_local_evidence() { :; }
@@ -422,7 +431,8 @@ REMOTE_STATE_CREATED=1
 PROVIDER_CREDENTIAL_COPIED=1
 PROVIDER_CREDENTIAL_ENV=OPENAI_API_KEY
 INSTANCE_NAME=verify-stale-test
-cleanup_verification
+trap finish_verification EXIT
+true
 `,
     });
     expect(cleanupResult.status, cleanupResult.stderr).toBe(1);
@@ -430,9 +440,11 @@ cleanup_verification
       "cleanup was not confirmed for verify-stale-test; do not reuse this instance",
     );
     expect(cleanupResult.stderr).toContain(
-      "rotate OPENAI_API_KEY immediately because provider-key might remain",
+      "rotate OPENAI_API_KEY immediately because the provider credential might remain on verify-stale-test",
     );
+  });
 
+  it("redacts credential material and incidental PII from stale-verification evidence", () => {
     const redactor = path.join(
       root,
       ".agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py",
@@ -440,7 +452,6 @@ cleanup_verification
     const standaloneBearer = `opaque-${"h".repeat(40)}`;
     const jwt = `eyJ${"j".repeat(12)}.${"k".repeat(12)}.${"l".repeat(12)}`;
     const base64Blob = "Q".repeat(64);
-
     const awsAccessKey = `AKIA${"1".repeat(16)}`;
     const redactionCases = [
       { input: `jwt=${jwt}`, secret: jwt },

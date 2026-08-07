@@ -226,13 +226,21 @@ cleanup_verification() {
   if [ "$cleanup_failed" = "1" ]; then
     echo "ERROR: cleanup was not confirmed for $INSTANCE_NAME; do not reuse this instance" >&2
     if [ "${PROVIDER_CREDENTIAL_COPIED:-0}" = "1" ]; then
-      echo "ERROR: rotate $PROVIDER_CREDENTIAL_ENV immediately because provider-key might remain" >&2
+      echo "ERROR: rotate $PROVIDER_CREDENTIAL_ENV immediately because the provider credential might remain on $INSTANCE_NAME" >&2
     fi
   fi
   cleanup_local_evidence
   [ "$cleanup_failed" = "0" ]
 }
-trap cleanup_verification EXIT
+finish_verification() {
+  local original_status=$?
+  trap - EXIT
+  if ! cleanup_verification; then
+    exit 1
+  fi
+  exit "$original_status"
+}
+trap finish_verification EXIT
 
 if [ -z "$EXISTING" ]; then
   PROVISIONED_NEW=1
