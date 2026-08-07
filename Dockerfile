@@ -152,6 +152,7 @@ COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openc
 COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
+COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
 COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
@@ -402,6 +403,7 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
@@ -1050,12 +1052,25 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-n
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
+# Keep OpenClaw's 1,500 ms tools/list catalog timeout by default. A validated
+# OpenClaw sandbox runtime setting can override only this discovery budget from
+# 1,500 ms through 10,000 ms. Invalid direct runtime values stop OpenClaw before
+# it connects to an MCP server.
+#
+# Removal criterion: drop when upstream OpenClaw exposes an equivalent bounded
+# tools/list-only runtime setting.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
 # Emit a redacted managed-transport diagnostic when a remote Streamable HTTP MCP
 # request fails. OpenClaw 2026.7.1 surfaces only the transport error text, which
 # does not say whether policy, CONNECT, TLS, the upstream connection, the
 # request, or response headers failed. The fetch-boundary wrapper is
-# failure-only, never retries, never alters the request, and never reads a 2xx
-# body, so streaming responses stay behaviorally unchanged. It is inert unless
+# failure-only by default, never retries, never alters the request, and never
+# reads a 2xx body, so streaming responses stay behaviorally unchanged. Successful request
+# timing is silent unless NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1 is explicitly
+# forwarded into an OpenClaw sandbox. The wrapper is inert unless
 # OPENSHELL_SANDBOX=1.
 #
 # Removal criterion: drop when upstream OpenClaw emits phase-classified,

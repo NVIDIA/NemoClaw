@@ -342,6 +342,16 @@ The router selects from the configured pool, then calls the upstream NVIDIA endp
 Some model and provider combinations need agent-specific compatibility setup.
 NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so fixes for each supported agent can be tested and reviewed independently.
 
+### Managed Inference Catalog
+
+Managed inference profiles use definitions under `managed-inference/presets/` and `managed-inference/recipes/`.
+The catalog compiler validates those definitions and includes them in the packaged runtime catalog.
+
+For a managed-cluster recipe, the `nodeCount` field declares cluster cardinality.
+Registered managed-cluster TypeScript adapters validate qualified topology and materialize each ranked node.
+Contributors can define a compatible managed-cluster profile that uses an existing execution contract with preset and recipe YAML.
+A managed-cluster profile that needs a different execution contract requires a registered adapter.
+
 Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider configuration details.
 
 ## Provider Credential Storage

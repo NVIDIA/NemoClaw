@@ -19,6 +19,7 @@ import {
 } from "../docker-gpu-route";
 import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
+import { managedImageRuntimeIdentity } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
@@ -405,7 +406,7 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
       repository: input.workload.source.contract.image,
       manifestDigest: input.workload.source.contract.digest,
     },
-    agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    agentIdentity: managedImageRuntimeIdentity(input.workload.source.contract.agent),
     intendedWorkloadArgv: input.intendedWorkloadArgv,
     expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
   } as const;

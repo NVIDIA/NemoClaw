@@ -268,6 +268,21 @@ describe("Docker managed bootstrap journal", () => {
     expect(restarted.load(IDENTITY)).toBeNull();
   });
 
+  it("retains rollback authority after owner cleanup becomes required", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const first = createFileDockerManagedBootstrapJournalStore(root);
+    first.create(journal);
+    first.transition(IDENTITY, "staged", "cutover");
+    first.transition(IDENTITY, "cutover", "rollback-authorized");
+    const retained = first.transition(IDENTITY, "rollback-authorized", "owner-cleanup-required");
+
+    const restarted = createFileDockerManagedBootstrapJournalStore(root);
+    expect(restarted.load(IDENTITY)).toEqual(retained);
+    restarted.remove(IDENTITY, ["owner-cleanup-required"]);
+    expect(restarted.load(IDENTITY)).toBeNull();
+  });
+
   it("recovers one durable cutover decision before journal replacement", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
