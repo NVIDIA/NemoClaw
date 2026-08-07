@@ -5,39 +5,61 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-const START_SCRIPT = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "agents",
-  "langchain-deepagents-code",
-  "start.sh",
-);
+const repoRoot = path.join(import.meta.dirname, "..", "..");
+const START_SCRIPT = path.join(repoRoot, "agents", "langchain-deepagents-code", "start.sh");
+const ENTRYPOINT_ENV_WRAPPER = path.join(repoRoot, "scripts", "lib", "entrypoint-env-wrapper.sh");
 
-export function makeStartScriptFixture(tempDir: string): {
-  envFile: string;
-  scriptPath: string;
-} {
-  const envFile = path.join(tempDir, "proxy-env.sh");
-  const scriptPath = path.join(tempDir, "start.sh");
-  const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
-  const entrypointEnvWrapper = path.join(
-    import.meta.dirname,
-    "..",
-    "..",
-    "scripts",
-    "lib",
-    "entrypoint-env-wrapper.sh",
+export type ManagedProxyEndpoint = { host: string; port: string };
+
+export const DEFAULT_MANAGED_PROXY: ManagedProxyEndpoint = { host: "10.200.0.1", port: "3128" };
+
+export type ManagedProxyScriptOptions = {
+  installRlimitHelper?: (rlimitLib: string) => void;
+  managedProxy?: ManagedProxyEndpoint;
+};
+
+export type StartScriptFixtureOptions = ManagedProxyScriptOptions & {
+  envDir?: string;
+  markerDir?: string;
+};
+
+export function dcodeStateDir(tempDir: string): string {
+  return path.join(tempDir, "persistent-dcode-state");
+}
+
+function writeRlimitStub(rlimitLib: string): void {
+  fs.writeFileSync(
+    rlimitLib,
+    "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
+    "utf8",
   );
+}
+
+function writeReadOnlyFile(file: string, contents: string): void {
+  fs.rmSync(file, { force: true });
+  fs.writeFileSync(file, contents, "utf8");
+  fs.chmodSync(file, 0o444);
+}
+
+export function prepareManagedProxyFixture(
+  source: string,
+  tempDir: string,
+  options: ManagedProxyScriptOptions = {},
+): string {
+  const managedProxy = options.managedProxy ?? DEFAULT_MANAGED_PROXY;
+  const installRlimitHelper = options.installRlimitHelper ?? writeRlimitStub;
+  const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
   const caFile = path.join(tempDir, "trusted-ca-bundle.pem");
-  const original = fs.readFileSync(START_SCRIPT, "utf8");
-  assert.ok(original.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
-  assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
-  const fixture = original
-    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
+  writeReadOnlyFile(hostFile, `${managedProxy.host}\n`);
+  writeReadOnlyFile(portFile, `${managedProxy.port}\n`);
+  writeReadOnlyFile(caFile, "trusted CA bundle\n");
+  installRlimitHelper(rlimitLib);
+  return source
+    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENTRYPOINT_ENV_WRAPPER)
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+    .replace("../../scripts/lib/sandbox-rlimits.sh", "missing-dev-sandbox-rlimits.sh")
     .replaceAll("/run/nemoclaw/managed-startup-ca-bundle.pem", caFile)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
@@ -54,27 +76,48 @@ export function makeStartScriptFixture(tempDir: string): {
     .replace(
       "readonly MANAGED_PROXY_OWNER_UID=0",
       `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
-    )
+    );
+}
+
+export function makeStartScriptFixture(
+  tempDir: string,
+  options: StartScriptFixtureOptions = {},
+): {
+  envFile: string;
+  scriptPath: string;
+} {
+  const envDir = options.envDir ?? tempDir;
+  const envFile = path.join(envDir, "proxy-env.sh");
+  const scriptPath = path.join(tempDir, "start.sh");
+  const markerDir = options.markerDir;
+  const original = fs.readFileSync(START_SCRIPT, "utf8");
+  assert.ok(original.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
+  assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
+  assert.ok(original.includes("local marker_dir=/sandbox/.deepagents"));
+  fs.mkdirSync(envDir, { recursive: true });
+  const envRedirected = prepareManagedProxyFixture(original, tempDir, options)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
-      `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
+      `tmp="$(mktemp "${envDir}/nemoclaw-proxy-env.XXXXXX")"`,
     );
+  const markerRedirected =
+    markerDir === undefined
+      ? envRedirected
+      : envRedirected.replace(
+          "local marker_dir=/sandbox/.deepagents",
+          `local marker_dir="${markerDir}"`,
+        );
+  // macOS mv lacks GNU's --no-target-directory flag. Linux CI exercises the
+  // production command so a missing -T regression cannot be hidden here.
+  const fixture =
+    process.platform === "darwin"
+      ? markerRedirected.replace('mv -fT -- "$tmp" "$target"', 'mv -f "$tmp" "$target"')
+      : markerRedirected;
   assert.ok(fixture.includes(`local target="${envFile}"`));
-  assert.ok(fixture.includes(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`));
+  assert.ok(fixture.includes(`tmp="$(mktemp "${envDir}/nemoclaw-proxy-env.XXXXXX")"`));
   assert.ok(!fixture.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
   assert.ok(!fixture.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
-  fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
-  fs.writeFileSync(portFile, "3128\n", "utf8");
-  fs.writeFileSync(caFile, "trusted CA bundle\n", "utf8");
-  fs.writeFileSync(
-    rlimitLib,
-    "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
-    "utf8",
-  );
-  fs.chmodSync(hostFile, 0o444);
-  fs.chmodSync(portFile, 0o444);
-  fs.chmodSync(caFile, 0o444);
   fs.writeFileSync(scriptPath, fixture, "utf8");
   fs.chmodSync(scriptPath, 0o755);
   return { envFile, scriptPath };

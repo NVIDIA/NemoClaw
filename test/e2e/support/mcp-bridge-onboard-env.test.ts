@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildMcpBridgeExactMainEnv,
   buildMcpBridgeOnboardEnv,
+  requireMcpBridgeTlsCaCert,
 } from "../live/mcp-bridge-onboard-env.ts";
 
 const ONBOARD_OPTIONS = {
@@ -60,6 +61,22 @@ describe("MCP bridge onboarding environment", () => {
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: "/usr/local/bin/openshell-gateway",
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: "/usr/local/bin/openshell-sandbox",
     });
+  });
+
+  it("passes the routed-private MCP test CA through the normal corporate CA input", () => {
+    const env = buildMcpBridgeOnboardEnv({
+      ...ONBOARD_OPTIONS,
+      corporateCaBundle: "/tmp/nemoclaw-mcp-tls/ca.crt",
+    });
+
+    expect(env.NEMOCLAW_CORPORATE_CA_BUNDLE).toBe("/tmp/nemoclaw-mcp-tls/ca.crt");
+  });
+
+  it("requires the routed-private MCP test CA before onboarding", () => {
+    expect(requireMcpBridgeTlsCaCert({ NEMOCLAW_MCP_TLS_CA_CERT: "/tmp/ca.crt" })).toBe(
+      "/tmp/ca.crt",
+    );
+    expect(() => requireMcpBridgeTlsCaCert({})).toThrow("NEMOCLAW_MCP_TLS_CA_CERT is required");
   });
 
   it("rejects protected onboarding key collisions", () => {

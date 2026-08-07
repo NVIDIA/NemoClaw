@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: docker-auth-cleanup
+description: Remove isolated Docker Hub credentials with validated path checks.
+
+runs:
+  using: composite
+  steps:
+    - name: Clean up Docker auth
+      shell: bash
+      run: bash "${{ github.action_path }}/../../scripts/docker-auth-cleanup.sh"

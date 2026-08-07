@@ -5,6 +5,31 @@ import type { SystemReadinessReport } from "../../readiness/types.js";
 
 export type ServingDefinitionKind = "ServingRecipe" | "ServingPreset";
 export type ServingSelectionPolicy = "automatic" | "explicit-only" | "disabled";
+export type ServingSupportState = "supported" | "experimental" | "disabled";
+
+/** Secret-free, immutable catalog identity persisted across onboarding lifecycle operations. */
+export interface ServingProfileProvenance {
+  readonly schemaVersion: 1;
+  readonly catalogDigest: string;
+  readonly preset: {
+    readonly id: string;
+    readonly digest: string;
+    readonly displayName: string;
+    readonly supportState: ServingSupportState;
+  };
+  readonly recipe: {
+    readonly id: string;
+    readonly digest: string;
+    readonly backend: string;
+  };
+  readonly model: {
+    readonly id: string;
+    readonly revision: string;
+  };
+  readonly runtimeImage: string | null;
+  readonly estimatedImageDownloadBytes: number | null;
+  readonly estimatedModelDownloadBytes: number | null;
+}
 export type ReadinessEntityKind = "observation" | "capability" | "qualification";
 export type ReadinessValueType = "boolean" | "number" | "string" | "version";
 export type ServingReadinessObservationRole =
@@ -17,6 +42,7 @@ export type ServingReadinessObservationRole =
 export interface ServingMetadata {
   readonly id: string;
   readonly displayName?: string;
+  readonly supportState?: ServingSupportState;
 }
 
 export interface ServingArgument {
@@ -115,6 +141,33 @@ export interface ManagedInferenceServingRecipe {
   };
 }
 
+/** A single-host vLLM recipe, with cluster-only inputs unavailable by construction. */
+export interface HostLocalInferenceServingRecipe
+  extends Omit<ManagedInferenceServingRecipe, "spec"> {
+  readonly spec: Omit<
+    ManagedInferenceServingRecipe["spec"],
+    "backend" | "bindings" | "execution"
+  > & {
+    readonly backend: "vllm";
+    readonly bindings?: never;
+    readonly execution: {
+      readonly materializerRef: "vllm.host-local/v1";
+      readonly lifecycleRef: "vllm.host-local.lifecycle/v1";
+      readonly topologyBinding?: never;
+      readonly nodeCount?: never;
+      readonly tensorParallelSize?: never;
+      readonly pipelineParallelSize?: never;
+      readonly distributedExecutorBackend?: never;
+      readonly rendezvousPort?: never;
+    };
+  };
+}
+
+export type ManagedInferenceRuntimeServingRecipe =
+  | ManagedInferenceServingRecipe
+  | HostLocalInferenceServingRecipe
+  | LlamaCppServingRecipe;
+
 interface ServingRecipeEnvelope {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingRecipe";
@@ -187,22 +240,18 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       }[];
       readonly acquisition: {
         readonly ref: "hugging-face-exact-file/v1";
+        readonly downloaderImage: string;
         readonly authentication: {
           readonly mode: "optional";
           readonly environment: "HF_TOKEN";
         };
       };
       readonly cache: {
-        readonly ref: "llama-cpp.gguf-content-addressed/v1";
-        readonly receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1";
+        readonly ref: "hugging-face-shared-cache/v1";
         readonly root: "user-cache";
-        readonly quotaBytes: number;
-        readonly stagingHeadroomBytes: number;
-        readonly staging: "same-filesystem";
-        readonly publication: "atomic-no-clobber";
-        readonly reuse: "verified-only-offline";
-        readonly sharing: "owner-only";
-        readonly cleanup: "receipt-owner-only";
+        readonly reuse: "verify-exact-file";
+        readonly sharing: "host-user";
+        readonly cleanup: "preserve";
       };
     };
     readonly runtime: {
@@ -211,6 +260,7 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
       readonly containerRuntime: "docker";
       readonly networkExposure: "loopback";
+      readonly restartPolicy: "unless-stopped";
       readonly hosts: 1;
       readonly cuda: { readonly baseImage: string; readonly minimumDriverVersion: string };
       readonly gpu: {
@@ -235,7 +285,7 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       readonly protocol: "openai-completions";
       readonly authentication: "bearer";
       readonly port: 8081;
-      readonly chatTemplate: string;
+      readonly chatTemplate: "nemotron-v3-embedded";
       readonly contextSize: number;
       readonly slots: 1;
       readonly idleSleepSeconds: -1;
@@ -248,9 +298,6 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       };
       readonly speculativeDecoding: "disabled";
       readonly limits: {
-        readonly maxRequestBodyBytes: number;
-        readonly maxPromptTokens: number;
-        readonly maxCompletionTokens: number;
         readonly requestTimeoutSeconds: number;
       };
     };
@@ -258,6 +305,7 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       readonly contractRef: string;
       readonly timeoutSeconds: number;
       readonly expectedModel: string;
+      readonly probeImage: string;
       readonly probes: {
         readonly models: true;
         readonly health: true;
@@ -365,11 +413,12 @@ export interface ManagedInferenceServingPreset {
   readonly spec: {
     readonly selection: ServingSelectionPolicy;
     readonly priority: number;
+    readonly featureGate?: string;
     readonly requirements: { readonly all: readonly ServingPresetRequirement[] };
     readonly plan: {
       readonly backend: string;
       readonly recipeRef: string;
-      readonly bindings: Readonly<Record<string, ServingPresetTopologyBinding>>;
+      readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
 }
@@ -381,6 +430,7 @@ export interface ServingPreset {
   readonly spec: {
     readonly selection: ServingSelectionPolicy;
     readonly priority: number;
+    readonly featureGate?: string;
     readonly requirements?: { readonly all: readonly ServingPresetRequirement[] };
     readonly plan: {
       readonly backend: string;
@@ -462,7 +512,7 @@ export type ManagedInferencePresetTopologyBinding = ServingPresetTopologyBinding
 export interface CompiledManagedInferenceCatalog
   extends Omit<CompiledServingCatalog, "presets" | "recipes"> {
   readonly presets: readonly ManagedInferenceServingPreset[];
-  readonly recipes: readonly ManagedInferenceServingRecipe[];
+  readonly recipes: readonly ManagedInferenceRuntimeServingRecipe[];
 }
 
 const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([
@@ -525,8 +575,30 @@ export interface ResolvedManagedInferenceSelection<TTopologyOutput = unknown> {
   readonly topologyQualification: ManagedInferenceTopologyQualification<TTopologyOutput>;
 }
 
+export interface ResolvedHostLocalInferenceSelection {
+  readonly outcome: "selected";
+  readonly selection: "automatic" | "explicit";
+  readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: HostLocalInferenceServingRecipe;
+}
+
+export interface ResolvedLlamaCppInferenceSelection {
+  readonly outcome: "selected";
+  readonly selection: "automatic" | "explicit";
+  readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: LlamaCppServingRecipe;
+}
+
 export type ManagedInferenceResolution<TTopologyOutput = unknown> =
   | ResolvedManagedInferenceSelection<TTopologyOutput>
+  | ResolvedHostLocalInferenceSelection
+  | ResolvedLlamaCppInferenceSelection
   | {
       readonly outcome: "no-match";
       readonly code: "explicit-intent" | "requirements-not-met";

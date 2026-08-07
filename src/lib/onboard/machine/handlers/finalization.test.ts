@@ -40,7 +40,7 @@ function createDeps(
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
-    verifyWebSearch: vi.fn(),
+    verifyWebSearch: vi.fn(() => true),
     dashboard: vi.fn(),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
@@ -88,6 +88,7 @@ function baseOptions(
     stagedLegacyKeys: [],
     migratedLegacyKeys: new Set(),
     webSearchEnabled: false,
+    webSearchProvider: null,
     deps,
   };
 }
@@ -273,6 +274,7 @@ describe("finalization handlers", () => {
       ...baseOptions(deps),
       agent,
       webSearchEnabled: true,
+      webSearchProvider: "brave",
     });
 
     const recoveryOrders = calls.recoverProcesses.mock.invocationCallOrder;
@@ -282,9 +284,12 @@ describe("finalization handlers", () => {
     expect(recoveryOrders[1]).toBeGreaterThan(
       calls.autoPairScopeApproval.mock.invocationCallOrder[0],
     );
-    expect(recoveryOrders[1]).toBeGreaterThan(calls.verifyWebSearch.mock.invocationCallOrder[0]);
     expect(refreshOrder).toBeGreaterThan(recoveryOrders[1]);
+    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(refreshOrder);
     expect(refreshOrder).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
+    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.verify.mock.invocationCallOrder[0],
+    );
   });
 
   it("skips dashboard and gateway verification for terminal agents without forwards", async () => {
@@ -379,8 +384,9 @@ describe("finalization handlers", () => {
       ...baseOptions(depsOn),
       agent,
       webSearchEnabled: true,
+      webSearchProvider: "brave",
     });
-    expect(callsOn.verifyWebSearch).toHaveBeenCalledWith("my-assistant", agent);
+    expect(callsOn.verifyWebSearch).toHaveBeenCalledWith("my-assistant", agent, "brave");
     // Probe runs after sandbox-process recovery so the post-policy state is live.
     expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(
       callsOn.recoverProcesses.mock.invocationCallOrder[0],
@@ -388,6 +394,35 @@ describe("finalization handlers", () => {
     expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
       callsOn.verify.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not complete when web-search credentials are exposed in the sandbox (#7425)", async () => {
+    const { deps, calls } = createDeps({
+      verifyWebSearchInsideSandbox: vi.fn(() => false),
+    });
+    const agent = { name: "openclaw" };
+
+    const result = await runFinalizationHandlers({
+      ...baseOptions(deps),
+      agent,
+      webSearchEnabled: true,
+      webSearchProvider: "brave",
+    });
+
+    expect(result.deploymentHealthy).toBe(false);
+    expect(result.stateResult).toMatchObject({
+      type: "pause",
+      metadata: { reason: "deployment_not_ready" },
+    });
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      agent,
+      false,
+    );
+    expect(calls.reportReadiness).toHaveBeenCalledWith(false);
   });
 
   // Scenario A (#4504): the auto-pair scope-approval sweep runs against the

@@ -35,7 +35,7 @@ describe("e2e workflow boundary", () => {
     ).not.toThrow();
   });
 
-  it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
+  it("keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
@@ -78,7 +78,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("selects Launchable E2E only for trusted manual full or Launchable dispatches (#7487)", () => {
+  it("selects Launchable E2E for main pushes and trusted manual dispatches (#7487)", () => {
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -125,9 +125,9 @@ describe("e2e workflow boundary", () => {
     ).toEqual({ runLaunchableE2e: false });
     expect(
       evaluateStagingBrevLaunchableDispatch({
-        eventName: "schedule",
+        eventName: "push",
       }),
-    ).toEqual({ runLaunchableE2e: false });
+    ).toEqual({ runLaunchableE2e: true });
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -155,7 +155,7 @@ describe("e2e workflow boundary", () => {
     };
     workflow["run-name"] = "E2E";
     workflow.on.workflow_dispatch.inputs.include_staging_brev_launchable.default = true;
-    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'schedule' }}";
+    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'push' }}";
     workflow.jobs["staging-brev-launchable-readiness"] = {};
     const dispatchIdentity = workflow.jobs["staging-brev-launchable"]!.steps!.find(
       (step) => step.name === "Record E2E dispatch identity",
@@ -171,7 +171,7 @@ describe("e2e workflow boundary", () => {
         "workflow run-name must expose the unique manual-dispatch correlation ID",
         "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
         "workflow must not define superseded staging-brev-launchable-readiness job",
-        "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
+        "staging-brev-launchable must run on main pushes and retain trusted manual selection",
         "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
         `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
       ]),
@@ -429,7 +429,7 @@ describe("e2e workflow boundary", () => {
       >;
     };
     const generateMatrix = workflow.jobs["generate-matrix"]!;
-    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    generateMatrix.outputs.matrix = "${{ steps.controller_matrix.outputs.matrix }}";
     const [trusted] = generateMatrix.steps.splice(
       generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
       1,
@@ -715,8 +715,24 @@ describe("e2e workflow boundary", () => {
       jobs: Record<string, { env?: Record<string, string>; if?: string }>;
     };
     const workflowJobs = new Set(Object.keys(workflow.jobs));
+    const portableWorkflow = YAML.parse(
+      fs.readFileSync(
+        path.join(process.cwd(), ".github", "workflows", "portable-profile-e2e.yaml"),
+        "utf8",
+      ),
+    ) as {
+      on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } };
+    };
+    const portableProofInputs = [
+      "scripts/install-openshell.sh",
+      "test/e2e/live/portable-profile-gateway-proof.ts",
+      "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "tools/e2e/check-semantic-phases.mts",
+    ];
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
+    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
+    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
     expect(inventory.allowedJobs).not.toHaveLength(0);
     expect(inventory.targetToJob.size).toBeGreaterThan(0);
     expect(inventory.workflowJobs.every((job) => workflowJobs.has(job))).toBe(true);

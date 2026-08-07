@@ -259,7 +259,7 @@ process.exit = (code = 0) => {
     assert.equal(payload.sessionExists, false, "onboard session must not be created");
     assert.match(
       result.stderr,
-      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open/,
+      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open, personal/,
     );
     assert.doesNotMatch(result.stderr, /Third-Party Software Notice/);
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /\[1\/8\] Preflight checks/);
@@ -370,7 +370,7 @@ describe("policy tier selection", () => {
     assert.equal(exit.mock.calls[0]?.[0], 1);
     assert.match(
       errors.join("\n"),
-      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open/,
+      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open, personal/,
     );
   });
 
@@ -444,6 +444,56 @@ describe("policy tier setup", () => {
 
     assert.deepEqual(result.tierUpdates, [{ sandboxName: "test-sb", policyTier: "open" }]);
     assert.deepEqual(result.applied, []);
+  });
+
+  it("keeps OpenClaw web search and OpenClaw-only presets in Personal", async () => {
+    const result = await runPolicySetup(
+      { tierName: "personal" },
+      { agent: "openclaw", webSearchConfig: null, webSearchSupported: true },
+    );
+
+    for (const name of [
+      "personal-open-internet",
+      "brave",
+      "tavily",
+      "openclaw-pricing",
+      "openclaw-diagnostics-otel-local",
+      "googlechat",
+    ]) {
+      assert.ok(result.applied.includes(name), `${name} should be applied`);
+    }
+    assert.ok(!result.applied.includes("nous-web"), "Hermes-only presets must remain filtered");
+    assert.ok(
+      !result.applied.includes("observability-otlp-local"),
+      "Deep Agents-only presets must remain filtered",
+    );
+  });
+
+  it("keeps supported Hermes web search and Hermes-only presets in Personal", async () => {
+    const result = await runPolicySetup(
+      { tierName: "personal" },
+      { agent: "hermes", webSearchConfig: null, webSearchSupported: true },
+    );
+
+    for (const name of ["personal-open-internet", "tavily", "nous-web", "nous-browser"]) {
+      assert.ok(result.applied.includes(name), `${name} should be applied`);
+    }
+    assert.ok(!result.applied.includes("brave"), "unsupported Brave must remain filtered");
+    assert.ok(
+      !result.applied.includes("openclaw-pricing"),
+      "OpenClaw-only presets must remain filtered",
+    );
+  });
+
+  it("keeps open internet access in Personal for Deep Agents Code", async () => {
+    const result = await runPolicySetup(
+      { tierName: "personal" },
+      { agent: "langchain-deepagents-code", webSearchConfig: null, webSearchSupported: true },
+    );
+
+    assert.ok(result.applied.includes("personal-open-internet"));
+    assert.ok(result.applied.includes("tavily"));
+    assert.ok(!result.applied.includes("brave"));
   });
 
   it("omits Brave from policy preset selection when web search is unsupported", async () => {

@@ -4,6 +4,8 @@
 # PR Review Priorities
 
 Use this order when you review a PR. Hard gates block approval. Queue signals set review order.
+Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md) to the
+current diff and repository evidence while evaluating these gates and expectations.
 
 ## Hard gates (all must pass to approve)
 

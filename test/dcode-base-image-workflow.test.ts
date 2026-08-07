@@ -372,6 +372,7 @@ describe("base-image publication behavior", () => {
     const platformJob = workflow.jobs?.["build-openclaw-platforms"];
     const manifestJob = workflow.jobs?.["build-and-push-openclaw"];
 
+    expect(platformJob?.needs).toEqual(["reviewed-npm-audit"]);
     expect(platformJob?.["timeout-minutes"]).toBe(60);
     expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
     expect(
@@ -430,7 +431,7 @@ describe("base-image publication behavior", () => {
     }
 
     expect(manifestJob?.name).toBe("Build and push OpenClaw base image");
-    expect(manifestJob?.needs).toBe("build-openclaw-platforms");
+    expect(manifestJob?.needs).toEqual(["build-openclaw-platforms", "reviewed-npm-audit"]);
     expect(manifestJob?.["timeout-minutes"]).toBe(10);
     expect(
       manifestJob?.steps?.some((step) => step.uses?.startsWith("docker/build-push-action@")),
@@ -516,6 +517,7 @@ describe("base-image publication behavior", () => {
 
     for (const { platformJobName } of imagePublishers) {
       const platformJob = workflow.jobs?.[platformJobName];
+      expect(platformJob?.needs).toEqual(["reviewed-npm-audit"]);
       expect(platformJob?.["timeout-minutes"]).toBe(60);
       expect(platformJob?.["runs-on"]).toBe("${{ matrix.runner }}");
       expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
@@ -577,7 +579,7 @@ describe("base-image publication behavior", () => {
     for (const imagePublisher of imagePublishers) {
       const manifestJob = workflow.jobs?.[imagePublisher.manifestJobName];
       expect(manifestJob?.name).toBe(imagePublisher.manifestName);
-      expect(manifestJob?.needs).toBe(imagePublisher.platformJobName);
+      expect(manifestJob?.needs).toEqual([imagePublisher.platformJobName, "reviewed-npm-audit"]);
       expect(manifestJob?.["timeout-minutes"]).toBe(10);
       expect(
         manifestJob?.steps?.some((step) => step.uses?.startsWith("docker/build-push-action@")),

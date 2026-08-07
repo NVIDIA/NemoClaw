@@ -14,6 +14,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  dockerRunCommandBetween,
+  runDockerShell,
+  runLoggedDockerShell,
+} from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -31,38 +36,6 @@ const DEEPAGENTS_DOCKERFILE_BASE = path.join(
 function completedDockerStage(dockerfile: string): string {
   const start = dockerfile.lastIndexOf("\nFROM ");
   return start >= 0 ? dockerfile.slice(start) : dockerfile;
-}
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Expected Dockerfile block between ${startMarker} and ${endMarker}`);
-  }
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  if (runIndex === -1 || runIndex > end) {
-    throw new Error(`Expected RUN instruction after ${startMarker}`);
-  }
-  const runLines: string[] = [];
-  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
-    runLines.push(line);
-    if (!line.trimEnd().endsWith("\\")) {
-      break;
-    }
-  }
-  const lastLine = runLines[runLines.length - 1]?.trimEnd() ?? "";
-  if (lastLine.endsWith("\\")) {
-    throw new Error(`Expected complete RUN instruction before ${endMarker}`);
-  }
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
 }
 
 function dockerHealthCommandBetween(
@@ -97,58 +70,6 @@ function dockerHealthCommandBetween(
     throw new Error(`Expected shell-form HEALTHCHECK CMD after ${startMarker}`);
   }
   return command.trim();
-}
-
-function runDockerShell(command: string, sandboxRoot: string) {
-  const logPath = path.join(sandboxRoot, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const rewritten = command.replaceAll("/sandbox", sandboxRoot);
-  const script = [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    `call_log=${JSON.stringify(logPath)}`,
-    'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
-    rewritten,
-  ].join("\n");
-  const scriptPath = path.join(sandboxRoot, "run-docker-block.sh");
-  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-  const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
-}
-
-function runLoggedDockerShell(
-  command: string,
-  tmp: string,
-  functionDefs: string[] = [],
-  env: Record<string, string | undefined> = {},
-) {
-  const logPath = path.join(tmp, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const script = [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    `call_log=${JSON.stringify(logPath)}`,
-    ...functionDefs,
-    command,
-  ].join("\n");
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const childEnv = { ...process.env };
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) {
-      delete childEnv[key];
-    } else {
-      childEnv[key] = value;
-    }
-  }
-  const result = spawnSync("bash", [scriptPath], {
-    encoding: "utf-8",
-    env: childEnv,
-    timeout: 5000,
-  });
-  const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
 }
 
 function runOpenclawRepairLayoutCase(legacy: boolean) {
@@ -395,10 +316,12 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
         tmp,
         ['curl() { printf "%s\\n" "$*" >> "$call_log"; }'],
         {
-          NEMOCLAW_DASHBOARD_PORT: undefined,
-          OPENCLAW_GATEWAY_PORT: undefined,
-          CHAT_UI_URL: undefined,
-          ...env,
+          env: {
+            NEMOCLAW_DASHBOARD_PORT: undefined,
+            OPENCLAW_GATEWAY_PORT: undefined,
+            CHAT_UI_URL: undefined,
+            ...env,
+          },
         },
       );
 
@@ -1112,8 +1035,17 @@ describe("Hermes sandbox provisioning", () => {
       localLib,
       "patch-hermes-langfuse-credentials.mts",
     );
+    const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
     const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.85.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
+    const stateLockPlanPath = path.join(
+      tmp,
+      "usr",
+      "local",
+      "share",
+      "nemoclaw",
+      "state-lock-plan.json",
+    );
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const hermesCronRestoreControlPath = path.join(localLib, "hermes-cron-restore-control.py");
     const files = [
@@ -1127,6 +1059,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "patch-hermes-session-list-preview.py"),
       path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
       path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
+      managedPolicyReaderPath,
       langfuseCredentialPatcherPath,
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
@@ -1136,6 +1069,7 @@ describe("Hermes sandbox provisioning", () => {
       mcpManifest,
       gatewaySupervisorPath,
       stateDirGuardPath,
+      stateLockPlanPath,
       managedGatewayControlPath,
       hermesCronRestoreControlPath,
       path.join(localLib, "sandbox-rlimits.sh"),
@@ -1147,11 +1081,13 @@ describe("Hermes sandbox provisioning", () => {
     )
       .replaceAll("/usr/local/bin", localBin)
       .replaceAll("/usr/local/lib/nemoclaw", localLib)
+      .replaceAll("/usr/local/share/nemoclaw/state-lock-plan.json", stateLockPlanPath)
       .replaceAll("/etc/profile.d", profileDir)
       .replaceAll("/etc/bash.bashrc", bashrcPath);
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(path.dirname(stateLockPlanPath), { recursive: true });
       fs.mkdirSync(etcDir, { recursive: true });
       fs.writeFileSync(bashrcPath, "# fixture\n", { mode: 0o600 });
       for (const file of files) fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
@@ -1161,7 +1097,7 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${stateLockPlanPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(hermesCronRestoreControlPath).mode & 0o777).toString(8)).toBe("700");
@@ -1169,8 +1105,10 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(langfuseCredentialPatcherPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(managedPolicyReaderPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(stateLockPlanPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

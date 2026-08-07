@@ -126,6 +126,43 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     ]);
   });
 
+  it("admits exact recorded private pins only for a trusted-private bridge", () => {
+    const alpha = registeredPolicy("alpha", "10.20.30.40");
+    const sandbox = sandboxWithPolicies([alpha]);
+    Object.assign(sandbox.mcp!.bridges.alpha!, {
+      trustedPrivateHost: "alpha.example.com",
+      allowedIps: ["10.20.30.40"],
+    });
+
+    expect(
+      inspectExactManagedMcpPolicies(
+        sandbox,
+        livePolicy([{ content: alpha.content, server: "alpha" }]),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        key: "mcp_bridge_alpha",
+        server: "alpha",
+      }),
+    ]);
+  });
+
+  it("rejects a trusted-private policy that differs from its durable pins", () => {
+    const alpha = registeredPolicy("alpha", "10.20.30.40");
+    const sandbox = sandboxWithPolicies([alpha]);
+    Object.assign(sandbox.mcp!.bridges.alpha!, {
+      trustedPrivateHost: "alpha.example.com",
+      allowedIps: ["10.20.30.41"],
+    });
+
+    expect(() =>
+      inspectExactManagedMcpPolicies(
+        sandbox,
+        livePolicy([{ content: alpha.content, server: "alpha" }]),
+      ),
+    ).toThrow(/does not match its recorded trusted-private address pins/);
+  });
+
   it.each([
     {
       label: "pending policy content",

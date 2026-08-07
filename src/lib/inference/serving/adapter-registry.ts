@@ -7,6 +7,9 @@ import {
   MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
 } from "./managed-cluster-topology.js";
 import type {
+  HostLocalInferenceServingRecipe,
+  LlamaCppServingRecipe,
+  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ServingCatalogRegistries,
@@ -16,6 +19,8 @@ import type {
 
 export const MANAGED_CLUSTER_VLLM_MATERIALIZER_REF = "vllm.managed-cluster/v1" as const;
 export const MANAGED_CLUSTER_VLLM_LIFECYCLE_REF = "vllm.managed-cluster.lifecycle/v1" as const;
+export const HOST_LOCAL_VLLM_MATERIALIZER_REF = "vllm.host-local/v1" as const;
+export const HOST_LOCAL_VLLM_LIFECYCLE_REF = "vllm.host-local.lifecycle/v1" as const;
 export const LLAMA_CPP_HOST_LOCAL_RECEIPT_REF = "llama-cpp.host-local.receipt/v1" as const;
 export const LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF = "llama-cpp.host-local/v1" as const;
 export const LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF = "llama-cpp.host-local.lifecycle/v1" as const;
@@ -44,12 +49,12 @@ export interface ManagedInferenceMaterializerDescriptor {
   readonly ref: string;
   readonly backend: string;
   readonly outputPlanSchema: string;
-  readonly topology: {
+  readonly topology?: {
     readonly qualificationId: string;
     readonly schemaVersion: number;
     readonly outputSchema: string;
   };
-  validateRecipe(recipe: ManagedInferenceServingRecipe): string | undefined;
+  validateRecipe(recipe: ManagedInferenceRuntimeServingRecipe): string | undefined;
 }
 
 export interface ManagedInferenceLifecycleDescriptor {
@@ -58,20 +63,24 @@ export interface ManagedInferenceLifecycleDescriptor {
   readonly acceptedMaterializerRefs: readonly string[];
   readonly acceptedPlanSchemas: readonly string[];
   readonly secretHandlePermissions: readonly string[];
-  validateRecipe(recipe: ManagedInferenceServingRecipe): string | undefined;
+  validateRecipe(recipe: ManagedInferenceRuntimeServingRecipe): string | undefined;
 }
 
 export interface ManagedInferencePreparationDescriptor {
   readonly ref: string;
   readonly backend: string;
   readonly phase: "container-before-exec";
-  validateRecipe(recipe: ManagedInferenceServingRecipe): string | undefined;
+  validateRecipe(recipe: ManagedInferenceRuntimeServingRecipe): string | undefined;
 }
 
 const MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA =
   "nemoclaw.nvidia.com/managed-cluster-topology/v1" as const;
 const MANAGED_CLUSTER_PLAN_SCHEMA = "nemoclaw.nvidia.com/managed-cluster-vllm-plan/v1" as const;
 const LOWERCASE_STABLE_ID = /^[a-z0-9][a-z0-9._/-]{0,159}$/u;
+const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/u;
+const PINNED_IMAGE =
+  /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u;
+const SAFE_ENVIRONMENT_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
 const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "GLOO_SOCKET_IFNAME",
@@ -87,9 +96,48 @@ const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "VLLM_API_KEY",
   "VLLM_HOST_IP",
 ]);
+const HOST_LOCAL_MATERIALIZER_OWNED_ENVIRONMENT = new Set(["HF_HOME", "VLLM_API_KEY"]);
+const HOST_LOCAL_MATERIALIZER_OWNED_ARGUMENTS = new Set([
+  "--api-key",
+  "--data-parallel-size",
+  "--distributed-executor-backend",
+  "--headless",
+  "--host",
+  "--master-addr",
+  "--master-port",
+  "--nnodes",
+  "--node-rank",
+  "--pipeline-parallel-size",
+  "--port",
+  "--revision",
+  "--served-model-name",
+  "--tensor-parallel-size",
+]);
 
 export function isManagedClusterMaterializerOwnedEnvironment(name: string): boolean {
   return MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT.has(name);
+}
+
+export function isManagedClusterInferenceServingRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): recipe is ManagedInferenceServingRecipe {
+  return recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF;
+}
+
+export function isHostLocalInferenceServingRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): recipe is HostLocalInferenceServingRecipe {
+  return recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF;
+}
+
+export function isLlamaCppServingRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): recipe is LlamaCppServingRecipe {
+  return (
+    recipe.spec.backend === "install-llama-cpp" &&
+    recipe.spec.execution.materializerRef === LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF &&
+    recipe.spec.execution.lifecycleRef === LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF
+  );
 }
 
 function managedClusterTopologyBinding(
@@ -99,7 +147,7 @@ function managedClusterTopologyBinding(
 }
 
 function positiveIntegerArgument(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceServingRecipe | HostLocalInferenceServingRecipe,
   name: string,
   maximum = Number.MAX_SAFE_INTEGER,
 ): number | undefined {
@@ -116,10 +164,10 @@ function positiveIntegerArgument(
 }
 
 function validateManagedClusterMaterializerRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
   if (recipe.spec.backend !== "vllm") return "managed cluster materializer requires backend vllm";
-  if (recipe.spec.execution.materializerRef !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
+  if (!isManagedClusterInferenceServingRecipe(recipe)) {
     return "recipe does not select the managed cluster materializer";
   }
   const { execution } = recipe.spec;
@@ -241,8 +289,11 @@ function validateManagedClusterMaterializerRecipe(
 }
 
 function validateManagedClusterLifecycleRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
+  if (!isManagedClusterInferenceServingRecipe(recipe)) {
+    return "recipe does not select the managed cluster lifecycle";
+  }
   const materializerError = validateManagedClusterMaterializerRecipe(recipe);
   if (materializerError) return materializerError;
   return recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
@@ -250,6 +301,138 @@ function validateManagedClusterLifecycleRecipe(
     : "recipe does not select the managed cluster lifecycle";
 }
 
+function validateHostLocalVllmMaterializerRecipe(
+  recipe: HostLocalInferenceServingRecipe,
+): string | undefined {
+  if (recipe.spec.backend !== "vllm") return "host-local vLLM materializer requires backend vllm";
+  if (recipe.spec.execution.materializerRef !== HOST_LOCAL_VLLM_MATERIALIZER_REF) {
+    return "recipe does not select the host-local vLLM materializer";
+  }
+  const execution = recipe.spec.execution;
+  if (
+    execution.topologyBinding !== undefined ||
+    execution.nodeCount !== undefined ||
+    execution.tensorParallelSize !== undefined ||
+    execution.pipelineParallelSize !== undefined ||
+    execution.distributedExecutorBackend !== undefined ||
+    execution.rendezvousPort !== undefined
+  ) {
+    return "host-local vLLM materializer does not accept distributed execution settings";
+  }
+  const bindings = recipe.spec.bindings;
+  if (bindings !== undefined) {
+    return "host-local vLLM materializer does not accept topology bindings";
+  }
+  const runtime = recipe.spec.runtime;
+  if (runtime.architecture !== "arm64") {
+    return "host-local vLLM materializer requires an arm64 runtime";
+  }
+  if (
+    runtime.networkMode !== "bridge" ||
+    runtime.ipcMode !== "host" ||
+    runtime.gpuRequest !== "all" ||
+    recipe.spec.serve.authentication !== "bearer"
+  ) {
+    return "host-local vLLM requires bridge networking, host IPC, all GPUs, and bearer authentication";
+  }
+  if (!PINNED_IMAGE.test(runtime.image)) {
+    return "host-local vLLM requires a digest-pinned runtime image";
+  }
+  if (
+    runtime.modelCache.source !== MANAGED_CLUSTER_HUGGING_FACE_CACHE_SOURCE ||
+    runtime.modelCache.target !== "/root/.cache/huggingface"
+  ) {
+    return "host-local vLLM requires the registered Hugging Face cache mount";
+  }
+  if (
+    !safeAbsoluteContainerPath(recipe.spec.serve.executable) ||
+    !safeAbsoluteContainerPath(runtime.modelCache.target) ||
+    runtime.devices.some((device) => !safeAbsoluteContainerPath(device)) ||
+    runtime.temporaryFilesystems.some(({ target }) => !safeAbsoluteContainerPath(target))
+  ) {
+    return "host-local vLLM runtime paths must be normalized absolute container paths";
+  }
+  if (
+    runtime.temporaryFilesystems.some(({ target }) =>
+      containerPathContains(target, runtime.modelCache.target),
+    )
+  ) {
+    return "host-local vLLM temporary filesystem cannot shadow the model cache";
+  }
+  if (
+    recipe.spec.serve.executable !== "/usr/local/bin/vllm" ||
+    recipe.spec.model.preparation.ref !== NO_PREPARATION_REF ||
+    recipe.spec.model.installFastSafetensors
+  ) {
+    return "host-local vLLM requires the registered executable without model preparation";
+  }
+  if (recipe.spec.readiness.expectedModel !== recipe.spec.model.servedName) {
+    return "host-local vLLM readiness must expect the served model ID";
+  }
+  if (!STABLE_ID.test(recipe.spec.model.id) || !STABLE_ID.test(recipe.spec.model.servedName)) {
+    return "host-local vLLM model identifiers do not match the registered format";
+  }
+  if (positiveIntegerArgument(recipe, "--max-model-len") === undefined) {
+    return "host-local vLLM requires one positive --max-model-len argument";
+  }
+  if (
+    recipe.spec.serve.arguments.some(({ name }) =>
+      HOST_LOCAL_MATERIALIZER_OWNED_ARGUMENTS.has(name),
+    )
+  ) {
+    return "host-local vLLM recipe overrides a materializer-owned serving argument";
+  }
+  if (
+    Object.keys(recipe.spec.runtime.environment).some(
+      (name) =>
+        !SAFE_ENVIRONMENT_NAME.test(name) || HOST_LOCAL_MATERIALIZER_OWNED_ENVIRONMENT.has(name),
+    )
+  ) {
+    return "host-local vLLM recipe overrides a materializer-owned environment value";
+  }
+  const resourceValues = [
+    recipe.spec.model.downloadSizeBytes,
+    runtime.imageDownloadSizeBytes,
+    runtime.pullTimeoutSeconds,
+    runtime.sharedMemoryBytes,
+    runtime.ulimits.stackBytes,
+    ...runtime.temporaryFilesystems.map(({ sizeBytes }) => sizeBytes),
+  ];
+  if (resourceValues.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+    return "host-local vLLM resource values must be positive safe integers";
+  }
+  if (runtime.ulimits.memlock !== -1 && runtime.ulimits.memlock !== "unlimited") {
+    return "host-local vLLM memlock must be unlimited";
+  }
+  if (
+    recipe.spec.serve.arguments.some(
+      ({ value }) =>
+        typeof value === "string" &&
+        (Buffer.byteLength(value, "utf8") > 16_384 ||
+          value.includes("\0") ||
+          !/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)),
+    ) ||
+    Object.values(recipe.spec.runtime.environment).some(
+      (value) =>
+        Buffer.byteLength(value, "utf8") > 4_096 ||
+        value.includes("\0") ||
+        !/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value),
+    )
+  ) {
+    return "host-local vLLM serving values must be bounded safe text";
+  }
+  return undefined;
+}
+
+function validateHostLocalVllmLifecycleRecipe(
+  recipe: HostLocalInferenceServingRecipe,
+): string | undefined {
+  const materializerError = validateHostLocalVllmMaterializerRecipe(recipe);
+  if (materializerError) return materializerError;
+  return recipe.spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF
+    ? undefined
+    : "recipe does not select the host-local vLLM lifecycle";
+}
 interface SnapshotPreparationInput {
   readonly ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF;
   readonly snapshotCopy: {
@@ -271,7 +454,7 @@ interface NoPreparationInput {
 type ManagedInferencePreparationInput = SnapshotPreparationInput | NoPreparationInput;
 
 function recipePreparation(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): ManagedInferencePreparationInput | undefined {
   const preparation = (recipe.spec.model as unknown as { readonly preparation?: unknown })
     .preparation;
@@ -314,7 +497,7 @@ function safeAbsoluteContainerPath(value: unknown): value is string {
 }
 
 function validateSnapshotPreparationRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
   if (recipe.spec.backend !== "vllm") return "snapshot preparation requires backend vllm";
   const preparation = recipePreparation(recipe);
@@ -353,7 +536,9 @@ function validateSnapshotPreparationRecipe(
   return undefined;
 }
 
-function validateNoPreparationRecipe(recipe: ManagedInferenceServingRecipe): string | undefined {
+function validateNoPreparationRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): string | undefined {
   if (recipe.spec.backend !== "vllm") return "empty preparation requires backend vllm";
   const preparation = recipePreparation(recipe);
   return preparation?.ref === NO_PREPARATION_REF && hasExactKeys(preparation, ["ref"])
@@ -383,6 +568,15 @@ const MATERIALIZER_DESCRIPTORS = [
     },
     validateRecipe: validateManagedClusterMaterializerRecipe,
   },
+  {
+    ref: HOST_LOCAL_VLLM_MATERIALIZER_REF,
+    backend: "vllm",
+    outputPlanSchema: "nemoclaw.nvidia.com/host-local-vllm-plan/v1",
+    validateRecipe: (recipe) =>
+      isHostLocalInferenceServingRecipe(recipe)
+        ? validateHostLocalVllmMaterializerRecipe(recipe)
+        : "recipe does not select the host-local vLLM materializer",
+  },
 ] as const satisfies readonly ManagedInferenceMaterializerDescriptor[];
 
 const LIFECYCLE_DESCRIPTORS = [
@@ -393,6 +587,17 @@ const LIFECYCLE_DESCRIPTORS = [
     acceptedPlanSchemas: [MANAGED_CLUSTER_PLAN_SCHEMA],
     secretHandlePermissions: ["sshBinding"],
     validateRecipe: validateManagedClusterLifecycleRecipe,
+  },
+  {
+    ref: HOST_LOCAL_VLLM_LIFECYCLE_REF,
+    backend: "vllm",
+    acceptedMaterializerRefs: [HOST_LOCAL_VLLM_MATERIALIZER_REF],
+    acceptedPlanSchemas: ["nemoclaw.nvidia.com/host-local-vllm-plan/v1"],
+    secretHandlePermissions: [],
+    validateRecipe: (recipe) =>
+      isHostLocalInferenceServingRecipe(recipe)
+        ? validateHostLocalVllmLifecycleRecipe(recipe)
+        : "recipe does not select the host-local vLLM lifecycle",
   },
 ] as const satisfies readonly ManagedInferenceLifecycleDescriptor[];
 
@@ -477,8 +682,9 @@ export function getManagedInferencePreparationDescriptor(
 }
 
 export function getManagedInferenceRecipeRegistrationError(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
+  if (isLlamaCppServingRecipe(recipe)) return undefined;
   const materializer = getManagedInferenceMaterializerDescriptor(
     recipe.spec.execution.materializerRef,
   );
@@ -546,11 +752,15 @@ export function getManagedInferenceServingCatalogRegistries(): ServingCatalogReg
     validateRecipe: (recipe: ServingRecipe) => {
       if (
         recipe.spec.execution.materializerRef !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF &&
-        recipe.spec.execution.lifecycleRef !== MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
+        recipe.spec.execution.lifecycleRef !== MANAGED_CLUSTER_VLLM_LIFECYCLE_REF &&
+        recipe.spec.execution.materializerRef !== HOST_LOCAL_VLLM_MATERIALIZER_REF &&
+        recipe.spec.execution.lifecycleRef !== HOST_LOCAL_VLLM_LIFECYCLE_REF
       ) {
         return undefined;
       }
-      return getManagedInferenceRecipeRegistrationError(recipe as ManagedInferenceServingRecipe);
+      return getManagedInferenceRecipeRegistrationError(
+        recipe as ManagedInferenceRuntimeServingRecipe,
+      );
     },
   };
 }

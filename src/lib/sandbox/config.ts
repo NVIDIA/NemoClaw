@@ -549,6 +549,7 @@ function writeSandboxConfig(
     if (result.issues.length > 0) {
       configFail(result.issues.map((issue) => `  ${issue}`));
     }
+    // Integrity-only digest for guard output; this is not a password verifier.
     const expectedNewDigest = createHash("sha256").update(content).digest("hex");
     if (result.configSha256 !== expectedNewDigest) {
       throw new Error(
@@ -607,6 +608,7 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
 // (installed by the agents/hermes image build). The python resolution order
 // mirrors start.sh's trusted `_HERMES_PYTHON` list.
 const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+const HERMES_MANAGED_POLICY_PATH = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
 const HERMES_TRUSTED_PYTHON3 = [
   "/opt/hermes/.venv/bin/python3",
   "/usr/local/bin/python3",
@@ -754,6 +756,7 @@ function runHermesDashboardConfigSeed(
     python,
     HERMES_DASHBOARD_SEEDER_PATH,
     ...(mergeLegacy ? ["--merge-legacy"] : []),
+    HERMES_MANAGED_POLICY_PATH,
     target.configPath,
     dashboardConfigPath,
     `${target.configDir}/.env`,

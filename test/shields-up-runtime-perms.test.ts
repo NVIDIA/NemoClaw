@@ -3,14 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import {
-  CONFIDENTIALITY_STATE_DIRS,
-  HIGH_RISK_STATE_DIRS,
-  WRITABLE_RUNTIME_SUBPATHS,
-} from "../src/lib/shields/state-dir-lock";
+import { loadAgent } from "../src/lib/agent/defs";
 
 const OPENCLAW_GUARD = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py";
+const OPENCLAW_STATE_LOCK_PLAN = loadAgent("openclaw").stateLockPlan;
+const HERMES_STATE_LOCK_PLAN = loadAgent("hermes").stateLockPlan;
 
 type GuardProbeResult = {
   calls: string[][];
@@ -73,6 +71,12 @@ Module._load = function patchedLoad(request, parent, isMain) {
         const command = commandFromArgs(args);
         calls.push(command);
         if (command[0] === "test" && command[1] === "-r") return completed();
+        if (
+          command[0] === "cat" &&
+          command[1] === "/usr/local/share/nemoclaw/state-lock-plan.json"
+        ) {
+          return completed(JSON.stringify(${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)}) + "\n");
+        }
 
         const openClawAction = guardAction(command, ${JSON.stringify(OPENCLAW_GUARD)});
         if (openClawAction) {
@@ -142,6 +146,8 @@ try {
       configPath: "/sandbox/.openclaw/openclaw.json",
       configDir: "/sandbox/.openclaw",
       sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+      stateLockPlan: ${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)},
+      stateLockPlanInImage: true,
     },
     false,
   );
@@ -171,7 +177,7 @@ function helperCalls(calls: string[][], helper: string, action?: string): string
 }
 
 describe("shields-up state-dir lock preserves sandbox-group access + runtime sessions writable", () => {
-  it("uses the installed descriptor-safe guards for top-level and recursive lockdown", () => {
+  it("uses descriptor-safe guards for top-level and recursive lockdown", () => {
     const result = runLockAgentConfigProbe();
     expect(result.status, result.stderr).toBe(0);
 
@@ -199,12 +205,17 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(stateLockIndex).toBeGreaterThan(configLockIndex);
   });
 
-  it("keeps the complete protected inventory and writable sessions carve-out", () => {
-    expect(HIGH_RISK_STATE_DIRS).toEqual(
-      expect.arrayContaining(["skills", "agent", "hooks", "agents", "extensions", "workspace"]),
+  it("uses the OpenClaw manifest plan and writable sessions carve-out", () => {
+    expect(OPENCLAW_STATE_LOCK_PLAN.readOnlyRoots).toEqual(
+      expect.arrayContaining(["skills", "hooks", "agents", "extensions", "profiles", "workspace"]),
     );
-    expect(CONFIDENTIALITY_STATE_DIRS).toEqual(["credentials", "identity", "pairing"]);
-    expect(WRITABLE_RUNTIME_SUBPATHS).toEqual(["agents/*/sessions", "profiles/dashboard-home"]);
+    expect(OPENCLAW_STATE_LOCK_PLAN.confidentialRoots).toEqual(["credentials", "identity"]);
+    expect(OPENCLAW_STATE_LOCK_PLAN.writableSubpaths).toEqual(["agents/*/sessions"]);
+  });
+
+  it("uses the Hermes manifest plan for pairing and the private dashboard profile", () => {
+    expect(HERMES_STATE_LOCK_PLAN.confidentialRoots).toEqual(["pairing"]);
+    expect(HERMES_STATE_LOCK_PLAN.writableSubpaths).toEqual(["profiles/dashboard-home"]);
   });
 
   it.each([

@@ -13,8 +13,8 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-auth-contract";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
-const EXPLICIT_ONLY_CONDITION =
-  "${{ contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}";
+const MAIN_AND_MANUAL_CONDITION =
+  "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}";
 const GATEWAY_PROBE_IMAGE =
   "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
 const ARTIFACT_SAFETY_GATED_UPLOAD =
@@ -85,8 +85,8 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   if (job.needs !== "generate-matrix") {
     errors.push(`${JOB_NAME} must depend on generate-matrix`);
   }
-  if (job.if !== EXPLICIT_ONLY_CONDITION) {
-    errors.push(`${JOB_NAME} must run only when explicitly selected`);
+  if (job.if !== MAIN_AND_MANUAL_CONDITION) {
+    errors.push(`${JOB_NAME} must run on main pushes and retain manual selectors`);
   }
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push(`${JOB_NAME} must run on ubuntu-latest`);
@@ -99,7 +99,6 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   const expectedEnv = {
     DOCKER_GRPC_PROBE_IMAGE: GATEWAY_PROBE_IMAGE,
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
-    E2E_DEFAULT_ENABLED: "0",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
   };
