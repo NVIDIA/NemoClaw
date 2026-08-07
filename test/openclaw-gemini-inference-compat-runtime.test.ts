@@ -55,6 +55,73 @@ if (typeof describeRouting !== "function") {
   throw new Error("OpenClaw routing summary function was not found");
 }
 
+const transportFile = fs
+  .readdirSync(distDir)
+  .find((entry) => entry.startsWith("openai-transport-stream-") && entry.endsWith(".js"));
+if (!transportFile) {
+  throw new Error("OpenClaw Chat Completions transport module was not found");
+}
+const transport = await import(pathToFileURL(path.join(distDir, transportFile)).href);
+const buildCompletionsParams = Object.values(transport).find(
+  (value) => typeof value === "function" && value.name === "buildOpenAICompletionsParams",
+);
+if (typeof buildCompletionsParams !== "function") {
+  throw new Error("OpenClaw Chat Completions request builder was not found");
+}
+
+const config = JSON.parse(fs.readFileSync("/fixture/openclaw.json", "utf8"));
+const provider = config.models.providers.inference;
+const model = {
+  ...provider.models[0],
+  provider: "inference",
+  api: provider.api,
+  baseUrl: provider.baseUrl,
+};
+const toolCallId = "call_managed_gemini_weather";
+const request = buildCompletionsParams(
+  model,
+  {
+    systemPrompt: "Use the weather tool.",
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: "What is the weather?" }],
+        timestamp: 1,
+      },
+      {
+        role: "assistant",
+        api: provider.api,
+        provider: "inference",
+        model: model.id,
+        stopReason: "toolUse",
+        content: [
+          {
+            type: "toolCall",
+            id: toolCallId,
+            name: "weather",
+            arguments: { city: "Santa Clara" },
+          },
+        ],
+        timestamp: 2,
+      },
+      {
+        role: "toolResult",
+        toolCallId,
+        toolName: "weather",
+        content: [{ type: "text", text: "sunny" }],
+        isError: false,
+        timestamp: 3,
+      },
+    ],
+  },
+  {},
+);
+const assistantRequest = request.messages.find((message) => message.role === "assistant");
+const toolResultRequest = request.messages.find((message) => message.role === "tool");
+if (!assistantRequest?.tool_calls?.[0] || !toolResultRequest) {
+  throw new Error("OpenClaw did not preserve the tool-call result round");
+}
+
 process.stdout.write(
   JSON.stringify({
     pluginStatus: inspected.plugin.status,
@@ -63,6 +130,13 @@ process.stdout.write(
       api: "openai-completions",
       baseUrl: "https://inference.local/v1",
     }),
+    toolRoundTrip: {
+      thoughtSignature:
+        assistantRequest.tool_calls[0].extra_content?.google?.thought_signature,
+      toolCallId: assistantRequest.tool_calls[0].id,
+      toolResultId: toolResultRequest.tool_call_id,
+      toolResultContent: toolResultRequest.content,
+    },
   }),
 );
 `;
@@ -205,6 +279,12 @@ suite("OpenClaw Gemini managed-route runtime compatibility", () => {
       pluginStatus: "loaded",
       routingSummary:
         "provider=inference api=openai-completions endpoint=google-generative-ai route=native policy=documented",
+      toolRoundTrip: {
+        thoughtSignature: "skip_thought_signature_validator",
+        toolCallId: "call_managed_gemini_weather",
+        toolResultId: "call_managed_gemini_weather",
+        toolResultContent: "sunny",
+      },
     });
-  });
+  }, 70_000);
 });
