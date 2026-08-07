@@ -657,7 +657,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(followUp).toContain("Bind every read to `NVIDIA/NemoClaw`");
     expect(followUp).toContain("Record each page count and terminal pagination signal");
-    expect(followUp).toContain("including pending, cancelled, and skipped results");
+    expect(followUp).toContain(
+      "every required check, including pending, cancelled, and skipped results",
+    );
     expect(followUp).toContain("retained evidence: none");
     expect(followUp).toContain("stop without further edits, commits, or pushes");
     expect(createPr).toContain("Apply one coherent change set");
