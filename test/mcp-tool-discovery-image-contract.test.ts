@@ -240,10 +240,13 @@ describe("MCP tool discovery image contract", () => {
     for (const seedName of seedNames) {
       const seed = fs.readFileSync(path.join(seedDirectory, seedName));
       const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
-      const matches = Object.values(lock.packages).filter(
+      const matches = (
+        Object.values(lock.packages) as Array<{ integrity?: string; resolved?: string }>
+      ).filter(
         (entry) =>
           entry.integrity === integrity &&
-          path.basename(new URL(entry.resolved).pathname) === seedName,
+          path.basename(new URL(entry.resolved ?? "https://invalid.invalid/").pathname) ===
+            seedName,
       );
 
       expect(matches).toHaveLength(1);
