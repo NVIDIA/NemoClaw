@@ -217,19 +217,19 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("rejects an incomplete offline cache before invoking Docker", () => {
-    const cacheRoot = path.join(testRoot, "offline-cache");
+  it("rejects an incomplete imported cache before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
     mkdirSync(cacheRoot);
 
-    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("offline cache is incomplete for openclaw");
+    expect(result.stderr).toContain("imported cache is incomplete for openclaw");
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("passes each agent complete offline cache metadata with network disabled", () => {
-    const cacheRoot = path.join(testRoot, "offline-cache");
+  it("imports each agent cache without changing RUN network cache identity", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
       mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
         recursive: true,
@@ -238,19 +238,20 @@ describe("protected managed-image build-cache boundary", () => {
     }
     stubBuildInvocation();
 
-    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
       expect(recordedBuildInvocation(agent)).toContain(
-        `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent} --network none`,
+        `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
       );
+      expect(recordedBuildInvocation(agent)).not.toContain("--network");
     }
   });
 
-  it("rejects a nested symlink in a complete offline cache before invoking Docker", () => {
-    const cacheRoot = path.join(testRoot, "offline-cache");
+  it("rejects a nested symlink in a complete imported cache before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
       mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
         recursive: true,
@@ -262,10 +263,10 @@ describe("protected managed-image build-cache boundary", () => {
       path.join(cacheRoot, "openclaw", "blobs", "sha256", "nested-link"),
     );
 
-    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("offline cache contains a symlink");
+    expect(result.stderr).toContain("imported cache contains a symlink");
     expect(existsSync(dockerLog)).toBe(false);
   });
 });

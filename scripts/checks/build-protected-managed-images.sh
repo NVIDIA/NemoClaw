@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--offline-cache <absolute-dir>]" >&2
+  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir>]" >&2
   exit 2
 }
 
@@ -18,7 +18,7 @@ hermes_base=""
 dcode_base=""
 source_root="$PWD"
 cache_to=""
-offline_cache=""
+cache_from=""
 while (($# > 0)); do
   case "$1" in
     --cache-to)
@@ -51,9 +51,9 @@ while (($# > 0)); do
       openclaw_base="$2"
       shift 2
       ;;
-    --offline-cache)
+    --cache-from)
       (($# >= 2)) || usage
-      offline_cache="$2"
+      cache_from="$2"
       shift 2
       ;;
     --hermes-base)
@@ -96,17 +96,17 @@ if [[ -n "$cache_to" ]]; then
     exit 1
   }
 fi
-if [[ -n "$offline_cache" ]]; then
-  [[ "$offline_cache" == /* && "$offline_cache" != *$'\n'* && -d "$offline_cache" && ! -L "$offline_cache" ]] || usage
-  offline_cache="$(cd -- "$offline_cache" && pwd -P)"
-  [[ -z "$(find "$offline_cache" -type l -print -quit)" ]] || {
-    echo "ERROR: protected managed-image offline cache contains a symlink" >&2
+if [[ -n "$cache_from" ]]; then
+  [[ "$cache_from" == /* && "$cache_from" != *$'\n'* && -d "$cache_from" && ! -L "$cache_from" ]] || usage
+  cache_from="$(cd -- "$cache_from" && pwd -P)"
+  [[ -z "$(find "$cache_from" -type l -print -quit)" ]] || {
+    echo "ERROR: protected managed-image imported cache contains a symlink" >&2
     exit 1
   }
   for agent in openclaw hermes langchain-deepagents-code; do
-    cache_source="$offline_cache/$agent"
+    cache_source="$cache_from/$agent"
     [[ -d "$cache_source/blobs/sha256" && -f "$cache_source/index.json" ]] || {
-      echo "ERROR: protected managed-image offline cache is incomplete for ${agent}" >&2
+      echo "ERROR: protected managed-image imported cache is incomplete for ${agent}" >&2
       exit 1
     }
   done
@@ -139,9 +139,9 @@ build_agent() {
     local cache_destination="$cache_to/$agent"
     cache_args+=(--cache-to "type=local,dest=${cache_destination},mode=max")
   fi
-  if [[ -n "$offline_cache" ]]; then
-    local cache_source="$offline_cache/$agent"
-    cache_args+=(--cache-from "type=local,src=${cache_source}" --network none)
+  if [[ -n "$cache_from" ]]; then
+    local cache_source="$cache_from/$agent"
+    cache_args+=(--cache-from "type=local,src=${cache_source}")
   fi
 
   local base_digest="${base_reference##*@}"
