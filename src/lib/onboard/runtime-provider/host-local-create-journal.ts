@@ -17,6 +17,7 @@ export const HOST_LOCAL_CREATE_JOURNAL_SCHEMA_VERSION = 1 as const;
 export const HOST_LOCAL_CREATE_JOURNAL_DIRECTORY = "host-local-create-journal";
 
 export type HostLocalCreateJournalPhase =
+  | "network-creating"
   | "prepared"
   | "creating"
   | "created"
@@ -32,10 +33,10 @@ export interface HostLocalCreateJournalRecord {
   readonly service: string;
   readonly containerName: string;
   readonly runtimeId: string | null;
-  /** Durable wall-clock boundary for an issued container-create mutation. */
+  /** Durable wall-clock boundary for the phase's issued resource-create mutation. */
   readonly createIntentUnixMs: number | null;
   readonly specSha256: string;
-  readonly networkId: string;
+  readonly networkId: string | null;
   /** Path- and value-free identity of the API-key file captured before create. */
   readonly apiKeyIdentitySha256: string;
   /** Path-free identity of the private directory chain that owns the API-key pathname. */
@@ -59,6 +60,10 @@ export interface HostLocalCreateJournalStore {
   readonly load: (transactionId: string) => HostLocalCreateJournalRecord | null;
   readonly list: () => readonly HostLocalCreateJournalRecord[];
   readonly create: (record: HostLocalCreateJournalRecord) => HostLocalCreateJournalRecord;
+  readonly recordNetworkCreated: (
+    transactionId: string,
+    networkId: string,
+  ) => HostLocalCreateJournalRecord;
   readonly recordCreating: (
     transactionId: string,
     createIntentUnixMs: number,
@@ -97,6 +102,7 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 const EXECUTION_LEASE_FILE = ".execution-lease.json";
 const EXECUTION_RECOVERY_FILE = ".execution-recovery.json";
 const PHASES = new Set<HostLocalCreateJournalPhase>([
+  "network-creating",
   "prepared",
   "creating",
   "created",
@@ -210,11 +216,19 @@ export function normalizeHostLocalCreateJournalRecord(
       : typeof record.serializedReceipt === "string"
         ? record.serializedReceipt
         : fail("serialized receipt must be canonical text or null");
-  if ((phase === "prepared" || phase === "creating") !== (runtimeId === null)) {
+  if (
+    (phase === "network-creating" || phase === "prepared" || phase === "creating") !==
+    (runtimeId === null)
+  ) {
     fail("phase and runtime identity disagree");
   }
   if ((phase === "prepared") !== (createIntentUnixMs === null)) {
     fail("phase and create intent timestamp disagree");
+  }
+  const networkId =
+    record.networkId === null ? null : exactText(record.networkId, RUNTIME_ID, "network identity");
+  if ((phase === "network-creating") !== (networkId === null)) {
+    fail("phase and network identity disagree");
   }
   const hasPreparedReceipt = phase === "receipt-prepared" || phase === "finalized";
   if (
@@ -256,7 +270,7 @@ export function normalizeHostLocalCreateJournalRecord(
     runtimeId,
     createIntentUnixMs,
     specSha256: exactText(record.specSha256, SHA256, "specification digest"),
-    networkId: exactText(record.networkId, RUNTIME_ID, "network identity"),
+    networkId,
     apiKeyIdentitySha256: exactText(
       record.apiKeyIdentitySha256,
       SHA256,
@@ -598,7 +612,9 @@ export function createHostLocalCreateJournalStore(
     create(record) {
       requireDirectory(root);
       const normalized = normalizeHostLocalCreateJournalRecord(record);
-      if (normalized.phase !== "prepared") fail("new transaction must be prepared");
+      if (normalized.phase !== "prepared" && normalized.phase !== "network-creating") {
+        fail("new transaction must record a prepared resource mutation");
+      }
       publish(
         root,
         recordPath(root, normalized.transactionId),
@@ -606,6 +622,19 @@ export function createHostLocalCreateJournalStore(
         true,
       );
       return normalized;
+    },
+    recordNetworkCreated(transactionId, networkId) {
+      return replace(transactionId, (current) => {
+        if (current.phase !== "network-creating") {
+          fail("only a network-creating transaction can record network creation");
+        }
+        return {
+          ...current,
+          phase: "prepared",
+          networkId: exactText(networkId, RUNTIME_ID, "network identity"),
+          createIntentUnixMs: null,
+        };
+      });
     },
     recordCreating(transactionId, createIntentUnixMs) {
       return replace(transactionId, (current) => {
