@@ -25,6 +25,9 @@ import {
   type LlamaCppDgxSparkExecutionPlan,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
+import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agent-qualification.mts";
+import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
+import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
 export { validateChatCompletionResponse, validateModelsResponse };
 
@@ -227,7 +230,14 @@ export function parseQualificationInvocation(
     throw new Error("registry ownership does not match this workflow run");
   }
   requireTrustedEnvironment(environment, runId, runAttempt);
-  if (cleanupOnly) return { cleanupOnly: true, registryName, registryOwner, runAttempt, runId };
+  if (cleanupOnly)
+    return {
+      cleanupOnly: true,
+      registryName,
+      registryOwner,
+      runAttempt,
+      runId,
+    };
 
   const workflowSha = requiredString(options.get("--workflow-sha"), "workflow SHA", gitShaPattern);
   requireTrustedEnvironment(environment, runId, runAttempt, workflowSha);
@@ -319,12 +329,14 @@ export function buildServerContainerArgv(
     registryOwner: string;
     runtimeGid: number;
     runtimeUid: number;
+    hostPort?: number;
   },
 ): string[] {
   return buildLlamaCppHostLocalDockerArgv(plan.recipe, {
     apiKeyHostPath: options.apiKeyHostPath,
     containerName: options.containerName,
     imageReference: options.imageReference,
+    ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
     model: options.model,
     network: { isolation: "docker-internal", name: options.networkName },
     ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
@@ -333,7 +345,32 @@ export function buildServerContainerArgv(
   });
 }
 
-export function validateStartupLog(log: string): { offloadedLayers: number; totalLayers: number } {
+export function validateOpenClawQualificationImageLabels(
+  source: string,
+  expectedRevision: string,
+): void {
+  let labels: unknown;
+  try {
+    labels = JSON.parse(source) as unknown;
+  } catch {
+    throw new Error("OpenClaw qualification image labels are invalid");
+  }
+  if (
+    !isRecord(labels) ||
+    labels["io.nvidia.nemoclaw.agent"] !== "openclaw" ||
+    labels["io.nvidia.nemoclaw.managed-image.contract"] !== "1" ||
+    labels["io.nvidia.nemoclaw.managed-image.platform"] !== "linux/arm64" ||
+    labels["org.opencontainers.image.source"] !== "https://github.com/NVIDIA/NemoClaw" ||
+    labels["org.opencontainers.image.revision"] !== expectedRevision
+  ) {
+    throw new Error("OpenClaw qualification image does not match the declarative identity");
+  }
+}
+
+export function validateStartupLog(log: string): {
+  offloadedLayers: number;
+  totalLayers: number;
+} {
   if (Buffer.byteLength(log) < 1 || Buffer.byteLength(log) > 16 * 1024 * 1024) {
     throw new Error("startup evidence is missing or exceeds the bounded log size");
   }
@@ -700,7 +737,9 @@ function inspectBuiltImage(
   });
   if (sha256Text(raw) !== digest)
     throw new Error("candidate manifest bytes do not match its digest");
-  runCommand("docker", ["pull", "--platform", "linux/arm64", reference], { capture: false });
+  runCommand("docker", ["pull", "--platform", "linux/arm64", reference], {
+    capture: false,
+  });
   const inspected = JSON.parse(
     runCommand("docker", ["image", "inspect", reference]).toString("utf8"),
   ) as unknown;
@@ -782,7 +821,10 @@ function writeReceipt(output: string, receipt: unknown, tempRoot: string): void 
     throw new Error("qualification receipt path must not be a symlink");
   }
   const temporary = `${output}.tmp-${process.pid}`;
-  fs.writeFileSync(temporary, `${JSON.stringify(receipt)}\n`, { encoding: "utf8", mode: 0o600 });
+  fs.writeFileSync(temporary, `${JSON.stringify(receipt)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   fs.renameSync(temporary, output);
 }
 
@@ -811,6 +853,12 @@ async function runQualification(
   let cleanupEvidence: CleanupEvidence | undefined;
   try {
     if (await tcpOpen(5000)) throw new Error("refusing to reuse an existing localhost registry");
+    if (
+      plan.qualification.agentQualification.execution === "enabled" &&
+      (await tcpOpen(plan.recipe.serve.port))
+    ) {
+      throw new Error("refusing to reuse the declarative llama.cpp agent qualification port");
+    }
     startRegistry(names);
     await waitForRegistry();
     runCommand("docker", buildCandidateImageArgv(plan, invocation, metadataFile), {
@@ -822,7 +870,11 @@ async function runQualification(
     fs.mkdirSync(names.tempRoot, { mode: 0o700 });
     const model = hashModelFile(invocation.modelHostPath, plan);
     const apiKey = randomBytes(32).toString("hex");
-    fs.writeFileSync(apiKeyHostPath, apiKey, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    fs.writeFileSync(apiKeyHostPath, apiKey, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
     const hostUid = process.getuid?.();
     const hostGid = process.getgid?.();
     if (hostUid === undefined || hostGid === undefined) {
@@ -862,6 +914,9 @@ async function runQualification(
         registryOwner: names.registryOwner,
         runtimeGid,
         runtimeUid,
+        ...(plan.qualification.agentQualification.execution === "enabled"
+          ? { hostPort: plan.recipe.serve.port }
+          : {}),
       }),
       { capture: false },
     );
@@ -877,18 +932,90 @@ async function runQualification(
       plan.recipe.runtime.cuda.minimumDriverVersion,
     );
     await waitForHealth(loopbackPort, plan.recipe.readiness.timeoutSeconds);
+    const offload = validateStartupLog(
+      runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
+        maximumBytes: 16 * 1024 * 1024,
+      }).toString("utf8"),
+    );
     const authorization = `Bearer ${apiKey}`;
     const probes = await runLlamaCppDgxSparkProtocolQualification({
       authorization,
       baseUrl: `http://127.0.0.1:${loopbackPort}`,
       plan,
     });
-    const offload = validateStartupLog(
-      runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
-        maximumBytes: 16 * 1024 * 1024,
-      }).toString("utf8"),
-    );
+    let agentQualification: JsonRecord = { execution: "disabled" };
+    const agentPlan = plan.qualification.agentQualification;
+    if (agentPlan.execution === "enabled") {
+      if (loopbackPort !== plan.recipe.serve.port) {
+        throw new Error("agent qualification requires the declarative llama.cpp loopback port");
+      }
+      runCommand(
+        "docker",
+        ["pull", "--platform", plan.imageBuild.platform.platform, agentPlan.image.reference],
+        { capture: false },
+      );
+      validateOpenClawQualificationImageLabels(
+        runCommand("docker", [
+          "image",
+          "inspect",
+          "--format",
+          "{{json .Config.Labels}}",
+          agentPlan.image.reference,
+        ]).toString("utf8"),
+        agentPlan.image.sourceRevision,
+      );
+      const route = resolveManagedImageLocalInferenceRoute("llama-cpp");
+      if (
+        route.providerName !== agentPlan.route.provider ||
+        route.defaultBaseUrl !== agentPlan.route.upstreamBaseUrl
+      ) {
+        throw new Error("managed OpenClaw route does not match the declarative qualification");
+      }
+      const credentialName = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
+      const baseUrlEnvironmentName = "NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL";
+      const priorCredential = process.env[credentialName];
+      const priorBaseUrl = process.env[baseUrlEnvironmentName];
+      process.env[credentialName] = apiKey;
+      process.env[baseUrlEnvironmentName] = agentPlan.route.upstreamBaseUrl;
+      try {
+        const managedResult = await runManagedImageOpenShellE2e(
+          {
+            agent: agentPlan.agent,
+            image: agentPlan.image.reference,
+            localProvider: "llama-cpp",
+            model: plan.recipe.model.servedName,
+            sandbox: agentPlan.sandbox.name,
+          },
+          (context) => runLlamaCppOpenClawAgentQualification(agentPlan, context),
+        );
+        if (!managedResult.probeEvidence) {
+          throw new Error("OpenClaw qualification did not return bounded evidence");
+        }
+        agentQualification = {
+          agent: agentPlan.agent,
+          cleanup: managedResult.cleanup,
+          execution: "enabled",
+          image: agentPlan.image,
+          model: {
+            chatTemplate: plan.recipe.serve.chatTemplate,
+            id: plan.recipe.model.id,
+            quantization: plan.recipe.model.file.quantization,
+            servedName: plan.recipe.model.servedName,
+          },
+          platform: plan.imageBuild.platform.platform,
+          probes: managedResult.probeEvidence,
+          route: agentPlan.route,
+          runtimeProvider: agentPlan.runtimeProvider,
+        };
+      } finally {
+        if (priorCredential === undefined) delete process.env[credentialName];
+        else process.env[credentialName] = priorCredential;
+        if (priorBaseUrl === undefined) delete process.env[baseUrlEnvironmentName];
+        else process.env[baseUrlEnvironmentName] = priorBaseUrl;
+      }
+    }
     successReceipt = {
+      agentQualification,
       baseSha: invocation.candidateBase,
       headSha: invocation.candidateHead,
       kind: LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND,
