@@ -61,10 +61,9 @@ function socketAuthorityDeps(): PodmanSocketAuthorityDeps {
 function createPodman(matches = [CONTAINER_ID]) {
   return vi.fn((args: readonly string[]) => {
     const command = args[0] === "--url" ? args.slice(2) : args;
-    if (command[0] === "info") return { status: 0, stdout: `${SOCKET_PATH}\n` };
-    if (command[0] === "ps") return { status: 0, stdout: `${matches.join("\n")}\n` };
-    if (command[0] === "inspect") {
-      return {
+    const handlers = {
+      info: () => ({ status: 0, stdout: `${SOCKET_PATH}\n` }),
+      inspect: () => ({
         status: 0,
         stdout: JSON.stringify([
           {
@@ -80,9 +79,10 @@ function createPodman(matches = [CONTAINER_ID]) {
             State: { Running: true },
           },
         ]),
-      };
-    }
-    throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
+      }),
+      ps: () => ({ status: 0, stdout: `${matches.join("\n")}\n` }),
+    };
+    return handlers[command[0] as keyof typeof handlers]();
   });
 }
 
