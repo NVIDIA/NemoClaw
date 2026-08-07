@@ -280,14 +280,14 @@ The previous design used a 25-minute default and a 60-minute extension for time-
 
 Two-pass design.
 
-- **Baseline pass (8a–8c):** install the **reported version**, run the reproducer, confirm it actually exposes the bug as described. This is the gate that proves the script is real.
-- **Latest pass (8d):** install **latest**, run the validated reproducer. This is what the confidence score is built on.
+- **Reported-release pass (8a–8c):** install the reported release, run the reproducer, and confirm that it exposes the reported symptom.
+- **Newest-release pass (8d):** install `$LATEST` as an exact release tag and run the validated reproducer.
 
-Without the baseline gate, a clean run on latest is ambiguous: maybe the bug really got fixed, maybe the script was never capable of triggering it. The baseline disambiguates.
+Without the reported-release result, a newest-release result without the symptom is inconclusive. The reproducer might never have exposed the reported symptom.
 
 ### Reset (run before each install)
 
-NemoClaw spawns OpenShell sandboxes (containers), runtime services, and listening processes. A naive `rm -rf ~/.nemoclaw` doesn't clean those — the latest install would inherit baseline state and contaminate the result. Use this fuller reset between installs:
+NemoClaw starts OpenShell sandboxes, runtime services, and listening processes. `rm -rf ~/.nemoclaw` does not remove those resources. Without the reset below, the newest-release install would inherit reported-release state and invalidate the comparison.
 
 ```bash
 RESET=$(cat <<'SCRIPT'
@@ -389,19 +389,18 @@ python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.
   "$EVIDENCE_DIR/baseline-install.log" >"$EVIDENCE_DIR/baseline-install.redacted.log"
 tail -40 "$EVIDENCE_DIR/baseline-install.redacted.log"
 
-# After a successful install, verify that the resolved release tag matches the requested tag.
-# This rejects shell-scoping errors that apply the variable to `curl` instead of `bash`.
-if [ "$BASELINE_INSTALL_FAILED" = "0" ]; then
-  RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
-  RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
-  RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
-  echo "[verify-stale] baseline requested: $REPORTED_VERSION; resolved: $RESOLVED"
-  if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$REPORTED_VERSION" ]; then
-    RESOLVED_TAG_MISMATCH=1
-    echo "ERROR: resolved release tag '$RESOLVED_TAG' does not match requested release tag $REPORTED_VERSION"
-    echo "Do not assign a verdict, score the run, or propose a GitHub comment."
-    exit 1
-  fi
+# Always attempt to resolve the installed release tag, including when the installer
+# exits after placing the CLI but before onboarding completes.
+RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
+RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+RESOLVED_TAG=""
+[ -z "$RESOLVED_SEMVER" ] || RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
+echo "[verify-stale] baseline requested: $REPORTED_VERSION; resolved: $RESOLVED"
+if [ -z "$RESOLVED_TAG" ] || [ "$RESOLVED_TAG" != "$REPORTED_VERSION" ]; then
+  RESOLVED_TAG_MISMATCH=1
+  echo "ERROR: resolved release tag '${RESOLVED_TAG:-<unresolved>}' does not match requested release tag $REPORTED_VERSION"
+  echo "Do not assign a verdict, score the run, or propose a GitHub comment."
+  exit 1
 fi
 
 # The bundled onboard creates a sandbox name we do not want carrying through to the reproducer.

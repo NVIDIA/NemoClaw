@@ -46,7 +46,7 @@ Most bugs are `functional`. The other three classes need separate verification h
 | `integration: openclaw` label or an OpenClaw-specific reproducer | `openclaw` |
 | No runtime-specific signal after Step 3 filters | `openclaw` |
 
-Do not substitute one agent runtime for another. If the issue mentions LangChain Deep Agents Code, stop and select `verify-inconclusive`; do not set `NEMOCLAW_AGENT` or use Brev. If another runtime signal is ambiguous, select `verify-inconclusive` or ask the maintainer before Brev use.
+Do not substitute one agent runtime for another. Step 3 must drop issues whose reproducer is specific to LangChain Deep Agents Code. If another runtime signal is ambiguous, select `verify-inconclusive` or ask the maintainer before Brev use.
 
 **Provider classification.** Some bugs are tied to a specific inference provider and do not reproduce faithfully under Ollama substitution. Classify the provider so downstream steps use the exact credential variable or select an inconclusive path:
 

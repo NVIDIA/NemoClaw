@@ -314,7 +314,7 @@ GitHub does not make these calls transactional. If a Project update succeeds and
 
 ## Step 11: Infra Failure Handling
 
-Two different failure types, two different responses.
+Handle each failure category according to the rules below.
 
 **Install failure on the newest release tag**, reuse-check failure, instance-creation failure, or harness error: hard infrastructure failure.
 
