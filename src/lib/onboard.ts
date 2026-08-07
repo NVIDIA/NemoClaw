@@ -995,10 +995,9 @@ const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawRea
   });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
+const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox, webSearchProviderForConfig } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
-
 // Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
@@ -4463,6 +4462,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         stagedLegacyKeys,
         migratedLegacyKeys,
         webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
+        webSearchProvider: (config) => webSearchProviderForConfig(config),
       },
       finalizationDeps: {
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.

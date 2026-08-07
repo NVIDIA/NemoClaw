@@ -1,43 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { dockerRunCommandBetween } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
-
-interface LoggedDockerShellResult {
-  calls: string;
-  result: SpawnSyncReturns<string>;
-}
-
-function runLoggedDockerShell(
-  command: string,
-  tmp: string,
-  functionDefs: string[] = [],
-): LoggedDockerShellResult {
-  const logPath = path.join(tmp, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const script = [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    `call_log=${JSON.stringify(logPath)}`,
-    ...functionDefs,
-    command,
-  ].join("\n");
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-  const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
-}
 
 function dashboardBuildCommand(hermesRoot: string, rootCache: string): string {
   const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");

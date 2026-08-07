@@ -499,6 +499,40 @@ A reusable source schema is deferred until a production consumer requires one.
 
 Removal criterion: drop this patch when the reviewed OpenClaw release emits redacted diagnostics classified by transport phase for remote MCP fetch failures.
 
+## Bounded MCP Tool Discovery Timeout
+
+`scripts/patch-openclaw-mcp-tools-list-timeout.mts` is a version-scoped, fail-closed compatibility patch.
+The transport symptoms investigated in issue #7957 motivated this bounded follow-up; the patch does not change that issue's diagnostics acceptance criteria.
+OpenClaw `2026.7.1` gives `tools/list` 1,500 ms unless an MCP server configuration supplies a request timeout.
+The managed mcporter registration does not expose a tool-discovery-only timeout.
+
+The patch identifies the compiled target by the `"openclaw-bundle-mcp"` client identity.
+It requires the 1,500 ms constant and the complete catalog-timeout resolver to appear exactly once.
+An unrecognized compiled shape fails the image build.
+`--audit` re-verifies the applied state.
+
+Reviewed behavior:
+
+- An unset or blank `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` value adds no override.
+  OpenClaw then uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
+- NemoClaw forwards the setting only to an OpenClaw sandbox.
+  Host-side validation trims surrounding whitespace, accepts the remaining canonical integer from 1,500 through 10,000 ms, forwards normalized digits, and rejects an invalid value before the sandbox create step, including the replacement create step during rebuild.
+- The injected runtime parser repeats the range and integer checks.
+  It ignores the host-side setting unless `OPENSHELL_SANDBOX=1` and stops module initialization for an invalid direct runtime value.
+- A valid override takes precedence over the server request timeout only for catalog `tools/list` requests.
+  It does not change the 30,000 ms connection timeout or the 60,000 ms default used by tool calls and other MCP requests.
+- OpenClaw writes one `mcp_tools_list_timeout_override_ms` line when the MCP runtime loads with an override.
+  The default path emits no additional log line.
+- The existing OpenClaw test-only timeout setter keeps first precedence so upstream runtime tests retain their isolation control.
+- The build patch runs only for OpenClaw `2026.7.1`.
+  It skips the reviewed `2026.3.11` and `2026.4.24` stale-upgrade E2E fixture versions before bundle discovery and rejects every other version.
+
+`test/openclaw-mcp-tools-list-timeout-patch.test.ts` executes the injected parser and pins the compiled preimage.
+It covers patch idempotence, fail-closed drift rejection, host and sandbox gates, bounds, invalid values, and composition with managed transport diagnostics.
+`src/lib/onboard/sandbox-create-launch.test.ts` covers canonical forwarding, range rejection, and exclusion from Hermes and Deep Agents Code sandboxes.
+
+Removal criterion: drop this patch when the reviewed OpenClaw release provides an equivalent bounded `tools/list`-only runtime setting.
+
 ## Gateway Startup Migration Compatibility
 
 OpenClaw `2026.7.1` requires its migration checkpoint to complete without
