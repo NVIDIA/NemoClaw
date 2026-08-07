@@ -19,7 +19,7 @@ export const CLI_ARTIFACT_DOWNLOAD_ACTION =
 export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 export const CLI_ARTIFACT_RESTORE_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d34b11e8b895760d6505d54e2cfc520332cb2a9c";
+  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3";
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
@@ -33,14 +33,14 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "f90d4532a64473817b183856e225b401b201d71aaafa75bd7cf8d63a3deeb76f";
+  "3a81ad631b839aa938eaaf1ad6777bab247204bf86fbca3c43c326a44dfb9c6c";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "3cae1755d65b5a491ce24f483c88f9dc08fb3eab1f43be7ba35f0de24d03ea22";
+  "5d09301f3d37c6d2f588379fa8c94ef33d00efb8e25dc475bcfba24377fd8365";
 const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
@@ -217,7 +217,9 @@ export function validateCliArtifactRestoreAction(
     '.artifactName == ("nemoclaw-cli-" + .candidateSha + "-" + .payloadSha256)',
     'git rev-parse --verify HEAD)" == "$candidate_sha"',
     '[[ "$workflow_sha" == "$CALLER_WORKFLOW_SHA" ]]',
-    '[[ "$run_id" == "$GITHUB_RUN_ID" && "$run_attempt" == "$GITHUB_RUN_ATTEMPT" ]]',
+    '[[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]',
+    '[[ "$run_id" == "$GITHUB_RUN_ID" ]]',
+    "(( run_attempt <= GITHUB_RUN_ATTEMPT ))",
     '[[ "$remote_repository" == "$candidate_repository" ]]',
     '<<<"$PROVENANCE_JSON" >>"$GITHUB_OUTPUT"',
   ]);
@@ -241,7 +243,7 @@ export function validateCliArtifactRestoreAction(
       CANDIDATE_REPOSITORY: "${{ steps.identity.outputs.candidate_repository }}",
       CANDIDATE_SHA: "${{ steps.identity.outputs.candidate_sha }}",
       PAYLOAD_SHA256: "${{ steps.identity.outputs.payload_sha256 }}",
-      RUN_ATTEMPT: "${{ steps.identity.outputs.run_attempt }}",
+      PRODUCER_RUN_ATTEMPT: "${{ steps.identity.outputs.producer_run_attempt }}",
       RUN_ID: "${{ steps.identity.outputs.run_id }}",
       WORKFLOW_SHA: "${{ steps.identity.outputs.workflow_sha }}",
     })
