@@ -5,13 +5,10 @@
 
 ## v0.0.104
 
-NemoClaw v0.0.104 adds fixed local model serving profiles for vLLM and llama.cpp on DGX Spark, trusted private endpoint configuration, and a selectable Personal network policy tier.
+NemoClaw v0.0.104 adds trusted private endpoint configuration and a selectable Personal network policy tier.
 It makes agent manifests authoritative for persistent state and strengthens gateway, rebuild, registry, and uninstall recovery.
 It also improves Hermes configuration safety, MCP diagnostics, credential isolation, and host installation guidance.
 
-- The feature-gated fixed local model profile for DGX Spark now supports the explicit `--local-model-runtime=vllm` and `--local-model-runtime=llama-cpp` onboarding choices with a fixed model catalog, loopback-only authenticated endpoints, and ownership-aware cleanup.
-  Durable serving receipts preserve lifecycle provenance across recovery, DGX Spark storage admission reports remediable capacity problems, and a public llama.cpp `/v1/models` route is accepted only when `/props` remains protected.
-  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), and [Understand Host Files and State](/user-guide/openclaw/reference/host-files-and-state).
 - Custom inference endpoints, MCP servers, and custom policy presets can now opt in to explicitly trusted private hosts.
   NemoClaw keeps exact host allowlists, pins generated `allowed_ips`, preserves those pins across restart and rebuild, and applies configured certificate authority trust without widening the endpoint policy.
   For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Create Custom Policy Presets](/user-guide/openclaw/network-policy/configure-policies/create-custom-policy-presets), and [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust).
