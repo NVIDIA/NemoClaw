@@ -46,6 +46,9 @@ const PS_OUTPUT = [
 
 const IMAGES_OUTPUT = [
   "i-nemoclaw ghcr.io/nvidia/nemoclaw:test",
+  // The gateway builds sandbox images under this repository, so the `openshell`
+  // half of the filter selects real resources and must stay covered.
+  "i-openshell openshell/sandbox-from:1780294581",
   "i-openclaw ghcr.io/openclaw/openclaw:latest",
   "i-unrelated redis:7",
 ].join("\n");
@@ -133,5 +136,11 @@ describe("uninstall Docker resource scope", () => {
     const calls = runWithDockerInventory();
 
     expect(calls).toContainEqual(["rmi", "-f", "i-nemoclaw"]);
+  });
+
+  it("still removes gateway-built OpenShell sandbox images", () => {
+    const calls = runWithDockerInventory();
+
+    expect(calls).toContainEqual(["rmi", "-f", "i-openshell"]);
   });
 });
