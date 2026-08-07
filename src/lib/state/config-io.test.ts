@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  ConfigCorruptError,
   ConfigPermissionError,
   ensureConfigDir,
   readConfigFile,
@@ -92,11 +93,71 @@ describe("config-io", () => {
     expect(readConfigFile(file, { ok: true })).toEqual({ ok: true });
   });
 
-  it("returns the fallback when the config file is malformed", () => {
+  it("fails instead of returning the fallback when the config file is malformed", () => {
     const dir = makeTempDir();
     const file = path.join(dir, "config.json");
     fs.writeFileSync(file, "{not-json");
-    expect(readConfigFile(file, { ok: true })).toEqual({ ok: true });
+
+    expect(() => readConfigFile(file, { ok: true })).toThrow(ConfigCorruptError);
+  });
+
+  it("leaves the malformed file untouched and keeps failing on every later read", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const original = '{"sandboxes":{"keep-me":{"name":"keep-me"}},}';
+    fs.writeFileSync(file, original, { mode: 0o600 });
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(() => readConfigFile(file, { ok: true })).toThrow(ConfigCorruptError);
+    }
+
+    expect(fs.readFileSync(file, "utf-8")).toBe(original);
+    expect(fs.readdirSync(dir)).toEqual(["config.json"]);
+  });
+
+  it("names the malformed file and a recovery path without quoting its contents", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, '{"token":"super-secret-value"');
+
+    let caught: unknown;
+    try {
+      readConfigFile(file, null);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ConfigCorruptError);
+    const corrupt = caught as ConfigCorruptError;
+    expect(corrupt.code).toBe("ECONFIGCORRUPT");
+    expect(corrupt.filePath).toBe(file);
+    expect(corrupt.message).toContain(file);
+    expect(corrupt.remediation).toMatch(new RegExp(`cp \\S*${file}\\S* \\S*${file}\\.bad`));
+    expect(corrupt.remediation).toContain("rm ");
+    expect(corrupt.cause).toBeUndefined();
+    expect(JSON.stringify(corrupt, Object.getOwnPropertyNames(corrupt))).not.toContain(
+      "super-secret-value",
+    );
+  });
+
+  it("fails on a malformed file reached through a symlinked final component", () => {
+    const dir = makeTempDir();
+    const target = path.join(dir, "target.json");
+    const link = path.join(dir, "config.json");
+    fs.writeFileSync(target, "{not-json", { mode: 0o600 });
+    fs.symlinkSync(target, link);
+
+    expect(() => readConfigFile(link, { ok: true })).toThrow(ConfigCorruptError);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, "utf-8")).toBe("{not-json");
+  });
+
+  it("throws when a present config path cannot be read as a file", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.mkdirSync(file);
+
+    expect(() => readConfigFile(file, { ok: true })).toThrow();
   });
 
   it("writes and reads JSON atomically", () => {

@@ -433,7 +433,11 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("CONNECTED_LIOST");
     expect(r.out).not.toContain("Unknown command: liost");
     const calls = fs.readFileSync(path.join(home, "openshell-calls.log"), "utf8").split("\n");
-    expect(calls).toContain("sandbox list");
+    // Every sandbox list in this flow is gateway-scoped, including registry
+    // recovery's. An unscoped list returns every sandbox on the host, so on a
+    // two-gateway host recovery would bind a sibling gateway's sandbox to the
+    // selected gateway (#7105).
+    expect(calls).not.toContain("sandbox list");
     expect(calls).toContain("sandbox list -g nemoclaw");
   });
 
