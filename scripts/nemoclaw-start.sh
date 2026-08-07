@@ -3406,8 +3406,8 @@ GATEWAYTOKENRECONCILESTART
     printf "    '%s') : ;;\n" "$_escaped_intended_gateway_token"
     cat <<'GATEWAYTOKENRECONCILEEND'
     *)
-      echo "Error: conflicting trust anchor" >&2
-      return 1 2>/dev/null || exit 1
+      /usr/bin/printf '%s\n' 'Error: conflicting trust anchor' >&2
+      /usr/bin/false
       ;;
   esac
 fi

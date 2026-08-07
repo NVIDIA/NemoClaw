@@ -38,6 +38,7 @@ interface Scenario {
   repeatSources?: boolean;
   readonlyPrivateSentinel?: boolean;
   shadowTestCommand?: boolean;
+  shadowStatusCommands?: boolean;
   sourceUrl?: string;
 }
 
@@ -77,15 +78,19 @@ function runReconcile(scenario: Scenario): {
   spawnSync("bash", [generator], { encoding: "utf-8" });
 
   const setup = [
+    "set -e",
     scenario.preset
       ? `${scenario.preset.readonly ? "readonly " : ""}OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.preset.value)}`
       : "",
     scenario.readonlyPrivateSentinel ? "readonly _nemoclaw_gateway_token='CALLER-SENTINEL'" : "",
     scenario.shadowTestCommand ? "function [ { return 0; }" : "",
+    scenario.shadowStatusCommands
+      ? "function return { builtin return 0; }; function exit { builtin return 0; }; function echo { builtin return 0; }"
+      : "",
     scenario.sourceUrl ? `OPENCLAW_GATEWAY_URL=${shellQuote(scenario.sourceUrl)}` : "",
   ].filter(Boolean);
   const sourceAndPrint = [
-    `. ${shellQuote(envFile)} || exit $?`,
+    `. ${shellQuote(envFile)}`,
     `printf 'TOKEN=[%s] PRIVATE=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}"`,
   ];
   const commands = scenario.repeatSources
@@ -128,6 +133,20 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
       shell: "bash",
       preset: { value: "SENTINEL_CONFLICT", readonly: true },
       shadowTestCommand: true,
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain("Error: conflicting trust anchor");
+    expect(stderr).not.toContain("read only");
+    expect(`${stdout}\n${stderr}`).not.toContain(REAL_TOKEN);
+    expect(stdout).not.toContain("TOKEN=");
+  });
+
+  it("rejects a conflicting readonly value when Bash shadows status commands", () => {
+    const { status, stdout, stderr } = runReconcile({
+      intended: REAL_TOKEN,
+      shell: "bash",
+      preset: { value: "SENTINEL_CONFLICT", readonly: true },
+      shadowStatusCommands: true,
     });
     expect(status).toBe(1);
     expect(stderr).toContain("Error: conflicting trust anchor");
