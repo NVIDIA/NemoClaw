@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
@@ -14,6 +15,64 @@ const dockerfiles = [
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
 ] as const;
+
+function createCacheSeedFixture(): {
+  cache: string;
+  fixture: string;
+  retryHelper: string;
+  seed: string;
+} {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-cache-seed-"));
+  const cache = path.join(fixture, "cache");
+  const retryHelper = path.join(fixture, "npm-ci-locked.sh");
+  const seedDirectory = path.join(fixture, "npm-cache-seed");
+  const seed = path.join(seedDirectory, "yoctocolors-2.1.2.tgz");
+  fs.mkdirSync(seedDirectory);
+  fs.copyFileSync(
+    path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
+    retryHelper,
+  );
+  fs.chmodSync(retryHelper, 0o755);
+  fs.copyFileSync(
+    path.join(
+      repoRoot,
+      "tools",
+      "mcp-tool-discovery-runtime",
+      "npm-cache-seed",
+      "yoctocolors-2.1.2.tgz",
+    ),
+    seed,
+  );
+  fs.writeFileSync(
+    path.join(fixture, "package.json"),
+    `${JSON.stringify({ name: "cache-seed-contract", private: true, dependencies: { yoctocolors: "2.1.2" } }, null, 2)}\n`,
+  );
+  fs.writeFileSync(
+    path.join(fixture, "package-lock.json"),
+    `${JSON.stringify(
+      {
+        name: "cache-seed-contract",
+        lockfileVersion: 3,
+        packages: {
+          "": {
+            name: "cache-seed-contract",
+            dependencies: { yoctocolors: "2.1.2" },
+          },
+          "node_modules/yoctocolors": {
+            version: "2.1.2",
+            resolved: "https://registry.npmjs.org/yoctocolors/-/yoctocolors-2.1.2.tgz",
+            integrity:
+              "sha512-CzhO+pFNo8ajLM2d2IW/R93ipy99LWjtwblvC1RsoSUMZgyLbYFr221TnSNT7GjGdYui6P459mw9JH/g/zW2ug==",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return { cache, fixture, retryHelper, seed };
+}
+
 describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact package pins and the production audit command protect the shipped runtime graph
   it("pins reviewed packages and retains the production audit command (#8177)", () => {
@@ -92,10 +151,54 @@ describe("MCP tool discovery image contract", () => {
     expect(installer).toContain('export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"');
     const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     expect(openClawDockerfile).toContain("FROM builder AS mcp-tool-discovery-runtime");
-    expect(openClawDockerfile).toContain(
-      "RUN --network=default /opt/nemoclaw-build-tools/npm-ci-locked.sh",
-    );
+    expect(openClawDockerfile).toContain("target=/opt/nemoclaw-build-tools/npm-cache-seed,ro");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "installs the pinned cache seed without registry access",
+    async () => {
+      const { cache, fixture, retryHelper } = createCacheSeedFixture();
+
+      try {
+        const installResult = spawnSync("/bin/sh", [retryHelper, "--offline", "--ignore-scripts"], {
+          encoding: "utf8",
+          cwd: fixture,
+          env: { ...process.env, NPM_CONFIG_CACHE: cache },
+        });
+
+        expect(installResult).toMatchObject({ status: 0 });
+        const installedModule = await import(
+          pathToFileURL(path.join(fixture, "node_modules", "yoctocolors", "index.js")).href
+        );
+        expect(installedModule.default.red("offline cache seed")).toBe("offline cache seed");
+      } finally {
+        fs.rmSync(fixture, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a cache seed that does not match the lockfile integrity",
+    () => {
+      const { cache, fixture, retryHelper, seed } = createCacheSeedFixture();
+      fs.appendFileSync(seed, "tampered");
+
+      try {
+        const installResult = spawnSync("/bin/sh", [retryHelper, "--offline"], {
+          encoding: "utf8",
+          cwd: fixture,
+          env: { ...process.env, NPM_CONFIG_CACHE: cache },
+        });
+
+        expect(installResult).toMatchObject({ status: 1 });
+        expect(installResult.stderr).toContain(
+          "refusing an npm cache seed not uniquely pinned by package-lock.json",
+        );
+      } finally {
+        fs.rmSync(fixture, { force: true, recursive: true });
+      }
+    },
+  );
 
   // source-shape-contract: compatibility -- Protected offline rebuilds must reuse the hosted dependency layers instead of changing their implicit network cache key
   it("pins dependency-materialization RUN cache identity", () => {
@@ -109,7 +212,7 @@ describe("MCP tool discovery image contract", () => {
       "utf8",
     );
 
-    expect(openClawDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(6);
+    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(6);
     expect(hermesDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
     expect(dcodeDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
   });

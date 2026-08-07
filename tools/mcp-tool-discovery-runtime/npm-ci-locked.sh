@@ -7,6 +7,42 @@ set -eu
 install_log=$(mktemp)
 trap 'rm -f "$install_log"' EXIT
 
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+seed_dir="$script_dir/npm-cache-seed"
+if [ -d "$seed_dir" ]; then
+  for seed_archive in "$seed_dir"/*.tgz; do
+    if ! node - "$seed_archive" <<'NODE'; then
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const archive = process.argv[2];
+const archiveStat = fs.lstatSync(archive);
+const archiveName = path.basename(archive);
+const integrity = `sha512-${crypto.createHash("sha512").update(fs.readFileSync(archive)).digest("base64")}`;
+const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+const matches = Object.values(lock.packages ?? {}).filter((entry) => {
+  if (entry?.integrity !== integrity || typeof entry.resolved !== "string") return false;
+  const resolved = new URL(entry.resolved);
+  return (
+    resolved.origin === "https://registry.npmjs.org" &&
+    path.basename(resolved.pathname) === archiveName
+  );
+});
+
+if (!archiveStat.isFile() || archiveStat.isSymbolicLink() || matches.length !== 1) process.exit(1);
+NODE
+      echo "[nemoclaw] refusing an npm cache seed not uniquely pinned by package-lock.json: $seed_archive" >&2
+      exit 1
+    fi
+    npm cache add "$seed_archive" >"$install_log" 2>&1 || {
+      install_status=$?
+      cat "$install_log" >&2
+      exit "$install_status"
+    }
+  done
+fi
+
 if npm ci "$@" >"$install_log" 2>&1; then
   cat "$install_log"
 else

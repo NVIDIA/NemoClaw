@@ -26,7 +26,9 @@ ENV NPM_CONFIG_AUDIT=false \
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /opt/nemoclaw-build-tools/npm-ci-locked.sh
 WORKDIR /opt/nemoclaw
-RUN --network=default /opt/nemoclaw-build-tools/npm-ci-locked.sh
+RUN --mount=type=bind,source=tools/mcp-tool-discovery-runtime/npm-cache-seed,target=/opt/nemoclaw-build-tools/npm-cache-seed,ro \
+    --network=default \
+    /opt/nemoclaw-build-tools/npm-ci-locked.sh
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 RUN npm run build \
@@ -346,7 +348,8 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
     NPM_CONFIG_FETCH_TIMEOUT=60000
-RUN --network=default NODE_OPTIONS=--dns-result-order=ipv4first \
+RUN --mount=type=bind,source=tools/mcp-tool-discovery-runtime/npm-cache-seed,target=/usr/local/lib/nemoclaw-build-tools/npm-cache-seed,ro \
+    --network=default NODE_OPTIONS=--dns-result-order=ipv4first \
         /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev \
     && rm -f /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 
