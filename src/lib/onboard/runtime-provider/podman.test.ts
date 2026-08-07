@@ -119,7 +119,7 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Conta
 }
 
 function providerHarness(agent: (typeof AGENTS)[number]) {
-  const sandboxName = `${agent}-podman`;
+  const sandboxName = agent === "langchain-deepagents-code" ? "dcode-podman" : `${agent}-podman`;
   const lifecycle = lifecycleEngine(sandboxName);
   const bundle = createPodmanRuntimeProviderBundle({
     engines: { hostDoctor: hostDoctorEngine(), sandboxLifecycle: lifecycle },

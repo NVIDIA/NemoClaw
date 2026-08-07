@@ -1139,6 +1139,11 @@ _PREEXISTING_SANDBOX_RECOVERY_RAN=false
 # preserved). The final summary must not claim those sandboxes were recovered.
 _PREEXISTING_SANDBOX_ORPHANED=false
 _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
+# OpenShell v0.0.99 routes sandbox and workspace identities through labels
+# capped at 19 characters. Keep this installer-only raw-registry preflight in
+# sync with NAME_MAX_LENGTH in nemoclaw/src/shared/sandbox-name.cts. The
+# current CLI cannot be prepared safely until legacy names are checked.
+_OPENSHELL_SANDBOX_NAME_MAX_LENGTH=19
 # #5735: set when automatic recovery/upgrade of pre-existing sandboxes
 # reported a failure. A failed/destructive rebuild must not be reported as a
 # clean install, so print_done downgrades the final banner when this is true.
@@ -2290,7 +2295,7 @@ verify_nemoclaw() {
 inspect_sandbox_registry_for_upgrade() {
   local reg_file="$1" field="$2" scope="${3:-legacy}" gateway_port
   gateway_port="$(resolve_nemoclaw_gateway_port)"
-  node - "$reg_file" "$field" "$gateway_port" "$scope" <<'NODE'
+  node - "$reg_file" "$field" "$gateway_port" "$scope" "$_OPENSHELL_SANDBOX_NAME_MAX_LENGTH" <<'NODE'
 const fs = require("node:fs");
 
 function isObjectRecord(value) {
@@ -2342,6 +2347,8 @@ try {
   process.exit(1);
 }
 if (process.argv[5] === "selected" && entries.length !== allEntries.length) process.exit(1);
+const maxNameLength = Number(process.argv[6]);
+if (!Number.isInteger(maxNameLength) || maxNameLength < 1) process.exit(1);
 // Keep this raw-registry predicate in sync with isRouteOnlySandboxReservation()
 // in src/lib/state/registry.ts.
 const sandboxes = entries.filter(
@@ -2350,6 +2357,18 @@ const sandboxes = entries.filter(
 
 if (process.argv[3] === "count") {
   process.stdout.write(String(sandboxes.length));
+  process.exit(0);
+}
+if (process.argv[3] === "incompatible-names") {
+  const compatiblePattern = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+  const incompatible = sandboxes
+    .map(([name]) => name)
+    .filter(
+      (name) =>
+        name.length > maxNameLength || !compatiblePattern.test(name) || name.includes("--"),
+    )
+    .sort();
+  process.stdout.write(JSON.stringify(incompatible));
   process.exit(0);
 }
 if (process.argv[3] !== "ambiguous-names") process.exit(1);
@@ -2495,6 +2514,69 @@ legacy_ambiguous_sandbox_names_json() {
     scope="selected"
   fi
   inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names "$scope"
+}
+
+openshell_incompatible_sandbox_names_json() {
+  local reg_file="$1"
+  local scope="legacy"
+  if [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ] \
+    && [ "$reg_file" = "$(nemoclaw_state_dir)/sandboxes.json" ]; then
+    scope="selected"
+  fi
+  inspect_sandbox_registry_for_upgrade "$reg_file" incompatible-names "$scope"
+}
+
+require_openshell_compatible_sandbox_names() {
+  local reg_file="$1" incompatible_json="" incompatible_count="0"
+  if ! incompatible_json="$(openshell_incompatible_sandbox_names_json "$reg_file")"; then
+    error "Could not validate existing sandbox names for the OpenShell upgrade. Existing gateway and sandboxes were left unchanged."
+  fi
+  incompatible_count="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$incompatible_json")"
+  if [ "$incompatible_count" -eq 0 ] 2>/dev/null; then
+    return 0
+  fi
+
+  cat <<EOF
+
+  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.99:
+EOF
+  while IFS= read -r sandbox_name; do
+    [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
+  done < <(node -e '
+    const preview = (value) => {
+      const raw = String(value);
+      const prefix = raw.slice(0, 80);
+      let escaped = "\"";
+      for (let index = 0; index < prefix.length; index += 1) {
+        const codeUnit = prefix.charCodeAt(index);
+        if (codeUnit === 0x22) escaped += "\\\"";
+        else if (codeUnit === 0x5c) escaped += "\\\\";
+        else if (codeUnit >= 0x20 && codeUnit <= 0x7e) escaped += prefix[index];
+        else escaped += "\\u" + codeUnit.toString(16).padStart(4, "0");
+      }
+      return escaped + (raw.length > 80 ? "...\"" : "\"");
+    };
+    for (const name of JSON.parse(process.argv[1])) console.log(preview(name));
+  ' "$incompatible_json")
+  cat <<EOF
+
+  OpenShell 0.0.99 caps routed sandbox names at
+  ${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH} characters and rejects consecutive
+  hyphens. Current NemoClaw names must use 1-${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH}
+  lowercase letters, numbers, and single internal hyphens, starting with a
+  letter and ending with a letter or number. NemoClaw does not rename durable
+  sandbox identity automatically.
+
+  The installer stopped before preparing the current CLI, starting a new
+  backup, retiring the gateway, installing OpenShell, or recreating a sandbox.
+  Use the currently installed NemoClaw and OpenShell runtime to transfer the
+  required state into a replacement sandbox with a compatible name. After you
+  verify the replacement, destroy each incompatible sandbox and rerun the
+  installer. If you already retired the gateway manually, restore the prior
+  OpenShell runtime and gateway before migrating the sandbox state.
+
+EOF
+  error "OpenShell 0.0.99 upgrade blocked by incompatible existing sandbox names."
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -2729,6 +2811,7 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+  require_openshell_compatible_sandbox_names "$reg_file"
   if ! command_exists openshell; then
     # NemoClaw v0.0.55's OpenShell 0.0.44 layout could install this binary
     # without persisting ~/.local/bin on PATH. Retain this fallback while direct
@@ -3788,7 +3871,8 @@ validate_station_express_resume_agent() {
 
 validate_station_express_resume_sandbox() {
   local sandbox="${1:-}"
-  [[ ${#sandbox} -le 63 ]] \
+  [[ ${#sandbox} -le $_OPENSHELL_SANDBOX_NAME_MAX_LENGTH ]] \
+    && [[ "$sandbox" != *--* ]] \
     && { [[ "$sandbox" =~ ^[a-z]$ ]] || [[ "$sandbox" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]; }
 }
 
