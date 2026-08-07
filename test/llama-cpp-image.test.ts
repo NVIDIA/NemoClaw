@@ -151,6 +151,19 @@ function enablePublication(source: string): string {
   });
 }
 
+function configureManifestAnnotations(
+  source: string,
+  annotations: Record<string, string> | undefined,
+): string {
+  const candidate = YAML.parse(source) as { metadata: { annotations?: Record<string, string> } };
+  if (annotations === undefined) {
+    delete candidate.metadata.annotations;
+  } else {
+    candidate.metadata.annotations = annotations;
+  }
+  return YAML.stringify(candidate);
+}
+
 describe("declarative llama.cpp server image", () => {
   const manifestSource = fs.readFileSync(manifestPath, "utf8");
   const manifest = YAML.parse(manifestSource) as ImageManifest;
@@ -372,6 +385,23 @@ describe("declarative llama.cpp server image", () => {
     [
       "an unexpected top-level field",
       manifestSource.replace("kind: ServerImageBuild", "kind: ServerImageBuild\nunexpected: true"),
+    ],
+    [
+      "a missing request guard state annotation",
+      configureManifestAnnotations(manifestSource, undefined),
+    ],
+    [
+      "a non-dormant request guard state annotation",
+      configureManifestAnnotations(manifestSource, {
+        "nemoclaw.nvidia.com/request-guard-state": "active",
+      }),
+    ],
+    [
+      "an unexpected image annotation",
+      configureManifestAnnotations(manifestSource, {
+        "nemoclaw.nvidia.com/request-guard-state": "dormant",
+        "nemoclaw.nvidia.com/unexpected": "true",
+      }),
     ],
   ])("rejects %s before exporting image build inputs (#8231)", (_case, candidate) => {
     expect(() => loadLlamaCppImageConfig(candidate)).toThrow();

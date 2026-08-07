@@ -254,6 +254,23 @@ func TestAPIKeyFileMustBeReadableRegularAndNonEmpty(t *testing.T) {
 	if err := validateAPIKeyFile(empty); err == nil {
 		t.Fatal("empty API-key file was accepted")
 	}
+	unreadable := filepath.Join(root, "unreadable")
+	if err := os.WriteFile(unreadable, []byte("opaque-test-key\n"), 0600); err != nil {
+		t.Fatalf("create unreadable API-key file: %v", err)
+	}
+	if err := os.Chmod(unreadable, 0000); err != nil {
+		t.Fatalf("remove API-key file read permissions: %v", err)
+	}
+	t.Run("unreadable", func(t *testing.T) {
+		probe, err := os.Open(unreadable)
+		if err == nil {
+			_ = probe.Close()
+			t.Skip("test process can read a mode-000 file")
+		}
+		if err := validateAPIKeyFile(unreadable); err == nil {
+			t.Fatal("unreadable API-key file was accepted")
+		}
+	})
 	valid := filepath.Join(root, "valid")
 	if err := os.WriteFile(valid, []byte("opaque-test-key\n"), 0600); err != nil {
 		t.Fatalf("create API-key file: %v", err)
@@ -581,7 +598,7 @@ func TestGuardPropagatesCancellation(t *testing.T) {
 	releaseBackend := func() { releaseOnce.Do(func() { close(release) }) }
 	backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		_, _ = io.Copy(io.Discard, request.Body)
-		request.Body.Close()
+		_ = request.Body.Close()
 		close(started)
 		select {
 		case <-request.Context().Done():
@@ -600,11 +617,15 @@ func TestGuardPropagatesCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req := httptest.NewRequest(
+	req, err := http.NewRequestWithContext(
+		ctx,
 		http.MethodPost,
 		"http://guard.test/v1/chat/completions",
 		strings.NewReader(`{"model":"test","max_tokens":8}`),
-	).WithContext(ctx)
+	)
+	if err != nil {
+		t.Fatalf("create guard request: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	result := make(chan struct{})
 	go func() {
