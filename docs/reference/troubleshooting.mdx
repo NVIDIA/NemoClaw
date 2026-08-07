@@ -836,7 +836,7 @@ NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.
-Onboarding detects those hosts separately and propagates eligible host group IDs for supported device nodes, including selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
+Onboarding detects those hosts separately and propagates eligible host group IDs for selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
 If that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
 
 ### Colima socket not detected (macOS)
@@ -2786,7 +2786,6 @@ This wrapper runs only when legacy OpenClaw Jetson recreation preserves the fixe
 The creation-time filesystem policy adds no Jetson entries unless `/dev/nvmap` is an existing, non-symlink character device.
 When that condition is met, the policy adds `/opt/nvidia` as read-only.
 It adds each existing, non-symlink character device on the eligible GPU path list as read-write.
-The eligible GPU path list includes `/dev/nvsciipc` for the read-write policy and device-group detection.
 Generic GPU and CPU-only policies do not receive these Jetson entries.
 
 Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.

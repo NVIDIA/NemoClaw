@@ -5,7 +5,6 @@ import fs from "node:fs";
 
 const TEGRA_GPU_DEVICE_NODES = [
   "/dev/nvmap",
-  "/dev/nvsciipc",
   "/dev/nvhost-ctrl",
   "/dev/nvhost-ctrl-gpu",
   "/dev/nvhost-gpu",
