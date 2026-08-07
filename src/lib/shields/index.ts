@@ -72,6 +72,9 @@ const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
 const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
+  waitForHermesInferenceRouteConvergence,
+}: typeof import("./inference-convergence") = require("./inference-convergence");
+const {
   inspectAnyShieldsTransitionLockOwner,
   isShieldsTransitionLockUnavailable,
   withShieldsTransitionLock,
@@ -3848,6 +3851,17 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
+    if (target.agentName === "hermes") {
+      console.log("  Confirming Hermes inference route after policy transition...");
+      const convergence = waitForHermesInferenceRouteConvergence(sandboxName);
+      if (!convergence.ok) {
+        const status =
+          convergence.httpStatus > 0 ? `HTTP ${convergence.httpStatus}` : "unavailable";
+        throw new Error(
+          `Hermes inference route did not converge after policy transition (${status}; ${convergence.attempts} attempts)`,
+        );
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const rollback = rollbackShieldsDown(
