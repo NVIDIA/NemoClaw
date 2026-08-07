@@ -967,13 +967,8 @@ function rollbackExact(
       captureMutation(options, lease, execution, ["rm", "--force", owned.id], MUTATION_TIMEOUT_MS),
     );
     if (
-      inspectContainer(
-        options.engine,
-        owned.id,
-        options.contract,
-        options.bindings,
-        "cleanup",
-      ) !== null
+      inspectContainer(options.engine, owned.id, options.contract, options.bindings, "cleanup") !==
+      null
     ) {
       throw new Error("Docker llama.cpp exact rollback left the owned runtime present.");
     }
