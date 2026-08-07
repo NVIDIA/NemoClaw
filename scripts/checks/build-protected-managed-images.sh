@@ -81,11 +81,24 @@ done
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || usage
 [[ "$cohort" =~ ^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] || usage
 [[ "$platform" == "linux/amd64" || "$platform" == "linux/arm64" ]] || usage
+case "$platform" in
+  linux/amd64) npm_target_cpu="x64" ;;
+  linux/arm64) npm_target_cpu="arm64" ;;
+esac
+npm_target_os="linux"
+npm_target_libc="glibc"
 [[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
+seed_helper="$source_root/scripts/checks/materialize-locked-npm-cache-seed.mts"
+source_lockfile="$source_root/nemoclaw/package-lock.json"
+source_seed_dir="$source_root/tools/mcp-tool-discovery-runtime/npm-cache-seed"
+[[ -f "$seed_helper" && ! -L "$seed_helper" ]] || usage
+[[ -f "$source_lockfile" && ! -L "$source_lockfile" ]] || usage
+[[ -d "$source_seed_dir" && ! -L "$source_seed_dir" ]] || usage
+[[ -z "$(find "$source_seed_dir" -type l -print -quit)" ]] || usage
 if [[ -n "$cache_to" ]]; then
   [[ "$cache_to" == /* && "$cache_to" != *$'\n'* && ! -L "$cache_to" ]] || usage
   mkdir -p -- "$cache_to"
@@ -110,9 +123,17 @@ if [[ -n "$cache_from" ]]; then
       exit 1
     }
   done
+  [[ -d "$cache_from/npm-cache-seed" && ! -L "$cache_from/npm-cache-seed" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked npm cache seed" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/npm-cache-seed/manifest.json" && ! -L "$cache_from/npm-cache-seed/manifest.json" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked npm cache seed manifest" >&2
+    exit 1
+  }
 fi
 
-for command in docker jq sha256sum; do
+for command in docker jq node sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "ERROR: protected managed-image build requires $command" >&2
     exit 1
@@ -120,7 +141,34 @@ for command in docker jq sha256sum; do
 done
 
 work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
-trap 'rm -rf "$work_dir"' EXIT
+seed_overlay_active=0
+seed_backup="$work_dir/npm-cache-seed-original"
+restore_worktree() {
+  if [[ "$seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_seed_dir"
+    cp -pR -- "$seed_backup" "$source_seed_dir"
+  fi
+  rm -rf -- "$work_dir"
+}
+trap restore_worktree EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ -n "$cache_from" ]]; then
+  imported_seed="$work_dir/npm-cache-seed-import"
+  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+    --lockfile "$source_lockfile" \
+    --seed "$cache_from/npm-cache-seed" \
+    --output "$imported_seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  cp -pR -- "$source_seed_dir" "$seed_backup"
+  seed_overlay_active=1
+  rm -rf -- "$source_seed_dir"
+  cp -pR -- "$imported_seed" "$source_seed_dir"
+fi
+
 contracts="$work_dir/contracts.jsonl"
 : >"$contracts"
 
@@ -255,6 +303,15 @@ build_agent \
   langchain-deepagents-code \
   agents/langchain-deepagents-code/Dockerfile \
   "$dcode_base"
+
+if [[ -n "$cache_to" ]]; then
+  node --experimental-strip-types --no-warnings "$seed_helper" export \
+    --lockfile "$source_lockfile" \
+    --output "$cache_to/npm-cache-seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+fi
 
 mkdir -p "$(dirname "$output")"
 jq -se \
