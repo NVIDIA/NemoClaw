@@ -32,6 +32,8 @@ export type ConnectHarness = {
   errorSpy: MockInstance;
   logSpy: MockInstance;
   preflightVllmSpy: MockInstance;
+  probeLocalProviderHealthSpy: MockInstance;
+  probeOllamaAuthProxyHealthSpy: MockInstance;
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
   registryEntries: SandboxEntry[];
@@ -114,6 +116,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const gatewayFailureClassifier = requireDist(
     "../../src/lib/actions/sandbox/gateway-failure-classifier.js",
   );
+  const localInference = requireDist("../../src/lib/inference/local.js");
   const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
   const gatewayRouteMutationLock = requireDist(
     "../../src/lib/inference/gateway-route-mutation-lock.js",
@@ -192,6 +195,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const ensureOllamaAuthProxySpy = vi
     .spyOn(ollamaProxy, "ensureOllamaAuthProxy")
     .mockImplementation(() => undefined);
+  vi.spyOn(localInference, "findReachableOllamaHost").mockReturnValue("127.0.0.1");
+  const probeLocalProviderHealthSpy = vi
+    .spyOn(localInference, "probeLocalProviderHealth")
+    .mockReturnValue({ ok: true });
+  const probeOllamaAuthProxyHealthSpy = vi
+    .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
+    .mockReturnValue({ ok: true });
   const primaryRegistryEntry: SandboxEntry = {
     name: "alpha",
     agent: options.agentName ?? "openclaw",
@@ -265,6 +275,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     errorSpy,
     logSpy,
     preflightVllmSpy,
+    probeLocalProviderHealthSpy,
+    probeOllamaAuthProxyHealthSpy,
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
     registryEntries,

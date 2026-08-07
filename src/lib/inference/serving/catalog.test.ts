@@ -143,20 +143,16 @@ spec:
         license: Apache-2.0
     acquisition:
       ref: hugging-face-exact-file/v1
+      downloaderImage: registry.example/downloader@sha256:${"4".repeat(64)}
       authentication:
         mode: optional
         environment: HF_TOKEN
     cache:
-      ref: llama-cpp.gguf-content-addressed/v1
-      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      ref: hugging-face-shared-cache/v1
       root: user-cache
-      quotaBytes: 6442450944
-      stagingHeadroomBytes: 1073741824
-      staging: same-filesystem
-      publication: atomic-no-clobber
-      reuse: verified-only-offline
-      sharing: owner-only
-      cleanup: receipt-owner-only
+      reuse: verify-exact-file
+      sharing: host-user
+      cleanup: preserve
   runtime:
     image: registry.example/test/llama-server@sha256:${"2".repeat(64)}
     imageDownloadSizeBytes: 1073741824
@@ -165,6 +161,7 @@ spec:
       - linux/arm64
     containerRuntime: docker
     networkExposure: loopback
+    restartPolicy: unless-stopped
     hosts: 1
     cuda:
       baseImage: registry.example/nvidia/cuda@sha256:${"3".repeat(64)}
@@ -186,7 +183,7 @@ spec:
     protocol: openai-completions
     authentication: bearer
     port: 8081
-    chatTemplate: test-chat
+    chatTemplate: nemotron-v3-embedded
     contextSize: 32768
     slots: 1
     idleSleepSeconds: -1
@@ -198,14 +195,12 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
-      maxRequestBodyBytes: 1048576
-      maxPromptTokens: 24576
-      maxCompletionTokens: 8192
       requestTimeoutSeconds: 120
   readiness:
     contractRef: test.readiness/v1
     timeoutSeconds: 120
     expectedModel: test-model
+    probeImage: registry.example/probe@sha256:${"5".repeat(64)}
     probes:
       models: true
       health: true
@@ -402,18 +397,9 @@ describe("managed inference serving catalog compiler", () => {
       "        environment: HF_TOKEN",
       "        environment: HF_TOKEN\n        token: test-secret",
     ],
-    ["a shared cache owner", "      sharing: owner-only", "      sharing: host-user"],
-    [
-      "cross-filesystem staging",
-      "      staging: same-filesystem",
-      "      staging: system-temporary",
-    ],
-    [
-      "clobbering cache publication",
-      "      publication: atomic-no-clobber",
-      "      publication: replace-existing",
-    ],
-    ["unverified cache reuse", "      reuse: verified-only-offline", "      reuse: trust-existing"],
+    ["a private cache owner", "      sharing: host-user", "      sharing: owner-only"],
+    ["deleting the shared cache", "      cleanup: preserve", "      cleanup: delete"],
+    ["unverified cache reuse", "      reuse: verify-exact-file", "      reuse: trust-existing"],
     [
       "a mutable server image",
       `    image: registry.example/test/llama-server@sha256:${"2".repeat(64)}`,
@@ -433,8 +419,12 @@ describe("managed inference serving catalog compiler", () => {
       `      revision: ${"e".repeat(40)}\n      credential: test-secret`,
     ],
     ["a host model path", "      - path: test-model.Q4_K_M.gguf", "      - path: /tmp/model.gguf"],
-    ["shell syntax", "    chatTemplate: test-chat", "    chatTemplate: $(id)"],
-    ["environment expansion", "    chatTemplate: test-chat", "    chatTemplate: \${HOME}"],
+    ["shell syntax", "    chatTemplate: nemotron-v3-embedded", "    chatTemplate: $(id)"],
+    [
+      "environment expansion",
+      "    chatTemplate: nemotron-v3-embedded",
+      "    chatTemplate: \${HOME}",
+    ],
     [
       "an unsupported protocol",
       "    protocol: openai-completions",
@@ -525,16 +515,11 @@ describe("managed inference serving catalog compiler", () => {
       `    revision: ${MODEL_REVISION}`,
       `    revision: ${MODEL_REVISION}
     cache:
-      ref: llama-cpp.gguf-content-addressed/v1
-      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      ref: hugging-face-shared-cache/v1
       root: user-cache
-      quotaBytes: 2048
-      stagingHeadroomBytes: 1024
-      staging: same-filesystem
-      publication: atomic-no-clobber
-      reuse: verified-only-offline
-      sharing: owner-only
-      cleanup: receipt-owner-only`,
+      reuse: verify-exact-file
+      sharing: host-user
+      cleanup: preserve`,
     ],
   ])("rejects llama.cpp model %s on a generic recipe (#8279)", (_field, expected, replacement) => {
     const recipe = replaceSource(recipeSource(), expected, replacement);
@@ -554,18 +539,6 @@ describe("managed inference serving catalog compiler", () => {
     );
   });
 
-  it("rejects llama.cpp request token limits that exceed serve.contextSize (#8181)", () => {
-    const excessiveTokenLimits = replaceSource(
-      llamaCppRecipeSource(),
-      "      maxCompletionTokens: 8192",
-      "      maxCompletionTokens: 8193",
-    );
-
-    expect(() => compile([excessiveTokenLimits])).toThrow(
-      "request token limits exceed serve.contextSize",
-    );
-  });
-
   it("rejects a llama.cpp micro-batch larger than its batch (#8173)", () => {
     const invalidBatching = replaceSource(
       llamaCppRecipeSource(),
@@ -575,18 +548,6 @@ describe("managed inference serving catalog compiler", () => {
 
     expect(() => compile([invalidBatching])).toThrow(
       "serve.microBatchSize cannot exceed serve.batchSize",
-    );
-  });
-
-  it("rejects a llama.cpp cache quota below the file size and staging headroom (#8279)", () => {
-    const insufficientQuota = replaceSource(
-      llamaCppRecipeSource(),
-      "      quotaBytes: 6442450944",
-      "      quotaBytes: 5368709119",
-    );
-
-    expect(() => compile([insufficientQuota])).toThrow(
-      "cache quota must be at least 5368709120 bytes",
     );
   });
 
