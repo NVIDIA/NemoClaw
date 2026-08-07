@@ -17,4 +17,19 @@ describe("Dockerfile RUN shell extraction", () => {
       "set -eu;  printf 'ready\\n'",
     );
   });
+
+  it("ignores Dockerfile comments inside a continued RUN instruction", () => {
+    const dockerfile = [
+      "# start",
+      "RUN --network=default if true; then \\",
+      "    # Dockerfile ignores comment-only continuation lines.",
+      "    printf 'ready\\n'; \\",
+      "fi",
+      "# end",
+    ].join("\n");
+
+    expect(dockerRunCommandBetween(dockerfile, "# start", "# end")).toBe(
+      "if true; then  printf 'ready\\n';  fi",
+    );
+  });
 });

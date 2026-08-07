@@ -34,12 +34,15 @@ export function dockerRunCommandBetween(
     throw new Error(`Expected RUN instruction after ${startMarker}`);
   }
   const blockLines = dockerfile.slice(runIndex, end).split("\n");
-  const finalLineIndex = blockLines.findIndex((line) => !line.trimEnd().endsWith("\\"));
+  const finalLineIndex = blockLines.findIndex(
+    (line) => !line.trimStart().startsWith("#") && !line.trimEnd().endsWith("\\"),
+  );
   if (finalLineIndex === -1) {
     throw new Error(`Expected complete RUN instruction before ${endMarker}`);
   }
   return blockLines
     .slice(0, finalLineIndex + 1)
+    .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")
     .trim()
     .replace(/\\\n\s*/g, " ")
