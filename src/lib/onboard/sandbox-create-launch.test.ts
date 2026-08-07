@@ -106,6 +106,39 @@ describe("buildSandboxRuntimeEnvArgs", () => {
     expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
   });
 
+  it("forwards only the literal OpenClaw MCP shadow diagnostic opt-in", () => {
+    const base = {
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+    };
+    const openclaw = { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any;
+
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: openclaw,
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: " 1 " },
+      }).envArgs,
+    ).toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1");
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: openclaw,
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "true" },
+      }).envArgs.some((entry) => entry.startsWith("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=")),
+    ).toBe(false);
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: loadAgent("hermes"),
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1" },
+      }).envArgs,
+    ).not.toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1");
+  });
+
   it.each([
     ["1500", "1500"],
     [" 3000 ", "3000"],

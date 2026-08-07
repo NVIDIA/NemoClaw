@@ -8,6 +8,7 @@ import {
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
   isHostLocalInferenceServingRecipe,
+  isLlamaCppServingRecipe,
   isManagedClusterInferenceServingRecipe,
 } from "./adapter-registry.js";
 import { immutableManagedInferenceCopy, managedInferenceDigest } from "./catalog-integrity.js";
@@ -504,6 +505,9 @@ function selectedResolution<TOutput>(
     return { ...common, recipe: common.recipe, topologyQualification };
   }
   if (isHostLocalInferenceServingRecipe(common.recipe)) {
+    return { ...common, recipe: common.recipe };
+  }
+  if (isLlamaCppServingRecipe(common.recipe)) {
     return { ...common, recipe: common.recipe };
   }
   return {

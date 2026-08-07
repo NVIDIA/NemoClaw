@@ -200,7 +200,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("## Managed Outbound Transport Diagnostics");
     expect(review).toContain("scripts/patch-openclaw-managed-transport-diagnostics.mts");
     expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
-    expect(review).toContain("Failure-only.");
+    expect(review).toContain("Failure-only by default.");
+    expect(review).toContain("`NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`");
+    expect(review).toContain("successful-request `managed_transport_shadow` timing events");
     expect(review).toContain("never retries, never alters the request");
     expect(review).toContain("`route=proxy_configured` means that `HTTPS_PROXY`");
     expect(review).toContain("report configuration evidence");
@@ -218,7 +220,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("A returned non-2xx response sets `transport_phase=response_headers`");
     expect(review).toContain("transport-phase signal");
     expect(review).toContain("does not inspect a 2xx response body");
-    expect(review).toContain("without an `operation` field");
+    expect(review).toContain("report a validated JSON-RPC method");
+    expect(review).toContain("reports the configured server name as `mcp_server`");
+    expect(review).toContain("Shadow recommendations apply only to `tools/list`");
+    expect(review).toContain("An explicit HTTP 503 produces no timeout recommendation.");
     expect(review).toContain("structured credentials such as `access_token`");
     expect(review).toContain("The peer address is not recorded.");
     expect(review).toContain("The `mcp-session-id` value is never emitted.");

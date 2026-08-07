@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Troubleshoot MCP Servers"
 sidebar-title: "Troubleshoot MCP Servers"
-description: "Diagnose managed MCP credential resolution, DNS pin drift, incomplete transactions, capability gaps, policy drift, and lifecycle-lock failures."
-description-agent: "Provides symptom-based remediation for NemoClaw-managed MCP servers, including trusted private endpoints. Use when mcp add, status, restart, remove, rebuild, or destroy does not converge."
-keywords: ["troubleshoot nemoclaw mcp", "mcp credential resolution", "mcp dns pin drift", "mcp policy drift", "mcp transaction"]
+description: "Diagnose managed MCP transport failures, timeout evidence, credential resolution, DNS pin drift, incomplete transactions, capability gaps, policy drift, and lifecycle-lock failures."
+description-agent: "Provides symptom-based remediation for NemoClaw-managed MCP servers, including transport diagnostics and trusted private endpoints. Use when MCP requests, add, status, restart, remove, rebuild, or destroy do not converge."
+keywords: ["troubleshoot nemoclaw mcp", "mcp transport diagnostics", "mcp timeout evidence", "mcp credential resolution", "mcp dns pin drift", "mcp policy drift", "mcp transaction"]
 content:
   type: "troubleshooting"
 ---
@@ -102,12 +102,20 @@ $$nemoclaw <sandbox> logs --tail 100
 ```text
 [nemoclaw] managed_transport_failure
 [nemoclaw] consumer=mcp
+[nemoclaw] mcp_server=gitlab
+[nemoclaw] operation=tools/list
+[nemoclaw] transport_generation=1
+[nemoclaw] request_sequence=3
 [nemoclaw] route=proxy_configured
 [nemoclaw] proxy=127.0.0.1:3128
 [nemoclaw] target=mcp.example.com:443
+[nemoclaw] connection_timeout_ms=30000
+[nemoclaw] request_timeout_ms=60000
+[nemoclaw] catalog_list_timeout_ms=1500
+[nemoclaw] effective_timeout_ms=1500
 [nemoclaw] transport_phase=response_headers
 [nemoclaw] http_status=503
-[nemoclaw] elapsed_ms=1512
+[nemoclaw] elapsed_ms=412
 [nemoclaw] server=envoy
 [nemoclaw] x_envoy_response_flags=UF,URX
 [nemoclaw] session_present=true
@@ -130,11 +138,18 @@ It states which transport step failed:
 `route=unknown` states that the diagnostic did not observe one.
 These values report configuration evidence and do not prove whether the failed request used a proxy.
 When present, `proxy` contains the configured proxy endpoint without credentials.
+`mcp_server` contains the configured MCP server name when it passes validation and redaction.
+`operation` contains a validated JSON-RPC method, such as `initialize`, `tools/list`, or `tools/call`.
+For other request shapes, it contains `rpc/unknown`, `transport/listen`, or `transport/close` when that transport action is known.
+The diagnostic never records JSON-RPC parameters, tool names, tool arguments, or successful response bodies.
+`transport_generation` identifies one constructed transport for the configured server.
+`request_sequence` counts requests through that transport.
+The connection, request, catalog-list, and effective timeout fields report the resolved millisecond budgets for the request operation.
 `server`, `via`, `x_request_id`, and the `x_envoy_*` fields are the proxy's own account of the failure and appear only when the proxy sends them.
 A proxy-generated response does not by itself prove whether the proxy or its upstream produced the failure; keep both the status and the cause chain when reporting one.
 
-The line group is written only for a failure, so normal traffic adds no logging.
-A 2xx response does not emit this diagnostic or read its body.
+By default, the line group is written only for a failure, so normal traffic adds no logging.
+A 2xx response does not emit this failure diagnostic or read its body.
 This fetch boundary cannot report a failure that occurs while the caller later reads a 2xx response body.
 For a non-2xx response, OpenClaw does not wait for asynchronous body sampling before it receives the response.
 Non-2xx response diagnostics are best-effort.
@@ -143,7 +158,51 @@ The line group can also be absent if OpenClaw exits before collection completes.
 The sampler waits at most 250 ms and retains at most 2,048 response bytes.
 The redacted `error_body` value contains at most 2,048 UTF-8 bytes before JSON encoding.
 It redacts session identifiers, bearer tokens, structured credentials such as `access_token`, `refresh_token`, and `client_secret`, and known token prefixes.
-The diagnostic does not include a JSON-RPC operation because this boundary sees only the endpoint.
+
+### Collect Shadow Timeout Evidence
+
+Set `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1` before you create or rebuild an OpenClaw sandbox to collect successful request timing without applying a timeout change.
+NemoClaw accepts only the literal value `1` and forwards it only to OpenClaw sandboxes.
+The setting is disabled by default and affects only remote Streamable HTTP MCP requests inside an OpenShell sandbox.
+
+<Warning>
+Enabling shadow diagnostics attempts to record one timing event for every successful remote Streamable HTTP MCP request and increases log volume.
+Each event includes the target host and port, configured server name, operation, and timeout metadata, but excludes URL paths, tool arguments, and successful response bodies.
+Rebuilding also interrupts the agent while NemoClaw replaces the sandbox and restores its managed state.
+</Warning>
+
+For an existing sandbox, export the setting and rebuild:
+
+```bash
+export NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1
+$$nemoclaw <sandbox> rebuild
+```
+
+For a new sandbox, export the setting before `$$nemoclaw onboard` creates it.
+
+When enabled, each successful request attempts to emit a `managed_transport_shadow` line group with the same validated operation, transport, timeout, and elapsed-time fields.
+The diagnostic does not read the successful response body or change the returned response.
+Identifier generation, serialization, or standard-error output failure can omit the line group without blocking the request or changing its response.
+
+For `tools/list`, NemoClaw retains up to 64 successful elapsed-time samples per target host and port in the OpenClaw process.
+Different MCP URL paths on the same target host and port share this sample set because the diagnostic does not retain URL paths.
+After five samples, the event reports `shadow_p95_ms` and `shadow_recommended_timeout_ms`.
+The proposed value is 1.5 times the observed p95 and is rounded up to 100 ms.
+It cannot be less than the active catalog-list budget or 1,500 ms, and it cannot exceed 10,000 ms.
+If the active budget already exceeds 10,000 ms, NemoClaw does not emit a recommendation.
+An abort observed near the effective `tools/list` budget proposes twice that budget under the same constraints.
+An explicit HTTP 503 does not produce a timeout recommendation because a longer timeout does not repair a returned upstream failure.
+
+The shadow recommendation is evidence only.
+It does not change a timeout, retry a request, or persist samples across an OpenClaw process restart.
+After you collect the evidence, remove the setting and rebuild to restore failure-only logging:
+
+```bash
+unset NEMOCLAW_MCP_SHADOW_DIAGNOSTICS
+$$nemoclaw <sandbox> rebuild
+```
+
+Verify that later successful MCP requests emit no `managed_transport_shadow` line groups.
 
 To find the matching sandbox audit record, read the sandbox log for the same endpoint around the failure time.
 The `logs` command reads both OpenClaw gateway output and OpenShell audit events, so it needs no separate audit flag.
@@ -154,7 +213,8 @@ $$nemoclaw <sandbox> logs --tail 200
 
 Match on `target` and the timestamp.
 If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing from the output.
-`diagnostic_id` is a local identifier created for one line group.
+`diagnostic_id` is a local identifier created for one line group when identifier generation succeeds.
+NemoClaw attempts to create it before the request starts, but does not add it to the request.
 It is not a distributed trace identifier and does not appear in OpenShell audit events.
 Correlate with OpenShell by endpoint and time until OpenShell records a shared identifier.
 

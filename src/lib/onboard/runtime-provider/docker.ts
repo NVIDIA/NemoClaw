@@ -33,6 +33,7 @@ import {
   type RuntimeProviderWorkloadCleanupResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
+import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
@@ -338,6 +339,12 @@ export function createDockerRuntimeProviderBundle(
       profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
       acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
     },
+    hostLocalInference: {
+      providerId,
+      supported: true,
+      services: ["llama-cpp"],
+      createOperation: ({ env }) => createDockerLlamaCppHostLocalOperation(env),
+    },
     lifecycle: {
       providerId,
       supported: true,
@@ -380,6 +387,7 @@ export function createDockerRuntimeProviderBundle(
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
         { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
+        { operation: "host-local-inference", engineId: "docker", displayName: "Docker" },
         { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
         { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
       ],
@@ -409,7 +417,7 @@ export function createKubernetesRuntimeProviderBundle(
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: true,
+      hostLocalInference: false,
       directLifecycle: false,
       legacyGatewayContainerInspection: true,
       workloadImageCleanup: true,
@@ -432,6 +440,10 @@ export function createKubernetesRuntimeProviderBundle(
       profile,
       acceptsReceipt: (receipt) => acceptsReceipt(profile, receipt),
     },
+    hostLocalInference: unsupported(
+      providerId,
+      "Kubernetes does not provide the managed llama.cpp host-local-inference lifecycle.",
+    ),
     lifecycle: unsupported(
       providerId,
       "Direct local lifecycle control is unavailable for the Kubernetes provider.",

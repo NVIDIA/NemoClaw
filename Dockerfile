@@ -1049,8 +1049,10 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-t
 # request fails. OpenClaw 2026.7.1 surfaces only the transport error text, which
 # does not say whether policy, CONNECT, TLS, the upstream connection, the
 # request, or response headers failed. The fetch-boundary wrapper is
-# failure-only, never retries, never alters the request, and never reads a 2xx
-# body, so streaming responses stay behaviorally unchanged. It is inert unless
+# failure-only by default, never retries, never alters the request, and never
+# reads a 2xx body, so streaming responses stay behaviorally unchanged. Successful request
+# timing is silent unless NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1 is explicitly
+# forwarded into an OpenClaw sandbox. The wrapper is inert unless
 # OPENSHELL_SANDBOX=1.
 #
 # Removal criterion: drop when upstream OpenClaw emits phase-classified,

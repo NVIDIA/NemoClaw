@@ -38,6 +38,10 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
 ] as const;
 
+// This opt-in emits MCP success timing events from the reviewed OpenClaw
+// dist patch. Accept only the literal enabled value, and only for OpenClaw, so
+// the broader host environment never becomes sandbox runtime input.
+const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
@@ -53,6 +57,17 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
   for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
     const value = env[key]?.trim();
     if (value) envArgs.push(formatEnvAssignment(key, value));
+  }
+}
+
+function appendOpenClawDiagnosticRuntimeEnvArgs(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  for (const key of OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS) {
+    if (env[key]?.trim() === "1") envArgs.push(formatEnvAssignment(key, "1"));
   }
 }
 
@@ -203,6 +218,7 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
 
   appendOpenClawRuntimeEnvArgs(envArgs, agent);
   appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
+  appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   appendHostProxyEnvArgs(envArgs, env, {
