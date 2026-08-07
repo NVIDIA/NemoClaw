@@ -5,8 +5,12 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
+import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { snapshotEnv } from "./rebuild-flow-test-support";
 
 type RebuildSandbox = typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+
+export { makePreparedRecoveryManifest, snapshotEnv };
 
 const requireDist = createRequire(
   path.join(process.cwd(), "src/lib/actions/sandbox/rebuild-flow-harness.ts"),
@@ -193,25 +197,6 @@ export type RebuildFlowHarness = {
   preparedDcodeBuildContext: Record<string, unknown> & { cleanupBuildCtx: MockInstance };
   session: RebuildFlowSession;
 };
-
-// Snapshot the given env vars and return a restore fn that reinstates their
-// prior values exactly — vars that were unset stay unset, set ones are put back.
-// Branchless on purpose (filter, not conditional restore) so it both restores
-// worker state correctly and keeps the changed-test-file guardrail green.
-export function snapshotEnv(names: readonly string[]): () => void {
-  const saved = names.map((name) => [name, process.env[name]] as const);
-  return () => {
-    for (const [name] of saved) {
-      delete process.env[name];
-    }
-    Object.assign(
-      process.env,
-      Object.fromEntries(
-        saved.filter((entry): entry is [string, string] => entry[1] !== undefined),
-      ),
-    );
-  };
-}
 
 const restoreRebuildFlowEnv = snapshotEnv([
   "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
@@ -859,24 +844,5 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     warnUnpreservedUserManagedFilesSpy,
     preparedDcodeBuildContext,
     session,
-  };
-}
-
-export function makePreparedRecoveryManifest() {
-  return {
-    version: 1,
-    sandboxName: "alpha",
-    timestamp: "2026-07-01T06-50-42-044Z",
-    agentType: "openclaw",
-    agentVersion: "0.1.0",
-    expectedVersion: "0.2.0",
-    stateDirs: ["workspace"],
-    backedUpDirs: ["workspace"],
-    stateFiles: [],
-    dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
-    blueprintDigest: null,
-    policyPresets: ["npm"],
-    customPolicies: [],
   };
 }
