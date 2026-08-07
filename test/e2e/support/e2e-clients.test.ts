@@ -18,6 +18,7 @@ import {
   type TrustedSandboxShellScript,
   trustedProviderEndpoint,
   trustedSandboxShellScript,
+  validateSandboxName,
 } from "../fixtures/clients/index.ts";
 import type {
   ShellProbeResult,
@@ -75,6 +76,23 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
+  it("enforces the OpenShell 0.0.99 sandbox identity boundary (#8497)", () => {
+    expect(() => validateSandboxName("a234567890123456789")).not.toThrow();
+
+    for (const invalidName of [
+      "a2345678901234567890",
+      "e2e--sandbox",
+      "1e2e-sandbox",
+      "E2e-sandbox",
+      "e2e.sandbox",
+      "e2e_sandbox",
+    ]) {
+      expect(() => validateSandboxName(invalidName), invalidName).toThrow(
+        /sandbox name is invalid for fixture client/,
+      );
+    }
+  });
+
   it("host client runs the configured NemoClaw CLI", async () => {
     const runner = new FakeRunner();
     runner.stdout = "nemoclaw 0.1.0\n";

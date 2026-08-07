@@ -3,13 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createSession,
-  filterSafeUpdates,
-  normalizeSession,
-  type Session,
-  type SessionUpdates,
-} from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import {
   advanceTo,
@@ -21,10 +14,13 @@ import {
 } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import { InvalidOnboardMachineTransitionError } from "./transitions";
-
-function cloneSession(session: Session): Session {
-  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
-}
+import {
+  type Session,
+  type SessionUpdates,
+  cloneSession,
+  createSession,
+  filterSafeUpdates,
+} from "../../../../test/helpers/onboard-machine-runtime-fixture";
 
 function createHarness(initialSession: Session | null = createSession()) {
   let session = initialSession ? cloneSession(initialSession) : null;

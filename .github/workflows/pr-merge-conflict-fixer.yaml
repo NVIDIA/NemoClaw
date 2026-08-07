@@ -57,7 +57,7 @@ jobs:
       PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
       RESOLUTION_WORKDIR: ${{ github.workspace }}/repo
       RESOLVER_CONFIG_DIR: ${{ github.workspace }}/pi-config
-      SANDBOX_NAME: pr-conflict-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.item.pr_number }}
+      SANDBOX_NAME: pr-conflict
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
       - name: Checkout trusted workflow code

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
+import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import {
   type DetectInferenceProviderHostStateDeps,
   detectInferenceProviderHostState,
   type InferenceProviderHostGpu,
 } from "./provider-host-state";
+
+const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
 
 const SUPPORTED_WINDOWS_OLLAMA = {
   supported: true,
@@ -179,8 +181,11 @@ describe("detectInferenceProviderHostState", () => {
     );
   });
 
-  it("detects a reachable Windows-host Ollama beside WSL-local Ollama and warns outside mirrored networking", () => {
+  it("detects Windows-host Ollama from Docker Desktop when WSL cannot reach it (#8127)", () => {
     const logs: string[] = [];
+    const dockerCapture = vi.fn((command: string[]) =>
+      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "",
+    );
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
@@ -191,10 +196,10 @@ describe("detectInferenceProviderHostState", () => {
       })),
       runCapture: vi.fn((command) => {
         const joined = command.join(" ");
-        if (joined.includes("host.docker.internal:11434/api/tags")) return "{}";
         if (joined.includes("wslinfo --networking-mode")) return "nat\n";
         return "";
       }),
+      dockerCapture,
     });
 
     const state = detectInferenceProviderHostState({
@@ -214,6 +219,20 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.winOllamaInstalledPath).toMatch(/ollama\.exe$/);
     expect(logs.join("\n")).toContain("Ollama is running on both WSL and the Windows host");
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith("docker-desktop");
+    expect(dockerCapture).toHaveBeenCalledWith(
+      [
+        "run",
+        "--rm",
+        "curlimages/curl:8.10.1",
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        WINDOWS_OLLAMA_TAGS_URL,
+      ],
+      { ignoreError: true },
+    );
   });
 
   it("keeps WSL-local install available when Docker Desktop cannot reach Windows-host Ollama (#8199)", () => {
@@ -236,6 +255,22 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.windowsOllamaReachable).toBe(false);
     expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
     expect(state.ollamaInstallMenu.entry?.label).toBe("Install Ollama (WSL Linux)");
+  });
+
+  it("does not run the Windows-host probe without Docker Desktop WSL integration (#8127)", () => {
+    const dockerCapture = vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => "{}");
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      dockerCapture,
+      getWindowsHostOllamaDockerRequirement: vi.fn(() =>
+        getWindowsHostOllamaDockerRequirement("docker"),
+      ),
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.windowsOllamaReachable).toBe(false);
+    expect(dockerCapture).not.toHaveBeenCalled();
   });
 
   it("passes injected platform and env through WSL detection", () => {
@@ -270,10 +305,10 @@ describe("detectInferenceProviderHostState", () => {
       })),
       runCapture: vi.fn((command) => {
         const joined = command.join(" ");
-        if (joined.includes("host.docker.internal:11434/api/tags")) return "{}";
         if (joined.includes("wslinfo --networking-mode")) return "mirrored\n";
         return "";
       }),
+      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
     });
 
     const state = detectInferenceProviderHostState({
@@ -293,6 +328,7 @@ describe("detectInferenceProviderHostState", () => {
 
   it("does not probe the Windows-host switch path when running Ollama already resolves to the Windows host", () => {
     const runCapture = vi.fn<DetectInferenceProviderHostStateDeps["runCapture"]>(() => "");
+    const dockerCapture = vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => "");
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       findReachableOllamaHost: vi.fn(() => "host.docker.internal"),
@@ -302,16 +338,13 @@ describe("detectInferenceProviderHostState", () => {
         loopbackOnly: true,
       })),
       runCapture,
+      dockerCapture,
     });
 
     const state = detectWithDeps(deps);
 
     expect(state.isWindowsHostOllama).toBe(true);
     expect(state.windowsOllamaReachable).toBe(false);
-    expect(
-      runCapture.mock.calls.some(([command]) =>
-        command.join(" ").includes("host.docker.internal:11434/api/tags"),
-      ),
-    ).toBe(false);
+    expect(dockerCapture).not.toHaveBeenCalled();
   });
 });

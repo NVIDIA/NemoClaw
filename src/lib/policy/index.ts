@@ -28,6 +28,7 @@ import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import { ROOT, run, runCapture } from "../runner";
+import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import * as registry from "../state/registry";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
 import {
@@ -668,6 +669,247 @@ function logPresetScopeForState(
   for (const line of renderPresetScope(content, { heading })) logger(line);
 }
 
+const OPENCLAW_NPM_BASELINE_KEY = "npm_registry";
+const OPENCLAW_NPM_PRESET_KEY = "npm_yarn";
+
+function npmCompatibilityEntry(
+  baselineEntry: PolicyObject,
+  npmPresetEntry: PolicyObject,
+): PolicyObject {
+  const presetEndpoints = Array.isArray(npmPresetEntry.endpoints)
+    ? npmPresetEntry.endpoints.filter(isPolicyObject)
+    : [];
+  const baselineEndpoints = Array.isArray(baselineEntry.endpoints)
+    ? baselineEntry.endpoints.filter(isPolicyObject)
+    : [];
+  if (baselineEndpoints.length === 0) {
+    throw new Error(
+      `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}' with '${OPENCLAW_NPM_BASELINE_KEY}': the reviewed baseline has no endpoints.`,
+    );
+  }
+  const baselineSelectors = new Set<string>();
+  const compatibleEndpoints = baselineEndpoints.map((baselineEndpoint) => {
+    const host = baselineEndpoint.host;
+    const port = baselineEndpoint.port;
+    if (
+      typeof host !== "string" ||
+      host.length === 0 ||
+      typeof port !== "number" ||
+      !Number.isInteger(port) ||
+      port <= 0
+    ) {
+      throw new Error(
+        `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}' with '${OPENCLAW_NPM_BASELINE_KEY}': the reviewed baseline selector is invalid.`,
+      );
+    }
+    const selector = `${host}:${port}`;
+    if (baselineSelectors.has(selector)) {
+      throw new Error(
+        `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}' with '${OPENCLAW_NPM_BASELINE_KEY}': the reviewed baseline repeats selector '${selector}'.`,
+      );
+    }
+    baselineSelectors.add(selector);
+    const matches = presetEndpoints.filter(
+      (candidate) => candidate.host === host && candidate.port === port,
+    );
+    if (matches.length !== 1) {
+      throw new Error(
+        `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}' with '${OPENCLAW_NPM_BASELINE_KEY}': selector '${selector}' must have exactly one preset match.`,
+      );
+    }
+    return structuredClone(matches[0]);
+  });
+  return { ...structuredClone(baselineEntry), endpoints: compatibleEndpoints };
+}
+
+type OpenClawNpmActivation = { policy: string; widenedBaseline: boolean };
+
+function openClawNpmReviewedEntries(baselinePolicyContent: string): {
+  baseline: PolicyObject;
+  preset: PolicyObject;
+} {
+  const baseline = getBaselineEntry(baselinePolicyContent, OPENCLAW_NPM_BASELINE_KEY);
+  const npmPresetContent = loadPresetForAgent("npm", { agent: "openclaw" });
+  const preset = parseNetworkPolicies(npmPresetContent)?.[OPENCLAW_NPM_PRESET_KEY];
+  if (!baseline || !isPolicyObject(preset)) {
+    throw new Error("Cannot reconcile OpenClaw npm policy compatibility: reviewed inputs missing.");
+  }
+  return { baseline, preset };
+}
+
+/**
+ * OpenShell 0.0.99 rejects overlapping endpoint selectors whose TLS or L7
+ * metadata differs, even when their binary lists are disjoint. Keep the
+ * restricted OpenClaw baseline GET-only. While the broader npm preset is
+ * active, its reviewed full-access L4 endpoint temporarily replaces the
+ * overlapping baseline endpoint metadata while retaining the baseline's
+ * OpenClaw-only binary scope.
+ */
+function activateOpenClawNpmCompatibility(
+  policyContent: string,
+  baselinePolicyContent: string,
+  npmWasActive: boolean,
+): OpenClawNpmActivation {
+  const parsed = YAML.parse(policyContent);
+  if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) {
+    throw new Error("Cannot reconcile OpenClaw npm policy compatibility: invalid policy mapping.");
+  }
+  const networkPolicies = parsed.network_policies;
+  const currentBaselineEntry = networkPolicies[OPENCLAW_NPM_BASELINE_KEY];
+  if (currentBaselineEntry === undefined) {
+    return { policy: policyContent, widenedBaseline: false };
+  }
+  if (!isPolicyObject(currentBaselineEntry)) {
+    throw new Error(`Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': baseline entry is malformed.`);
+  }
+
+  const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
+  const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, reviewed.preset);
+  const currentNpmEntry = networkPolicies[OPENCLAW_NPM_PRESET_KEY];
+  if (!isPolicyObject(currentNpmEntry) || !isDeepStrictEqual(currentNpmEntry, reviewed.preset)) {
+    throw new Error(
+      `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': the resulting entry differs from the reviewed npm preset.`,
+    );
+  }
+  if (isDeepStrictEqual(currentBaselineEntry, compatibilityEntry)) {
+    if (!npmWasActive) {
+      throw new Error(
+        `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': found a compatibility overlay without an active npm preset.`,
+      );
+    }
+    return { policy: policyContent, widenedBaseline: false };
+  }
+  if (!isDeepStrictEqual(currentBaselineEntry, reviewed.baseline)) {
+    throw new Error(
+      `Cannot compose '${OPENCLAW_NPM_PRESET_KEY}': '${OPENCLAW_NPM_BASELINE_KEY}' differs from the reviewed baseline.`,
+    );
+  }
+  networkPolicies[OPENCLAW_NPM_BASELINE_KEY] = compatibilityEntry;
+  parsed.network_policies = networkPolicies;
+  return { policy: YAML.stringify(parsed), widenedBaseline: true };
+}
+
+function restoreOpenClawNpmCompatibility(
+  currentPolicy: string,
+  updatedPolicy: string,
+  baselinePolicyContent: string,
+): string {
+  const current = YAML.parse(currentPolicy);
+  const updated = YAML.parse(updatedPolicy);
+  if (
+    !isPolicyDocument(current) ||
+    !isPresetPolicyMap(current.network_policies) ||
+    !isPolicyDocument(updated) ||
+    !isPresetPolicyMap(updated.network_policies)
+  ) {
+    throw new Error("Cannot restore OpenClaw npm policy compatibility: invalid policy mapping.");
+  }
+  const currentBaselineEntry = current.network_policies[OPENCLAW_NPM_BASELINE_KEY];
+  if (currentBaselineEntry === undefined) return updatedPolicy;
+  if (!isPolicyObject(currentBaselineEntry)) {
+    throw new Error(`Cannot remove '${OPENCLAW_NPM_PRESET_KEY}': baseline entry is malformed.`);
+  }
+
+  const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
+  if (isDeepStrictEqual(currentBaselineEntry, reviewed.baseline)) return updatedPolicy;
+
+  const currentNpmEntry = current.network_policies[OPENCLAW_NPM_PRESET_KEY];
+  if (!isPolicyObject(currentNpmEntry)) {
+    throw new Error(
+      `Cannot remove '${OPENCLAW_NPM_PRESET_KEY}': found a compatibility overlay without an active npm preset.`,
+    );
+  }
+  const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, currentNpmEntry);
+  if (!isDeepStrictEqual(currentBaselineEntry, compatibilityEntry)) {
+    throw new Error(
+      `Cannot remove '${OPENCLAW_NPM_PRESET_KEY}': '${OPENCLAW_NPM_BASELINE_KEY}' differs from both the reviewed baseline and active compatibility overlay.`,
+    );
+  }
+  updated.network_policies[OPENCLAW_NPM_BASELINE_KEY] = structuredClone(reviewed.baseline);
+  return YAML.stringify(updated);
+}
+
+function resolveSandboxOpenClawNpmBaseline(sandboxName: string): string | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  // Legacy and unregistered rows historically use OpenClaw preset content.
+  // Activation still requires an exact reviewed npm_registry entry in the
+  // live policy, so this fallback cannot inject or broaden a missing key.
+  const agent = sandbox?.agent || "openclaw";
+  if (agent !== "openclaw") return null;
+  const baseline = resolveAgentBaselinePolicy(agent);
+  if (!baseline) {
+    throw new Error(
+      `Cannot reconcile OpenClaw npm policy compatibility for '${sandboxName}': the reviewed baseline is unavailable.`,
+    );
+  }
+  return baseline.content;
+}
+
+function openClawNpmExclusionStateError(sandboxName: string, currentPolicy: string): string | null {
+  const transition = registry.getBaselineExclusionTransition(sandboxName);
+  if (transition?.exclusion.key === OPENCLAW_NPM_BASELINE_KEY) {
+    return `baseline repair for '${OPENCLAW_NPM_BASELINE_KEY}' is still pending; finish that transaction before changing npm`;
+  }
+  const isExcluded = registry
+    .getBaselineExclusions(sandboxName)
+    .some((entry) => entry.key === OPENCLAW_NPM_BASELINE_KEY);
+  if (!isExcluded) return null;
+  const live = inspectLiveBaselineEntry(currentPolicy, OPENCLAW_NPM_BASELINE_KEY);
+  return live.state === "absent"
+    ? null
+    : `recorded exclusion for '${OPENCLAW_NPM_BASELINE_KEY}' requires the live entry to remain absent`;
+}
+
+export type OpenClawNpmCompatibilityState = "match" | "repair" | "excluded" | "drift";
+
+function getOpenClawNpmCompatibilityState(
+  sandboxName: string,
+): OpenClawNpmCompatibilityState | null {
+  try {
+    const baselinePolicyContent = resolveSandboxOpenClawNpmBaseline(sandboxName);
+    if (!baselinePolicyContent) return "match";
+    const currentPolicy = readCurrentSandboxPolicy(sandboxName);
+    if (!currentPolicy) return null;
+    const transition = registry.getBaselineExclusionTransition(sandboxName);
+    if (transition?.exclusion.key === OPENCLAW_NPM_BASELINE_KEY) return "drift";
+    const isExcluded = registry
+      .getBaselineExclusions(sandboxName)
+      .some((entry) => entry.key === OPENCLAW_NPM_BASELINE_KEY);
+    const live = inspectLiveBaselineEntry(currentPolicy, OPENCLAW_NPM_BASELINE_KEY);
+    if (isExcluded) return live.state === "absent" ? "excluded" : "drift";
+    if (live.state !== "present") return "drift";
+
+    const parsed = YAML.parse(currentPolicy);
+    if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) return null;
+    const reviewed = openClawNpmReviewedEntries(baselinePolicyContent);
+    const currentNpmEntry = parsed.network_policies[OPENCLAW_NPM_PRESET_KEY];
+    if (!isPolicyObject(currentNpmEntry) || !isDeepStrictEqual(currentNpmEntry, reviewed.preset)) {
+      return "drift";
+    }
+    if (isDeepStrictEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], reviewed.baseline)) {
+      return "repair";
+    }
+    const compatibilityEntry = npmCompatibilityEntry(reviewed.baseline, currentNpmEntry);
+    return isDeepStrictEqual(parsed.network_policies[OPENCLAW_NPM_BASELINE_KEY], compatibilityEntry)
+      ? "match"
+      : "drift";
+  } catch {
+    return null;
+  }
+}
+
+function policyHasNetworkPolicy(policyContent: string, policyKey: string): boolean {
+  return isPolicyObject(parseNetworkPolicies(policyContent)?.[policyKey]);
+}
+
+function logOpenClawNpmCompatibilityDisclosure(logger: (line: string) => void = console.log): void {
+  logger("  OpenClaw npm compatibility scope while this preset is active:");
+  logger(
+    "    registry.npmjs.org:443 for /usr/local/bin/openclaw changes from inspected GET-only REST to full L4 pass-through (HTTP methods and paths are not inspected).",
+  );
+  logger("    Removing the npm preset restores the exact reviewed GET-only baseline route.");
+}
+
 function mergePresetNamesIntoPolicy(
   currentPolicy: string,
   presetNames: string[],
@@ -697,7 +939,24 @@ function mergePresetNamesIntoPolicy(
     appliedPresets.push(presetName);
   }
 
-  return { policy: merged, appliedPresets, missingPresets };
+  let policy = merged;
+  if (
+    (options.agent === undefined || options.agent === null || options.agent === "openclaw") &&
+    appliedPresets.includes("npm")
+  ) {
+    const reviewedBaseline = resolveAgentBaselinePolicy("openclaw");
+    if (!reviewedBaseline) {
+      throw new Error(
+        "Cannot reconcile OpenClaw npm policy compatibility: reviewed baseline missing.",
+      );
+    }
+    policy = activateOpenClawNpmCompatibility(
+      merged,
+      reviewedBaseline.content,
+      policyHasNetworkPolicy(currentPolicy, OPENCLAW_NPM_PRESET_KEY),
+    ).policy;
+  }
+  return { policy, appliedPresets, missingPresets };
 }
 
 /**
@@ -793,11 +1052,10 @@ function removePreset(
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 
@@ -841,7 +1099,21 @@ function removePreset(
     return false;
   }
 
-  const updated = removePresetFromPolicy(currentPolicy, presetEntries);
+  let updated = removePresetFromPolicy(currentPolicy, presetEntries);
+  if (!isCustom && presetName === "npm") {
+    try {
+      const baseline = resolveSandboxOpenClawNpmBaseline(sandboxName);
+      if (baseline) {
+        const exclusionError = openClawNpmExclusionStateError(sandboxName, currentPolicy);
+        if (exclusionError) throw new Error(exclusionError);
+        updated = restoreOpenClawNpmCompatibility(currentPolicy, updated, baseline);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  Refusing to remove npm policy compatibility: ${message}`);
+      return false;
+    }
+  }
 
   if (updated === currentPolicy) {
     console.error(`  Preset '${presetName}' could not be removed from the current policy.`);
@@ -1627,16 +1899,21 @@ function applyPresetContent(
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 
   if (options.custom) {
     const np = parseNetworkPolicies(presetContent);
+    if (np && Object.prototype.hasOwnProperty.call(np, OPENCLAW_NPM_PRESET_KEY)) {
+      console.error(
+        `  Custom presets cannot own reserved network policy key '${OPENCLAW_NPM_PRESET_KEY}'.`,
+      );
+      return false;
+    }
     const hasGeneratedPins = np !== null && networkPoliciesHasAllowedIps(np);
     const trustedPrivatePinsValid = isTrustedPrivatePolicyPinCapability(
       presetContent,
@@ -1724,14 +2001,40 @@ function applyPresetContent(
       return false;
     }
   }
-  const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
+  let merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
+  let npmBaselineWidened = false;
+  if (!options.custom && presetName === "npm") {
+    try {
+      const baseline = resolveSandboxOpenClawNpmBaseline(sandboxName);
+      if (baseline) {
+        const exclusionError = openClawNpmExclusionStateError(sandboxName, currentPolicy);
+        if (exclusionError) throw new Error(exclusionError);
+        const activation = activateOpenClawNpmCompatibility(
+          merged,
+          baseline,
+          policyHasNetworkPolicy(currentPolicy, OPENCLAW_NPM_PRESET_KEY),
+        );
+        merged = activation.policy;
+        npmBaselineWidened = activation.widenedBaseline;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  Refusing to apply npm policy compatibility: ${message}`);
+      return false;
+    }
+  }
 
   const presetState = classifyPresetEntries(currentPolicy, presetEntries);
+  const disclosedPresetState =
+    npmBaselineWidened && presetState === "match" ? "drift" : presetState;
   const disclosedStateStillCurrent =
     Object.prototype.hasOwnProperty.call(options, "disclosedPresetState") &&
-    options.disclosedPresetState === presetState;
+    options.disclosedPresetState === disclosedPresetState;
   if (!options.suppressDisclosure && !disclosedStateStillCurrent) {
-    logPresetScopeForState(presetName, presetContent, presetState);
+    logPresetScopeForState(presetName, presetContent, disclosedPresetState);
+  }
+  if (npmBaselineWidened && !options.suppressDisclosure) {
+    logOpenClawNpmCompatibilityDisclosure();
   }
 
   // Ownership-aware callers use a successful `policy set --wait` as part of
@@ -1843,11 +2146,10 @@ function applyPreset(
  * preset during onboarding.
  */
 function applyPresets(sandboxName: string, presetNames: string[]): boolean {
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 
@@ -1903,8 +2205,37 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     merged = mergePresetIntoPolicy(merged, presetEntries);
   }
 
+  let npmBaselineWidened = false;
+  if (uniquePresetNames.includes("npm")) {
+    try {
+      const baseline = resolveSandboxOpenClawNpmBaseline(sandboxName);
+      if (baseline) {
+        const exclusionError = openClawNpmExclusionStateError(sandboxName, originalPolicy);
+        if (exclusionError) throw new Error(exclusionError);
+        const activation = activateOpenClawNpmCompatibility(
+          merged,
+          baseline,
+          policyHasNetworkPolicy(originalPolicy, OPENCLAW_NPM_PRESET_KEY),
+        );
+        merged = activation.policy;
+        npmBaselineWidened = activation.widenedBaseline;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  Refusing to apply npm policy compatibility: ${message}`);
+      return false;
+    }
+  }
+
   for (const preset of presetContents) {
-    logPresetScopeForState(preset.name, preset.content, preset.state);
+    const disclosedPresetState =
+      preset.name === "npm" && npmBaselineWidened && preset.state === "match"
+        ? "drift"
+        : preset.state;
+    logPresetScopeForState(preset.name, preset.content, disclosedPresetState);
+    if (preset.name === "npm" && npmBaselineWidened) {
+      logOpenClawNpmCompatibilityDisclosure();
+    }
   }
 
   const policyChanged = !policyDocumentsMatch(originalPolicy, merged);
@@ -2304,11 +2635,10 @@ function resolvePermissivePolicyPath(sandboxName: string): string {
 }
 
 function applyPermissivePolicy(sandboxName: string): void {
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 
@@ -2342,6 +2672,7 @@ export {
   getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
   getLiveSandboxPolicyEntryDigest,
+  getOpenClawNpmCompatibilityState,
   getPresetContentGatewayState,
   getPresetEndpoints,
   getPresetValidationWarning,
@@ -2354,6 +2685,7 @@ export {
   loadPreset,
   loadPresetForSandbox,
   loadPresetFromFile,
+  logOpenClawNpmCompatibilityDisclosure,
   logPresetNoNewEgress,
   logPresetScope,
   logPresetScopeForState,

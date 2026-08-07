@@ -36,7 +36,7 @@ If sudo is unavailable in a non-interactive run, rerun interactively or upgrade 
 After an upgrade, NemoClaw probes the running daemon again and stops if its reported version remains below the minimum.
 Fresh installs skip this second probe because the bundled installers provide a daemon at or above the minimum.
 
-The version gate does not apply to Windows-host Ollama reached from WSL through `host.docker.internal`.
+The version gate does not apply to Windows-host Ollama reached from Docker Desktop through `host.docker.internal`.
 The Windows-host menu entries perform their own actions on the Windows side.
 
 ## Choose a Linux Install Mode
@@ -122,8 +122,9 @@ When NemoClaw runs in WSL, the provider menu can offer these Windows-host action
 - Start Ollama when it is installed but not running.
 - Install Ollama when it is not installed on Windows.
 
-The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on Windows so Docker and WSL can reach the daemon through `host.docker.internal`.
-NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and waits for the endpoint to respond.
+The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on Windows so Docker Desktop containers can reach the daemon through `host.docker.internal`.
+NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and checks the endpoint from Docker Desktop's network context.
+A direct request from WSL can fail because Docker Desktop defines this hostname for its containers.
 It pulls missing models through the Ollama HTTP API without requiring an Ollama CLI inside WSL.
 
 <Warning>
