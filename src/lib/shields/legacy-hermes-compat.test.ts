@@ -88,6 +88,7 @@ describe("legacy Hermes shields compatibility", () => {
   let privilegedExecArgvSpy: MockInstance;
   let applyStateDirLockModeSpy: MockInstance;
   let inferenceConvergenceSpy: MockInstance;
+  let auditSpy: MockInstance;
   let errorSpy: MockInstance;
 
   beforeEach(() => {
@@ -120,6 +121,7 @@ describe("legacy Hermes shields compatibility", () => {
         attempts: 1,
         httpStatus: 200,
       });
+    auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     spies.push(
       runSpy,
@@ -145,7 +147,7 @@ describe("legacy Hermes shields compatibility", () => {
       vi.spyOn(stateDirLock, "restoreStateDirLockPosture").mockReturnValue([]),
       vi.spyOn(stateDirLock, "stateLockPlanCompatibilityIssues").mockReturnValue([]),
       inferenceConvergenceSpy,
-      vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined),
+      auditSpy,
       vi
         .spyOn(permissiveRuntime, "buildRuntimePermissivePolicy")
         .mockImplementation((basePath: unknown) => String(basePath)),
@@ -165,21 +167,40 @@ describe("legacy Hermes shields compatibility", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
-  function installExecResponses(help: string, hermesDirMode = "3770", finishError?: Error): void {
+  function installExecResponses(
+    help: string,
+    hermesDirMode = "3770",
+    finishError?: Error,
+    simulateLockTransition = false,
+  ): void {
+    let pendingMode: "locked" | "mutable" = "mutable";
+    let appliedMode: "locked" | "mutable" = "mutable";
     dockerExecSpy.mockImplementation((cmd: string[]) => {
       switch (true) {
         case cmd.includes(HERMES_GUARD) && cmd.includes("--help"):
           return help;
-        case isGuardAction(cmd, "begin-shields-transition"):
+        case isGuardAction(cmd, "begin-shields-transition"): {
+          const mode = cmd[cmd.indexOf("--shields-mode") + 1];
+          pendingMode = mode === "locked" ? "locked" : "mutable";
           return `lock_token=${LOCK_TOKEN} original_locked=1`;
+        }
         case isGuardAction(cmd, "apply-shields-transition"):
-          return "shields_mode=mutable chattr_applied=0";
+          appliedMode = pendingMode;
+          return `shields_mode=${appliedMode} chattr_applied=0`;
         case isGuardAction(cmd, "finish-shields-transition") && finishError !== undefined:
           throw finishError;
+        case cmd[0] === "stat" && simulateLockTransition && appliedMode === "locked":
+          return cmd.at(-1) === "/sandbox/.hermes"
+            ? "3770 root:sandbox"
+            : cmd.at(-1) === "/sandbox"
+              ? "1775 root:sandbox"
+              : "444 root:root";
         case cmd[0] === "stat":
           return cmd.at(-1) === "/sandbox/.hermes"
             ? `${hermesDirMode} sandbox:sandbox`
             : "640 sandbox:sandbox";
+        case cmd[0] === "sha256sum":
+          return `${"b".repeat(64)}  ${cmd.at(-1)}`;
         case cmd[0] === "lsattr":
           return `---------------- ${cmd.at(-1)}`;
         default:
@@ -413,7 +434,7 @@ describe("legacy Hermes shields compatibility", () => {
   });
 
   it("gives route-specific recovery guidance when inference convergence fails", () => {
-    installExecResponses(CURRENT_GUARD_HELP);
+    installExecResponses(CURRENT_GUARD_HELP, "3770", undefined, true);
     inferenceConvergenceSpy.mockReturnValue({
       ok: false,
       attempts: 4,
@@ -432,6 +453,15 @@ describe("legacy Hermes shields compatibility", () => {
       "Recover the Hermes inference route, then re-run `nemoclaw current-hermes shields down`.",
     );
     expect(errors).not.toContain("after correcting file ownership");
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const state = JSON.parse(
+      fs.readFileSync(path.join(stateDir, "shields-current-hermes.json"), "utf-8"),
+    );
+    expect(state).toMatchObject({ shieldsDown: false });
+    expect(
+      fs.readdirSync(stateDir).filter((entry) => entry.startsWith("shields-transition-")),
+    ).toEqual([]);
+    expect(auditSpy).not.toHaveBeenCalled();
   });
 
   it("descriptor-safely protects and verifies the sandbox parent when a failed rebuild relocks an old image", () => {
