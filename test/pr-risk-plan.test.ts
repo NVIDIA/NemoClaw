@@ -86,7 +86,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(16);
+    expect(first.version).toBe(17);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -471,6 +471,8 @@ describe("deterministic PR risk plan", () => {
 
   it("keeps protected llama.cpp DGX Spark qualification activation-only until trusted (#8260)", () => {
     const activation = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
+    const agentQualification =
+      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml";
     const result = plan(activation);
     const dormantImplementation = plan(
       "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
@@ -485,6 +487,14 @@ describe("deterministic PR risk plan", () => {
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(riskPlanRequiredJobIds(plan(agentQualification))).toContain(
+      "llama-cpp-dgx-spark-qualification",
+    );
+    expect(
+      riskPlanRequiredJobIds(
+        plan("managed-inference/qualifications/llama-cpp.other.spark-single.v1.yaml"),
+      ),
+    ).not.toContain("llama-cpp-dgx-spark-qualification");
     expect(
       dormantImplementation.families.some(
         (family) => family.id === "llama-cpp-dgx-spark-qualification",
