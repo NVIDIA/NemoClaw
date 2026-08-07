@@ -87,6 +87,8 @@ describe("legacy Hermes shields compatibility", () => {
   let dockerExecSpy: MockInstance;
   let privilegedExecArgvSpy: MockInstance;
   let applyStateDirLockModeSpy: MockInstance;
+  let inferenceConvergenceSpy: MockInstance;
+  let errorSpy: MockInstance;
 
   beforeEach(() => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-hermes-"));
@@ -111,6 +113,14 @@ describe("legacy Hermes shields compatibility", () => {
     privilegedExecArgvSpy = vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")
       .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
+    inferenceConvergenceSpy = vi
+      .spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence")
+      .mockReturnValue({
+        ok: true,
+        attempts: 1,
+        httpStatus: 200,
+      });
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     spies.push(
       runSpy,
       vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n"),
@@ -134,11 +144,7 @@ describe("legacy Hermes shields compatibility", () => {
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
       vi.spyOn(stateDirLock, "restoreStateDirLockPosture").mockReturnValue([]),
       vi.spyOn(stateDirLock, "stateLockPlanCompatibilityIssues").mockReturnValue([]),
-      vi.spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence").mockReturnValue({
-        ok: true,
-        attempts: 1,
-        httpStatus: 200,
-      }),
+      inferenceConvergenceSpy,
       vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined),
       vi
         .spyOn(permissiveRuntime, "buildRuntimePermissivePolicy")
@@ -146,7 +152,7 @@ describe("legacy Hermes shields compatibility", () => {
       vi.spyOn(tempFiles, "cleanupTempDir").mockImplementation(() => undefined),
       vi.spyOn(console, "log").mockImplementation(() => undefined),
       vi.spyOn(console, "warn").mockImplementation(() => undefined),
-      vi.spyOn(console, "error").mockImplementation(() => undefined),
+      errorSpy,
     );
 
     shields = requireSource(INDEX_MODULE);
@@ -404,6 +410,28 @@ describe("legacy Hermes shields compatibility", () => {
       commands.filter((cmd) => cmd.includes(HERMES_GUARD) && cmd.includes("--help")),
     ).toHaveLength(1);
     expect(commands.some((cmd) => isGuardAction(cmd, "begin-shields-transition"))).toBe(true);
+  });
+
+  it("gives route-specific recovery guidance when inference convergence fails", () => {
+    installExecResponses(CURRENT_GUARD_HELP);
+    inferenceConvergenceSpy.mockReturnValue({
+      ok: false,
+      attempts: 4,
+      httpStatus: 503,
+    });
+
+    expect(() =>
+      shields.shieldsDown("current-hermes", {
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).toThrow(/inference route did not converge.*HTTP 503.*4 attempts/i);
+
+    const errors = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errors).toContain(
+      "Recover the Hermes inference route, then re-run `nemoclaw current-hermes shields down`.",
+    );
+    expect(errors).not.toContain("after correcting file ownership");
   });
 
   it("descriptor-safely protects and verifies the sandbox parent when a failed rebuild relocks an old image", () => {

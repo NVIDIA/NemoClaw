@@ -50,8 +50,14 @@ export function waitForHermesInferenceRouteConvergence(
   sandboxName: string,
   options: InferenceRouteConvergenceOptions,
 ): InferenceRouteConvergenceResult {
-  const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
-  const retryDelayMs = Math.max(0, Math.trunc(options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS));
+  const configuredMaxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const configuredRetryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const maxAttempts = Number.isFinite(configuredMaxAttempts)
+    ? Math.max(1, Math.trunc(configuredMaxAttempts))
+    : DEFAULT_MAX_ATTEMPTS;
+  const retryDelayMs = Number.isFinite(configuredRetryDelayMs)
+    ? Math.max(0, Math.trunc(configuredRetryDelayMs))
+    : DEFAULT_RETRY_DELAY_MS;
   const sleep = options.sleep ?? sleepMs;
   let httpStatus = 0;
 
