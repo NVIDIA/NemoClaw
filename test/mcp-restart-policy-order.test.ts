@@ -93,7 +93,9 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, ["8.8.8.8"]),
+  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+    addresses: ["8.8.8.8"],
+  }),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 
@@ -220,7 +222,9 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, ["8.8.8.8"]),
+  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+    addresses: ["8.8.8.8"],
+  }),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 

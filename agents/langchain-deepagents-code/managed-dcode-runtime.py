@@ -155,30 +155,6 @@ _MCP_BLOCKED_ALIASES = {
     "host.docker.internal",
     "host.containers.internal",
 }
-_MCP_RESERVED_NAMES = {"localhost", "local", "internal", "metadata"}
-_MCP_BLOCKED_IPV4_NETWORKS = tuple(
-    ipaddress.ip_network(network)
-    for network in (
-        "0.0.0.0/8",
-        "10.0.0.0/8",
-        "100.64.0.0/10",
-        "127.0.0.0/8",
-        "169.254.0.0/16",
-        "172.16.0.0/12",
-        "192.0.0.0/24",
-        "192.0.2.0/24",
-        "192.31.196.0/24",
-        "192.52.193.0/24",
-        "192.88.99.0/24",
-        "192.168.0.0/16",
-        "192.175.48.0/24",
-        "198.18.0.0/15",
-        "198.51.100.0/24",
-        "203.0.113.0/24",
-        "224.0.0.0/4",
-        "240.0.0.0/4",
-    )
-)
 _MANAGED_MCP_FD: int | None = None
 _MANAGED_MCP_BINDING: dict[str, int | str] | None = None
 _MANAGED_MCP_CHILD_BINDING: dict[str, int | str] | None = None
@@ -366,13 +342,11 @@ def _validate_managed_mcp_hostname(hostname: str) -> None:
         hostname != hostname.lower()
         or hostname.endswith(".")
         or hostname in _MCP_BLOCKED_ALIASES
-        or hostname in _MCP_RESERVED_NAMES
-        or any(
-            hostname.endswith(f".{reserved}")
-            for reserved in _MCP_RESERVED_NAMES
-        )
     ):
         raise RuntimeError("managed MCP server URL hostname is invalid")
+    # Host preflight owns destination trust and binds every accepted endpoint to
+    # exact OpenShell address pins. This runtime revalidates canonical syntax,
+    # but it does not classify an already-admitted IPv4 or DNS destination.
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
@@ -383,12 +357,8 @@ def _validate_managed_mcp_hostname(hostname: str) -> None:
         ):
             raise RuntimeError("managed MCP server URL hostname is invalid")
         return
-    if (
-        address.version != 4
-        or not address.is_global
-        or any(address in network for network in _MCP_BLOCKED_IPV4_NETWORKS)
-    ):
-        raise RuntimeError("managed MCP server URL address is not public IPv4")
+    if address.version != 4:
+        raise RuntimeError("managed MCP server URL does not support IPv6 literals")
 
 
 def _validate_managed_mcp_url(value: object) -> str:
