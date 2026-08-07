@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -109,6 +112,25 @@ describe("test registration boundary scanner", () => {
     expect(violations.map(({ call }) => call)).toEqual(["vitest.describe.only"]);
   });
 
+  it("flags tagged-template registrations through direct, renamed, and namespace imports", () => {
+    const violations = scan(
+      [
+        'import { describe, test as scenario } from "vitest";',
+        'import * as vitest from "vitest";',
+        "",
+        'describe.each`value | expected\n${1} | ${1}`("direct", () => {});',
+        'scenario.each`value\n${2}`("renamed", () => {});',
+        'vitest.suite.each`value\n${3}`("namespaced", () => {});',
+      ].join("\n"),
+    );
+
+    expect(violations.map(({ call }) => call)).toEqual([
+      "describe.each",
+      "scenario.each",
+      "vitest.suite.each",
+    ]);
+  });
+
   it("does not flag fixture extension", () => {
     const violations = scan(
       [
@@ -157,6 +179,23 @@ describe("test registration boundary scanner", () => {
     expect(violations).toEqual([]);
   });
 
+  it("resolves a nested registration parameter instead of the imported binding", () => {
+    const violations = scan(
+      [
+        'import { it } from "vitest";',
+        "",
+        'it("imported", () => {});',
+        "function invoke(it: (title: string, body: () => void) => unknown) {",
+        '  it("local", () => {});',
+        "}",
+      ].join("\n"),
+    );
+
+    expect(violations).toEqual([
+      { file: "test/helpers/example-helper.ts", line: 3, column: 1, call: "it" },
+    ]);
+  });
+
   it("does not flag a type-only Vitest import", () => {
     const violations = scan(
       [
@@ -186,9 +225,10 @@ describe("test registration boundary module selection", () => {
     expect(isScannedModule("test/example.spec.js")).toBe(false);
   });
 
-  it("does not select a shared suite module", () => {
-    expect(isScannedModule("test/local-credential-helper-suite.ts")).toBe(false);
-    expect(isScannedModule("test/openclaw-integrity-pin-suite.ts")).toBe(false);
+  it("selects an orphan suite module but exempts one imported by a test", () => {
+    expect(isScannedModule("test/orphan-suite.ts")).toBe(true);
+    expect(isScannedModule("test/local-credential-helper-suite.ts", true)).toBe(false);
+    expect(isScannedModule("test/openclaw-integrity-pin-suite.ts", true)).toBe(false);
   });
 
   it("does not select files that are not JavaScript or TypeScript", () => {
@@ -210,6 +250,28 @@ describe("test registration boundary diagnostics", () => {
 });
 
 describe("test registration boundary repository state", () => {
+  it("exempts an imported suite module and reports an orphan suite module", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-registration-boundary-"));
+    try {
+      writeFileSync(path.join(root, "collected.test.ts"), 'import "./imported-suite";\n');
+      writeFileSync(
+        path.join(root, "imported-suite.ts"),
+        'import { it } from "vitest";\nit("imported", () => {});\n',
+      );
+      writeFileSync(
+        path.join(root, "orphan-suite.ts"),
+        'import { it } from "vitest";\nit("orphan", () => {});\n',
+      );
+
+      const violations = findTestRegistrationViolations([root]);
+
+      expect(violations).toHaveLength(1);
+      expect(path.basename(violations[0]?.file ?? "")).toBe("orphan-suite.ts");
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("reports no test registration outside test and suite files", () => {
     expect(findTestRegistrationViolations()).toEqual([]);
   });

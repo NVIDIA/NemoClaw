@@ -26,6 +26,16 @@ const DEFAULT_SCAN_ROOTS = Object.freeze([
 const SOURCE_FILE_PATTERN = /\.(?:[cm]?[jt]sx?)$/;
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/;
 const SUITE_FILE_PATTERN = /-suite\.(?:[cm]?[jt]sx?)$/;
+const SOURCE_EXTENSIONS = Object.freeze([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+]);
 const SKIP_DIRS = new Set([".git", ".venv", "coverage", "dist", "node_modules"]);
 const REGISTRATION_NAMES = new Set(["describe", "it", "suite", "test"]);
 const REGISTRATION_MODIFIERS = new Set([
@@ -49,8 +59,8 @@ type CallChain = {
 };
 
 type VitestBindings = {
-  readonly registrations: ReadonlyMap<string, string>;
-  readonly namespaces: ReadonlySet<string>;
+  readonly registrations: ReadonlyMap<ts.Symbol, string>;
+  readonly namespaces: ReadonlySet<ts.Symbol>;
 };
 
 function scriptKindFor(filePath: string): ts.ScriptKind {
@@ -60,9 +70,43 @@ function scriptKindFor(filePath: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
-function collectVitestBindings(sourceFile: ts.SourceFile): VitestBindings {
-  const registrations = new Map<string, string>();
-  const namespaces = new Set<string>();
+function bindSourceFile(file: string, source: string): {
+  readonly checker: ts.TypeChecker;
+  readonly sourceFile: ts.SourceFile;
+} {
+  const fileName = path.resolve(file);
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindFor(fileName),
+  );
+  const host: ts.CompilerHost = {
+    fileExists: (candidate) => path.resolve(candidate) === fileName,
+    getCanonicalFileName: (candidate) => candidate,
+    getCurrentDirectory: () => path.dirname(fileName),
+    getDefaultLibFileName: () => "lib.d.ts",
+    getNewLine: () => "\n",
+    getSourceFile: (candidate) => (path.resolve(candidate) === fileName ? sourceFile : undefined),
+    readFile: (candidate) => (path.resolve(candidate) === fileName ? source : undefined),
+    useCaseSensitiveFileNames: () => true,
+    writeFile: () => undefined,
+  };
+  const program = ts.createProgram(
+    [fileName],
+    { allowJs: true, noLib: true, noResolve: true, target: ts.ScriptTarget.Latest },
+    host,
+  );
+  return { checker: program.getTypeChecker(), sourceFile };
+}
+
+function collectVitestBindings(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+): VitestBindings {
+  const registrations = new Map<ts.Symbol, string>();
+  const namespaces = new Set<ts.Symbol>();
 
   for (const statement of sourceFile.statements) {
     if (
@@ -78,14 +122,16 @@ function collectVitestBindings(sourceFile: ts.SourceFile): VitestBindings {
     const bindings = importClause.namedBindings;
     if (bindings === undefined) continue;
     if (ts.isNamespaceImport(bindings)) {
-      namespaces.add(bindings.name.text);
+      const symbol = checker.getSymbolAtLocation(bindings.name);
+      if (symbol !== undefined) namespaces.add(symbol);
       continue;
     }
     for (const element of bindings.elements) {
       if (element.isTypeOnly) continue;
       const importedName = element.propertyName?.text ?? element.name.text;
       if (REGISTRATION_NAMES.has(importedName)) {
-        registrations.set(element.name.text, importedName);
+        const symbol = checker.getSymbolAtLocation(element.name);
+        if (symbol !== undefined) registrations.set(symbol, importedName);
       }
     }
   }
@@ -102,13 +148,20 @@ function callChain(expression: ts.Expression): CallChain | null {
     if (inner === null) return null;
     return { ...inner, members: [...inner.members, expression.name.text] };
   }
+  if (ts.isTaggedTemplateExpression(expression)) return callChain(expression.tag);
   if (ts.isCallExpression(expression)) return callChain(expression.expression);
   return null;
 }
 
-function registrationCall(chain: CallChain, bindings: VitestBindings): string | null {
-  const imported = bindings.registrations.get(chain.rootName);
-  const name = imported ?? (bindings.namespaces.has(chain.rootName) ? chain.members[0] : undefined);
+function registrationCall(
+  chain: CallChain,
+  bindings: VitestBindings,
+  checker: ts.TypeChecker,
+): string | null {
+  const symbol = checker.getSymbolAtLocation(chain.rootNode);
+  if (symbol === undefined) return null;
+  const imported = bindings.registrations.get(symbol);
+  const name = imported ?? (bindings.namespaces.has(symbol) ? chain.members[0] : undefined);
   const modifiers = imported === undefined ? chain.members.slice(1) : chain.members;
   if (name === undefined || !REGISTRATION_NAMES.has(name)) return null;
   if (!modifiers.every((modifier) => REGISTRATION_MODIFIERS.has(modifier))) return null;
@@ -119,14 +172,9 @@ export function scanTestRegistrations(
   file: string,
   source: string,
 ): readonly TestRegistrationViolation[] {
-  const sourceFile = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    scriptKindFor(file),
-  );
-  const bindings = collectVitestBindings(sourceFile);
+  if (!source.includes("vitest")) return [];
+  const { checker, sourceFile } = bindSourceFile(file, source);
+  const bindings = collectVitestBindings(sourceFile, checker);
   if (bindings.registrations.size === 0 && bindings.namespaces.size === 0) return [];
 
   const violations: TestRegistrationViolation[] = [];
@@ -135,7 +183,7 @@ export function scanTestRegistrations(
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
       const chain = callChain(node.expression);
-      const call = chain === null ? null : registrationCall(chain, bindings);
+      const call = chain === null ? null : registrationCall(chain, bindings, checker);
       if (chain !== null && call !== null) {
         const start = chain.rootNode.getStart(sourceFile);
         if (!reported.has(start)) {
@@ -157,12 +205,12 @@ export function scanTestRegistrations(
   return violations;
 }
 
-export function isScannedModule(file: string): boolean {
+export function isScannedModule(file: string, suiteImportedByTest = false): boolean {
   const name = path.basename(file);
   return (
     SOURCE_FILE_PATTERN.test(name) &&
     !TEST_FILE_PATTERN.test(name) &&
-    !SUITE_FILE_PATTERN.test(name)
+    (!SUITE_FILE_PATTERN.test(name) || !suiteImportedByTest)
   );
 }
 
@@ -171,7 +219,7 @@ function isSkipped(absolutePath: string): boolean {
   return segments.some((segment) => SKIP_DIRS.has(segment));
 }
 
-function* walkModules(directory: string): Generator<string> {
+function* walkSourceModules(directory: string): Generator<string> {
   if (!existsSync(directory) || isSkipped(directory)) return;
 
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -179,23 +227,79 @@ function* walkModules(directory: string): Generator<string> {
     const absolutePath = path.join(directory, entry.name);
     if (isSkipped(absolutePath)) continue;
     if (entry.isDirectory()) {
-      yield* walkModules(absolutePath);
-    } else if (entry.isFile() && isScannedModule(entry.name)) {
+      yield* walkSourceModules(absolutePath);
+    } else if (entry.isFile() && SOURCE_FILE_PATTERN.test(entry.name)) {
       yield absolutePath;
     }
   }
+}
+
+function staticModuleSpecifiers(sourceFile: ts.SourceFile): readonly string[] {
+  const specifiers: string[] = [];
+  for (const statement of sourceFile.statements) {
+    if (
+      (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
+      statement.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      specifiers.push(statement.moduleSpecifier.text);
+    }
+  }
+  return specifiers;
+}
+
+function resolveRelativeModule(
+  importer: string,
+  specifier: string,
+  modules: ReadonlySet<string>,
+): string | null {
+  if (!specifier.startsWith(".")) return null;
+  const base = path.resolve(path.dirname(importer), specifier);
+  const extension = path.extname(base);
+  const stem = SOURCE_EXTENSIONS.includes(extension) ? base.slice(0, -extension.length) : base;
+  const candidates = new Set([base, ...SOURCE_EXTENSIONS.map((suffix) => `${stem}${suffix}`)]);
+  for (const candidate of candidates) {
+    if (modules.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+function importedSuiteModules(modules: ReadonlySet<string>): ReadonlySet<string> {
+  const importedSuites = new Set<string>();
+  for (const importer of modules) {
+    if (!TEST_FILE_PATTERN.test(path.basename(importer))) continue;
+    const source = readFileSync(importer, "utf8");
+    const sourceFile = ts.createSourceFile(
+      importer,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKindFor(importer),
+    );
+    for (const specifier of staticModuleSpecifiers(sourceFile)) {
+      const resolved = resolveRelativeModule(importer, specifier, modules);
+      if (resolved !== null && SUITE_FILE_PATTERN.test(path.basename(resolved))) {
+        importedSuites.add(resolved);
+      }
+    }
+  }
+  return importedSuites;
 }
 
 export function findTestRegistrationViolations(
   roots: readonly string[] = DEFAULT_SCAN_ROOTS,
 ): readonly TestRegistrationViolation[] {
   const violations: TestRegistrationViolation[] = [];
+  const modules = new Set<string>();
   for (const root of roots) {
     const absoluteRoot = path.resolve(REPO_ROOT, root);
-    for (const absolutePath of walkModules(absoluteRoot)) {
-      const file = path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/");
-      violations.push(...scanTestRegistrations(file, readFileSync(absolutePath, "utf8")));
-    }
+    for (const absolutePath of walkSourceModules(absoluteRoot)) modules.add(absolutePath);
+  }
+  const importedSuites = importedSuiteModules(modules);
+  for (const absolutePath of modules) {
+    if (!isScannedModule(absolutePath, importedSuites.has(absolutePath))) continue;
+    const file = path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/");
+    violations.push(...scanTestRegistrations(file, readFileSync(absolutePath, "utf8")));
   }
   return violations;
 }
