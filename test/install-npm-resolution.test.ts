@@ -102,6 +102,74 @@ function isLinuxRoot(): boolean {
   );
 }
 
+/**
+ * Builds an install tree where the active npm prefix bin has no CLI but the
+ * user-local shim is present and working, and the shim directory is absent
+ * from PATH. Callers that need the no-shim control remove `shimPath`.
+ */
+function createStaleNpmPrefixTree(): {
+  tmp: string;
+  fakeBin: string;
+  prefix: string;
+  shimPath: string;
+} {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-shim-probe-"));
+  const fakeBin = path.join(tmp, "bin");
+  const prefix = path.join(tmp, "prefix");
+  const shimPath = path.join(tmp, ".local", "bin", "nemoclaw");
+
+  fs.mkdirSync(fakeBin);
+  fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+  fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+
+  writeExecutable(
+    path.join(fakeBin, "node"),
+    `#!/usr/bin/env bash
+exit 0
+`,
+  );
+  writeExecutable(
+    path.join(fakeBin, "npm"),
+    `#!/usr/bin/env bash
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$ACTIVE_NPM_PREFIX"
+  exit 0
+fi
+if [ "$1" = "uninstall" ] && [ "$2" = "-g" ] && [ "$3" = "nemoclaw" ] && [ -n "$NPM_UNINSTALL_TARGET" ]; then
+  rm -f -- "$NPM_UNINSTALL_TARGET"
+  exit 0
+fi
+exit 99
+`,
+  );
+  writeExecutable(
+    shimPath,
+    `#!/usr/bin/env bash
+echo "nemoclaw v0.1.0"
+`,
+  );
+
+  return { tmp, fakeBin, prefix, shimPath };
+}
+
+function runVerifyNemoclaw(
+  tree: ReturnType<typeof createStaleNpmPrefixTree>,
+  extraEnv: Record<string, string> = {},
+) {
+  return runInstallerFunction(
+    "_CLI_BIN=nemoclaw; verify_nemoclaw; " +
+      "printf 'CLI_PATH=%s\\nREFRESH=%s\\nREADY=%s\\n' " +
+      '"$_CLI_PATH" "$NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH" "$NEMOCLAW_READY_NOW"',
+    tree.fakeBin,
+    {
+      ACTIVE_NPM_PREFIX: tree.prefix,
+      HOME: tree.tmp,
+      NPM_UNINSTALL_TARGET: "",
+      ...extraEnv,
+    },
+  );
+}
+
 describe("installer npm resolution", () => {
   it("creates user-local shims for every packaged CLI alias during the default install path", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-package-shims-"));
@@ -333,5 +401,88 @@ exit 98
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("WRITABLE");
+  });
+
+  it("verifies through the user-local shim when the active npm prefix has no CLI (#8311)", () => {
+    const tree = createStaleNpmPrefixTree();
+
+    const result = runVerifyNemoclaw(tree);
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(normalizeShellPathForAssert(result.stdout)).toContain(
+      `CLI_PATH=${normalizeShellPathForAssert(tree.shimPath)}`,
+    );
+    expect(result.stdout).toContain("REFRESH=true");
+    expect(result.stdout).toContain("READY=false");
+  });
+
+  it("keeps the PATH-refresh hint when a rejected binary still shadows the shim (#8311)", () => {
+    const tree = createStaleNpmPrefixTree();
+    writeExecutable(
+      path.join(tree.fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+echo "placeholder package"
+`,
+    );
+
+    const result = runVerifyNemoclaw(tree, {
+      PATH: [tree.fakeBin, path.dirname(tree.shimPath), TEST_SYSTEM_PATH].join(path.delimiter),
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(normalizeShellPathForAssert(result.stdout)).toContain(
+      `CLI_PATH=${normalizeShellPathForAssert(tree.shimPath)}`,
+    );
+    expect(result.stdout).toContain("REFRESH=true");
+    expect(result.stdout).toContain("READY=false");
+  });
+
+  it("reports the CLI as ready when the shim itself resolves on PATH (#8311)", () => {
+    const tree = createStaleNpmPrefixTree();
+
+    const result = runVerifyNemoclaw(tree, {
+      PATH: [path.dirname(tree.shimPath), tree.fakeBin, TEST_SYSTEM_PATH].join(path.delimiter),
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(normalizeShellPathForAssert(result.stdout)).toContain(
+      `CLI_PATH=${normalizeShellPathForAssert(tree.shimPath)}`,
+    );
+    expect(result.stdout).toContain("READY=true");
+    expect(result.stdout).toContain("REFRESH=false");
+  });
+
+  it("resolves the CLI name to the user-local shim after npm removes a rejected PATH command (#8311)", () => {
+    const tree = createStaleNpmPrefixTree();
+    const shadowPath = path.join(tree.fakeBin, "nemoclaw");
+    writeExecutable(
+      shadowPath,
+      `#!/usr/bin/env bash
+echo "placeholder package"
+`,
+    );
+
+    const result = runVerifyNemoclaw(tree, {
+      NPM_UNINSTALL_TARGET: shadowPath,
+      PATH: [tree.fakeBin, path.dirname(tree.shimPath), TEST_SYSTEM_PATH].join(path.delimiter),
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(fs.existsSync(shadowPath)).toBe(false);
+    expect(normalizeShellPathForAssert(result.stdout)).toContain(
+      `CLI_PATH=${normalizeShellPathForAssert(tree.shimPath)}`,
+    );
+    expect(result.stdout).toContain("READY=true");
+    expect(result.stdout).toContain("REFRESH=false");
+  });
+
+  it("still fails the install when neither the npm prefix nor the shim has a CLI (#8311)", () => {
+    const tree = createStaleNpmPrefixTree();
+    fs.rmSync(tree.shimPath);
+
+    const result = runVerifyNemoclaw(tree);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("nemoclaw binary not found");
   });
 });

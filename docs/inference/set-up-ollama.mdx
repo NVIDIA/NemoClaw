@@ -51,7 +51,20 @@ Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` or `NEMOCLAW_OLLAMA_INSTALL_MODE=user`
 
 The user-local mode downloads and extracts the Ollama release to `${HOME}/.local`, then starts `${HOME}/.local/bin/ollama serve` once.
 It does not configure a systemd service, create the `ollama` system user, or install CUDA drivers.
-Restart the daemon manually after a reboot.
+For ordinary user-local installs, restart the daemon manually after a reboot.
+
+<AgentOnly variant="openclaw">
+For a sandbox created with the portable experimental profile, `$$nemoclaw <name> connect --probe-only` and `$$nemoclaw <name> recover` can restart the user-local daemon that NemoClaw installed.
+Before it decides whether to start Ollama, recovery probes `http://127.0.0.1:11434/api/tags`.
+If the API is unhealthy, recovery starts Ollama only when the sandbox records `ollama-local` and a valid ownership receipt names the fixed regular executable.
+It refuses to launch a duplicate when another `ollama` process exists but the API is unhealthy.
+After it launches the daemon, it waits up to 30 seconds for `/api/tags` to return valid JSON with a `models` array.
+Recovery then requires a trusted reachable result from the sandbox `inference.local` route.
+When route repair needs the local Ollama dependency check, it verifies or recovers the authenticated proxy before it retries `inference.local`.
+If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+The command exits non-zero with recovery guidance when startup or route validation fails.
+It does not start, stop, or replace a system service or another user-managed Ollama daemon.
+</AgentOnly>
 
 NemoClaw prints a `PATH` hint when `${HOME}/.local/bin` is missing from your `PATH`.
 Add `export PATH="${HOME}/.local/bin:$PATH"` to your shell profile if you want to invoke `ollama` directly.

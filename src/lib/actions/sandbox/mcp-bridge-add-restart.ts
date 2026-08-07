@@ -5,6 +5,11 @@ import crypto from "node:crypto";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
+import {
+  normalizeTrustedPrivateHost,
+  parseTrustedPrivateHosts,
+  replayTrustedPrivateEndpoint,
+} from "../../security/trusted-private-endpoint";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -51,15 +56,16 @@ import {
   nowIso,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
+import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedCredentialReference,
   assertMcpCredentialBoundaryRuntimeVersion,
   buildMcpBridgeProviderName,
   normalizeMcpServerUrl,
+  preflightMcpServerUrlResolvedTarget,
   resolveCredentialEnv,
   uniqueEnvNames,
   validateMcpServerName,
-  validateMcpServerUrlResolvedTarget,
   validateSandboxName,
 } from "./mcp-bridge-validation";
 
@@ -71,6 +77,11 @@ function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): 
     existing.url === requested.url &&
     existing.providerName === requested.providerName &&
     existing.policyName === requested.policyName &&
+    existing.trustedPrivateHost === requested.trustedPrivateHost &&
+    (existing.allowedIps?.length ?? 0) === (requested.allowedIps?.length ?? 0) &&
+    (existing.allowedIps ?? []).every(
+      (address, index) => address === requested.allowedIps?.[index],
+    ) &&
     existing.env.length === requested.env.length &&
     existing.env.every((name, index) => name === requested.env[index])
   );
@@ -80,7 +91,7 @@ function assertPreparedMcpAddResourcesAbsent(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
-  resolvedAddresses?: readonly string[],
+  target: McpBridgeTargetValidation,
 ): void {
   const adapterInspection = inspectAgentAdapterRegistration(sandboxName, adapter, entry);
   if (adapterInspection.state !== "absent") {
@@ -116,7 +127,7 @@ function assertPreparedMcpAddResourcesAbsent(
     entry.server,
     entry.url,
     adapter,
-    resolvedAddresses,
+    target.addresses,
   );
   const policyState = policies.getPresetContentGatewayState(sandboxName, policyContent);
   if (policyState !== "absent") {
@@ -140,8 +151,39 @@ async function addMcpBridgeUnlocked(
   validateSandboxName(sandboxName);
   validateMcpServerName(options.server);
   assertAuthenticatedCredentialReference(options.env);
-  const normalizedUrl = normalizeMcpServerUrl(options.url);
-  const resolvedAddresses = await validateMcpServerUrlResolvedTarget(new URL(normalizedUrl));
+  let explicitTrustedPrivateHosts: string[];
+  let configuredTrustedPrivateHosts: string[];
+  try {
+    explicitTrustedPrivateHosts = (options.trustedPrivateHosts ?? []).map((host) =>
+      normalizeTrustedPrivateHost(host),
+    );
+    configuredTrustedPrivateHosts = parseTrustedPrivateHosts(
+      process.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS,
+    );
+  } catch (error) {
+    throw new McpBridgeError(error instanceof Error ? error.message : String(error), 2);
+  }
+  if (new Set(explicitTrustedPrivateHosts).size !== explicitTrustedPrivateHosts.length) {
+    throw new McpBridgeError(
+      "Duplicate --trusted-private-host declarations are not accepted after normalization.",
+      2,
+    );
+  }
+  const allTrustedPrivateHosts = [
+    ...new Set([...explicitTrustedPrivateHosts, ...configuredTrustedPrivateHosts]),
+  ];
+  const normalizedUrl = normalizeMcpServerUrl(options.url, {
+    trustedPrivateHosts: allTrustedPrivateHosts,
+  });
+  const urlHost = new URL(normalizedUrl).hostname.toLowerCase();
+  const unrelatedExplicitHost = explicitTrustedPrivateHosts.find((host) => host !== urlHost);
+  if (unrelatedExplicitHost) {
+    throw new McpBridgeError(
+      `--trusted-private-host ${unrelatedExplicitHost} does not match MCP server URL host '${urlHost}'.`,
+      2,
+    );
+  }
+  const matchingTrustedPrivateHosts = allTrustedPrivateHosts.filter((host) => host === urlHost);
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(sandbox);
   const agent = getSandboxAgent(sandbox);
@@ -151,6 +193,39 @@ async function addMcpBridgeUnlocked(
     throw new McpBridgeError(
       `MCP server '${options.server}' already exists on sandbox '${sandboxName}'.`,
     );
+  }
+  let target: McpBridgeTargetValidation;
+  if (existingEntry?.trustedPrivateHost) {
+    if (
+      existingEntry.trustedPrivateHost !== urlHost ||
+      !matchingTrustedPrivateHosts.includes(existingEntry.trustedPrivateHost)
+    ) {
+      throw new McpBridgeError(
+        `MCP server '${options.server}' has an incomplete add transaction with different trusted-private host intent. Re-run the original add command or remove it with --force before changing the definition.`,
+        2,
+      );
+    }
+    try {
+      const replay = replayTrustedPrivateEndpoint(
+        existingEntry.trustedPrivateHost,
+        existingEntry.allowedIps ?? [],
+      );
+      target = {
+        addresses: [...replay.addresses],
+        trustedPrivateCapability: replay.trustedPrivateCapability,
+        trustedPrivateHost: replay.host,
+      };
+    } catch (error) {
+      throw new McpBridgeError(
+        `MCP server '${options.server}' has invalid durable trusted-private intent: ${error instanceof Error ? error.message : String(error)}. Remove it with --force and add it again.`,
+        2,
+      );
+    }
+  } else {
+    target = await preflightMcpServerUrlResolvedTarget(new URL(normalizedUrl), {
+      trustedPrivateHosts: matchingTrustedPrivateHosts,
+      requireTrustedPrivateEndpoint: explicitTrustedPrivateHosts.length > 0,
+    });
   }
 
   const envNames = uniqueEnvNames(options.env);
@@ -189,6 +264,12 @@ async function addMcpBridgeUnlocked(
     adapter,
     url: normalizedUrl,
     env: envNames,
+    ...(target.trustedPrivateHost
+      ? {
+          trustedPrivateHost: target.trustedPrivateHost,
+          allowedIps: [...target.addresses],
+        }
+      : {}),
     ...(providerName ? { providerName } : {}),
     policyName,
     addedAt: existingEntry?.addedAt ?? nowIso(),
@@ -203,7 +284,11 @@ async function addMcpBridgeUnlocked(
   }
 
   let entry: McpBridgeEntry = existingEntry
-    ? { ...existingEntry, env: [...existingEntry.env] }
+    ? {
+        ...existingEntry,
+        env: [...existingEntry.env],
+        ...(existingEntry.allowedIps ? { allowedIps: [...existingEntry.allowedIps] } : {}),
+      }
     : requestedEntry;
   const resumingPreflightedAdd = existingEntry?.addState === "preflighted";
   if (existingEntry?.addState === "prepared" && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
@@ -268,7 +353,7 @@ async function addMcpBridgeUnlocked(
     }
 
     if (entry.addState === "prepared") {
-      assertPreparedMcpAddResourcesAbsent(sandboxName, adapter, entry, resolvedAddresses);
+      assertPreparedMcpAddResourcesAbsent(sandboxName, adapter, entry, target);
       entry = { ...entry, addState: "preflighted" };
       // This second durable boundary proves the derived resource names and the
       // adapter slot were absent before any side effect. After a crash, retries
@@ -295,7 +380,7 @@ async function addMcpBridgeUnlocked(
     // Loading the real protocol:mcp policy with --wait is the authoritative
     // running-supervisor capability check. Do it before any host credential is
     // created or updated so unsupported runtimes fail without that side effect.
-    applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
+    applyGeneratedPolicy(sandboxName, entry, target);
     policyApplied = true;
     const providerResult = upsertMcpProvider(providerName ?? "", options.env, {
       // A first mutation must still observe the absence proven above. Only a
