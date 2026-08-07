@@ -94,7 +94,7 @@ unset LOCAL_MCP_TOKEN
 
 The declaration must equal the normalized host from `--url`.
 NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations before mutation.
-It also rejects a hostname when any answer is outside the admitted private ranges or otherwise disallowed.
+It also rejects a trusted-private hostname when its DNS answers mix public and private addresses, or when any answer is otherwise disallowed.
 
 As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
 NemoClaw combines the environment list with any `--trusted-private-host` options.
