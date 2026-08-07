@@ -23,6 +23,7 @@ describe("runInstallerSourcedBody", () => {
 
   it("removes a helper-created home on remove", () => {
     const run = runInstallerSourcedBody("true", { homePrefix: "nemoclaw-fixture-home-" });
+    onTestFinished(() => run.remove());
 
     expect(fs.existsSync(run.home)).toBe(true);
     run.remove();
