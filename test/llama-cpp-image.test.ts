@@ -31,7 +31,10 @@ const exporterPath = path.join(repoRoot, "scripts", "checks", "export-llama-cpp-
 type ImageManifest = {
   apiVersion?: string;
   kind?: string;
-  metadata?: { id?: string };
+  metadata?: {
+    annotations?: { "nemoclaw.nvidia.com/request-guard-state"?: string };
+    id?: string;
+  };
   spec?: {
     build?: {
       backendDirectory?: string;
@@ -158,7 +161,12 @@ describe("declarative llama.cpp server image", () => {
     expect(manifest).toMatchObject({
       apiVersion: "nemoclaw.nvidia.com/managed-inference/v1",
       kind: "ServerImageBuild",
-      metadata: { id: "llama-cpp-server.v1" },
+      metadata: {
+        id: "llama-cpp-server.v1",
+        annotations: {
+          "nemoclaw.nvidia.com/request-guard-state": "dormant",
+        },
+      },
       spec: {
         repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
         build: { backendDirectory: "/opt/llama.cpp/lib" },

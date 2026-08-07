@@ -95,9 +95,61 @@ func requireExactCommandMarker(command []string, option string) error {
 	return nil
 }
 
+func validateSupportedCommandOptions(command []string) error {
+	allowed := map[string]bool{
+		"--alias":              true,
+		"--api-key-file":       true,
+		"--batch-size":         true,
+		"--cache-type-k":       true,
+		"--cache-type-v":       true,
+		"--ctx-size":           true,
+		"--flash-attn":         true,
+		"--gpu-layers":         true,
+		"--host":               true,
+		"--metrics":            false,
+		"--model":              true,
+		"--no-agent":           false,
+		"--no-mmproj":          false,
+		"--no-slots":           false,
+		"--no-ui":              false,
+		"--n-predict":          true,
+		"--parallel":           true,
+		"--port":               true,
+		"--sleep-idle-seconds": true,
+		"--timeout":            true,
+		"--ubatch-size":        true,
+	}
+	seen := make(map[string]bool, len(allowed))
+	for index := 0; index < len(command); index++ {
+		option := command[index]
+		takesValue, supported := allowed[option]
+		if !supported {
+			return fmt.Errorf("llama-server option %s is not supported by the request guard", option)
+		}
+		if seen[option] {
+			return fmt.Errorf("llama-server command must declare %s at most once", option)
+		}
+		seen[option] = true
+		if !takesValue {
+			continue
+		}
+		index++
+		if index >= len(command) || strings.HasPrefix(command[index], "--") {
+			return fmt.Errorf("llama-server %s requires one value", option)
+		}
+	}
+	if !seen["--model"] {
+		return errors.New("llama-server command must declare --model exactly once")
+	}
+	return nil
+}
+
 func validateLlamaServerCommand(command []string, config guardConfig) error {
 	if len(command) == 0 || command[0] != llamaServerPath {
 		return fmt.Errorf("request guard command must start with %s", llamaServerPath)
+	}
+	if err := validateSupportedCommandOptions(command[1:]); err != nil {
+		return err
 	}
 	for _, required := range []struct {
 		option string
@@ -522,7 +574,28 @@ func newHTTPServer(config guardConfig, handler http.Handler) *http.Server {
 	}
 }
 
+func validateAPIKeyFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return errors.New("request guard API-key file is unavailable")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("request guard API-key file is not a regular file")
+	}
+	var firstByte [1]byte
+	if count, err := file.Read(firstByte[:]); count != 1 || err != nil {
+		return errors.New("request guard API-key file is empty or unreadable")
+	}
+	return nil
+}
+
 func run(config guardConfig, command []string) int {
+	if err := validateAPIKeyFile(llamaServerAPIKeyPath); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(config.listenHost, strconv.Itoa(config.listenPort)))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "request guard could not bind its declared listener")

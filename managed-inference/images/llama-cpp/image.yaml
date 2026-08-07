@@ -6,6 +6,8 @@ kind: ServerImageBuild
 
 metadata:
   id: llama-cpp-server.v1
+  annotations:
+    nemoclaw.nvidia.com/request-guard-state: dormant
 
 spec:
   repository: ghcr.io/nvidia/nemoclaw/llama-cpp-server

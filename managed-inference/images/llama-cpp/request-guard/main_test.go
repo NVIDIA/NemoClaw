@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -227,6 +229,37 @@ func TestParseConfigRejectsABypassableLlamaServerCommand(t *testing.T) {
 				t.Fatalf("child %s bypass was accepted", mutation.name)
 			}
 		})
+	}
+	for _, extra := range []string{"--embedding", "--model", "/models/other.gguf"} {
+		candidate := append(append([]string(nil), base...), extra)
+		if _, _, err := parseConfig(candidate); err == nil {
+			t.Fatalf("child command with extra %s was accepted", extra)
+		}
+	}
+}
+
+func TestAPIKeyFileMustBeReadableRegularAndNonEmpty(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing")
+	if err := validateAPIKeyFile(missing); err == nil {
+		t.Fatal("missing API-key file was accepted")
+	}
+	if err := validateAPIKeyFile(root); err == nil {
+		t.Fatal("API-key directory was accepted")
+	}
+	empty := filepath.Join(root, "empty")
+	if err := os.WriteFile(empty, nil, 0600); err != nil {
+		t.Fatalf("create empty API-key file: %v", err)
+	}
+	if err := validateAPIKeyFile(empty); err == nil {
+		t.Fatal("empty API-key file was accepted")
+	}
+	valid := filepath.Join(root, "valid")
+	if err := os.WriteFile(valid, []byte("opaque-test-key\n"), 0600); err != nil {
+		t.Fatalf("create API-key file: %v", err)
+	}
+	if err := validateAPIKeyFile(valid); err != nil {
+		t.Fatalf("valid API-key file was rejected: %v", err)
 	}
 }
 
@@ -543,29 +576,40 @@ func TestGuardStreamsAllowedResponses(t *testing.T) {
 func TestGuardPropagatesCancellation(t *testing.T) {
 	started := make(chan struct{})
 	cancelled := make(chan struct{})
-	guard, _ := guardedServer(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseBackend := func() { releaseOnce.Do(func() { close(release) }) }
+	backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		_, _ = io.Copy(io.Discard, request.Body)
+		request.Body.Close()
 		close(started)
-		<-request.Context().Done()
-		close(cancelled)
-	}))
-	ctx, cancel := context.WithCancel(context.Background())
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		guard.URL+"/v1/chat/completions",
-		strings.NewReader(`{"model":"test","max_tokens":8}`),
-	)
-	if err != nil {
-		t.Fatalf("create request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	result := make(chan error, 1)
-	go func() {
-		response, err := http.DefaultClient.Do(req)
-		if response != nil {
-			response.Body.Close()
+		select {
+		case <-request.Context().Done():
+			close(cancelled)
+		case <-release:
 		}
-		result <- err
+	}))
+	defer func() {
+		releaseBackend()
+		backend.CloseClientConnections()
+		backend.Close()
+	}()
+	handler, err := newGuardHandler(configForServer(t, backend))
+	if err != nil {
+		t.Fatalf("create guard: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"http://guard.test/v1/chat/completions",
+		strings.NewReader(`{"model":"test","max_tokens":8}`),
+	).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	result := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		close(result)
 	}()
 	select {
 	case <-started:
@@ -578,8 +622,10 @@ func TestGuardPropagatesCancellation(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("upstream request was not cancelled")
 	}
-	if err := <-result; err == nil {
-		t.Fatal("cancelled client request succeeded")
+	select {
+	case <-result:
+	case <-time.After(2 * time.Second):
+		t.Fatal("guard handler did not return after cancellation")
 	}
 }
 

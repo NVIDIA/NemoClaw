@@ -18,7 +18,10 @@ import {
 type ServerImageManifest = {
   apiVersion?: unknown;
   kind?: unknown;
-  metadata?: { id?: unknown };
+  metadata?: {
+    annotations?: { "nemoclaw.nvidia.com/request-guard-state"?: unknown };
+    id?: unknown;
+  };
   spec?: {
     build?: {
       backendDirectory?: unknown;
@@ -296,7 +299,10 @@ export function loadLlamaCppImageConfig(
   const recipe = parseQualificationRecipe(recipeSource, recipeSchemaSource);
   const agentQualification = parseAgentQualificationDocument(agentQualificationSource);
   assertExactKeys(manifest, "manifest", ["apiVersion", "kind", "metadata", "spec"]);
-  assertExactKeys(manifest.metadata, "metadata", ["id"]);
+  assertExactKeys(manifest.metadata, "metadata", ["annotations", "id"]);
+  assertExactKeys(manifest.metadata?.annotations, "metadata annotations", [
+    "nemoclaw.nvidia.com/request-guard-state",
+  ]);
   assertExactKeys(manifest.spec, "spec", [
     "build",
     "cuda",
@@ -391,7 +397,8 @@ export function loadLlamaCppImageConfig(
   if (
     manifest?.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
     manifest?.kind !== "ServerImageBuild" ||
-    manifest?.metadata?.id !== "llama-cpp-server.v1"
+    manifest?.metadata?.id !== "llama-cpp-server.v1" ||
+    manifest?.metadata?.annotations?.["nemoclaw.nvidia.com/request-guard-state"] !== "dormant"
   ) {
     throw new Error("invalid llama.cpp server image manifest identity");
   }
