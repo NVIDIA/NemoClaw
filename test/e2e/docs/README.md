@@ -327,8 +327,10 @@ test/e2e/
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
-  invocations and suppress PR reporting and scorecards. The workflow boundary
-  requires every selected job shard to upload its evidence artifact.
+  invocations and suppress PR reporting and scorecards. The trusted workflow
+  validates a plan hash that binds each risk signal to the workflow revision and
+  selected mode. The workflow boundary requires every selected job shard to
+  upload its evidence artifact.
 - `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
   four independent shards on each of macOS and WSL, with `fail-fast` disabled.
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute

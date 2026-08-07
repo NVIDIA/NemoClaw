@@ -78,6 +78,8 @@ case "$E2E_JOBS" in
 esac
 REVIEW_REASON='Reviewed the PR head commit for credentialed E2E.'
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+PLAN_IDENTITY="manual-pr-e2e:v1:${WORKFLOW_SHA}:${E2E_JOBS}::false"
+PLAN_HASH="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$PLAN_IDENTITY")"
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
@@ -90,11 +92,12 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
   -f "base_sha=${BASE_SHA}" \
   -f "workflow_sha=${WORKFLOW_SHA}" \
+  -f "plan_hash=${PLAN_HASH}" \
   -f "review_reason=${REVIEW_REASON}" \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
-The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and selected mode.
+The trusted pre-checkout step requires current `maintain` or `admin` permission. It validates the open PR, repository, head SHA, base SHA, workflow SHA, plan hash, review reason, and selected mode.
 A second validation after checkout rejects a changed PR identity before preparation.
 
 Find and verify the correlated run with bounded GitHub reads:

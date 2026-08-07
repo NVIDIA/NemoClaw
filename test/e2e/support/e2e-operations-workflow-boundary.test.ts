@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -222,6 +223,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const headSha = "a".repeat(40);
     const baseSha = "b".repeat(40);
     const workflowSha = "c".repeat(40);
+    const planHash = createHash("sha256")
+      .update(`manual-pr-e2e:v1:${workflowSha}:${jobs}::false`)
+      .digest("hex");
     const prefix = [
       "curl() {",
       '  case "${@: -1}" in',
@@ -247,6 +251,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           GITHUB_TOKEN: "token",
           INCLUDE_LAUNCHABLE: "false",
           JOBS: jobs,
+          PLAN_HASH: planHash,
           PR_NUMBER: "42",
           REVIEW_REASON: "Reviewed PR head revision",
           RUN_ATTEMPT: "1",
@@ -261,6 +266,21 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(result.status, result.stderr).toBe(expectedStatus);
     expect(result.stderr).toContain(expectedStderr);
+  });
+
+  it("rejects a manual PR plan hash that does not match the trusted selection", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace(
+      '"$PLAN_HASH" == "$expected_plan_hash"',
+      '"$PLAN_HASH" != "$expected_plan_hash"',
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      'Manual PR authentication must retain "$PLAN_HASH" == "$expected_plan_hash"',
+    );
   });
 
   it("uses central maintainer authorization for protected managed-image qualification", () => {
