@@ -25,25 +25,43 @@ function step(job: WorkflowJob, name: string): WorkflowStep {
 }
 
 describe("Spark Express video evidence workflow", () => {
-  it("is manual-only, trusted-main-only, serialized, and least-privileged", () => {
+  it("is manual-only, explicitly authorized, serialized, and least-privileged", () => {
     const value = workflow();
 
     expect(value.name).toBe("CI / Spark Express Video Evidence");
-    expect(value.on).toEqual({ workflow_dispatch: {} });
+    expect(value.on).toEqual({
+      workflow_dispatch: {
+        inputs: {
+          maintainer_branch_override: {
+            description: "Allow an authorized maintainer to qualify the selected non-main revision",
+            required: true,
+            type: "boolean",
+            default: false,
+          },
+        },
+      },
+    });
     expect(value.permissions).toEqual({ contents: "read" });
     expect(value.concurrency).toEqual({
       group: "spark-express-video-evidence",
       "cancel-in-progress": false,
     });
     expect(value.jobs.record).toMatchObject({
-      if: "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}",
+      if: "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || (inputs.maintainer_branch_override && github.actor == 'ericksoa' && github.triggering_actor == 'ericksoa')) }}",
       "runs-on": "linux-arm64-gpu-dgx-spark-gb10-protected-1",
       environment: { name: "approve-dgx-spark-image-qualification" },
       "timeout-minutes": 90,
       permissions: { contents: "read" },
     });
-    expect(step(value.jobs.record, "Validate protected Spark dispatch").run).toContain(
-      '[[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]]',
+    const guard = step(value.jobs.record, "Validate protected Spark dispatch");
+    expect(guard.env).toMatchObject({
+      ACTOR: "${{ github.actor }}",
+      MAINTAINER_BRANCH_OVERRIDE: "${{ inputs.maintainer_branch_override }}",
+      TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
+    });
+    expect(guard.run).toContain('[[ "$REF" == "refs/heads/main" ]]');
+    expect(guard.run).toContain(
+      '[[ "$MAINTAINER_BRANCH_OVERRIDE" == "true" && "$ACTOR" == "ericksoa" && "$TRIGGERING_ACTOR" == "ericksoa" ]]',
     );
     expect(step(value.jobs.record, "Validate protected Spark dispatch").run).toContain(
       '[[ "$RUNNER_ARCH_KIND" == "ARM64" ]]',
@@ -121,7 +139,7 @@ describe("Spark Express video evidence workflow", () => {
 
     expect(render).toMatchObject({
       needs: "record",
-      if: "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.record.result == 'success' }}",
+      if: "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || (inputs.maintainer_branch_override && github.actor == 'ericksoa' && github.triggering_actor == 'ericksoa')) && needs.record.result == 'success' }}",
       "runs-on": "ubuntu-24.04",
       "timeout-minutes": 15,
       permissions: { contents: "read" },

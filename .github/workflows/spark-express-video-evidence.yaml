@@ -4,7 +4,13 @@
 name: CI / Spark Express Video Evidence
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      maintainer_branch_override:
+        description: Allow an authorized maintainer to qualify the selected non-main revision
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,7 +22,7 @@ concurrency:
 jobs:
   record:
     name: Record Spark Express vLLM qualification
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || (inputs.maintainer_branch_override && github.actor == 'ericksoa' && github.triggering_actor == 'ericksoa')) }}
     runs-on: linux-arm64-gpu-dgx-spark-gb10-protected-1
     environment:
       name: approve-dgx-spark-image-qualification
@@ -37,15 +43,24 @@ jobs:
     steps:
       - name: Validate protected Spark dispatch
         env:
+          ACTOR: ${{ github.actor }}
           EVENT_NAME: ${{ github.event_name }}
+          MAINTAINER_BRANCH_OVERRIDE: ${{ inputs.maintainer_branch_override }}
           REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
           RUNNER_ARCH_KIND: ${{ runner.arch }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
-            echo "::error::Spark evidence must run manually from NVIDIA/NemoClaw main" >&2
+          trusted_ref=0
+          if [[ "$REF" == "refs/heads/main" ]]; then
+            trusted_ref=1
+          elif [[ "$MAINTAINER_BRANCH_OVERRIDE" == "true" && "$ACTOR" == "ericksoa" && "$TRIGGERING_ACTOR" == "ericksoa" ]]; then
+            trusted_ref=1
+          fi
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$EVENT_NAME" == "workflow_dispatch" && "$trusted_ref" -eq 1 ]] || {
+            echo "::error::Spark evidence requires trusted main or the authorized maintainer branch override" >&2
             exit 1
           }
           [[ "$RUNNER_ARCH_KIND" == "ARM64" ]] || {
@@ -116,7 +131,7 @@ jobs:
   render:
     name: Render Spark Express qualification video
     needs: record
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.record.result == 'success' }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || (inputs.maintainer_branch_override && github.actor == 'ericksoa' && github.triggering_actor == 'ericksoa')) && needs.record.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
