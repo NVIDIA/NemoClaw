@@ -5,12 +5,13 @@ import { createHash } from "node:crypto";
 
 import YAML from "yaml";
 
+export {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
+} from "./llama-cpp-dgx-spark-qualification-paths.mts";
+
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID =
   "llama-cpp-dgx-spark-qualification" as const;
-export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH =
-  "ci/llama-cpp-dgx-spark-qualification-v1.yaml" as const;
-export const LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH =
-  "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND =
   "nemoclaw-llama-cpp-dgx-spark-qualification-v1" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE = "dgx-spark-gb10-single" as const;

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import * as importedLlamaCppDgxSparkQualificationContract from "../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
+import {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
+} from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
 
 // The root TypeScript package is exposed as CJS under the exact
@@ -15,19 +18,8 @@ const protectedManagedImageContract = (
     : importedProtectedManagedImageContract
 ) as typeof import("../../scripts/checks/protected-managed-image-contract.ts");
 
-const llamaCppDgxSparkQualificationContract = (
-  "default" in importedLlamaCppDgxSparkQualificationContract &&
-  importedLlamaCppDgxSparkQualificationContract.default
-    ? importedLlamaCppDgxSparkQualificationContract.default
-    : importedLlamaCppDgxSparkQualificationContract
-) as typeof import("../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts");
-
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
-const {
-  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
-  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
-} = llamaCppDgxSparkQualificationContract;
 
 export const RISK_PLAN_VERSION = 17 as const;
 
