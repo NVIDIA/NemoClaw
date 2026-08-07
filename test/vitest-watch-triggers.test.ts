@@ -72,6 +72,8 @@ const OPAQUE_INPUTS = [
   ".github/workflows/approve-maintainer-pr-workflow-runs.yaml",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
+  ".github/workflows/spark-express-video-evidence.yaml",
+  "tools/e2e/spark-express-video-evidence.mts",
   ".github/workflows/hosted-runner-recovery.yaml",
   ".github/workflows/wsl-e2e.yaml",
   ".github/workflows/macos-e2e.yaml",
@@ -163,6 +165,12 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
       "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/spark-express-video-evidence.yaml")).toEqual([
+      "test/e2e/support/spark-express-video-evidence-workflow.test.ts",
+    ]);
+    expect(triggeredBy("tools/e2e/spark-express-video-evidence.mts")).toEqual([
+      "test/e2e/support/spark-express-video-evidence.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",

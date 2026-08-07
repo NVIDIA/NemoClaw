@@ -152,6 +152,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e-main-retry-workflow.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/spark-express-video-evidence\.yaml$/,
+    testsToRun: runTests("test/e2e/support/spark-express-video-evidence-workflow.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)tools\/e2e\/spark-express-video-evidence\.mts$/,
+    testsToRun: runTests("test/e2e/support/spark-express-video-evidence.test.ts"),
+  },
+  {
     pattern:
       /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|wsl-e2e|macos-e2e|platform-vitest-main)\.yaml$/,
     testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),

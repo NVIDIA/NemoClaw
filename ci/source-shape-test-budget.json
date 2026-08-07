@@ -800,6 +800,11 @@
       "file": "test/e2e-main-retry-workflow.test.ts",
       "test": "runs the bounded evidence-upload step after evaluation failure",
       "category": "security"
+    },
+    {
+      "file": "test/e2e/support/spark-express-video-evidence-workflow.test.ts",
+      "test": "renders only successful sanitized timelines on a standard hosted runner",
+      "category": "security"
     }
   ]
 }
