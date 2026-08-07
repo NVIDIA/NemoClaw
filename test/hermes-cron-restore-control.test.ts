@@ -182,6 +182,25 @@ try:
             raise module.ControlError("simulated reactivation failure")
         module._wait_for_release_disposition = fail_after_operator_drain
         module.release_drain(41, 902, token)
+    elif scenario == "complete":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.complete_replacement(41, 902, token)
+    elif scenario == "complete-same-identity":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        module.complete_replacement(41, 902, token)
+    elif scenario == "complete-validation-failure":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        def fail_validation():
+            raise module.ControlError("replacement cron tree is invalid")
+        module.validate_cron_tree = fail_validation
+        module.complete_replacement(41, 902, token)
     elif scenario == "recover":
         module.begin_drain()
         status.payload["pid"] = 77
@@ -269,6 +288,9 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "unsafe-lock-metadata"
       | "replacement-owned-marker"
       | "rollback-operator"
+      | "complete"
+      | "complete-same-identity"
+      | "complete-validation-failure"
       | "recover"
       | "recover-operator"
       | "recover-noop",
@@ -495,6 +517,45 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stderr).toContain("simulated reactivation failure");
     expect(result.stdout).toContain("FINAL_MARKER:operator");
     expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
+    expect(result.stdout).toContain("OWN_MARKER:present");
+  });
+
+  it("keeps the owned drain through gateway replacement and releases the validated replacement (#8472)", () => {
+    const result = runLifecycle("complete");
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    const receipts = result.stdout
+      .split("\n")
+      .filter((line) => line.startsWith(RECEIPT_PREFIX))
+      .map((line) => JSON.parse(line.slice(RECEIPT_PREFIX.length)));
+    expect(receipts.map((receipt) => receipt.action)).toEqual(["begin", "validate", "complete"]);
+    expect(receipts.at(-1)).toEqual(
+      expect.objectContaining({
+        active_jobs: 1,
+        disposition: "dispatch-reactivated",
+        pid: 77,
+        profiles: 1,
+        script_jobs: 1,
+        start_time: 903,
+      }),
+    );
+    expect(result.stdout).toContain("OWN_MARKER:absent");
+  });
+
+  it("keeps dispatch drained when the gateway identity was not replaced (#8472)", () => {
+    const result = runLifecycle("complete-same-identity");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("gateway identity did not change during cron restore");
+    expect(result.stdout).toContain("OWN_MARKER:present");
+  });
+
+  it("keeps dispatch drained when replacement validation fails (#8472)", () => {
+    const result = runLifecycle("complete-validation-failure");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("replacement cron tree is invalid");
     expect(result.stdout).toContain("OWN_MARKER:present");
   });
 

@@ -3,10 +3,11 @@
 """Control Hermes cron dispatch while NemoClaw restores durable state.
 
 Cron restore control is the rebuild-time gate that keeps dispatch disabled until
-backed-up scripts and job definitions are valid and the gateway identity is
-unchanged. The gateway identity is the (PID, start_time) tuple pinned across
-begin, validate, and release. A drain token is the client-side secret proving
-ownership of the server-side persisted drain marker.
+backed-up scripts and job definitions are valid and the replacement gateway is
+ready. The initial gateway identity is pinned across begin and validate. The
+complete action requires a different live identity before releasing the gate. A
+drain token is the client-side secret proving ownership of the server-side
+persisted drain marker.
 """
 
 from __future__ import annotations
@@ -569,6 +570,33 @@ def release_drain(pid: int, start_time: int, drain_token: str) -> None:
         )
 
 
+def complete_replacement(pid: int, start_time: int, drain_token: str) -> None:
+    with _control_lock():
+        drain_control, status_module = _load_gateway_modules()
+        _require_owned_drain(drain_token)
+        _, replacement_pid, replacement_start_time = _gateway_identity(status_module)
+        if replacement_pid == pid and replacement_start_time == start_time:
+            raise ControlError("Hermes gateway identity did not change during cron restore")
+        _wait_for_state(
+            status_module,
+            pid=replacement_pid,
+            start_time=replacement_start_time,
+            state="draining",
+            require_idle=True,
+            timeout_seconds=BEGIN_TIMEOUT_SECONDS,
+        )
+        counts = validate_cron_tree()
+        _complete_release(
+            "complete",
+            drain_control,
+            status_module,
+            pid=replacement_pid,
+            start_time=replacement_start_time,
+            drain_token=drain_token,
+            **counts,
+        )
+
+
 def recover_drain() -> None:
     with _control_lock():
         drain_control, status_module = _load_gateway_modules()
@@ -614,7 +642,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="action", required=True)
     subparsers.add_parser("begin")
     subparsers.add_parser("recover")
-    for action in ("validate", "release"):
+    for action in ("validate", "complete", "release"):
         subparser = subparsers.add_parser(action)
         subparser.add_argument("--pid", required=True, type=int)
         subparser.add_argument("--start-time", required=True, type=int)
@@ -634,6 +662,8 @@ def main() -> int:
             recover_drain()
         elif args.action == "validate":
             validate_restore(args.pid, args.start_time, args.drain_token)
+        elif args.action == "complete":
+            complete_replacement(args.pid, args.start_time, args.drain_token)
         elif args.action == "release":
             release_drain(args.pid, args.start_time, args.drain_token)
         else:

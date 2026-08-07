@@ -14,7 +14,7 @@ const CONTROL_TIMEOUT_MS = 25_000;
 const RECOVERY_TIMEOUT_MS = BEGIN_TIMEOUT_MS + CONTROL_TIMEOUT_MS * 2 + 10_000;
 const HERMES_GATEWAY_RECHECK_ATTEMPTS = 2;
 
-type HermesCronRestoreAction = "begin" | "validate" | "release" | "recover";
+type HermesCronRestoreAction = "begin" | "validate" | "complete" | "release" | "recover";
 type HermesCronRestoreDisposition =
   | "drain-acquired"
   | "restore-validated"
@@ -38,10 +38,15 @@ interface HermesCronRestoreReceipt {
   preserved_drain?: boolean;
 }
 
-type HermesCronRestoreIdentity = Pick<
+export type HermesCronRestoreIdentity = Pick<
   HermesCronRestoreReceipt,
   "pid" | "start_time" | "drain_token"
 >;
+
+export interface PendingHermesCronRestore<T> {
+  result: T;
+  identity: HermesCronRestoreIdentity;
+}
 
 export type HermesCronRestoreRecoveryOutcome =
   | "dispatch-reactivated"
@@ -94,10 +99,9 @@ interface HermesPostRestoreGatewayDeps {
  * that restart produced. `relaunchManagedSupervisorSession` already restarts
  * after its own restore for the same reason.
  *
- * The restart belongs here rather than inside `runHermesCronRestoreTransaction`:
- * that gate records the gateway `pid` and `start_time` when it drains dispatch
- * and compares them again on validate and release, so a restart inside it would
- * fail its own identity check.
+ * A gated rebuild keeps the root-owned cron drain active while this function
+ * replaces and verifies the gateway. The caller then completes the held
+ * transaction against the replacement process before dispatch can resume.
  */
 export function ensureHermesGatewayAfterStateRestore(
   sandboxName: string,
@@ -244,6 +248,24 @@ function parseCronRestoreReceipt(
           "preserved_drain",
         ]);
       break;
+    case "complete":
+      actionValid =
+        receipt.drain_acquired === true &&
+        receipt.active_agents === 0 &&
+        isNonNegativeInteger(receipt.profiles) &&
+        isNonNegativeInteger(receipt.active_jobs) &&
+        isNonNegativeInteger(receipt.script_jobs) &&
+        isReleaseDispositionValid(receipt) &&
+        hasExactReceiptFields(receipt, [
+          ...baseFields,
+          ...tokenFields,
+          "active_agents",
+          "profiles",
+          "active_jobs",
+          "script_jobs",
+          "preserved_drain",
+        ]);
+      break;
     case "recover":
       if (receipt.drain_acquired) {
         actionValid =
@@ -304,7 +326,7 @@ function runCronRestoreControl(
       command,
       action === "begin"
         ? BEGIN_TIMEOUT_MS
-        : action === "recover"
+        : action === "recover" || action === "complete"
           ? RECOVERY_TIMEOUT_MS
           : CONTROL_TIMEOUT_MS,
     );
@@ -360,6 +382,27 @@ export function releaseHermesCronRestore(
   }
 }
 
+export function completeHermesCronRestoreAfterGatewayReplacement(
+  sandboxName: string,
+  originalIdentity: HermesCronRestoreIdentity,
+): HermesCronRestoreIdentity {
+  if (!originalIdentity.drain_token) {
+    throw new Error("Hermes cron completion requires the held drain token");
+  }
+  const receipt = runCronRestoreControl(sandboxName, "complete", originalIdentity);
+  if (
+    receipt.drain_token !== originalIdentity.drain_token ||
+    (receipt.pid === originalIdentity.pid && receipt.start_time === originalIdentity.start_time)
+  ) {
+    throw new Error("Hermes cron completion did not bind to the replacement gateway identity");
+  }
+  return {
+    pid: receipt.pid,
+    start_time: receipt.start_time,
+    ...(receipt.drain_token ? { drain_token: receipt.drain_token } : {}),
+  };
+}
+
 function isLegacyCronRestoreControl(error: unknown): boolean {
   if (!(error instanceof HermesCronRestoreControlFailure)) return false;
   return (
@@ -390,11 +433,8 @@ export function recoverHermesCronRestore(sandboxName: string): HermesCronRestore
 export function runHermesCronRestoreTransaction<T extends { restoreSucceeded: boolean }>(
   sandboxName: string,
   restore: () => T,
-  onGateTransition: (
-    state: "acquired" | "released",
-    identity: HermesCronRestoreIdentity,
-  ) => void = () => {},
-): T {
+  onGateTransition: (state: "acquired", identity: HermesCronRestoreIdentity) => void = () => {},
+): PendingHermesCronRestore<T> {
   const identity = beginHermesCronRestore(sandboxName);
   onGateTransition("acquired", identity);
   const result = restore();
@@ -402,7 +442,5 @@ export function runHermesCronRestoreTransaction<T extends { restoreSucceeded: bo
     throw new HermesCronRestoreIncompleteError();
   }
   validateHermesCronRestore(sandboxName, identity);
-  releaseHermesCronRestore(sandboxName, identity);
-  onGateTransition("released", identity);
-  return result;
+  return { result, identity };
 }

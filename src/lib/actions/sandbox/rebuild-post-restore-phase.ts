@@ -18,7 +18,9 @@ import { refreshMutableOpenClawConfigHashAfterPostRestoreWrites } from "./rebuil
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
+  completeHermesCronRestoreAfterGatewayReplacement,
   ensureHermesGatewayAfterStateRestore,
+  type HermesCronRestoreIdentity,
   printHermesGatewayRestoreRecovery,
 } from "./rebuild-hermes-post-restore";
 import {
@@ -31,6 +33,7 @@ import { reapplyMessagingManifestAfterOpenClawDoctor } from "./rebuild-messaging
 import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export {
+  type HermesCronRestoreIdentity,
   HermesCronRestoreIncompleteError,
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
@@ -45,6 +48,21 @@ export function printHermesCronRestoreRecoveryCommand(
   );
 }
 
+function bailWithHeldHermesCronRestore(
+  sandboxName: string,
+  backupManifest: RebuildBackupManifest,
+  detail: string,
+  bailMessage: string,
+  bail: RebuildBail,
+): never {
+  console.error(detail);
+  if (backupManifest) {
+    console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+  }
+  printHermesCronRestoreRecoveryCommand(sandboxName);
+  return bail(bailMessage);
+}
+
 export interface RebuildPostRestorePhaseInput {
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
@@ -53,6 +71,7 @@ export interface RebuildPostRestorePhaseInput {
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   restoreSucceeded: boolean;
+  hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   backupWasForceSkipped: boolean;
   failedPresets: string[];
   finalBuiltinPresets: string[];
@@ -155,6 +174,7 @@ export async function runRebuildPostRestorePhase(
     backupManifest,
     mcpEntries,
     restoreSucceeded,
+    hermesCronRestoreIdentity,
     backupWasForceSkipped,
     failedPresets,
     finalBuiltinPresets,
@@ -182,6 +202,15 @@ export async function runRebuildPostRestorePhase(
     console.error(
       `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
     );
+    if (hermesCronRestoreIdentity) {
+      return bailWithHeldHermesCronRestore(
+        sandboxName,
+        backupManifest,
+        "  Hermes cron dispatch remains drained because the replacement identity is unverified.",
+        "Recreated sandbox agent identity did not match the authoritative rebuild target.",
+        bail,
+      );
+    }
     bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
     return;
   }
@@ -256,6 +285,35 @@ export async function runRebuildPostRestorePhase(
     targetAgentName,
   );
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  if (hermesCronRestoreIdentity) {
+    if (hermesGatewayRestoreUnverified || hermesGatewayRestoreState === "not-applicable") {
+      return bailWithHeldHermesCronRestore(
+        sandboxName,
+        backupManifest,
+        "  Hermes cron dispatch remains drained because the replacement gateway was not verified.",
+        "Hermes cron restore validation failed; dispatch was not re-enabled.",
+        bail,
+      );
+    }
+    let replacementIdentity: HermesCronRestoreIdentity;
+    try {
+      replacementIdentity = completeHermesCronRestoreAfterGatewayReplacement(
+        sandboxName,
+        hermesCronRestoreIdentity,
+      );
+    } catch (error) {
+      return bailWithHeldHermesCronRestore(
+        sandboxName,
+        backupManifest,
+        `  Hermes cron restore could not validate the replacement gateway and reactivate dispatch: ${error instanceof Error ? error.message : String(error)}`,
+        "Hermes cron restore validation failed; dispatch was not re-enabled.",
+        bail,
+      );
+    }
+    log(
+      `Hermes cron restore gate released: pid=${String(replacementIdentity.pid)}, startTime=${String(replacementIdentity.start_time)}`,
+    );
+  }
   if (hermesGatewayRestoreState === "healthy") {
     console.log(`  ${G}\u2713${R} Hermes gateway restarted and verified after state restore`);
   } else if (hermesGatewayRestoreState === "recovered") {

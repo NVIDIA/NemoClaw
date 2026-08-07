@@ -577,7 +577,7 @@ export function createRebuildHermesCronRestoreFixture({
       );
       expect(acquired, "rebuild output must report cron restore gate acquisition").not.toBeNull();
       expect(released, "rebuild output must report cron restore gate release").not.toBeNull();
-      expect(released?.slice(1)).toEqual(acquired?.slice(1));
+      expect(released?.slice(1)).not.toEqual(acquired?.slice(1));
       expect(rebuildOutput.indexOf(released?.[0] ?? "released")).toBeGreaterThan(
         rebuildOutput.indexOf(acquired?.[0] ?? "acquired"),
       );

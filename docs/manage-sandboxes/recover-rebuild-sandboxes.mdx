@@ -235,9 +235,10 @@ If this validation fails, the rebuild keeps the existing sandbox and reports the
 After NemoClaw creates the replacement, it acquires an independent root-owned gate that blocks new Hermes turns and cron dispatch.
 The gate remains active across gateway and container restarts in the replacement sandbox.
 NemoClaw waits for active agent work to finish before restoring state.
-It validates the restored jobs and scripts against the same running gateway before it clears its gate.
+It validates the restored jobs and scripts before the gateway replacement, then keeps dispatch blocked while it restarts and verifies that replacement.
+Before it clears its gate, it validates the restored cron tree against the replacement gateway.
 If an operator already drained the gateway, NemoClaw clears only its gate and leaves the operator drain active.
-If state restore or cron validation fails after gate acquisition, the command exits nonzero, preserves the backup, and retains the NemoClaw gate.
+If state restore, gateway replacement, or cron validation fails after gate acquisition, the command exits nonzero, preserves the backup, and retains the NemoClaw gate.
 Failures before gate acquisition do not create a new gate.
 Do not manually remove the root-owned cron restore marker because removal bypasses restored cron validation.
 After you correct the reported restore problem, run `$$nemoclaw <sandbox-name> recover` to validate the restored cron tree and clear the NemoClaw gate.
