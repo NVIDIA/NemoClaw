@@ -157,6 +157,64 @@ If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the poli
 `diagnostic_id` is a local identifier created for one line group.
 It is not a distributed trace identifier and does not appear in OpenShell audit events.
 Correlate with OpenShell by endpoint and time until OpenShell records a shared identifier.
+
+### Adjust the Tool Discovery Timeout
+
+OpenClaw uses a 1,500 ms timeout for `tools/list` when no server-specific request timeout exists.
+This discovery request retrieves tool names and schemas; it does not execute an MCP tool.
+
+Set `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` before you create or rebuild an OpenClaw sandbox to override only this discovery timeout.
+The value must be an integer from `1500` through `10000`.
+When the value is unset or blank, NemoClaw adds no override.
+OpenClaw then uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
+The override applies to catalog `tools/list` requests for every MCP server in the sandbox and takes precedence over a server-specific request timeout.
+NemoClaw rejects an invalid value before the sandbox create step, including the replacement create step during rebuild.
+
+<Warning>
+Rebuilding interrupts the agent while NemoClaw replaces the sandbox and restores its managed state.
+A longer timeout does not correct an HTTP 503 response, an authentication failure, a policy denial, or a connection failure.
+</Warning>
+
+For an existing sandbox, start with 3,000 ms:
+
+```bash
+export NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000
+$$nemoclaw <sandbox> rebuild
+```
+
+OpenClaw writes the selected override once when its MCP runtime loads:
+
+```text
+[nemoclaw] mcp_tools_list_timeout_override_ms=3000
+```
+
+Verify the selected value in recent startup output:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 100
+```
+
+Choose a repeat count before testing, such as 10 runs.
+After each rebuild, run the identical tool-discovery workflow that many times.
+Current OpenClaw timeout errors do not identify the JSON-RPC operation, so reproduce through catalog loading rather than a tool call.
+Advance from `3000` to `5000`, and then to `10000`, only when catalog loading fails and the recent logs contain:
+
+```text
+McpError: MCP error -32001: Request timed out
+```
+
+Stop at the lowest value that completes every planned catalog-loading run without that error.
+Do not increase this setting for `MCP server ... connection timed out after 30000ms`; that message reports the separate connection timeout.
+Do not increase the value after an explicit HTTP 503 response or a non-timeout transport failure.
+
+Unset the override and rebuild to restore OpenClaw's normal server-specific or 1,500 ms fallback selection:
+
+```bash
+unset NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS
+$$nemoclaw <sandbox> rebuild
+```
+
+Inspect the recent startup output again and verify that the new OpenClaw start did not add an `mcp_tools_list_timeout_override_ms` line.
 </AgentOnly>
 
 ## Policy or Provider Ownership Drifted
