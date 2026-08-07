@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX,
   type ManagedImageLocalInferenceKind,
   managedImageProtectedSandboxName,
   PROTECTED_MANAGED_IMAGE_AGENTS,
@@ -321,7 +322,7 @@ async function proveOwnedRuntimeInventoryClean(host: HostCliClient): Promise<voi
     [
       "-lc",
       `set -euo pipefail
-containers="$(docker ps -a --format '{{.Label "openshell.ai/sandbox-name"}}' --filter label=openshell.ai/managed-by=openshell | grep '^nemoclaw-managed-' || true)"
+containers="$(docker ps -a --format '{{.Label "openshell.ai/sandbox-name"}}' --filter label=openshell.ai/managed-by=openshell | grep '^${MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX}' || true)"
 networks="$(docker network ls --format '{{.Name}}' | grep '^nemoclaw-managed-pr-' || true)"
 test -z "$containers"
 test -z "$networks"`,

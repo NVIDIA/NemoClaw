@@ -24,15 +24,14 @@ import { requireFixture } from "./require-fixture";
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
-    expect(() => assertChannelsStopStartSandboxName("personal-dev")).toThrow(
-      /only accepts sandbox names with prefix e2e-channels-stop-start-/,
+    expect(() => assertChannelsStopStartSandboxName("personal-dev", "openclaw")).toThrow(
+      /only accepts openclaw sandbox names with prefix e2e-oc-ch-/,
     );
-    expect(() =>
-      assertChannelsStopStartSandboxName("e2e-channels-stop-start-openclaw"),
-    ).not.toThrow();
-    expect(() =>
-      assertChannelsStopStartSandboxName("e2e-channels-stop-start-hermes"),
-    ).not.toThrow();
+    expect(() => assertChannelsStopStartSandboxName("e2e-oc-ch-cycle", "openclaw")).not.toThrow();
+    expect(() => assertChannelsStopStartSandboxName("e2e-hm-ch-cycle", "hermes")).not.toThrow();
+    expect(() => assertChannelsStopStartSandboxName("e2e-hm-ch-cycle", "openclaw")).toThrow(
+      /only accepts openclaw sandbox names with prefix e2e-oc-ch-/,
+    );
   });
 
   it("keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
@@ -1377,8 +1376,8 @@ jobs:
         expect.arrayContaining([
           "channels-stop-start job must keep the 90 minute timeout",
           "channels-stop-start strategy.fail-fast must be false",
-          "channels-stop-start matrix.agent must be openclaw,hermes",
-          "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
+          "channels-stop-start matrix must bind canonical per-agent sandbox names",
+          "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
           "channels-stop-start job env must not include DOCKER_CONFIG",
           "channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "channels-stop-start checkout step must set persist-credentials=false",

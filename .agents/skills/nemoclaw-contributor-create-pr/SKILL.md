@@ -58,15 +58,11 @@ Select checks that apply to the diff.
 
 ### Review-Driven Repair Closure
 
-When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step.
+When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
 
-- Classify every finding in the latest completed head-stable collection before editing.
-- Group findings by root cause and inspect adjacent paths.
-- Apply one coherent change set instead of one commit or push per finding.
-- Run targeted validation after the complete change set.
-- Commit the candidate change set and run the required independent documentation writer review against that commit.
-- If the review identifies valid findings, apply them, rerun affected validation, commit the result, and rerun the review against the new `HEAD`.
-- Push after the independent documentation writer review covers the final `HEAD`, all blocking findings are resolved, and the receipt identifies that commit.
+Group valid code-changing findings by root cause. Route each valid code-changing finding to `nemoclaw-contributor-implement-issue` as part of its root-cause group. That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for the group instead of one commit or push per finding.
+
+This workflow owns the push gate. After the routed repair returns, follow the numbered steps under `After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for validation, the commit, the independent documentation writer review, the final collection, evidence removal, and the push. If that review identifies a valid finding, return the repair to `nemoclaw-contributor-implement-issue`, commit the result, and rerun the review against the new `HEAD`. Push after the independent documentation writer review covers the final `HEAD`, every blocking finding is resolved, and the receipt identifies that commit.
 
 Immediately before pushing, repeat the complete head-stable collection. Do not push while that collection contains an unclassified or actionable finding. Remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. If the user tells you to stop, stop without pushing. The user may defer only a non-blocking suggestion; record that disposition before pushing.
 
@@ -89,27 +85,15 @@ The fallback compares the branch with the refreshed `origin/main` ref from Step 
 Use `npm run check` for changes to repository-wide validation.
 Examples include hook configuration, formatter configuration, generated-check scripts, and coverage baselines.
 
-### Targeted Tests
+### Validation Evidence
 
-Run the smallest test that verifies each changed behavior.
-Run it once for each change set. Record the command and result in the PR body:
+`nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior.
+Record the command and result that it reported in the PR body.
+Do not select a test in this workflow. Do not rerun a reported test because hooks passed.
 
-- CLI or root `src/`, `bin/`, `scripts/`, or `test/` changes: `npx vitest run --project cli` or the directly affected test file.
-- Plugin changes under `nemoclaw/src/`: `npx vitest run --project plugin` or the directly affected plugin test file.
-- E2E support changes under `test/e2e/support/`: `npx vitest run --project e2e-support`.
-- E2E workflow, artifact upload, trace timing, or fixture-boundary changes: run the affected tests from this list:
-  - `test/e2e/support/*workflow*.test.ts`
-  - `test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts`
-  - `test/e2e/support/sanitize-trace-timing.test.ts`
-  - Related fixture-boundary tests
-  Do not use an unrelated live target as evidence.
-- Installer behavior changes: run the relevant installer integration project only when the local environment supports it.
-
-Do not rerun a targeted test because hooks passed.
-Rerun it after an edit or hook fix that can affect the tested behavior.
-Use `npm test` for broad runtime or test-harness changes. Also use it when a targeted test cannot give enough evidence.
-Use `npm run check` for repository-wide validation changes.
-Do not run all tests for a docs-only change unless it changes code samples or generated behavior.
+If the change set arrives without that evidence, stop and route the change set to
+`nemoclaw-contributor-implement-issue` for test selection and validation.
+Do not open the PR with an unselected tests line.
 
 For doc-only changes, run the docs build before opening the PR:
 
@@ -247,8 +231,53 @@ Follow these rules when filling in the template:
 
 ## Step 7: Create the PR
 
-Run `gh pr create` with `--assignee @me` and the completed body file.
 Run this command only after Step 4 passes.
+Assemble the whole command before you run it. Decide each optional flag in the sections below first.
+Do not add a flag that the authenticated `gh` account cannot use.
+
+Run exactly one `gh pr create` command. Every contributor can run this base command:
+
+```bash
+gh pr create \
+  --title "<type>(<scope>): <description>" \
+  --body-file /tmp/nemoclaw-pr-body.md
+```
+
+For work that is not ready for review, complete Step 4 and add `--draft` to whichever `gh pr create` command you run.
+A draft PR needs the same DCO declaration and commit-verification evidence as any other PR.
+
+### Assignment
+
+Assignment is a triage write.
+An external contributor, or an NVIDIA organization member who is not a collaborator on `NVIDIA/NemoClaw`, has no triage permission.
+
+Run this command before deciding whether to add `--assignee`:
+
+```bash
+gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
+```
+
+Only when it reports `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`, run this command instead of the base command:
+
+```bash
+gh pr create \
+  --title "<type>(<scope>): <description>" \
+  --body-file /tmp/nemoclaw-pr-body.md \
+  --assignee "@me"
+```
+
+Otherwise create the PR without `--assignee`.
+Report that the PR needs a maintainer to assign it.
+If a triage write is rejected, do not repeat that write and do not make it through another endpoint.
+Confirm whether the PR exists before you run `gh pr create` again.
+
+### Labels
+
+Do not select or add labels during PR publication.
+Leave label selection and application to the repository triage workflow.
+
+### Reviewers
+
 Before you use a reviewer-request write, confirm that one of these conditions is true:
 
 - The current user names the exact reviewer.
@@ -256,35 +285,6 @@ Before you use a reviewer-request write, confirm that one of these conditions is
 
 Otherwise, do not add `--reviewer` or make a separate reviewer-request write.
 Reviewer routing belongs to repository-owned sources and the shared PR follow-up workflow.
-
-```bash
-gh pr create \
-  --title "<type>(<scope>): <description>" \
-  --assignee "@me" \
-  --body-file /tmp/nemoclaw-pr-body.md
-```
-
-### Labels
-
-Add labels that apply:
-
-```bash
---label "area: docs"      # for doc-only or doc-inclusive PRs
---label "topic:security"  # for security-related changes
-```
-
-### Draft PRs
-
-For work that is not ready for review, complete Step 4 and use the completed body file.
-Draft PRs require the same DCO declaration and commit-verification evidence as other PRs.
-
-```bash
-gh pr create \
-  --draft \
-  --title "<type>(<scope>): <description>" \
-  --assignee "@me" \
-  --body-file /tmp/nemoclaw-pr-body.md
-```
 
 ## Step 8: Monitor CI and Review Feedback
 
@@ -306,6 +306,7 @@ Automated review: no actionable findings / addressed findings / waiting on user
 - Keep all template sections except an unused `Related Issue` section.
 - Select only boxes that have evidence.
 - Do not create a PR from `main`.
-- Assign the PR to its creator with `--assignee @me`.
+- Assign the PR to its creator with `--assignee @me` when the creator has triage permission.
+- Route each valid code-changing review finding to `nemoclaw-contributor-implement-issue`.
 - Report decisions, changes, and verification evidence. Do not report the analysis process.
 - Follow CI and automated reviews after you create the PR.

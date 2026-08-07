@@ -192,7 +192,7 @@ fi
 
 info "13. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &
   GW_PID=$!
   sleep 0.5

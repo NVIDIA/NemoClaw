@@ -21,10 +21,17 @@ implementation, an issue number or URL identifies the issue. Fetch missing issue
 If "work on this issue" could mean planning or implementation, ask which lifecycle stage the user
 wants. Do not infer implementation intent.
 
+This workflow also owns the code repair that `nemoclaw-contributor-create-pr` routes back from a
+classified review finding. The classified finding defines the repair scope inside the pull request's
+already accepted product scope. It does not establish new product scope. Keep the change inside the
+finding's root-cause group. Return the changed behavior and its evidence to that workflow for
+publication.
+
 Do not use this workflow for these requests:
 
 - plan, refine, scope, or divide an issue without implementing it;
-- create, push, publish, or review a pull request;
+- create, push, or publish a pull request;
+- collect, classify, or answer pull request review feedback;
 - perform an independent security review or vulnerability assessment;
 - run a maintainer queue, release loop, or repository sweep.
 

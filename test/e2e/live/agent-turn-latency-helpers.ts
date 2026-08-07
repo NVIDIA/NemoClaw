@@ -21,9 +21,9 @@ export { REPO_ROOT };
 
 export const CLI = CLI_ENTRYPOINT;
 export const OPENCLAW_SANDBOX =
-  process.env.NEMOCLAW_OPENCLAW_TURN_LATENCY_SANDBOX_NAME ?? "e2e-openclaw-turn-latency";
+  process.env.NEMOCLAW_OPENCLAW_TURN_LATENCY_SANDBOX_NAME ?? "e2e-oc-turn-lat";
 export const HERMES_SANDBOX =
-  process.env.NEMOCLAW_HERMES_TURN_LATENCY_SANDBOX_NAME ?? "e2e-hermes-turn-latency";
+  process.env.NEMOCLAW_HERMES_TURN_LATENCY_SANDBOX_NAME ?? "e2e-hm-turn-lat";
 validateSandboxName(OPENCLAW_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
 const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
