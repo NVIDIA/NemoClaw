@@ -141,6 +141,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
+        path.join(libDir, "patch-hermes-sqlite-temp-store.py"),
         discordRecoveryPatcherPath,
         profilePolicyPatcherPath,
         managedPolicyReaderPath,

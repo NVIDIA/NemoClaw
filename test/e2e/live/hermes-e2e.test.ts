@@ -502,6 +502,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
 
   await assertHermesCliAdapterLiveContract({
     env: commandEnv(),
+    host,
     redactionValues,
     sandbox,
     sandboxName: SANDBOX_NAME,
