@@ -89,6 +89,11 @@ const DEFAULT_WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e.
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const SAFE_REPO_PATH_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+$/u;
 const MATRIX_EXPRESSION_PATTERN = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/gu;
+const OPT_IN_HARDWARE_JOB_IDS = new Set([
+  "jetson-nvmap-gpu",
+  "llama-cpp-dgx-spark-plan",
+  "llama-cpp-dgx-spark-qualification",
+]);
 
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -250,11 +255,6 @@ function isLaunchableE2eJob(jobId: string, job: JsonRecord): boolean {
   );
 }
 
-function requiresConfirmedJetsonRunner(job: JsonRecord): boolean {
-  const runsOn = job["runs-on"];
-  return typeof runsOn === "string" && runsOn.includes("inputs.allow_jetson_runner_queue");
-}
-
 function releaseActivationPath(job: JsonRecord, jobId: string): string | undefined {
   const rawEnvironment = job.env;
   if (rawEnvironment === undefined) return undefined;
@@ -307,7 +307,9 @@ export function buildReleaseE2ePreflight(input: {
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const plan = input.plan ?? buildE2eWorkflowPlan();
   const pathExists = input.candidatePathExists ?? candidatePathExists;
-  const defaultJobIds = inventory.workflowJobs.filter((jobId) => jobId !== "shared-e2e");
+  const defaultJobIds = inventory.workflowJobs.filter(
+    (jobId) => jobId !== "shared-e2e" && !OPT_IN_HARDWARE_JOB_IDS.has(jobId),
+  );
   for (const jobId of defaultJobIds) {
     const activationPath = releaseActivationPath(
       record(jobs[jobId], `workflow.jobs.${jobId}`),
@@ -428,6 +430,16 @@ export function buildReleaseE2eLedger(
       booleanField(dispatch, "includeStagingBrevLaunchable", `${label}.dispatch`),
       true,
       `${label}.dispatch.includeStagingBrevLaunchable`,
+    );
+    requireEqual(
+      booleanField(dispatch, "allowJetsonRunnerQueue", `${label}.dispatch`),
+      false,
+      `${label}.dispatch.allowJetsonRunnerQueue`,
+    );
+    requireEqual(
+      booleanField(dispatch, "allowDgxSparkRunnerQueue", `${label}.dispatch`),
+      false,
+      `${label}.dispatch.allowDgxSparkRunnerQueue`,
     );
 
     const selectedExecutions = preflight.executions;

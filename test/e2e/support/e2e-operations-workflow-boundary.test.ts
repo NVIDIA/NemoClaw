@@ -211,11 +211,40 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   });
 
   it.each([
-    ["maintain", "", 0, ""],
-    ["maintain", "managed-image-protected-runtime", 0, ""],
-    ["maintain", "gpu-e2e", 1, "accepts only empty selectors or managed-image-protected-runtime"],
-    ["write", "", 1, "requires a repository maintainer or administrator"],
-  ])("requires a maintainer role and bounded selector before manual PR E2E for %s with %s", (role, jobs, expectedStatus, expectedStderr) => {
+    ["accepts empty-selector manual PR E2E for a maintainer", "maintain", "", undefined, 0, ""],
+    [
+      "accepts protected managed-image qualification for a maintainer",
+      "maintain",
+      "managed-image-protected-runtime",
+      undefined,
+      0,
+      "",
+    ],
+    [
+      "rejects an unsupported manual PR job selector",
+      "maintain",
+      "gpu-e2e",
+      undefined,
+      1,
+      "accepts only empty selectors or managed-image-protected-runtime",
+    ],
+    [
+      "rejects manual PR E2E for a writer",
+      "write",
+      "",
+      undefined,
+      1,
+      "requires a repository maintainer or administrator",
+    ],
+    [
+      "rejects a syntactically valid plan hash that does not match the selected manual PR plan",
+      "maintain",
+      "",
+      "d".repeat(64),
+      1,
+      "plan_hash must match the trusted manual PR E2E plan",
+    ],
+  ])("manual PR authorization: %s", (_behavior, role, jobs, planHashOverride, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
@@ -224,7 +253,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const baseSha = "b".repeat(40);
     const workflowSha = "c".repeat(40);
     const planHash = createHash("sha256")
-      .update(`manual-pr-e2e:v1:${workflowSha}:${jobs}::false`)
+      .update(`manual-pr-e2e:v2:${workflowSha}:${jobs}::false:mock:false:false`)
       .digest("hex");
     const prefix = [
       "curl() {",
@@ -243,6 +272,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         env: {
           ...process.env,
           ACTOR: "maintainer",
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
+          ALLOW_JETSON_RUNNER_QUEUE: "false",
           BASE_SHA: baseSha,
           CHECKOUT_REPOSITORY: "contributor/NemoClaw",
           CHECKOUT_SHA: headSha,
@@ -250,8 +281,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           GITHUB_TOKEN: "token",
           INCLUDE_LAUNCHABLE: "false",
+          INFERENCE_MODE: "mock",
           JOBS: jobs,
-          PLAN_HASH: planHash,
+          PLAN_HASH: planHashOverride ?? planHash,
           PR_NUMBER: "42",
           REVIEW_REASON: "Reviewed PR head revision",
           RUN_ATTEMPT: "1",
@@ -280,6 +312,18 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
       'Manual PR authentication must retain "$PLAN_HASH" == "$expected_plan_hash"',
+    );
+  });
+
+  it("rejects a changed manual PR plan-hash derivation", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace("sha256sum", "sha1sum");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      `Manual PR authentication must retain expected_plan_hash="$(printf '%s' "$plan_identity" | sha256sum | cut -d ' ' -f 1)"`,
     );
   });
 
