@@ -14,7 +14,7 @@ import {
   readFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
