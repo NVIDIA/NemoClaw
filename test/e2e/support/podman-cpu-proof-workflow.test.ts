@@ -94,6 +94,10 @@ describe("native Podman CPU proof workflow", () => {
     expect(disableDocker).toContain("pkill -TERM -x dockerd");
     expect(disableDocker).toContain("docker-absence-boundary.json");
     expect(disableDocker).toContain("Docker socket remained available after Docker shutdown");
+    const correctPastaPolicy = namedStep("Apply Ubuntu pasta signal policy correction").run ?? "";
+    expect(correctPastaPolicy).toContain("/etc/apparmor.d/usr.bin.pasta");
+    expect(correctPastaPolicy).toContain("signal (receive) peer=podman,");
+    expect(correctPastaPolicy).toContain('apparmor_parser -r "$pasta_profile"');
     expect(startPodman).toContain("umask 077");
     expect(startPodman).toContain('socket_path="$runtime_dir/podman/podman.sock"');
     expect(startPodman).toContain('default_rootless_network_cmd = "pasta"');

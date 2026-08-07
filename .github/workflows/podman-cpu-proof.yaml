@@ -78,6 +78,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes \
+            apparmor \
             fuse-overlayfs \
             passt \
             slirp4netns \
@@ -88,6 +89,22 @@ jobs:
           test "$package_version" = "$PODMAN_APT_VERSION"
           test "$version" = "podman version 5.7.0"
           printf '### Podman runtime\n\n`%s` (`%s`)\n' "$version" "$package_version" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Apply Ubuntu pasta signal policy correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta_profile="/etc/apparmor.d/usr.bin.pasta"
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          test "$(grep -Fc 'include <abstractions/pasta>' "$pasta_profile")" -eq 1
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1
+          sudo apparmor_parser -r "$pasta_profile"
 
       - name: Install Docker invocation guard
         shell: bash
