@@ -92,7 +92,6 @@ function mergeSignal(previous: E2eRiskSignal | null, current: E2eRiskSignal): E2
     previous.shardId !== current.shardId ||
     previous.expectedSha !== current.expectedSha ||
     previous.testedSha !== current.testedSha ||
-    previous.planHash !== current.planHash ||
     previous.correlationId !== current.correlationId
   ) {
     throw new Error("risk signal metadata changed between Vitest invocations");

@@ -60,6 +60,16 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
+  it("binds protected candidate identity on ordinary main runs", () => {
+    const value = workflow();
+    const jobEnv = multiarchJob(value).env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA = "${{ inputs.checkout_sha }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup env must bind NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+
   it("ships the exact activation contract consumed by the trusted lane (#7744)", () => {
     const activation = JSON.parse(
       fs.readFileSync(

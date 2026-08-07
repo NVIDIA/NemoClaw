@@ -853,14 +853,14 @@ describe("blueprint identity wrapper", () => {
     store.set(stateDir, { type: "dir" });
     store.set(`${stateDir}/plan.json`, {
       type: "file",
-      content: JSON.stringify({ sandbox_name: "pre-existing-sandbox" }),
+      content: JSON.stringify({ sandbox_name: "existing-sandbox" }),
     });
 
     await actionRollback("legacy-run");
 
     const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(rollbackCommands).not.toContain("sandbox stop pre-existing-sandbox");
-    expect(rollbackCommands).not.toContain("sandbox remove pre-existing-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox stop existing-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox remove existing-sandbox");
     expect(store.get(`${stateDir}/rolled_back`)?.content).toBeDefined();
   });
 

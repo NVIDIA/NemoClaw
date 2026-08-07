@@ -1442,6 +1442,9 @@ start_socat_forwarder() {
 }
 
 build_hermes_dashboard_args() {
+  # HERMES_DASHBOARD_HOME is a dedicated profile for privilege separation.
+  # Hermes otherwise treats a profiles/<name> launch as a request for its
+  # unified machine dashboard and re-execs outside this prepared profile.
   HERMES_DASHBOARD_ARGS=(
     dashboard
     --host
@@ -1450,6 +1453,7 @@ build_hermes_dashboard_args() {
     "$DASHBOARD_INTERNAL_PORT"
     --skip-build
     --no-open
+    --isolated
   )
   if hermes_dashboard_tui_enabled; then
     HERMES_DASHBOARD_ARGS+=(--tui)

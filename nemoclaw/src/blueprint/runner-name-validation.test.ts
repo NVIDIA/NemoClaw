@@ -149,7 +149,7 @@ describe("blueprint name validation (fail-closed integration)", () => {
     );
   });
 
-  it("rollback rejects a plan whose sandbox_name is not an RFC 1035 label", async () => {
+  it("rollback rejects a plan whose sandbox_name is not OpenShell-compatible", async () => {
     const runDir = `${RUNS_DIR}/nc-run-1`;
     addDir(runDir);
     // "--rm" would be consumed as a flag by `openshell sandbox stop/remove`.

@@ -26,6 +26,7 @@ import { isSafeModelId } from "../validation";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
 import {
   type Arm64WslDockerDesktopGpuProver,
+  escapeGpuNameForTerminal,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
@@ -84,27 +85,27 @@ export interface GpuDetection {
   // skips `computeIntensive` registry entries on these hosts.
   computeConstrained?: boolean;
   // Set when a denylisted `JMJWOA-Generic-*` placeholder name was accepted only
-  // because a bounded Docker `--gpus` CUDA proof passed (Windows-ARM N1X + WSL2
-  // + Docker Desktop, #4565). Diagnostic marker that this detection cleared a
-  // live proof rather than firmware/name trust. The sandbox GPU preflight still
-  // reaches the Docker Desktop WSL compatibility branch via its own
-  // `detectWslDockerDesktopStatus()` check (consistent because the proof itself
-  // requires Docker Desktop WSL); this flag does not gate that branch.
+  // because a bounded Docker `--gpus` CUDA proof passed, on Windows-ARM N1X
+  // (WSL2 + Docker Desktop, #4565) or native ARM64 Linux (#8096). Diagnostic
+  // marker that this detection cleared a live proof rather than firmware/name
+  // trust. The sandbox GPU preflight reaches the Docker Desktop WSL
+  // compatibility branch via its own `detectWslDockerDesktopStatus()` check,
+  // which stays false on a native Linux host; this flag does not gate that
+  // branch.
   wslDockerDesktopGpuProofPassed?: boolean;
 }
 
 export interface DetectGpuDeps {
-  // Optional accept-path for ARM64 WSL Docker Desktop `JMJWOA-Generic-*` GPUs
-  // (#4565). Injected in tests; in production `detectGpu()` lazily builds the
-  // default prover from the onboard WSL Docker Desktop module only when it is
-  // about to reject a denylisted ARM64 name.
+  // Optional accept-path for native or Docker Desktop-backed WSL ARM64 Linux
+  // hosts that report a `JMJWOA-Generic-*` GPU (#4565/#8096). Injected in tests;
+  // in production `detectGpu()` lazily builds the default prover only when it
+  // is about to reject a denylisted ARM64 name.
   proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
 }
 
-// Lazily construct the default ARM64 WSL Docker Desktop GPU prover. Kept lazy
-// (and behind a require) so the inference layer does not statically depend on
-// the onboard layer, and so the bounded Docker proof is only wired when we
-// actually reach the denylist-reject path on an ARM64 host.
+// Lazily construct the default ARM64 Linux GPU prover. Keep it behind a require
+// so the inference layer does not statically depend on the onboard layer. The
+// bounded Docker proof is wired only at the denylist-reject path.
 function defaultArm64WslDockerDesktopGpuProver(): Arm64WslDockerDesktopGpuProver | null {
   try {
     return require("../onboard/wsl-docker-desktop-gpu").createArm64WslDockerDesktopGpuProver();
@@ -164,7 +165,8 @@ export function groupGpusByName(gpus: readonly NimGpu[]): GpuGroup[] {
 // See #2669 for the multi-GPU case the previous fix missed.
 export function formatNvidiaGpuPreflightLines(gpu: GpuDetection): string[] {
   if (gpu.name) {
-    const detail = gpu.count > 1 ? `${gpu.count}x ${gpu.name}` : gpu.name;
+    const name = escapeGpuNameForTerminal(gpu.name);
+    const detail = gpu.count > 1 ? `${gpu.count}x ${name}` : name;
     return [`NVIDIA GPU detected (${detail}, ${gpu.totalMemoryMB} MB)`];
   }
   if (gpu.gpus && gpu.gpus.length > 0) {
@@ -174,7 +176,7 @@ export function formatNvidiaGpuPreflightLines(gpu: GpuDetection): string[] {
       const anyDuplicate = groups.some((grp) => grp.count > 1);
       for (const grp of groups) {
         const prefix = anyDuplicate ? `${grp.count}x ` : "";
-        lines.push(`    - ${prefix}${grp.name} (${grp.memoryMB} MB)`);
+        lines.push(`    - ${prefix}${escapeGpuNameForTerminal(grp.name)} (${grp.memoryMB} MB)`);
       }
       return lines;
     }
@@ -459,12 +461,18 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
         } else if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+          // The all-GPU CUDA workload proves that at least one usable device
+          // exists. It does not establish which nvidia-smi rows or capacities
+          // are genuine, so a denylisted multi-row response stays untrusted.
+          if (parsed.length !== 1) {
+            return null;
+          }
           // A denylisted `JMJWOA-Generic-*` placeholder. Both real Windows-ARM
           // N1X (WSL2 + Docker Desktop) and the Snapdragon nvidia-smi shim emit
           // this name, so the name and `/proc/driver/nvidia` are insufficient.
-          // Give the host one bounded Docker `--gpus` CUDA proof: only the real
-          // GPU can run the workload, so a pass safely accepts N1X while the
-          // shim keeps failing closed (#4565 without reopening #3988/#4424).
+          // A bounded Docker `--gpus` workload proves that the single reported
+          // row has a usable CUDA device. The Snapdragon shim cannot pass it
+          // (#4565 without reopening #3988/#4424).
           const prover =
             deps.proveArm64WslDockerDesktopGpu === undefined
               ? defaultArm64WslDockerDesktopGpuProver()
@@ -473,13 +481,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           if (!proof || !proof.passed) {
             return null;
           }
-          // The proof confirms a usable GPU, but it does not vouch for every
-          // row. Keep only the placeholder rows it covers plus any plausibly-
-          // named NVIDIA rows; drop unrecognized garbage so a mixed-row spoof
-          // cannot inflate totalMemoryMB with a phantom device.
-          trusted = parsed.filter(
-            (p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name) || isPlausibleNvidiaGpuName(p.name),
-          );
+          trusted = parsed;
           wslDockerDesktopGpuProofPassed = true;
         } else {
           if (!nvidiaHostLooksGenuine()) {
@@ -510,9 +512,10 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
-          // The proof-passed Windows-ARM N1X iGPU is memory-shared like Jetson
-          // and cannot serve a computeIntensive model in-loop, so tag it
+          // The proof-passed ARM64 N1X GPU is memory-shared like Jetson and
+          // cannot serve a computeIntensive model in-loop, so tag it
           // computeConstrained to exclude those Ollama bootstrap models (#3707).
+          // This covers the N1X part on WSL2 and on native Linux (#8096).
           ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
             ? { computeConstrained: true }
             : {}),
