@@ -77,6 +77,7 @@ export type StatusFlowHarnessOptions = {
     baselineExclusionTransition?: BaselineExclusionTransition;
     preferredInferenceApi?: string | null;
     compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
+    dashboardRemoteBindPrepared?: boolean;
   };
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";
