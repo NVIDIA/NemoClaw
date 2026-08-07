@@ -996,7 +996,7 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("accepts the reviewed OpenShell 0.0.99 release manifests (#8499)", () => {
+  it("accepts the allowlisted OpenShell 0.0.99 release manifests (#8499)", () => {
     const result = runFixture("complete", "0.0.99", true);
 
     expect(result.status).toBe(0);
