@@ -135,7 +135,7 @@ describe("Docker managed-startup root applicator", () => {
         environment: {
           NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: " 0.25 ",
           NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "03",
-          NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+          NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: " 1 ",
           NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "5000",
           NEMOCLAW_NOT_AN_APPLICATION_RUNTIME_INPUT: "must-not-cross",
         },
@@ -148,6 +148,26 @@ describe("Docker managed-startup root applicator", () => {
     expect(argv).toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1");
     expect(argv).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=5000");
     expect(argv.join("\n")).not.toContain("NEMOCLAW_NOT_AN_APPLICATION_RUNTIME_INPUT");
+  });
+
+  it("omits an unsupported MCP shadow diagnostics value from the clean root exec", () => {
+    const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
+
+    applyDockerManagedStartupRootRequest(
+      { containerId: CONTAINER_ID, request: requestFor("openclaw") },
+      {
+        dockerCapture: vi.fn(() => stableInspect()),
+        dockerSpawnSync,
+        environment: {
+          NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "true",
+          NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "5000",
+        },
+      },
+    );
+
+    const [argv] = dockerSpawnSync.mock.calls[0] as unknown as [string[]];
+    expect(argv.join("\n")).not.toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=");
+    expect(argv).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=5000");
   });
 
   it("retries one lost acknowledgement with the identical pinned command and payload", () => {
