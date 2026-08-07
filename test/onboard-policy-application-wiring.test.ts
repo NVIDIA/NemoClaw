@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 import type { OnboardPolicyApplicationDeps } from "../src/lib/onboard/policy-selection.js";
@@ -12,14 +14,15 @@ type PolicyApplication = ReturnType<PolicySelectionModule["createOnboardPolicyAp
 
 function replaceCachedExports(modulePath: string, exports: unknown): void {
   const cached = require.cache[modulePath];
-  if (!cached) throw new Error(`Expected ${modulePath} to be loaded`);
+  assert.ok(cached, `Expected ${modulePath} to be loaded`);
   cached.exports = exports;
 }
 
 function restoreRequireCache(prior: Map<string, NodeModule>): void {
-  for (const modulePath of Object.keys(require.cache)) {
-    if (!prior.has(modulePath)) delete require.cache[modulePath];
-  }
+  const addedModulePaths = Object.keys(require.cache).filter(
+    (modulePath) => !prior.has(modulePath),
+  );
+  for (const modulePath of addedModulePaths) delete require.cache[modulePath];
   for (const [modulePath, cached] of prior) require.cache[modulePath] = cached;
 }
 
@@ -121,9 +124,8 @@ describe("onboarding policy application production wiring", () => {
       delete require.cache[onboardPath];
       require(onboardPath);
 
-      if (!capturedDeps || !application) {
-        throw new Error("Expected onboard.ts to create the policy application");
-      }
+      assert.ok(capturedDeps, "Expected onboard.ts to capture policy application dependencies");
+      assert.ok(application, "Expected onboard.ts to create the policy application");
       expect(capturedDeps.withSandboxMutationLock).toBe(withSandboxMutationLock);
       expect(capturedDeps.waitForSandboxReady).toBe(waitForSandboxReady);
       expect(capturedDeps.waitForSandboxControlPlaneReady).toBe(waitForSandboxControlPlaneReady);
