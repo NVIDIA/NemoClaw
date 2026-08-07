@@ -221,10 +221,14 @@ export async function preflightMcpServerUrlResolvedTarget(
 ): Promise<McpBridgeTargetValidation> {
   // invalidState: a hostname is public at add time but later rebinds to an
   // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
+  // With its operator-controlled proxy_connect_by_hostname option disabled,
   // OpenShell v0.0.99 resolves, validates every answer against allowed_ips, and
-  // connects with that same SocketAddr list. whyNotSourceFix: duplicating DNS
-  // resolution here before each remote connection would create a second,
-  // non-authoritative TOCTOU boundary outside OpenShell's data plane.
+  // connects with that same SocketAddr list. This URL validator cannot observe
+  // gateway configuration; the documented guarantee and residual risk are
+  // therefore explicitly conditional on that option remaining disabled.
+  // whyNotSourceFix: duplicating DNS resolution here before each remote
+  // connection would create a second, non-authoritative TOCTOU boundary outside
+  // OpenShell's data plane.
   // regressionTest: e2e/support/mcp-bridge-sandbox.test.ts pins the exact
   // upstream source contract, and live/mcp-bridge.test.ts remaps DNS and proves
   // a 403 plus zero upstream requests for all three adapters.

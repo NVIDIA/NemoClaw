@@ -366,6 +366,9 @@ describe("validateName", () => {
   it("rejects excessively long valid-looking names before spawning OpenShell", () => {
     const { validateName } = require(runnerPath);
     expect(validateName("a".repeat(19))).toBe("a".repeat(19));
+    expect(() => validateName("a".repeat(20), "sandbox name")).toThrow(
+      /sandbox name too long \(max 19 chars\)/,
+    );
     expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
       /sandbox name too long \(max 19 chars\)/,
     );
