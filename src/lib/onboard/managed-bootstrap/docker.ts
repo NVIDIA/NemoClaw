@@ -44,6 +44,7 @@ import {
   createManagedBootstrapIdentity,
   createManagedBootstrapPlanFingerprint,
   createManagedBootstrapPreparedAuthority,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapAdapter,
   ManagedBootstrapCommitStateIndeterminateError,
@@ -97,18 +98,18 @@ import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
   MANAGED_BOOTSTRAP_REQUEST_FILE,
   parseManagedBootstrapImageCompletion,
-  serializeManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
 } from "./envelope";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const FULL_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ARGV_BYTES = 128 * 1024;
 const MAX_CONTAINER_NAME_LENGTH = 253;
-const REQUEST_TEMP_PREFIX = "nemoclaw-managed-bootstrap-request";
 const COMPLETION_TEMP_PREFIX = "nemoclaw-managed-bootstrap-completion";
 const COMPLETION_MAX_BYTES = 4096;
 const DOCKER_DRIVER_ID = "docker";
 const MAX_RECOVERY_FAILURE_DETAIL_BYTES = 8 * 1024;
+const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-bootstrap";
 
@@ -456,34 +457,28 @@ function assertHeldCommand(
   bootstrapIdentity: string,
 ): void {
   assertManagedBootstrapIdentity(bootstrapIdentity);
-  const expected = openshellSandboxCommandEnvValue(heldWorkloadArgv);
-  const observed = envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND");
-  if (!expected || observed !== expected) {
-    throw new Error(
-      "Managed bootstrap Docker workload does not contain the exact identity-bound hold.",
-    );
-  }
   const identityIndexes = heldWorkloadArgv
     .map((value, index) => (value === bootstrapIdentity ? index : -1))
     .filter((index) => index >= 0);
   if (identityIndexes.length !== 1) {
     throw new Error("Managed bootstrap hold does not contain exactly one bootstrap identity.");
   }
+  assertBootstrapIdentityEnvironment(inspect, bootstrapIdentity);
+  if (
+    envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND") !== OPENSHELL_DRIVER_IDLE_COMMAND
+  ) {
+    throw new Error("Managed bootstrap Docker workload left the OpenShell idle hold boundary.");
+  }
 }
 
-function assertBootstrapIdentityInObservedHold(
+function assertBootstrapIdentityEnvironment(
   inspect: DockerContainerInspect,
   bootstrapIdentity: string,
 ): void {
   assertManagedBootstrapIdentity(bootstrapIdentity);
-  const observed = envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND");
-  if (!observed) {
-    throw new Error("Managed bootstrap Docker workload is missing its held command.");
-  }
-  const occurrences = observed.split(bootstrapIdentity).length - 1;
-  if (occurrences !== 1) {
+  if (envValue(inspect.Config?.Env, MANAGED_BOOTSTRAP_IDENTITY_ENV) !== bootstrapIdentity) {
     throw new Error(
-      "Managed bootstrap Docker held command does not contain one exact bootstrap identity.",
+      "Managed bootstrap Docker workload does not contain one exact persisted bootstrap identity.",
     );
   }
 }
@@ -545,32 +540,11 @@ function replacementStagingName(originalName: string, bootstrapIdentity: string)
   return `${originalName.slice(0, Math.max(1, MAX_CONTAINER_NAME_LENGTH - suffix.length))}${suffix}`;
 }
 
-function writeProtectedEnvelope(
+function protectedEnvelopeArchive(
   bootstrapIdentity: string,
-  request: Parameters<typeof serializeManagedBootstrapEnvelope>[0]["rootApplyRequest"],
-): string {
-  const file = secureTempFile(REQUEST_TEMP_PREFIX, ".json");
-  try {
-    fs.writeFileSync(
-      file,
-      serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest: request }),
-      { encoding: "utf8", flag: "wx", mode: 0o400 },
-    );
-    fs.chmodSync(file, 0o400);
-    const stat = fs.lstatSync(file);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.nlink !== 1 ||
-      (stat.mode & 0o777) !== 0o400
-    ) {
-      throw new Error("Managed bootstrap request source is not one protected 0400 file.");
-    }
-    return file;
-  } catch (error) {
-    cleanupTempDir(file, REQUEST_TEMP_PREFIX);
-    throw error;
-  }
+  request: Parameters<typeof serializeManagedBootstrapEnvelopeTar>[0]["rootApplyRequest"],
+): Buffer {
+  return serializeManagedBootstrapEnvelopeTar({ bootstrapIdentity, rootApplyRequest: request });
 }
 
 function readProtectedImageCompletion(
@@ -779,6 +753,27 @@ function assertExactStringSet(observed: unknown, expected: readonly string[], la
   }
 }
 
+function capabilitySet(value: unknown, label: string): string[] {
+  const normalized = exactStringArray(value ?? [], label).map((entry) => {
+    const raw = entry.trim().toUpperCase();
+    return raw === "ALL" || raw.startsWith("CAP_") ? raw : `CAP_${raw}`;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate capabilities.`);
+  }
+  return normalized.sort();
+}
+
+function assertExactCapabilitySet(
+  observed: unknown,
+  expected: readonly string[],
+  label: string,
+): void {
+  if (!exactArrayEqual(capabilitySet(observed, label), capabilitySet(expected, label))) {
+    throw new Error(`Managed bootstrap Docker ${label} changed outside declared deltas.`);
+  }
+}
+
 function modeEnvironment(mode: DockerGpuPatchMode): string[] {
   const values: string[] = [];
   for (let index = 0; index < mode.args.length; index += 1) {
@@ -792,6 +787,21 @@ function modeEnvironment(mode: DockerGpuPatchMode): string[] {
     }
   }
   return values;
+}
+
+function canonicalEnvironmentBindings(value: unknown, label: string): string[] {
+  const entries = exactStringArray(value ?? [], label);
+  const keys = entries.map((entry) => {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) {
+      throw new Error(`Managed bootstrap Docker ${label} contains an invalid binding.`);
+    }
+    return entry.slice(0, separator);
+  });
+  if (new Set(keys).size !== keys.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate keys.`);
+  }
+  return entries.sort();
 }
 
 function assertExactEnvironmentDelta(
@@ -812,8 +822,13 @@ function assertExactEnvironmentDelta(
           : entry,
       ),
   ];
-  const observed = exactStringArray(replacement.Env ?? [], "replacement environment");
-  if (!exactArrayEqual(observed, expected)) {
+  const observed = canonicalEnvironmentBindings(replacement.Env ?? [], "replacement environment");
+  if (
+    !exactArrayEqual(
+      observed,
+      canonicalEnvironmentBindings(expected, "expected replacement environment"),
+    )
+  ) {
     throw new Error(
       "Managed bootstrap Docker replacement environment changed outside declared deltas.",
     );
@@ -858,9 +873,7 @@ function expectedUlimits(original: unknown, required: readonly DockerUlimit[]): 
       Hard: requiredEntry.hard,
     });
   }
-  return JSON.stringify(
-    [...merged.values()].sort((left, right) => left.Name.localeCompare(right.Name)),
-  );
+  return canonicalUlimits([...merged.values()], "expected ulimits");
 }
 
 function assertExactDeviceRequests(
@@ -943,6 +956,32 @@ function scrubVerifiedReplacementDeltas(canonicalJson: string): string {
   return JSON.stringify(root);
 }
 
+function differingJsonPaths(
+  left: unknown,
+  right: unknown,
+  path = "$",
+  result: string[] = [],
+): string[] {
+  if (JSON.stringify(left) === JSON.stringify(right)) return result;
+  if (
+    typeof left !== "object" ||
+    left === null ||
+    typeof right !== "object" ||
+    right === null ||
+    Array.isArray(left) ||
+    Array.isArray(right)
+  ) {
+    result.push(path);
+    return result;
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)])) {
+    differingJsonPaths(leftRecord[key], rightRecord[key], `${path}.${key}`, result);
+  }
+  return result;
+}
+
 function assertReplacementMatchesIntent(
   originalCanonicalJson: string,
   replacement: DockerContainerInspect,
@@ -968,11 +1007,12 @@ function assertReplacementMatchesIntent(
   const observedHost = objectField(observedInspect, "HostConfig");
   const gpuAugment = plan.mode.kind !== "startup-command";
   assertExactEnvironmentDelta(originalConfig, observedConfig, plan.mode, intendedSandboxCommand);
-  assertExactStringSet(
+  const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
+  assertExactCapabilitySet(
     observedHost.CapAdd,
     [
-      ...stringSet(originalHost.CapAdd, "original capability additions"),
-      ...(gpuAugment ? ["SYS_PTRACE"] : []),
+      ...originalCapabilities,
+      ...(gpuAugment && !originalCapabilities.includes("CAP_SYS_PTRACE") ? ["CAP_SYS_PTRACE"] : []),
     ].filter((value, index, values) => values.indexOf(value) === index),
     "capability additions",
   );
@@ -1003,17 +1043,24 @@ function assertReplacementMatchesIntent(
     ].filter((value, index, values) => values.indexOf(value) === index),
     "supplementary groups",
   );
-  if (
-    canonicalUlimits(observedHost.Ulimits, "replacement ulimits") !==
-    expectedUlimits(originalHost.Ulimits, plan.requiredUlimits)
-  ) {
-    throw new Error("Managed bootstrap Docker ulimits changed outside declared requirements.");
+  const observedUlimits = canonicalUlimits(observedHost.Ulimits, "replacement ulimits");
+  const intendedUlimits = expectedUlimits(originalHost.Ulimits, plan.requiredUlimits);
+  if (observedUlimits !== intendedUlimits) {
+    throw new Error(
+      `Managed bootstrap Docker ulimits changed outside declared requirements: expected ${intendedUlimits}, observed ${observedUlimits}.`,
+    );
   }
   const expectedPreserved = scrubVerifiedReplacementDeltas(originalCanonicalJson);
   const observedPreserved = scrubVerifiedReplacementDeltas(replacementSpec.canonicalJson);
   if (observedPreserved !== expectedPreserved) {
+    const changedPaths = differingJsonPaths(
+      JSON.parse(expectedPreserved),
+      JSON.parse(observedPreserved),
+    )
+      .sort()
+      .slice(0, 16);
     throw new Error(
-      "Managed bootstrap Docker replacement normalized spec changed outside declared deltas.",
+      `Managed bootstrap Docker replacement normalized spec changed outside declared deltas: ${changedPaths.join(", ")}.`,
     );
   }
   return replacementSpec.hash;
@@ -3082,7 +3129,7 @@ export function createDockerManagedBootstrapAdapter(
       assertRootSupervisor(inspect);
       assertImage(inspect, input.expectedImage, deps);
       assertMetadata(inspect, input.sandbox, input.metadata);
-      assertBootstrapIdentityInObservedHold(inspect, input.bootstrapIdentity);
+      assertBootstrapIdentityEnvironment(inspect, input.bootstrapIdentity);
       return Object.freeze({
         sandbox: input.sandbox,
         runtimeId,
@@ -3199,7 +3246,6 @@ export function createDockerManagedBootstrapAdapter(
         timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
       };
 
-      let requestFile = "";
       let replacementRuntimeId = "";
       let stagedAuthority: DockerBootstrapTransaction | null = null;
       try {
@@ -3289,11 +3335,12 @@ export function createDockerManagedBootstrapAdapter(
           commitReceipt: null,
         });
 
-        requestFile = writeProtectedEnvelope(handle.bootstrapIdentity, request);
-        const copied = deps.dockerRun(
-          ["cp", requestFile, replacementRuntimeId + ":" + MANAGED_BOOTSTRAP_REQUEST_FILE],
-          options,
-        );
+        const requestArchive = protectedEnvelopeArchive(handle.bootstrapIdentity, request);
+        const copied = deps.dockerRun(["cp", "-", replacementRuntimeId + ":/"], {
+          ...options,
+          input: requestArchive,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
         assertZero(
           copied,
           "Managed bootstrap could not stage its protected root-owned 0400 envelope",
@@ -3359,8 +3406,6 @@ export function createDockerManagedBootstrapAdapter(
         const failure = error instanceof Error ? error : new Error(String(error));
         if (rollbackError) attachManagedBootstrapRollbackError(failure, rollbackError);
         throw failure;
-      } finally {
-        if (requestFile) cleanupTempDir(requestFile, REQUEST_TEMP_PREFIX);
       }
     },
     async activateBootstrapReplacement({ handle, snapshot, prepared, durablePreparation }) {
@@ -3380,11 +3425,13 @@ export function createDockerManagedBootstrapAdapter(
           null,
           durablePreparation,
         );
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: existingJournal.bootstrapIdentity,
-          runtimeId: existingJournal.replacementRuntimeId,
-          detail: `activation requires rollback or commit from durable phase ${existingJournal.phase}`,
-        });
+        if (existingJournal.phase !== "staged") {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: existingJournal.bootstrapIdentity,
+            runtimeId: existingJournal.replacementRuntimeId,
+            detail: `activation requires rollback or commit from durable phase ${existingJournal.phase}`,
+          });
+        }
       }
       const options = {
         ignoreError: true,
@@ -3409,7 +3456,8 @@ export function createDockerManagedBootstrapAdapter(
           );
         }
 
-        let journal = createDockerBootstrapJournalDurably(durableAuthority, deps);
+        let journal =
+          existingJournal ?? createDockerBootstrapJournalDurably(durableAuthority, deps);
         const originalAtFence = inspectExact(snapshot.runtimeId, deps);
         const replacementAtFence = inspectExact(prepared.preparedRuntimeId, deps);
         assertTransactionOriginal(journal, originalAtFence);

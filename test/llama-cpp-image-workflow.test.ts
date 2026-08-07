@@ -378,7 +378,7 @@ describe("llama.cpp image PR workflow", () => {
       "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
     ]);
     expect(namedStep(attest, "Attest SLSA build provenance").uses).toBe(
-      "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f",
+      "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373",
     );
     expect(namedStep(attest, "Sign exact candidate index").run).toContain(
       'cosign sign --yes "$IMAGE@$DIGEST"',

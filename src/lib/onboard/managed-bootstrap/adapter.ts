@@ -17,6 +17,7 @@ import {
 
 export const MANAGED_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
 export const MANAGED_BOOTSTRAP_IDENTITY_BYTES = 32;
+export const MANAGED_BOOTSTRAP_IDENTITY_ENV = "NEMOCLAW_MANAGED_BOOTSTRAP_IDENTITY";
 
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;

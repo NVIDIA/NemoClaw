@@ -694,16 +694,17 @@ export function buildVllmServeCommand(
   model: VllmModelDef,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const envPrefix = model.serveEnv
-    ? `${Object.entries(model.serveEnv)
-        .map(([key, value]) => {
-          if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
-            throw new Error(`Invalid vLLM serving environment variable name: ${key}`);
-          }
-          return `export ${key}=${shellQuote(value)}`;
-        })
-        .join(" && ")} && `
-    : "";
+  const envPrefix =
+    model.serveEnv && Object.keys(model.serveEnv).length > 0
+      ? `${Object.entries(model.serveEnv)
+          .map(([key, value]) => {
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+              throw new Error(`Invalid vLLM serving environment variable name: ${key}`);
+            }
+            return `export ${key}=${shellQuote(value)}`;
+          })
+          .join(" && ")} && `
+      : "";
   const args = [
     ...(model.fixedServeCommand ? FIXED_HOST_LOCAL_VLLM_ARGS : SHARED_VLLM_ARGS),
     "--max-model-len",

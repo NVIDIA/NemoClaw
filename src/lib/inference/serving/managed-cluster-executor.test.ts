@@ -10,10 +10,12 @@ import {
   inspectManagedClusterVllmNodesSync,
   type ManagedClusterVllmExecutorRuntimeDeps,
 } from "./managed-cluster-executor.js";
-import { fixtureManagedClusterPlan } from "./managed-cluster-fixture.test-support.js";
+import {
+  fixtureManagedClusterPlan,
+  STOPPED_FOREIGN_CONTAINER_FIXTURES,
+} from "./managed-cluster-fixture.test-support.js";
 import {
   MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
-  MANAGED_CLUSTER_MANAGED_LABEL,
   MANAGED_CLUSTER_TRANSACTION_LABEL,
   type ManagedClusterVllmPlan,
   type ManagedClusterVllmRole,
@@ -36,34 +38,6 @@ const PEER_CACHE_ROOT = "/home/spark/.cache/huggingface";
 type DockerCaptureOptions = NonNullable<
   Parameters<ManagedClusterVllmExecutorRuntimeDeps["dockerCapture"]>[1]
 >;
-
-type StoppedForeignContainerFixture = {
-  readonly signal: string;
-  readonly name: string;
-  readonly image: string;
-  readonly labels: Readonly<Record<string, string>>;
-};
-
-const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixture[] = [
-  {
-    signal: "name",
-    name: "foreign-vllm-server",
-    image: "example.invalid/inference:latest",
-    labels: {},
-  },
-  {
-    signal: "image",
-    name: "foreign-inference",
-    image: "vllm/vllm-openai:latest",
-    labels: {},
-  },
-  {
-    signal: "managed label",
-    name: "foreign-inference",
-    image: "example.invalid/inference:latest",
-    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
-  },
-];
 
 function bindPlan(fixture: ManagedVllmSshBindingFixture): ManagedClusterVllmPlan {
   const plan = fixtureManagedClusterPlan();

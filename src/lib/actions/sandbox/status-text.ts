@@ -345,6 +345,12 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(`  Sandbox: ${sb.name}`);
   console.log(`    Model:    ${currentModel}`);
   console.log(`    Provider: ${currentProvider}`);
+  if (sb.servingProfileProvenance) {
+    const provenance = sb.servingProfileProvenance;
+    console.log(`    Serving profile: ${provenance.preset.displayName} (${provenance.preset.id})`);
+    console.log(`    Serving recipe:  ${provenance.recipe.id}`);
+    console.log(`    Catalog digest:  ${provenance.catalogDigest}`);
+  }
   const reasoningEffort = getEffectiveReasoningEffort(sb);
   if (reasoningEffort) console.log(`    Reasoning effort: ${reasoningEffort}`);
   printInferenceRouteDrift(context.routeDrift, sb.name);

@@ -72,6 +72,9 @@ import {
   type HttpsPinCredentialProviderType,
   resolveHttpsPinCredentialHeader,
 } from "./https-pin-runtime";
+
+export { parseHttpsPinRouteId } from "./https-pin-runtime";
+
 import {
   describeForwardHttpError,
   ForwardHttpError,

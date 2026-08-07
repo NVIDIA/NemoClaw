@@ -16,7 +16,7 @@ import {
   buildRuntimeHistory,
   createRuntimeSummary,
   formatRuntimeHistory,
-  loadPriorNightlySummaries,
+  loadPriorPushSummaries,
   normalizeRuntimeSummary,
   RUNTIME_SUMMARY_ARTIFACT,
   RUNTIME_SUMMARY_FILE,
@@ -87,7 +87,7 @@ describe("E2E rolling runtime history", () => {
     expect(markdown).toContain("failed | 33%/67%/0% (1/2/0) | 3 |");
     expect(markdown).toContain("build Hermes image (3)");
     expect(markdown).toContain("⚠ total +70.0s (+63.6%); build Hermes image +55.0s (+84.6%)");
-    expect(markdown).toContain("### Nightly flake watch");
+    expect(markdown).toContain("### Push flake watch");
     expect(markdown).toContain(
       "| rebuild-hermes | rebuild Hermes from source | 4 | 1/3/0 | 75% | 1 | 3 | build Hermes image (3) |",
     );
@@ -132,7 +132,7 @@ describe("E2E rolling runtime history", () => {
     ];
 
     const flakeWatch = formatRuntimeHistory(current, prior).split(
-      "### Nightly flake watch\n",
+      "### Push flake watch\n",
     )[1] as string;
 
     for (let index = 0; index < 5; index += 1) {
@@ -156,7 +156,7 @@ describe("E2E rolling runtime history", () => {
         },
         [runtimeSample()],
         output,
-        { loadPriorNightlySummaries: vi.fn().mockRejectedValue(new Error("unavailable")) },
+        { loadPriorPushSummaries: vi.fn().mockRejectedValue(new Error("unavailable")) },
         new Date("2026-07-24T00:00:00.000Z"),
       );
 
@@ -196,7 +196,7 @@ describe("E2E rolling runtime history", () => {
         output,
         {
           currentFirstTurnLatency: firstTurnSample(true),
-          loadPriorNightlySummaries: vi.fn().mockResolvedValue(prior),
+          loadPriorPushSummaries: vi.fn().mockResolvedValue(prior),
         },
         new Date("2026-07-24T00:00:00.000Z"),
       );
@@ -239,12 +239,12 @@ describe("E2E rolling runtime history", () => {
     ).toBeNull();
   });
 
-  it("queries only prior completed scheduled runs and tolerates missing artifacts", async () => {
+  it("queries only prior completed push runs and tolerates missing artifacts", async () => {
     const listWorkflowRuns = vi.fn().mockResolvedValue({
       data: { workflow_runs: [{ id: 123 }, { id: 122 }] },
     });
     const paginate = vi.fn().mockResolvedValue([]);
-    const summaries = await loadPriorNightlySummaries({
+    const summaries = await loadPriorPushSummaries({
       context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
       github: {
         paginate,
@@ -261,7 +261,7 @@ describe("E2E rolling runtime history", () => {
     expect(summaries).toEqual([]);
     expect(listWorkflowRuns).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: "schedule",
+        event: "push",
         status: "completed",
         workflow_id: "e2e.yaml",
       }),
@@ -283,7 +283,7 @@ describe("E2E rolling runtime history", () => {
         ),
       ]),
     );
-    const loaded = await loadPriorNightlySummaries({
+    const loaded = await loadPriorPushSummaries({
       context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 999 },
       github: {
         paginate: vi.fn(
@@ -332,7 +332,7 @@ describe("E2E rolling runtime history", () => {
     const downloadArtifact = vi.fn().mockResolvedValue({
       data: artifactZip([{ name: RUNTIME_SUMMARY_FILE, contents: JSON.stringify(summary) }]),
     });
-    const summaries = await loadPriorNightlySummaries({
+    const summaries = await loadPriorPushSummaries({
       context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
       github: {
         paginate: vi

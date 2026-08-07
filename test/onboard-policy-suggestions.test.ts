@@ -525,6 +525,7 @@ describe("onboard policy preset suggestions", () => {
   it("keeps agent-specific policy presets out of the opposite agent selector", () => {
     const allPresets = [
       { name: "weather" },
+      { name: "brave" },
       { name: "openclaw-pricing" },
       { name: "openclaw-diagnostics-otel-local" },
       { name: "observability-otlp-local" },
@@ -539,6 +540,7 @@ describe("onboard policy preset suggestions", () => {
     ]);
     expect(filterSetupPolicyPresetsForAgent(allPresets, "openclaw").map((p) => p.name)).toEqual([
       "weather",
+      "brave",
       "openclaw-pricing",
       "openclaw-diagnostics-otel-local",
     ]);
