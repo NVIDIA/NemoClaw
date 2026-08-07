@@ -138,6 +138,7 @@ function socketAuthorityDeps(
   options: {
     directory?: boolean;
     directoryMode?: bigint;
+    onLstat?: () => void;
     socketInode?: () => bigint;
     socketMode?: bigint;
     socketUid?: bigint;
@@ -147,6 +148,7 @@ function socketAuthorityDeps(
   return {
     uid: 1001,
     lstat: (filePath) => {
+      options.onLstat?.();
       const socket = filePath === SOCKET_PATH;
       const directoryInode = directoryInodes.get(filePath) ?? BigInt(7000 + directoryInodes.size);
       directoryInodes.set(filePath, directoryInode);
@@ -337,13 +339,20 @@ describe("portable demo sandbox lifecycle", () => {
     const runtime = createPodman();
     installReceipt(stateDir, runtime.podman);
     runtime.podman.mockClear();
-    const hardenSocketDirectory = vi.fn();
+    const socketEvents: string[] = [];
+    const hardenSocketDirectory = vi.fn(() => socketEvents.push("harden"));
+    const podmanSocketAuthorityDeps = socketAuthorityDeps({
+      onLstat: () => socketEvents.push("capture"),
+    });
 
-    expect(resolveTarget(stateDir, runtime, { hardenSocketDirectory })).toMatchObject({
+    expect(
+      resolveTarget(stateDir, runtime, { hardenSocketDirectory, podmanSocketAuthorityDeps }),
+    ).toMatchObject({
       containerId: CONTAINER_ID,
       dockerHost: "unix:///run/user/1001/podman/podman.sock",
     });
     expect(hardenSocketDirectory).toHaveBeenCalledWith(SOCKET_PATH);
+    expect(socketEvents.slice(0, 2)).toEqual(["harden", "capture"]);
     expect(runtime.podman.mock.calls.map(([args]) => args)).toEqual([
       ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
       [
