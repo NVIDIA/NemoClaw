@@ -47,6 +47,7 @@ describe("native Podman CPU proof workflow", () => {
       "src/lib/onboard/experimental/portable-demo-lifecycle.ts",
     );
     expect(parsed.on.pull_request.paths).toContain("scripts/install-openshell.sh");
+    expect(parsed.on.pull_request.paths).toContain("test/e2e/live/podman-cpu-lifecycle-helpers.ts");
     expect(job.name).toBe("Rootless Podman CPU lifecycle with Docker disabled");
     expect(job["runs-on"]).toBe("ubuntu-26.04");
     expect(job["timeout-minutes"]).toBe(30);
