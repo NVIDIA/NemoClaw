@@ -9,6 +9,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import YAML from "yaml";
 
 import {
+  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
@@ -50,6 +51,7 @@ type ServerImageManifest = {
         gpu?: unknown;
         model?: unknown;
         platform?: unknown;
+        probeBounds?: unknown;
         probes?: unknown;
         profile?: unknown;
         recipeRef?: unknown;
@@ -332,6 +334,7 @@ export function loadLlamaCppImageConfig(
     "gpu",
     "model",
     "platform",
+    "probeBounds",
     "probes",
     "profile",
     "recipeRef",
@@ -439,7 +442,7 @@ export function loadLlamaCppImageConfig(
       fullOffload: true,
       vendor: "nvidia",
     }) ||
-    JSON.stringify(qualification?.probes) !== JSON.stringify(["health", "completion"])
+    JSON.stringify(qualification?.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
   ) {
     throw new Error("invalid llama.cpp image publication contract");
   }
@@ -536,6 +539,7 @@ export function loadLlamaCppImageConfig(
       id: qualificationModel?.id,
     },
     platform: qualification?.platform,
+    probeBounds: qualification?.probeBounds,
     probes: qualification?.probes,
     profile: qualification?.profile,
     recipeRef: qualificationRecipeRef,
@@ -669,7 +673,12 @@ export function loadLlamaCppImageConfig(
         revision: spec?.source?.revision,
       },
     },
+    qualification: {
+      probeBounds: qualification?.probeBounds,
+      probes: qualification?.probes,
+    },
     recipe: {
+      capabilities: recipe.spec.capabilities,
       id: recipe.metadata.id,
       model: {
         acquisition: {
