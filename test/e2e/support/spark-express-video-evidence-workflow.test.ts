@@ -82,6 +82,10 @@ describe("Spark Express video evidence workflow", () => {
     expect(step(record, "Prepare E2E workspace").uses).toBe(
       "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75",
     );
+    expect(record.env?.NEMOCLAW_SPARK_EVIDENCE_TIMELINE).toBe(
+      "${{ github.workspace }}/spark-express-video-work/spark-express-vllm.timeline.jsonl",
+    );
+    expect(JSON.stringify(record.env)).not.toContain("runner.temp");
     for (const variable of [
       "DOCKER_CONFIG",
       "DOCKERHUB_USERNAME",
@@ -152,9 +156,10 @@ describe("Spark Express video evidence workflow", () => {
       uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       with: {
         name: "spark-express-video-timeline",
-        path: "${{ runner.temp }}/spark-express-video-input",
+        path: "${{ github.workspace }}/spark-express-video-work/input",
       },
     });
+    expect(JSON.stringify(render.env)).not.toContain("runner.temp");
     const run = step(render, "Render sanitized Spark Express replay").run;
     expect(run).toContain("tools/e2e/spark-express-video-evidence.mts render");
     expect(run).toContain('--frames "$NEMOCLAW_SPARK_EVIDENCE_FRAMES"');

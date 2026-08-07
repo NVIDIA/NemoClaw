@@ -38,7 +38,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_SANDBOX_NAME: e2e-spark-express-vllm
-      NEMOCLAW_SPARK_EVIDENCE_TIMELINE: ${{ runner.temp }}/spark-express-vllm.timeline.jsonl
+      NEMOCLAW_SPARK_EVIDENCE_TIMELINE: ${{ github.workspace }}/spark-express-video-work/spark-express-vllm.timeline.jsonl
       OPENSHELL_GATEWAY: nemoclaw
     steps:
       - name: Validate protected Spark dispatch
@@ -137,10 +137,10 @@ jobs:
     permissions:
       contents: read
     env:
-      NEMOCLAW_SPARK_EVIDENCE_CONCAT: ${{ runner.temp }}/spark-express-video.ffconcat
-      NEMOCLAW_SPARK_EVIDENCE_FRAMES: ${{ runner.temp }}/spark-express-video-frames
-      NEMOCLAW_SPARK_EVIDENCE_INPUT: ${{ runner.temp }}/spark-express-video-input/spark-express-vllm.timeline.jsonl
-      NEMOCLAW_SPARK_EVIDENCE_OUTPUT: ${{ runner.temp }}/spark-express-video-output
+      NEMOCLAW_SPARK_EVIDENCE_CONCAT: ${{ github.workspace }}/spark-express-video-work/replay.ffconcat
+      NEMOCLAW_SPARK_EVIDENCE_FRAMES: ${{ github.workspace }}/spark-express-video-work/frames
+      NEMOCLAW_SPARK_EVIDENCE_INPUT: ${{ github.workspace }}/spark-express-video-work/input/spark-express-vllm.timeline.jsonl
+      NEMOCLAW_SPARK_EVIDENCE_OUTPUT: ${{ github.workspace }}/spark-express-video-work/output
     steps:
       - name: Checkout exact evidence renderer
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -152,7 +152,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: spark-express-video-timeline
-          path: ${{ runner.temp }}/spark-express-video-input
+          path: ${{ github.workspace }}/spark-express-video-work/input
 
       - name: Render sanitized Spark Express replay
         shell: bash
