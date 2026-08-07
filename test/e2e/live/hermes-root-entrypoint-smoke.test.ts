@@ -479,7 +479,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       "gateway.pid is stored as a regular file below the writable runtime directory",
       "gateway user cannot remove config.yaml from sticky config root",
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
-      "dashboard profile is sandbox-owned, and its allowlisted .env excludes API_SERVER_KEY",
+      "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
       "legacy gateway.pid symlink/state shape is repaired and booted",
       "legacy dashboard profile state is moved into profiles/dashboard-home",
     ],
