@@ -29,6 +29,11 @@ describe("banner boundary package contract", () => {
   it("renders through the generated boundary from both built package wrappers", async () => {
     const cli = await importBuilt("dist", "lib", "cli", "banner.js");
     const plugin = await importBuilt("nemoclaw", "dist", "banner.js");
+    const boundary = await importBuilt("nemoclaw", "dist", "shared", "banner-boundary.cjs");
+
+    // The plugin wrapper re-exports the boundary's own function, so a stale or
+    // reintroduced plugin-local renderer cannot execute.
+    expect(plugin.renderBox).toBe(boundary.renderBox);
 
     // The built CLI wrapper renders through the real compiled boundary. This
     // exact output matches the narrow-terminal case in the source banner tests.
