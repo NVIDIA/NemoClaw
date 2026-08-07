@@ -1405,11 +1405,15 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     );
   });
 
-  it("rejects a container whose configured host port is not the bound host port", () => {
+  it("cleans up a post-create host-port mismatch and lets recovery converge", () => {
+    const [fixture, store] = [dockerFixture(), journalStore()] as const;
     const lifecycle = createDockerLlamaCppManagedLifecycle(
-      options(dockerFixture(), journalStore(), { ...bindings(), hostPort: 18_081 }),
+      options(fixture, store, { ...bindings(), hostPort: 18_081 }),
     );
     expect(() => lifecycle.start(receiptWriter())).toThrow("not the bound host port");
+    expect(store.list()).toEqual([]);
+    expect(lifecycle.recoverUnfinished(receiptWriter())).toEqual({ recovered: [], failures: [] });
+    expect(controller(fixture, store).start(receiptWriter()).endpoint.port).toBe(LLAMA_CPP_PORT);
   });
 
   it("rejects effective hardening drift after creation (#8395)", () => {
