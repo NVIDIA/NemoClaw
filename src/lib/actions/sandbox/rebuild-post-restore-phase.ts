@@ -308,6 +308,7 @@ export async function runRebuildPostRestorePhase(
         "  Hermes cron dispatch remains drained because the replacement gateway was not verified.",
         "Hermes cron restore validation failed; dispatch was not re-enabled.",
         bail,
+        mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
       );
     }
     if (mcpBridgeRestoreUnverified) {

@@ -283,6 +283,39 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
+  it("repairs MCP before cron recovery when gateway verification also fails (#8472)", async () => {
+    agentName = "hermes";
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+    vi.mocked(
+      rebuildHermesPostRestore.ensureHermesGatewayAfterStateRestoreForCronGate,
+    ).mockReturnValue({ state: "unverified" });
+    const args = {
+      ...input(),
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).not.toHaveBeenCalled();
+    const mcpCall = vi
+      .mocked(console.log)
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha mcp restart"));
+    const recoverCall = vi
+      .mocked(console.error)
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha recover"));
+    expect(mcpCall).toBeGreaterThanOrEqual(0);
+    expect(recoverCall).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(console.log).mock.invocationCallOrder[mcpCall]).toBeLessThan(
+      vi.mocked(console.error).mock.invocationCallOrder[recoverCall] ?? 0,
+    );
+  });
+
   it("discloses carried-over baseline exclusions in the successful rebuild summary (#7194)", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
