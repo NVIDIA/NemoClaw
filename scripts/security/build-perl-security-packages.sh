@@ -38,6 +38,27 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
 
 (
   cd "${source_dir}"
+  # Test::Harness validates signal-result parsing by deliberately sending
+  # SIGSEGV to a child Perl process. Desktop crash reporters surface that
+  # expected child signal as a scary "process crash" notification during the
+  # otherwise healthy package build. Skip only that self-crash subtest; the
+  # rest of cpan/Test-Harness/t/harness.t still runs normally.
+  readonly test_harness_test='cpan/Test-Harness/t/harness.t'
+  readonly test_harness_tmp="${test_harness_test}.nemoclaw"
+  test "$(grep -Fc 'skip "No SIGSEGV on $^O", 1 if' "${test_harness_test}")" -eq 1
+  awk '
+    index($0, "skip \"No SIGSEGV on $^O\", 1 if") {
+      print "        skip \"NemoClaw package builds do not intentionally raise SIGSEGV\", 1;"
+      next
+    }
+    { print }
+  ' "${test_harness_test}" >"${test_harness_tmp}"
+  mv "${test_harness_tmp}" "${test_harness_test}"
+  test "$(
+    grep -Fxc \
+      '        skip "NemoClaw package builds do not intentionally raise SIGSEGV", 1;' \
+      "${test_harness_test}"
+  )" -eq 1
   # Pin the reviewed d_syscallproto result for trixie's libc so both native
   # architectures use the same known declaration instead of relying on a
   # Configure probe that previously returned a false negative under QEMU.
