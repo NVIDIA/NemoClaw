@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it } from "vitest";
+import { describe, it, onTestFinished } from "vitest";
 import {
   createOnboardProcessWorkspace,
   runOnboardProcess,
@@ -40,6 +40,7 @@ describe("onboard sandbox recreate reservation safety", () => {
     expectedRemoval,
   }) => {
     const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
+    onTestFinished(() => workspace.remove());
     const scriptPath = workspace.path("reservation-survives.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
