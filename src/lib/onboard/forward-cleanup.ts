@@ -65,12 +65,12 @@ export function bestEffortForwardStopForSandbox(
   sandboxName: string,
 ): "stopped" | "owned-other" | "no-entry" | "list-failed" {
   // A runner reports failure either by throwing or by returning null; both
-  // mean "list-failed" here. Neither may reach getOccupiedPorts, which parses
-  // an empty string into an empty map, so the "no-entry" branch below would
-  // still run the stop — exactly the collateral-damage case this helper
-  // exists to avoid. A runner that ignores the command failure itself must
-  // convert it to null, never to an empty string, which is indistinguishable
-  // from a genuinely empty forward list.
+  // mean "list-failed" here. Do not pass either result to getOccupiedPorts,
+  // which parses an empty string into an empty map, so the "no-entry" branch
+  // below would still run the stop against this sandbox's own live forward
+  // without any ownership evidence. A runner that ignores the command failure
+  // itself must convert it to null, never to an empty string, which is
+  // indistinguishable from a genuinely empty forward list.
   let listOutput: string | null = null;
   try {
     listOutput = runCaptureOpenshell(["forward", "list"], {

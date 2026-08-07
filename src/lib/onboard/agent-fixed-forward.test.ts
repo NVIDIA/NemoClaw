@@ -26,7 +26,7 @@ describe("ensureAgentFixedForward", () => {
     vi.clearAllMocks();
   });
 
-  it("runs no `forward stop` when the capture runner reports a failed forward list", () => {
+  it("skips the stop when the capture runner reports a failed `forward list` (#8522)", () => {
     const deps = makeDeps(() => null);
 
     const started = ensureAgentFixedForward(deps, "my-sandbox", 18789, "messaging webhook");
@@ -39,7 +39,7 @@ describe("ensureAgentFixedForward", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("runs a sandbox-scoped `forward stop` when the forward list is genuinely empty", () => {
+  it("runs a sandbox-scoped `forward stop` when the `forward list` is genuinely empty (#8522)", () => {
     const deps = makeDeps(() => "SANDBOX   BIND        PORT   PID    STATUS");
 
     const started = ensureAgentFixedForward(deps, "my-sandbox", 18789, "messaging webhook");
