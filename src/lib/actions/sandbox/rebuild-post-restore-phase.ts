@@ -22,6 +22,7 @@ import {
   ensureHermesGatewayAfterStateRestore,
   ensureHermesGatewayAfterStateRestoreForCronGate,
   type HermesCronRestoreIdentity,
+  isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
 } from "./rebuild-hermes-post-restore";
 import {
@@ -330,7 +331,7 @@ export async function runRebuildPostRestorePhase(
       );
     } catch (error) {
       const errorDetail = error instanceof Error ? error.message : String(error);
-      if (errorDetail.includes("drain release failed and its marker could not be restored")) {
+      if (isHermesCronRestoreDrainMarkerRollbackFailure(error)) {
         return bailAfterHermesCronRestoreFailure(
           sandboxName,
           backupManifest,

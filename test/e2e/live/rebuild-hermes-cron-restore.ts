@@ -602,7 +602,11 @@ export function createRebuildHermesCronRestoreFixture({
       expectExitZero(restoredScript, "read restored Hermes cron script");
       expect(restoredScript.stdout).toBe(seed.scriptContent);
       await assertControlMarker(false, "phase-7-verify-cron-restore-marker-released");
-      await waitForGatewayState("running", "phase-7-verify-gateway-running-after-cron-restore");
+      const liveGateway = await waitForGatewayState(
+        "running",
+        "phase-7-verify-gateway-running-after-cron-restore",
+      );
+      expect(released?.slice(1)).toEqual([String(liveGateway.pid), String(liveGateway.start_time)]);
       await assertExecutionMarkerAbsent(seed, "phase-7-verify-restored-cron-not-auto-executed");
 
       await runCronNow(seed, "phase-7-run-restored-hermes-cron-job");

@@ -16,11 +16,13 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE } from "../src/lib/actions/sandbox/rebuild-hermes-post-restore";
 import { validateHermesCronRestoreBackup } from "../src/lib/state/rebuild/hermes-cron-restore-backup";
 
 const HELPER = path.resolve("agents/hermes/cron-restore-control.py");
 const HOST_VALIDATOR = path.resolve("src/lib/state/rebuild/hermes-cron-restore-backup.ts");
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
+const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
 const LIFECYCLE_HARNESS = String.raw`
 import importlib.util
 import os
@@ -116,24 +118,26 @@ try:
     if scenario == "success":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
-        module.release_drain(41, 902, token)
+        module.recover_drain()
     elif scenario == "wrong-identity":
         token = module.begin_drain()
         module.validate_restore(42, 902, token)
     elif scenario == "missing-marker":
         token = module.begin_drain()
         module._marker_path().unlink()
-        module.release_drain(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "preserve-operator":
         drain.marker = {"principal": "operator"}
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
-        module.release_drain(41, 902, token)
+        module.recover_drain()
     elif scenario == "concurrent-operator":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         drain.marker = {"principal": "operator"}
-        module.release_drain(41, 902, token)
+        module.recover_drain()
     elif scenario == "existing-owned-marker":
         marker = module._marker_path()
         marker.write_text(
@@ -153,13 +157,13 @@ try:
         held = module.NEMOCLAW_HOME / "held-marker.json"
         marker.rename(held)
         marker.symlink_to(held.name)
-        module.release_drain(41, 902, token)
+        module.recover_drain()
     elif scenario == "hardlinked-owned-marker":
         token = module.begin_drain()
         marker = module._marker_path()
         held = module.NEMOCLAW_HOME / "held-marker.json"
         os.link(marker, held)
-        module.release_drain(41, 902, token)
+        module.recover_drain()
     elif scenario == "unsafe-lock-metadata":
         module.CONTROL_LOCK_PATH.write_text("unsafe", encoding="utf-8")
         os.chmod(module.CONTROL_LOCK_PATH, 0o644)
@@ -173,7 +177,9 @@ try:
             encoding="utf-8",
         )
         os.chmod(marker, 0o400)
-        module.release_drain(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "rollback-operator":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
@@ -181,7 +187,7 @@ try:
             drain.marker = {"principal": "operator"}
             raise module.ControlError("simulated reactivation failure")
         module._wait_for_release_disposition = fail_after_operator_drain
-        module.release_drain(41, 902, token)
+        module.recover_drain()
     elif scenario == "complete":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
@@ -236,6 +242,19 @@ try:
             raise module.ControlError("simulated replacement release failure")
         module._wait_for_release_disposition = fail_release
         module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "complete-release-rollback-failure":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.observe_replacement(41, 902, token)
+        def fail_release(*_args, **_kwargs):
+            raise module.ControlError("simulated replacement release failure")
+        def fail_rollback(*_args, **_kwargs):
+            raise module.ControlError("simulated marker rollback failure")
+        module._wait_for_release_disposition = fail_release
+        module._write_owned_drain = fail_rollback
+        module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "recover":
         module.begin_drain()
         status.payload["pid"] = 77
@@ -252,7 +271,7 @@ try:
     else:
         raise RuntimeError(f"unknown scenario: {scenario}")
 except module.ControlError as error:
-    print(str(error), file=sys.stderr)
+    module._emit_control_error(error)
     raise SystemExit(1)
 finally:
     print(f"OPERATOR_MUTATIONS:{drain.write_calls}:{drain.clear_calls}")
@@ -329,6 +348,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "complete-substitution"
       | "complete-release-substitution"
       | "complete-release-failure"
+      | "complete-release-rollback-failure"
       | "recover"
       | "recover-operator"
       | "recover-noop",
@@ -423,7 +443,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stderr).toContain("active job #1 script is not readable");
   });
 
-  it("pins one gateway identity across begin, validation, and release", () => {
+  it("pins one gateway identity across begin, validation, and recovery", () => {
     const result = runLifecycle("success");
 
     expect(result.stderr).toBe("");
@@ -432,7 +452,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
       .split("\n")
       .filter((line) => line.startsWith(RECEIPT_PREFIX))
       .map((line) => JSON.parse(line.slice(RECEIPT_PREFIX.length)));
-    expect(receipts.map((receipt) => receipt.action)).toEqual(["begin", "validate", "release"]);
+    expect(receipts.map((receipt) => receipt.action)).toEqual(["begin", "validate", "recover"]);
     expect(receipts.map((receipt) => receipt.disposition)).toEqual([
       "drain-acquired",
       "restore-validated",
@@ -624,6 +644,24 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("simulated replacement release failure");
     expect(result.stdout).toContain("OWN_MARKER:present");
+  });
+
+  it("emits the structured rollback-failure code when its marker cannot be restored (#8472)", () => {
+    const result = runLifecycle("complete-release-rollback-failure");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "HERMES_CRON_RESTORE_ERROR: Hermes cron restore drain release failed and its marker could not be restored",
+    );
+    const signals = result.stderr
+      .split(/\r?\n/u)
+      .filter((line) => line.startsWith(CONTROL_ERROR_PREFIX));
+    expect(signals).toHaveLength(1);
+    expect(JSON.parse(signals[0].slice(CONTROL_ERROR_PREFIX.length))).toEqual({
+      code: HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+      message: "Hermes cron restore drain release failed and its marker could not be restored",
+    });
+    expect(result.stdout).toContain("OWN_MARKER:absent");
   });
 
   it("re-pins a restarted gateway before validating and reactivating dispatch", () => {

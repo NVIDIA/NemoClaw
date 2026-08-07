@@ -73,6 +73,10 @@ describe("rebuild post-restore phase", () => {
       rebuildHermesPostRestore,
       "completeHermesCronRestoreAfterGatewayReplacement",
     ).mockReturnValue({ pid: 77, start_time: 903, drain_token: "restore-token" });
+    vi.spyOn(
+      rebuildHermesPostRestore,
+      "isHermesCronRestoreDrainMarkerRollbackFailure",
+    ).mockReturnValue(false);
     vi.spyOn(registry, "getSandbox").mockImplementation(
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
@@ -252,13 +256,17 @@ describe("rebuild post-restore phase", () => {
 
   it("reports unverified dispatch state when release marker rollback fails (#8472)", async () => {
     agentName = "hermes";
+    const rollbackFailure = new Error(
+      "Hermes cron complete failed: Hermes cron restore drain release failed and its marker could not be restored",
+    );
     vi.mocked(
       rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
     ).mockImplementation(() => {
-      throw new Error(
-        "Hermes cron complete failed: Hermes cron restore drain release failed and its marker could not be restored",
-      );
+      throw rollbackFailure;
     });
+    vi.mocked(
+      rebuildHermesPostRestore.isHermesCronRestoreDrainMarkerRollbackFailure,
+    ).mockImplementation((error) => error === rollbackFailure);
     const args = {
       ...input(),
       hermesCronRestoreIdentity: {
@@ -278,6 +286,9 @@ describe("rebuild post-restore phase", () => {
     expect(output).toContain("Dispatch gate state is unverified; run recovery immediately");
     expect(output).toContain("nemoclaw alpha recover");
     expect(output).not.toContain("dispatch was not re-enabled");
+    expect(
+      rebuildHermesPostRestore.isHermesCronRestoreDrainMarkerRollbackFailure,
+    ).toHaveBeenCalledWith(rollbackFailure);
   });
 
   it("keeps the gate active and repairs MCP before cron recovery (#8472)", async () => {

@@ -116,6 +116,30 @@ describe("binding the Hermes gateway to restored state", () => {
     expect(order).toEqual(["restart", "observe", "health", "observe"]);
   });
 
+  it("binds a recovered cron-gated gateway to its observed replacement identity (#8472)", () => {
+    const replacement = { pid: 77, start_time: 903, drain_token: "restore-token" };
+    const observeHermesCronReplacement = vi.fn(() => replacement);
+    const checkAndRecoverSandboxProcesses = vi
+      .fn()
+      .mockReturnValueOnce({ checked: true, wasRunning: false, recovered: true })
+      .mockReturnValueOnce({ checked: true, wasRunning: true, recovered: false });
+
+    expect(
+      ensureHermesGatewayAfterStateRestoreForCronGate(
+        "alpha",
+        "hermes",
+        { pid: 41, start_time: 902, drain_token: "restore-token" },
+        {
+          restartSandboxGateway: () => RESTART_FAILED,
+          observeHermesCronReplacement,
+          checkAndRecoverSandboxProcesses,
+        },
+      ),
+    ).toEqual({ state: "recovered", replacementIdentity: replacement });
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledTimes(2);
+    expect(observeHermesCronReplacement).toHaveBeenCalledTimes(3);
+  });
+
   it("fails closed when another gateway replaces the process during health verification (#8472)", () => {
     const observeHermesCronReplacement = vi
       .fn()

@@ -9,18 +9,14 @@ import * as processRecovery from "./process-recovery";
 const HERMES_CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
+const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
+export const HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE = "drain-marker-rollback-failed";
 const BEGIN_TIMEOUT_MS = 70_000;
 const CONTROL_TIMEOUT_MS = 25_000;
 const RECOVERY_TIMEOUT_MS = BEGIN_TIMEOUT_MS + CONTROL_TIMEOUT_MS * 2 + 10_000;
 const HERMES_GATEWAY_RECHECK_ATTEMPTS = 2;
 
-type HermesCronRestoreAction =
-  | "begin"
-  | "validate"
-  | "observe"
-  | "complete"
-  | "release"
-  | "recover";
+type HermesCronRestoreAction = "begin" | "validate" | "observe" | "complete" | "recover";
 type HermesCronRestoreDisposition =
   | "drain-acquired"
   | "restore-validated"
@@ -317,18 +313,6 @@ function parseCronRestoreReceipt(
         receipt.active_agents === 0 &&
         hasExactReceiptFields(receipt, [...baseFields, ...tokenFields, "active_agents"]);
       break;
-    case "release":
-      actionValid =
-        receipt.drain_acquired === true &&
-        receipt.active_agents === 0 &&
-        isReleaseDispositionValid(receipt) &&
-        hasExactReceiptFields(receipt, [
-          ...baseFields,
-          ...tokenFields,
-          "active_agents",
-          "preserved_drain",
-        ]);
-      break;
     case "complete":
       actionValid =
         receipt.drain_acquired === true &&
@@ -379,15 +363,59 @@ function parseCronRestoreReceipt(
   return receipt as unknown as HermesCronRestoreReceipt;
 }
 
-class HermesCronRestoreControlFailure extends Error {
-  constructor(
-    action: HermesCronRestoreAction,
-    readonly stderr: string,
+function parseCronRestoreControlError(stderr: string): { code: string; message: string } | null {
+  const signalLines = stderr
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(CONTROL_ERROR_PREFIX));
+  if (signalLines.length !== 1) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(signalLines[0].slice(CONTROL_ERROR_PREFIX.length));
+  } catch {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const signal = payload as Record<string, unknown>;
+  if (
+    !hasExactReceiptFields(signal, ["code", "message"]) ||
+    typeof signal.code !== "string" ||
+    signal.code.length === 0 ||
+    typeof signal.message !== "string" ||
+    signal.message.length === 0
   ) {
-    const detail = stderr.trim().split(/\r?\n/u).at(-1);
+    return null;
+  }
+  return { code: signal.code, message: signal.message };
+}
+
+class HermesCronRestoreControlFailure extends Error {
+  readonly action: HermesCronRestoreAction;
+  readonly stderr: string;
+  readonly controlCode?: string;
+
+  constructor(action: HermesCronRestoreAction, stderr: string) {
+    const controlError = parseCronRestoreControlError(stderr);
+    const detail =
+      controlError?.message ??
+      stderr
+        .trim()
+        .split(/\r?\n/u)
+        .filter((line) => !line.startsWith(CONTROL_ERROR_PREFIX))
+        .at(-1);
     super(`Hermes cron ${action} failed${detail ? `: ${detail}` : ""}`);
     this.name = "HermesCronRestoreControlFailure";
+    this.action = action;
+    this.stderr = stderr;
+    this.controlCode = controlError?.code;
   }
+}
+
+export function isHermesCronRestoreDrainMarkerRollbackFailure(error: unknown): boolean {
+  return (
+    error instanceof HermesCronRestoreControlFailure &&
+    error.action === "complete" &&
+    error.controlCode === HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE
+  );
 }
 
 function runCronRestoreControl(
@@ -455,20 +483,6 @@ export function validateHermesCronRestore(
     receipt.drain_token !== identity.drain_token
   ) {
     throw new Error("Hermes cron validate receipt changed gateway identity");
-  }
-}
-
-export function releaseHermesCronRestore(
-  sandboxName: string,
-  identity: HermesCronRestoreIdentity,
-): void {
-  const receipt = runCronRestoreControl(sandboxName, "release", identity);
-  if (
-    receipt.pid !== identity.pid ||
-    receipt.start_time !== identity.start_time ||
-    receipt.drain_token !== identity.drain_token
-  ) {
-    throw new Error("Hermes cron release receipt changed gateway identity");
   }
 }
 

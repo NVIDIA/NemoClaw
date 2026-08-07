@@ -30,14 +30,16 @@ vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
 import {
   beginHermesCronRestore,
   completeHermesCronRestoreAfterGatewayReplacement,
+  HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+  isHermesCronRestoreDrainMarkerRollbackFailure,
   observeHermesCronReplacement,
   recoverHermesCronRestore,
-  releaseHermesCronRestore,
   runHermesCronRestoreTransaction,
   validateHermesCronRestore,
 } from "./rebuild-hermes-post-restore";
 
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
+const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
 
 function writeJson(target: string, payload: unknown): void {
   mkdirSync(path.dirname(target), { recursive: true });
@@ -49,7 +51,7 @@ function writeScript(target: string): void {
   writeFileSync(target, "print('ok')\n", { mode: 0o600 });
 }
 
-type ReceiptAction = "begin" | "validate" | "observe" | "complete" | "release" | "recover";
+type ReceiptAction = "begin" | "validate" | "observe" | "complete" | "recover";
 
 function receipt(
   action: ReceiptAction,
@@ -85,12 +87,6 @@ function receipt(
       profiles: 1,
       script_jobs: 1,
     },
-    release: {
-      active_agents: 0,
-      disposition: "dispatch-reactivated",
-      operator_drain_active: false,
-      preserved_drain: false,
-    },
     recover: {
       active_agents: 0,
       active_jobs: 1,
@@ -111,6 +107,20 @@ function receipt(
     ...actionFields[action],
     ...overrides,
   })}`;
+}
+
+function completionFailure(stderr: string): unknown {
+  processMocks.dockerSpawnSync.mockReturnValue({ status: 1, stdout: "", stderr });
+  try {
+    completeHermesCronRestoreAfterGatewayReplacement(
+      "alpha",
+      { pid: 41, start_time: 902, drain_token: "restore-token" },
+      { pid: 77, start_time: 903, drain_token: "restore-token" },
+    );
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Hermes cron completion unexpectedly succeeded");
 }
 
 function notRequiredRecoveryReceipt(overrides: Record<string, unknown> = {}): string {
@@ -190,22 +200,17 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it("binds validation and release to the begin receipt identity", () => {
+  it("binds validation to the begin receipt identity", () => {
     processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => {
-      const action = argv.includes("validate")
-        ? "validate"
-        : argv.includes("release")
-          ? "release"
-          : "begin";
+      const action = argv.includes("validate") ? "validate" : "begin";
       return { status: 0, stdout: receipt(action), stderr: "" };
     });
 
     const identity = beginHermesCronRestore("alpha");
     validateHermesCronRestore("alpha", identity);
-    releaseHermesCronRestore("alpha", identity);
 
     expect(identity).toEqual({ pid: 41, start_time: 902, drain_token: "restore-token" });
-    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledTimes(3);
+    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledTimes(2);
     expect(processMocks.privilegedSandboxExecArgv.mock.calls[1]?.[1]).toEqual([
       "/opt/hermes/.venv/bin/python",
       "-I",
@@ -218,7 +223,6 @@ describe("Hermes cron rebuild restore contract", () => {
       "--drain-token",
       "restore-token",
     ]);
-    expect(processMocks.privilegedSandboxExecArgv.mock.calls[2]?.[1]).toContain("release");
   });
 
   it("passes an untrusted drain token as one argv value", () => {
@@ -234,18 +238,6 @@ describe("Hermes cron rebuild restore contract", () => {
 
     const validateArgv = processMocks.privilegedSandboxExecArgv.mock.calls[1]?.[1];
     expect(validateArgv?.at(-1)).toBe(untrustedToken);
-  });
-
-  it("rejects a control receipt that changes gateway identity", () => {
-    processMocks.dockerSpawnSync.mockReturnValue({
-      status: 0,
-      stdout: receipt("release", 42, 902),
-      stderr: "",
-    });
-
-    expect(() => releaseHermesCronRestore("alpha", { pid: 41, start_time: 902 })).toThrow(
-      "changed gateway identity",
-    );
   });
 
   it("keeps dispatch drained when state restore is incomplete", () => {
@@ -265,11 +257,7 @@ describe("Hermes cron rebuild restore contract", () => {
   it("keeps dispatch held after restore validation until gateway replacement (#8472)", () => {
     const events: string[] = [];
     processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => {
-      const action = argv.includes("validate")
-        ? "validate"
-        : argv.includes("release")
-          ? "release"
-          : "begin";
+      const action = argv.includes("validate") ? "validate" : "begin";
       events.push(action);
       return { status: 0, stdout: receipt(action), stderr: "" };
     });
@@ -365,7 +353,7 @@ describe("Hermes cron rebuild restore contract", () => {
     expect(processMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
 
-  it("rejects a replacement observation with a different drain token (#8472)", () => {
+  it("rejects completion when the replacement carries a different drain token (#8472)", () => {
     expect(() =>
       completeHermesCronRestoreAfterGatewayReplacement(
         "alpha",
@@ -374,6 +362,32 @@ describe("Hermes cron rebuild restore contract", () => {
       ),
     ).toThrow("changed the held drain token");
     expect(processMocks.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it("classifies the structured drain-marker rollback failure (#8472)", () => {
+    const message = "Hermes cron restore drain release failed and its marker could not be restored";
+    const failure = completionFailure(
+      [
+        `HERMES_CRON_RESTORE_ERROR: ${message}`,
+        `${CONTROL_ERROR_PREFIX}${JSON.stringify({
+          code: HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+          message,
+        })}`,
+      ].join("\n"),
+    );
+
+    expect(isHermesCronRestoreDrainMarkerRollbackFailure(failure)).toBe(true);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(message);
+  });
+
+  it("does not classify matching prose without the structured failure code (#8472)", () => {
+    const message = "Hermes cron restore drain release failed and its marker could not be restored";
+    const failure = completionFailure(`HERMES_CRON_RESTORE_ERROR: ${message}`);
+
+    expect(isHermesCronRestoreDrainMarkerRollbackFailure(failure)).toBe(false);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(message);
   });
 
   it("rejects completion while replacement agents are still active (#8472)", () => {

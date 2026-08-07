@@ -33,6 +33,9 @@ NEMOCLAW_HOME = SANDBOX_HOME / ".nemoclaw"
 CONTROL_LOCK_PATH = Path("/run/nemoclaw/hermes-cron-restore-control.lock")
 CONTROL_MARKER_NAME = "hermes-cron-restore-drain.json"
 RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:"
+CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:"
+CONTROL_ERROR_CODE = "control-failure"
+DRAIN_MARKER_ROLLBACK_FAILED_CODE = "drain-marker-rollback-failed"
 BEGIN_TIMEOUT_SECONDS = 60.0
 RELEASE_TIMEOUT_SECONDS = 15.0
 POLL_SECONDS = 0.1
@@ -44,6 +47,24 @@ ROOT_GID = 0
 
 class ControlError(RuntimeError):
     """Expected fail-closed control or validation error."""
+
+    def __init__(self, message: str, *, code: str = CONTROL_ERROR_CODE) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _emit_control_error(error: ControlError) -> None:
+    """Write the stable control signal after the existing human-readable error."""
+    print(f"HERMES_CRON_RESTORE_ERROR: {error}", file=sys.stderr)
+    print(
+        CONTROL_ERROR_PREFIX
+        + json.dumps(
+            {"code": error.code, "message": str(error)},
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+    )
 
 
 def _marker_path() -> Path:
@@ -496,7 +517,8 @@ def _complete_release(
             _write_owned_drain(drain_token)
         except ControlError as rollback_error:
             raise ControlError(
-                "Hermes cron restore drain release failed and its marker could not be restored"
+                "Hermes cron restore drain release failed and its marker could not be restored",
+                code=DRAIN_MARKER_ROLLBACK_FAILED_CODE,
             ) from rollback_error
         if isinstance(release_error, ControlError):
             raise release_error
@@ -554,21 +576,6 @@ def validate_restore(pid: int, start_time: int, drain_token: str) -> None:
             disposition="restore-validated",
             operator_drain_active=_operator_drain_active(drain_control),
             **counts,
-        )
-
-
-def release_drain(pid: int, start_time: int, drain_token: str) -> None:
-    with _control_lock():
-        drain_control, status_module = _load_gateway_modules()
-        _require_owned_drain(drain_token)
-        _require_drained_idle(status_module, pid, start_time)
-        _complete_release(
-            "release",
-            drain_control,
-            status_module,
-            pid=pid,
-            start_time=start_time,
-            drain_token=drain_token,
         )
 
 
@@ -677,7 +684,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="action", required=True)
     subparsers.add_parser("begin")
     subparsers.add_parser("recover")
-    for action in ("validate", "observe", "complete", "release"):
+    for action in ("validate", "observe", "complete"):
         subparser = subparsers.add_parser(action)
         subparser.add_argument("--pid", required=True, type=int)
         subparser.add_argument("--start-time", required=True, type=int)
@@ -712,13 +719,11 @@ def main() -> int:
                 args.replacement_start_time,
                 args.drain_token,
             )
-        elif args.action == "release":
-            release_drain(args.pid, args.start_time, args.drain_token)
         else:
             counts = validate_cron_tree(args.home, args.sandbox_home)
             print(json.dumps(counts, separators=(",", ":"), sort_keys=True))
     except ControlError as error:
-        print(f"HERMES_CRON_RESTORE_ERROR: {error}", file=sys.stderr)
+        _emit_control_error(error)
         return 1
     return 0
 
