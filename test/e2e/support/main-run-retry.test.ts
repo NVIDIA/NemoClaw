@@ -92,7 +92,7 @@ async function evaluate(options: { attempt: number; conclusion: string; latestRu
 }
 
 describe("main E2E retry controller", () => {
-  it.each([1, 2])("requests retry %s before the attempt limit", async (attempt) => {
+  it.each([1, 2])("requests failed-job rerun after attempt %s fails", async (attempt) => {
     const { evidence, requests } = await evaluate({ attempt, conclusion: "failure" });
 
     expect(E2E_MAX_RETRIES).toBe(2);
@@ -106,6 +106,11 @@ describe("main E2E retry controller", () => {
       method: "POST",
       path: `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun-failed-jobs`,
     });
+    expect(
+      requests.some(
+        (request) => request.path === `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun`,
+      ),
+    ).toBe(false);
   });
 
   it("stops after the third failed attempt", async () => {
