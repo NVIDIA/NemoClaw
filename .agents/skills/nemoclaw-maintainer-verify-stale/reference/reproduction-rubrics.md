@@ -70,9 +70,9 @@ For functional bugs, the reproducer's standard output is sufficient. For log-onl
 
 **Intermittent-result retry.** For `functional` bugs, race-prone reproducers can produce inconsistent results. Run the reported-release reproducer three times when the first results disagree. Use the same script and environment for each run:
 
-| 3-run baseline result | Verdict |
+| Three-run reported-release result | Verdict |
 |---|---|
-| All three reproduce the symptom | Strong baseline match → continue to 8d |
+| All three reproduce the symptom | All three reported-release runs match → continue to 8d |
 | None of the three show the symptom | Reproducer does not expose the bug on the reported release → Step 8c revision |
 | One or two runs show the symptom | Intermittent reproducer. State that result in the comment; use `+25` instead of the normal `+50` newest-release signal because one result without the symptom does not establish a fix |
 

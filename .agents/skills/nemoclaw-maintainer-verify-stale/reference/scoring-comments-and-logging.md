@@ -143,20 +143,23 @@ The helper implements the patterns below in this order. Update the helper and it
 8.  (?i)^(\s*(?:[><*]\s*)?)(authorization|proxy-authorization|cookie|set-cookie):[^\n]*
     → HTTP authentication and session headers, including curl verbose prefixes
 
-9.  URLs containing `@` before the host (e.g., https://user:pw@host/...)
+9.  (?i)(\bBearer\s+)\S+
+    → Standalone bearer credentials
+
+10. URLs containing `@` before the host, such as `https://user:pw@host/`
     → Basic-auth credentials in URLs
 
-10. (?i)(token|secret|password|api[_-]?key|bearer)[^\n]*[:=][^\n]*
-    → Inline credentials in env/config/log output
+11. (?i)(token|secret|password|api[_-]?key|bearer)[^\n]*[:=][^\n]*
+    → Inline credentials in environment, configuration, and log output
 
-11. \b\w+\.(nvidia\.internal|nv-internal\.com|nvidia\.dev)\b
-    → Internal hostnames (extend list per team)
+12. \b\w+\.(nvidia\.internal|nv-internal\.com|nvidia\.dev)\b
+    → Internal hostnames
 
-12. [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
-    → Email addresses (PII)
+13. [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+    → Email addresses
 
-13. \b[A-Za-z0-9+/]{60,}={0,2}\b
-    → Long base64 blobs (likely keys/sessions; tune length to taste — too short hits legit data)
+14. \b[A-Za-z0-9+/]{60,}={0,2}\b
+    → Long base64 blobs that can contain credentials or session data
 ```
 
 **File paths under the reporter's home directory** (`/Users/<name>/`, `/home/<name>/`) → replace with `~/`. Run last; catches incidental username PII.

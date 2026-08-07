@@ -289,38 +289,109 @@ Without the reported-release result, a newest-release result without the symptom
 
 NemoClaw starts OpenShell sandboxes, runtime services, and listening processes. `rm -rf ~/.nemoclaw` does not remove those resources. Without the reset below, the newest-release install would inherit reported-release state and invalidate the comparison.
 
+The approval plan must name these reset effects before either install: registered sandboxes, containers whose names start with `openshell-` or `nemoclaw-`, processes whose paths contain `/nemoclaw` or `/openshell`, TCP ports `8080`, `18789`, and `9119`, user state directories, and system install paths.
+
 ```bash
 RESET=$(cat <<'SCRIPT'
+set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
-if command -v nemoclaw >/dev/null 2>&1; then
-  nemoclaw list --json 2>/dev/null \
-    | python3 -c 'import json,sys; [print(item["name"]) for item in json.load(sys.stdin).get("sandboxes", [])]' \
-    | while IFS= read -r sandbox; do
-        nemoclaw "$sandbox" destroy --force --cleanup-gateway 2>/dev/null || true
-      done
-fi
-# Anchor pkill patterns to "/nemoclaw" / "/openshell" path components so the kill doesn't
-# match unrelated processes that happen to mention these strings (including the agent
-# harness running this skill if its working dir contains the word).
-pkill -9 -f '/nemoclaw([[:space:]]|$)' 2>/dev/null || true
-pkill -9 -f '/openshell([[:space:]]|$)' 2>/dev/null || true
-docker ps -a --filter "name=openshell-" -q 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
-docker ps -a --filter "name=nemoclaw-" -q 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
-# Remove CLI, runtime, and OpenShell configuration only after the registered
-# sandboxes, gateway processes, and containers above have been retired.
-rm -rf ~/.nemoclaw ~/.openclaw ~/.hermes ~/.config/nemoclaw ~/.config/openshell 2>/dev/null
-rm -rf ~/.verify-stale-running 2>/dev/null
-sudo -n rm -f /usr/local/bin/nemoclaw 2>/dev/null || true
-sudo -n rm -rf /usr/local/lib/nemoclaw 2>/dev/null || true
-for port in 8080 18789 9119; do fuser -k -n tcp $port 2>/dev/null || true; done
-true
+
+for command in python3 docker pkill pgrep fuser; do
+  command -v "$command" >/dev/null 2>&1 || { echo "ERROR: reset requires $command"; exit 1; }
+done
+
+sandbox_names() {
+  if ! command -v nemoclaw >/dev/null 2>&1; then
+    return 0
+  fi
+  nemoclaw list --json \
+    | python3 -c 'import json,sys; [print(item["name"]) for item in json.load(sys.stdin).get("sandboxes", [])]'
+}
+
+SANDBOXES=$(sandbox_names)
+while IFS= read -r sandbox; do
+  [ -z "$sandbox" ] || nemoclaw "$sandbox" destroy --force --cleanup-gateway
+done <<<"$SANDBOXES"
+[ -z "$(sandbox_names)" ] || { echo "ERROR: registered sandboxes remain after reset"; exit 1; }
+
+kill_process_pattern() {
+  local pattern=$1 status
+  if pkill -9 -f "$pattern" 2>/dev/null; then
+    return 0
+  else
+    status=$?
+    [ "$status" -eq 1 ] || return "$status"
+  fi
+}
+assert_process_absent() {
+  local pattern=$1 status
+  if pgrep -f "$pattern" >/dev/null 2>&1; then
+    echo "ERROR: process remains after reset: $pattern"
+    return 1
+  else
+    status=$?
+    [ "$status" -eq 1 ] || return "$status"
+  fi
+}
+
+kill_process_pattern '/nemoclaw([[:space:]]|$)'
+kill_process_pattern '/openshell([[:space:]]|$)'
+
+for prefix in openshell- nemoclaw-; do
+  CONTAINERS=$(docker ps -a --filter "name=$prefix" -q)
+  [ -z "$CONTAINERS" ] || docker rm -f $CONTAINERS >/dev/null
+  [ -z "$(docker ps -a --filter "name=$prefix" -q)" ] \
+    || { echo "ERROR: $prefix containers remain after reset"; exit 1; }
+done
+
+# Delete state only after sandbox, process, and container cleanup succeeds.
+for path in \
+  "$HOME/.nemoclaw" \
+  "$HOME/.openclaw" \
+  "$HOME/.hermes" \
+  "$HOME/.config/nemoclaw" \
+  "$HOME/.config/openshell" \
+  "$HOME/.verify-stale-running"; do
+  rm -rf -- "$path"
+done
+
+sudo -n rm -f /usr/local/bin/nemoclaw
+sudo -n rm -rf /usr/local/lib/nemoclaw
+
+for port in 8080 18789 9119; do
+  if fuser -k -n tcp "$port" >/dev/null 2>&1; then
+    :
+  else
+    status=$?
+    [ "$status" -eq 1 ] || exit "$status"
+  fi
+  if fuser -n tcp "$port" >/dev/null 2>&1; then
+    echo "ERROR: TCP port $port remains in use after reset"
+    exit 1
+  fi
+done
+
+[ -z "$(sandbox_names)" ] || { echo "ERROR: registered sandboxes remain after verification"; exit 1; }
+assert_process_absent '/nemoclaw([[:space:]]|$)'
+assert_process_absent '/openshell([[:space:]]|$)'
+for path in \
+  "$HOME/.nemoclaw" \
+  "$HOME/.openclaw" \
+  "$HOME/.hermes" \
+  "$HOME/.config/nemoclaw" \
+  "$HOME/.config/openshell" \
+  "$HOME/.verify-stale-running"; do
+  [ ! -e "$path" ] || { echo "ERROR: state remains after reset: $path"; exit 1; }
+done
+sudo -n test ! -e /usr/local/bin/nemoclaw
+sudo -n test ! -e /usr/local/lib/nemoclaw
 SCRIPT
 )
 ```
 
-Idempotent — fails silently when there's nothing to clean. Run via `run_bounded brev exec "$INSTANCE_NAME" "$RESET"` before 8a's install and again before 8d's install.
+Run the reset through `run_bounded brev exec "$INSTANCE_NAME" "$RESET"` before each install. A missing resource satisfies its acceptance criterion. A present resource that cannot be removed, or a failed post-reset check, is an infrastructure failure and stops the verification.
 
-**Sudo precondition.** All `sudo` invocations use `sudo -n` (non-interactive) so they fail fast instead of hanging on a password prompt. The skill assumes the Brev image's default user has passwordless sudo configured — Brev's stock images do; custom images may not. If `sudo -n` fails, the binary cleanup is best-effort and a stale `/usr/local/bin/nemoclaw` may persist. The user-local install path (`~/.nemoclaw`) is fully reset regardless.
+**Sudo precondition.** System-path removal uses `sudo -n` so a password prompt cannot hang the run. If passwordless sudo is unavailable or a system install path remains, the reset fails and the workflow follows the infrastructure-failure branch.
 
 ### Step 8a: Install reported version
 
@@ -446,7 +517,7 @@ run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s ollama lis
 ```
 
 ```bash
-# vLLM + a model (HuggingFace-hosted).
+# vLLM + a model hosted by Hugging Face.
 BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
 run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s python3 -m pip install --quiet 'vllm==<version reported by the issue>'" || exit 1
 BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1

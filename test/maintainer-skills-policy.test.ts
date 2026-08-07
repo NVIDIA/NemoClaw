@@ -409,6 +409,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
       root,
       ".agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py",
     );
+    const standaloneBearer = `opaque-${"h".repeat(40)}`;
+
     const sensitive = [
       "ordinary diagnostic line",
       `github_pat_${"a".repeat(30)}`,
@@ -417,6 +419,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
       `> Authorization: Basic ${"e".repeat(40)}`,
       `* Proxy-Authorization: Bearer ${"f".repeat(40)}`,
       `< Set-Cookie: session=${"g".repeat(40)}`,
+
+      `request failed with Bearer ${standaloneBearer}`,
       `OPENAI_API_KEY=sk-proj-${"d".repeat(30)}`,
       "reporter@example.com",
       "/Users/reporter/private/output.log",
@@ -428,10 +432,12 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(redacted.stdout).toContain("[REDACTED]");
     for (const secret of [
       "github_pat_",
-      "Bearer",
+      `Bearer ${"b".repeat(40)}`,
       "session=",
       `Basic ${"e".repeat(40)}`,
       `Bearer ${"f".repeat(40)}`,
+
+      standaloneBearer,
       "sk-proj-",
       "reporter@example.com",
       "/Users/reporter/",

@@ -42,6 +42,11 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         rf"\1\2: {REDACTED}",
     ),
+
+    (
+        re.compile(r"(\bBearer\s+)\S+", re.IGNORECASE),
+        rf"\1{REDACTED}",
+    ),
     (
         re.compile(r"\b(https?://)[^\s/@]+(?::[^\s/@]*)?@", re.IGNORECASE),
         rf"\1{REDACTED}@",
