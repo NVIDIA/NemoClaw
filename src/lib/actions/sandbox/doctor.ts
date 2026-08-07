@@ -20,9 +20,9 @@ import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderSelectionError,
   requireRuntimeProviderBundle,
   resolveCurrentRuntimeProviderBundle,
-  RuntimeProviderSelectionError,
 } from "../../onboard/runtime-provider/access";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
@@ -40,6 +40,7 @@ import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import {
   collectInferenceChecks,
+  collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
@@ -544,6 +545,7 @@ async function collectDoctorChecks(
     })),
     ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
     ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
+    ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
   ];

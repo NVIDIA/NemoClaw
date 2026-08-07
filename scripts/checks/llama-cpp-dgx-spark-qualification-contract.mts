@@ -33,6 +33,8 @@ export const LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE =
   "docker.io/nvidia/cuda@sha256:ef2203909e80b8b976cfc672f7e2ae2b00bc0e25c404ee86d89e10a3802f1c52" as const;
 export const LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE =
   "docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e" as const;
+export const LLAMA_CPP_DGX_SPARK_TOOL_IMAGE =
+  "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2" as const;
 export const LLAMA_CPP_DGX_SPARK_MINIMUM_DRIVER_VERSION = "580.65.06" as const;
 
 export const LLAMA_CPP_DGX_SPARK_SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -114,6 +116,9 @@ export type LlamaCppDgxSparkExecutionPlan = {
   readonly recipe: {
     readonly id: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE;
     readonly model: {
+      readonly acquisition: {
+        readonly downloaderImage: typeof LLAMA_CPP_DGX_SPARK_TOOL_IMAGE;
+      };
       readonly file: {
         readonly digest: typeof LLAMA_CPP_DGX_SPARK_MODEL_DIGEST;
         readonly format: "gguf";
@@ -134,6 +139,7 @@ export type LlamaCppDgxSparkExecutionPlan = {
     readonly readiness: {
       readonly contractRef: "llama-cpp.server-readiness/v1";
       readonly expectedModel: typeof LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID;
+      readonly probeImage: typeof LLAMA_CPP_DGX_SPARK_TOOL_IMAGE;
       readonly probes: {
         readonly health: true;
         readonly metrics: true;
@@ -143,6 +149,7 @@ export type LlamaCppDgxSparkExecutionPlan = {
       readonly timeoutSeconds: number;
     };
     readonly runtime: {
+      readonly restartPolicy: "unless-stopped";
       readonly cuda: {
         readonly baseImage: typeof LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE;
         readonly minimumDriverVersion: string;
@@ -171,9 +178,6 @@ export type LlamaCppDgxSparkExecutionPlan = {
         readonly value: "f16" | "q8_0" | "q4_0";
       };
       readonly limits: {
-        readonly maxCompletionTokens: number;
-        readonly maxPromptTokens: number;
-        readonly maxRequestBodyBytes: number;
         readonly requestTimeoutSeconds: number;
       };
       readonly microBatchSize: number;
@@ -524,8 +528,17 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   const model = record(recipe.model, "compiled qualification recipe model");
   requireExactKeys(
     model,
-    ["file", "id", "revision", "servedName"],
+    ["acquisition", "file", "id", "revision", "servedName"],
     "compiled qualification recipe model",
+  );
+  const modelAcquisition = record(
+    model.acquisition,
+    "compiled qualification recipe model acquisition",
+  );
+  requireExactKeys(
+    modelAcquisition,
+    ["downloaderImage"],
+    "compiled qualification recipe model acquisition",
   );
   const modelFile = record(model.file, "compiled qualification recipe model file");
   requireExactKeys(
@@ -540,6 +553,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   );
   if (
     recipe.id !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE ||
+    modelAcquisition.downloaderImage !== LLAMA_CPP_DGX_SPARK_TOOL_IMAGE ||
     model.id !== LLAMA_CPP_DGX_SPARK_MODEL_ID ||
     model.revision !== "9ad8b366c308f931b2a96b9306f0b41aef9cd405" ||
     model.servedName !== LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID ||
@@ -569,7 +583,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   const readiness = record(recipe.readiness, "compiled qualification recipe readiness");
   requireExactKeys(
     readiness,
-    ["contractRef", "expectedModel", "probes", "timeoutSeconds"],
+    ["contractRef", "expectedModel", "probeImage", "probes", "timeoutSeconds"],
     "compiled qualification recipe readiness",
   );
   const readinessProbes = record(readiness.probes, "compiled qualification readiness probes");
@@ -587,6 +601,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   if (
     readiness.contractRef !== "llama-cpp.server-readiness/v1" ||
     readiness.expectedModel !== LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID ||
+    readiness.probeImage !== LLAMA_CPP_DGX_SPARK_TOOL_IMAGE ||
     readinessProbes.health !== true ||
     readinessProbes.metrics !== true ||
     readinessProbes.models !== true ||
@@ -598,7 +613,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   const recipeRuntime = record(recipe.runtime, "compiled qualification recipe runtime");
   requireExactKeys(
     recipeRuntime,
-    ["cuda", "gpu", "resources"],
+    ["cuda", "gpu", "resources", "restartPolicy"],
     "compiled qualification recipe runtime",
   );
   const recipeCuda = record(recipeRuntime.cuda, "compiled qualification recipe CUDA");
@@ -638,6 +653,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     4096,
   );
   if (
+    recipeRuntime.restartPolicy !== "unless-stopped" ||
     recipeCuda.baseImage !== LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE ||
     typeof recipeCuda.minimumDriverVersion !== "string" ||
     !LLAMA_CPP_DGX_SPARK_DRIVER_PATTERN.test(recipeCuda.minimumDriverVersion) ||
@@ -690,29 +706,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   requireExactKeys(kvCache, ["key", "value"], "compiled qualification KV cache");
   const allowedKvTypes = new Set(["f16", "q8_0", "q4_0"]);
   const limits = record(serve.limits, "compiled qualification request limits");
-  requireExactKeys(
-    limits,
-    ["maxCompletionTokens", "maxPromptTokens", "maxRequestBodyBytes", "requestTimeoutSeconds"],
-    "compiled qualification request limits",
-  );
-  const maxPromptTokens = boundedInteger(
-    limits.maxPromptTokens,
-    "compiled qualification prompt token limit",
-    1,
-    contextSize,
-  );
-  const maxCompletionTokens = boundedInteger(
-    limits.maxCompletionTokens,
-    "compiled qualification completion token limit",
-    1,
-    contextSize,
-  );
-  const maxRequestBodyBytes = boundedInteger(
-    limits.maxRequestBodyBytes,
-    "compiled qualification request body limit",
-    1024,
-    64 * 1024 ** 2,
-  );
+  requireExactKeys(limits, ["requestTimeoutSeconds"], "compiled qualification request limits");
   const requestTimeoutSeconds = boundedInteger(
     limits.requestTimeoutSeconds,
     "compiled qualification request timeout",
@@ -731,8 +725,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     typeof kvCache.key !== "string" ||
     !allowedKvTypes.has(kvCache.key) ||
     typeof kvCache.value !== "string" ||
-    !allowedKvTypes.has(kvCache.value) ||
-    maxPromptTokens + maxCompletionTokens > contextSize
+    !allowedKvTypes.has(kvCache.value)
   ) {
     throw new Error("compiled llama.cpp DGX Spark serve contract is invalid");
   }
@@ -792,6 +785,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     recipe: {
       id: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
       model: {
+        acquisition: { downloaderImage: LLAMA_CPP_DGX_SPARK_TOOL_IMAGE },
         file: {
           path: "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
           digest: LLAMA_CPP_DGX_SPARK_MODEL_DIGEST,
@@ -813,9 +807,11 @@ export function parseLlamaCppDgxSparkExecutionPlan(
         contractRef: "llama-cpp.server-readiness/v1",
         timeoutSeconds: readinessTimeout,
         expectedModel: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+        probeImage: LLAMA_CPP_DGX_SPARK_TOOL_IMAGE,
         probes: { models: true, health: true, properties: true, metrics: true },
       },
       runtime: {
+        restartPolicy: "unless-stopped",
         cuda: {
           baseImage: LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
           minimumDriverVersion: recipeCuda.minimumDriverVersion,
@@ -840,9 +836,6 @@ export function parseLlamaCppDgxSparkExecutionPlan(
         },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes,
-          maxPromptTokens,
-          maxCompletionTokens,
           requestTimeoutSeconds,
         },
       },
