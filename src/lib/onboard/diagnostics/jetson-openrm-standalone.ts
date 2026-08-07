@@ -11,6 +11,7 @@ import { createDirectSandboxGpuVerifier } from "../sandbox-gpu-preflight";
 const SANDBOX_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u;
 const CUINIT_801_PATTERN = /cuInit\(0\)=801/u;
 const RECREATE_TIMEOUT_SECS = 180;
+const OPENRM_POLICY_PROOF_ENV = "NEMOCLAW_DIAGNOSE_JETSON_OPENRM_POLICY";
 
 type SandboxPatch = Pick<
   ReturnType<typeof createDockerGpuSandboxCreatePatch>,
@@ -91,9 +92,11 @@ export async function runStandaloneJetsonOpenRmPolicyProof(
   let proof: SandboxGpuProofResult | null = null;
   let expectedBoundaryFailure = false;
   let rollbackFailure: unknown = null;
+  const previousPolicyProofSetting = process.env[OPENRM_POLICY_PROOF_ENV];
   try {
     await patch.ensureApplied();
     patch.waitForSupervisorReconnectIfNeeded();
+    process.env[OPENRM_POLICY_PROOF_ENV] = "1";
     try {
       proof = await patch.verifyGpuOrExit(verifyGpu);
     } catch (error) {
@@ -107,6 +110,11 @@ export async function runStandaloneJetsonOpenRmPolicyProof(
       expectedBoundaryFailure = true;
     }
   } finally {
+    if (previousPolicyProofSetting === undefined) {
+      delete process.env[OPENRM_POLICY_PROOF_ENV];
+    } else {
+      process.env[OPENRM_POLICY_PROOF_ENV] = previousPolicyProofSetting;
+    }
     await patch.rollbackManagedStartupAfterCreateFailure();
     if (!rollbackFailure) {
       console.log("  ✓ Original sandbox container restored after the standalone proof.");

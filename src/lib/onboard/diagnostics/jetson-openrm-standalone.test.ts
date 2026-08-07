@@ -10,11 +10,15 @@ function verifierFactory() {
 
 describe("standalone Jetson OpenRM policy proof", () => {
   it("runs the production recreation boundary and restores it after cuInit 801 (#7610)", async () => {
+    const policyProofEnv = "NEMOCLAW_DIAGNOSE_JETSON_OPENRM_POLICY";
+    const previousPolicyProofSetting = process.env[policyProofEnv];
+    let observedPolicyProofSetting: string | undefined;
     const rollback = vi.fn(async () => undefined);
     const createPatch = vi.fn(() => ({
       ensureApplied: vi.fn(async () => undefined),
       waitForSupervisorReconnectIfNeeded: vi.fn(),
       verifyGpuOrExit: vi.fn(async () => {
+        observedPolicyProofSetting = process.env[policyProofEnv];
         throw new Error("Sandbox GPU proof returned failed status (cuInit(0)=801)");
       }),
       rollbackManagedStartupAfterCreateFailure: rollback,
@@ -35,6 +39,8 @@ describe("standalone Jetson OpenRM policy proof", () => {
         preserveJetsonDeviceGroupMembership: true,
       }),
     );
+    expect(observedPolicyProofSetting).toBe("1");
+    expect(process.env[policyProofEnv]).toBe(previousPolicyProofSetting);
     expect(rollback).toHaveBeenCalledOnce();
   });
 
