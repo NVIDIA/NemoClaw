@@ -1979,6 +1979,7 @@ jobs:
       E2E_TARGET_ID: "managed-image-multiarch-startup"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-multiarch-activation-v1.json
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}
@@ -2401,6 +2402,7 @@ jobs:
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: linux-arm64-gpu-dgx-spark-gb10
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification/evidence.json
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN: ${{ github.workspace }}/.llama-cpp-qualification/plan.json
