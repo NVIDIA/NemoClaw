@@ -327,11 +327,6 @@
       "category": "security"
     },
     {
-      "file": "test/maintainer-pr-workflow-approval.test.ts",
-      "test": "keeps workflow approval inside the trusted metadata boundary",
-      "category": "security"
-    },
-    {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
       "test": "keeps secret-bearing live E2E on trusted main-branch code",
       "category": "security"
