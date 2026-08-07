@@ -34,6 +34,7 @@ export type ReviewedNpmCacheSeedRequest = Readonly<{
   archives: ReadonlyMap<string, string>;
   cacheDirectory: string;
   lockfilePath: string;
+  packumentsOnly?: boolean;
   registryOrigin: string;
   selectedPackageSpecs?: ReadonlySet<string>;
 }>;
@@ -260,7 +261,9 @@ export async function seedReviewedNpmCache(
   const selectedPackageSpecs =
     request.selectedPackageSpecs ??
     new Set(locked.map(({ name, version }) => `${name}@${version}`));
-  const expectedArchives = new Set(selectedPackageSpecs);
+  const expectedArchives = request.packumentsOnly
+    ? new Set<string>()
+    : new Set(selectedPackageSpecs);
   const unexpectedArchives = new Set(request.archives.keys());
   const cachePath = join(cacheDirectory, "_cacache");
   const packumentVersions = new Map<string, Record<string, unknown>>();
@@ -268,30 +271,33 @@ export async function seedReviewedNpmCache(
   for (const entry of locked) {
     const packageSpec = `${entry.name}@${entry.version}`;
     if (!selectedPackageSpecs.has(packageSpec)) continue;
-    const archivePath = request.archives.get(packageSpec);
-    if (!archivePath) throw new Error(`reviewed npm cache seed archive is missing: ${packageSpec}`);
-    expectedArchives.delete(packageSpec);
-    unexpectedArchives.delete(packageSpec);
-    const archive = readArchive(archivePath, packageSpec);
-    const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
-    if (actualIntegrity !== entry.integrity) {
-      throw new Error(
-        `reviewed npm cache seed integrity mismatch for ${packageSpec}\nExpected: ${entry.integrity}\nActual:   ${actualIntegrity}`,
-      );
-    }
-    await put(cachePath, `make-fetch-happen:request-cache:${entry.resolved}`, archive, {
-      metadata: {
-        options: { compress: true },
-        reqHeaders: {},
-        resHeaders: {
-          "cache-control": "public, immutable, max-age=31557600",
-          "content-type": "application/octet-stream",
+    if (!request.packumentsOnly) {
+      const archivePath = request.archives.get(packageSpec);
+      if (!archivePath)
+        throw new Error(`reviewed npm cache seed archive is missing: ${packageSpec}`);
+      expectedArchives.delete(packageSpec);
+      unexpectedArchives.delete(packageSpec);
+      const archive = readArchive(archivePath, packageSpec);
+      const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
+      if (actualIntegrity !== entry.integrity) {
+        throw new Error(
+          `reviewed npm cache seed integrity mismatch for ${packageSpec}\nExpected: ${entry.integrity}\nActual:   ${actualIntegrity}`,
+        );
+      }
+      await put(cachePath, `make-fetch-happen:request-cache:${entry.resolved}`, archive, {
+        metadata: {
+          options: { compress: true },
+          reqHeaders: {},
+          resHeaders: {
+            "cache-control": "public, immutable, max-age=31557600",
+            "content-type": "application/octet-stream",
+          },
+          time: 0,
+          url: entry.resolved,
         },
-        time: 0,
-        url: entry.resolved,
-      },
-    });
-    await put(cachePath, `pacote:tarball:${packageSpec}`, archive);
+      });
+      await put(cachePath, `pacote:tarball:${packageSpec}`, archive);
+    }
 
     const version = {
       ...(entry.bundleDependencies ? { bundleDependencies: entry.bundleDependencies } : {}),
@@ -357,9 +363,14 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
   let cpu = "";
   let libc = "";
   let os = "";
+  let packumentsOnly = false;
   const archives = new Map<string, string>();
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
+    if (flag === "--packuments-only") {
+      packumentsOnly = true;
+      continue;
+    }
     const value = args[index + 1];
     if (!value) throw new Error(`missing value for ${flag ?? "argument"}`);
     if (flag === "--archive-directory") archiveDirectory = value;
@@ -386,8 +397,11 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
   }
   if (!cacheDirectory || !lockfilePath || !registryOrigin) {
     throw new Error(
-      "usage: seed-reviewed-npm-cache.mts --cache ABSOLUTE --lockfile FILE --registry-origin HTTPS_ORIGIN (--archive PACKAGE@VERSION=ABSOLUTE | --archive-directory ABSOLUTE)",
+      "usage: seed-reviewed-npm-cache.mts --cache ABSOLUTE --lockfile FILE --registry-origin HTTPS_ORIGIN (--archive PACKAGE@VERSION=ABSOLUTE | --archive-directory ABSOLUTE | --packuments-only)",
     );
+  }
+  if (packumentsOnly && (archiveDirectory || archives.size > 0)) {
+    throw new Error("reviewed npm cache seed packuments-only mode does not accept archives");
   }
   if (archiveDirectory && archives.size > 0) {
     throw new Error(
@@ -407,13 +421,14 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
         os,
       })
     : archives;
-  if (selectedArchives.size === 0) {
+  if (!packumentsOnly && selectedArchives.size === 0) {
     throw new Error("reviewed npm cache seed requires at least one locked archive");
   }
   return {
     archives: selectedArchives,
     cacheDirectory,
     lockfilePath,
+    ...(packumentsOnly ? { packumentsOnly: true } : {}),
     registryOrigin,
     ...(archiveDirectory ? { selectedPackageSpecs: new Set(selectedArchives.keys()) } : {}),
   };
@@ -422,7 +437,9 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
 if (invokedPath === import.meta.url) {
   seedReviewedNpmCache(parseCli(process.argv.slice(2)))
-    .then((packages) => process.stdout.write(`Seeded ${packages.length} reviewed npm archives\n`))
+    .then((packages) =>
+      process.stdout.write(`Seeded ${packages.length} reviewed npm cache entries\n`),
+    )
     .catch((error) => {
       process.stderr.write(`${String(error)}\n`);
       process.exitCode = 1;

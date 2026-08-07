@@ -356,6 +356,10 @@ describe("MCP tool discovery image contract", () => {
       "@openclaw/slack": "2026.7.1",
       "@openclaw/whatsapp": "2026.7.1",
       "@tencent-weixin/openclaw-weixin": "2.4.3",
+      "agent-base": "6.0.2",
+      axios: "1.18.0",
+      "https-proxy-agent": "5.0.1",
+      undici: "8.10.0",
     });
     expect(openClawDockerfile).toContain("AS openclaw-managed-messaging-npm-cache-0");
     expect(openClawDockerfile).toContain("AS openclaw-managed-messaging-npm-cache-1");
@@ -366,6 +370,7 @@ describe("MCP tool discovery image contract", () => {
       "--archive-directory /opt/nemoclaw-build-tools/npm-cache-seed",
     );
     expect(openClawDockerfile).toContain('--os linux --cpu "$npm_target_cpu" --libc glibc');
+    expect(openClawDockerfile).toContain("--packuments-only");
     expect(openClawDockerfile).toContain('export NPM_CONFIG_CACHE="$install_cache"');
     expect(openClawDockerfile).toContain("export NPM_CONFIG_OFFLINE=true");
     expect(hermesDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);

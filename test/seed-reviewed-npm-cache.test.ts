@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -167,6 +168,37 @@ describe("reviewed npm cache seed", () => {
       expect.objectContaining({ "3.1.2": expect.any(Object), "5.0.1": expect.any(Object) }),
       expect.objectContaining({ "3.1.2": expect.any(Object), "5.0.1": expect.any(Object) }),
     ]);
+  });
+
+  it("serves npm view offline from lock-derived packuments", async () => {
+    const input = fixture();
+    await seedReviewedNpmCache({
+      ...request(input, new Map()),
+      packumentsOnly: true,
+    });
+
+    const integrity = execFileSync(
+      "npm",
+      [
+        "view",
+        PACKAGE_SPEC,
+        "dist.integrity",
+        "--userconfig",
+        "/dev/null",
+        "--registry",
+        REGISTRY_ORIGIN,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NPM_CONFIG_CACHE: input.cacheDirectory,
+          NPM_CONFIG_OFFLINE: "true",
+        },
+      },
+    ).trim();
+
+    expect(integrity).toBe(input.integrity);
   });
 
   it("rejects missing, extra, and integrity-mismatched archives", async () => {

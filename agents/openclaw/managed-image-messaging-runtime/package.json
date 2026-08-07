@@ -11,7 +11,11 @@
     "@openclaw/msteams": "2026.7.1",
     "@openclaw/slack": "2026.7.1",
     "@openclaw/whatsapp": "2026.7.1",
-    "@tencent-weixin/openclaw-weixin": "2.4.3"
+    "@tencent-weixin/openclaw-weixin": "2.4.3",
+    "agent-base": "6.0.2",
+    "axios": "1.18.0",
+    "https-proxy-agent": "5.0.1",
+    "undici": "8.10.0"
   },
   "engines": {
     "node": ">=22.19.0"

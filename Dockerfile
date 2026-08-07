@@ -253,6 +253,11 @@ RUN --network=default set -eu; \
             --userconfig /dev/null --registry https://registry.npmjs.org/ \
             --cache /out/npm-cache; \
     fi; \
+    node --experimental-strip-types /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
+        --packuments-only \
+        --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
+        --cache /out/npm-cache \
+        --registry-origin https://registry.npmjs.org/; \
     npm cache verify --cache /out/npm-cache; \
     rm -rf /opt/managed-image-messaging-runtime/node_modules \
         /opt/nemoclaw-build-tools/npm-cache-seed; \
