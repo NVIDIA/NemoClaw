@@ -94,6 +94,19 @@ Read Project Priority and Status from live Project 199 data. Do not infer either
 
 Record the selected issue's `updatedAt` as `ISSUE_UPDATED_AT`. Step 10 compares it immediately before a write. If the issue changes during a long verification, refresh the discussion and Project fields and request approval for a revised write set.
 
+In batch mode, bind `ISSUE_NUMBER` to the current candidate before any comment or Project query:
+
+```bash
+if [ -n "${CANDIDATE_JSON:-}" ]; then
+  ISSUE_NUMBER=$(jq -er '.number' <<<"$CANDIDATE_JSON")
+fi
+case "$ISSUE_NUMBER" in
+  ''|*[!0-9]*) echo "ERROR: current candidate has an invalid issue number"; exit 1 ;;
+esac
+```
+
+Do not inherit `ISSUE_NUMBER` from the preceding candidate. Present the verification plan for the bound issue number only.
+
 Before applying the idempotency or active-discussion filters to each candidate, fetch its complete comment history through the paginated REST endpoint. Nested GraphQL comment connections are not paginated by the outer issue query and can silently truncate old markers:
 
 ```bash

@@ -23,8 +23,8 @@ Start at 0. Apply each rule that fires.
 
 | Signal | Delta |
 |---|---|
-| The baseline-validated reproducer produced the expected exit and no reported symptom on the newest release tag | +50 |
-| The reported-release retry had mixed results, and the newest-release run did not show the symptom | +25 instead of the +50 newest-release signal |
+| The same reviewed reproducer matched the reported symptom on `$REPORTED_VERSION`, then produced the expected exit and no reported symptom on the newest release tag | +50 |
+| After that reported-release symptom match, the reported-release retry had mixed results and the newest-release run did not show the symptom | +25 instead of the +50 newest-release signal |
 | A reviewed diff between the tags changes the implicated behavior in a way that addresses the symptom | +25 |
 | A merged PR explicitly states that it fixes this issue or the reproduced symptom | +25 |
 | Reproducer received the −30 confidence penalty after an LLM introduced a command or state change that affects the reproduced behavior | −30 |
@@ -219,7 +219,7 @@ Only the reporter can confirm whether the original symptom is gone in their envi
 
 The skill becomes the *unsticking voice* on a thread that has gone quiet — never a clueless interruption when discussion is fresh (Step 3 already filtered the within-7-day case).
 
-**Comment template (fixed or inconclusive — bug not reproduced on the newest release tag):**
+**Comment template (fixed — bug not reproduced on the newest release tag):**
 
 ````markdown
 ## Stale-issue verification — automated
@@ -251,16 +251,39 @@ The skill becomes the *unsticking voice* on a thread that has gone quiet — nev
 
 </details>
 
-@<reporter> — please test a recent build (≥ v0.0.<Z>) and reply with a fresh reproducer if the symptom remains.
+@<reporter> — please test v0.0.<Z> or newer and reply with a reproducer if the symptom remains.
 
 <!-- nemoclaw-verify-stale v1 verdict=fixed-on-latest YYYY-MM-DD -->
 ````
 
-For a score below 60, use the same evidence structure only as far as needed for the shorter inconclusive comment, state `Verdict: verify-inconclusive; no Project field change proposed`, and end with:
+**Comment template (inconclusive — reported-release verification stopped):**
 
-```text
+````markdown
+## Stale-issue verification — inconclusive
+
+**Reported on:** v0.0.31
+**Verified on:** n/a; newest release tag not run
+**Verification mode:** reported-release verification stopped before the baseline gate completed.
+
+### Reported Release
+
+- Install: requested release tag resolved; install or build failed · succeeded
+- Reproducer: n/a · reconstructed or synthesized and reviewed
+- Result: `<one redacted failure line or no-match explanation>`
+
+### Newest Release
+
+- Install: n/a; not run because the reported-release gate did not complete
+- Result: n/a
+
+### Verdict
+
+**Verdict:** `verify-inconclusive`; no Project field change proposed.
+
+@<reporter> — please reply with the missing environment detail or a revised reproducer named above.
+
 <!-- nemoclaw-verify-stale v1 verdict=verify-inconclusive YYYY-MM-DD -->
-```
+````
 
 **Comment template (still reproduces — Step 9 special case).** Keep this minimal — per L174 it caps at 30–80 words, drops transcripts (issue body has them), and omits the closing reporter @-mention (the reporter knows their own bug is real). Only the unanswered-question lead paragraph (when fired) adds an @-mention; no closing dual @-mention even then.
 

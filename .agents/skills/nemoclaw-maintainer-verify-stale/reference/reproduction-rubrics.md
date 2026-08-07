@@ -147,17 +147,25 @@ python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.
   "$EVIDENCE_DIR/latest-install.log" >"$EVIDENCE_DIR/latest-install.redacted.log"
 tail -40 "$EVIDENCE_DIR/latest-install.redacted.log"
 
-# Apply the same resolved-release-tag check as Step 8a. Reject shell-scoping errors
-# or installer fallback when the resolved release tag differs from $LATEST.
-RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
-RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
-RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
-echo "[verify-stale] newest release requested: $LATEST; resolved: $RESOLVED"
-if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$LATEST" ]; then
+# Apply the same resolved-release-tag check as Step 8a. Check the bounded command
+# status before parsing output so a transport failure cannot verify an install.
+LATEST_VERSION_LOG="$EVIDENCE_DIR/latest-version.log"
+if run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" \
+  >"$LATEST_VERSION_LOG" 2>&1; then
+  RESOLVED=$(tail -1 "$LATEST_VERSION_LOG")
+  RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+  RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
+  echo "[verify-stale] newest release requested: $LATEST; resolved: $RESOLVED"
+  if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$LATEST" ]; then
     echo "ERROR: resolved release tag '$RESOLVED_TAG' does not match requested release tag $LATEST."
-    echo "Treating this as an infrastructure failure; no verdict or GitHub write is allowed."
     LATEST_INSTALL_FAILED=1
+  fi
+else
+  echo "ERROR: could not resolve the installed release tag"
+  LATEST_INSTALL_FAILED=1
 fi
+[ "$LATEST_INSTALL_FAILED" = "0" ] \
+  || echo "Treating this as an infrastructure failure; no verdict or GitHub write is allowed."
 
 # Do not replace OpenShell manually. The installer for the requested release tag enforces the
 # blueprint's min/max OpenShell range and verifies the pinned release assets.

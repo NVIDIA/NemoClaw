@@ -486,8 +486,16 @@ python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.
 tail -40 "$EVIDENCE_DIR/baseline-install.redacted.log"
 
 # Always attempt to resolve the installed release tag, including when the installer
-# exits after placing the CLI but before onboarding completes.
-RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
+# exits after placing the CLI but before onboarding completes. Check the bounded
+# command status before parsing its output.
+BASELINE_VERSION_LOG="$EVIDENCE_DIR/baseline-version.log"
+if ! run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" \
+  >"$BASELINE_VERSION_LOG" 2>&1; then
+  RESOLVED_TAG_MISMATCH=1
+  echo "ERROR: could not resolve the installed release tag; no verdict or GitHub comment is allowed"
+  exit 1
+fi
+RESOLVED=$(tail -1 "$BASELINE_VERSION_LOG")
 RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
 RESOLVED_TAG=""
 [ -z "$RESOLVED_SEMVER" ] || RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
@@ -525,21 +533,7 @@ Brev CPU images include the dependencies required to install NemoClaw, but they 
 - Provider requires a credential the approved run does not supply. Substitution cannot establish a fixed provider-specific bug. Select `verify-inconclusive` and document the mismatch.
 - If the reviewed bug path fails before the dependency runs, record that evidence in the comment.
 
-**Canonical bootstraps:**
-
-```bash
-# Ollama + a specific model, only when installer onboarding did not already
-# provide it. If the issue is Ollama-version-specific, install that exact
-# reviewed version rather than using the moving installer URL below.
-BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
-run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -o pipefail -c 'curl -fsSL https://ollama.com/install.sh | sh'" || exit 1
-BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
-run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -c 'sudo systemctl start ollama && sleep 3'" || exit 1
-BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
-run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s ollama pull <model>" || exit 1
-BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
-run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s ollama list" || exit 1   # confirm before continuing
-```
+**Ollama dependency rule.** Use Ollama only when installer onboarding already provided the reported dependency and model. Do not execute a moving third-party installer in this workflow. If the required Ollama version is absent, select `verify-inconclusive` and leave dependency installation to a separately reviewed manual run.
 
 ```bash
 # vLLM + a model hosted by Hugging Face.

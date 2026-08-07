@@ -247,14 +247,40 @@ gh auth status 2>&1 | grep -q "'project'" || {
 
 Use the local path only for read-only CLI behavior. A local positive match can establish `still-reproduces`. A local result without the reported symptom cannot establish `fixed-on-latest` because the reproducer has not passed the reported-release baseline gate.
 
-Resolve the local binary and release tag with these read-only preflight commands before requesting approval:
+Resolve the local binary and release tag with these read-only preflight commands before requesting approval. The Python wrapper limits the version probe to 10 seconds:
 
 ```bash
 NEMOCLAW_BIN=$(command -v nemoclaw)
-LOCAL_VERSION=$("$NEMOCLAW_BIN" --version 2>&1)
+LOCAL_PREFLIGHT_FAILED=0
+if LOCAL_VERSION=$(python3 - "$NEMOCLAW_BIN" <<'PY'
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(
+        [sys.argv[1], "--version"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=10,
+    )
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+sys.stdout.write(result.stdout)
+raise SystemExit(result.returncode)
+PY
+); then
+  :
+else
+  LOCAL_PREFLIGHT_FAILED=1
+  echo "Local version probe did not complete; continue to the Brev path."
+fi
 ```
 
 **Predicate** — local-first applies if **all** of these hold:
+
+- `LOCAL_PREFLIGHT_FAILED` is `0`.
 
 - Every step is one literal `nemoclaw` invocation with no shell operator, expansion, redirection, environment read, or command substitution.
 - Every invocation is read-only: `--version`, `--help`, `list`, or `status`. A subcommand with `--help` is also read-only. Reject `onboard`, `update`, `uninstall`, `destroy`, `rebuild`, `recover`, `start`, `stop`, `upload`, `download`, `snapshot`, and every write flag.
@@ -281,7 +307,14 @@ import os, pathlib, shlex, subprocess, sys
 binary, script_path, transcript_path, isolated_home = sys.argv[1:]
 env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR", "SHELL") if key in os.environ}
 env.update({"HOME": isolated_home, "XDG_CONFIG_HOME": f"{isolated_home}/.config", "XDG_STATE_HOME": f"{isolated_home}/.local/state"})
-allowed_roots = {"--help", "-h", "--version", "list", "status"}
+allowed_exact = {
+    ("--help",),
+    ("-h",),
+    ("--version",),
+    ("list",),
+    ("list", "--json"),
+    ("status",),
+}
 last_returncode = 0
 with open(transcript_path, "w", encoding="utf-8") as transcript:
     for raw in pathlib.Path(script_path).read_text(encoding="utf-8").splitlines():
@@ -290,7 +323,13 @@ with open(transcript_path, "w", encoding="utf-8") as transcript:
         argv = shlex.split(raw, posix=True)
         if not argv or argv[0] != "nemoclaw":
             raise SystemExit(f"disallowed local reproducer line: {raw}")
-        if len(argv) < 2 or (argv[1] not in allowed_roots and "--help" not in argv[1:] and "-h" not in argv[1:]):
+        args = tuple(argv[1:])
+        subcommand_help = (
+            len(args) == 2
+            and not args[0].startswith("-")
+            and args[1] in {"--help", "-h"}
+        )
+        if args not in allowed_exact and not subcommand_help:
             raise SystemExit(f"non-read-only local reproducer line: {raw}")
         try:
             result = subprocess.run([binary, *argv[1:]], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60, check=False)
