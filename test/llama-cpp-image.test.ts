@@ -229,7 +229,7 @@ describe("declarative llama.cpp server image", () => {
       },
       qualification: {
         agentQualification: {
-          execution: "disabled",
+          execution: "enabled",
           image: {
             reference:
               "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e",
@@ -445,7 +445,7 @@ describe("declarative llama.cpp server image", () => {
       manifestSource,
       recipeSource,
       undefined,
-      qualificationSource.replace("execution: disabled", "execution: enabled"),
+      qualificationSource,
     );
 
     expect(JSON.parse(enabled.publication_qualification_plan)).toMatchObject({
