@@ -33,6 +33,7 @@ import {
   HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
   isHermesCronRestoreDrainMarkerRollbackFailure,
   observeHermesCronReplacement,
+  prepareHermesCronRestoreRecovery,
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
   validateHermesCronRestore,
@@ -134,6 +135,19 @@ function notRequiredRecoveryReceipt(overrides: Record<string, unknown> = {}): st
     disposition: "not-required",
     operator_drain_active: false,
     preserved_drain: false,
+    ...overrides,
+  })}`;
+}
+
+function preparationReceipt(
+  disposition: "gate-prepared" | "not-required",
+  overrides: Record<string, unknown> = {},
+): string {
+  return `${RECEIPT_PREFIX}${JSON.stringify({
+    version: 1,
+    action: "prepare-recover",
+    drain_acquired: disposition === "gate-prepared",
+    disposition,
     ...overrides,
   })}`;
 }
@@ -466,18 +480,78 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it("composes the recovery transport budget from every controller phase (#7806)", () => {
-    processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => ({
+  it.each([
+    "gate-prepared",
+    "not-required",
+  ] as const)("returns the %s pre-repair disposition", (disposition) => {
+    processMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
-      stdout: receipt(argv.includes("recover") ? "recover" : "begin"),
+      stdout: preparationReceipt(disposition),
       stderr: "",
-    }));
+    });
+
+    expect(prepareHermesCronRestoreRecovery("alpha")).toBe(disposition);
+    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
+      "alpha",
+      [
+        "/opt/hermes/.venv/bin/python",
+        "-I",
+        "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+        "prepare-recover",
+      ],
+      false,
+      true,
+    );
+  });
+
+  it("rejects an inconsistent pre-repair receipt", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: preparationReceipt("gate-prepared", { drain_acquired: false }),
+      stderr: "",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "prepare-recover receipt failed validation",
+    );
+  });
+
+  it.each([
+    `/opt/hermes/.venv/bin/python: can't open file '/usr/local/lib/nemoclaw/hermes-cron-restore-control.py': [Errno 2] No such file or directory`,
+    "hermes-cron-restore-control.py: error: argument action: invalid choice: 'prepare-recover'",
+  ])("keeps pre-repair compatible with a legacy Hermes sandbox: %s", (stderr) => {
+    processMocks.dockerSpawnSync.mockReturnValue({ status: 2, stdout: "", stderr });
+
+    expect(prepareHermesCronRestoreRecovery("alpha")).toBe("unsupported");
+  });
+
+  it("does not hide a current controller pre-repair failure", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "NemoClaw cron restore release recovery record metadata is unsafe",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "Hermes cron prepare-recover failed: NemoClaw cron restore release recovery record metadata is unsafe",
+    );
+  });
+
+  it("composes the recovery transport budget from every controller phase (#7806)", () => {
+    processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => {
+      const stdout = argv.includes("prepare-recover")
+        ? preparationReceipt("not-required")
+        : receipt(argv.includes("recover") ? "recover" : "begin");
+      return { status: 0, stdout, stderr: "" };
+    });
 
     beginHermesCronRestore("alpha");
+    prepareHermesCronRestoreRecovery("alpha");
     recoverHermesCronRestore("alpha");
 
     expect(processMocks.dockerSpawnSync.mock.calls[0]?.[1]).toMatchObject({ timeout: 70_000 });
-    expect(processMocks.dockerSpawnSync.mock.calls[1]?.[1]).toMatchObject({ timeout: 130_000 });
+    expect(processMocks.dockerSpawnSync.mock.calls[1]?.[1]).toMatchObject({ timeout: 25_000 });
+    expect(processMocks.dockerSpawnSync.mock.calls[2]?.[1]).toMatchObject({ timeout: 130_000 });
   });
 
   it("returns not-required when no NemoClaw recovery gate exists", () => {

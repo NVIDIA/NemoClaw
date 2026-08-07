@@ -335,8 +335,8 @@ export async function runRebuildPostRestorePhase(
         return bailAfterHermesCronRestoreFailure(
           sandboxName,
           backupManifest,
-          `  Hermes cron restore release rollback failed: ${errorDetail}. Dispatch gate state is unverified; run recovery immediately.`,
-          "Hermes cron restore gate state is unverified after release rollback failure; recover immediately.",
+          `  Hermes cron restore release rollback failed: ${errorDetail}. Dispatch state is unverified, but root-owned recovery state was preserved; run recovery immediately so it can reacquire the gate and validate restored cron state.`,
+          "Hermes cron restore release state requires immediate recovery.",
           bail,
         );
       }

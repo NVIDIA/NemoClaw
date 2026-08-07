@@ -16,7 +16,14 @@ const CONTROL_TIMEOUT_MS = 25_000;
 const RECOVERY_TIMEOUT_MS = BEGIN_TIMEOUT_MS + CONTROL_TIMEOUT_MS * 2 + 10_000;
 const HERMES_GATEWAY_RECHECK_ATTEMPTS = 2;
 
-type HermesCronRestoreAction = "begin" | "validate" | "observe" | "complete" | "recover";
+type HermesCronRestoreAction =
+  | "begin"
+  | "validate"
+  | "observe"
+  | "complete"
+  | "prepare-recover"
+  | "recover";
+type HermesCronRestoreReceiptAction = Exclude<HermesCronRestoreAction, "prepare-recover">;
 type HermesCronRestoreDisposition =
   | "drain-acquired"
   | "restore-validated"
@@ -56,6 +63,8 @@ export type HermesCronRestoreRecoveryOutcome =
   | "operator-drain-preserved"
   | "not-required"
   | "unsupported";
+
+export type HermesCronRestorePreparationOutcome = "gate-prepared" | "not-required" | "unsupported";
 
 export class HermesCronRestoreIncompleteError extends Error {
   constructor() {
@@ -241,7 +250,7 @@ function isReleaseDispositionValid(payload: Record<string, unknown>): boolean {
 
 function parseCronRestoreReceipt(
   stdout: string,
-  expectedAction: HermesCronRestoreAction,
+  expectedAction: HermesCronRestoreReceiptAction,
 ): HermesCronRestoreReceipt {
   const receiptLines = stdout.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
   if (receiptLines.length !== 1) {
@@ -363,6 +372,35 @@ function parseCronRestoreReceipt(
   return receipt as unknown as HermesCronRestoreReceipt;
 }
 
+function parseCronRestorePreparationReceipt(stdout: string): HermesCronRestorePreparationOutcome {
+  const receiptLines = stdout.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
+  if (receiptLines.length !== 1) {
+    throw new Error("Hermes cron prepare-recover returned an invalid receipt");
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(receiptLines[0].slice(RECEIPT_PREFIX.length));
+  } catch {
+    throw new Error("Hermes cron prepare-recover returned malformed JSON");
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Hermes cron prepare-recover receipt failed validation");
+  }
+  const receipt = payload as Record<string, unknown>;
+  const validDisposition =
+    (receipt.drain_acquired === true && receipt.disposition === "gate-prepared") ||
+    (receipt.drain_acquired === false && receipt.disposition === "not-required");
+  if (
+    receipt.version !== 1 ||
+    receipt.action !== "prepare-recover" ||
+    !validDisposition ||
+    !hasExactReceiptFields(receipt, ["version", "action", "drain_acquired", "disposition"])
+  ) {
+    throw new Error("Hermes cron prepare-recover receipt failed validation");
+  }
+  return receipt.disposition as "gate-prepared" | "not-required";
+}
+
 function parseCronRestoreControlError(stderr: string): { code: string; message: string } | null {
   const signalLines = stderr
     .split(/\r?\n/u)
@@ -418,12 +456,12 @@ export function isHermesCronRestoreDrainMarkerRollbackFailure(error: unknown): b
   );
 }
 
-function runCronRestoreControl(
+function executeCronRestoreControl(
   sandboxName: string,
   action: HermesCronRestoreAction,
   identity?: HermesCronRestoreIdentity,
   replacementIdentity?: HermesCronRestoreIdentity,
-): HermesCronRestoreReceipt {
+): string {
   const command = [HERMES_PYTHON, "-I", HERMES_CRON_CONTROL, action];
   if (identity) {
     command.push("--pid", String(identity.pid), "--start-time", String(identity.start_time));
@@ -460,7 +498,19 @@ function runCronRestoreControl(
   if (result.status !== 0) {
     throw new HermesCronRestoreControlFailure(action, result.stderr);
   }
-  return parseCronRestoreReceipt(result.stdout, action);
+  return result.stdout;
+}
+
+function runCronRestoreControl(
+  sandboxName: string,
+  action: HermesCronRestoreReceiptAction,
+  identity?: HermesCronRestoreIdentity,
+  replacementIdentity?: HermesCronRestoreIdentity,
+): HermesCronRestoreReceipt {
+  return parseCronRestoreReceipt(
+    executeCronRestoreControl(sandboxName, action, identity, replacementIdentity),
+    action,
+  );
 }
 
 export function beginHermesCronRestore(sandboxName: string): HermesCronRestoreIdentity {
@@ -540,13 +590,33 @@ export function observeHermesCronReplacement(
   };
 }
 
-function isLegacyCronRestoreControl(error: unknown): boolean {
+function isLegacyCronRestoreControl(
+  error: unknown,
+  action: "prepare-recover" | "recover",
+): boolean {
   if (!(error instanceof HermesCronRestoreControlFailure)) return false;
+  const invalidAction =
+    action === "prepare-recover"
+      ? /argument action: invalid choice: ['"]prepare-recover['"]/u
+      : /argument action: invalid choice: ['"]recover['"]/u;
   return (
     /can't open file ['"]\/usr\/local\/lib\/nemoclaw\/hermes-cron-restore-control\.py['"]: \[Errno 2\] No such file or directory/u.test(
       error.stderr,
-    ) || /argument action: invalid choice: ['"]recover['"]/u.test(error.stderr)
+    ) || invalidAction.test(error.stderr)
   );
+}
+
+export function prepareHermesCronRestoreRecovery(
+  sandboxName: string,
+): HermesCronRestorePreparationOutcome {
+  let stdout: string;
+  try {
+    stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
+  } catch (error) {
+    if (isLegacyCronRestoreControl(error, "prepare-recover")) return "unsupported";
+    throw error;
+  }
+  return parseCronRestorePreparationReceipt(stdout);
 }
 
 export function recoverHermesCronRestore(sandboxName: string): HermesCronRestoreRecoveryOutcome {
@@ -554,7 +624,7 @@ export function recoverHermesCronRestore(sandboxName: string): HermesCronRestore
   try {
     receipt = runCronRestoreControl(sandboxName, "recover");
   } catch (error) {
-    if (isLegacyCronRestoreControl(error)) return "unsupported";
+    if (isLegacyCronRestoreControl(error, "recover")) return "unsupported";
     throw error;
   }
   if (
