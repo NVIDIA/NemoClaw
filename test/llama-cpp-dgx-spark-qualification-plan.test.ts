@@ -10,6 +10,7 @@ import YAML from "yaml";
 
 import { exportLlamaCppDgxSparkQualificationPlan } from "../scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts";
 import {
+  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
   parseLlamaCppDgxSparkExecutionPlan,
   parseLlamaCppDgxSparkQualificationPlan,
 } from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
@@ -94,7 +95,34 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
     });
     expect(
       parseLlamaCppDgxSparkExecutionPlan(JSON.parse(output.plan), output.plan_sha256),
-    ).toMatchObject({ contractVersion: 1 });
+    ).toMatchObject({
+      contractVersion: 1,
+      qualification: {
+        probeBounds: {
+          cancellationMaxTokens: 4096,
+          clientTimeoutMilliseconds: 250,
+          maxResponseBytes: 16777216,
+          maxStreamEvents: 512,
+          maxTokens: {
+            streamingChat: 32,
+            structuredOutput: 64,
+            synchronousChat: 16,
+            toolCall: 256,
+            toolResultContinuation: 64,
+          },
+        },
+        probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+      },
+      recipe: {
+        capabilities: {
+          agents: [],
+          protocols: ["openai-completions"],
+          streaming: true,
+          structuredOutputs: true,
+          toolCalls: true,
+        },
+      },
+    });
   });
 
   it("exports the checked-in main qualification as enabled", () => {

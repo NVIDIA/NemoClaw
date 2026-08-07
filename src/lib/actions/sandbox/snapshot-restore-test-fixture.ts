@@ -4,6 +4,7 @@
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -54,11 +55,7 @@ export type SandboxRecord = {
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
 };
-export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
-
-export function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
-  return `${SANDBOX_EXEC_STARTED_MARKER}\nNEMOCLAW_DCODE_PROBE=${state}\n${extra}`;
-}
+export { type DcodeProbeState, dcodeProbeOutput } from "./dcode-probe-test-fixture";
 
 export function captureOpenshellStreams(
   args: string[],

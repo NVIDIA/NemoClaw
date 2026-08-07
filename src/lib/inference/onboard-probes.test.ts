@@ -439,6 +439,175 @@ describe("OpenAI-compatible inference probes", () => {
     expect(args).toContain(FAKE_CONFIG_PATH);
   });
 
+  it("retries a reasoning-only tool-call response with a larger output budget", () => {
+    const script = `#!/usr/bin/env bash
+outfile=""
+payload=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' "$payload" > "${HARNESS_TMPDIR}/request-$n.json"
+if [ -n "$outfile" ]; then
+  if [ "$n" -eq 1 ]; then
+    cat <<'JSON' > "$outfile"
+{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"Planning the tool call.","tool_calls":null}}]}
+JSON
+  else
+    cat <<'JSON' > "$outfile"
+{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}
+JSON
+  fi
+fi
+printf '200'
+exit 0
+`;
+    withFakeCurlProbe(
+      { script, dirPrefix: "nemoclaw-reasoning-tool-probe-" },
+      ({ counter, tmpDir }) => {
+        const result = probeOpenAiLikeEndpoint("http://127.0.0.1:11434/v1", "qwen3-vl:4b", "", {
+          skipResponsesProbe: true,
+          requireChatCompletionsToolCalling: true,
+        });
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        const initialPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "request-1.json"), "utf8"),
+        );
+        const retryPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8"),
+        );
+        expect(initialPayload).toMatchObject({ max_tokens: 256, tool_choice: "required" });
+        expect(retryPayload).toMatchObject({ max_tokens: 1024, tool_choice: "required" });
+      },
+    );
+  });
+
+  it("rejects a strict DeepSeek timeout after the larger-budget retry", () => {
+    const script = `#!/usr/bin/env bash
+outfile=""
+payload=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' "$payload" > "${HARNESS_TMPDIR}/request-$n.json"
+if [ "$n" -eq 1 ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"Planning the tool call."}}]}
+JSON
+  printf '200'
+  exit 0
+fi
+: > "$outfile"
+printf '000'
+exit 28
+`;
+    withFakeCurlProbe(
+      { script, dirPrefix: "nemoclaw-reasoning-tool-timeout-" },
+      ({ counter, tmpDir }) => {
+        const result = probeOpenAiLikeEndpoint(
+          "http://127.0.0.1:11434/v1",
+          "deepseek-ai/deepseek-v4-pro",
+          "",
+          {
+            skipResponsesProbe: true,
+            requireChatCompletionsToolCalling: true,
+          },
+        );
+
+        expect(result).toMatchObject({ ok: false });
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        const initialPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "request-1.json"), "utf8"),
+        );
+        const retryPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8"),
+        );
+        expect(initialPayload).toMatchObject({ max_tokens: 256 });
+        expect(retryPayload).toMatchObject({ max_tokens: 1024 });
+      },
+    );
+  });
+
+  it("does not restart Chat Completions after its reasoning retry times out", () => {
+    const script = `#!/usr/bin/env bash
+outfile=""
+payload=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' "$payload" > "${HARNESS_TMPDIR}/request-$n.json"
+if echo "$url" | grep -q '/responses'; then
+  : > "$outfile"
+  printf '000'
+  exit 28
+fi
+if [ "$n" -eq 2 ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"Planning the tool call."}}]}
+JSON
+  printf '200'
+  exit 0
+fi
+if [ "$n" -eq 3 ]; then
+  : > "$outfile"
+  printf '000'
+  exit 28
+fi
+cat <<'JSON' > "$outfile"
+{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}
+JSON
+printf '200'
+exit 0
+`;
+    withFakeCurlProbe(
+      { script, dirPrefix: "nemoclaw-reasoning-mixed-timeout-" },
+      ({ counter, tmpDir }) => {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "qwen3-vl:4b",
+          "sk-test",
+          { requireChatCompletionsToolCalling: true },
+        );
+
+        expect(result).toMatchObject({ ok: false });
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
+        expect(
+          JSON.parse(fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8")),
+        ).toMatchObject({ max_tokens: 256 });
+        expect(
+          JSON.parse(fs.readFileSync(path.join(tmpDir, "request-3.json"), "utf8")),
+        ).toMatchObject({ max_tokens: 1024 });
+        expect(fs.existsSync(path.join(tmpDir, "request-4.json"))).toBe(false);
+      },
+    );
+  });
+
   describe("sandbox-internal URL handling", () => {
     it("identifies host.openshell.internal as sandbox-internal", () => {
       expect(isSandboxInternalUrl("http://host.openshell.internal:8001/v1")).toBe(true);

@@ -374,6 +374,12 @@ describe("declarative llama.cpp server image", () => {
     expect(() =>
       loadLlamaCppImageConfig(
         manifestSource,
+        recipeSource.replace("toolCalls: true", "toolCalls: false"),
+      ),
+    ).toThrow("capability claims are invalid");
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
         recipeSource.replace("batchSize: 2048", "batchSize: 1024"),
       ),
     ).not.toThrow();
