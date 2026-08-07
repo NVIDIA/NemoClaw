@@ -162,6 +162,7 @@ other literal identifiers.
 | `OpenShell gateway` | Technical noun | The host service that owns credentials, coordinates sandbox lifecycle, and proxies approved traffic. | agent gateway, gateway when the type is unclear |
 | `port forward` | Technical noun or verb | A connection that maps a host port to a service inside a sandbox, or the act of creating that connection. | tunnel when no general tunnel exists |
 | `provider profile` | Technical noun | An OpenShell declaration of one service provider's credentials, endpoints, allowed binaries, and access policy. | inference profile, provider settings |
+| `runtime provider state mutation` | Technical noun | A bounded, provider-mediated protection transition or restore operation whose selected state, projection digest, active fence, and recovery contract are explicit. | state mutation without the runtime provider modifier, lifecycle mutation |
 | `runtime setting` | Technical noun | A value applied when a process or sandbox runs. | build-time setting, runtime config |
 | `sandbox image` | Technical noun | The built image used to create an agent sandbox. | base image, container |
 | `sandbox registry` | Technical noun | NemoClaw state that records managed sandboxes and their selected agent types. | image registry, container registry |

@@ -131,7 +131,7 @@ export function createMxcRuntimeProviderBundle({
       "MXC mutations remain disabled until lifecycle and cleanup pass live E2E.",
     ),
     stateMutation: unsupported(
-      "MXC state mutation remains disabled until lifecycle and cleanup pass live E2E.",
+      "The MXC runtime provider state mutation surface remains disabled until lifecycle and cleanup pass live E2E.",
     ),
     bootstrap: unsupported(
       "The OpenShell MXC driver does not expose a per-sandbox native artifact launch contract.",

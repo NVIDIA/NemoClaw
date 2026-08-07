@@ -21,7 +21,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const INTENTS = new Set(["protection-transition", "restore"]);
 
 function fail(message: string): never {
-  throw new Error(`Runtime provider state-mutation plan is invalid: ${message}`);
+  throw new Error(`Runtime provider state mutation plan is invalid: ${message}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

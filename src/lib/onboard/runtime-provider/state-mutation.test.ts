@@ -21,7 +21,7 @@ function plan() {
   };
 }
 
-describe("runtime provider state-mutation plan", () => {
+describe("runtime provider state mutation plan", () => {
   it("binds a bounded scope to the AgentDefinition projection without copying it (#7744)", () => {
     const source = plan();
     const prepared = prepareRuntimeProviderStateMutationPlan(source);

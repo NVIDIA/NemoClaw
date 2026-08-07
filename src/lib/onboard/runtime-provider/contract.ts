@@ -222,7 +222,7 @@ export type RuntimeProviderStateMutationSelector =
   | { readonly kind: "path"; readonly path: string }
   | { readonly kind: "prefix"; readonly prefix: string };
 
-/** One bounded state scope. Providers never accept commands or callbacks here. */
+/** One bounded runtime provider state mutation. Providers never accept commands or callbacks. */
 export interface RuntimeProviderStateMutationPlan {
   readonly schemaVersion: typeof RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION;
   readonly intent: "protection-transition" | "restore";
@@ -244,7 +244,7 @@ export interface RuntimeProviderStateMutationContext {
   readonly sandboxName: string;
 }
 
-/** Opaque provider proof for one durable, exact-runtime active fence. */
+/** Opaque provider proof for one active, exact-runtime provider state mutation fence. */
 export interface RuntimeProviderStateMutationFence {
   readonly schemaVersion: 1;
   readonly providerId: string;
@@ -257,7 +257,7 @@ export interface RuntimeProviderStateMutationFence {
   readonly providerHandle: string;
 }
 
-/** Fresh service evidence required before an active fence may be retired. */
+/** Fresh service evidence required before a runtime provider state mutation fence may retire. */
 export interface RuntimeProviderStateMutationActivationProof {
   readonly schemaVersion: 1;
   readonly providerId: string;
@@ -344,7 +344,7 @@ export type RuntimeProviderStateMutationSurface =
       readonly contractVersion: typeof RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION;
       acquire(
         input: RuntimeProviderStateMutationContext & {
-          /** Frozen, digested output of prepareRuntimeProviderStateMutationPlan. */
+          /** Frozen, digested runtime provider state mutation plan. */
           readonly plan: RuntimeProviderPreparedStateMutationPlan;
         },
       ): Promise<RuntimeProviderStateMutationFence>;
