@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
+import { recordUserLocalOllamaOwnership } from "./ollama-user-local-runtime";
 import {
   installPortableDemoSandboxLifecycle,
   portableDemoLifecycleInternals,
@@ -558,6 +559,7 @@ describe("portable demo sandbox lifecycle", () => {
     const runtime = createPodman();
     installReceipt(stateDir, runtime.podman);
     const binPath = createManagedOllamaBinary(stateDir);
+    recordUserLocalOllamaOwnership(binPath, { homeDir: stateDir, stateDir });
     let ollamaStarted = false;
     const captureHost = vi.fn((command: string) => {
       switch (command) {
@@ -589,7 +591,6 @@ describe("portable demo sandbox lifecycle", () => {
             args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
           captureHost,
           launchHost,
-          loadManagedOllama: () => binPath,
           log,
         },
       ),
@@ -601,6 +602,98 @@ describe("portable demo sandbox lifecycle", () => {
     expect(log).toHaveBeenCalledWith(
       "  Portable demo lifecycle restarted NemoClaw-managed Ollama.",
     );
+    expect(captureHost).toHaveBeenCalledWith(
+      "curl",
+      expect.arrayContaining(["--noproxy", "127.0.0.1"]),
+      5000,
+    );
+  });
+
+  it("records an explicitly re-enrolled pre-receipt Ollama before recovery (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const binPath = createManagedOllamaBinary(stateDir);
+    let ollamaStarted = false;
+    const launchHost = vi.fn(() => {
+      ollamaStarted = true;
+    });
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          env: { HOME: stateDir, NEMOCLAW_PORTABLE_OLLAMA_REENROLL: "1" },
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
+          captureHost: (command) =>
+            command === "pgrep"
+              ? { status: 1 }
+              : ollamaStarted
+                ? { status: 0, stdout: JSON.stringify({ models: [] }) }
+                : { status: 7 },
+          launchHost,
+        },
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(stateDir, "ollama", "user-local-ownership.json"), "utf8"),
+      ),
+    ).toMatchObject({ binPath });
+    expect(launchHost).toHaveBeenCalledWith(binPath, ["serve"], {
+      HOME: stateDir,
+      OLLAMA_HOST: "127.0.0.1:11434",
+    });
+  });
+
+  it("rejects Ollama re-enrollment for a non-Ollama sandbox (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "nvidia" },
+        {
+          platform: "linux",
+          env: { HOME: stateDir, NEMOCLAW_PORTABLE_OLLAMA_REENROLL: "1" },
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: () => ({ status: 0 }),
+        },
+      ),
+    ).toThrow("requires a portable sandbox with the recorded ollama-local provider");
+  });
+
+  it("rejects a symlink before recording explicit Ollama re-enrollment (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const binPath = createManagedOllamaBinary(stateDir);
+    const targetPath = path.join(stateDir, "ollama-target");
+    fs.renameSync(binPath, targetPath);
+    fs.symlinkSync(targetPath, binPath);
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          env: { HOME: stateDir, NEMOCLAW_PORTABLE_OLLAMA_REENROLL: "1" },
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: () => ({ status: 0 }),
+        },
+      ),
+    ).toThrow("is not a regular executable");
+    expect(fs.existsSync(path.join(stateDir, "ollama", "user-local-ownership.json"))).toBe(false);
   });
 
   it("does not inspect ownership or launch Ollama when the local API is already healthy (#8502)", () => {

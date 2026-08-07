@@ -10,7 +10,11 @@ import path from "node:path";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
-import { loadUserLocalOllamaOwnership, OLLAMA_PORT } from "./ollama-user-local-runtime";
+import {
+  loadUserLocalOllamaOwnership,
+  OLLAMA_PORT,
+  recordUserLocalOllamaOwnership,
+} from "./ollama-user-local-runtime";
 
 const RECEIPT_DIRECTORY = "portable-demo-lifecycle";
 const MAX_RECEIPT_BYTES = 4096;
@@ -20,6 +24,7 @@ const EXEC_READY_TIMEOUT_MS = 90_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
 const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
+const PORTABLE_OLLAMA_REENROLL_ENV = "NEMOCLAW_PORTABLE_OLLAMA_REENROLL";
 const POLL_INTERVAL_MS = 1_000;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
@@ -431,6 +436,8 @@ function ollamaIsHealthy(
     "curl",
     [
       "-fsS",
+      "--noproxy",
+      "127.0.0.1",
       "--max-time",
       String(Math.max(1, Math.ceil(Math.min(PROBE_TIMEOUT_MS, timeoutMs) / 1_000))),
       `http://127.0.0.1:${String(OLLAMA_PORT)}/api/tags`,
@@ -469,13 +476,29 @@ function recoverManagedOllama(
   timing: Required<Pick<PortableDemoLifecycleDeps, "now" | "sleep">>,
   deps: PortableDemoLifecycleDeps,
 ): void {
-  if (context.provider !== "ollama-local") return;
+  const reenrollRequested = commandEnv[PORTABLE_OLLAMA_REENROLL_ENV] === "1";
+  const homeDir = commandEnv.HOME ?? os.homedir();
+  if (context.provider !== "ollama-local") {
+    if (reenrollRequested) {
+      throw new Error(
+        `${PORTABLE_OLLAMA_REENROLL_ENV}=1 requires a portable sandbox with the recorded ollama-local provider`,
+      );
+    }
+    return;
+  }
+  if (reenrollRequested) {
+    const binPath = path.join(homeDir, ".local", "bin", "ollama");
+    assertManagedOllamaBinary(binPath);
+    recordUserLocalOllamaOwnership(binPath, { homeDir, stateDir });
+    (deps.log ?? console.log)(
+      "  Portable demo lifecycle recorded the explicitly re-enrolled user-local Ollama.",
+    );
+  }
   const captureHost =
     deps.captureHost ??
     ((command, args, timeoutMs) => defaultCaptureHost(command, args, timeoutMs, commandEnv));
   if (ollamaIsHealthy(captureHost, PROBE_TIMEOUT_MS)) return;
 
-  const homeDir = commandEnv.HOME ?? os.homedir();
   const binPath = deps.loadManagedOllama
     ? deps.loadManagedOllama()
     : loadUserLocalOllamaOwnership({ homeDir, stateDir });
@@ -494,11 +517,13 @@ function recoverManagedOllama(
 
   const launchHost =
     deps.launchHost ?? ((command, args, env) => defaultLaunchHost(command, args, env));
-  launchHost(binPath, ["serve"], {
+  const launchEnv: NodeJS.ProcessEnv = {
     ...commandEnv,
     HOME: homeDir,
     OLLAMA_HOST: `127.0.0.1:${String(OLLAMA_PORT)}`,
-  });
+  };
+  delete launchEnv[PORTABLE_OLLAMA_REENROLL_ENV];
+  launchHost(binPath, ["serve"], launchEnv);
   const recovered = waitFor(OLLAMA_STARTUP_TIMEOUT_MS, timing, (remainingMs) =>
     ollamaIsHealthy(captureHost, remainingMs),
   );
