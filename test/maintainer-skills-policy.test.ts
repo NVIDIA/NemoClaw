@@ -405,6 +405,34 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(stale).not.toContain('touch "$SENTINEL"');
     expect(stale).not.toContain("NEMOCLAW_MODEL=${NEMOCLAW_MODEL:-nemotron-3-nano:4b}");
 
+    const cleanupFunction = stale.match(
+      /(cleanup_verification\(\) \{[\s\S]*?\n\})\ntrap cleanup_verification EXIT/u,
+    );
+    expect(cleanupFunction).not.toBeNull();
+    const cleanupResult = spawnSync("bash", [], {
+      encoding: "utf8",
+      input: `
+${cleanupFunction?.[1] ?? ""}
+run_with_timeout() { return 1; }
+instance_is_absent() { return 1; }
+cleanup_local_evidence() { :; }
+PROVISIONED_NEW=1
+KEEP_INSTANCE=0
+REMOTE_STATE_CREATED=1
+PROVIDER_CREDENTIAL_COPIED=1
+PROVIDER_CREDENTIAL_ENV=OPENAI_API_KEY
+INSTANCE_NAME=verify-stale-test
+cleanup_verification
+`,
+    });
+    expect(cleanupResult.status, cleanupResult.stderr).toBe(1);
+    expect(cleanupResult.stderr).toContain(
+      "cleanup was not confirmed for verify-stale-test; do not reuse this instance",
+    );
+    expect(cleanupResult.stderr).toContain(
+      "rotate OPENAI_API_KEY immediately because provider-key might remain",
+    );
+
     const redactor = path.join(
       root,
       ".agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py",
