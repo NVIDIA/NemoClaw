@@ -4,16 +4,13 @@
 import { dockerCapture } from "../adapters/docker/run";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
 import * as registry from "../state/registry";
+import { compareAndSetLegacySandboxLifecycleGeneration } from "../state/registry/lifecycle-generation";
 
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 
-type SandboxEntry = {
-  name?: string;
-  lifecycleGeneration?: string;
-  openshellDriver?: string | null;
-};
+type SandboxEntry = import("../state/registry").SandboxEntry;
 
 type LabeledSandboxContainer = {
   id: string;
@@ -220,6 +217,8 @@ function privilegedSandboxExecArgv(
     driver === "docker"
       ? resolvePortableDemoPrivilegedExecTarget(sandboxName, {
           ...(entry.lifecycleGeneration ? { registryGeneration: entry.lifecycleGeneration } : {}),
+          backfillRegistryGeneration: (generation) =>
+            compareAndSetLegacySandboxLifecycleGeneration(entry, generation),
         })
       : null;
   if (portableTarget) {

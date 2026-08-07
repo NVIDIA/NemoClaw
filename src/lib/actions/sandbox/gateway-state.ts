@@ -51,6 +51,7 @@ import {
   type PortableDemoLifecycleRecoveryResult,
   recoverPortableDemoSandboxLifecycle,
 } from "../../onboard/experimental/portable-demo-lifecycle";
+import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
@@ -91,10 +92,7 @@ function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
 export function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
-  sandbox: Pick<
-    SandboxEntry,
-    "agent" | "lifecycleGeneration" | "openshellDriver" | "provider"
-  > | null,
+  sandbox: SandboxEntry | null,
   gatewayName: string,
 ): PortableDemoLifecycleRecoveryResult {
   if (!sandbox || sandbox.openshellDriver !== "docker") return { kind: "not-installed" };
@@ -108,6 +106,8 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
       provider: sandbox.provider,
     },
     {
+      backfillRegistryGeneration: (generation) =>
+        compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
       openshellBinary: getOpenshellBinary(),
       captureOpenshell: (args, timeoutMs) => {
         const result = captureOpenshell([...args], {
