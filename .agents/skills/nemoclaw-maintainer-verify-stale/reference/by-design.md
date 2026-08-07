@@ -20,7 +20,7 @@ Use whenever the reproducer points at removed, intentionally changed, or depreca
 
 Before scoring, check whether an accepted issue, accepted design decision, merged PR, or maintainer comment explicitly establishes that the behavior changed intentionally. Code deletion or symbol absence alone does not establish intent; either can be an accidental regression, rename, or move.
 
-This step is split into substeps so the rigor is mechanical, not optional. Every claim in the final comment must be backed by a verifiable evidence block — a comment URL with quoted phrase, a commit SHA with diff range, or a grep command with its actual output. Hand-wavy claims fail Step 8.5d's self-verification pass and force a bail to `verify-inconclusive`.
+Use these substeps for every by-design investigation. Support each final-comment claim with a comment URL and quoted phrase, a commit SHA and diff range, or a `grep` command and its output. If Step 8.5d cannot reproduce the evidence, select `verify-inconclusive`.
 
 ### Step 8.5a: Run signal detection
 
@@ -59,6 +59,7 @@ git log "$REPORTED_VERSION".."$LATEST" \
 
 # Confirm that a selected candidate diff deletes the reviewed symbol.
 git show --format=fuller --patch <candidate-sha> -- src/ bin/ nemoclaw/src/ \
+  | grep -E '^-[^-]' \
   | grep -nF -- "$SYMBOL"
 ```
 

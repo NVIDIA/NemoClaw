@@ -512,7 +512,7 @@ If the baseline install or build fails after the resolved release tag matches `$
 
 ### Step 8a.5: Bootstrap reproducer dependencies
 
-Brev's stock CPU images ship with NemoClaw installable but not the broader ecosystem the reproducer may need — local model servers (Ollama, vLLM), inference providers, third-party CLIs. **Default to maximum faithfulness: install the actual dependency the reporter used rather than substituting a stub.** Substituting trades faithfulness for speed; that trade is rarely worth it on a 60-min budget, and it almost always introduces a confound that makes the verdict less trustworthy.
+Brev CPU images include the dependencies required to install NemoClaw, but they might not include the dependency named by the reproducer. Install the reported dependency instead of a substitute. A substitute changes the verification environment and can make the verdict inconclusive.
 
 **When to bootstrap (not substitute):**
 
