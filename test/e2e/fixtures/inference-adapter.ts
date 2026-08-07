@@ -7,6 +7,7 @@ import type { ArtifactSink } from "./artifacts.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import { type ProviderClient, trustedProviderEndpoint } from "./clients/provider.ts";
 import {
+  type FakeOpenAiCompatibleRequest,
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "./fake-openai-compatible.ts";
@@ -42,6 +43,9 @@ import type { TestProgress, TestProgressCapability } from "./progress.ts";
 export const E2E_INFERENCE_MODE_VALUES = ["mock", "internal-nvidia", "public-nvidia"] as const;
 export type E2EInferenceMode = (typeof E2E_INFERENCE_MODE_VALUES)[number];
 
+/** Non-secret marker used to prove fixture content reached the local mock inference boundary. */
+export const E2E_MOCK_REQUEST_CANARY = "NEMOCLAW_E2E_REQUEST_CANARY_K9X2";
+
 export interface E2EInferenceAdapter {
   readonly mode: E2EInferenceMode;
   readonly model: string;
@@ -52,6 +56,8 @@ export interface E2EInferenceAdapter {
   readonly contractLabel: string;
   env(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   redactionValues(): string[];
+  /** Privacy-safe mock request metadata; unavailable when inference is hosted. */
+  requestSummaries(): readonly FakeOpenAiCompatibleRequest[] | undefined;
   probeModels(artifactName: string): Promise<unknown>;
   directChat(
     prompt: string,
@@ -219,6 +225,10 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
     return [this.apiKey];
   }
 
+  requestSummaries(): readonly FakeOpenAiCompatibleRequest[] | undefined {
+    return this.fake?.requests();
+  }
+
   async probeModels(artifactName: string): Promise<unknown> {
     if (this.providerClient) {
       return requestViaProvider(this.providerClient, {
@@ -326,6 +336,10 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
     return [this.apiKey];
   }
 
+  requestSummaries(): undefined {
+    return undefined;
+  }
+
   async probeModels(artifactName: string): Promise<unknown> {
     return requestViaProvider(this.providerClient, {
       allowedHosts: PUBLIC_NVIDIA_ALLOWED_HOSTS,
@@ -370,6 +384,8 @@ export async function createE2EInferenceAdapter(
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "PONG",
+      // The fake stores only presence metadata, never request bodies or the canary value.
+      requestCanaryMarker: E2E_MOCK_REQUEST_CANARY,
       // A Docker network namespace cannot reach host loopback through the host
       // alias, so listen on the bridge-facing interfaces. The workflow uses an
       // ephemeral ubuntu-latest VM, an OS-assigned port, and a per-run credential.

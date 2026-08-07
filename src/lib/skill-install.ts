@@ -111,6 +111,8 @@ export interface SkillPaths {
   uploadDirSharedWithAgent: boolean;
   /** OpenClaw-only: session index to clear, or null */
   sessionFile: string | null;
+  /** Whether a fresh agent session reloads skills without a gateway restart */
+  reloadsSkillsOnSessionStart: boolean;
   /** Whether the agent is OpenClaw (drives refresh behavior) */
   isOpenClaw: boolean;
 }
@@ -164,6 +166,7 @@ export function resolveSkillPaths(
     mirrorDir: mirror ? mirror(dir, skillName) : null,
     uploadDirSharedWithAgent: Boolean(sharedDir),
     sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
+    reloadsSkillsOnSessionStart: agentName === "hermes",
     isOpenClaw,
   };
 }
@@ -597,7 +600,7 @@ export function installFreshSharedSkill(
 
 /**
  * Run post-install steps: skill-load mirror for every agent that needs one,
- * session refresh for OpenClaw, and a restart hint when neither applies.
+ * session refresh for OpenClaw, and agent-specific activation guidance.
  */
 export function postInstall(
   ctx: SshContext,
@@ -645,7 +648,11 @@ export function postInstall(
   }
 
   if (!paths.mirrorDir && !paths.sessionFile) {
-    messages.push("Restart the agent gateway to pick up the new skill.");
+    messages.push(
+      paths.reloadsSkillsOnSessionStart
+        ? "Start a new chat session to load the skill; a gateway restart is not required."
+        : "Restart the agent gateway to pick up the new skill.",
+    );
   }
 
   return { success: true, messages };

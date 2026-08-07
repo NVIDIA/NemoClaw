@@ -45,6 +45,7 @@ const paths = {
   mirrorDir: "$HOME/.openclaw/skills/demo-skill",
   uploadDirSharedWithAgent: false,
   sessionFile: "/sandbox/.openclaw/agents/main/sessions/sessions.json",
+  reloadsSkillsOnSessionStart: false,
   isOpenClaw: true,
 };
 
@@ -59,6 +60,7 @@ const sharedPaths = {
   mirrorDir: null,
   uploadDirSharedWithAgent: true,
   sessionFile: null,
+  reloadsSkillsOnSessionStart: false,
   isOpenClaw: false,
 };
 

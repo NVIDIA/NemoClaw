@@ -15,6 +15,7 @@ import type {
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   createE2EInferenceAdapter,
+  E2E_MOCK_REQUEST_CANARY,
   type E2EInferenceAdapter,
   requirePublicNvidiaInferenceKey,
 } from "../fixtures/inference-adapter.ts";
@@ -164,9 +165,19 @@ describe("E2E inference adapter", () => {
     expect(await adapter.probeModels("mock-models")).toMatchObject({
       data: [{ id: "nvidia/nvidia/nemotron-3-ultra" }],
     });
-    expect(await adapter.directChat("Reply PONG")).toMatchObject({
+    const requestOffset = adapter.requestSummaries()?.length ?? 0;
+    expect(await adapter.directChat(`Reply PONG ${E2E_MOCK_REQUEST_CANARY}`)).toMatchObject({
       choices: [{ message: { content: "PONG" } }],
     });
+    expect(adapter.requestSummaries()?.slice(requestOffset)).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        method: "POST",
+        path: "/v1/chat/completions",
+        forbiddenMarkerMatches: 0,
+        requestCanaryPresent: true,
+      }),
+    );
   });
 
   it("keeps unrelated ambient secrets out of adapter and fake-server child environments", async () => {
@@ -207,6 +218,7 @@ describe("E2E inference adapter", () => {
     const env = adapter.env({ NVIDIA_INFERENCE_API_KEY: "ambient-source-key" });
 
     expect(adapter.mode).toBe("internal-nvidia");
+    expect(adapter.requestSummaries()).toBeUndefined();
     expect(adapter.expectedRouteProvider).toBe("compatible-endpoint");
     expect(env).toMatchObject({
       NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia",
@@ -304,6 +316,7 @@ describe("E2E inference adapter", () => {
     });
 
     expect(adapter.mode).toBe("public-nvidia");
+    expect(adapter.requestSummaries()).toBeUndefined();
     expect(adapter.expectedRouteProvider).toBe("nvidia-prod");
     expect(adapter.endpointUrl).toBe("https://integrate.api.nvidia.com/v1");
     expect(env).toMatchObject({

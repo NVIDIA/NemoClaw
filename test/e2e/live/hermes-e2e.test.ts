@@ -19,6 +19,7 @@ import {
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
+import { assertHermesSkillLifecycle } from "./hermes-skill-lifecycle.ts";
 import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
@@ -376,7 +377,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(resultText(install)).toContain(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`);
   }
 
-  progress.phase("validate sandbox layout and health");
+  progress.phase("validate sandbox layout, health, and skill activation");
   // Phase 3: sandbox verification.
   const list = await host.command("nemoclaw", ["list"], {
     artifactName: "phase-3-nemoclaw-list",
@@ -499,6 +500,14 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   );
   expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
   expect(configProbe.stdout).toContain("OK");
+
+  await assertHermesSkillLifecycle({
+    env: commandEnv(),
+    host,
+    inference,
+    redactionValues,
+    sandboxName: SANDBOX_NAME,
+  });
 
   await assertHermesCliAdapterLiveContract({
     env: commandEnv(),
@@ -1443,6 +1452,9 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       sandboxListedAndHealthy: true,
       directProviderInferencePong: true,
       sandboxInferenceLocalPong: true,
+      hermesSkillInstalled: true,
+      hermesSkillDiscovered: true,
+      hermesSkillUsedInFreshSession: true,
       dashboardChecked: hermesDashboardE2eEnabled(),
       securityPostureChecked: securityPosture !== null,
     },

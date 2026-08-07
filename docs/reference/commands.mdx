@@ -2720,6 +2720,8 @@ OpenClaw caches skill content per session, so the command also refreshes the Ope
 
 Hermes plugins are different from NemoClaw skills.
 `skill install` uploads agent skills, while Hermes plugin configuration is managed by the Hermes runtime and the NemoClaw Hermes plugin baked into the sandbox image.
+The NemoClaw Hermes plugin reloads installed skills when a new chat session starts.
+Start a new Hermes chat session after an install or update; a gateway restart is not required.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -2766,7 +2768,8 @@ For OpenClaw, the command also removes the OpenClaw home-directory mirror when p
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Run `$$nemoclaw <name> gateway restart` if prompted so the removal takes effect.
+Start a new Hermes chat session for the removal to take effect.
+A gateway restart is not required.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

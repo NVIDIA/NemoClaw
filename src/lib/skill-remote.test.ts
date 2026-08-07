@@ -85,6 +85,27 @@ describe("removeSkill (unit — no SSH)", () => {
     ]);
   });
 
+  it("tells Hermes users to start a fresh session after removal", () => {
+    const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
+    const paths = resolveSkillPaths(
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
+      "test-skill",
+    );
+    const commands: string[] = [];
+    const result = removeSkill(ctx, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.messages).toEqual([
+      "Start a new chat session for the removal to take effect; a gateway restart is not required.",
+    ]);
+    expect(commands).toEqual(["rm -rf '/sandbox/.hermes/skills/test-skill'"]);
+  });
+
   it("probes the canonical Deep Agents directory for diagnostics (#7634)", () => {
     const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
     const paths = resolveSkillPaths(
