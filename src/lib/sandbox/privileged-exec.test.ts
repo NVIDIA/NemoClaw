@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // The shared source hook preserves the writable CommonJS cache used by these mocks.
 const require = createRequire(import.meta.url);
@@ -28,7 +28,7 @@ function withPrivilegedExecMocks<T>(
     };
     resolvePortableDemoPrivilegedExecTarget?: (
       sandboxName: string,
-    ) => { containerId: string; dockerHost: string } | null;
+    ) => { assertRuntimeAuthority: () => void; containerId: string; dockerHost: string } | null;
   },
   run: (helper: typeof import("./privileged-exec")) => T,
 ): T {
@@ -143,6 +143,7 @@ describe("privileged sandbox exec routing", () => {
 
   it("uses the receipt-owned Podman socket when the default Docker daemon has no container (#8584)", () => {
     let dockerPsCalls = 0;
+    const assertRuntimeAuthority = vi.fn();
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
@@ -152,6 +153,7 @@ describe("privileged sandbox exec routing", () => {
           return "";
         },
         resolvePortableDemoPrivilegedExecTarget: () => ({
+          assertRuntimeAuthority,
           containerId: "a".repeat(64),
           dockerHost: "unix:///run/user/1001/podman/podman.sock",
         }),
@@ -203,6 +205,7 @@ describe("privileged sandbox exec routing", () => {
       },
     );
     expect(dockerPsCalls).toBe(0);
+    expect(assertRuntimeAuthority).toHaveBeenCalledOnce();
   });
 
   it("bounds direct sandbox container discovery", () => {

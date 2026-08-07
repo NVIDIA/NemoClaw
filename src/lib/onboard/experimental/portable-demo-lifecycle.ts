@@ -7,7 +7,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  createPodmanContainerEngine,
+  type PodmanSocketAuthorityDeps,
+} from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
 import {
@@ -62,6 +69,7 @@ interface PodmanContainerInspection {
 }
 
 export interface PortableDemoPrivilegedExecTarget {
+  readonly assertRuntimeAuthority: () => void;
   readonly containerId: string;
   readonly dockerHost: string;
 }
@@ -71,7 +79,8 @@ export interface PortableDemoLifecycleDeps {
   stateDir?: string;
   env?: NodeJS.ProcessEnv;
   openshellBinary?: string;
-  podman?: (args: readonly string[]) => CommandResult;
+  podman?: (args: readonly string[], env?: NodeJS.ProcessEnv) => CommandResult;
+  podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
   launchOpenshell?: (args: readonly string[]) => void;
   captureHost?: (command: string, args: readonly string[], timeoutMs: number) => CommandResult;
@@ -364,8 +373,19 @@ function discoverPodmanContainer(
   return inspectPodmanContainer(matches[0]!, sandboxName, podman);
 }
 
-function podmanDockerHost(podman: NonNullable<PortableDemoLifecycleDeps["podman"]>): string {
-  const result = podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"]);
+function localPodmanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const local = { ...env };
+  delete local.CONTAINER_CONNECTION;
+  delete local.CONTAINER_HOST;
+  delete local.CONTAINER_SSHKEY;
+  return local;
+}
+
+function podmanSocketPath(
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  env: NodeJS.ProcessEnv,
+): string {
+  const result = podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
   requireCommand(result, "Resolving the portable Podman socket");
   const socket = String(result.stdout ?? "").trim();
   if (/[\u0000-\u001f\u007f-\u009f]/u.test(socket)) {
@@ -375,7 +395,22 @@ function podmanDockerHost(podman: NonNullable<PortableDemoLifecycleDeps["podman"
   if (!path.posix.isAbsolute(socketPath)) {
     throw new Error("The portable Podman socket path is invalid");
   }
-  return `unix://${socketPath}`;
+  return socketPath;
+}
+
+function podmanCapture(
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  env: NodeJS.ProcessEnv,
+): ContainerEngineCommandCapture {
+  return (_executable, args) => {
+    const result = podman(args, env);
+    return {
+      status: result.status ?? 1,
+      stdout: String(result.stdout ?? ""),
+      stderr: String(result.stderr ?? ""),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  };
 }
 
 /** Resolve the receipt-owned portable container for a host-side privileged exec. */
@@ -390,9 +425,19 @@ export function resolvePortableDemoPrivilegedExecTarget(
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
 
-  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
-  const dockerHost = podmanDockerHost(podman);
-  const providerPodman = (args: readonly string[]) => podman(["--url", dockerHost, ...args]);
+  const podman = deps.podman ?? ((args, env = commandEnv) => defaultPodman(args, env));
+  const podmanEnv = localPodmanEnvironment(commandEnv);
+  const socketAuthority = capturePodmanSocketAuthority(
+    podmanSocketPath(podman, podmanEnv),
+    deps.podmanSocketAuthorityDeps,
+  );
+  const provider = createPodmanContainerEngine({
+    operation: "sandbox-lifecycle",
+    socketAuthority,
+    authorityDeps: deps.podmanSocketAuthorityDeps,
+    ...(deps.podman ? { capture: podmanCapture(podman, podmanEnv) } : {}),
+  });
+  const providerPodman = (args: readonly string[]) => provider.capture(args, COMMAND_TIMEOUT_MS);
   const inspection = discoverPodmanContainer(sandboxName, providerPodman);
   if (inspection.containerId !== receipt.containerId) {
     throw new Error(
@@ -407,7 +452,12 @@ export function resolvePortableDemoPrivilegedExecTarget(
   if (!inspection.running) {
     throw new Error(`Portable sandbox '${sandboxName}' is not running`);
   }
-  return { containerId: inspection.containerId, dockerHost };
+  return {
+    assertRuntimeAuthority: () =>
+      assertPodmanSocketAuthority(socketAuthority, deps.podmanSocketAuthorityDeps),
+    containerId: inspection.containerId,
+    dockerHost: `unix://${socketAuthority.socketPath}`,
+  };
 }
 
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {

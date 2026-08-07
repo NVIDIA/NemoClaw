@@ -6,10 +6,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { SandboxEntry } from "../../state/registry";
 import { recordUserLocalOllamaOwnership } from "./ollama-user-local-runtime";
 import {
   installPortableDemoSandboxLifecycle,
+  type PortableDemoLifecycleDeps,
   portableDemoLifecycleInternals,
   recoverPortableDemoSandboxLifecycle,
   resolvePortableDemoPrivilegedExecTarget,
@@ -17,6 +19,7 @@ import {
 
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
+const SOCKET_PATH = "/run/user/1001/podman/podman.sock";
 const STARTUP_ARGV = [
   "env",
   "CHAT_UI_URL=http://127.0.0.1:18789",
@@ -68,7 +71,7 @@ function createPodman(
   let containerName = "openshell-sandbox-alpha";
   let matches = [CONTAINER_ID];
   let socketPath = "/run/user/1001/podman/podman.sock";
-  const podman = vi.fn((args: readonly string[]) => {
+  const podman = vi.fn((args: readonly string[], _env?: NodeJS.ProcessEnv) => {
     const command = args[0] === "--url" ? args.slice(2) : args;
     switch (command[0]) {
       case "info":
@@ -129,6 +132,56 @@ function createPodman(
       socketPath = value;
     },
   };
+}
+
+function socketAuthorityDeps(
+  options: {
+    directory?: boolean;
+    directoryMode?: bigint;
+    socketInode?: () => bigint;
+    socketMode?: bigint;
+    socketUid?: bigint;
+  } = {},
+): PodmanSocketAuthorityDeps {
+  const directoryInodes = new Map<string, bigint>();
+  return {
+    uid: 1001,
+    lstat: (filePath) => {
+      const socket = filePath === SOCKET_PATH;
+      const directoryInode = directoryInodes.get(filePath) ?? BigInt(7000 + directoryInodes.size);
+      directoryInodes.set(filePath, directoryInode);
+      return {
+        dev: 8n,
+        ino: socket ? (options.socketInode?.() ?? 9001n) : directoryInode,
+        mode: socket
+          ? (options.socketMode ?? 0o600n)
+          : filePath === path.dirname(SOCKET_PATH)
+            ? (options.directoryMode ?? 0o700n)
+            : 0o755n,
+        uid: socket
+          ? (options.socketUid ?? 1001n)
+          : filePath.startsWith("/run/user/1001")
+            ? 1001n
+            : 0n,
+        isDirectory: () => !socket && (options.directory ?? true),
+        isSocket: () => socket,
+      };
+    },
+  };
+}
+
+function resolveTarget(
+  stateDir: string,
+  runtime: ReturnType<typeof createPodman>,
+  overrides: Partial<PortableDemoLifecycleDeps> = {},
+) {
+  return resolvePortableDemoPrivilegedExecTarget("alpha", {
+    platform: "linux",
+    stateDir,
+    podman: runtime.podman,
+    podmanSocketAuthorityDeps: socketAuthorityDeps(),
+    ...overrides,
+  });
 }
 
 function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman>["podman"]): void {
@@ -284,34 +337,31 @@ describe("portable demo sandbox lifecycle", () => {
     installReceipt(stateDir, runtime.podman);
     runtime.podman.mockClear();
 
-    expect(
-      resolvePortableDemoPrivilegedExecTarget("alpha", {
-        platform: "linux",
-        stateDir,
-        podman: runtime.podman,
-      }),
-    ).toEqual({
+    expect(resolveTarget(stateDir, runtime)).toMatchObject({
       containerId: CONTAINER_ID,
       dockerHost: "unix:///run/user/1001/podman/podman.sock",
     });
-    expect(runtime.podman.mock.calls).toEqual([
-      [["info", "--format", "{{.Host.RemoteSocket.Path}}"]],
+    expect(runtime.podman.mock.calls.map(([args]) => args)).toEqual([
+      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
       [
-        [
-          "--url",
-          "unix:///run/user/1001/podman/podman.sock",
-          "ps",
-          "-a",
-          "--no-trunc",
-          "--filter",
-          "label=openshell.managed=true",
-          "--filter",
-          "label=openshell.sandbox-name=alpha",
-          "--format",
-          "{{.ID}}",
-        ],
+        "--url",
+        "unix:///run/user/1001/podman/podman.sock",
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        "label=openshell.managed=true",
+        "--filter",
+        "label=openshell.sandbox-name=alpha",
+        "--format",
+        "{{.ID}}",
       ],
-      [["--url", "unix:///run/user/1001/podman/podman.sock", "inspect", CONTAINER_ID]],
+      ["--url", "unix:///run/user/1001/podman/podman.sock", "inspect", CONTAINER_ID],
+    ]);
+    expect(runtime.podman.mock.calls.map(([, env]) => env)).toEqual([
+      expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
+      expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
+      expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
     ]);
   });
 
@@ -322,13 +372,7 @@ describe("portable demo sandbox lifecycle", () => {
       installReceipt(stateDir, runtime.podman);
       runtime.setMatches(matches);
 
-      expect(() =>
-        resolvePortableDemoPrivilegedExecTarget("alpha", {
-          platform: "linux",
-          stateDir,
-          podman: runtime.podman,
-        }),
-      ).toThrow(`found ${matches.length}`);
+      expect(() => resolveTarget(stateDir, runtime)).toThrow(`found ${matches.length}`);
     }
   });
 
@@ -338,23 +382,11 @@ describe("portable demo sandbox lifecycle", () => {
     installReceipt(stateDir, runtime.podman);
 
     runtime.setContainerName("renamed-alpha");
-    expect(() =>
-      resolvePortableDemoPrivilegedExecTarget("alpha", {
-        platform: "linux",
-        stateDir,
-        podman: runtime.podman,
-      }),
-    ).toThrow("OpenShell identity does not match");
+    expect(() => resolveTarget(stateDir, runtime)).toThrow("OpenShell identity does not match");
 
     runtime.setContainerName("openshell-sandbox-alpha");
     runtime.setSandboxNameLabel("beta");
-    expect(() =>
-      resolvePortableDemoPrivilegedExecTarget("alpha", {
-        platform: "linux",
-        stateDir,
-        podman: runtime.podman,
-      }),
-    ).toThrow("OpenShell identity does not match");
+    expect(() => resolveTarget(stateDir, runtime)).toThrow("OpenShell identity does not match");
   });
 
   it("refuses a replacement or stopped portable container before privileged exec (#8584)", () => {
@@ -365,24 +397,12 @@ describe("portable demo sandbox lifecycle", () => {
     const replacementId = "b".repeat(64);
     runtime.setMatches([replacementId]);
     runtime.setContainerId(replacementId);
-    expect(() =>
-      resolvePortableDemoPrivilegedExecTarget("alpha", {
-        platform: "linux",
-        stateDir,
-        podman: runtime.podman,
-      }),
-    ).toThrow("recorded container identity changed");
+    expect(() => resolveTarget(stateDir, runtime)).toThrow("recorded container identity changed");
 
     runtime.setMatches([CONTAINER_ID]);
     runtime.setContainerId(CONTAINER_ID);
     runtime.setRunning(false);
-    expect(() =>
-      resolvePortableDemoPrivilegedExecTarget("alpha", {
-        platform: "linux",
-        stateDir,
-        podman: runtime.podman,
-      }),
-    ).toThrow("is not running");
+    expect(() => resolveTarget(stateDir, runtime)).toThrow("is not running");
   });
 
   it("refuses a non-local portable Podman socket before privileged exec (#8584)", () => {
@@ -391,13 +411,52 @@ describe("portable demo sandbox lifecycle", () => {
     installReceipt(stateDir, runtime.podman);
     runtime.setSocketPath("tcp://example.test:1234");
 
+    expect(() => resolveTarget(stateDir, runtime)).toThrow("socket path is invalid");
+  });
+
+  it.each([
+    ["foreign owner", socketAuthorityDeps({ socketUid: 2000n }), "owned by uid 2000"],
+    ["writable socket", socketAuthorityDeps({ socketMode: 0o660n }), "writable by another"],
+    ["writable parent", socketAuthorityDeps({ directoryMode: 0o770n }), "writable by another"],
+    ["symlinked parent", socketAuthorityDeps({ directory: false }), "not a real directory"],
+  ])("refuses a %s for portable privileged exec (#8584)", (_case, authority, message) => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+
     expect(() =>
-      resolvePortableDemoPrivilegedExecTarget("alpha", {
-        platform: "linux",
-        stateDir,
-        podman: runtime.podman,
-      }),
-    ).toThrow("socket path is invalid");
+      resolveTarget(stateDir, runtime, { podmanSocketAuthorityDeps: authority }),
+    ).toThrow(message);
+  });
+
+  it("ignores ambient Podman remote selection for portable privileged exec (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+
+    resolveTarget(stateDir, runtime, {
+      env: {
+        CONTAINER_CONNECTION: "attacker",
+        CONTAINER_HOST: "tcp://example.test:1234",
+        CONTAINER_SSHKEY: "/tmp/attacker-key",
+      },
+    });
+
+    expect(runtime.podman.mock.calls.map(([, env]) => env)).toEqual([{}, {}, {}]);
+  });
+
+  it("refuses socket replacement after portable workload inspection (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    let inode = 9001n;
+    const target = resolveTarget(stateDir, runtime, {
+      podmanSocketAuthorityDeps: socketAuthorityDeps({ socketInode: () => inode }),
+    });
+    inode = 9002n;
+
+    expect(() => target?.assertRuntimeAuthority()).toThrow("changed after it was qualified");
   });
 
   it("does not persist proxy credentials from the create-time environment (#8441)", () => {

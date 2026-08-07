@@ -222,6 +222,7 @@ function privilegedSandboxExecArgv(
     const sanitizedEnvArgs = sanitizeEnvironment
       ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
       : [];
+    portableTarget.assertRuntimeAuthority();
     return [
       "--host",
       portableTarget.dockerHost,
