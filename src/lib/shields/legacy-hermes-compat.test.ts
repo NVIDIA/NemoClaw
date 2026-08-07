@@ -100,7 +100,7 @@ describe("legacy Hermes shields compatibility", () => {
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
     const dockerExec = requireSource("../adapters/docker/exec.js");
     const stateDirLock = requireSource("./state-dir-lock.js");
-    const inferenceConvergence = requireSource("./inference-convergence.js");
+    const relockReconfirm = requireSource("./relock-reconfirm.js");
     const audit = requireSource("./audit.js");
     const permissiveRuntime = requireSource("./permissive-runtime.js");
     const tempFiles = requireSource("../onboard/temp-files.js");
@@ -134,7 +134,7 @@ describe("legacy Hermes shields compatibility", () => {
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
       vi.spyOn(stateDirLock, "restoreStateDirLockPosture").mockReturnValue([]),
       vi.spyOn(stateDirLock, "stateLockPlanCompatibilityIssues").mockReturnValue([]),
-      vi.spyOn(inferenceConvergence, "waitForHermesInferenceRouteConvergence").mockReturnValue({
+      vi.spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence").mockReturnValue({
         ok: true,
         attempts: 1,
         httpStatus: 200,

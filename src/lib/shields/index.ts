@@ -70,10 +70,10 @@ const {
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
-const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
+  relockAndReconfirm,
   waitForHermesInferenceRouteConvergence,
-}: typeof import("./inference-convergence") = require("./inference-convergence");
+}: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   inspectAnyShieldsTransitionLockOwner,
   isShieldsTransitionLockUnavailable,
@@ -3853,7 +3853,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     );
     if (target.agentName === "hermes") {
       console.log("  Confirming Hermes inference route after policy transition...");
-      const convergence = waitForHermesInferenceRouteConvergence(sandboxName);
+      const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
       if (!convergence.ok) {
         const status =
           convergence.httpStatus > 0 ? `HTTP ${convergence.httpStatus}` : "unavailable";

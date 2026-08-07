@@ -5,14 +5,26 @@ import {
   buildSandboxInferenceRouteProbeArgs,
   parseSandboxInferenceRouteProbeResult,
 } from "../actions/sandbox/connect-inference-route-probe";
-import { captureOpenshell } from "../adapters/openshell/runtime";
-import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
-import { sleepMs } from "../core/wait";
 
 const DEFAULT_MAX_ATTEMPTS = 4;
 const DEFAULT_RETRY_DELAY_MS = 500;
+const INFERENCE_ROUTE_PROBE_TIMEOUT_MS = 10_000;
 
-type CaptureInferenceRoute = typeof captureOpenshell;
+interface InferenceRouteCommandResult {
+  status: number | null;
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+}
+
+type RunInferenceRoute = (
+  command: readonly string[],
+  options: { ignoreError: true; suppressOutput: true; timeout: number },
+) => InferenceRouteCommandResult;
+
+function sleepMs(milliseconds: number): void {
+  if (milliseconds <= 0 || !Number.isFinite(milliseconds)) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
 
 export interface InferenceRouteConvergenceResult {
   ok: boolean;
@@ -21,9 +33,9 @@ export interface InferenceRouteConvergenceResult {
 }
 
 export interface InferenceRouteConvergenceOptions {
-  capture?: CaptureInferenceRoute;
   maxAttempts?: number;
   retryDelayMs?: number;
+  run: RunInferenceRoute;
   sleep?: (milliseconds: number) => void;
 }
 
@@ -36,21 +48,27 @@ export interface InferenceRouteConvergenceOptions {
  */
 export function waitForHermesInferenceRouteConvergence(
   sandboxName: string,
-  options: InferenceRouteConvergenceOptions = {},
+  options: InferenceRouteConvergenceOptions,
 ): InferenceRouteConvergenceResult {
-  const capture = options.capture ?? captureOpenshell;
   const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
   const retryDelayMs = Math.max(0, Math.trunc(options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS));
   const sleep = options.sleep ?? sleepMs;
   let httpStatus = 0;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const probe = capture(buildSandboxInferenceRouteProbeArgs(sandboxName, { name: "hermes" }), {
-      ignoreError: true,
-      includeStreams: true,
-      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+    const probe = options.run(
+      buildSandboxInferenceRouteProbeArgs(sandboxName, { name: "hermes" }),
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+      },
+    );
+    const parsed = parseSandboxInferenceRouteProbeResult({
+      status: probe.status,
+      output: String(probe.stdout ?? ""),
+      stderr: String(probe.stderr ?? ""),
     });
-    const parsed = parseSandboxInferenceRouteProbeResult(probe);
     httpStatus = parsed.httpStatus;
     if (parsed.healthy) return { ok: true, attempts: attempt, httpStatus };
     if (attempt < maxAttempts) sleep(retryDelayMs);
