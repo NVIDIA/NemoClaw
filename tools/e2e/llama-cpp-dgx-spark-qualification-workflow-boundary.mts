@@ -223,7 +223,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     E2E_JOB: "1",
     E2E_TARGET_ID: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
     RELEASE_E2E_ACTIVATION_PATH: LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA:
       "${{ inputs.base_sha || github.event.before || github.sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN:

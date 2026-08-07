@@ -4,7 +4,7 @@
 title: "Choose a Local Inference Server"
 sidebar-title: "Choose a Local Server"
 description: "Compare operator-run servers and managed runtime profiles before choosing local inference for NemoClaw."
-description-agent: "Compares NemoClaw local inference options. Use when choosing Ollama, vLLM, llama.cpp, NVIDIA NIM, or a fixed local model profile."
+description-agent: "Compares NemoClaw local inference options. Use when choosing Ollama, vLLM, llama.cpp, NVIDIA NIM, or a fixed vLLM profile."
 keywords: ["nemoclaw local inference", "ollama vllm llama.cpp nim", "local inference server"]
 content:
   type: "concept"
@@ -23,7 +23,8 @@ OpenShell intercepts that traffic and forwards it to the local endpoint configur
 | Ollama | You want the default local option and want NemoClaw to install, start, or use Ollama on supported hosts. | Appears when Ollama is installed or running, and the wizard can offer installation on supported hosts. | Ollama through the managed local route. |
 | Existing vLLM | You already run vLLM on `localhost:8000`. | Appears when NemoClaw detects the server. | `/v1/chat/completions`. |
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
-| Fixed local model profile | You need one catalog-selected model and serving runtime combination. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
+| Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
+| Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Appears on a qualified DGX Spark host and supports explicit non-interactive selection. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
 
@@ -32,7 +33,8 @@ OpenShell intercepts that traffic and forwards it to the local endpoint configur
 |---|---|---|---|
 | Existing vLLM | You already run vLLM on `localhost:8000`. | Appears when NemoClaw detects the server. | `/v1/chat/completions`. |
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
-| Fixed local model profile | You need one catalog-selected model and serving runtime combination. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
+| Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
+| Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Appears on a qualified DGX Spark host and supports explicit non-interactive selection. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
 
@@ -61,16 +63,16 @@ NemoClaw forces the Chat Completions API path because the vLLM Responses endpoin
 
 Refer to [Set Up vLLM](set-up-vllm).
 
-## Install a Fixed Local Model Profile
+## Install a Fixed vLLM Profile
 
-Use this feature-gated path to install one catalog-selected model-and-runtime combination for vLLM or llama.cpp.
+Use this feature-gated path to install the fixed catalog-selected vLLM model and runtime combination.
 The installer does not accept a provider or model override for this profile.
 
 Before you start, confirm these prerequisites:
 
 - Use a DGX Spark host with Linux on Arm64.
 - Confirm that Docker, the NVIDIA Container Toolkit, and the NVIDIA GPU driver are operational.
-- Stop any server that already uses port `8000` for vLLM or port `8081` for llama.cpp.
+- Stop any server that already uses port `8000`.
 - Allow capacity for container images, model artifacts, and same-filesystem download staging.
 - Export `HF_TOKEN` only if the configured artifact source requires Hugging Face authentication.
 
@@ -82,8 +84,6 @@ The installer downloads a pinned container image and a fixed catalog model from 
 It runs the remaining onboarding steps non-interactively and can recreate the named sandbox when its recorded inference route differs.
 The runtime stores an owner-only bearer API key and model artifacts on the host.
 </Warning>
-
-Select vLLM:
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
@@ -101,43 +101,18 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
   bash -s -- --local-model-runtime=vllm
 ```
 
-Select llama.cpp:
-
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
-<AgentOnly variant="openclaw">
-  NEMOCLAW_AGENT=openclaw \
-</AgentOnly>
-<AgentOnly variant="hermes">
-  NEMOCLAW_AGENT=hermes \
-</AgentOnly>
-<AgentOnly variant="deepagents">
-  NEMOCLAW_AGENT=langchain-deepagents-code \
-</AgentOnly>
-  NEMOCLAW_SANDBOX_NAME=my-assistant \
-  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-  bash -s -- --local-model-runtime=llama-cpp
-```
-
-The flag enables the dedicated profile gate, disables Express selection, and selects the matching catalog recipe.
+The flag enables the dedicated vLLM profile gate, disables Express selection, and selects the matching catalog recipe.
 Do not combine this path with `NEMOCLAW_PROVIDER` or `NEMOCLAW_MODEL`.
-The vLLM profile rejects `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
+The profile rejects `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
 
-The vLLM choice performs these actions:
+The profile performs these actions:
 
 - Uses the pinned runtime image and fixed serving command from the catalog.
 - Stores model files in the host Hugging Face cache.
 - Publishes the authenticated server only on `127.0.0.1:8000`.
 - Reuses the owner-only host-global managed-vLLM API key.
 
-The llama.cpp choice performs these actions:
-
-- Downloads one exact GGUF artifact over HTTPS.
-- Verifies the declared size and SHA-256 digest before cache publication or launch.
-- Stores the verified artifact in an owner-only content-addressed cache.
-- Publishes the authenticated server only on `127.0.0.1:8081` through a dedicated internal Docker network.
-
-After either runtime passes its readiness check, onboarding registers the provider and routes sandbox traffic through `inference.local`.
+After the runtime passes its readiness check, onboarding registers the provider and routes sandbox traffic through `inference.local`.
 
 Verify the sandbox route:
 
@@ -149,30 +124,114 @@ $$nemoclaw my-assistant doctor
 Accept the result when `status` reports the inference route as `reachable` and `doctor` exits with status `0`.
 Route reachability does not by itself establish successful model invocation.
 
-Verify the loopback publication for the selected runtime:
+Verify the loopback publication:
 
 ```bash
 docker port nemoclaw-vllm
-docker port nemoclaw-llama-cpp
 ```
 
-Run only the command for the selected runtime.
-The vLLM result must contain `127.0.0.1:8000`.
-The llama.cpp result must contain `127.0.0.1:8081`.
+The result must contain `127.0.0.1:8000`.
 
 If installation stops after a model download, rerun the same installer command.
 The runtime reuses only an artifact that passes its recorded identity checks.
-If Docker reports a container-name or network-name conflict, inspect the resource labels before removing anything.
+If Docker reports a container-name conflict, inspect the resource labels before removing anything.
 Do not remove a resource that lacks the NemoClaw ownership label for this profile.
-Refer to [Host Files and State](../../reference/host-files-and-state) before deleting a credential or cached artifact.
+Refer to [Host Files and State](../../reference/host-files-and-state) before deleting a credential or shared cached artifact.
 
 When you intend to remove the entire NemoClaw installation, run `$$nemoclaw uninstall`.
-Full uninstall verifies the exact managed container and network ownership before it removes those resources and deletes their state.
-It preserves the managed llama.cpp model cache by default and preserves the shared Hugging Face cache used by vLLM.
-Add `--delete-models` only when you also accept deletion of the managed llama.cpp cache and NemoClaw-pulled Ollama models.
+Full uninstall verifies exact managed container ownership before it removes the runtime and its state.
+It preserves the shared Hugging Face cache used by vLLM.
+Add `--delete-models` only when you also accept deletion of NemoClaw-pulled Ollama models.
 If cleanup reports an ownership or Docker error, leave the state files in place, resolve the reported resource, and rerun uninstall.
-After a successful full uninstall, `docker container inspect` must report no object for the selected managed container name.
-For llama.cpp, `docker network inspect nemoclaw-llama-cpp-internal` must also report no object.
+After a successful full uninstall, `docker container inspect nemoclaw-vllm` must report no object.
+
+## Install Managed llama.cpp on DGX Spark
+
+Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
+The default recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
+
+<Note>
+This path is an experimental implementation.
+It does not establish a supported agent, model, and runtime tuple until the protected qualification and activation gates pass.
+</Note>
+
+Before you start, confirm these prerequisites:
+
+- Use a DGX Spark host with Linux on Arm64.
+- Confirm that Docker and the NVIDIA Container Toolkit are operational.
+- Confirm that NVIDIA Container Device Interface support is healthy.
+- Use NVIDIA driver version `580.65.06` or later.
+- Stop any process that uses host port `8081`.
+- Allow capacity for the pinned images, the GGUF file, and same-filesystem download staging.
+- Export `HF_TOKEN` only when the YAML-declared Hugging Face source requires authentication.
+
+NemoClaw uses `HF_TOKEN` only while it acquires the model.
+It does not write the value to managed llama.cpp state, the receipt, the serving container environment, or the sandbox registry.
+Run `unset HF_TOKEN` after onboarding when no other process needs it.
+
+<Warning>
+When the exact artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
+It reuses locally present pinned images and a cached GGUF only after their exact identities verify.
+It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
+Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
+</Warning>
+
+Run interactive onboarding on the DGX Spark and select **NVIDIA Nemotron with managed llama.cpp (DGX Spark)**:
+
+```bash
+$$nemoclaw onboard
+```
+
+For non-interactive onboarding, select the repository-owned recipe explicitly:
+
+```bash
+NEMOCLAW_PROVIDER=install-llama-cpp \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+When `NEMOCLAW_LLAMACPP_RECIPE` is unset, NemoClaw selects the one shipped managed llama.cpp recipe.
+Do not set `NEMOCLAW_MODEL` for this path.
+The recipe owns the exact model file, revision, digest, image, launch settings, readiness probes, and disabled surfaces.
+
+Onboarding performs these actions:
+
+- Resolves the recipe against a fresh DGX Spark readiness report.
+- Reuses locally present pinned downloader, runtime, and probe images, and pulls only the missing digest-pinned images declared by the recipe.
+- Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
+- Verifies the GGUF size and SHA-256 digest before it starts the runtime.
+- Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
+- Publishes port `8081` on `127.0.0.1` and connects the container to a Docker internal network.
+- Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
+
+The runtime cannot download a model and has no egress on its internal Docker network.
+The recipe disables the Web UI, slot inspection, server tools, agent mode, Model Context Protocol proxy, router, and multimodal projection.
+The API key enters the container through an owner-only read-only file, not a process argument.
+
+Verify the managed runtime and sandbox route:
+
+```bash
+$$nemoclaw my-assistant status
+$$nemoclaw my-assistant doctor
+docker port nemoclaw-llama-cpp
+```
+
+Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `reachable`, and `doctor` exits with status `0`.
+The Docker port output must contain `127.0.0.1:8081`.
+These checks do not establish agent and model qualification.
+
+If onboarding stops, rerun the same provider and recipe selection.
+NemoClaw resumes only the exact persisted Docker authority, image, recipe, model digest, network, and runtime identity.
+It reconciles an unfinished create journal before it starts a new runtime: phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.
+
+If `status` reports `stopped` or `preparing`, rerun the same onboarding selection to resume the runtime.
+If it reports `absent`, `conflict`, or `unknown`, inspect the reported identity or Docker-authority error before retrying.
+Do not remove a same-name container or network unless its labels and identifiers match the persisted ownership state.
+
+`$$nemoclaw my-assistant destroy` removes the exact managed llama.cpp container, internal network, API key, and gateway-scoped ownership state after OpenShell confirms sandbox deletion.
+It preserves `~/.cache/huggingface/` because other applications can use that cache.
+If exact cleanup fails, NemoClaw preserves the sandbox registry entry and ownership state for a retry.
 
 ## Choose NVIDIA NIM
 

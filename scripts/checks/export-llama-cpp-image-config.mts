@@ -90,6 +90,7 @@ type LlamaCppQualificationRecipe = {
       source: { repository: string; revision: string };
     };
     model: {
+      acquisition: { downloaderImage: string };
       id: string;
       revision: string;
       servedName: string;
@@ -108,6 +109,7 @@ type LlamaCppQualificationRecipe = {
       platforms: string[];
       containerRuntime: string;
       networkExposure: string;
+      restartPolicy: string;
       hosts: number;
       cuda: { baseImage: string; minimumDriverVersion: string };
       gpu: { vendor: string; count: number; offload: string; cpuFallback: string };
@@ -128,9 +130,6 @@ type LlamaCppQualificationRecipe = {
       kvCache: { key: string; value: string };
       speculativeDecoding: string;
       limits: {
-        maxRequestBodyBytes: number;
-        maxPromptTokens: number;
-        maxCompletionTokens: number;
         requestTimeoutSeconds: number;
       };
     };
@@ -138,6 +137,7 @@ type LlamaCppQualificationRecipe = {
       contractRef: string;
       timeoutSeconds: number;
       expectedModel: string;
+      probeImage: string;
       probes: { models: boolean; health: boolean; properties: boolean; metrics: boolean };
     };
     policy: { egress: string; modelSource: string; modelDownloads: string };
@@ -480,8 +480,6 @@ export function loadLlamaCppImageConfig(
     recipe.spec.serve.flashAttention !== "enabled" ||
     recipe.spec.serve.speculativeDecoding !== "disabled" ||
     recipe.spec.serve.microBatchSize > recipe.spec.serve.batchSize ||
-    recipe.spec.serve.limits.maxPromptTokens + recipe.spec.serve.limits.maxCompletionTokens >
-      recipe.spec.serve.contextSize ||
     recipe.spec.readiness.contractRef !== "llama-cpp.server-readiness/v1" ||
     recipe.spec.readiness.expectedModel !== recipe.spec.model.servedName ||
     !matchesExactRecord(recipe.spec.readiness.probes, {
@@ -674,6 +672,9 @@ export function loadLlamaCppImageConfig(
     recipe: {
       id: recipe.metadata.id,
       model: {
+        acquisition: {
+          downloaderImage: recipe.spec.model.acquisition.downloaderImage,
+        },
         file: recipeModelFile,
         id: recipe.spec.model.id,
         revision: recipe.spec.model.revision,
@@ -685,6 +686,7 @@ export function loadLlamaCppImageConfig(
         cuda: recipe.spec.runtime.cuda,
         gpu: recipe.spec.runtime.gpu,
         resources: recipe.spec.runtime.resources,
+        restartPolicy: recipe.spec.runtime.restartPolicy,
       },
       serve: recipe.spec.serve,
       server: recipe.spec.server,
