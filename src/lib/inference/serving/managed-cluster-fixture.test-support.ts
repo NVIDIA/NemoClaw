@@ -5,10 +5,10 @@ import {
   isManagedClusterInferenceServingRecipe,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
-import type { ResolvedManagedInferenceSelection } from "./types.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import {
+  MANAGED_CLUSTER_MANAGED_LABEL,
   type ManagedClusterVllmPlan,
   materializeManagedClusterVllmPlan,
 } from "./managed-cluster-materialize.js";
@@ -19,6 +19,35 @@ import {
   managedClusterTopologyOutputDigest,
   managedClusterTopologySubjectDigest,
 } from "./managed-cluster-topology.js";
+import type { ResolvedManagedInferenceSelection } from "./types.js";
+
+export type StoppedForeignContainerFixture = {
+  readonly signal: string;
+  readonly name: string;
+  readonly image: string;
+  readonly labels: Readonly<Record<string, string>>;
+};
+
+export const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixture[] = [
+  {
+    signal: "name",
+    name: "foreign-vllm-server",
+    image: "example.invalid/inference:latest",
+    labels: {},
+  },
+  {
+    signal: "image",
+    name: "foreign-inference",
+    image: "vllm/vllm-openai:latest",
+    labels: {},
+  },
+  {
+    signal: "managed label",
+    name: "foreign-inference",
+    image: "example.invalid/inference:latest",
+    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
+  },
+];
 
 function fixtureCatalogDefinitions() {
   const catalog = loadManagedInferenceCatalog();

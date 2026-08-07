@@ -8,61 +8,36 @@
 import type fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-interface FsEntry {
-  type: "file" | "dir";
-  content?: string;
-}
+import {
+  createRunnerFsStore,
+  createStdoutCapture,
+  FAKE_HOME,
+  FIXED_RUN_UUID,
+  inMemoryFsMethods,
+  resolvedEndpointFor,
+} from "./runner-mock-fixtures.js";
+import { minimalBlueprint, successResult } from "./runner-test-fixtures.js";
 
-/** Throw from an expression position so the fake fs stays branch-free. */
-function raise(message: string): never {
-  throw new Error(message);
-}
-
-const store = new Map<string, FsEntry>();
-
-function addFile(p: string, content: string): void {
-  store.set(p, { type: "file", content });
-}
-
-function addDir(p: string): void {
-  store.set(p, { type: "dir" });
-}
-
-const FAKE_HOME = "/fakehome";
+const { store, addFile, addDir } = createRunnerFsStore();
 
 vi.mock("node:os", () => ({
   homedir: () => FAKE_HOME,
 }));
 
 vi.mock("node:crypto", () => ({
-  randomUUID: () => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  randomUUID: () => FIXED_RUN_UUID,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
+  const memory = inMemoryFsMethods(store, { spy: vi.fn });
   return {
     ...original,
-    existsSync: (p: string) => store.has(p),
-    mkdirSync: vi.fn((p: string) => {
-      addDir(p);
-    }),
-    readFileSync: (p: string) => {
-      const entry = store.get(p);
-      return entry?.type === "file" ? (entry.content ?? "") : raise(`ENOENT: ${p}`);
-    },
-    writeFileSync: vi.fn((p: string, data: string) => {
-      store.set(p, { type: "file", content: data });
-    }),
-    readdirSync: (p: string) => {
-      const prefix = p.endsWith("/") ? p : `${p}/`;
-      const entries = new Set(
-        [...store.keys()]
-          .filter((k) => k.startsWith(prefix))
-          .map((k) => k.slice(prefix.length).split("/")[0])
-          .filter((first): first is string => Boolean(first)),
-      );
-      return entries.size === 0 && !store.has(p) ? raise(`ENOENT: ${p}`) : [...entries].sort();
-    },
+    existsSync: memory.existsSync,
+    mkdirSync: memory.mkdirSync,
+    readFileSync: memory.readFileSync,
+    writeFileSync: memory.writeFileSync,
+    readdirSync: memory.readdirSync,
   };
 });
 
@@ -75,51 +50,13 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./ssrf.js")>();
   return {
     ...actual,
-    validateEndpointUrl: vi.fn(async (url: string) => ({
-      url,
-      pinnedUrl: url,
-      protocol: url.startsWith("http:") ? "http:" : "https:",
-      hostname: new URL(url).hostname,
-      dnsResolved: false,
-    })),
+    validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
 
 const { actionApply, actionRollback } = await import("./runner.js");
 
-const stdoutChunks: string[] = [];
-
-function captureStdout(): void {
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
-    stdoutChunks.push(String(chunk));
-    return true;
-  });
-}
-
-function minimalBlueprint(): Record<string, unknown> {
-  return {
-    version: "1.0",
-    components: {
-      inference: {
-        profiles: {
-          default: {
-            provider_type: "openai",
-            provider_name: "my-provider",
-            endpoint: "https://api.example.com/v1",
-            model: "gpt-4",
-            credential_env: "MY_API_KEY",
-          },
-        },
-      },
-      sandbox: {
-        image: "openclaw",
-        name: "test-sandbox",
-        forward_ports: [18789],
-      },
-      policy: { additions: {} },
-    },
-  };
-}
+const stdout = createStdoutCapture();
 
 function createCalls(): unknown[] {
   return mockExeca.mock.calls.filter(
@@ -174,10 +111,10 @@ describe("blueprint name validation (fail-closed integration)", () => {
 
   beforeEach(() => {
     store.clear();
-    stdoutChunks.length = 0;
+    stdout.reset();
     vi.clearAllMocks();
-    captureStdout();
-    mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    vi.spyOn(process.stdout, "write").mockImplementation(stdout.write);
+    mockExeca.mockResolvedValue(successResult());
   });
 
   afterEach(() => {

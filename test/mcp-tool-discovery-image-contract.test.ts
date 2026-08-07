@@ -16,11 +16,14 @@ const dockerfiles = [
 ] as const;
 
 describe("MCP tool discovery image contract", () => {
-  // source-shape-contract: security -- Exact package pins and the production audit command protect the shipped runtime graph
-  it("pins reviewed packages and retains the production audit command (#8177)", () => {
+  // source-shape-contract: security -- Exact package pins and the CI audit mapping protect the shipped runtime graph
+  it("pins reviewed packages and audits their lock outside image builds (#8253)", () => {
     const packageRoot = path.join(repoRoot, "tools", "mcp-tool-discovery-runtime");
     const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
     const lock = JSON.parse(fs.readFileSync(path.join(packageRoot, "package-lock.json"), "utf8"));
+    const auditConfig = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
+    );
     const review = fs.readFileSync(path.join(packageRoot, "dependency-review.md"), "utf8");
     const installer = fs.readFileSync(
       path.join(packageRoot, "install-reviewed-runtime.sh"),
@@ -86,7 +89,16 @@ describe("MCP tool discovery image contract", () => {
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter((line) => line.startsWith("npm audit")),
-    ).toEqual(["npm audit signatures", "npm audit --omit=dev --audit-level=low"]);
+    ).toEqual(["npm audit signatures"]);
+    expect(auditConfig.lockedGraphs).toContainEqual({
+      id: "mcp-tool-discovery-runtime",
+      label: "MCP tool discovery runtime locked production graph",
+      packageSpec: `${reviewedSdk.name}@${reviewedSdk.version}`,
+      integrity: reviewedSdk.integrity,
+      tarballUrl: reviewedSdk.resolved,
+      directory: "tools/mcp-tool-discovery-runtime",
+      lockSha256: "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb",
+    });
     expect(installer).toContain(
       'export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"',
     );
@@ -180,7 +192,7 @@ exit 0
         expect(result.stderr).toContain(
           "retrying the missing lockfile archive after a transient network failure",
         );
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("11");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("10");
         expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 6)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
