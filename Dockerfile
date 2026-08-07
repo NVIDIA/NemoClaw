@@ -153,10 +153,10 @@ ADD --checksum=sha256:0ec75f1cd0bd6011b687d0aac25478f3123ffa81ec299281bcb1747dd3
 
 FROM scratch AS openclaw-optional-plugin-archives
 
-ADD --checksum=sha256:a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz /diagnostics-otel-2026.7.1.tgz
-ADD --checksum=sha256:f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz /brave-plugin-2026.7.1.tgz
-ADD --checksum=sha256:2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61 https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz /propagator-jaeger-2.9.0.tgz
-ADD --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz /core-2.9.0.tgz
+ADD --chmod=0444 --checksum=sha256:a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz /diagnostics-otel-2026.7.1.tgz
+ADD --chmod=0444 --checksum=sha256:f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz /brave-plugin-2026.7.1.tgz
+ADD --chmod=0444 --checksum=sha256:2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61 https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz /propagator-jaeger-2.9.0.tgz
+ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz /core-2.9.0.tgz
 
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
