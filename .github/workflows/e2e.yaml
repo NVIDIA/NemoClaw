@@ -2298,6 +2298,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      agent_qualification_execution: ${{ steps.plan.outputs.agent_qualification_execution }}
       environment: ${{ steps.plan.outputs.environment }}
       execution: ${{ steps.plan.outputs.execution }}
       model_host_path: ${{ steps.plan.outputs.model_host_path }}
@@ -2459,6 +2460,10 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
+
+      - name: Install OpenShell CLI for declarative OpenClaw qualification
+        if: ${{ needs.llama-cpp-dgx-spark-plan.outputs.agent_qualification_execution == 'enabled' }}
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Materialize trusted llama.cpp qualification plan
         env:
@@ -7515,8 +7520,6 @@ jobs:
             if (!response.ok) {
               core.setFailed(`Slack webhook returned ${response.status}`);
             }
-
-
       - name: Upload E2E runtime summary
         if: ${{ always() && github.event_name == 'push' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
