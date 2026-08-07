@@ -186,7 +186,10 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
           "--",
           "/bin/sh",
           "-lc",
-          `printf '%s\\n' '${agent}' >/tmp/nemoclaw-agent-proof && exec sleep infinity`,
+          // OpenShell keeps sandboxes by default after the initial command
+          // exits. Let this command finish so `sandbox create` can return;
+          // a foreground keepalive would hold the CLI session indefinitely.
+          `printf '%s\\n' '${agent}' >/tmp/nemoclaw-agent-proof`,
         ],
         {
           artifactName: `podman-lifecycle-create-${agent}`,
