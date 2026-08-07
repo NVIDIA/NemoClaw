@@ -167,6 +167,7 @@ describe("setupNim vLLM route containment", () => {
   });
 
   it("fails closed for a managed endpoint that is neither loopback nor operator-trusted private", async () => {
+    const queryVllmModels = vi.fn(() => JSON.stringify({ data: [{ id: "served/model" }] }));
     const validateOpenAiLikeSelection = vi.fn(async () => ({ ok: true }));
     const handler = createSetupNimVllmHandler(
       deps({
@@ -176,12 +177,13 @@ describe("setupNim vLLM route containment", () => {
           baseUrl: "http://93.184.216.34:8000/v1",
           apiKey: "a".repeat(64),
         }),
-        queryVllmModels: () => JSON.stringify({ data: [{ id: "served/model" }] }),
+        queryVllmModels,
         validateOpenAiLikeSelection,
       }),
     );
 
     await expect(handler(state(null))).rejects.toThrow("exit 1");
+    expect(queryVllmModels).not.toHaveBeenCalled();
     expect(validateOpenAiLikeSelection).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       "  Managed vLLM endpoint authorization could not be verified.",

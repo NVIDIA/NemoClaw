@@ -271,6 +271,16 @@ export function createSetupNimVllmHandler(
         ? "  ✓ Using managed vLLM endpoint"
         : `  ✓ Using existing vLLM on localhost:${deps.VLLM_PORT}`,
     );
+    let managedValidationOptions: Awaited<ReturnType<typeof managedVllmValidationOptions>> | null =
+      null;
+    if (apiKey) {
+      try {
+        managedValidationOptions = await managedVllmValidationOptions(validationBaseUrl, apiKey);
+      } catch {
+        console.error("  Managed vLLM endpoint authorization could not be verified.");
+        deps.exitProcess(1);
+      }
+    }
     const raw = apiKey
       ? deps.queryVllmModels(validationBaseUrl, apiKey)
       : deps.runCapture(["curl", "-sf", `${validationBaseUrl}/models`], {
@@ -338,16 +348,6 @@ export function createSetupNimVllmHandler(
     }
 
     const validationModel = deps.requireValue(state.model, "Expected a detected vLLM model");
-    let managedValidationOptions: Awaited<ReturnType<typeof managedVllmValidationOptions>> | null =
-      null;
-    if (apiKey) {
-      try {
-        managedValidationOptions = await managedVllmValidationOptions(validationBaseUrl, apiKey);
-      } catch {
-        console.error("  Managed vLLM endpoint authorization could not be verified.");
-        deps.exitProcess(1);
-      }
-    }
     const validation = apiKey
       ? await deps.validateOpenAiLikeSelection(
           "Local vLLM",
