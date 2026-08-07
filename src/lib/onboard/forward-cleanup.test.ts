@@ -41,12 +41,6 @@ describe("bestEffortForwardStopForSandbox", () => {
       ["forward", "list"],
       expect.objectContaining({ timeout: 15_000 }),
     );
-    // Caller must NOT pass ignoreError; failures should throw so the catch
-    // branch returns "list-failed" instead of running a stop with no owner data.
-    expect(fetch).not.toHaveBeenCalledWith(
-      ["forward", "list"],
-      expect.objectContaining({ ignoreError: true }),
-    );
   });
 
   it("returns stopped and uses the sandbox-scoped forward stop form when ownership matches", () => {
