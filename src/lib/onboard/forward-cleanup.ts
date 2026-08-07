@@ -68,8 +68,9 @@ export function bestEffortForwardStopForSandbox(
   // mean "list-failed" here. Neither may reach getOccupiedPorts, which parses
   // an empty string into an empty map, so the "no-entry" branch below would
   // still run the stop — exactly the collateral-damage case this helper
-  // exists to avoid. Runners must not pass ignoreError: true, which collapses
-  // a failure into an indistinguishable empty output.
+  // exists to avoid. A runner that ignores the command failure itself must
+  // convert it to null, never to an empty string, which is indistinguishable
+  // from a genuinely empty forward list.
   let listOutput: string | null = null;
   try {
     listOutput = runCaptureOpenshell(["forward", "list"], {
