@@ -592,6 +592,43 @@ describe("managed startup shared-state transaction", () => {
     ).toThrow(/must be .* mode 755/u);
   });
 
+  it("rejects a writable copied receipt before transaction status parsing", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
+    const profile = managedStartupE2eProfile("openclaw");
+    const bootstrapIdentity = "b".repeat(64);
+    const boundOptions = { ...options, bootstrapIdentity };
+    beginManagedStartupSharedStateTransaction(profile, boundOptions);
+
+    const imageParent = path.join(temporaryRoot, "read-only-image-var-lib-nemoclaw");
+    const copiedReceipt = path.join(imageParent, "managed-startup-shared-state-transaction-v1");
+    fs.mkdirSync(imageParent, { mode: 0o755 });
+    fs.cpSync(transactionDirectory, copiedReceipt, {
+      recursive: true,
+      preserveTimestamps: true,
+    });
+    fs.chmodSync(copiedReceipt, 0o700);
+    fs.chmodSync(path.join(copiedReceipt, "backups"), 0o700);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    vi.spyOn(process, "getegid").mockReturnValue(0);
+
+    expect(() =>
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent: "openclaw",
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        {
+          ...boundOptions,
+          transactionDirectory: copiedReceipt,
+          readOnlyReceipt: true,
+        },
+      ),
+    ).toThrow(/rollback receipt mount is writable/u);
+  });
+
   it("rejects planted target and ancestor symlinks before creating a receipt", () => {
     const outside = path.join(temporaryRoot, "outside");
     fs.mkdirSync(outside);

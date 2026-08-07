@@ -115,6 +115,13 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
   );
 }
 
+function createManagedOllamaBinary(homeDir: string): string {
+  const binPath = path.join(homeDir, ".local", "bin", "ollama");
+  fs.mkdirSync(path.dirname(binPath), { recursive: true });
+  fs.writeFileSync(binPath, "#!/bin/sh\n", { mode: 0o755 });
+  return binPath;
+}
+
 function expectRecoveryIdentityRefusal(
   stateDir: string,
   runtime: ReturnType<typeof createPodman>,
@@ -544,6 +551,230 @@ describe("portable demo sandbox lifecycle", () => {
 
     expect(result).toEqual({ kind: "already-running" });
     expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("restarts receipt-owned user-local Ollama before reporting portable recovery complete (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const binPath = createManagedOllamaBinary(stateDir);
+    let ollamaStarted = false;
+    const captureHost = vi.fn((command: string) => {
+      switch (command) {
+        case "pgrep":
+          return { status: 1 };
+        case "curl":
+          return ollamaStarted
+            ? { status: 0, stdout: JSON.stringify({ models: [] }) }
+            : { status: 7, stderr: "connection refused" };
+        default:
+          throw new Error(`Unexpected host command: ${command}`);
+      }
+    });
+    const launchHost = vi.fn(() => {
+      ollamaStarted = true;
+    });
+    const log = vi.fn();
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          env: { HOME: stateDir },
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
+          captureHost,
+          launchHost,
+          loadManagedOllama: () => binPath,
+          log,
+        },
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(launchHost).toHaveBeenCalledWith(binPath, ["serve"], {
+      HOME: stateDir,
+      OLLAMA_HOST: "127.0.0.1:11434",
+    });
+    expect(log).toHaveBeenCalledWith(
+      "  Portable demo lifecycle restarted NemoClaw-managed Ollama.",
+    );
+  });
+
+  it("does not inspect ownership or launch Ollama when the local API is already healthy (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const loadManagedOllama = vi.fn();
+    const launchHost = vi.fn();
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
+          captureHost: (command) =>
+            command === "curl"
+              ? { status: 0, stdout: JSON.stringify({ models: [] }) }
+              : { status: 1 },
+          launchHost,
+          loadManagedOllama,
+        },
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(loadManagedOllama).not.toHaveBeenCalled();
+    expect(launchHost).not.toHaveBeenCalled();
+  });
+
+  it("does not launch an unowned user-local Ollama binary (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const launchHost = vi.fn();
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
+          captureHost: () => ({ status: 7 }),
+          launchHost,
+          loadManagedOllama: () => null,
+        },
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(launchHost).not.toHaveBeenCalled();
+  });
+
+  it("refuses to launch a duplicate when another Ollama process is unhealthy (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const binPath = createManagedOllamaBinary(stateDir);
+    const launchHost = vi.fn();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: () => ({ status: 0 }),
+          captureHost: (command) => ({ status: command === "pgrep" ? 0 : 7 }),
+          launchHost,
+          loadManagedOllama: () => binPath,
+        },
+      ),
+    ).toThrow("refused to launch a duplicate");
+    expect(launchHost).not.toHaveBeenCalled();
+  });
+
+  it("refuses a receipt-owned Ollama binary that is not executable (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const binPath = createManagedOllamaBinary(stateDir);
+    fs.chmodSync(binPath, 0o600);
+    const launchHost = vi.fn();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: () => ({ status: 0 }),
+          captureHost: () => ({ status: 7 }),
+          launchHost,
+          loadManagedOllama: () => binPath,
+        },
+      ),
+    ).toThrow("is not a regular executable");
+    expect(launchHost).not.toHaveBeenCalled();
+  });
+
+  it("refuses a receipt-owned Ollama path that is a symbolic link (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const targetPath = createManagedOllamaBinary(stateDir);
+    const binPath = path.join(stateDir, "ollama-link");
+    fs.symlinkSync(targetPath, binPath);
+    const launchHost = vi.fn();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: () => ({ status: 0 }),
+          captureHost: () => ({ status: 7 }),
+          launchHost,
+          loadManagedOllama: () => binPath,
+        },
+      ),
+    ).toThrow("is not a regular executable");
+    expect(launchHost).not.toHaveBeenCalled();
+  });
+
+  it("fails after the bounded timeout when restarted Ollama stays unhealthy (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const binPath = createManagedOllamaBinary(stateDir);
+    let now = 0;
+    const launchHost = vi.fn();
+
+    let failure: Error | undefined;
+    try {
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: () => ({ status: 0 }),
+          captureHost: (command) =>
+            command === "pgrep"
+              ? { status: 1 }
+              : { status: 0, stdout: JSON.stringify({ status: "ok" }) },
+          launchHost,
+          loadManagedOllama: () => binPath,
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        },
+      );
+    } catch (error) {
+      failure = error as Error;
+    }
+    expect(failure?.message).toContain("did not become healthy");
+    expect(failure?.message).toContain(
+      `start the receipt-bound executable at ${JSON.stringify(binPath)} with the 'serve' argument, then retry`,
+    );
+    expect(now).toBe(30_000);
+    expect(launchHost).toHaveBeenCalledOnce();
   });
 
   it("restarts the managed startup process once when recovery upgrades a schema-1 receipt (#8441)", () => {

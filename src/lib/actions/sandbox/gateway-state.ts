@@ -91,13 +91,13 @@ function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
 export function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
-  sandbox: Pick<SandboxEntry, "agent"> | null,
+  sandbox: Pick<SandboxEntry, "agent" | "provider"> | null,
   gatewayName: string,
 ): PortableDemoLifecycleRecoveryResult {
   if (!sandbox) return { kind: "not-installed" };
   return recoverPortableDemoSandboxLifecycle(
     sandboxName,
-    { agent: sandbox.agent, gatewayName },
+    { agent: sandbox.agent, gatewayName, provider: sandbox.provider },
     {
       openshellBinary: getOpenshellBinary(),
       captureOpenshell: (args, timeoutMs) => {

@@ -30,7 +30,10 @@ import {
 import type {
   HostLocalInferenceReceipt,
   HostLocalInferenceReceiptWriter,
+  HostLocalInferenceRecoveryResult,
   HostLocalInferenceRuntime,
+  HostLocalLlamaCppLifecycle,
+  HostLocalLlamaCppLifecycleInput,
 } from "./host-local-inference";
 import {
   normalizeHostLocalInferenceImageRef,
@@ -56,42 +59,23 @@ const PROVIDER_LABEL = "io.nvidia.nemoclaw.host-local-inference.provider";
 const SERVICE_LABEL = "io.nvidia.nemoclaw.host-local-inference.service";
 const SPEC_LABEL = "io.nvidia.nemoclaw.host-local-inference.spec-sha256";
 const TRANSACTION_LABEL = "io.nvidia.nemoclaw.host-local-inference.transaction-sha256";
+const NETWORK_TRANSACTION_LABEL =
+  "io.nvidia.nemoclaw.host-local-inference.network-transaction-sha256";
 const INSPECT_TIMEOUT_MS = 15_000;
 const MUTATION_TIMEOUT_MS = 30 * 60 * 1000;
 const UNCERTAIN_CREATE_ABSENCE_GRACE_MS = MUTATION_TIMEOUT_MS + INSPECT_TIMEOUT_MS;
 const STOP_GRACE_SECONDS = 30;
 const AT_REST = new Set(["created", "dead", "exited"]);
 
-export interface DockerLlamaCppManagedLifecycleOptions {
-  readonly authorityStore: PersistedEngineAuthorityStore;
-  readonly apiKeyRootHostPath: string;
-  readonly bindingSha256: string;
-  readonly bindings: LlamaCppHostLocalRuntimeBindings;
-  readonly cacheRootHostPath: string;
-  readonly contract: LlamaCppHostLocalLaunchContract;
-  readonly engine: ContainerEngine;
-  readonly journalStore: HostLocalCreateJournalStore;
-  readonly plan: LlamaCppGgufCachePlan;
-  readonly probeImageReference: string;
-}
+export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleInput;
 
 export interface DockerLlamaCppManagedLifecycleDependencies {
   readonly now?: () => number;
 }
 
-export interface DockerLlamaCppRecoveryResult {
-  readonly recovered: readonly string[];
-  readonly failures: readonly {
-    readonly transactionId: string;
-    readonly message: string;
-  }[];
-}
+export type DockerLlamaCppRecoveryResult = HostLocalInferenceRecoveryResult;
 
-export interface DockerLlamaCppManagedLifecycle {
-  readonly runtime: HostLocalInferenceRuntime;
-  start(writer: HostLocalInferenceReceiptWriter): HostLocalInferenceReceipt;
-  recoverUnfinished(writer: HostLocalInferenceReceiptWriter): DockerLlamaCppRecoveryResult;
-}
+export type DockerLlamaCppManagedLifecycle = HostLocalLlamaCppLifecycle;
 
 interface DockerNetworkAuthority {
   readonly id: string;
@@ -117,6 +101,7 @@ interface DockerContainerInspection {
   readonly hardening: {
     readonly user: string;
     readonly networkMode: string;
+    readonly restartPolicy: string;
     readonly readOnlyRootfs: boolean;
     readonly capDrop: readonly string[];
     readonly securityOpt: readonly string[];
@@ -173,6 +158,24 @@ function sha256Text(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function stableFileIdentitySha256(identity: StableFileIdentity): string {
+  return sha256({
+    dev: identity.dev.toString(),
+    ino: identity.ino.toString(),
+    size: identity.size.toString(),
+    mtimeNs: identity.mtimeNs.toString(),
+    ctimeNs: identity.ctimeNs.toString(),
+  });
+}
+
+function readinessTimeoutSeconds(options: DockerLlamaCppManagedLifecycleOptions): number {
+  const value = options.readinessTimeoutSeconds;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 86_400) {
+    throw new Error("Docker llama.cpp readiness timeout must be 1-86400 seconds.");
+  }
+  return value;
+}
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -202,11 +205,22 @@ function exactPort(value: unknown): number {
   return port;
 }
 
-function inspectNetwork(engine: ContainerEngine, name: string): DockerNetworkAuthority {
-  const output = requireSuccess(
-    "network inspection",
-    engine.capture(["network", "inspect", name], INSPECT_TIMEOUT_MS),
+function inspectNetworkIfPresent(
+  engine: ContainerEngine,
+  name: string,
+  ownerLabel: LlamaCppHostLocalRuntimeBindings["ownerLabel"],
+  transactionId?: string,
+): DockerNetworkAuthority | null {
+  const result = engine.capture(["network", "inspect", name], INSPECT_TIMEOUT_MS);
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const exactAbsent = new RegExp(
+    `^(?:Error response from daemon:\\s*)?(?:No such network: ${escapedName}|network ${escapedName} not found)$`,
+    "iu",
   );
+  if (!result.error && result.status === 1 && exactAbsent.test(result.stderr.trim())) {
+    return null;
+  }
+  const output = requireSuccess("network inspection", result);
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -217,13 +231,32 @@ function inspectNetwork(engine: ContainerEngine, name: string): DockerNetworkAut
     throw new Error("Docker llama.cpp network inspection must identify exactly one network.");
   }
   const source = record(parsed[0], "Docker llama.cpp network inspection");
-  if (source.Name !== name || source.Internal !== true) {
+  const labels = parseLabels(source.Labels);
+  if (
+    source.Name !== name ||
+    source.Internal !== true ||
+    source.Driver !== "bridge" ||
+    source.Scope !== "local" ||
+    labels[ownerLabel.name] !== ownerLabel.value ||
+    (transactionId !== undefined && labels[NETWORK_TRANSACTION_LABEL] !== transactionId)
+  ) {
     throw new Error("Docker llama.cpp requires the exact internal Docker network.");
   }
   return Object.freeze({
     id: exactId(source.Id, "Docker network identity"),
     name,
   });
+}
+
+function inspectNetwork(
+  engine: ContainerEngine,
+  name: string,
+  ownerLabel: LlamaCppHostLocalRuntimeBindings["ownerLabel"],
+  transactionId: string,
+): DockerNetworkAuthority {
+  const network = inspectNetworkIfPresent(engine, name, ownerLabel, transactionId);
+  if (network === null) throw new Error("Docker llama.cpp exact internal network is absent.");
+  return network;
 }
 
 function parseLabels(value: unknown): Readonly<Record<string, string>> {
@@ -255,6 +288,7 @@ function parseInspection(
   const source = record(parsed[0], "Docker llama.cpp inspection");
   const config = record(source.Config, "Docker llama.cpp container configuration");
   const hostConfig = record(source.HostConfig, "Docker llama.cpp host configuration");
+  const restartPolicy = record(hostConfig.RestartPolicy, "Docker llama.cpp restart policy");
   const state = record(source.State, "Docker llama.cpp container state");
   const networkSettings = record(source.NetworkSettings, "Docker llama.cpp network settings");
   const networks = record(networkSettings.Networks, "Docker llama.cpp attached networks");
@@ -357,6 +391,7 @@ function parseInspection(
     hardening: Object.freeze({
       user: String(config.User ?? ""),
       networkMode: String(hostConfig.NetworkMode ?? ""),
+      restartPolicy: String(restartPolicy.Name ?? ""),
       readOnlyRootfs: hostConfig.ReadonlyRootfs === true,
       capDrop: Object.freeze(
         Array.isArray(hostConfig.CapDrop) ? hostConfig.CapDrop.map(String) : [],
@@ -660,13 +695,28 @@ function createArguments(
   ]);
 }
 
+function createNetworkArguments(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  transactionId: string,
+): readonly string[] {
+  return Object.freeze([
+    "network",
+    "create",
+    "--internal",
+    "--label",
+    `${options.bindings.ownerLabel.name}=${options.bindings.ownerLabel.value}`,
+    "--label",
+    `${NETWORK_TRANSACTION_LABEL}=${transactionId}`,
+    options.bindings.network.name,
+  ]);
+}
+
 function expectedCommand(options: DockerLlamaCppManagedLifecycleOptions): readonly string[] {
   return buildLlamaCppHostLocalServerArgv(options.contract);
 }
 
 function specificationDigest(
   options: DockerLlamaCppManagedLifecycleOptions,
-  network: DockerNetworkAuthority,
   apiKeyRootIdentity: string,
   receiptTargetSha256: string,
 ): string {
@@ -679,11 +729,13 @@ function specificationDigest(
       planDigest: options.plan.planDigest,
       recipeId: options.plan.recipeId,
       digest: options.plan.acquisition.source.file.digest,
+      filesystemIdentitySha256: stableFileIdentitySha256(options.bindings.model.filesystemIdentity),
       sizeBytes: options.plan.acquisition.source.file.sizeBytes,
     },
-    network,
+    network: options.bindings.network,
     ownerLabel: options.bindings.ownerLabel,
     probeImageReference: options.probeImageReference,
+    readinessTimeoutSeconds: options.readinessTimeoutSeconds,
     receiptTargetSha256,
     runtimeGid: options.bindings.runtimeGid,
     runtimeUid: options.bindings.runtimeUid,
@@ -720,6 +772,7 @@ function requireOwnedContainer(
     container.hardening.user !==
       `${String(options.bindings.runtimeUid)}:${String(options.bindings.runtimeGid)}` ||
     container.hardening.networkMode !== options.bindings.network.name ||
+    container.hardening.restartPolicy !== options.contract.runtime.restartPolicy ||
     !container.hardening.readOnlyRootfs ||
     container.hardening.capDrop.length !== 1 ||
     container.hardening.capDrop[0] !== "ALL" ||
@@ -766,6 +819,7 @@ function probeReady(
   lease: HostLocalCreateJournalExecutionLease,
   execution: MutationExecutionState,
 ): void {
+  const timeoutSeconds = readinessTimeoutSeconds(options);
   requireSuccess(
     "readiness probe",
     captureMutation(
@@ -778,18 +832,24 @@ function probeReady(
         "--pull=never",
         "--network",
         options.bindings.network.name,
+        "--entrypoint",
+        "curl",
         options.probeImageReference,
         "--fail",
         "--silent",
         "--show-error",
+        "--max-time",
+        String(timeoutSeconds),
         "--retry",
-        "10",
+        String(timeoutSeconds),
         "--retry-delay",
         "1",
+        "--retry-max-time",
+        String(timeoutSeconds),
         "--retry-connrefused",
         `http://${options.bindings.containerName}:${String(options.contract.serve.port)}/health`,
       ],
-      INSPECT_TIMEOUT_MS,
+      timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
     ),
   );
 }
@@ -802,6 +862,58 @@ function rollbackExact(
   uncertainRecoveryUnixMs?: number,
 ): void {
   options.journalStore.assertExecution(lease);
+  if (record.phase === "network-creating") {
+    let network = inspectNetworkIfPresent(
+      options.engine,
+      options.bindings.network.name,
+      options.bindings.ownerLabel,
+      record.transactionId,
+    );
+    if (network === null && uncertainRecoveryUnixMs !== undefined) {
+      if (
+        record.createIntentUnixMs === null ||
+        uncertainRecoveryUnixMs < record.createIntentUnixMs ||
+        uncertainRecoveryUnixMs - record.createIntentUnixMs < UNCERTAIN_CREATE_ABSENCE_GRACE_MS
+      ) {
+        throw new Error(
+          "Docker llama.cpp uncertain network create remains inside its absence grace period.",
+        );
+      }
+      options.journalStore.assertExecution(lease);
+      network = inspectNetworkIfPresent(
+        options.engine,
+        options.bindings.network.name,
+        options.bindings.ownerLabel,
+        record.transactionId,
+      );
+    }
+    if (network !== null) {
+      requireSuccess(
+        "exact network rollback",
+        captureMutation(
+          options,
+          lease,
+          execution,
+          ["network", "rm", network.id],
+          MUTATION_TIMEOUT_MS,
+        ),
+      );
+      if (
+        inspectNetworkIfPresent(
+          options.engine,
+          options.bindings.network.name,
+          options.bindings.ownerLabel,
+          record.transactionId,
+        ) !== null
+      ) {
+        throw new Error("Docker llama.cpp exact network rollback left the network present.");
+      }
+    }
+    options.journalStore.assertExecution(lease);
+    options.journalStore.retire(record.transactionId);
+    options.journalStore.assertExecution(lease);
+    return;
+  }
   const target = record.runtimeId ?? record.containerName;
   let container = inspectContainer(
     options.engine,
@@ -842,16 +954,45 @@ function rollbackExact(
       throw new Error("Docker llama.cpp exact rollback left the owned runtime present.");
     }
   }
+  const networkId = requireJournalNetworkId(record);
+  const network = requireExactNetwork(options, networkId, record.transactionId);
+  requireSuccess(
+    "exact network rollback",
+    captureMutation(options, lease, execution, ["network", "rm", network.id], MUTATION_TIMEOUT_MS),
+  );
+  if (
+    inspectNetworkIfPresent(
+      options.engine,
+      options.bindings.network.name,
+      options.bindings.ownerLabel,
+      record.transactionId,
+    ) !== null
+  ) {
+    throw new Error("Docker llama.cpp exact network rollback left the network present.");
+  }
   options.journalStore.assertExecution(lease);
   options.journalStore.retire(record.transactionId);
   options.journalStore.assertExecution(lease);
 }
 
+function requireJournalNetworkId(record: HostLocalCreateJournalRecord): string {
+  if (record.networkId === null) {
+    throw new Error("Docker llama.cpp lifecycle journal lacks an exact network identity.");
+  }
+  return record.networkId;
+}
+
 function requireExactNetwork(
   options: DockerLlamaCppManagedLifecycleOptions,
   expectedId: string,
+  transactionId: string,
 ): DockerNetworkAuthority {
-  const network = inspectNetwork(options.engine, options.bindings.network.name);
+  const network = inspectNetwork(
+    options.engine,
+    options.bindings.network.name,
+    options.bindings.ownerLabel,
+    transactionId,
+  );
   if (network.id !== expectedId) {
     throw new Error("Docker llama.cpp internal network identity changed.");
   }
@@ -960,6 +1101,7 @@ export function createDockerLlamaCppManagedLifecycle(
 ): DockerLlamaCppManagedLifecycle {
   assertLlamaCppGgufCachePlanDigest(options.plan);
   normalizeHostLocalInferenceImageRef(options.probeImageReference);
+  readinessTimeoutSeconds(options);
   const qualifiedAuthority = qualifyEngine(options);
 
   const authorizeStaticReceipt = (value: HostLocalInferenceReceipt) => {
@@ -1016,7 +1158,6 @@ export function createDockerLlamaCppManagedLifecycle(
         ? null
         : specificationDigest(
             options,
-            { id: journal.networkId, name: options.bindings.network.name },
             journal.apiKeyRootIdentitySha256,
             journal.receiptTargetSha256,
           );
@@ -1052,7 +1193,11 @@ export function createDockerLlamaCppManagedLifecycle(
     readonly container: DockerContainerInspection;
   } => {
     const authorized = authorizeReceipt(value, requireFinalized);
-    requireExactNetwork(options, authorized.journal.networkId);
+    requireExactNetwork(
+      options,
+      requireJournalNetworkId(authorized.journal),
+      authorized.journal.transactionId,
+    );
     if (authorized.receipt.runtime.kind !== "container") {
       throw new Error("Docker llama.cpp receipt is not a container authority.");
     }
@@ -1088,7 +1233,14 @@ export function createDockerLlamaCppManagedLifecycle(
       throw new Error("Docker llama.cpp creation requires its declarative controller.");
     },
     inspectManaged(receipt: HostLocalInferenceReceipt) {
+      assertModelFilesystemAuthority(options);
+      const activeKeyIdentity = apiKeyIdentity(options);
       const inspected = inspectAuthorized(receipt);
+      if (apiKeyIdentitySha256(activeKeyIdentity) !== inspected.journal.apiKeyIdentitySha256) {
+        throw new Error("Docker llama.cpp API-key identity differs from its create journal.");
+      }
+      assertApiKeyIdentity(options, activeKeyIdentity, inspected.journal.apiKeyRootIdentitySha256);
+      assertModelFilesystemAuthority(options);
       return Object.freeze({
         running: inspected.container.running,
         receipt: inspected.receipt,
@@ -1152,7 +1304,11 @@ export function createDockerLlamaCppManagedLifecycle(
           activeKeyIdentity,
           authorized.journal.apiKeyRootIdentitySha256,
         );
-        requireExactNetwork(options, inspected.journal.networkId);
+        requireExactNetwork(
+          options,
+          requireJournalNetworkId(inspected.journal),
+          inspected.journal.transactionId,
+        );
         return inspected.receipt;
       } finally {
         if (!execution.unknown) options.journalStore.releaseExecution(lease);
@@ -1240,18 +1396,69 @@ export function createDockerLlamaCppManagedLifecycle(
 
   return Object.freeze({
     runtime,
+    resume(receipt: HostLocalInferenceReceipt) {
+      const initial = authorizeReceipt(receipt, true);
+      const lease = options.journalStore.acquireExecution(initial.journal.transactionId);
+      const execution: MutationExecutionState = { unknown: false };
+      try {
+        const authorized = authorizeReceipt(receipt, true);
+        const activeKeyIdentity = apiKeyIdentity(options);
+        if (apiKeyIdentitySha256(activeKeyIdentity) !== authorized.journal.apiKeyIdentitySha256) {
+          throw new Error("Docker llama.cpp API-key identity differs from its create journal.");
+        }
+        assertModelFilesystemAuthority(options);
+        assertApiKeyIdentity(
+          options,
+          activeKeyIdentity,
+          authorized.journal.apiKeyRootIdentitySha256,
+        );
+        let inspected = inspectAuthorized(receipt);
+        if (!inspected.container.running) {
+          if (!AT_REST.has(inspected.container.status)) {
+            throw new Error("Docker llama.cpp container is not in an exact resumable state.");
+          }
+          requireSuccess(
+            "container resume",
+            captureMutation(
+              options,
+              lease,
+              execution,
+              ["start", inspected.container.id],
+              MUTATION_TIMEOUT_MS,
+            ),
+          );
+          inspected = inspectAuthorized(receipt);
+          if (!inspected.container.running) {
+            throw new Error("Docker llama.cpp resume did not leave the exact runtime running.");
+          }
+        }
+        probeReady(options, lease, execution);
+        assertModelFilesystemAuthority(options);
+        assertApiKeyIdentity(
+          options,
+          activeKeyIdentity,
+          authorized.journal.apiKeyRootIdentitySha256,
+        );
+        requireExactNetwork(
+          options,
+          requireJournalNetworkId(authorized.journal),
+          authorized.journal.transactionId,
+        );
+        return inspected.receipt;
+      } finally {
+        if (!execution.unknown) options.journalStore.releaseExecution(lease);
+      }
+    },
     start(writerValue: HostLocalInferenceReceiptWriter) {
       const writer = requireReceiptWriter(writerValue);
       assertLlamaCppGgufCachePlanDigest(options.plan);
       assertModelFilesystemAuthority(options);
       const startingApiKeyRootIdentitySha256 = apiKeyRootIdentitySha256(options);
       const startingKeyIdentity = apiKeyIdentity(options);
-      const network = inspectNetwork(options.engine, options.bindings.network.name);
       const authority = authorizeEngine(options, qualifiedAuthority, true);
       const transactionId = writer.transactionId;
       const specSha256 = specificationDigest(
         options,
-        network,
         startingApiKeyRootIdentitySha256,
         writer.targetSha256,
       );
@@ -1270,18 +1477,27 @@ export function createDockerLlamaCppManagedLifecycle(
         ) {
           throw new Error("Docker llama.cpp container name is already in use.");
         }
+        if (
+          inspectNetworkIfPresent(
+            options.engine,
+            options.bindings.network.name,
+            options.bindings.ownerLabel,
+          ) !== null
+        ) {
+          throw new Error("Docker llama.cpp network name is already in use.");
+        }
         options.journalStore.assertExecution(lease);
         journal = options.journalStore.create({
           schemaVersion: 1,
           transactionId,
-          phase: "prepared",
+          phase: "network-creating",
           providerId: PROVIDER_ID,
           service: SERVICE,
           containerName: options.bindings.containerName,
           runtimeId: null,
-          createIntentUnixMs: null,
+          createIntentUnixMs: operationTime(dependencies),
           specSha256,
-          networkId: network.id,
+          networkId: null,
           engineAuthority: authority,
           apiKeyIdentitySha256: apiKeyIdentitySha256(startingKeyIdentity),
           apiKeyRootIdentitySha256: startingApiKeyRootIdentitySha256,
@@ -1290,7 +1506,37 @@ export function createDockerLlamaCppManagedLifecycle(
           receiptSha256: null,
         });
         options.journalStore.assertExecution(lease);
-        requireExactNetwork(options, network.id);
+        const createNetwork = captureMutation(
+          options,
+          lease,
+          execution,
+          createNetworkArguments(options, transactionId),
+          MUTATION_TIMEOUT_MS,
+        );
+        const network = inspectNetworkIfPresent(
+          options.engine,
+          options.bindings.network.name,
+          options.bindings.ownerLabel,
+          transactionId,
+        );
+        if (createNetwork.error || createNetwork.status !== 0 || network === null) {
+          throw new Error(
+            `Docker llama.cpp network create failed (exit ${String(createNetwork.status)}).`,
+          );
+        }
+        const networkCreateId = exactId(
+          createNetwork.stdout.trim(),
+          "Docker network create result",
+        );
+        if (network.id !== networkCreateId) {
+          throw new Error(
+            "Docker llama.cpp network create result disagrees with exact name inspection.",
+          );
+        }
+        options.journalStore.assertExecution(lease);
+        journal = options.journalStore.recordNetworkCreated(transactionId, network.id);
+        options.journalStore.assertExecution(lease);
+        requireExactNetwork(options, network.id, transactionId);
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
         options.journalStore.assertExecution(lease);
@@ -1322,7 +1568,7 @@ export function createDockerLlamaCppManagedLifecycle(
         options.journalStore.assertExecution(lease);
         journal = options.journalStore.recordCreated(transactionId, created.id);
         options.journalStore.assertExecution(lease);
-        requireExactNetwork(options, network.id);
+        requireExactNetwork(options, network.id, transactionId);
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
         requireSuccess(
@@ -1344,11 +1590,11 @@ export function createDockerLlamaCppManagedLifecycle(
         options.journalStore.assertExecution(lease);
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
-        requireExactNetwork(options, network.id);
+        requireExactNetwork(options, network.id, transactionId);
         probeReady(options, lease, execution);
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
-        requireExactNetwork(options, network.id);
+        requireExactNetwork(options, network.id, transactionId);
         const receipt = receiptFor(options, authority, journal, started);
         const serialized = serializeHostLocalInferenceReceipt(receipt);
         options.journalStore.assertExecution(lease);
@@ -1442,7 +1688,6 @@ export function createDockerLlamaCppManagedLifecycle(
           }
           const expectedSpecSha256 = specificationDigest(
             options,
-            { id: journal.networkId, name: options.bindings.network.name },
             journal.apiKeyRootIdentitySha256,
             journal.receiptTargetSha256,
           );
@@ -1451,7 +1696,9 @@ export function createDockerLlamaCppManagedLifecycle(
               "Docker llama.cpp recovery journal differs from declarative authority.",
             );
           }
-          requireExactNetwork(options, journal.networkId);
+          if (journal.phase !== "network-creating") {
+            requireExactNetwork(options, requireJournalNetworkId(journal), journal.transactionId);
+          }
           if (journal.phase === "receipt-prepared") {
             if (journal.serializedReceipt === null) {
               throw new Error("Docker llama.cpp prepared receipt is missing.");
@@ -1470,7 +1717,7 @@ export function createDockerLlamaCppManagedLifecycle(
             probeReady(options, lease, execution);
             assertModelFilesystemAuthority(options);
             assertApiKeyIdentity(options, activeKeyIdentity, journal.apiKeyRootIdentitySha256);
-            requireExactNetwork(options, journal.networkId);
+            requireExactNetwork(options, requireJournalNetworkId(journal), journal.transactionId);
             options.journalStore.assertExecution(lease);
             writePreparedReceipt(writer, journal);
             options.journalStore.assertExecution(lease);
@@ -1482,7 +1729,9 @@ export function createDockerLlamaCppManagedLifecycle(
               journal,
               lease,
               execution,
-              journal.phase === "creating" ? operationTime(dependencies) : undefined,
+              journal.phase === "creating" || journal.phase === "network-creating"
+                ? operationTime(dependencies)
+                : undefined,
             );
           }
           recovered.push(journal.transactionId);

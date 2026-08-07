@@ -1,0 +1,37 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.104
+
+NemoClaw v0.0.104 adds trusted private endpoint configuration and a selectable Personal network policy tier.
+It makes agent manifests authoritative for persistent state and strengthens gateway, rebuild, registry, and uninstall recovery.
+It also improves Hermes configuration safety, MCP diagnostics, credential isolation, and host installation guidance.
+
+- Custom inference endpoints, MCP servers, and custom policy presets can now opt in to explicitly trusted private hosts.
+  NemoClaw keeps exact host allowlists, pins generated `allowed_ips`, preserves those pins across restart and rebuild, and applies configured certificate authority trust without widening the endpoint policy.
+  For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Create Custom Policy Presets](/user-guide/openclaw/network-policy/configure-policies/create-custom-policy-presets), and [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust).
+- Onboarding now offers a Personal network policy tier for trusted single-user environments that need broad TCP access on ports 80 and 443.
+  The tier continues to block unspecified, loopback, and link-local destinations, and the documentation calls out its larger trust boundary so users can choose it deliberately.
+  For more information, refer to [Network Policies Reference](/user-guide/openclaw/reference/network-policies) and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- The selected agent manifest is now the canonical definition of persistent state for backup, restore, wipe, and Shields operations.
+  State operations fail closed when stored authority drifts from the manifest, and lifecycle lock timeouts remain side-effect free.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), [Security Best Practices](/user-guide/openclaw/security/best-practices), and [Trusted Computing Base](/user-guide/openclaw/security/trusted-computing-base).
+- Gateway and sandbox recovery now waits for the managed gateway lease, resumes journaled rebuild recreation, and applies compatibility decisions before rejecting a restored sandbox as not ready.
+  Malformed sandbox registry data fails closed, gateways that never served receive bounded boot-grace recovery, and registry repair remains scoped to the target gateway.
+  For more information, refer to [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Scoped uninstall now deletes the sandbox before removing its unit and preserves the gateway and unit when sandbox deletion fails, leaving a retryable state instead of partial teardown.
+  Desktop metadata no longer blocks uninstall when the managed runtime state is otherwise valid.
+  For more information, refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Hermes configuration now comes from one typed policy, keeps the dashboard token only in the process environment, and recalculates the context window when the selected model changes.
+  WhatsApp setup reports the gateway and dashboard sessions separately, while the managed Hermes image and dependency checks include the reviewed security updates.
+  For more information, refer to [Switch Models](/user-guide/hermes/inference/manage-inference/switch-models), [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp), and [Credential Storage](/user-guide/hermes/security/credential-storage).
+- OpenClaw MCP discovery now has a bounded `tools/list` timeout that can be tuned from 1500 to 10000 milliseconds with `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS`.
+  Opt-in `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1` diagnostics report redacted operation timings and rolling latency summaries without changing MCP behavior.
+  For more information, refer to [Troubleshoot MCP Servers](/user-guide/openclaw/reference/troubleshoot-mcp-servers) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Onboarding now blocks raw Brave and Tavily web-search credentials from entering the sandbox and directs users to the supported credential flow.
+  Preflight remediation includes stable advisory identifiers, and malformed registry diagnostics remain redacted.
+  For more information, refer to [Credential Storage](/user-guide/openclaw/security/credential-storage) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Installation now resolves `nemoclaw` through the user-local shim when required, and remote network-policy guidance opens the sandbox terminal with `openshell term` before running approval commands.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Approve Network Requests](/user-guide/openclaw/network-policy/approve-network-requests).
