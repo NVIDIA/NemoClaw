@@ -94,10 +94,10 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(report.verdict).toBe("unpaired");
     expect(session?.severity).toBe("warn");
     expect(session?.detail).toMatch(/dashboard-home has WhatsApp credentials/);
-    expect(pairing?.hint).toMatch(/Update or rebuild/);
-    expect(session?.hint).toMatch(/pair again from Dashboard/);
+    expect(pairing?.hint).toContain("`nemoclaw <sandbox> rebuild --yes`");
+    expect(session?.hint).toMatch(/Pair again from Dashboard/);
     expect(hints).toContain("/sandbox/.hermes/platforms/whatsapp/session");
-    expect(hints).toContain("re-run channels status");
+    expect(hints).toContain("`nemoclaw <sandbox> channels status --channel whatsapp`");
     expect(hints).not.toContain("platforms.whatsapp.extra.session_path");
     expect(hints).not.toContain("profiles/dashboard-home/platforms/whatsapp/session");
   });

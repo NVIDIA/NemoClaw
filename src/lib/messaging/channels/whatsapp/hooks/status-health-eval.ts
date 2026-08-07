@@ -131,7 +131,7 @@ function isParseableTimestamp(value: string | null): value is string {
 }
 
 const HERMES_LEGACY_DASHBOARD_SESSION_HINT =
-  "Update or rebuild the sandbox, pair again from Dashboard so credentials are stored in `/sandbox/.hermes/platforms/whatsapp/session`, then re-run channels status.";
+  "Run `nemoclaw <sandbox> rebuild --yes`. Pair again from Dashboard so credentials are stored in `/sandbox/.hermes/platforms/whatsapp/session`. Rerun `nemoclaw <sandbox> channels status --channel whatsapp`.";
 
 function pairingSignal(input: WhatsappProbeInput): DiagnosticSignal {
   if (!input.probeReachable) {

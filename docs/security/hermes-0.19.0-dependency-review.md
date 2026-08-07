@@ -242,6 +242,24 @@ The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the following publi
 | Source commit | `a7a7f3e470a75c404d316d2054445e16bb63b48c` |
 | OCI index | `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27` |
 
+The selected index resolves to these platform manifests and image-configuration labels:
+
+| Platform | Child manifest | `org.opencontainers.image.source` | `org.opencontainers.image.revision` |
+| --- | --- | --- | --- |
+| `linux/amd64` | `sha256:63b5a1944a4613f90fa8f9f92f6a3ccb2ceac6df23bcefad0282ed4167e6c09c` | `https://github.com/NVIDIA/NemoClaw` | `a7a7f3e470a75c404d316d2054445e16bb63b48c` |
+| `linux/arm64` | `sha256:f30b5c2529bbb5c06de38d0c1a7018c27d6c08d5a917503fa354300f12e5568c` | `https://github.com/NVIDIA/NemoClaw` | `a7a7f3e470a75c404d316d2054445e16bb63b48c` |
+
+Each child manifest has the following per-platform Supply-chain Levels for Software Artifacts (SLSA) provenance:
+
+| Platform | Attestation manifest | SLSA provenance layer | Builder ID |
+| --- | --- | --- | --- |
+| `linux/amd64` | `sha256:6797db760d6c894b624a4e40614b33a611ca02ed772323dd0b097f8ca782beab` | `sha256:f95cea632fa5006fc78c193f7e550d869423818e8ba3ab2b48a6518746a7a43c` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31031662054/attempts/1` |
+| `linux/arm64` | `sha256:3237354f9fe66b71b2e5e2fb9f4c1983c9c9151c53ecfdf7cf3ecbfee4029944` | `sha256:1ca19a6f81b3709df3e05fc39fc40a0425ce6473036909be61fa274569e858c5` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31031662054/attempts/1` |
+
+Both in-toto layers use predicate type `https://slsa.dev/provenance/v1` and bind source `https://github.com/NVIDIA/NemoClaw` to revision `a7a7f3e470a75c404d316d2054445e16bb63b48c`.
+The selected index has no index-level attestation manifest.
+Each platform attestation manifest contains only its SLSA provenance layer and has no software bill of materials (SBOM) layer.
+
 The selected build includes the exact-source dashboard WhatsApp session-path patch. Its amd64 and arm64 base-image builds passed the exact-source patch guard, locked bridge install, bridge-to-Baileys option assertions, and controlled-proxy WebSocket `CONNECT` regression.
 
 The replacement follows the security-refreshed multi-platform index published by run `31006872948`, attempt 1, from source commit `bd668121e918e7b1dda13062bed728f18150360e`:
@@ -344,8 +362,8 @@ The review records the following publication and registry evidence.
 - GitHub Actions workflow `.github/workflows/base-image.yaml` run `31031662054`, attempt 1, published the selected patched `linux/amd64` and `linux/arm64` base images; run `31006872948`, attempt 1, published the preceding security-refreshed index.
 - PyPI Trusted Publisher attestations bind both `hermes-agent==0.19.0` artifacts to source commit `3ef6bbd201263d354fd83ec55b3c306ded2eb72a`.
 - The npm registry-integrity check matches the `hermes-agent==0.19.0` cross-check value recorded in this review.
-- OCI inspection records the immutable index, image-configuration source and revision labels, SLSA provenance, and build histories.
-- The OCI index has no SBOM attestation.
+- OCI inspection records the immutable index, both child manifests, image-configuration source and revision labels, per-platform SLSA provenance, and build histories.
+- The selected index has no index-level attestation manifest, and neither platform attestation manifest contains an SBOM layer.
 
 Before merge, these checks must pass:
 

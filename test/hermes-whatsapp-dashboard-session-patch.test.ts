@@ -35,7 +35,7 @@ it("stores Hermes dashboard pairing state in the gateway session directory (#818
   }
 });
 
-it("leaves the Hermes CLI and gateway unpatched", () => {
+it("leaves the Hermes CLI and gateway unpatched (#8184)", () => {
   const patch = fs.readFileSync(PATCH, "utf8");
   expect(patch).not.toContain("diff --git a/hermes_cli/main.py");
   expect(patch).not.toContain("diff --git a/gateway/");

@@ -3,8 +3,10 @@
 #
 # Routes the pinned Hermes v2026.7.20 WhatsApp bridge through the OpenShell
 # proxy and keeps dashboard pairing state in the gateway's session directory.
-# Remove the relevant hunk when the minimum supported Hermes release provides
-# that behavior natively.
+# Remove the web_server.py hunk when the minimum supported Hermes release stores
+# Dashboard pairing state in the gateway session directory natively.
+# Remove the scripts/whatsapp-bridge hunks when that release routes the WhatsApp
+# bridge through HTTPS_PROXY natively.
 diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
 index d0c78a6b3..5f6d801b5 100644
 --- a/hermes_cli/web_server.py
