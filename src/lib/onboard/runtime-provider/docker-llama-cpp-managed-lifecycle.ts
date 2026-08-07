@@ -276,6 +276,7 @@ function parseInspection(
   contract: LlamaCppHostLocalLaunchContract,
   networkName: string,
   hostPort: number | undefined,
+  portValidation: "exact" | "cleanup",
 ): DockerContainerInspection {
   let parsed: unknown;
   try {
@@ -309,8 +310,12 @@ function parseInspection(
     throw new Error("Docker llama.cpp container has unexpected configured ports.");
   }
   const configuredPort = record(configuredBindings[0], "Docker llama.cpp configured port");
-  const expectedHostPort = hostPort === undefined ? "" : String(hostPort);
-  if (configuredPort.HostIp !== "127.0.0.1" || configuredPort.HostPort !== expectedHostPort) {
+  if (configuredPort.HostIp !== "127.0.0.1") {
+    throw new Error("Docker llama.cpp configured host port is not loopback-only.");
+  }
+  const configuredHostPort =
+    configuredPort.HostPort === "" ? null : exactPort(configuredPort.HostPort);
+  if (portValidation === "exact" && configuredHostPort !== (hostPort ?? null)) {
     throw new Error("Docker llama.cpp configured host port does not match its loopback binding.");
   }
   const bindings = ports[portKey];
@@ -322,7 +327,12 @@ function parseInspection(
     throw new Error("Docker llama.cpp host port is not loopback-only.");
   }
   const publishedHostPort = published === null ? null : exactPort(published.HostPort);
-  if (hostPort !== undefined && publishedHostPort !== null && publishedHostPort !== hostPort) {
+  if (
+    portValidation === "exact" &&
+    hostPort !== undefined &&
+    publishedHostPort !== null &&
+    publishedHostPort !== hostPort
+  ) {
     throw new Error("Docker llama.cpp published host port differs from its declared binding.");
   }
   if (!Array.isArray(source.Mounts)) {
@@ -431,6 +441,7 @@ function inspectContainer(
   contract: LlamaCppHostLocalLaunchContract,
   networkName: string,
   hostPort: number | undefined,
+  portValidation: "exact" | "cleanup" = "exact",
 ): DockerContainerInspection | null {
   const result = engine.capture(["container", "inspect", target], INSPECT_TIMEOUT_MS);
   const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -446,6 +457,7 @@ function inspectContainer(
     contract,
     networkName,
     hostPort,
+    portValidation,
   );
 }
 
@@ -933,6 +945,7 @@ function rollbackExact(
     options.contract,
     options.bindings.network.name,
     options.bindings.hostPort,
+    "cleanup",
   );
   if (container === null && record.phase === "creating" && uncertainRecoveryUnixMs !== undefined) {
     if (
@@ -949,6 +962,7 @@ function rollbackExact(
       options.contract,
       options.bindings.network.name,
       options.bindings.hostPort,
+      "cleanup",
     );
   }
   if (container !== null) {
@@ -964,6 +978,7 @@ function rollbackExact(
         options.contract,
         options.bindings.network.name,
         options.bindings.hostPort,
+        "cleanup",
       ) !== null
     ) {
       throw new Error("Docker llama.cpp exact rollback left the owned runtime present.");

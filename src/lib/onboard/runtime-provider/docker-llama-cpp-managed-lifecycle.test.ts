@@ -813,13 +813,16 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
   it("rejects configured or published Docker port drift from the recipe (#8544)", () => {
     for (const args of [["8082"], ["8081", "8082"]] as const) {
+      const [fixture, store] = [dockerFixture(...args), journalStore()];
       const lifecycle = createDockerLlamaCppManagedLifecycle(
-        options(dockerFixture(...args), journalStore(), { ...bindings(), hostPort: 8081 }),
+        options(fixture, store, { ...bindings(), hostPort: 8081 }),
       );
       expect(() => lifecycle.start(receiptWriter())).toThrow(/binding/u);
+      const calls = fixture.capture.mock.calls.map((call) => call[0]);
+      expect(store.list()).toEqual([]);
+      expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
     }
   });
-
   it("uses the declarative readiness timeout as both curl retry budget and capture budget", () => {
     const fixture = dockerFixture();
     const lifecycle = createDockerLlamaCppManagedLifecycle({
@@ -827,7 +830,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       readinessTimeoutSeconds: 37,
     });
     lifecycle.start(receiptWriter());
-
     const probe = fixture.capture.mock.calls.find(([args]) => args[0] === "run");
     expect(probe).toBeDefined();
     const [args, timeoutMs] = probe!;
@@ -844,10 +846,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     ).toEqual(["--retry-max-time", "37"]);
     expect(timeoutMs).toBe(52_000);
   });
-
   it("rejects an invalid declarative readiness timeout before inspection or mutation", () => {
     const fixture = dockerFixture();
-
     expect(() =>
       createDockerLlamaCppManagedLifecycle({
         ...options(fixture),
