@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderHealthStatus } from "../../inference/health";
-import { collectInferenceChecks } from "./doctor-inference";
+import { collectInferenceChecks, collectManagedLlamaCppDoctorChecks } from "./doctor-inference";
 
 const endpoint = "https://inference.local/v1/models";
 
@@ -32,6 +32,44 @@ function upstream(overrides: Partial<ProviderHealthStatus> = {}): ProviderHealth
 }
 
 describe("doctor inference checks", () => {
+  it.each([
+    ["running", "ok", false],
+    ["preparing", "warn", true],
+    ["stopped", "warn", true],
+    ["absent", "fail", true],
+    ["conflict", "fail", true],
+    ["unknown", "fail", true],
+  ] as const)("maps managed llama.cpp %s to an actionable %s diagnostic", (state, status, hinted) => {
+    const checks = collectManagedLlamaCppDoctorChecks("spark-agent", 7443, {
+      inspectManagedLlamaCppStatusImpl: vi.fn(() => ({
+        recipeId: "llama-cpp.nemotron.spark.v1",
+        modelDigest: state === "preparing" ? null : `sha256:${"a".repeat(64)}`,
+        imageReference:
+          state === "preparing"
+            ? null
+            : `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"b".repeat(64)}`,
+        endpoint: "https://inference.local/v1" as const,
+        state,
+        detail: `${state} managed runtime`,
+      })),
+    });
+
+    expect(checks).toHaveLength(2);
+    expect(checks[1]).toMatchObject({
+      label: "Managed llama.cpp runtime",
+      status,
+      detail: `${state}: ${state} managed runtime; endpoint https://inference.local/v1`,
+      ...(hinted
+        ? { hint: "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime" }
+        : {}),
+    });
+    expect(checks[1]?.hint).toBe(
+      hinted
+        ? "re-run `nemoclaw onboard` for 'spark-agent' to recover the exact runtime"
+        : undefined,
+    );
+  });
+
   it("makes a broken inference.local route authoritative over a healthy upstream (#6192)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
