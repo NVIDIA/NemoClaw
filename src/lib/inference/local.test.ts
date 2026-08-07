@@ -32,6 +32,7 @@ import {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  getWindowsHostOllamaDockerReachabilityArgs,
   isLocalProviderProbeOutputHealthy,
   isOllamaRunnerCrash,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
@@ -105,6 +106,20 @@ describe("local inference helpers", () => {
       allowHostDockerInternal: true,
       probeFromDocker: { expectedPort: 11434 },
     });
+  });
+
+  it("builds a credential-free Docker Desktop probe for Windows-host Ollama (#8127)", () => {
+    expect(getWindowsHostOllamaDockerReachabilityArgs()).toEqual([
+      "run",
+      "--rm",
+      CONTAINER_REACHABILITY_IMAGE,
+      "-sf",
+      "--connect-timeout",
+      "2",
+      "--max-time",
+      "5",
+      "http://host.docker.internal:11434/api/tags",
+    ]);
   });
 
   it("returns the expected base URL for vllm-local", () => {

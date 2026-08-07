@@ -648,6 +648,32 @@ exit 0
     });
   });
 
+  it("explains how to enable vLLM tool parsing when the frontend disables it", () => {
+    const body = `if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"error":{"message":"tool parsing is disabled by frontend configuration"}}
+JSON
+fi
+printf '400'
+exit 0
+`;
+    withFakeCurlProbe(
+      { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-disabled-tool-parser-probe-" },
+      () => {
+        const result = probeOpenAiLikeEndpoint("http://127.0.0.1:8000/v1", "local-model", "dummy", {
+          skipResponsesProbe: true,
+          requireChatCompletionsToolCalling: true,
+        });
+
+        expect(result).toMatchObject({ ok: false });
+        expect(result.message).toContain("Chat Completions tool parsing is disabled");
+        expect(result.message).toContain("--enable-auto-tool-choice");
+        expect(result.message).toContain("--tool-call-parser");
+        expect(result.message).toContain("selected frontend registers");
+      },
+    );
+  });
+
   describe("private-address SSRF guard (#6293)", () => {
     it("rejects a non-loopback private LAN endpoint before issuing any probe (#6293)", () => {
       const result = probeOpenAiLikeEndpoint(
