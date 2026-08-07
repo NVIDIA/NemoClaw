@@ -183,6 +183,8 @@ describe("maintainer merge-gate contributor compliance", () => {
           headBranch: "feature-branch",
           headRepository: forkRepository,
           pullRequests: [],
+          status: "completed",
+          conclusion: "failure",
         }),
       },
     });
@@ -190,6 +192,41 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       allPass: true,
       gates: { ci: { pass: true } },
+    });
+  });
+
+  it.each([
+    {
+      evidence: "the workflow run is in progress",
+      run: { status: "in_progress", conclusion: "failure" },
+    },
+    {
+      evidence: "the completed workflow run has no conclusion",
+      run: { status: "completed", conclusion: null },
+    },
+  ])("keeps an association-less fork Advisor lane merge-relevant when $evidence", ({ run }) => {
+    const runId = 9005;
+    const jobId = 9105;
+    const forkRepository = "contributor/NemoClaw";
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      headRepository: forkRepository,
+      statusChecks: [...successfulRequiredChecks(), advisorCheck(runId, jobId)],
+      actionRunAttempts: {
+        [String(runId)]: advisorRun(jobId, {
+          headSha: HEAD_SHA,
+          headBranch: "feature-branch",
+          headRepository: forkRepository,
+          pullRequests: [],
+          ...run,
+        }),
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: false,
+      gates: { ci: { pass: false } },
     });
   });
 

@@ -1908,6 +1908,8 @@ function currentCheckRollup(
         ? true
         : exactDiff.headRepository !== repo &&
           run !== null &&
+          run.status === "COMPLETED" &&
+          run.conclusion !== null &&
           associationLessHeadBinding(run) === "current";
     return Boolean(
       run &&
