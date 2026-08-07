@@ -171,12 +171,12 @@ describe("MCP tool discovery image contract", () => {
       expect(review).toContain(`\`${packageName}@${metadata.version}\``);
       expect(review).toContain(`\`${metadata.integrity}\``);
     }
-    expect(
-      installer
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.startsWith("npm audit")),
-    ).toEqual(["npm audit signatures"]);
+    expect(installer).not.toContain("npm audit signatures");
+    const reviewedAuditDriver = fs.readFileSync(
+      path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
+      "utf8",
+    );
+    expect(reviewedAuditDriver).toContain('["audit", "signatures", "--omit=dev"]');
     expect(auditConfig.lockedGraphs).toContainEqual({
       id: "mcp-tool-discovery-runtime",
       label: "MCP tool discovery runtime locked production graph",
@@ -491,7 +491,7 @@ exit 0
         expect(result.stderr).toContain(
           "retrying the missing lockfile archive after a transient network failure",
         );
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("11");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("10");
         expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 7)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
           "ls --all --json --ignore-scripts --no-audit --no-fund --no-progress",
