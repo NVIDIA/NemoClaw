@@ -192,14 +192,67 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(out).toBe(basePath);
   });
 
-  it("returns the static base path when live policy has no filesystem_policy section", () => {
-    const basePath = "/path/to/static.yaml";
-    const liveYaml = YAML.stringify({ landlock: { compatibility: "best_effort" } });
+  it("carries the live landlock stanza so a startup-sealed field is not changed (#8461)", () => {
+    // Deep Agents Code starts with `strict` but ships no permissive policy of
+    // its own, so the base is the OpenClaw document with `best_effort`.
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
+      landlock: { compatibility: "strict" },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "strict" });
+  });
+
+  it("carries a live landlock stanza that already equals the base (#8461)", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
+      landlock: { compatibility: "best_effort" },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "best_effort" });
+  });
+
+  it("keeps the base landlock stanza when the live policy carries none (#8461)", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "best_effort" });
+  });
+
+  it("carries Landlock when the live policy has no filesystem paths (#8461)", () => {
+    const basePath = "/unused-base.yaml";
+    const liveYaml = YAML.stringify({ landlock: { compatibility: "strict" } });
     const out = buildRuntimePermissivePolicy(basePath, {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
-    expect(out).toBe(basePath);
+    trackTempForCleanup(out, basePath);
+
+    expect(out).not.toBe(basePath);
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "strict" });
   });
 
   it("returns the static base path when readBasePolicy throws (I/O failure)", () => {
