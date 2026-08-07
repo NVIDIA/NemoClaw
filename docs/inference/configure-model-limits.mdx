@@ -9,8 +9,8 @@ keywords: ["nemoclaw context window", "nemoclaw max tokens", "model limits"]
 content:
   type: "how_to"
 ---
-Configure model limits before onboarding so NemoClaw can bake them into the sandbox image.
-Changing a build-time model limit on an existing sandbox requires fresh recreation.
+Configure explicit model limits before onboarding so NemoClaw can bake them into the sandbox image.
+Changing an explicit build-time model limit on an existing sandbox requires fresh recreation.
 
 ## Set OpenClaw Limits
 
@@ -52,6 +52,8 @@ $$nemoclaw onboard
 
 When onboarding resolves a valid value, NemoClaw writes it as `model.context_length` in `/sandbox/.hermes/config.yaml`.
 For non-Ollama endpoints, the field remains unset when no explicit or probed value is available so Hermes can auto-detect it from the endpoint.
+During `inference set`, NemoClaw recomputes the context window for the target model.
+It writes `model.context_length` when it resolves a value and omits the field when Hermes must use endpoint auto-discovery.
 When NemoClaw starts Local Ollama on macOS or Linux, it requests at least `64000` tokens.
 Fresh onboarding then verifies the loaded model's actual `context_length` through `/api/ps`.
 Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
@@ -91,4 +93,4 @@ Use this recreation path for Deep Agents context-window or maximum-token changes
 ## Related Topics
 
 - [Configure Inference Timeouts](configure-inference-timeouts) for request, validation, and readiness budgets.
-- [Switch Models](switch-models) to change the model without changing model limits.
+- [Switch Models](switch-models) to change the selected model.
