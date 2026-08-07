@@ -537,7 +537,9 @@ run_install_check() {
     local v
     v="$(echo "$_raw" | tr -d '[:space:]')"
     [[ -z "$v" ]] && continue
-    case "$v" in install-* | start-windows-ollama) continue ;; esac
+    case "$v" in
+      install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) continue ;;
+    esac
     if ! grep -qxF -- "$v" <<<"$_bootstrap_values"; then
       echo "check-docs: [install] provider \"$v\" canonical but absent from $BOOTSTRAP_SH bootstrap_usage" >&2
       _drift=1
@@ -557,7 +559,7 @@ run_install_check() {
     printf '%s\n' "$_canonical" \
       | tr ',' '\n' \
       | sed 's/[[:space:]]//g' \
-      | grep -vxE 'install-.*|start-windows-ollama' \
+      | grep -vxE 'install-vllm|install-ollama|install-windows-ollama|start-windows-ollama' \
       | grep -E '^[a-zA-Z][a-zA-Z0-9-]*$' \
       | LC_ALL=C sort -u
   )"
@@ -595,7 +597,7 @@ run_install_check() {
         | awk -F '|' '{ print $3 }' \
         | grep -oE "\`[a-zA-Z][a-zA-Z0-9-]*\`" \
         | tr -d '`' \
-        | grep -vxE 'install-.*|start-windows-ollama' \
+        | grep -vxE 'install-vllm|install-ollama|install-windows-ollama|start-windows-ollama' \
         | LC_ALL=C sort -u
     )"
     while IFS= read -r v; do
