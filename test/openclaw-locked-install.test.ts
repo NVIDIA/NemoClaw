@@ -22,6 +22,9 @@ const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
 const LOCK_SHA256 = "759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCPORTER_LOCK_SHA256 = "962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793";
+const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
+const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
+  "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -382,12 +385,17 @@ describe("locked OpenClaw production installation (#5896)", () => {
           lockSha256: MCPORTER_LOCK_SHA256,
           packageSpec: MCPORTER_PACKAGE_SPEC,
         }),
+        expect.objectContaining({
+          directory: "tools/mcp-tool-discovery-runtime",
+          lockSha256: MCP_TOOL_DISCOVERY_LOCK_SHA256,
+          packageSpec: MCP_TOOL_DISCOVERY_PACKAGE_SPEC,
+        }),
       ]),
     );
-    expect(audit.lockedGraphs).toHaveLength(2);
+    expect(audit.lockedGraphs).toHaveLength(3);
     expect(
       audit.lockedGraphs.map(({ packageSpec }: { packageSpec?: string }) => packageSpec).sort(),
-    ).toEqual([MCPORTER_PACKAGE_SPEC, PACKAGE_SPEC].sort());
+    ).toEqual([MCPORTER_PACKAGE_SPEC, MCP_TOOL_DISCOVERY_PACKAGE_SPEC, PACKAGE_SPEC].sort());
     for (const graph of audit.lockedGraphs) {
       expect(graph).not.toHaveProperty("replacementLockSha256");
       expect(graph).not.toHaveProperty("reviewedLockSha256");

@@ -92,7 +92,7 @@ async function evaluate(options: { attempt: number; conclusion: string; latestRu
 }
 
 describe("main E2E retry controller", () => {
-  it.each([1, 2])("requests retry %s before the attempt limit", async (attempt) => {
+  it.each([1, 2])("requests failed-job rerun after attempt %s fails", async (attempt) => {
     const { evidence, requests } = await evaluate({ attempt, conclusion: "failure" });
 
     expect(E2E_MAX_RETRIES).toBe(2);
@@ -106,6 +106,11 @@ describe("main E2E retry controller", () => {
       method: "POST",
       path: `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun-failed-jobs`,
     });
+    expect(
+      requests.some(
+        (request) => request.path === `repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun`,
+      ),
+    ).toBe(false);
   });
 
   it("stops after the third failed attempt", async () => {
@@ -132,6 +137,19 @@ describe("main E2E retry controller", () => {
     const { evidence } = await evaluate({ attempt: 1, conclusion: "success" });
 
     expect(evidence).toMatchObject({ action: "passed-first-attempt", flaky: false });
+  });
+
+  it("ignores a cancelled run that never created jobs", async () => {
+    const { evidence, requests } = await evaluate({ attempt: 1, conclusion: "cancelled" });
+
+    expect(evidence).toMatchObject({
+      action: "ignored",
+      reason: "E2E concluded with cancelled",
+      attempts: [],
+      totalRunnerMinutes: 0,
+    });
+    expect(requests.some((request) => request.path.includes("/attempts/"))).toBe(false);
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
   it("does not retry a run superseded by a newer main push", async () => {
