@@ -359,6 +359,10 @@ describe("effective built-in policy contracts", () => {
       });
       expect(methods(endpoint ?? {})).toEqual(["GET", "POST"]);
     }
+    const llamaCpp = (localInference.endpoints ?? []).find(
+      (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 8081,
+    );
+    expect(llamaCpp?.rules).toEqual([{ allow: { method: "POST", path: "/v1/chat/completions" } }]);
     expect(binaries(localInference)).toEqual(
       expect.arrayContaining([
         "/usr/local/bin/openclaw",

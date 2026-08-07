@@ -7,6 +7,7 @@ import {
   MANAGED_IMAGE_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
+  MANAGED_IMAGE_RUNTIME_IDENTITIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractV1,
@@ -54,6 +55,14 @@ describe("managed image contract v1", () => {
       "hermes",
       "langchain-deepagents-code",
     ]);
+  });
+
+  it("binds every shipped image to its baked-in non-root runtime identity (#7744)", () => {
+    expect(MANAGED_IMAGE_RUNTIME_IDENTITIES).toEqual({
+      openclaw: { uid: 998, gid: 998, workdir: "/sandbox" },
+      hermes: { uid: 998, gid: 999, workdir: "/sandbox" },
+      "langchain-deepagents-code": { uid: 999, gid: 999, workdir: "/sandbox" },
+    });
   });
 
   it.each(
