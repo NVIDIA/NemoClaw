@@ -34,10 +34,10 @@ function state(): SetupNimSelectionState {
   } as unknown as SetupNimSelectionState;
 }
 
-function plan(runtime: "vllm" | "llama-cpp") {
+function plan() {
   return resolveLocalModelProfilePlan(loadServingCatalog(), {
     [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
-    [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: runtime,
+    [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
   })!;
 }
 
@@ -51,9 +51,7 @@ describe("dedicated local model profile onboarder", () => {
     });
     const onboard = createLocalModelProfileOnboarder({
       installVllm,
-      installLlamaCpp: vi.fn() as never,
       handleVllmSelection,
-      handleLlamaCppSelection: vi.fn() as never,
       prompt: vi.fn(async () => ""),
       error: vi.fn(),
     });
@@ -61,7 +59,7 @@ describe("dedicated local model profile onboarder", () => {
 
     await expect(
       onboard(
-        plan("vllm"),
+        plan(),
         { hasVllmImage: false, sparkHost: true, vllmProfile, vllmRunning: false },
         selection,
       ),
@@ -78,53 +76,20 @@ describe("dedicated local model profile onboarder", () => {
     });
   });
 
-  it("installs and then fingerprint-attaches the fixed llama.cpp recipe", async () => {
-    const selection = state();
-    const installLlamaCpp = vi.fn(async () => ({
-      ok: true as const,
-      apiKey: "a".repeat(64),
-      model: "nvidia-nemotron-3-nano-30b-a3b",
-    }));
-    const handleLlamaCppSelection = vi.fn(async () => "selected" as const);
-    const onboard = createLocalModelProfileOnboarder({
-      installVllm: vi.fn() as never,
-      installLlamaCpp,
-      handleVllmSelection: vi.fn() as never,
-      handleLlamaCppSelection,
-      prompt: vi.fn(async () => ""),
-      error: vi.fn(),
-    });
-
-    await expect(
-      onboard(
-        plan("llama-cpp"),
-        { hasVllmImage: false, sparkHost: true, vllmProfile: null, vllmRunning: false },
-        selection,
-      ),
-    ).resolves.toBe("selected");
-    expect(handleLlamaCppSelection).toHaveBeenCalledWith(
-      selection,
-      "nvidia-nemotron-3-nano-30b-a3b",
-      null,
-    );
-  });
-
   it("rejects a vLLM port override before installation", async () => {
     const installVllm = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const onboard = createLocalModelProfileOnboarder({
       env: { NEMOCLAW_VLLM_PORT: "9000" },
       installVllm,
-      installLlamaCpp: vi.fn() as never,
       handleVllmSelection: vi.fn() as never,
-      handleLlamaCppSelection: vi.fn() as never,
       prompt: vi.fn(async () => ""),
       error,
     });
 
     await expect(
       onboard(
-        plan("vllm"),
+        plan(),
         {
           hasVllmImage: false,
           sparkHost: true,
@@ -139,16 +104,14 @@ describe("dedicated local model profile onboarder", () => {
   });
 
   it("reports invalid vLLM materialization through the retry path", async () => {
-    const invalidPlan = structuredClone(plan("vllm"));
+    const invalidPlan = structuredClone(plan());
     delete (invalidPlan.recipe.spec.model as { gated?: boolean }).gated;
     const installVllm = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const onboard = createLocalModelProfileOnboarder({
       env: {},
       installVllm,
-      installLlamaCpp: vi.fn() as never,
       handleVllmSelection: vi.fn() as never,
-      handleLlamaCppSelection: vi.fn() as never,
       prompt: vi.fn(async () => ""),
       error,
     });

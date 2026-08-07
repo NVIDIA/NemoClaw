@@ -56,7 +56,29 @@ spec:
         cpuFallback: reject
       probes:
         - health
-        - completion
+        - models
+        - synchronous-chat
+        - streaming-chat
+        - usage
+        - structured-output
+        - tool-call
+        - tool-result-continuation
+        - context-window
+        - authentication
+        - malformed-request
+        - cancellation
+        - client-timeout
+      probeBounds:
+        cancellationMaxTokens: 4096
+        clientTimeoutMilliseconds: 250
+        maxResponseBytes: 16777216
+        maxStreamEvents: 512
+        maxTokens:
+          synchronousChat: 16
+          streamingChat: 32
+          structuredOutput: 64
+          toolCall: 256
+          toolResultContinuation: 64
 
   source:
     repository: https://github.com/ggml-org/llama.cpp

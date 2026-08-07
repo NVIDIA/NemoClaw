@@ -98,14 +98,13 @@ import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
   MANAGED_BOOTSTRAP_REQUEST_FILE,
   parseManagedBootstrapImageCompletion,
-  serializeManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
 } from "./envelope";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const FULL_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ARGV_BYTES = 128 * 1024;
 const MAX_CONTAINER_NAME_LENGTH = 253;
-const REQUEST_TEMP_PREFIX = "nemoclaw-managed-bootstrap-request";
 const COMPLETION_TEMP_PREFIX = "nemoclaw-managed-bootstrap-completion";
 const COMPLETION_MAX_BYTES = 4096;
 const DOCKER_DRIVER_ID = "docker";
@@ -541,32 +540,11 @@ function replacementStagingName(originalName: string, bootstrapIdentity: string)
   return `${originalName.slice(0, Math.max(1, MAX_CONTAINER_NAME_LENGTH - suffix.length))}${suffix}`;
 }
 
-function writeProtectedEnvelope(
+function protectedEnvelopeArchive(
   bootstrapIdentity: string,
-  request: Parameters<typeof serializeManagedBootstrapEnvelope>[0]["rootApplyRequest"],
-): string {
-  const file = secureTempFile(REQUEST_TEMP_PREFIX, ".json");
-  try {
-    fs.writeFileSync(
-      file,
-      serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest: request }),
-      { encoding: "utf8", flag: "wx", mode: 0o400 },
-    );
-    fs.chmodSync(file, 0o400);
-    const stat = fs.lstatSync(file);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.nlink !== 1 ||
-      (stat.mode & 0o777) !== 0o400
-    ) {
-      throw new Error("Managed bootstrap request source is not one protected 0400 file.");
-    }
-    return file;
-  } catch (error) {
-    cleanupTempDir(file, REQUEST_TEMP_PREFIX);
-    throw error;
-  }
+  request: Parameters<typeof serializeManagedBootstrapEnvelopeTar>[0]["rootApplyRequest"],
+): Buffer {
+  return serializeManagedBootstrapEnvelopeTar({ bootstrapIdentity, rootApplyRequest: request });
 }
 
 function readProtectedImageCompletion(
@@ -895,9 +873,7 @@ function expectedUlimits(original: unknown, required: readonly DockerUlimit[]): 
       Hard: requiredEntry.hard,
     });
   }
-  return JSON.stringify(
-    [...merged.values()].sort((left, right) => left.Name.localeCompare(right.Name)),
-  );
+  return canonicalUlimits([...merged.values()], "expected ulimits");
 }
 
 function assertExactDeviceRequests(
@@ -1067,11 +1043,12 @@ function assertReplacementMatchesIntent(
     ].filter((value, index, values) => values.indexOf(value) === index),
     "supplementary groups",
   );
-  if (
-    canonicalUlimits(observedHost.Ulimits, "replacement ulimits") !==
-    expectedUlimits(originalHost.Ulimits, plan.requiredUlimits)
-  ) {
-    throw new Error("Managed bootstrap Docker ulimits changed outside declared requirements.");
+  const observedUlimits = canonicalUlimits(observedHost.Ulimits, "replacement ulimits");
+  const intendedUlimits = expectedUlimits(originalHost.Ulimits, plan.requiredUlimits);
+  if (observedUlimits !== intendedUlimits) {
+    throw new Error(
+      `Managed bootstrap Docker ulimits changed outside declared requirements: expected ${intendedUlimits}, observed ${observedUlimits}.`,
+    );
   }
   const expectedPreserved = scrubVerifiedReplacementDeltas(originalCanonicalJson);
   const observedPreserved = scrubVerifiedReplacementDeltas(replacementSpec.canonicalJson);
@@ -3269,7 +3246,6 @@ export function createDockerManagedBootstrapAdapter(
         timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
       };
 
-      let requestFile = "";
       let replacementRuntimeId = "";
       let stagedAuthority: DockerBootstrapTransaction | null = null;
       try {
@@ -3359,11 +3335,12 @@ export function createDockerManagedBootstrapAdapter(
           commitReceipt: null,
         });
 
-        requestFile = writeProtectedEnvelope(handle.bootstrapIdentity, request);
-        const copied = deps.dockerRun(
-          ["cp", requestFile, replacementRuntimeId + ":" + MANAGED_BOOTSTRAP_REQUEST_FILE],
-          options,
-        );
+        const requestArchive = protectedEnvelopeArchive(handle.bootstrapIdentity, request);
+        const copied = deps.dockerRun(["cp", "-", replacementRuntimeId + ":/"], {
+          ...options,
+          input: requestArchive,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
         assertZero(
           copied,
           "Managed bootstrap could not stage its protected root-owned 0400 envelope",
@@ -3429,8 +3406,6 @@ export function createDockerManagedBootstrapAdapter(
         const failure = error instanceof Error ? error : new Error(String(error));
         if (rollbackError) attachManagedBootstrapRollbackError(failure, rollbackError);
         throw failure;
-      } finally {
-        if (requestFile) cleanupTempDir(requestFile, REQUEST_TEMP_PREFIX);
       }
     },
     async activateBootstrapReplacement({ handle, snapshot, prepared, durablePreparation }) {
