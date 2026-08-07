@@ -40,7 +40,7 @@ const BASE_ENV = baseOpenClawGenerationEnv();
 let tmpDir: string;
 
 const buildTestEnv = (envOverrides: Record<string, string> = {}): Record<string, string> =>
-  buildOpenClawTestEnv(tmpDir, BASE_ENV, envOverrides);
+  withLegacyMessagingPlanEnv(buildOpenClawTestEnv(tmpDir, BASE_ENV, envOverrides), "openclaw");
 
 function withEnv<T>(env: Record<string, string>, fn: () => T): T {
   const originalEnv = { ...process.env };

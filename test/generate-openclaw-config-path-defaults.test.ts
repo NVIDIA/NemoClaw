@@ -8,8 +8,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { main } from "../scripts/generate-openclaw-config.mts";
-import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "./helpers/openclaw-env-fixture";
+import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const BASE_ENV = baseOpenClawGenerationEnv();
 
@@ -18,7 +18,7 @@ const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
 let tmpDir: string;
 
 const buildTestEnv = (envOverrides: Record<string, string> = {}): Record<string, string> =>
-  buildOpenClawTestEnv(tmpDir, BASE_ENV, envOverrides);
+  withLegacyMessagingPlanEnv(buildOpenClawTestEnv(tmpDir, BASE_ENV, envOverrides), "openclaw");
 
 function withEnv<T>(env: Record<string, string>, fn: () => T): T {
   const original = { ...process.env };
