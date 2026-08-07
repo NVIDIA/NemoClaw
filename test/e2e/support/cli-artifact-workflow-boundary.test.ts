@@ -375,47 +375,43 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
       }),
     },
   });
-  if (identityResult.status !== 0) {
-    return {
-      candidateSha,
-      cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
-      output: `${identityResult.stdout}${identityResult.stderr}`,
-      result: identityResult,
-      runnerTemp,
-      workspace,
-    };
-  }
-  const identityOutputs = Object.fromEntries(
-    fs
-      .readFileSync(githubOutput, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => {
-        const separator = line.indexOf("=");
-        return [line.slice(0, separator), line.slice(separator + 1)];
-      }),
-  );
-  const restoreResult = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
-    cwd: workspace,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      ARTIFACT_NAME: identityOutputs.artifact_name,
-      CANDIDATE_REPOSITORY: identityOutputs.candidate_repository,
-      CANDIDATE_SHA: identityOutputs.candidate_sha,
-      GITHUB_WORKSPACE: workspace,
-      PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
-      PAYLOAD_SHA256: identityOutputs.payload_sha256,
-      PRODUCER_RUN_ATTEMPT: identityOutputs.producer_run_attempt,
-      RUN_ID: identityOutputs.run_id,
-      RUNNER_TEMP: runnerTemp,
-      WORKFLOW_SHA: identityOutputs.workflow_sha,
-    },
-  });
+  const runRestoreStep = () => {
+    const identityOutputs = Object.fromEntries(
+      fs
+        .readFileSync(githubOutput, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+    );
+    return spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
+      cwd: workspace,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ARTIFACT_NAME: identityOutputs.artifact_name,
+        CANDIDATE_REPOSITORY: identityOutputs.candidate_repository,
+        CANDIDATE_SHA: identityOutputs.candidate_sha,
+        GITHUB_WORKSPACE: workspace,
+        PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
+        PAYLOAD_SHA256: identityOutputs.payload_sha256,
+        PRODUCER_RUN_ATTEMPT: identityOutputs.producer_run_attempt,
+        RUN_ID: identityOutputs.run_id,
+        RUNNER_TEMP: runnerTemp,
+        WORKFLOW_SHA: identityOutputs.workflow_sha,
+      },
+    });
+  };
+  const identitySucceeded = identityResult.status === 0;
+  const restoreResult = identitySucceeded ? runRestoreStep() : identityResult;
   return {
     candidateSha,
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
-    output: `${identityResult.stdout}${identityResult.stderr}${restoreResult.stdout}${restoreResult.stderr}`,
+    output: `${identityResult.stdout}${identityResult.stderr}${
+      identitySucceeded ? `${restoreResult.stdout}${restoreResult.stderr}` : ""
+    }`,
     result: restoreResult,
     runnerTemp,
     workspace,
