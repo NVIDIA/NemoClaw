@@ -143,7 +143,7 @@ export function finalizeRebuildPostRestore(
     }
     if (messagingHostForwardUnverified) {
       writeLine(
-        `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${options.sandboxName} connect\` after resolving the port conflict`,
+        `    Messaging webhook forward was not verified. Resolve the preceding OpenShell or port error, then run \`${CLI_NAME} ${options.sandboxName} connect\`.`,
       );
     }
     if (policyPresetRestoreIncomplete) {

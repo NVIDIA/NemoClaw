@@ -125,6 +125,10 @@ describe("finalizeRebuildPostRestore", () => {
     expect(output).toContain("Mutable config permissions were not verified");
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
     expect(output).toContain("Messaging webhook forward was not verified");
+    expect(output).toContain(
+      "Resolve the preceding OpenShell or port error, then run `nemoclaw alpha connect`.",
+    );
+    expect(output).not.toContain("after resolving the port conflict");
     expect(output).toContain("Policy presets failed to reapply: messaging-telegram");
     expect(output).toContain("Shields were previously enabled");
     const orderedFragments = [
