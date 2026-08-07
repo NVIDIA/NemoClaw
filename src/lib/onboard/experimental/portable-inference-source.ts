@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { TextDecoder } from "node:util";
+
+export const PORTABLE_INFERENCE_ACTIVATION_PATH = "/run/nemoclaw/portable-inference.b64";
 
 const DEFAULT_RELATIVE_OBJECT_KEY = "secrets/nvcf-llm.b64";
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
@@ -23,6 +26,57 @@ export class PortableInferenceSourceError extends Error {
 }
 
 export type PortableInferenceObjectReader = (uri: string, env: NodeJS.ProcessEnv) => Buffer;
+export type PortableInferenceActivationReader = () => Buffer | null;
+
+export function readPortableInferenceActivationFile(
+  filePath: string = PORTABLE_INFERENCE_ACTIVATION_PATH,
+): Buffer | null {
+  let descriptorFd: number;
+  try {
+    const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+    descriptorFd = openSync(filePath, constants.O_RDONLY | noFollow);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new PortableInferenceSourceError(
+      "Portable hosted inference could not read its activated credential descriptor.",
+    );
+  }
+
+  try {
+    const stats = fstatSync(descriptorFd);
+    const effectiveUid = typeof process.geteuid === "function" ? process.geteuid() : null;
+    if (
+      !stats.isFile() ||
+      (stats.mode & 0o077) !== 0 ||
+      (effectiveUid !== null && stats.uid !== 0 && stats.uid !== effectiveUid)
+    ) {
+      throw new PortableInferenceSourceError(
+        "Portable hosted inference requires its activated descriptor to be a regular file owned by root or the current user, with no group or other permissions.",
+      );
+    }
+
+    const buffer = Buffer.allocUnsafe(MAX_DESCRIPTOR_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = readSync(descriptorFd, buffer, offset, buffer.length - offset, null);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset === 0 || offset > MAX_DESCRIPTOR_BYTES) {
+      throw new PortableInferenceSourceError(
+        "Portable hosted inference received an empty or oversized descriptor.",
+      );
+    }
+    return buffer.subarray(0, offset);
+  } catch (error) {
+    if (error instanceof PortableInferenceSourceError) throw error;
+    throw new PortableInferenceSourceError(
+      "Portable hosted inference could not read its activated credential descriptor.",
+    );
+  } finally {
+    closeSync(descriptorFd);
+  }
+}
 
 function configurationValue(env: NodeJS.ProcessEnv, name: string): string {
   return String(env[name] ?? "").trim();
@@ -208,7 +262,21 @@ export function parsePortableInferenceDescriptor(raw: Buffer): PortableInference
 export function resolvePortableInferenceSource(
   env: NodeJS.ProcessEnv,
   readObject: PortableInferenceObjectReader = readObjectWithAwsCli,
+  readActivatedDescriptor: PortableInferenceActivationReader = readPortableInferenceActivationFile,
 ): PortableInferenceSource | null {
+  let activatedDescriptor: Buffer | null;
+  try {
+    activatedDescriptor = readActivatedDescriptor();
+  } catch (error) {
+    if (error instanceof PortableInferenceSourceError) throw error;
+    throw new PortableInferenceSourceError(
+      "Portable hosted inference could not read its activated credential descriptor.",
+    );
+  }
+  if (activatedDescriptor !== null) {
+    return parsePortableInferenceDescriptor(activatedDescriptor);
+  }
+
   const uri = resolveObjectUri(env);
   if (!uri) return null;
   let raw: Buffer;

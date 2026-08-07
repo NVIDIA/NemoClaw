@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   parsePortableInferenceDescriptor,
+  readPortableInferenceActivationFile,
   resolvePortableInferenceSource,
 } from "./portable-inference-source";
 
@@ -18,12 +23,91 @@ const VALID_FIELDS = {
   model: "example/model-1",
 };
 
+const tempDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of tempDirectories.splice(0)) {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 describe("portable hosted inference source", () => {
   it("does not read object storage when the portable source is not configured", () => {
     const readObject = vi.fn();
 
     expect(resolvePortableInferenceSource({}, readObject)).toBeNull();
     expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it("prefers an activated descriptor over configured object storage", () => {
+    const readObject = vi.fn();
+    const readActivatedDescriptor = vi.fn(() => descriptor(VALID_FIELDS));
+
+    expect(
+      resolvePortableInferenceSource(
+        { S3_BUCKET: "portable-inference", S3_KEY: "path/credential.b64" },
+        readObject,
+        readActivatedDescriptor,
+      ),
+    ).toEqual({
+      apiKey: VALID_FIELDS.apiKey,
+      baseUrl: VALID_FIELDS.url,
+      model: VALID_FIELDS.model,
+    });
+    expect(readActivatedDescriptor).toHaveBeenCalledOnce();
+    expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it("redacts unexpected activated-descriptor reader errors", () => {
+    const readActivatedDescriptor = vi.fn(() => {
+      throw new Error("reader output contained test-credential-value-1234");
+    });
+
+    expect(() => resolvePortableInferenceSource({}, vi.fn(), readActivatedDescriptor)).toThrow(
+      "could not read its activated credential descriptor",
+    );
+    try {
+      resolvePortableInferenceSource({}, vi.fn(), readActivatedDescriptor);
+    } catch (error) {
+      expect(String(error)).not.toContain("test-credential-value-1234");
+    }
+  });
+
+  it("reads an owner-only activated descriptor file", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "portable-inference-test-"));
+    tempDirectories.push(directory);
+    const filePath = path.join(directory, "descriptor.b64");
+    const raw = descriptor(VALID_FIELDS);
+    writeFileSync(filePath, raw, { mode: 0o600 });
+    chmodSync(filePath, 0o600);
+
+    expect(readPortableInferenceActivationFile(filePath)).toEqual(raw);
+  });
+
+  it("rejects a group-readable activated descriptor file", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "portable-inference-test-"));
+    tempDirectories.push(directory);
+    const filePath = path.join(directory, "descriptor.b64");
+    writeFileSync(filePath, descriptor(VALID_FIELDS), { mode: 0o640 });
+    chmodSync(filePath, 0o640);
+
+    expect(() => readPortableInferenceActivationFile(filePath)).toThrow(
+      "owned by root or the current user",
+    );
+  });
+
+  it("rejects a symlinked activated descriptor file", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "portable-inference-test-"));
+    tempDirectories.push(directory);
+    const targetPath = path.join(directory, "target.b64");
+    const linkPath = path.join(directory, "descriptor.b64");
+    writeFileSync(targetPath, descriptor(VALID_FIELDS), { mode: 0o600 });
+    chmodSync(targetPath, 0o600);
+    symlinkSync(targetPath, linkPath);
+
+    expect(() => readPortableInferenceActivationFile(linkPath)).toThrow(
+      "could not read its activated credential descriptor",
+    );
   });
 
   it("reads and validates the configured descriptor without writing credential state", () => {
