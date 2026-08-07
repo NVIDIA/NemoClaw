@@ -18,6 +18,7 @@ const CONTAINER_TIMEOUT_MS = 20_000;
 
 type BootstrapRunOptions = {
   environment?: Record<string, string>;
+  groupDatabase?: "regular" | "symlink";
 };
 
 type BootstrapRun = {
@@ -37,8 +38,17 @@ type FixtureState = {
 };
 
 const fixtureParent = process.platform === "darwin" ? "/private/tmp" : os.tmpdir();
-const fixtureImage = `nemoclaw-jetson-bootstrap-test:${String(process.pid)}-${String(Date.now())}`;
-let containerFixtureRoot = "";
+const fixtureId = `${String(process.pid)}-${String(Date.now())}`;
+const fixtureImage = `nemoclaw-jetson-bootstrap-test:${fixtureId}`;
+let containerFixtureRoot = path.join(
+  fixtureParent,
+  `nemoclaw-jetson-bootstrap-not-created-${fixtureId}`,
+);
+
+const GROUP_DATABASE_DOCKER_ARGS = {
+  regular: [],
+  symlink: ["--tmpfs", "/etc:rw,nosuid,nodev,noexec,size=1m"],
+} as const satisfies Record<NonNullable<BootstrapRunOptions["groupDatabase"]>, readonly string[]>;
 
 function writeExecutable(filePath: string, source: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -134,6 +144,11 @@ printf 'SUPERVISOR_EXECUTED\n'
 set -uo pipefail
 printf '1000 44\n' >/test-state/memberships
 printf '44:video\n' >/test-state/group-map
+case "\${TEST_GROUP_DATABASE:-regular}" in
+  regular) ;;
+  symlink) /bin/ln -s /tmp/nemoclaw-missing-group /etc/group ;;
+  *) exit 2 ;;
+esac
 set +e
 /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh "$@"
 status=$?
@@ -199,6 +214,7 @@ function parseFixtureState(stdout: string): { state: FixtureState; stdout: strin
 }
 
 function runBootstrap(args: readonly string[], options: BootstrapRunOptions = {}): BootstrapRun {
+  const groupDatabase = options.groupDatabase ?? "regular";
   const dockerArgs = [
     "run",
     "--rm",
@@ -213,10 +229,11 @@ function runBootstrap(args: readonly string[], options: BootstrapRunOptions = {}
     "/tmp:rw,nosuid,nodev,noexec,size=1m",
     "--tmpfs",
     "/test-state:rw,nosuid,nodev,noexec,size=1m",
-    ...Object.entries(options.environment ?? {}).flatMap(([key, value]) => [
-      "--env",
-      `${key}=${value}`,
-    ]),
+    ...GROUP_DATABASE_DOCKER_ARGS[groupDatabase],
+    ...Object.entries({
+      ...options.environment,
+      TEST_GROUP_DATABASE: groupDatabase,
+    }).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
     "--entrypoint",
     "/test-fixture/run",
     fixtureImage,
@@ -269,16 +286,12 @@ suite("Jetson device-group bootstrap", () => {
   }, 65_000);
 
   afterAll(() => {
-    if (dockerProbe.status === 0) {
-      dockerSpawnSync(["image", "rm", "--force", fixtureImage], {
-        encoding: "utf8",
-        killSignal: "SIGKILL",
-        timeout: 10_000,
-      });
-    }
-    if (containerFixtureRoot) {
-      fs.rmSync(containerFixtureRoot, { force: true, recursive: true });
-    }
+    dockerSpawnSync(["image", "rm", "--force", fixtureImage], {
+      encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 10_000,
+    });
+    fs.rmSync(containerFixtureRoot, { force: true, recursive: true });
   });
 
   it("adds existing and new device groups before the fixed supervisor handoff (#8099)", () => {
@@ -372,6 +385,18 @@ suite("Jetson device-group bootstrap", () => {
 
     expect(run.status).toBe(1);
     expect(run.stderr).toContain("Jetson device-group bootstrap: device group record is invalid");
+    expectNoMutation(run);
+  });
+
+  it("rejects a symlinked group database before account mutation (#8099)", () => {
+    const run = runBootstrap(["--device-group-gids", "44", "--", SUPERVISOR], {
+      groupDatabase: "symlink",
+    });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(
+      "Jetson device-group bootstrap: container group database is invalid",
+    );
     expectNoMutation(run);
   });
 
