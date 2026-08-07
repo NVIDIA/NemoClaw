@@ -3,13 +3,13 @@
 
 # verify-stale — Scoring, Comments, Project Fields, and Logging Reference
 
-Use after a latest result exists or after a by-design/inconclusive branch is selected. Covers confidence scoring, redaction, concise comments, authorized Project updates, infra failures, and activity logging.
+Use after a newest-release result exists or after a by-design or inconclusive branch is selected. Covers confidence scoring, redaction, concise comments, authorized Project updates, infrastructure failures, and activity logging.
 
 ## Contents
 
 - [Step 9: Score Confidence](#step-9-score-confidence)
 - [Step 10: Compose and Post the Comment](#step-10-compose-and-post-the-comment)
-- [Step 11: Infra Failure Handling](#step-11-infra-failure-handling)
+- [Step 11: Infrastructure Failure Handling](#step-11-infrastructure-failure-handling)
 - [Step 12: Log to Activity](#step-12-log-to-activity)
 - [Cadence](#cadence)
 - [Out of Scope (v1)](#out-of-scope-v1)
@@ -315,14 +315,14 @@ GitHub does not make these calls transactional. If a Project update succeeds and
 
 ---
 
-## Step 11: Infra Failure Handling
+## Step 11: Infrastructure Failure Handling
 
 Handle each failure category according to the rules below.
 
 **Install failure on the newest release tag**, reuse-check failure, instance-creation failure, or harness error: hard infrastructure failure.
 
 - Print the error.
-- Apply no Project field or label change — infra failures must not pollute the verification record.
+- Apply no Project field or label change. Infrastructure failures must not change the verification record.
 - Post a short comment **only if explicitly requested by the invoking user**. Default is silent move-on.
 - Continue to the next candidate in batch mode.
 
@@ -369,7 +369,7 @@ After each issue, append to `$VERIFY_STALE_LOG_DIR/nemoclaw-verify-stale-log.md`
 **Newest-release install:** succeeded | failed (infrastructure error)
 **Newest-release result:** expected result, no symptom | still-reproduces | partial | intermittent | n/a (Step 8d skipped)
 **Confidence:** 88 / 100 | n/a (still-reproduces)
-**Verdict marker:** fixed-on-latest | verify-inconclusive | by-design | still-reproduces | none (infra)
+**Verdict marker:** fixed-on-latest | verify-inconclusive | by-design | still-reproduces | none (infrastructure failure)
 **Project Status:** moved to Needs Review | moved to Won't Fix | unchanged | update failed
 **Assignee:** @<GH_IDENTITY> | not assigned (verdict: <X>)
 **Brev wall time (approx):** N min
@@ -397,7 +397,7 @@ At end of a batch session, prepend a session summary:
 **Recorded `verify-inconclusive` verdicts:** N
 **Local-first short-circuits (no Brev cost):** N
 **Skipped (Windows / macOS / integration / no version):** N
-**Infra failures:** N
+**Infrastructure failures:** N
 **Brev wall time:** N min · approx $X.XX
 
 ---

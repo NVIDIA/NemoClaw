@@ -91,7 +91,7 @@ Skip this retry for `performance` and `rebuild-cycle` classes because Steps 8e a
 3. If neither error string nor expected-behavior contradiction can be identified, route the script to Step 8c (synth-repro) — let the LLM produce a more diagnostic script that emits something testable.
 
 - **Match** → reproducer validated. Proceed to 8d.
-- **No match** (silent pass, wrong error, infra noise, or no testable outcome): script has gaps. Proceed to 8c.
+- **No match** (no symptom, different error, infrastructure error, or no testable outcome): script has gaps. Proceed to 8c.
 
 ### Step 8c: Revise and Retry on the Reported Release
 
@@ -153,21 +153,21 @@ RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
 echo "[verify-stale] newest release requested: $LATEST; resolved: $RESOLVED"
 if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$LATEST" ]; then
     echo "ERROR: resolved release tag '$RESOLVED_TAG' does not match requested release tag $LATEST."
-    echo "Treating this as an infra failure; no verdict or GitHub write is allowed."
+    echo "Treating this as an infrastructure failure; no verdict or GitHub write is allowed."
     LATEST_INSTALL_FAILED=1
 fi
 
 # Do not replace OpenShell manually. The installer for the requested release tag enforces the
 # blueprint's min/max OpenShell range and verifies the pinned release assets.
-# An OpenShell range failure is an infra failure, not permission to download an
+# An OpenShell range failure is an infrastructure failure, not permission to download an
 # unverified replacement binary.
 
 [ "${LATEST_INSTALL_FAILED:-0}" = "0" ] || exit 1
 
 # Remove the installer's verification sandbox so the approved reproducer sees
 # the same state with no registered verification sandbox used after the reported-release install.
-if ! run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$PATH\"; nemoclaw verify-stale-install destroy --force --cleanup-gateway 2>/dev/null || true"; then
-  echo "ERROR: could not remove the newest-release installer's verification sandbox"
+if ! remove_install_sandbox; then
+  echo "ERROR: could not remove or verify absence of the newest-release installer's sandbox"
   exit 1
 fi
 

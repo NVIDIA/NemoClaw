@@ -247,6 +247,13 @@ gh auth status 2>&1 | grep -q "'project'" || {
 
 Use the local path only for read-only CLI behavior. A local positive match can establish `still-reproduces`. A local result without the reported symptom cannot establish `fixed-on-latest` because the reproducer has not passed the reported-release baseline gate.
 
+Resolve the local binary and release tag with these read-only preflight commands before requesting approval:
+
+```bash
+NEMOCLAW_BIN=$(command -v nemoclaw)
+LOCAL_VERSION=$("$NEMOCLAW_BIN" --version 2>&1)
+```
+
 **Predicate** — local-first applies if **all** of these hold:
 
 - Every step is one literal `nemoclaw` invocation with no shell operator, expansion, redirection, environment read, or command substitution.
@@ -257,11 +264,9 @@ Use the local path only for read-only CLI behavior. A local positive match can e
 
 **If the predicate fires:**
 
-Stop and obtain the local-execution approval from Step 6 before running the block below. The approval must name the resolved local binary/version, every literal command, the isolated home directory, the 60-second per-command timeout, and the fact that no Brev action or cost is involved.
+Present the resolved binary and version with every proposed reproducer command, the isolated home directory, the 60-second per-command timeout, and the fact that no Brev action or cost is involved. Obtain approval before running any reproducer command.
 
 ```bash
-NEMOCLAW_BIN=$(command -v nemoclaw)
-LOCAL_VERSION=$("$NEMOCLAW_BIN" --version 2>&1)
 LOCAL_SEMVER=$(printf '%s\n' "$LOCAL_VERSION" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 LOCAL_ELIGIBLE=1
 [ "v${LOCAL_SEMVER#v}" = "$LATEST" ] || LOCAL_ELIGIBLE=0

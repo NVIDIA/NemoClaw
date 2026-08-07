@@ -39,7 +39,7 @@ Verify-stale progress:
 4. **Create and install.** If the isolated local path does not settle the issue, read [reference/brev-provisioning.md](reference/brev-provisioning.md). Use it for Brev reuse or creation, reset, reported-release and newest-release installs, dependency bootstrap, and `brev exec` command constraints.
 5. **Run the verification rubric.** Read [reference/reproduction-rubrics.md](reference/reproduction-rubrics.md). Use it to validate reported-release behavior, retry with a synthesized reproducer if needed, verify the newest release tag, handle architecture changes, and branch for performance or rebuild-cycle bugs.
 6. **Check intentional changes.** If the symptom targets removed/deprecated behavior, read [reference/by-design.md](reference/by-design.md). Use static evidence to recommend Project Status `Won't Fix`, then request explicit approval for the Project/comment write set.
-7. **Score, propose, apply, and log.** Read [reference/scoring-comments-and-logging.md](reference/scoring-comments-and-logging.md) and the shared [documentation-writing-review.md](../_shared/documentation-writing-review.md) contract. Use them for confidence scoring, redaction, concise templates, authorization, issue-state race checks, approved Project 199 movement, infra failures, and activity logging.
+7. **Score, propose, apply, and log.** Read [reference/scoring-comments-and-logging.md](reference/scoring-comments-and-logging.md) and the shared [documentation-writing-review.md](../_shared/documentation-writing-review.md) contract. Use them for confidence scoring, redaction, concise templates, authorization, issue-state race checks, approved Project 199 movement, infrastructure failures, and activity logging.
 
 ## Non-negotiables
 
@@ -64,4 +64,4 @@ Verify-stale progress:
 | Brev instance reuse or creation, reset, installs, dependency bootstrap | [reference/brev-provisioning.md](reference/brev-provisioning.md) |
 | Reported-release and newest-release matching, synthesized reproducer, architecture changes, performance, rebuild-cycle | [reference/reproduction-rubrics.md](reference/reproduction-rubrics.md) |
 | Static by-design branch and proposed `Won't Fix` Project state | [reference/by-design.md](reference/by-design.md) |
-| Score, redact, authorize, comment, Project update, infra handling, log | [reference/scoring-comments-and-logging.md](reference/scoring-comments-and-logging.md) |
+| Score, redact, authorize, comment, Project update, infrastructure-failure handling, log | [reference/scoring-comments-and-logging.md](reference/scoring-comments-and-logging.md) |

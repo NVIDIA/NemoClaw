@@ -165,6 +165,29 @@ run_bounded() {
   command_budget=$(remaining_seconds) || return 124
   run_with_timeout "$command_budget" "$@"
 }
+
+verify_install_sandbox_absent() {
+  local check_command
+  check_command=$(cat <<'SCRIPT'
+export PATH="$HOME/.local/bin:$PATH"
+nemoclaw list --json | python3 -c '
+import json, sys
+names = {item["name"] for item in json.load(sys.stdin).get("sandboxes", [])}
+raise SystemExit("verify-stale-install" in names)
+'
+SCRIPT
+)
+  run_bounded brev exec "$INSTANCE_NAME" "$check_command"
+}
+remove_install_sandbox() {
+  if verify_install_sandbox_absent; then
+    return 0
+  fi
+  run_bounded brev exec "$INSTANCE_NAME" \
+    "export PATH=\"\$HOME/.local/bin:\$PATH\"; nemoclaw verify-stale-install destroy --force --cleanup-gateway" \
+    || return 1
+  verify_install_sandbox_absent
+}
 instance_is_absent() {
   local raw current
   raw=$(run_with_timeout 30 brev ls --json) || return 1
@@ -259,18 +282,18 @@ if ! run_bounded brev exec "$INSTANCE_NAME" 'rm -rf ~/.verify-stale-evidence && 
 fi
 REMOTE_STATE_CREATED=1
 
-# Cleanup runs on success, error, and SIGINT. Reset verification state and remove
-# copied credentials, scripts, logs, and the sentinel from every instance. Delete
-# only what this run created; reused instances stay available without run artifacts.
+# Cleanup runs on success, error, and SIGINT. On a reused instance, remove the
+# resources and state named in the approved reset plan, including copied credentials,
+# scripts, logs, and the sentinel. Delete an instance created by this run.
 # `brev delete` is non-interactive by default — there is no --yes flag, and passing one errors.
 echo ">>> Brev instance: $INSTANCE_NAME (created_by_run=$PROVISIONED_NEW; approved cleanup: reset verification state, remove credentials/scripts/logs, and brev delete $INSTANCE_NAME when created by this run)"
 ```
 
 Do not set `KEEP_INSTANCE=1` unless the maintainer separately approves the retention cost, names the cleanup owner, and accepts an exact deletion deadline. Before reuse or retention, remove `~/.verify-stale-evidence` and confirm the verification sentinel is absent.
 
-Wall-clock execution budget per verification: **60 minutes** default, measured from the approved create/reuse action. `run_bounded` caps every post-approval local Brev CLI process; phase-specific remote `timeout` calls use the smaller remaining budget. Cleanup gets a separate bounded grace period of up to 120 seconds because deletion still depends on the Brev control plane. The approval plan must disclose that grace and that billing can continue until deletion is acknowledged. Do not start a phase whose required sample plan cannot fit. Bugs that need more than an hour fall out of v1 scope; an expired budget is an infra failure (Step 11), and the cleanup trap still runs.
+Wall-clock execution budget per verification: **60 minutes** default, measured from the approved create/reuse action. `run_bounded` caps every post-approval local Brev CLI process; phase-specific remote `timeout` calls use the smaller remaining budget. Cleanup gets a separate bounded grace period of up to 120 seconds because deletion still depends on the Brev control plane. The approval plan must disclose that grace and that billing can continue until deletion is acknowledged. Do not start a phase whose required sample plan cannot fit. Bugs that need more than an hour fall out of v1 scope; an expired budget is an infrastructure failure (Step 11), and the cleanup trap still runs.
 
-Check every `run_bounded` result. Status `124` means the local wall-clock wrapper or remote phase timed out; treat it as an infra failure and let the cleanup trap run. Never continue from a failed copy, reset, bootstrap, or transport call using partial state.
+Check every `run_bounded` result. Status `124` means the local wall-clock wrapper or remote phase timed out; treat it as an infrastructure failure and let the cleanup trap run. Never continue from a failed copy, reset, bootstrap, or transport call using partial state.
 
 The previous design used a 25-minute default and a 60-minute extension for time-sensitive bugs such as `memory leak` and `over time`. The keyword-based extension required a rerun when an install or bootstrap exceeded 25 minutes. One 60-minute execution budget avoids that rerun condition.
 
@@ -337,12 +360,14 @@ assert_process_absent() {
 kill_process_pattern '/nemoclaw([[:space:]]|$)'
 kill_process_pattern '/openshell([[:space:]]|$)'
 
-for prefix in openshell- nemoclaw-; do
-  CONTAINERS=$(docker ps -a --filter "name=$prefix" -q)
-  [ -z "$CONTAINERS" ] || docker rm -f $CONTAINERS >/dev/null
-  [ -z "$(docker ps -a --filter "name=$prefix" -q)" ] \
-    || { echo "ERROR: $prefix containers remain after reset"; exit 1; }
-done
+matching_container_ids() {
+  docker ps -a --format '{{.ID}} {{.Names}}' \
+    | awk '$2 ~ /^(openshell-|nemoclaw-)/ {print $1}'
+}
+CONTAINERS=$(matching_container_ids)
+[ -z "$CONTAINERS" ] || docker rm -f $CONTAINERS >/dev/null
+[ -z "$(matching_container_ids)" ] \
+  || { echo "ERROR: matching containers remain after reset"; exit 1; }
 
 # Delete state only after sandbox, process, and container cleanup succeeds.
 for path in \
@@ -475,8 +500,8 @@ if [ -z "$RESOLVED_TAG" ] || [ "$RESOLVED_TAG" != "$REPORTED_VERSION" ]; then
 fi
 
 # The bundled onboard creates a sandbox name we do not want carrying through to the reproducer.
-if ! run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$PATH\"; nemoclaw verify-stale-install destroy --force --cleanup-gateway 2>/dev/null || true"; then
-  echo "ERROR: could not remove the baseline installer's verification sandbox"
+if ! remove_install_sandbox; then
+  echo "ERROR: could not remove or verify absence of the reported-release installer's sandbox"
   exit 1
 fi
 ```
@@ -528,7 +553,7 @@ run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -c 's
 
 Bootstrap once before Step 8b's reported-release run and reuse the dependency for Step 8d's newest-release run. Record the exact dependency and model versions. If the dependency itself is implicated, reproduce the reported version. When the issue reports no dependency version, select `verify-inconclusive` or obtain maintainer direction. A dependency version selected at run time is acceptable only when the reviewed bug path is independent of its version, and the plan must state that condition. Do not reset Ollama or vLLM state between release installs because model downloads are expensive and unrelated to the NemoClaw install.
 
-**If bootstrap fails** (network issue pulling the model, service won't start, etc.), this is an infra failure — abort to Step 11. Do not silently substitute; the user opted into faithfulness for a reason.
+**If bootstrap fails** because a model download or service start does not complete, this is an infrastructure failure. Stop and follow Step 11. Do not substitute another dependency.
 
 **Ollama coverage table.** Ollama is the default provider for verification runs because it's free, local, and self-hosted. It covers most bug classes faithfully but not all. Use this table to decide whether Ollama is sufficient or whether Step 5's API-key prompt should fire:
 
