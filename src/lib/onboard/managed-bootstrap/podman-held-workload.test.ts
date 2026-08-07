@@ -12,7 +12,10 @@ import {
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "./podman-held-workload";
 
 const RUNTIME_ID = "1".repeat(64);
@@ -21,7 +24,7 @@ const OTHER_IMAGE_ID = "3".repeat(64);
 const BOOTSTRAP_IDENTITY = "4".repeat(64);
 const SANDBOX_ID = "sandbox-uuid-1";
 const SANDBOX_NAME = "demo-box";
-const SANDBOX_NAMESPACE = "default";
+const SANDBOX_NAMESPACE = PODMAN_SANDBOX_NAMESPACE;
 const SUPERVISOR_ARGV = ["/opt/openshell/bin/supervisor", "--config", "/etc/openshell.toml"];
 const HELD_WORKLOAD_ARGV = [
   "/usr/local/bin/nemoclaw-managed-hold",
@@ -53,7 +56,8 @@ function inspectOutput(
     {
       Id: overrides.id ?? RUNTIME_ID,
       Image: overrides.image ?? `sha256:${IMAGE_ID}`,
-      Name: overrides.name ?? `openshell-sandbox-${SANDBOX_NAME}`,
+      Name:
+        overrides.name ?? `openshell-${PODMAN_SANDBOX_WORKSPACE}--${SANDBOX_NAME}-${SANDBOX_ID}`,
       Config: {
         Cmd: SUPERVISOR_ARGV.slice(1),
         Entrypoint: [SUPERVISOR_ARGV[0]],
@@ -67,6 +71,7 @@ function inspectOutput(
           [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
           [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
           [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
+          [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
         },
         User: overrides.user ?? "root",
       },
@@ -115,7 +120,7 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     ]);
 
     expect(inspect(fake.engine)).toEqual({
-      containerName: `openshell-sandbox-${SANDBOX_NAME}`,
+      containerName: `openshell-${PODMAN_SANDBOX_WORKSPACE}--${SANDBOX_NAME}-${SANDBOX_ID}`,
       heldWorkloadArgv: HELD_WORKLOAD_ARGV,
       imageContentId: `sha256:${IMAGE_ID}`,
       labels: {
@@ -123,6 +128,7 @@ describe("Podman managed bootstrap held-workload inspection", () => {
         [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
         [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
         [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
+        [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
       },
       runtimeId: RUNTIME_ID,
       running: true,
@@ -140,7 +146,11 @@ describe("Podman managed bootstrap held-workload inspection", () => {
           "--filter",
           `label=${PODMAN_MANAGED_LABEL}=true`,
           "--filter",
+          `label=${PODMAN_SANDBOX_ID_LABEL}=${SANDBOX_ID}`,
+          "--filter",
           `label=${PODMAN_SANDBOX_NAME_LABEL}=${SANDBOX_NAME}`,
+          "--filter",
+          `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
           "--format",
           "json",
         ],
@@ -157,10 +167,12 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     expect(fake.capture).not.toHaveBeenCalled();
   });
 
-  it("rejects an empty expected namespace before discovering a workload", () => {
+  it("rejects a non-empty expected namespace before discovering a workload", () => {
     const fake = engineWith([]);
 
-    expect(() => inspect(fake.engine, "")).toThrow("sandbox namespace must be a bounded non-empty");
+    expect(() => inspect(fake.engine, "default")).toThrow(
+      "sandbox namespace must match OpenShell v0.0.99",
+    );
     expect(fake.capture).not.toHaveBeenCalled();
   });
 
@@ -181,6 +193,7 @@ describe("Podman managed bootstrap held-workload inspection", () => {
             [PODMAN_SANDBOX_ID_LABEL]: "another-sandbox",
             [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
             [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
+            [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
           },
         }),
       ),
@@ -199,12 +212,41 @@ describe("Podman managed bootstrap held-workload inspection", () => {
             [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
             [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
             [PODMAN_SANDBOX_NAMESPACE_LABEL]: "another-namespace",
+            [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
           },
         }),
       ),
     ]);
 
     expect(() => inspect(fake.engine)).toThrow("exact OpenShell ownership");
+  });
+
+  it("rejects a workspace outside NemoClaw's default OpenShell authority", () => {
+    const fake = engineWith([
+      result(listOutput()),
+      result(
+        inspectOutput({
+          labels: {
+            [PODMAN_MANAGED_LABEL]: "true",
+            [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
+            [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
+            [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
+            [PODMAN_SANDBOX_WORKSPACE_LABEL]: "another-workspace",
+          },
+        }),
+      ),
+    ]);
+
+    expect(() => inspect(fake.engine)).toThrow("exact OpenShell ownership");
+  });
+
+  it("rejects a container name outside the exact default-workspace identity", () => {
+    const fake = engineWith([
+      result(listOutput()),
+      result(inspectOutput({ name: `openshell-${SANDBOX_NAME}-${SANDBOX_ID}` })),
+    ]);
+
+    expect(() => inspect(fake.engine)).toThrow("name does not match");
   });
 
   it("rejects a label value that exceeds the bounded inspect contract", () => {
@@ -217,6 +259,7 @@ describe("Podman managed bootstrap held-workload inspection", () => {
             [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
             [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
             [PODMAN_SANDBOX_NAMESPACE_LABEL]: "x".repeat(64 * 1024 + 1),
+            [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
           },
         }),
       ),

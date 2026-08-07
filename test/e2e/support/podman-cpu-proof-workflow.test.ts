@@ -41,19 +41,33 @@ describe("native Podman CPU proof workflow", () => {
     expect(parsed.permissions).toEqual({ contents: "read" });
     expect(parsed.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
     expect(parsed.on.pull_request.paths).toContain("src/lib/adapters/podman/**");
+    expect(parsed.on.pull_request.paths).toContain("src/lib/onboard/docker-driver-gateway-*.ts");
+    expect(parsed.on.pull_request.paths).toContain("src/lib/onboard/managed-bootstrap/podman-*.ts");
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/experimental/portable-demo-lifecycle.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain("scripts/install-openshell.sh");
     expect(job.name).toBe("Rootless Podman CPU lifecycle with Docker disabled");
     expect(job["runs-on"]).toBe("ubuntu-26.04");
     expect(job["timeout-minutes"]).toBe(30);
     expect(job.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(job.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBe("0.0.99");
     expect(job.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(namedStep("Checkout").with).toMatchObject({
       ref: "${{ github.event.pull_request.head.sha }}",
     });
     const installPodman = namedStep("Install Podman 5 runtime").run ?? "";
-    expect(installPodman).toContain('apt-get install --yes "podman=$PODMAN_APT_VERSION"');
+    expect(installPodman).toContain("apt-get install --yes");
+    expect(installPodman).toContain("passt");
+    expect(installPodman).toContain("uidmap");
+    expect(installPodman).toContain('"podman=$PODMAN_APT_VERSION"');
     expect(installPodman).toContain('test "$package_version" = "$PODMAN_APT_VERSION"');
     expect(installPodman).toContain('test "$version" = "podman version 5.7.0"');
-    expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("secrets.");
+    const installOpenShell = namedStep("Install pinned OpenShell runtime").run ?? "";
+    expect(installOpenShell).toContain("env -u GH_TOKEN -u GITHUB_TOKEN");
+    expect(installOpenShell).toContain("bash scripts/install-openshell.sh");
+    expect(installOpenShell).toContain("$HOME/.local/bin");
+    expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("${{ secrets.");
   });
 
   it("pins one rootless socket and fails closed on Docker use", () => {
@@ -72,28 +86,40 @@ describe("native Podman CPU proof workflow", () => {
     expect(disableDocker).toContain("Docker socket remained available after Docker shutdown");
     expect(startPodman).toContain("umask 077");
     expect(startPodman).toContain('socket_path="$runtime_dir/podman/podman.sock"');
+    expect(startPodman).toContain('default_rootless_network_cmd = "pasta"');
+    expect(startPodman).toContain("rootlessNetworkCmd");
+    expect(startPodman).toContain("CONTAINERS_CONF");
     expect(startPodman).toContain('podman system service --time=0 "unix://$socket_path"');
     expect(startPodman).toContain("E2E_PODMAN_SOCKET");
     expect(scripts).not.toMatch(/\bdocker\s+(?:build|info|login|pull|run)\b/u);
     expect(scripts).not.toContain("podman-docker");
   });
 
-  it("creates all-agent fixtures and invokes only the native lifecycle proof", () => {
-    const fixtures = namedStep("Create exact managed lifecycle fixtures").run ?? "";
-    const proof = namedStep("Prove native Podman preflight and all-agent CPU lifecycle");
-    const cleanup = namedStep("Clean up rootless Podman fixtures");
+  it("runs the real pinned OpenShell activation proof without synthetic fixtures", () => {
+    const proof = namedStep(
+      "Prove pinned OpenShell activation and registered-agent Podman CPU lifecycle",
+    );
+    const diagnostics = namedStep("Capture failed Podman lifecycle diagnostics");
+    const cleanup = namedStep("Clean up rootless Podman runtime");
+    const scripts = proofJob()
+      .steps?.map((step) => step.run ?? "")
+      .join("\n");
 
-    expect(fixtures).toContain("for agent in openclaw hermes langchain-deepagents-code");
-    expect(fixtures).toContain('langchain-deepagents-code) sandbox_name="podman-dcode"');
-    expect(fixtures).not.toContain('sandbox_name="podman-$agent"');
-    expect(fixtures).toContain("openshell.managed=true");
-    expect(fixtures).toContain("openshell.sandbox-name=$sandbox_name");
-    expect(fixtures).toContain("openshell.sandbox-namespace=default");
     expect(proof.run).toBe(
       "npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts",
     );
+    expect(scripts).not.toContain("podman create");
+    expect(scripts).not.toContain("openshell-sandbox-$sandbox_name");
+    expect(scripts).not.toContain("openshell.sandbox-name");
+    expect(diagnostics.if).toBe("failure()");
+    expect(diagnostics.run).toContain('podman --url "$endpoint" inspect');
+    expect(diagnostics.run).toContain('podman --url "$endpoint" logs');
+    expect(diagnostics.run).toContain("podman-secrets.txt");
     expect(cleanup.if).toBe("always()");
-    expect(cleanup.run).toContain("podman-openclaw podman-hermes podman-dcode");
+    expect(cleanup.run).toContain("--filter label=openshell.managed=true");
     expect(cleanup.run).toContain('podman --url "$endpoint" rm --force');
+    expect(cleanup.run).toContain('podman --url "$endpoint" volume rm --force');
+    expect(cleanup.run).toContain('podman --url "$endpoint" secret rm');
+    expect(cleanup.run).toContain('podman --url "$endpoint" network rm openshell-docker');
   });
 });

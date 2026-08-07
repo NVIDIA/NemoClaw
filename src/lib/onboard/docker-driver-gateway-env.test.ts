@@ -74,6 +74,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       const env = buildDockerDriverGatewayEnv({
         platform: "linux",
         stateDir,
+        podmanSocketPath: "/run/user/1001/podman/podman.sock",
         getDockerSupervisorImage: () => "supervisor:test",
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       });
@@ -83,11 +84,13 @@ describe("buildDockerDriverGatewayEnv", () => {
         OPENSHELL_BIND_ADDRESS: "0.0.0.0",
         OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
         NETAVARK_FW: "iptables",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       });
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(toml).toContain('compute_drivers = ["podman"]');
       expect(toml).toContain("[openshell.drivers.podman]");
       expect(toml).toContain('host_gateway_ip = "169.254.1.2"');
+      expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
       expect(toml).not.toContain("supervisor_bin");
     } finally {
       vi.unstubAllEnvs();

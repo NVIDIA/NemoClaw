@@ -57,27 +57,41 @@ function sandboxEntry(): SandboxEntry {
 }
 
 function createPodman(
-  options: { running?: boolean; sandboxId?: string; updateStatus?: number } = {},
+  options: {
+    running?: boolean;
+    sandboxId?: string;
+    updateStatus?: number;
+    discoveredContainerIds?: readonly string[];
+  } = {},
 ) {
   let running = options.running ?? true;
   let sandboxId = options.sandboxId ?? SANDBOX_ID;
   let managedLabel = "true";
   let sandboxNameLabel = "alpha";
+  let sandboxNamespaceLabel = "";
+  let sandboxWorkspaceLabel = "default";
+  let containerName = `openshell-default--alpha-${sandboxId}`;
   const podman = vi.fn((args: readonly string[]) => {
     switch (args[0]) {
       case "ps":
-        return { status: 0, stdout: `${CONTAINER_ID}\n` };
+        return {
+          status: 0,
+          stdout: `${(options.discoveredContainerIds ?? [CONTAINER_ID]).join("\n")}\n`,
+        };
       case "inspect":
         return {
           status: 0,
           stdout: JSON.stringify([
             {
               Id: CONTAINER_ID,
+              Name: containerName,
               Config: {
                 Labels: {
                   "openshell.managed": managedLabel,
-                  "openshell.sandbox-id": sandboxId,
-                  "openshell.sandbox-name": sandboxNameLabel,
+                  "openshell.ai/sandbox-id": sandboxId,
+                  "openshell.ai/sandbox-name": sandboxNameLabel,
+                  "openshell.ai/sandbox-namespace": sandboxNamespaceLabel,
+                  "openshell.ai/sandbox-workspace": sandboxWorkspaceLabel,
                 },
               },
               State: { Running: running },
@@ -97,12 +111,22 @@ function createPodman(
     podman,
     setSandboxId(value: string) {
       sandboxId = value;
+      containerName = `openshell-default--alpha-${value}`;
+    },
+    setContainerName(value: string) {
+      containerName = value;
     },
     setManagedLabel(value: string) {
       managedLabel = value;
     },
     setSandboxNameLabel(value: string) {
       sandboxNameLabel = value;
+    },
+    setSandboxNamespaceLabel(value: string) {
+      sandboxNamespaceLabel = value;
+    },
+    setSandboxWorkspaceLabel(value: string) {
+      sandboxWorkspaceLabel = value;
     },
   };
 }
@@ -237,7 +261,9 @@ describe("portable demo sandbox lifecycle", () => {
       "--filter",
       "label=openshell.managed=true",
       "--filter",
-      "label=openshell.sandbox-name=alpha",
+      "label=openshell.ai/sandbox-name=alpha",
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
       "--format",
       "{{.ID}}",
     ]);
@@ -284,6 +310,25 @@ describe("portable demo sandbox lifecycle", () => {
     expect(() => installReceipt(stateDir, runtime.podman)).toThrow(
       "Setting the portable restart policy",
     );
+    expect(fs.existsSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir))).toBe(
+      false,
+    );
+  });
+
+  it("fails closed when exact OpenShell labels identify multiple containers (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({
+      discoveredContainerIds: [CONTAINER_ID, "b".repeat(64)],
+    });
+
+    expect(() => installReceipt(stateDir, runtime.podman)).toThrow(
+      "requires one exact Podman container",
+    );
+    expect(runtime.podman).not.toHaveBeenCalledWith([
+      "update",
+      "--restart=unless-stopped",
+      expect.any(String),
+    ]);
     expect(fs.existsSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir))).toBe(
       false,
     );
@@ -1116,6 +1161,33 @@ describe("portable demo sandbox lifecycle", () => {
     const runtime = createPodman();
     installReceipt(stateDir, runtime.podman);
     runtime.setSandboxNameLabel("different-name");
+
+    expectRecoveryIdentityRefusal(stateDir, runtime);
+  });
+
+  it("refuses a container whose OpenShell sandbox namespace is not empty (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setSandboxNamespaceLabel("default");
+
+    expectRecoveryIdentityRefusal(stateDir, runtime);
+  });
+
+  it("refuses a container outside the default OpenShell workspace (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setSandboxWorkspaceLabel("another-workspace");
+
+    expectRecoveryIdentityRefusal(stateDir, runtime);
+  });
+
+  it("refuses a container whose engine name does not match its OpenShell identity (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setContainerName(`openshell-default--alpha-${SANDBOX_ID}-other`);
 
     expectRecoveryIdentityRefusal(stateDir, runtime);
   });

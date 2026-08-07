@@ -11,10 +11,10 @@ This review covers the complete public source boundary from the previously suppo
 commits and 515 distinct changed paths. Source review, release publication, consumed artifact
 identity, credential-boundary review, and NemoClaw runtime qualification are separate gates.
 
-The source and artifact review supports selecting `0.0.99`. Merge remains conditional on the
-exact pinned artifacts passing NemoClaw's managed activation and live E2E lanes. In particular,
-the previously observed `0.0.85` activation mismatch is part of this upgrade's completion, not a
-waived unrelated failure.
+The source and artifact review supports selecting `0.0.99`. Runtime qualification is complete only
+after the exact pinned artifacts pass NemoClaw's managed activation and live E2E lanes. The
+previously observed `0.0.85` activation mismatch remains part of this upgrade's completion. It is
+not a waived unrelated failure.
 
 ## Audit Method and Exact Boundary
 
@@ -116,8 +116,11 @@ than enabling optional upstream behavior implicitly.
 | `OS99-13` | Inference status heading changed from `Gateway inference:` to `Inference:` | The parser accepts both headings, with focused regression coverage for the exact v0.0.99 output. |
 | `OS99-14` | Routable sandbox names are capped at 19 characters and cannot contain consecutive hyphens | NemoClaw's canonical validation enforces both constraints. Before any CLI preparation, backup, gateway retirement, OpenShell install, or sandbox recreation, the installer lists incompatible registered names for the selected gateway and stops. `upgrade-sandboxes --check` lists incompatible names and returns without gateway inspection or rebuild. `upgrade-sandboxes --auto` lists them and exits with a nonzero status before gateway inspection or rebuild. Generated activation names fit the constraint, and exact all-agent activation remains a final acceptance gate. |
 | `OS99-15` | The Docker driver records the immutable image content ID in `Config.Image` | Managed bootstrap accepts either the reviewed `repository@manifestDigest` or its exact runtime content ID, while separately requiring Docker to prove that the manifest resolves to that content ID. |
-| `OS99-16` | The Docker driver appends `--workdir /sandbox` to the supervisor command | Managed bootstrap requires that exact v0.0.99 supervisor argv before replacing the held workload. |
+| `OS99-16` | The Docker driver appends `--workdir /sandbox` to the supervisor command | Managed bootstrap requires that exact v0.0.99 supervisor argv. The managed clone preserves only that tuple, or the empty v0.0.85 migration form, and rejects other supervisor arguments before mutation. |
 | `OS99-17` | Overlapping endpoint selectors with conflicting connection or request metadata are rejected before policy activation | The OpenClaw baseline npm route remains GET-only in Restricted and temporarily adopts the reviewed npm preset's L4 metadata while that preset is active. An approved baseline exclusion remains absent, and unexpected live drift stops the npm change. Homebrew's overlapping GitHub routes use automatic TLS, and Outlook matches Microsoft Teams' request-body credential-rewrite setting on shared Microsoft endpoints. Focused composition coverage protects each compatibility decision. |
+| `OS99-18` | Docker and Podman container identity is workspace-qualified | Podman mutation requires the exact v0.0.99 labels, empty namespace, `default` workspace, full immutable container ID, and matching container name. Docker ownership accepts only the reviewed `default` workspace form, retains the v0.0.85 forms for migration, and rejects ambiguity. |
+| `OS99-19` | The Podman gateway must use the prepared rootless socket | The portable gateway writes the normalized absolute socket path into the OpenShell Podman driver configuration. The pinned live lane disables Docker, requires rootless Podman with `pasta`, checks authenticated gateway health, and then exercises sandbox creation and lifecycle. |
+| `OS99-20` | A failed v0.0.99 status probe omits the selected gateway name | Gateway reuse scopes the status probe to the requested gateway. It classifies a connection failure as stale only when the requested or reported active gateway matches; other status failures remain non-reusable. |
 
 An unresolved critical or high concern blocks the upgrade. Test selection cannot waive a concern;
 conditional skips and expected failures do not count as qualification evidence.
@@ -129,8 +132,10 @@ OpenShell API-created held workload serialized `AttachStdout=false`, `AttachStde
 `PortBindings=null`; the Docker CLI-created equivalent serialized `true`, `true`, and `{}`. Those
 values are creation-client markers or equivalent empty defaults, not durable workload identity.
 NemoClaw now normalizes them before hashing. It still refuses any non-empty port binding because
-the managed clone cannot reproduce that behavior exactly. Unit tests prove both equivalence and
-the rejection path; exact `0.0.85 -> 0.0.99` live activation remains required.
+the managed clone cannot reproduce that behavior exactly. The v0.0.99 held workload also appends
+`--workdir /sandbox` to the supervisor command. The managed clone preserves only that exact tuple
+or the empty v0.0.85 form and rejects other supervisor arguments before mutation. Unit tests prove
+the accepted forms and rejection paths. Exact `0.0.85 -> 0.0.99` live activation remains required.
 
 OpenShell 0.0.99 also validates the complete effective network policy before activation. Several
 previously accepted overlaps used incompatible metadata: the OpenClaw baseline and npm preset
