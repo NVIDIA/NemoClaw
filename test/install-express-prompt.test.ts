@@ -213,6 +213,21 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     );
   });
 
+  it.each([
+    ["port", { NEMOCLAW_VLLM_PORT: "18000" }],
+    ["serve arguments", { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]' }],
+  ])("rejects a preset %s before activating the fixed Spark Express profile", (_, extraEnv) => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", extraEnv);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain(
+      "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides.",
+    );
+    expect(output).not.toContain("RESULT NON_INTERACTIVE=");
+    expect(output).not.toContain("PROFILE_GATE=1");
+  });
+
   it("preserves a preset Spark vLLM model in the prompt and exported env", () => {
     const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
       NEMOCLAW_VLLM_MODEL: "custom-qwen3.6",
