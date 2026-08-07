@@ -27,7 +27,8 @@ export type { Session, SessionUpdates } from "../../src/lib/state/onboard-sessio
 
 /** A deep session copy that survives independent mutation. */
 export function cloneSession(session: Session): Session {
-  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
+  const copy = JSON.parse(JSON.stringify(session)) as Session;
+  return normalizeSession(copy) ?? copy;
 }
 
 /** Behavior options for createTestRuntime. */
