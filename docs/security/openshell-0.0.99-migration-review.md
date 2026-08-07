@@ -116,6 +116,7 @@ than enabling optional upstream behavior implicitly.
 | `OS99-13` | Inference status heading changed from `Gateway inference:` to `Inference:` | The parser accepts both headings, with focused regression coverage for the exact v0.0.99 output. |
 | `OS99-14` | Routable sandbox names are capped at 19 characters | NemoClaw's canonical validation uses the same 19-character limit, and generated activation names fit it. Exact all-agent activation remains a final acceptance gate. |
 | `OS99-15` | The Docker driver records the immutable image content ID in `Config.Image` | Managed bootstrap accepts either the reviewed `repository@manifestDigest` or its exact runtime content ID, while separately requiring Docker to prove that the manifest resolves to that content ID. |
+| `OS99-16` | The Docker driver appends `--workdir /sandbox` to the supervisor command | Managed bootstrap requires that exact v0.0.99 supervisor argv before replacing the held workload. |
 
 An unresolved critical or high concern blocks the upgrade. Test selection cannot waive a concern;
 conditional skips and expected failures do not count as qualification evidence.

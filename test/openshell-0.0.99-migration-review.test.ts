@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseGatewayInference } from "../src/lib/inference/config.js";
+import { resolveOnboardManagedBootstrapLaunch } from "../src/lib/onboard/managed-workload/onboard-orchestration.js";
 import { pinnedOpenShellSandboxBuildVersion } from "../src/lib/onboard/openshell-feature-gate.js";
 import { validateName } from "../src/lib/runner.js";
 
@@ -148,6 +149,41 @@ function parseDigestTable(start: string, end: string): DigestMatrix {
 }
 
 describe("OpenShell 0.0.99 migration review", () => {
+  it("binds managed Docker activation to the v0.0.99 supervisor workdir argv (#8497)", () => {
+    const authorityStore = {};
+    const launch = resolveOnboardManagedBootstrapLaunch({
+      runtime: {
+        runtimeProvider: {
+          bootstrap: {
+            supported: true,
+            createAuthorityStore: () => authorityStore,
+          },
+        },
+      } as never,
+      workload: {
+        source: {
+          kind: "managed-image",
+          contract: {
+            agent: "openclaw",
+            image: "registry.example/nemoclaw/openclaw",
+            digest: `sha256:${"1".repeat(64)}`,
+          },
+        },
+      } as never,
+      stateRoot: "/tmp/nemoclaw-state",
+      bootstrapIdentity: "bootstrap-identity",
+      request: {} as never,
+      intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
+    });
+
+    expect(launch?.expectedSupervisorArgv).toEqual([
+      "/opt/openshell/bin/openshell-sandbox",
+      "--workdir",
+      "/sandbox",
+    ]);
+    expect(launch?.authorityStore).toBe(authorityStore);
+  });
+
   it("binds every adjacent range to its declared unique commit ledger (#8497)", () => {
     const ledger = parseLedger();
     const table = parseRangeTable();
