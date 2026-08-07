@@ -1097,6 +1097,27 @@ describe("shields command flow", () => {
     expect(output).toContain("Config remains unlocked — manual intervention required");
   });
 
+  it("keeps the host attached beyond failed-startup recovery's container timeout (#8304)", () => {
+    const harness = createHarness({ failOpenClawGuardActions: ["preflight"] });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "failed-startup timeout coverage",
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).not.toThrow();
+
+    const recovery = harness.dockerSpawnCalls.find(({ args }) =>
+      args.includes("unlock-failed-startup"),
+    );
+    expect(recovery?.args).toEqual(
+      expect.arrayContaining(["timeout", "--kill-after=5s", "25m", "unlock-failed-startup"]),
+    );
+    expect(recovery?.timeout).toBe(26 * 60 * 1000);
+  });
+
   it("reports staged driver-neutral recovery when snapshot restoration fails (#6126)", () => {
     const harness = createHarness({ run: () => ({ status: 1 }) });
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
