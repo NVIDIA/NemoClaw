@@ -29,18 +29,19 @@ const PAYLOAD_SHA256 = "b".repeat(64);
 const CONTENT_ADDRESSED_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}-\${payload_sha256}"`;
 const UNBOUND_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}"`;
 
-function runIdentityValidation(overrides: Record<string, unknown> = {}) {
+function runIdentityValidation(overrides: Record<string, unknown> = {}, consumerAttempt = "1") {
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const workflowSha = "d".repeat(40);
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-identity-"));
   try {
-    return spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
+    const outputPath = path.join(outputDirectory, "github-output");
+    const result = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
       encoding: "utf8",
       env: {
         ...process.env,
         CALLER_WORKFLOW_SHA: workflowSha,
-        GITHUB_OUTPUT: path.join(outputDirectory, "github-output"),
-        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_RUN_ATTEMPT: consumerAttempt,
         GITHUB_RUN_ID: "98765",
         PROVENANCE_JSON: JSON.stringify({
           kind: "nemoclaw-e2e-cli-provenance-v1",
@@ -57,6 +58,10 @@ function runIdentityValidation(overrides: Record<string, unknown> = {}) {
         }),
       },
     });
+    return {
+      ...result,
+      outputs: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
+    };
   } finally {
     fs.rmSync(outputDirectory, { force: true, recursive: true });
   }
@@ -67,11 +72,25 @@ function workflowFixture(): Workflow {
 }
 
 type RestoreFixtureOptions = {
-  archive?: "valid" | "missing-shared" | "non-dist" | "link" | "traversal";
+  archive?:
+    | "valid"
+    | "cli-directory"
+    | "missing-shared"
+    | "non-dist"
+    | "link"
+    | "shared-module-directory"
+    | "traversal";
   buildIdentitySha?: string;
+  consumerRunAttempt?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
-  preexistingDist?: "dangling-symlink" | "directory" | "nested-directory";
+  manifestRunAttempt?: string;
+  preexistingDist?:
+    | "dangling-symlink"
+    | "directory"
+    | "plugin-directory"
+    | "symlinked-plugin-parent";
+  producerRunAttempt?: string;
 };
 
 type ArchiveFixtureContext = {
@@ -84,13 +103,19 @@ function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function writeDistTree(
+function writeCliArchive(
   context: ArchiveFixtureContext,
   customizeDist: (dist: string) => void,
+  customizeShared: (shared: string) => void = () => undefined,
 ): void {
   const dist = path.join(context.payloadRoot, "dist");
+  const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
   fs.mkdirSync(dist);
-  fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("nemoclaw v0.0.0");\n');
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(
+    path.join(dist, "nemoclaw.js"),
+    'require("../nemoclaw/dist/shared/sandbox-name.cjs");\nconsole.log("nemoclaw v0.0.0");\n',
+  );
   fs.writeFileSync(
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({
@@ -98,41 +123,64 @@ function writeDistTree(
       sourceRevision: context.buildIdentitySha,
     })}\n`,
   );
+  for (const boundary of [
+    "openshell-policy-boundary.cjs",
+    "sandbox-name.cjs",
+    "snapshot-sanitizer-boundary.cjs",
+  ]) {
+    fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
+  }
+  customizeShared(shared);
+
   customizeDist(dist);
-}
-
-function writeSharedTree(context: ArchiveFixtureContext): void {
-  const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
-  fs.mkdirSync(shared, { recursive: true });
-  fs.writeFileSync(path.join(shared, "sandbox-name.cjs"), "module.exports = {};\n");
-}
-
-function writeArchive(context: ArchiveFixtureContext, members: string[]): void {
-  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, ...members]);
-}
-
-function writeCompleteArchive(
-  context: ArchiveFixtureContext,
-  customizeDist: (dist: string) => void,
-): void {
-  writeDistTree(context, customizeDist);
-  writeSharedTree(context);
-  writeArchive(context, ["dist", "nemoclaw/dist"]);
+  execFileSync("tar", [
+    "-cf",
+    context.payload,
+    "-C",
+    context.payloadRoot,
+    "dist",
+    "nemoclaw/dist/shared",
+  ]);
 }
 
 function writeValidArchive(context: ArchiveFixtureContext): void {
-  writeCompleteArchive(context, () => undefined);
+  writeCliArchive(context, () => undefined);
 }
 
 function writeLinkArchive(context: ArchiveFixtureContext): void {
-  writeCompleteArchive(context, (dist) => {
+  writeCliArchive(context, (dist) => {
     fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
   });
 }
 
+function writeCliDirectoryArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(context, (dist) => {
+    const entrypoint = path.join(dist, "nemoclaw.js");
+    fs.rmSync(entrypoint);
+    fs.mkdirSync(entrypoint);
+    fs.writeFileSync(path.join(entrypoint, "index.js"), 'console.log("nemoclaw v0.0.0");\n');
+  });
+}
+
 function writeMissingSharedArchive(context: ArchiveFixtureContext): void {
-  writeDistTree(context, () => undefined);
-  writeArchive(context, ["dist"]);
+  writeCliArchive(
+    context,
+    () => undefined,
+    (shared) => fs.rmSync(path.join(shared, "sandbox-name.cjs")),
+  );
+}
+
+function writeSharedModuleDirectoryArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(
+    context,
+    () => undefined,
+    (shared) => {
+      const modulePath = path.join(shared, "sandbox-name.cjs");
+      fs.rmSync(modulePath);
+      fs.mkdirSync(modulePath);
+      fs.writeFileSync(path.join(modulePath, "index.js"), "module.exports = {};\n");
+    },
+  );
 }
 
 function writeNonDistArchive(context: ArchiveFixtureContext): void {
@@ -157,9 +205,12 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
 }
 
 const ARCHIVE_FIXTURE_WRITERS = {
+  "cli-directory": writeCliDirectoryArchive,
   link: writeLinkArchive,
   "missing-shared": writeMissingSharedArchive,
+
   "non-dist": writeNonDistArchive,
+  "shared-module-directory": writeSharedModuleDirectoryArchive,
   traversal: writeTraversalArchive,
   valid: writeValidArchive,
 } satisfies Record<
@@ -178,16 +229,25 @@ function writePreexistingDistDirectory(workspace: string): void {
   fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
 }
 
-function writePreexistingNestedDistDirectory(workspace: string): void {
-  const dist = path.join(workspace, "nemoclaw", "dist");
-  fs.mkdirSync(dist, { recursive: true });
-  fs.writeFileSync(path.join(dist, "existing.txt"), "preserve\n");
+function writePreexistingPluginDistDirectory(workspace: string): void {
+  const shared = path.join(workspace, "nemoclaw", "dist", "shared");
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(shared, "existing.cjs"), "module.exports = {};\n");
+}
+
+function writeSymlinkedPluginParent(workspace: string): void {
+  const escaped = path.join(path.dirname(workspace), "escaped");
+  fs.rmSync(path.join(workspace, "nemoclaw"), { force: true, recursive: true });
+  fs.mkdirSync(escaped);
+  fs.symlinkSync(escaped, path.join(workspace, "nemoclaw"), "dir");
 }
 
 const PREEXISTING_DIST_WRITERS = {
   "dangling-symlink": writeDanglingDistSymlink,
   directory: writePreexistingDistDirectory,
-  "nested-directory": writePreexistingNestedDistDirectory,
+  "plugin-directory": writePreexistingPluginDistDirectory,
+  "symlinked-plugin-parent": writeSymlinkedPluginParent,
+
   none: () => undefined,
 } satisfies Record<
   NonNullable<RestoreFixtureOptions["preexistingDist"]> | "none",
@@ -203,6 +263,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const toolDirectory = path.join(root, "tools");
   fs.mkdirSync(path.join(workspace, "bin"), { recursive: true });
   fs.mkdirSync(path.join(workspace, "nemoclaw"), { recursive: true });
+
   fs.mkdirSync(artifactDirectory, { recursive: true });
   fs.mkdirSync(payloadRoot, { recursive: true });
   fs.mkdirSync(toolDirectory, { recursive: true });
@@ -212,8 +273,10 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     '#!/usr/bin/env node\nrequire("../dist/nemoclaw.js");\n',
     { mode: 0o755 },
   );
-  fs.writeFileSync(path.join(workspace, "nemoclaw", ".gitkeep"), "");
   execFileSync("git", ["init", "--quiet"], { cwd: workspace });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/NVIDIA/NemoClaw.git"], {
+    cwd: workspace,
+  });
   execFileSync("git", ["add", "."], { cwd: workspace });
   execFileSync(
     "git",
@@ -250,6 +313,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const actualPayloadSha256 = sha256File(payload);
   const expectedPayloadSha256 = options.expectedPayloadSha256 ?? actualPayloadSha256;
   const artifactName = `nemoclaw-cli-${candidateSha}-${expectedPayloadSha256}`;
+  const producerRunAttempt = options.producerRunAttempt ?? "1";
   const workflowSha = "d".repeat(40);
   fs.writeFileSync(
     path.join(artifactDirectory, "manifest.json"),
@@ -262,7 +326,11 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
         sourceTree,
         lockfileSha256: sha256File(path.join(workspace, "package-lock.json")),
       },
-      workflow: { sha: workflowSha, runId: "98765", runAttempt: "1" },
+      workflow: {
+        sha: workflowSha,
+        runId: "98765",
+        runAttempt: options.manifestRunAttempt ?? options.producerRunAttempt ?? "1",
+      },
       toolchain: {
         node: "v22.23.1",
         npm: "10.9.2",
@@ -283,28 +351,68 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
-  const result = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
+  const githubOutput = path.join(root, "github-output");
+  const identityResult = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
     cwd: workspace,
     encoding: "utf8",
     env: {
       ...process.env,
-      ARTIFACT_NAME: artifactName,
-      CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
-      CANDIDATE_SHA: candidateSha,
-      GITHUB_WORKSPACE: workspace,
-      PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
-      PAYLOAD_SHA256: expectedPayloadSha256,
-      RUN_ATTEMPT: "1",
-      RUN_ID: "98765",
-      RUNNER_TEMP: runnerTemp,
-      WORKFLOW_SHA: workflowSha,
+      CALLER_WORKFLOW_SHA: workflowSha,
+      GITHUB_OUTPUT: githubOutput,
+      GITHUB_RUN_ATTEMPT: options.consumerRunAttempt ?? producerRunAttempt,
+      GITHUB_RUN_ID: "98765",
+      PROVENANCE_JSON: JSON.stringify({
+        kind: "nemoclaw-e2e-cli-provenance-v1",
+        artifactDigest: "c".repeat(64),
+        artifactId: "12345",
+        artifactName,
+        candidateRepository: "NVIDIA/NemoClaw",
+        candidateSha,
+        payloadSha256: expectedPayloadSha256,
+        runAttempt: producerRunAttempt,
+        runId: "98765",
+        workflowSha,
+      }),
     },
   });
+  const runRestoreStep = () => {
+    const identityOutputs = Object.fromEntries(
+      fs
+        .readFileSync(githubOutput, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+    );
+    return spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
+      cwd: workspace,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ARTIFACT_NAME: identityOutputs.artifact_name,
+        CANDIDATE_REPOSITORY: identityOutputs.candidate_repository,
+        CANDIDATE_SHA: identityOutputs.candidate_sha,
+        GITHUB_WORKSPACE: workspace,
+        PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
+        PAYLOAD_SHA256: identityOutputs.payload_sha256,
+        PRODUCER_RUN_ATTEMPT: identityOutputs.producer_run_attempt,
+        RUN_ID: identityOutputs.run_id,
+        RUNNER_TEMP: runnerTemp,
+        WORKFLOW_SHA: identityOutputs.workflow_sha,
+      },
+    });
+  };
+  const identitySucceeded = identityResult.status === 0;
+  const restoreResult = identitySucceeded ? runRestoreStep() : identityResult;
   return {
     candidateSha,
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
-    output: `${result.stdout}${result.stderr}`,
-    result,
+    output: `${identityResult.stdout}${identityResult.stderr}${
+      identitySucceeded ? `${restoreResult.stdout}${restoreResult.stderr}` : ""
+    }`,
+    result: restoreResult,
     runnerTemp,
     workspace,
   };
@@ -316,6 +424,7 @@ function expectRestoreFailure(options: RestoreFixtureOptions, message: string): 
     expect(fixture.result.status, fixture.output).not.toBe(0);
     expect(fixture.output).toContain(message);
     expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
+    expect(fs.existsSync(path.join(fixture.workspace, "nemoclaw", "dist"))).toBe(false);
   } finally {
     fixture.cleanup();
   }
@@ -351,7 +460,42 @@ describe("exact-commit CLI artifact workflow boundary", () => {
 
   it("accepts matching artifact, candidate source, and workflow identities", () => {
     const result = runIdentityValidation();
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, "matching artifact identity validation failed").toBe(0);
+  });
+
+  it("reuses an immutable producer artifact during a later failed-job rerun", () => {
+    const fixture = runRestoreValidation({ consumerRunAttempt: "2", producerRunAttempt: "1" });
+    try {
+      expect(fixture.result.status, "cross-attempt CLI artifact restore failed").toBe(0);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fixture.workspace, "dist", "build-identity.json"), "utf8"),
+        ),
+      ).toEqual({ nemoclawVersion: "0.0.0", sourceRevision: fixture.candidateSha });
+      expect(fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw.js"))).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
+        ),
+      ).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects a producer attempt that does not match the restored artifact manifest", () => {
+    expectRestoreFailure(
+      { manifestRunAttempt: "2", producerRunAttempt: "1" },
+      "exact-commit CLI artifact provenance mismatch",
+    );
+  });
+
+  it("rejects consumer workflow attempt zero", () => {
+    const result = runIdentityValidation({}, "0");
+    expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "consumer workflow run attempt is invalid",
+    );
   });
 
   it.each([
@@ -404,8 +548,12 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       "consumer checkout repository does not match producer provenance",
     ],
     ["workflow SHA", { workflowSha: "e".repeat(40) }, "consumer and producer workflow SHAs differ"],
-    ["run ID", { runId: "98766" }, "consumer and producer workflow run identities differ"],
-    ["run attempt", { runAttempt: "2" }, "consumer and producer workflow run identities differ"],
+    ["run ID", { runId: "98766" }, "consumer and producer workflow run IDs differ"],
+    [
+      "future producer attempt",
+      { runAttempt: "2" },
+      "producer workflow attempt is newer than the consumer attempt",
+    ],
   ])("rejects a mismatched %s before artifact download", (_case, overrides, expectedError) => {
     const result = runIdentityValidation(overrides);
     expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
@@ -426,6 +574,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
         ),
       ).toBe(true);
+
       expect(
         fs
           .readdirSync(fixture.runnerTemp)
@@ -450,17 +599,31 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
+  it("rejects a payload missing a compiled shared module before activation (#7915)", () => {
+    expectRestoreFailure(
+      { archive: "missing-shared" },
+      "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
+    );
+  });
+
+  it("rejects a directory in place of the CLI entry point before activation (#7915)", () => {
+    expectRestoreFailure(
+      { archive: "cli-directory" },
+      "restored CLI artifact entry point is missing or is not a nonempty regular file",
+    );
+  });
+
+  it("rejects a directory in place of a shared module before activation (#7915)", () => {
+    expectRestoreFailure(
+      { archive: "shared-module-directory" },
+      "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
+    );
+  });
+
   it("rejects an archive member outside dist before artifact extraction (#7915)", () => {
     expectRestoreFailure(
       { archive: "non-dist" },
       "CLI artifact contains an unsafe member: outside.txt",
-    );
-  });
-
-  it("rejects a payload missing the compiled shared dependency before activation (#7915)", () => {
-    expectRestoreFailure(
-      { archive: "missing-shared" },
-      "restored CLI artifact is missing nemoclaw/dist/shared/sandbox-name.cjs",
     );
   });
 
@@ -485,6 +648,42 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     }
   });
 
+  it("does not overwrite a preexisting nemoclaw/dist directory (#7915)", () => {
+    const fixture = runRestoreValidation({ preexistingDist: "plugin-directory" });
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain(
+        "consumer unexpectedly built nemoclaw/dist before artifact restore",
+      );
+      expect(
+        fs.readFileSync(
+          path.join(fixture.workspace, "nemoclaw", "dist", "shared", "existing.cjs"),
+          "utf8",
+        ),
+      ).toBe("module.exports = {};\n");
+      expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects a symlinked nemoclaw directory without writing outside the workspace (#7915)", () => {
+    const fixture = runRestoreValidation({ preexistingDist: "symlinked-plugin-parent" });
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain(
+        "consumer nemoclaw directory must be a non-symlink directory",
+      );
+      expect(fs.lstatSync(path.join(fixture.workspace, "nemoclaw")).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(path.join(path.dirname(fixture.workspace), "escaped", "dist"))).toBe(
+        false,
+      );
+      expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("does not overwrite a dangling dist symlink (#7915)", () => {
     const fixture = runRestoreValidation({ preexistingDist: "dangling-symlink" });
     try {
@@ -492,22 +691,6 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       expect(fixture.output).toContain("consumer unexpectedly built dist before artifact restore");
       expect(fs.lstatSync(path.join(fixture.workspace, "dist")).isSymbolicLink()).toBe(true);
       expect(fs.readlinkSync(path.join(fixture.workspace, "dist"))).toBe("missing-dist");
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  it("does not overwrite a preexisting nemoclaw/dist directory (#7915)", () => {
-    const fixture = runRestoreValidation({ preexistingDist: "nested-directory" });
-    try {
-      expect(fixture.result.status, fixture.output).not.toBe(0);
-      expect(fixture.output).toContain(
-        "consumer unexpectedly built nemoclaw/dist before artifact restore",
-      );
-      expect(
-        fs.readFileSync(path.join(fixture.workspace, "nemoclaw", "dist", "existing.txt"), "utf8"),
-      ).toBe("preserve\n");
-      expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
     } finally {
       fixture.cleanup();
     }
@@ -542,6 +725,160 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         "CLI artifact upload must use the immutable content-addressed upload contract",
       ]),
     );
+  });
+
+  it("rejects changes to checkout, workflow settings, job settings, or steps through CLI artifact restore", () => {
+    const settingsError =
+      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract";
+    const restoreOrderError =
+      "sandbox-operations must restore the CLI artifact in the step after workspace preparation";
+    const scenarios: Array<{
+      expectedErrors: string[];
+      mutate: (workflow: Workflow) => void;
+      name: string;
+    }> = [
+      {
+        name: "changed candidate checkout",
+        mutate: (workflow) => {
+          const checkout = workflow.jobs["sandbox-operations"].steps![0]!;
+          checkout.with = { ...checkout.with, repository: "NVIDIA/NemoClaw" };
+        },
+        expectedErrors: [
+          "sandbox-operations must use one candidate checkout with the required action, repository, ref, and credential settings",
+          settingsError,
+        ],
+      },
+      {
+        name: "workflow BASH_ENV",
+        mutate: (workflow) => {
+          const workflowWithEnv = workflow as Workflow & {
+            env?: Record<string, string>;
+          };
+          workflowWithEnv.env = {
+            ...workflowWithEnv.env,
+            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
+          };
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "job BASH_ENV",
+        mutate: (workflow) => {
+          const job = workflow.jobs["sandbox-operations"];
+          job.env = {
+            ...job.env,
+            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
+          };
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "job default shell",
+        mutate: (workflow) => {
+          Object.assign(workflow.jobs["sandbox-operations"], {
+            defaults: { run: { shell: "bash scripts/leak.sh {0}" } },
+          });
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "restore step BASH_ENV",
+        mutate: (workflow) => {
+          const restore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
+          restore.env = {
+            ...restore.env,
+            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
+          };
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "local action",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run local action",
+            uses: "./.github/actions/untrusted",
+          });
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "workspace helper",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run workspace helper",
+            run: 'bash "$GITHUB_WORKSPACE/scripts/pr-helper.sh"',
+          });
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "root checkout script",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run root checkout script",
+            run: "bash install.sh",
+          });
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "removed authentication",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
+          steps.splice(authIndex, 1);
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "reordered authentication",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
+          const [auth] = steps.splice(authIndex, 1);
+          const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
+          steps.splice(restoreIndex, 0, auth!);
+        },
+        expectedErrors: [settingsError, restoreOrderError],
+      },
+      {
+        name: "delayed restore",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
+          steps.splice(restoreIndex, 0, {
+            name: "Delay CLI artifact restore",
+            run: "true",
+          });
+        },
+        expectedErrors: [settingsError, restoreOrderError],
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const workflow = workflowFixture();
+      scenario.mutate(workflow);
+      expect(validateCliArtifactWorkflowBoundary(workflow), scenario.name).toEqual(
+        expect.arrayContaining(scenario.expectedErrors),
+      );
+    }
+  });
+
+  it("leaves job timeouts to their dedicated workflow validators", () => {
+    const workflow = workflowFixture();
+    for (const jobName of ["hermes-e2e", "hermes-discord", "hermes-shields-config"]) {
+      const timeoutMinutes = workflow.jobs[jobName]["timeout-minutes"];
+      workflow.jobs[jobName]["timeout-minutes"] = Number(timeoutMinutes) + 1;
+    }
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual([]);
   });
 
   it("rejects incomplete consumer provenance and a mutable action reference", () => {

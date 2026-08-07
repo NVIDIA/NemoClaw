@@ -56,6 +56,15 @@ describe("shields policy transition", () => {
       configFile: "config.json",
       configPath: "/sandbox/.deepagents/config.json",
       format: "json",
+      stateLockPlan: {
+        version: 1,
+        readOnlyRoots: ["skills"],
+        confidentialRoots: [],
+        readOnlyPrefixes: [],
+        confidentialPrefixes: [],
+        writableSubpaths: [],
+      },
+      stateLockPlanInImage: false,
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -101,6 +110,191 @@ describe("shields policy transition", () => {
   });
 });
 
+describe("shields down policy rejection", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-policy-rejection-"));
+    vi.stubEnv("HOME", tmpDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createRejectedPolicyHarness() {
+    return createShieldsFlowHarness(requireSource, tmpDir, {
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+  }
+
+  it("keeps `shields status` at `UP` when OpenShell rejects the permissive policy (#8198)", () => {
+    const harness = createRejectedPolicyHarness();
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify",
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+
+    const state = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, ".nemoclaw/state/shields-openclaw.json"), "utf-8"),
+    );
+    expect(state).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
+  });
+
+  it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: false,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      }),
+    );
+    const timerKill = vi.fn(() => true);
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      failPolicyRejectionStateClear: true,
+      initialOpenClawPosture: "locked",
+      processStartIdentity: "test-process-start-identity",
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: timerKill,
+      }),
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify recovery authority",
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+
+    expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
+      shieldsDown: true,
+      shieldsDownReason: "verify recovery authority",
+    });
+    expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+    expect(
+      fs.readdirSync(stateDir).some((name) => name.startsWith("shields-transition-openclaw-")),
+    ).toBe(true);
+    const transitionName = fs
+      .readdirSync(stateDir)
+      .find((name) => name.startsWith("shields-transition-openclaw-"));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8")),
+    ).toMatchObject({ phase: "policy_rejected" });
+    expect(timerKill).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "The scheduled auto-restore remains authoritative.",
+    );
+
+    harness.logSpy.mockClear();
+    harness.errorSpy.mockClear();
+    harness.shieldsStatus("openclaw", true, {
+      verifyLockState: () => ({ ok: true, issues: [] }),
+      verifyStateLockPlan: () => [],
+      resolveConfig: () => ({
+        agentName: "openclaw",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+        configDir: "/sandbox/.openclaw",
+        configFile: "openclaw.json",
+        format: "json",
+        stateLockPlanInImage: true,
+      }),
+    });
+
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+    expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toMatch(/DOWN|permissive|unlocked/);
+  });
+
+  it("denies mutations when rejected policy state and transition updates both fail (#8198)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: false,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      }),
+    );
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      failPolicyRejectionStateClear: true,
+      failPolicyRejectionTransitionWrite: true,
+      initialOpenClawPosture: "locked",
+      processStartIdentity: "test-process-start-identity",
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: vi.fn(() => true),
+      }),
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify incomplete rejection",
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+
+    const transitionName = fs
+      .readdirSync(stateDir)
+      .find((name) => name.startsWith("shields-transition-openclaw-"));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8")),
+    ).toMatchObject({ phase: "preparing" });
+    expect(harness.getShieldsPosture("openclaw", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+    expect(() =>
+      harness.shieldsStatus("openclaw", true, {
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+          configFile: "openclaw.json",
+          format: "json",
+          stateLockPlanInImage: true,
+        }),
+      }),
+    ).toThrow("process exit 1");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Shields: ERROR (Shields down transition incomplete)",
+    );
+  });
+});
+
 describe("shields config lock without a shipped config hash", () => {
   const CONFIG_DIR = "/sandbox/.deepagents";
   const CONFIG_PATH = `${CONFIG_DIR}/config.toml`;
@@ -132,6 +326,15 @@ describe("shields config lock without a shipped config hash", () => {
       configPath: CONFIG_PATH,
       format: "toml",
       sensitiveFiles: [HASH_PATH],
+      stateLockPlan: {
+        version: 1 as const,
+        readOnlyRoots: ["skills"],
+        confidentialRoots: [],
+        readOnlyPrefixes: [],
+        confidentialPrefixes: [],
+        writableSubpaths: [],
+      },
+      stateLockPlanInImage: false,
     };
   }
 
@@ -519,7 +722,13 @@ describe("shields config lock without a shipped config hash", () => {
 
     expect(lockCalls[0].slice(4)).toEqual([CONFIG_DIR, CONFIG_PATH]);
     expect(unlockCalls).toHaveLength(0);
-    expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(expect.anything(), CONFIG_DIR, true);
+    expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      CONFIG_DIR,
+      true,
+      target().stateLockPlan,
+      false,
+    );
     expect(stateDirGuardActions).toEqual(["preflight", "lock"]);
     expect(entries.get(CONFIG_DIR)).toEqual({ mode: "755", owner: "root:root" });
     expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });

@@ -270,6 +270,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
           bootstrap: {
             providerId: "mxc",
             supported: true,
+            createAuthorityStore: vi.fn(() => ({
+              recordPreparedAuthority: vi.fn(),
+            })),
             createLifecycle,
             createOnboardRouting: vi.fn(() => ({
               nativeFallbackHasCleanBaseline: false,
@@ -291,6 +294,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     };
     input.managedBootstrap = {
       bootstrapIdentity: launch.managedBootstrapIdentity!,
+      stateRoot: "/tmp/nemoclaw-mxc-bootstrap",
       runtimeProvider,
       authorityStore: {
         async recordPreparedAuthority(authority) {
@@ -349,6 +353,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ stableReadyPolls: 2 }),
+    );
 
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
@@ -662,6 +669,35 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.objectContaining({ stableReadyPolls: 1 }),
     );
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+  });
+
+  it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
+    const input = createInput();
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
+
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
+      input.sandboxName,
+      input.sandboxStartupCommand,
+    );
+  });
+
+  it("keeps a created sandbox when portable lifecycle setup fails (#8441)", async () => {
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => {
+      throw new Error("Authorization: Bearer portable-secret");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "native",
+    });
+
+    const warning = vi.mocked(console.warn).mock.calls.flat().join("\n");
+    expect(warning).toContain("Portable demo lifecycle setup did not complete");
+    expect(warning).toContain("Authorization: Bearer <REDACTED>");
+    expect(warning).not.toContain("portable-secret");
   });
 });
 

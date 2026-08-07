@@ -25,6 +25,23 @@ This path preserves the sandbox workspace and repairs the agent runtime and host
 If the container is paused, follow the printed `docker unpause` guidance instead.
 If the container is missing or OpenShell reports another terminal phase such as `Failed`, follow the printed `rebuild --yes` guidance so NemoClaw can recreate the sandbox from its recorded metadata.
 
+<AgentOnly variant="openclaw">
+If the sandbox has shields up and the OpenClaw gateway does not start after the container restarts, lower shields before you rebuild:
+
+```bash
+$$nemoclaw <sandbox-name> shields down
+```
+
+While holding the config mutation lock, NemoClaw confirms that no startup process runs and no readiness lease exists.
+Only then does it accept `shields down`.
+Other locked-config operations still require the lease.
+This failed-startup recovery path requires a sandbox image that includes the in-container OpenClaw config and state guards.
+If NemoClaw reports that the config guard is absent, upgrade the CLI.
+Then rebuild the sandbox before you retry recovery.
+After shields are down, start the sandbox again.
+When the OpenClaw gateway is healthy, rerun `shields up`.
+</AgentOnly>
+
 ## Recover the Agent Runtime
 
 <AgentOnly variant="openclaw">
@@ -59,8 +76,17 @@ $$nemoclaw <sandbox-name> recover
 
 The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
 It is idempotent and safe to script.
-If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+If the gateway is already healthy, `recover` does not restart it.
 If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
+
+After it checks gateway health and host forwards, `recover` checks for a NemoClaw cron restore gate left by an interrupted rebuild.
+The gate continues to block new Hermes turns and cron dispatch across gateway and container restarts in the same sandbox.
+When the gate exists, `recover` waits for active agent work to finish and validates the restored cron jobs and scripts.
+It clears only the NemoClaw gate after validation succeeds.
+If no independent operator drain exists, successful recovery prints `Hermes cron dispatch resumed after restored jobs and scripts were validated.`
+If an operator drain exists, recovery prints `Hermes cron restore gate cleared; the independent operator drain remains active.`
+The command does not own or clear the Hermes operator drain, so new Hermes turns and cron dispatch remain blocked while that drain is active.
+If cron validation fails, `recover` exits nonzero and retains the NemoClaw gate.
 
 Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
 
@@ -117,6 +143,27 @@ Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicit
 `$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+### Recover Portable Local Ollama
+
+For a portable experimental-profile sandbox with the recorded `ollama-local` provider, `connect --probe-only` and `recover` also verify the host-side inference chain.
+Before it decides whether to start Ollama, the command probes `http://127.0.0.1:11434/api/tags` and leaves a healthy daemon unchanged.
+When that API is unhealthy, it starts the fixed user-local executable only if NemoClaw has a valid ownership receipt.
+NemoClaw releases that predate this receipt do not claim an existing executable after an upgrade.
+To authorize recovery for a previous NemoClaw user-local install, first verify that `${HOME}/.local/bin/ollama` is the executable you want NemoClaw to manage.
+Then run `NEMOCLAW_PORTABLE_OLLAMA_REENROLL=1 nemoclaw <name> recover` once.
+The command rejects a symbolic link or non-executable file before it records ownership.
+It refuses to launch a duplicate when another `ollama` process exists but the API remains unhealthy.
+After a launch, recovery waits up to 30 seconds for `/api/tags` to return valid JSON with a `models` array.
+It does not take over a system service or an unrelated user-managed daemon.
+It refuses a symbolic link, non-regular file, or non-executable file at the receipt-bound executable path.
+
+On every `ollama-local` completion path, the command verifies the authenticated proxy on port `11435`.
+It also requires HTTP 2xx from `https://inference.local/v1/models` before it reports success.
+If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+An Ollama startup or route failure exits non-zero and prints the available recovery guidance.
+</AgentOnly>
+
 ## Rebuild While Preserving State
 
 <AgentOnly variant="openclaw">
@@ -141,6 +188,21 @@ Back up those paths outside the sandbox before you approve legacy recovery.
 $$nemoclaw <sandbox-name> rebuild
 ```
 
+### Resolve Rebuild Preflight Stops
+
+Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, policy, MCP, agent, and operation-lock state.
+When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`.
+At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
+
+Use the recovery guidance that matches the reported check:
+
+- Verify the sandbox name when its registry entry is missing.
+- Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
+- Repair the named pending baseline policy transition, then rerun `rebuild`.
+- Resolve an incomplete MCP destroy transaction before retrying.
+- Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
+- Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
+
 <AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
 When no host web-search key is staged, rebuild preflight reuses an existing Brave or Tavily credential only when the provider name, type, and credential key match the sandbox's binding on its recorded OpenShell gateway.
@@ -162,6 +224,22 @@ Before post-restore repairs, NemoClaw verifies that the recreated sandbox still 
 After state restore, NemoClaw restores managed MCP configuration through the normal lifecycle, then re-proves or recovers gateway health and performs final MCP reconciliation.
 `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
 Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> recover` for gateway health and `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
+
+When the rebuild backup contains active Hermes cron jobs that reference scripts, NemoClaw validates those script references before it deletes the existing sandbox.
+The check covers the default profile and named profiles.
+Each referenced script must exist, be readable, be a regular file, and remain inside its profile's `scripts` directory.
+Disabled and paused jobs do not require their referenced scripts.
+If this validation fails, the rebuild keeps the existing sandbox and reports the preserved backup path.
+
+After NemoClaw creates the replacement, it acquires an independent root-owned gate that blocks new Hermes turns and cron dispatch.
+The gate remains active across gateway and container restarts in the replacement sandbox.
+NemoClaw waits for active agent work to finish before restoring state.
+It validates the restored jobs and scripts against the same running gateway before it clears its gate.
+If an operator already drained the gateway, NemoClaw clears only its gate and leaves the operator drain active.
+If state restore or cron validation fails after gate acquisition, the command exits nonzero, preserves the backup, and retains the NemoClaw gate.
+Failures before gate acquisition do not create a new gate.
+Do not manually remove the root-owned cron restore marker because removal bypasses restored cron validation.
+After you correct the reported restore problem, run `$$nemoclaw <sandbox-name> recover` to validate the restored cron tree and clear the NemoClaw gate.
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
@@ -182,6 +260,14 @@ The rerun takes one of these actions:
 - It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
 
 An accepted replacement is not deleted again.
+<AgentOnly variant="hermes">
+A rerun that accepts a journaled Hermes replacement checks for any retained NemoClaw gate before it retires the replacement journal.
+When the gate exists, the rerun validates the restored cron tree and releases the gate first.
+If validation or gate release fails, NemoClaw preserves the accepted replacement, state backup, and replacement journal.
+New Hermes turns and cron dispatch remain blocked.
+Correct the reported restore problem, then run `$$nemoclaw <name> recover`.
+After recovery succeeds, rerun `rebuild` with the same replacement settings so NemoClaw can retire the journal.
+</AgentOnly>
 The command reports `Sandbox '<name>' already holds the replacement from the interrupted rebuild.` and preserves the state backup path when one exists.
 Pass `--verbose` to include the replacement identifier, OpenShell gateway, and journal phase in rebuild diagnostics.
 

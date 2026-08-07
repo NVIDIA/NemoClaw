@@ -34,7 +34,7 @@ They are the preferred backup and restore path.
 
 ## Understand Snapshot Contents
 
-Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+Snapshots capture the manifest-declared snapshot state directories and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
 Agent manifests can also declare durable top-level state files.
 Treat snapshot directories as private local data.
 
@@ -55,9 +55,12 @@ This sanitization uses an isolated `python3` helper on POSIX hosts to keep reads
 If a copied file or parent directory changes identity during the operation, snapshot creation fails closed instead of following the changed path.
 
 <AgentOnly variant="hermes">
-Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/profiles/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+On the first startup after this layout change, NemoClaw moves an existing `.hermes/dashboard-home/` directory when the canonical profile is absent or empty and the legacy path is not a symlink.
+Startup sets the canonical dashboard profile directory to mode `0700`, whether it migrates legacy state or reuses an existing destination.
+During normal startup, NemoClaw refuses unsafe paths and does not merge two populated profile directories.
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
-NemoClaw captures cron job definitions from `.hermes/cron` as directory state.
+NemoClaw captures cron job definitions from `.hermes/cron` and user-authored cron scripts from `.hermes/scripts` as directory state.
 NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
 After it replaces a database, NemoClaw opens a write transaction against the result and fails the restore when the database cannot be written.
 Named-profile cron and Discord databases under `.hermes/profiles/<name>/` use raw directory capture and can be inconsistent if a write overlaps the snapshot.
@@ -78,10 +81,10 @@ Wait for active `dcode` work to finish before running `$$nemoclaw <name> snapsho
 Snapshots preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy add --from-file` or `policy add --from-dir` and baseline network policy entries excluded with `policy exclude`.
 When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk, and rebuild continues to apply the recorded baseline exclusions.
 
-The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
-NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
-Restore limits directory cleanup to state directories declared by the snapshot manifest.
-It preserves directories that exist only in the target manifest or whose backup failed.
+The target sandbox's current agent manifest remains authoritative for directory and state-file restore behavior.
+NemoClaw rejects the restore when the snapshot's agent, config directory, any snapshot directory, state-file path, or state-file strategy conflicts with that manifest.
+Restore limits directory cleanup to state directories authorized by both the snapshot and the current manifest.
+It preserves target-only directories and directories whose backup failed.
 
 For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
 For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
@@ -99,14 +102,17 @@ NemoClaw computes versions (`v1`, `v2`, through `vN`) from timestamp order, so `
 `snapshot create` requires shields to be down.
 Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
 
-If a timed shields-down window expires during snapshot work, auto-restore closes the per-sandbox lifecycle deadline gate.
-The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation.
-NemoClaw does not signal the snapshot process.
-If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
-If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
-A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
-Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
-If the command reports exact-generation recovery guidance, stop all NemoClaw processes for the sandbox, then follow that guidance before you retry the snapshot.
+If a timed shields-down window expires during snapshot work, the deadline gate blocks new mutations and waits for the exact snapshot owner to finish without signaling it.
+Snapshot work does not bypass recovery for an expired shields-down window.
+<AgentOnly variant="openclaw,hermes">
+Follow [Timed Shields Windows](../configure-sandboxes/understand-runtime-changes#timed-shields-windows) to correct state-directory failures or complete exact-generation recovery before you rerun `$$nemoclaw <name> snapshot create`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If a state-directory failure prevents gate publication, normal mutation-lock acquisition also fails.
+If recovery reports a state-directory failure, correct it and run `$$nemoclaw <name> shields status`.
+Durable containment or retained exact gates keep new mutations blocked until you complete exact-generation recovery.
+If the command reports exact-generation recovery guidance, stop all NemoClaw processes for the sandbox and follow that guidance before you rerun `$$nemoclaw <name> snapshot create`.
+</AgentOnly>
 
 Tag a snapshot with a human-readable label:
 
@@ -203,6 +209,23 @@ OpenClaw regenerates its device identity on demand.
 Credential-bearing Hermes files such as `auth.json` are intentionally excluded from snapshots.
 NemoClaw-regenerated Hermes config files, including `config.yaml` and `.env`, are also excluded.
 NemoClaw recreates model, provider, and messaging credentials from host-side onboarding and OpenShell provider state during rebuild.
+
+If a Hermes rebuild cannot validate or release its NemoClaw cron restore gate, NemoClaw preserves the state backup.
+If the rebuild already accepted the replacement sandbox, it also preserves the replacement journal.
+New Hermes turns and cron dispatch remain blocked while the gate exists.
+
+<Warning>
+Do not manually remove the root-owned cron restore marker.
+Removing it bypasses validation of the restored cron jobs and scripts.
+Correct the reported restore problem, then run `$$nemoclaw <sandbox-name> recover`.
+Recovery validates the restored cron tree before it clears the NemoClaw gate.
+If an independent Hermes operator drain exists, recovery leaves it active.
+After recovery succeeds, rerun `rebuild` with the same replacement settings so NemoClaw can retire the replacement journal.
+</Warning>
+
+After a rebuild restores `dashboard-home` or `profiles`, NemoClaw reruns the dashboard state migration before it reports the restore as complete.
+During rebuild restore, NemoClaw moves disjoint top-level entries from the legacy dashboard directory without replacing entries in the canonical profile.
+If an entry collides or migration otherwise fails, NemoClaw marks the restore incomplete instead of reporting success.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 ### Excluded Deep Agents State

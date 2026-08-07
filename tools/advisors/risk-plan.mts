@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-
+import {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
+} from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
 
 // The root TypeScript package is exposed as CJS under the exact
@@ -18,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 15 as const;
+export const RISK_PLAN_VERSION = 17 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -30,6 +33,10 @@ const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
+const JOURNALED_RECREATE_RESUME_RUNTIME_FILES = new Set([
+  "src/lib/onboard/machine/handlers/sandbox-resume.ts",
+  "src/lib/onboard/machine/handlers/sandbox.ts",
+]);
 const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
   "src/lib/onboard/docker-driver-sandbox-recovery.ts",
@@ -46,6 +53,13 @@ const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
   "agents/hermes/validate-cli-adapter.py",
+]);
+const HERMES_CRON_RESTORE_E2E_JOB_IDS = ["rebuild-hermes"] as const;
+const HERMES_CRON_RESTORE_RUNTIME_FILES = new Set([
+  "agents/hermes/cron-restore-control.py",
+  "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
+  "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
 ]);
 const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
   "bedrock-runtime-compatible-anthropic",
@@ -68,7 +82,23 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
-const LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
+const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUTS = new Set([
+  MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION,
+  "src/lib/onboard.ts",
+  "src/lib/onboard/sandbox-create-intent-types.ts",
+  "src/lib/onboard/sandbox-create-plan-materialization.ts",
+  "src/lib/onboard/sandbox-create-plan.ts",
+  "src/lib/onboard/sandbox-registration.ts",
+]);
+const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
+  "scripts/checks/run-managed-image-openshell-e2e.",
+  "src/lib/actions/sandbox/rebuild-",
+  "src/lib/onboard/managed-bootstrap/",
+  "src/lib/onboard/managed-workload/",
+  "src/lib/onboard/runtime-provider/",
+  "src/lib/onboard/workload/",
+  "test/e2e/live/managed-image-protected-runtime.",
+] as const;
 const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualification" as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
@@ -171,7 +201,6 @@ const CREDENTIAL_SECURITY_FILE =
   /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
 const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/e2e.yaml",
-  ".github/workflows/pr-e2e-gate.yaml",
   ".github/workflows/pr.yaml",
   "package-lock.json",
   "package.json",
@@ -220,6 +249,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     changedFiles.filter(
       (file) =>
         file === DEEPAGENTS_HEADLESS_INFERENCE_CHECK ||
+        JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file) ||
         (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
@@ -249,6 +279,9 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
+  const journaledRecreateResumeFiles = stableUnique(
+    changedFiles.filter((file) => JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file)),
+  );
   const managedStartupFiles = stableUnique(
     changedFiles.filter(
       (file) =>
@@ -263,6 +296,11 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const hermesCronRestoreFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_CRON_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
   const hermesManagedPolicyFiles = stableUnique(
     changedFiles.filter(
       (file) =>
@@ -271,10 +309,25 @@ export function focusedPrE2eJobsForChangedFiles(
     ),
   );
   return [
-    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
+    ...(journaledRecreateResumeFiles.length > 0
+      ? [
+          {
+            id: "openshell-gateway-upgrade",
+            matchedFiles: journaledRecreateResumeFiles,
+          },
+        ]
+      : []),
+    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: managedStartupFiles,
+    })),
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesCronRestoreFiles,
     })),
     ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
       id,
@@ -468,17 +521,25 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Protected managed-image runtime qualification must retain real GPU access, host-local Ollama, NVIDIA NIM, vLLM, transactional rollback, and exact cleanup for every shipped agent.",
     tier: 3,
-    requiredJobs: [MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID],
+    requiredJobs: [
+      MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID,
+      PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
+    ],
     invariants: [
       "OpenClaw, Hermes, and Deep Agents Code run from exact PR image digests through the production managed-bootstrap path",
+      "the exact all-agent image cohort passes native linux/amd64 and linux/arm64 startup qualification",
       "real NVIDIA GPU access and host-local Ollama, NVIDIA NIM, and vLLM inference.local completions are all required",
       "bootstrap completion failure removes the exact failed sandbox, container, network, and transaction state for every agent",
       "NGC credentials remain host-scoped and never enter a managed sandbox or persisted artifact",
     ],
-    // The trusted workflow and validator land before activation. The follow-on
-    // activation slice broadens this boundary to runtime inputs after the
-    // protected job exists on main and can safely qualify candidate code.
-    matches: (file) => file === MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION,
+    // Keep this source boundary synchronized with the protected managed-image
+    // runtime workflow path filter. The trusted workflow and validator are
+    // already on main. Activation now
+    // binds every production bootstrap/rebuild input to both exact all-agent
+    // multiarch startup and the native-GPU local-inference runtime proof.
+    matches: (file) =>
+      MANAGED_IMAGE_PROTECTED_RUNTIME_INPUTS.has(file) ||
+      MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES.some((prefix) => file.startsWith(prefix)),
   },
   {
     id: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
@@ -494,7 +555,9 @@ export const RISK_RULES: readonly RiskRule[] = [
     // The trusted workflow and validators land while dormant. A later YAML-only
     // activation candidate selects this protected lane after the Spark runner,
     // approval environment, and verified local model path are provisioned.
-    matches: (file) => file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION,
+    matches: (file) =>
+      file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH ||
+      file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   },
   {
     id: "sandbox-boundary",

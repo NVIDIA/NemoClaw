@@ -103,6 +103,11 @@ export const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["tools/e2e/runtime-policy.mts"],
   },
+  {
+    name: "test-registration-boundary",
+    command: TSX,
+    args: ["scripts/checks/test-registration-boundary.mts"],
+  },
 ];
 
 type RunChecksOptions = {

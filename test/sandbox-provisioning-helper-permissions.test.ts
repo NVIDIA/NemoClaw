@@ -1,58 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  expect(start, `Expected Dockerfile start marker: ${startMarker}`).toBeGreaterThanOrEqual(0);
-  expect(end, `Expected Dockerfile end marker: ${endMarker}`).toBeGreaterThan(start);
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  expect(runIndex, `Expected RUN instruction after ${startMarker}`).toBeGreaterThanOrEqual(start);
-  expect(runIndex, `Expected RUN instruction before ${endMarker}`).toBeLessThan(end);
-  const runBlock = dockerfile.slice(runIndex, end).split("\n");
-  const completeLineIndex = runBlock.findIndex((line) => !line.trimEnd().endsWith("\\"));
-  expect(
-    completeLineIndex,
-    `Expected complete RUN instruction before ${endMarker}`,
-  ).toBeGreaterThanOrEqual(0);
-  const runLines = runBlock.slice(0, completeLineIndex + 1);
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
-}
-
-function runLoggedDockerShell(command: string, tmp: string, functionDefs: string[] = []) {
-  const logPath = path.join(tmp, "calls.log");
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `call_log=${JSON.stringify(logPath)}`,
-      ...functionDefs,
-      command,
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-  return { result };
-}
 
 describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () => {
   it("normalizes copied blueprint permissions before non-root config generation", () => {
@@ -130,6 +86,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
+    const stateLockPlanPath = path.join(localShare, "state-lock-plan.json");
     const configGuardPath = path.join(localLib, "openclaw-config-guard.py");
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
@@ -143,6 +100,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "sandbox-rlimits.sh"),
       gatewaySupervisorPath,
       stateDirGuardPath,
+      stateLockPlanPath,
       configGuardPath,
       managedGatewayControlPath,
       path.join(localLib, "openclaw_device_approval_policy.py"),
@@ -204,6 +162,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(stateLockPlanPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(configGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {

@@ -6,32 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { dockerRunCommandBetween } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  expect(start, `Expected Dockerfile start marker ${startMarker}`).toBeGreaterThanOrEqual(0);
-  expect(end, `Expected Dockerfile end marker ${endMarker}`).toBeGreaterThan(start);
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  expect(runIndex, `Expected RUN instruction after ${startMarker}`).toBeGreaterThanOrEqual(start);
-  expect(runIndex, `Expected RUN instruction before ${endMarker}`).toBeLessThan(end);
-  const blockLines = dockerfile.slice(runIndex, end).split("\n");
-  const runEnd = blockLines.findIndex((line) => !line.trimEnd().endsWith("\\"));
-  expect(runEnd, `Expected complete RUN instruction before ${endMarker}`).toBeGreaterThanOrEqual(0);
-  const runLines = blockLines.slice(0, runEnd + 1);
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
-}
 
 function runHermesMcpClientImportValidation({
   mcpAvailable,

@@ -13,6 +13,15 @@ const INDEX_MODULE = "./index.js";
 
 type ShieldsModule = typeof import("./index");
 
+const STATE_LOCK_PLAN = {
+  version: 1 as const,
+  readOnlyRoots: ["skills"],
+  confidentialRoots: ["credentials"],
+  readOnlyPrefixes: [],
+  confidentialPrefixes: [],
+  writableSubpaths: [],
+};
+
 function openClawTarget() {
   return {
     agentName: "openclaw",
@@ -21,6 +30,8 @@ function openClawTarget() {
     format: "json",
     configFile: "openclaw.json",
     sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    stateLockPlan: STATE_LOCK_PLAN,
+    stateLockPlanInImage: true,
   };
 }
 
@@ -33,6 +44,7 @@ describe("OpenClaw shields top-config transaction", () => {
   let guardSpy: MockInstance;
   let applyStateSpy: MockInstance;
   let restoreStateSpy: MockInstance;
+  let compatibilitySpy: MockInstance;
   let events: string[];
 
   beforeEach(() => {
@@ -87,6 +99,9 @@ describe("OpenClaw shields top-config transaction", () => {
     privilegedExecSpy = vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")
       .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
+    compatibilitySpy = vi
+      .spyOn(stateDirLock, "stateLockPlanCompatibilityIssues")
+      .mockReturnValue([]);
 
     spies.push(
       vi.spyOn(runner, "run").mockReturnValue({ status: 0 }),
@@ -94,6 +109,7 @@ describe("OpenClaw shields top-config transaction", () => {
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => openClawTarget()),
       privilegedExecSpy,
       dockerExecSpy,
+      compatibilitySpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
       applyStateSpy,
       restoreStateSpy,
@@ -111,6 +127,34 @@ describe("OpenClaw shields top-config transaction", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
+  function useMutablePosture() {
+    dockerExecSpy.mockImplementation((cmd) => {
+      const argv = cmd as string[];
+      switch (argv[0]) {
+        case "stat":
+          return argv.at(-1) === "/sandbox"
+            ? "755 sandbox:sandbox"
+            : argv.at(-1) === "/sandbox/.openclaw"
+              ? "2770 sandbox:sandbox"
+              : "660 sandbox:sandbox";
+        case "lsattr":
+          return `---------------- ${String(argv.at(-1))}`;
+        default:
+          return "";
+      }
+    });
+  }
+
+  function guardFailure(code: string, detail: string) {
+    return {
+      issues: [
+        `OpenClaw config guard preflight [${code}] /run/nemoclaw/openclaw-config-ready.json: ${detail}`,
+      ],
+      issueCodes: [code],
+      chattrApplied: false,
+    };
+  }
+
   it("freezes the top-level binding before recursive lock and avoids pathname mutation", () => {
     expect(() => shields.lockAgentConfig("openclaw", openClawTarget(), false)).not.toThrow();
 
@@ -118,6 +162,20 @@ describe("OpenClaw shields top-config transaction", () => {
     const commands = dockerExecSpy.mock.calls.map((call) => call[0] as string[]);
     expect(commands.some((cmd) => ["chmod", "chown", "chattr"].includes(cmd[0]))).toBe(false);
     expect(commands.some((cmd) => cmd[0] === "stat" && cmd.at(-1) === "/sandbox")).toBe(true);
+  });
+
+  it("rejects an incompatible runtime plan before mutating the config tree", () => {
+    compatibilitySpy.mockReturnValueOnce([
+      "installed state lock plan differs from the current agent manifest",
+    ]);
+
+    expect(() => shields.lockAgentConfig("openclaw", openClawTarget(), false)).toThrow(
+      /installed state lock plan differs/,
+    );
+
+    expect(events).toEqual([]);
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
   });
 
   it("preserves the sealed top after a partial recursive lock", () => {
@@ -189,25 +247,86 @@ describe("OpenClaw shields top-config transaction", () => {
   });
 
   it("keeps the protected top binding until recursive unlock is ready", () => {
-    dockerExecSpy.mockImplementation((cmd) => {
-      const argv = cmd as string[];
-      switch (argv[0]) {
-        case "stat":
-          return argv.at(-1) === "/sandbox"
-            ? "755 sandbox:sandbox"
-            : argv.at(-1) === "/sandbox/.openclaw"
-              ? "2770 sandbox:sandbox"
-              : "660 sandbox:sandbox";
-        case "lsattr":
-          return `---------------- ${String(argv.at(-1))}`;
-        default:
-          return "";
-      }
-    });
+    useMutablePosture();
 
     expect(() => shields.unlockAgentConfig("openclaw", openClawTarget(), true)).not.toThrow();
 
     expect(events.slice(0, 3)).toEqual(["top:preflight", "state:unlock", "top:unlock"]);
+  });
+
+  it("uses structured readiness diagnostics and verifies recovered mutable posture (#8304)", () => {
+    useMutablePosture();
+    guardSpy.mockImplementation((_exec, action) => {
+      events.push(`top:${action}`);
+      return action === "preflight"
+        ? guardFailure("startup-not-ready", "startup lease is absent")
+        : { issues: [], chattrApplied: false };
+    });
+
+    expect(() => shields.unlockAgentConfig("openclaw", openClawTarget(), true)).not.toThrow();
+    expect(events).toEqual(["top:preflight", "top:unlock-failed-startup"]);
+    const commands = dockerExecSpy.mock.calls.map((call) => call[0] as string[]);
+    expect(commands.filter((cmd) => cmd[0] === "stat").map((cmd) => cmd.at(-1))).toEqual([
+      "/sandbox/.openclaw/openclaw.json",
+      "/sandbox/.openclaw/.config-hash",
+      "/sandbox/.openclaw",
+      "/sandbox",
+    ]);
+  });
+
+  it("does not recover when readiness is mixed with another guard failure (#8304)", () => {
+    guardSpy.mockImplementation((_exec, action) => {
+      events.push(`top:${action}`);
+      return action === "preflight"
+        ? {
+            issues: [
+              "OpenClaw config guard preflight [startup-not-ready] /run/nemoclaw/openclaw-config-ready.json: startup lease is absent",
+              "OpenClaw config guard preflight returned an invalid result contract",
+            ],
+            issueCodes: ["startup-not-ready"],
+            chattrApplied: false,
+          }
+        : { issues: [], chattrApplied: false };
+    });
+
+    expect(() => shields.unlockAgentConfig("openclaw", openClawTarget(), true)).toThrow(
+      /invalid result contract/,
+    );
+    expect(events).toEqual(["top:preflight"]);
+  });
+
+  it("falls back only for the distinct not-applicable recovery code (#8304)", () => {
+    guardSpy.mockImplementation((_exec, action) => {
+      events.push(`top:${action}`);
+      return action === "preflight"
+        ? guardFailure("startup-not-ready", "startup lease is absent")
+        : guardFailure(
+            "failed-startup-not-proven",
+            "unlock-failed-startup requires a proven terminal startup failure",
+          );
+    });
+
+    expect(() => shields.unlockAgentConfig("openclaw", openClawTarget(), true)).toThrow(
+      /\[startup-not-ready\].*startup lease is absent/,
+    );
+    expect(events).toEqual(["top:preflight", "top:unlock-failed-startup"]);
+  });
+
+  it("propagates lost failed-startup authorization instead of masking it (#8304)", () => {
+    guardSpy.mockImplementation((_exec, action) => {
+      events.push(`top:${action}`);
+      return action === "preflight"
+        ? guardFailure("startup-not-ready", "startup lease is absent")
+        : guardFailure(
+            "startup-not-ready",
+            "unlock-failed-startup lost its failed-startup authorization before taking effect",
+          );
+    });
+
+    expect(() => shields.unlockAgentConfig("openclaw", openClawTarget(), true)).toThrow(
+      /Failed-startup shields recovery failed.*lost its failed-startup authorization/,
+    );
+    expect(events).toEqual(["top:preflight", "top:unlock-failed-startup"]);
   });
 
   it("fails closed to the locked posture when recursive unlock is partial", () => {

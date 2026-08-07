@@ -134,10 +134,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/maintainer-pr-workflow-approval.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/pr-e2e-gate\.yaml$/,
-    testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
   },
@@ -151,6 +147,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
     testsToRun: runTests("test/pr-review-advisor-openshell-workflow-boundary.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/e2e-main-retry\.yaml$/,
+    testsToRun: runTests("test/e2e-main-retry-workflow.test.ts"),
   },
   {
     pattern:

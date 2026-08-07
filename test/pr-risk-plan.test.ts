@@ -28,6 +28,12 @@ const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_JOBS = ["channels-stop-start", "mcp-bridge"];
+const HERMES_CRON_RESTORE_FILES = [
+  "agents/hermes/cron-restore-control.py",
+  "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
+  "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
+];
 const HERMES_MANAGED_POLICY_JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
@@ -80,7 +86,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(15);
+    expect(first.version).toBe(17);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -190,6 +196,47 @@ describe("deterministic PR risk plan", () => {
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(expectedRequiredJobs);
+  });
+
+  it.each(
+    HERMES_CRON_RESTORE_FILES,
+  )("selects Hermes rebuild E2E for cron restore and drain changes in %s (#7806)", (changedFile) => {
+    const result = plan(changedFile);
+    const expectedRequiredJobs = changedFile.startsWith("agents/hermes/")
+      ? [...HERMES_SANDBOX_BOUNDARY_JOBS, "rebuild-hermes"]
+      : changedFile === "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts"
+        ? [
+            "managed-image-multiarch-startup",
+            "managed-image-protected-runtime",
+            "onboard-repair",
+            "onboard-resume",
+            "rebuild-hermes",
+            "rebuild-openclaw",
+            "state-backup-restore",
+          ]
+        : [
+            "onboard-repair",
+            "onboard-resume",
+            "rebuild-hermes",
+            "rebuild-openclaw",
+            "state-backup-restore",
+          ];
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: [changedFile],
+        requiredJobs: ["rebuild-hermes"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(expectedRequiredJobs);
+  });
+
+  it("does not select Hermes rebuild E2E for the generic recovery command (#7806)", () => {
+    const result = plan("src/commands/sandbox/recover.ts");
+
+    expect(result.families).not.toContainEqual(expect.objectContaining({ id: "focused-e2e" }));
+    expect(riskPlanRequiredJobIds(result)).not.toContain("rebuild-hermes");
   });
 
   it.each(
@@ -383,11 +430,13 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
-  it("keeps protected GPU and local-inference qualification activation-only until trusted (#7744)", () => {
+  it("selects protected GPU, local-inference, and multiarch qualification for activated runtime inputs (#7744)", () => {
     const activation = "ci/protected-managed-image-runtime-activation-v1.json";
     const result = plan(activation);
-    const dormantImplementation = plan(
+    const activatedImplementation = plan(
       "scripts/checks/run-managed-image-openshell-e2e.ts",
+      "src/lib/onboard/managed-bootstrap/docker.ts",
+      "src/lib/onboard/managed-workload/onboard-orchestration.ts",
       "test/e2e/live/managed-image-protected-runtime.test.ts",
     );
 
@@ -395,12 +444,26 @@ describe("deterministic PR risk plan", () => {
       expect.objectContaining({
         id: "managed-image-protected-runtime",
         matchedFiles: [activation],
-        requiredJobs: ["managed-image-protected-runtime"],
+        requiredJobs: ["managed-image-protected-runtime", "managed-image-multiarch-startup"],
       }),
     );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-protected-runtime"]);
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
+    ]);
     expect(
-      dormantImplementation.families.some(
+      activatedImplementation.families.some(
+        (family) => family.id === "managed-image-protected-runtime",
+      ),
+    ).toBe(true);
+    expect(riskPlanRequiredJobIds(activatedImplementation)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup",
+        "managed-image-protected-runtime",
+      ]),
+    );
+    expect(
+      plan("src/lib/actions/sandbox/rebuilding-status.ts").families.some(
         (family) => family.id === "managed-image-protected-runtime",
       ),
     ).toBe(false);
@@ -408,6 +471,8 @@ describe("deterministic PR risk plan", () => {
 
   it("keeps protected llama.cpp DGX Spark qualification activation-only until trusted (#8260)", () => {
     const activation = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
+    const agentQualification =
+      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml";
     const result = plan(activation);
     const dormantImplementation = plan(
       "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
@@ -422,6 +487,14 @@ describe("deterministic PR risk plan", () => {
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(riskPlanRequiredJobIds(plan(agentQualification))).toContain(
+      "llama-cpp-dgx-spark-qualification",
+    );
+    expect(
+      riskPlanRequiredJobIds(
+        plan("managed-inference/qualifications/llama-cpp.other.spark-single.v1.yaml"),
+      ),
+    ).not.toContain("llama-cpp-dgx-spark-qualification");
     expect(
       dormantImplementation.families.some(
         (family) => family.id === "llama-cpp-dgx-spark-qualification",
@@ -537,6 +610,35 @@ describe("deterministic PR risk plan", () => {
     );
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentCheck.planHash);
+  });
+
+  it.each([
+    "src/lib/onboard/machine/handlers/sandbox-resume.ts",
+    "src/lib/onboard/machine/handlers/sandbox.ts",
+  ])("selects gateway upgrade and the Deep Agents Code target for journaled recreation changes in %s", (file) => {
+    const result = plan(file);
+
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "openshell-gateway-upgrade",
+        families: ["focused-e2e"],
+        matchedFiles: [file],
+      }),
+    );
+    expect(result.requiredTargets).toContainEqual(
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[0],
+        families: ["focused-e2e"],
+        matchedFiles: [file],
+      }),
+    );
+  });
+
+  it("does not select the journaled recreation lanes for an adjacent sandbox handler", () => {
+    const result = plan("src/lib/onboard/machine/handlers/sandbox-messaging.ts");
+
+    expect(riskPlanRequiredJobIds(result)).not.toContain("openshell-gateway-upgrade");
+    expect(riskPlanRequiredTargetIds(result)).not.toContain(PR_E2E_TYPED_TARGET_IDS[0]);
   });
 
   it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {
@@ -711,7 +813,6 @@ describe("deterministic PR risk plan", () => {
 
   it.each([
     ".github/workflows/e2e.yaml",
-    ".github/workflows/pr-e2e-gate.yaml",
     ".github/workflows/pr.yaml",
     ".github/actions/prepare-e2e/action.yaml",
     ".github/actions/upload-e2e-artifacts/action.yaml",
@@ -722,7 +823,6 @@ describe("deterministic PR risk plan", () => {
     "tools/advisors/github.mts",
     "tools/advisors/io.mts",
     "tools/advisors/risk-plan.mts",
-    "tools/e2e/pr-e2e-gate.mts",
     "tools/e2e/risk-signal.ts",
     "tools/e2e/private-file.mts",
     "tools/e2e/workflow-plan.mts",
@@ -788,6 +888,7 @@ describe("deterministic PR risk plan", () => {
       "cloud-inference",
       "cloud-onboard",
       "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",

@@ -1,12 +1,75 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
   resetRebuildFlowTestEnvironment,
   restoreRebuildFlowTestEnvironment,
 } from "../../../../test/helpers/rebuild-flow-harness";
+import { ensureHermesGatewayAfterStateRestore } from "./rebuild-hermes-post-restore";
+
+describe("Hermes gateway post-restore recheck", () => {
+  it("accepts a gateway that becomes healthy after an inconclusive recovery check (#7084)", () => {
+    const checkAndRecoverSandboxProcesses = vi
+      .fn()
+      .mockReturnValueOnce({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+      })
+      .mockReturnValueOnce({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+      });
+
+    expect(
+      ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+        checkAndRecoverSandboxProcesses,
+      }),
+    ).toBe("healthy");
+
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "forwardRecoveryFailed",
+    "secretBoundaryRefused",
+    "mcpReconciliationRefused",
+  ] as const)("fails immediately when recovery reports %s (#7084)", (failureFlag) => {
+    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      [failureFlag]: true,
+    }));
+
+    expect(
+      ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+        checkAndRecoverSandboxProcesses,
+      }),
+    ).toBe("unverified");
+
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed after the bounded gateway recheck remains inconclusive (#7084)", () => {
+    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+    }));
+
+    expect(
+      ensureHermesGatewayAfterStateRestore("alpha", "hermes", {
+        checkAndRecoverSandboxProcesses,
+      }),
+    ).toBe("unverified");
+
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("Hermes rebuild post-restore verification", () => {
   beforeEach(resetRebuildFlowTestEnvironment);

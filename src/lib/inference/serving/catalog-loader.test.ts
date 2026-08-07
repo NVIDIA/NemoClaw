@@ -3,6 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF,
+  LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF,
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry";
@@ -25,11 +29,23 @@ const EMPTY_CATALOG: CompiledServingCatalog = {
   sources: [],
   catalogDigest: `sha256:${"b".repeat(64)}`,
 };
-const EXPECTED_MANAGED_RECIPE_IDS = ["vllm.deepseek-v4-flash-0731.spark-dual.v1"];
-const EXPECTED_MANAGED_PRESET_IDS = ["vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731"];
-const EXPECTED_MANAGED_SOURCE_IDS = [
-  "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
+const EXPECTED_MANAGED_RECIPE_IDS = [
+  "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
   "vllm.deepseek-v4-flash-0731.spark-dual.v1",
+  "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
+];
+const EXPECTED_MANAGED_PRESET_IDS = [
+  "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  "local-model-profile.vllm.spark.v1",
+  "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
+];
+const EXPECTED_MANAGED_SOURCE_IDS = [
+  "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  "local-model-profile.vllm.spark.v1",
+  "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
+  "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+  "vllm.deepseek-v4-flash-0731.spark-dual.v1",
+  "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
 ];
 
 const INCOMPLETE_MANAGED_RECIPE: ServingRecipe = {
@@ -78,7 +94,10 @@ const HOST_LOCAL_PRESET: ServingPreset = {
   spec: {
     selection: "explicit-only",
     priority: 1,
-    plan: { backend: "install-llama-cpp", recipeRef: HOST_LOCAL_RECIPE.metadata.id },
+    plan: {
+      backend: "install-llama-cpp",
+      recipeRef: HOST_LOCAL_RECIPE.metadata.id,
+    },
   },
 };
 
@@ -91,7 +110,7 @@ function managedCatalogValidationError(catalog: CompiledServingCatalog): string 
   }
 }
 
-function expectOnlyManagedVllmDefinitions(catalog: CompiledServingCatalog): void {
+function expectManagedRuntimeDefinitions(catalog: CompiledServingCatalog): void {
   const { catalogDigest, ...catalogContents } = catalog;
 
   expect(catalogDigest).toBe(servingCatalogDigest(catalogContents));
@@ -114,20 +133,79 @@ describe("managed inference catalog loader", () => {
     expect(managedCatalogValidationError(catalog)).toMatch(/Managed inference (preset|recipe)/u);
   });
 
-  it("excludes host-local definitions from the managed-cluster runtime catalog (#8173)", () => {
+  it("rejects an incomplete registered llama.cpp definition (#8433)", () => {
     const servingCatalog: CompiledServingCatalog = {
       ...EMPTY_CATALOG,
       recipes: [HOST_LOCAL_RECIPE],
       presets: [HOST_LOCAL_PRESET],
     };
 
-    const managedCatalog = managedInferenceCatalogFromServingCatalog(servingCatalog);
+    expect(() => managedInferenceCatalogFromServingCatalog(servingCatalog)).toThrow(
+      "Managed inference",
+    );
+  });
 
-    expect(managedCatalog.recipes).toEqual([]);
-    expect(managedCatalog.presets).toEqual([]);
-    expect(managedCatalog.catalogDigest).not.toBe(EMPTY_CATALOG.catalogDigest);
-    const { catalogDigest, ...catalogContents } = managedCatalog;
-    expect(catalogDigest).toBe(servingCatalogDigest(catalogContents));
+  it("retains registered host-local vLLM definitions (#8246)", () => {
+    const servingCatalog = loadServingCatalog();
+    const sourceRecipe = servingCatalog.recipes.find(
+      ({ spec }) =>
+        spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF &&
+        spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF,
+    )!;
+    expect(sourceRecipe).toBeDefined();
+    const sourceSpec = sourceRecipe.spec as Exclude<
+      ServingRecipe["spec"],
+      { backend: "install-llama-cpp" }
+    >;
+    const sourcePreset = servingCatalog.presets.find(
+      ({ spec }) => spec.plan.recipeRef === sourceRecipe.metadata.id,
+    )!;
+    const recipe = {
+      ...sourceRecipe,
+      metadata: { id: "test.vllm-host-local-recipe" },
+      spec: {
+        ...sourceSpec,
+        model: { ...sourceSpec.model },
+        execution: { ...sourceSpec.execution },
+        runtime: { ...sourceSpec.runtime },
+      },
+    } satisfies ServingRecipe;
+    const preset = {
+      ...sourcePreset,
+      metadata: { id: "test.vllm-host-local-preset" },
+      spec: {
+        ...sourcePreset.spec,
+        selection: "explicit-only",
+        requirements: {
+          all: sourcePreset.spec.requirements!.all.filter(
+            (requirement) => "readiness" in requirement,
+          ),
+        },
+        plan: { backend: "vllm", recipeRef: recipe.metadata.id },
+      },
+    } as ServingPreset;
+    const projected = managedInferenceCatalogFromServingCatalog({
+      ...EMPTY_CATALOG,
+      recipes: [recipe],
+      presets: [preset],
+    });
+
+    expect(projected.recipes.map(({ metadata }) => metadata.id)).toEqual([recipe.metadata.id]);
+    expect(projected.presets.map(({ metadata }) => metadata.id)).toEqual([preset.metadata.id]);
+  });
+
+  it("retains the registered declarative llama.cpp definition (#8433)", () => {
+    const servingCatalog = loadServingCatalog();
+    const recipe = servingCatalog.recipes.find(
+      ({ spec }) =>
+        spec.execution.materializerRef === LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF &&
+        spec.execution.lifecycleRef === LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF,
+    );
+    expect(recipe).toBeDefined();
+    const projected = managedInferenceCatalogFromServingCatalog(servingCatalog);
+    expect(projected.recipes.some(({ metadata }) => metadata.id === recipe!.metadata.id)).toBe(
+      true,
+    );
   });
 
   it("retains managed vLLM definitions while projecting the mixed serving catalog (#8173)", () => {
@@ -138,14 +216,14 @@ describe("managed inference catalog loader", () => {
       true,
     );
 
-    expectOnlyManagedVllmDefinitions(managedInferenceCatalogFromServingCatalog(servingCatalog));
+    expectManagedRuntimeDefinitions(managedInferenceCatalogFromServingCatalog(servingCatalog));
   });
 
-  it("excludes host-local definitions through the public managed loader (#8173)", () => {
+  it("loads every registered managed runtime through the public loader (#8433)", () => {
     const projectedCatalog = managedInferenceCatalogFromServingCatalog(loadServingCatalog());
     const loadedCatalog = loadManagedInferenceCatalog();
 
     expect(loadedCatalog).toEqual(projectedCatalog);
-    expectOnlyManagedVllmDefinitions(loadedCatalog);
+    expectManagedRuntimeDefinitions(loadedCatalog);
   });
 });

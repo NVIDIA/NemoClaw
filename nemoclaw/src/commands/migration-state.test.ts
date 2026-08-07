@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginLogger } from "../index.js";
 import { setConfigValue } from "./migration-state.js";
+import { makeHostOpenClawState, makeSnapshotManifest } from "./migration-state-test-fixtures.js";
 
 // fs mock — thin in-memory store keyed by absolute path
 type FsEntry = { type: "file" | "dir" | "symlink"; content?: string };
@@ -501,21 +502,12 @@ describe("commands/migration-state", () => {
   describe("createSnapshotBundle", () => {
     it("returns null when stateDir is missing", () => {
       const logger = makeLogger();
-      const hostState: HostOpenClawState = {
+      const hostState = makeHostOpenClawState({
         exists: false,
-        homeDir: "/home/user",
         stateDir: null,
         configDir: null,
         configPath: null,
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      });
       expect(createSnapshotBundle(hostState, logger, { persist: false })).toBeNull();
       expect(logger.error).toHaveBeenCalled();
     });
@@ -525,21 +517,7 @@ describe("commands/migration-state", () => {
       addDir("/home/user/.openclaw");
       addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
       const bundle = createSnapshotBundle(hostState, logger, { persist: true });
       if (bundle === null) {
@@ -556,23 +534,14 @@ describe("commands/migration-state", () => {
       addDir("/home/user/.openclaw");
       addFile("/etc/openclaw.json", JSON.stringify({ external: true }));
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
+      const hostState = makeHostOpenClawState({
         configPath: "/etc/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
         hasExternalConfig: true,
-      };
+      });
 
-      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+      });
       if (bundle === null) {
         expect.unreachable("bundle should not be null");
         return;
@@ -586,16 +555,8 @@ describe("commands/migration-state", () => {
       addDir("/home/user/.openclaw");
       addDir("/external/ws");
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
+      const hostState = makeHostOpenClawState({
         configPath: null,
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
         externalRoots: [
           {
             id: "workspaces-ws",
@@ -608,12 +569,11 @@ describe("commands/migration-state", () => {
             bindings: [{ configPath: "agents.list[0].workspace" }],
           },
         ],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      });
 
-      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+      });
       if (bundle === null) {
         expect.unreachable("bundle should not be null");
         return;
@@ -637,23 +597,11 @@ describe("commands/migration-state", () => {
         JSON.stringify({ name: "main" }),
       );
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
-      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+      });
       if (bundle === null) {
         expect.unreachable("bundle should not be null");
         return;
@@ -682,23 +630,11 @@ describe("commands/migration-state", () => {
         }),
       );
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
-      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+      });
       if (bundle === null) {
         expect.unreachable("bundle should not be null");
         return;
@@ -737,23 +673,11 @@ describe("commands/migration-state", () => {
         }),
       );
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
-      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+      });
       if (bundle === null) {
         expect.unreachable("bundle should not be null");
         return;
@@ -778,21 +702,7 @@ describe("commands/migration-state", () => {
       addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
       addFile("/test/blueprint.yaml", "version: 0.1.0\ndigest: ''\n");
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
       const bundle = createSnapshotBundle(hostState, logger, {
         persist: false,
@@ -811,23 +721,11 @@ describe("commands/migration-state", () => {
       addDir("/home/user/.openclaw");
       addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
-      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+      });
       if (bundle === null) {
         expect.unreachable("bundle should not be null");
         return;
@@ -840,21 +738,7 @@ describe("commands/migration-state", () => {
       addDir("/home/user/.openclaw");
       addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
       // /test/nonexistent.yaml does not exist in store
       const bundle = createSnapshotBundle(hostState, logger, {
@@ -877,23 +761,11 @@ describe("commands/migration-state", () => {
         }),
       );
 
-      const hostState: HostOpenClawState = {
-        exists: true,
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configDir: "/home/user/.openclaw",
-        configPath: "/home/user/.openclaw/openclaw.json",
-        workspaceDir: null,
-        extensionsDir: null,
-        skillsDir: null,
-        hooksDir: null,
-        externalRoots: [],
-        warnings: [],
-        errors: [],
-        hasExternalConfig: false,
-      };
+      const hostState = makeHostOpenClawState();
 
-      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+      });
       if (bundle === null) {
         expect.unreachable("bundle should not be null");
         return;
@@ -969,13 +841,7 @@ describe("commands/migration-state", () => {
 
   describe("loadSnapshotManifest", () => {
     it("reads and parses snapshot.json", () => {
-      const manifest: SnapshotManifest = {
-        version: 2,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configPath: null,
-        hasExternalConfig: false,
+      const manifest = makeSnapshotManifest({
         externalRoots: [
           {
             id: "workspace-root",
@@ -989,7 +855,7 @@ describe("commands/migration-state", () => {
           },
         ],
         warnings: ["workspace root was remapped"],
-      };
+      });
       addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
       const loaded = loadSnapshotManifest("/snapshots/snap1");
       expect(loaded).toEqual(manifest);
@@ -1032,16 +898,7 @@ describe("commands/migration-state", () => {
   describe("restoreSnapshotToHost", () => {
     it("returns false when snapshot openclaw dir is missing", () => {
       const logger = makeLogger();
-      const manifest: SnapshotManifest = {
-        version: 2,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configPath: null,
-        hasExternalConfig: false,
-        externalRoots: [],
-        warnings: [],
-      };
+      const manifest = makeSnapshotManifest();
       addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
       // Don't add /snapshots/snap1/openclaw
       const result = restoreSnapshotToHost("/snapshots/snap1", logger);
@@ -1054,16 +911,7 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
-        };
+        const manifest = makeSnapshotManifest();
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
         addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
@@ -1089,16 +937,10 @@ describe("commands/migration-state", () => {
       process.env.HOME = "/home/user";
       process.env.OPENCLAW_CONFIG_PATH = "/etc/openclaw.json";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
+        const manifest = makeSnapshotManifest({
           configPath: "/etc/openclaw.json",
           hasExternalConfig: true,
-          externalRoots: [],
-          warnings: [],
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
         addFile("/snapshots/snap1/config/openclaw.json", JSON.stringify({ external: true }));
@@ -1125,16 +967,10 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
+        const manifest = makeSnapshotManifest({
           homeDir: "/tmp/evil",
           stateDir: "/tmp/evil/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1155,16 +991,9 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
+        const manifest = makeSnapshotManifest({
           stateDir: "/tmp/evil/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1187,16 +1016,7 @@ describe("commands/migration-state", () => {
       process.env.HOME = "/home/user";
       process.env.OPENCLAW_STATE_DIR = "/home/user/.custom-state";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
-        };
+        const manifest = makeSnapshotManifest();
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1224,16 +1044,7 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: true,
-          externalRoots: [],
-          warnings: [],
-        };
+        const manifest = makeSnapshotManifest({ hasExternalConfig: true });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1254,16 +1065,10 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
+        const manifest = makeSnapshotManifest({
           configPath: "/tmp/evil/openclaw.json",
           hasExternalConfig: true,
-          externalRoots: [],
-          warnings: [],
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1286,16 +1091,10 @@ describe("commands/migration-state", () => {
       process.env.HOME = "/home/user";
       process.env.OPENCLAW_CONFIG_PATH = "/home/user/my-config.json";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
+        const manifest = makeSnapshotManifest({
           configPath: "/etc/openclaw.json",
           hasExternalConfig: true,
-          externalRoots: [],
-          warnings: [],
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1329,21 +1128,7 @@ describe("commands/migration-state", () => {
         // First create a snapshot with blueprintPath to get the real digest
         addDir("/home/user/.openclaw");
         addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
-        const hostState: HostOpenClawState = {
-          exists: true,
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configDir: "/home/user/.openclaw",
-          configPath: "/home/user/.openclaw/openclaw.json",
-          workspaceDir: null,
-          extensionsDir: null,
-          skillsDir: null,
-          hooksDir: null,
-          externalRoots: [],
-          warnings: [],
-          errors: [],
-          hasExternalConfig: false,
-        };
+        const hostState = makeHostOpenClawState();
         const bundle = createSnapshotBundle(hostState, logger, {
           persist: false,
           blueprintPath: "/test/blueprint.yaml",
@@ -1357,17 +1142,10 @@ describe("commands/migration-state", () => {
 
         // Now set up for restore with matching digest
         store.clear();
-        const manifest: SnapshotManifest = {
+        const manifest = makeSnapshotManifest({
           version: 3,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
           blueprintDigest: digest,
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
         addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
@@ -1391,17 +1169,10 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
+        const manifest = makeSnapshotManifest({
           version: 3,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
           blueprintDigest: "wrong-hash-value",
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
         addFile("/test/blueprint.yaml", "version: 0.1.0\n");
@@ -1425,17 +1196,10 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
+        const manifest = makeSnapshotManifest({
           version: 3,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
           blueprintDigest: "",
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1458,17 +1222,10 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
+        const manifest = makeSnapshotManifest({
           version: 3,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
           blueprintDigest: "abc123",
-        };
+        });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
 
@@ -1491,17 +1248,8 @@ describe("commands/migration-state", () => {
       const origHome = process.env.HOME;
       process.env.HOME = "/home/user";
       try {
-        const manifest: SnapshotManifest = {
-          version: 2,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
-          // no blueprintDigest field
-        };
+        // no blueprintDigest field
+        const manifest = makeSnapshotManifest();
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
         addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
@@ -1523,17 +1271,8 @@ describe("commands/migration-state", () => {
       process.env.HOME = "/home/user";
       try {
         // v3 manifest with no blueprintDigest field — created without a blueprint
-        const manifest: SnapshotManifest = {
-          version: 3,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          homeDir: "/home/user",
-          stateDir: "/home/user/.openclaw",
-          configPath: null,
-          hasExternalConfig: false,
-          externalRoots: [],
-          warnings: [],
-          // blueprintDigest intentionally omitted
-        };
+        // blueprintDigest intentionally omitted
+        const manifest = makeSnapshotManifest({ version: 3 });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
         addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));

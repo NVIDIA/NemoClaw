@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -21,6 +20,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
 import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
@@ -420,6 +420,15 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(policy.exitCode, resultText(policy)).toBe(0);
   expect(resultText(policy)).toMatch(/network_policies/i);
 
+  await expectPackageDatabaseReadOnly({
+    artifactPrefix: "phase-3",
+    env: commandEnv(),
+    host,
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    timeoutMs: 30_000,
+  });
+
   const deniedEgress = await sandbox.exec(
     SANDBOX_NAME,
     ["curl", "-fsS", "--connect-timeout", "5", "--max-time", "15", "https://example.com/"],
@@ -456,6 +465,26 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   });
   expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
   expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
+
+  const dependencyVersions = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/opt/hermes/.venv/bin/python",
+      "-I",
+      "-c",
+      "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual; print('\\n'.join(f'{name}=={actual[name]}' for name in sorted(actual)))",
+    ],
+    {
+      artifactName: "phase-4-hermes-dependency-versions",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(dependencyVersions.exitCode, resultText(dependencyVersions)).toBe(0);
+  expect(dependencyVersions.stdout.trim().split(/\r?\n/u)).toEqual([
+    "aiohttp==3.14.3",
+    "cryptography==50.0.0",
+  ]);
 
   const configProbe = await sandbox.execShell(
     SANDBOX_NAME,

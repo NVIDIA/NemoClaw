@@ -250,11 +250,6 @@ function validateRecipeSemantics(
       );
     }
     const { serve } = recipe.spec;
-    if (serve.limits.maxPromptTokens + serve.limits.maxCompletionTokens > serve.contextSize) {
-      throw new ServingCatalogValidationError(
-        `Recipe ${recipe.metadata.id} request token limits exceed serve.contextSize.`,
-      );
-    }
     if (serve.microBatchSize > serve.batchSize) {
       throw new ServingCatalogValidationError(
         `Recipe ${recipe.metadata.id} serve.microBatchSize cannot exceed serve.batchSize.`,
@@ -520,9 +515,9 @@ function validateCatalogSemantics(
       );
     }
     if (isLlamaCppServingRecipe(recipe)) {
-      if (preset.spec.selection !== "explicit-only") {
+      if (preset.spec.selection === "automatic") {
         throw new ServingCatalogValidationError(
-          `Preset ${preset.metadata.id} must use explicit-only selection for llama.cpp recipe ${recipe.metadata.id}.`,
+          `Preset ${preset.metadata.id} must not use automatic selection for llama.cpp recipe ${recipe.metadata.id}; explicit-only and disabled presets are resolved outside automatic selection.`,
         );
       }
       if ((preset.spec.requirements?.all.length ?? 0) === 0) {

@@ -31,6 +31,7 @@ describe("createCoreOnboardFlowPhases", () => {
   beforeEach(() => {
     mocks.createProviderInferencePhase.mockReturnValue({ state: "provider_selection" });
     mocks.createResumeProviderShim.mockReturnValue({
+      ensureManagedLlamaCppResumeReady: vi.fn(),
       ensureResumeProviderReady: vi.fn(),
       isResumeProviderSurfaceReady: vi.fn(),
     });
@@ -61,6 +62,7 @@ describe("createCoreOnboardFlowPhases", () => {
     expect(mocks.createProviderInferencePhase).toHaveBeenCalledWith({
       deps: {
         existingProviderDependency,
+        ensureManagedLlamaCppResumeReady: expect.any(Function),
         ensureResumeProviderReady: expect.any(Function),
         isResumeProviderSurfaceReady: expect.any(Function),
       },

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -125,15 +125,19 @@ describe("runtime provider central source boundary", () => {
     expect(providerContract.contract).toMatch(
       /import type[\s\S]*from ["']\.\.\/managed-bootstrap\/runtime-create["']/u,
     );
-    expect(
-      [providerContract.current, providerContract.docker, providerContract.registry].join("\n"),
-    ).not.toMatch(/managed-bootstrap/u);
+    expect([providerContract.current, providerContract.registry].join("\n")).not.toMatch(
+      /managed-bootstrap/u,
+    );
+    expect(disallowedManagedBootstrapLoads(providerContract.docker)).toEqual([
+      "../managed-bootstrap/docker-runtime",
+    ]);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
   });
 
-  it("inventories every dormant managed-bootstrap protocol source", () => {
+  it("inventories every managed-bootstrap protocol source", () => {
     expect(bootstrapProtocolPaths).toEqual([
       "src/lib/onboard/managed-bootstrap/adapter.ts",
+      "src/lib/onboard/managed-bootstrap/docker-authority-store.ts",
       "src/lib/onboard/managed-bootstrap/docker-journal.ts",
       "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
       "src/lib/onboard/managed-bootstrap/docker-shared-state.ts",
@@ -144,6 +148,11 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/managed-bootstrap/image-runtime.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
       "src/lib/onboard/managed-bootstrap/managed-bootstrap-test-fixture.ts",
+      "src/lib/onboard/managed-bootstrap/podman-bootstrap-journal.ts",
+      "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
+      "src/lib/onboard/managed-bootstrap/podman-held-workload.ts",
+      "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
+      "src/lib/onboard/managed-bootstrap/podman-watcher-lease.ts",
       "src/lib/onboard/managed-bootstrap/runtime-create.ts",
     ]);
   });
@@ -153,11 +162,59 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/access.ts",
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
+      "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",
+      "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
+      "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/podman-preflight.ts",
+      "src/lib/onboard/runtime-provider/podman.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
     ]);
+  });
+
+  // source-shape-contract: security -- Managed llama.cpp activation must remain behind the exact receipt-backed controller and operation-scoped Docker authority
+  it("activates Docker llama.cpp only through its durable lifecycle controller (#8433)", () => {
+    const docker = read("src/lib/onboard/runtime-provider/docker.ts");
+    const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
+    const operation = read("src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts");
+    const hostLocalContract = read("src/lib/onboard/runtime-provider/host-local-inference.ts");
+    const podman = read("src/lib/onboard/runtime-provider/podman.ts");
+    const installer = read("src/lib/inference/llama-cpp/managed-installer.ts");
+    const localModelProfilePlan = read("src/lib/onboard/local-model-profile/plan.ts");
+    const allTrackedPaths = trackedPaths(".");
+    expect(allTrackedPaths.filter((path) => !existsSync(join(repoRoot, path)))).toEqual([]);
+    const productionComposition = allTrackedPaths
+      .filter(
+        (path) =>
+          /\.[cm]?ts$/u.test(path) &&
+          !path.endsWith(".test.ts") &&
+          !path.includes("/test/") &&
+          !path.startsWith("test/") &&
+          path !== "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
+      )
+      .map(read)
+      .join("\n");
+    expect(docker).toContain("createDockerLlamaCppHostLocalOperation");
+    expect(docker).toMatch(/hostLocalInference:\s*\{[\s\S]*services:\s*\[["']llama-cpp["']\]/u);
+    expect(adapter).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(operation).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(installer).toContain("requireRuntimeProviderHostLocalInferenceOperation");
+    expect(installer).not.toMatch(/(?:createDocker|docker-llama-cpp)/u);
+    expect(hostLocalContract).not.toMatch(/(?:Docker|Podman|createDocker)/u);
+    expect(podman).toMatch(/hostLocalInference:\s*unsupported\(/u);
+    expect(podman).not.toContain("createDockerLlamaCppHostLocalOperation");
+    expect(productionComposition).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(productionComposition).toContain("docker-llama-cpp-managed-lifecycle");
+    expect(localModelProfilePlan).toContain(
+      'export const LOCAL_MODEL_PROFILE_ENABLED_ENV = "NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE"',
+    );
+    expect(localModelProfilePlan).toContain('export type LocalModelProfileRuntime = "vllm";');
+    expect(localModelProfilePlan).not.toMatch(/LocalModelProfileRuntime\s*=\s*[^;]*llama-cpp/u);
   });
 
   it("inventories every production Dockerfile", () => {
@@ -190,10 +247,13 @@ describe("runtime provider central source boundary", () => {
     );
   });
 
-  // source-shape-contract: security -- Production onboarding may consume the provider-neutral create contract but cannot select a driver-specific bootstrap implementation
-  it("keeps production activation paths disconnected from driver bootstrap adapters", () => {
+  // source-shape-contract: security -- Central onboarding consumes the provider-neutral create contract while provider bundles own driver-specific bootstrap implementations
+  it("keeps central activation paths disconnected from driver bootstrap adapters", () => {
     const onboardEntry = read("src/lib/onboard.ts");
-    const activationSource = activationPaths.map(read).join("\n");
+    const activationSource = activationPaths
+      .filter((path) => !path.startsWith("src/lib/onboard/runtime-provider/"))
+      .map(read)
+      .join("\n");
     expect(disallowedManagedBootstrapLoads(onboardEntry)).toEqual([]);
     expect(disallowedManagedBootstrapLoads(activationSource)).toEqual([]);
     expect(
@@ -230,18 +290,27 @@ describe("runtime provider central source boundary", () => {
     ]);
   });
 
-  // source-shape-contract: security -- Registered runtime providers must remain bootstrap-unsupported until their complete transaction implementations are qualified
-  it("keeps registered providers bootstrap-unsupported", () => {
+  // source-shape-contract: security -- Qualified bootstrap implementations compose only inside their provider bundle; unqualified providers remain unsupported
+  it("composes Docker bootstrap locally while keeping Kubernetes unsupported", () => {
     const dockerProvider = read("src/lib/onboard/runtime-provider/docker.ts");
+    // Neutral contracts may name an operation but cannot activate a provider implementation.
     const providerImplementationSource = providerPaths
-      .filter((path) => path !== "src/lib/onboard/runtime-provider/contract.ts")
+      .filter(
+        (path) =>
+          path !== "src/lib/onboard/runtime-provider/contract.ts" &&
+          path !== "src/lib/onboard/runtime-provider/docker.ts" &&
+          path !== "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
+      )
       .map(read)
       .join("\n");
-    expect(dockerProvider).not.toMatch(
-      /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
-    );
     expect(providerImplementationSource).not.toMatch(/managed-bootstrap/iu);
-    expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
+    expect(disallowedManagedBootstrapLoads(dockerProvider)).toEqual([
+      "../managed-bootstrap/docker-runtime",
+    ]);
+    expect(dockerProvider).toMatch(
+      /bootstrap:\s*createDockerManagedBootstrapSurface\(providerId\)/u,
+    );
+    expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(1);
     expect(dockerProvider.match(/recovery:\s*unsupported\(/gu)).toHaveLength(2);
   });
 
