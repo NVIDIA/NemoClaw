@@ -23,7 +23,7 @@ OpenShell intercepts that traffic and forwards it to the local endpoint configur
 | Ollama | You want the default local option and want NemoClaw to install, start, or use Ollama on supported hosts. | Appears when Ollama is installed or running, and the wizard can offer installation on supported hosts. | Ollama through the managed local route. |
 | Existing vLLM | You already run vLLM on `localhost:8000`. | Appears when NemoClaw detects the server. | `/v1/chat/completions`. |
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
-| Fixed local model profile | You need one catalog-selected model and serving runtime combination. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
+| Fixed local model profile | You need one catalog-selected model and serving runtime combination. | DGX Spark Express selects the vLLM profile. Direct installation can use the dedicated installer flag. The profile does not appear in the provider menu. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
 
@@ -32,7 +32,7 @@ OpenShell intercepts that traffic and forwards it to the local endpoint configur
 |---|---|---|---|
 | Existing vLLM | You already run vLLM on `localhost:8000`. | Appears when NemoClaw detects the server. | `/v1/chat/completions`. |
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
-| Fixed local model profile | You need one catalog-selected model and serving runtime combination. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
+| Fixed local model profile | You need one catalog-selected model and serving runtime combination. | DGX Spark Express selects the vLLM profile. Direct installation can use the dedicated installer flag. The profile does not appear in the provider menu. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
 
@@ -65,6 +65,7 @@ Refer to [Set Up vLLM](set-up-vllm).
 
 Use this feature-gated path to install one catalog-selected model-and-runtime combination for vLLM or llama.cpp.
 The installer does not accept a provider or model override for this profile.
+DGX Spark Express enables this path and selects vLLM automatically.
 
 Before you start, confirm these prerequisites:
 
@@ -120,6 +121,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 ```
 
 The flag enables the dedicated profile gate, disables Express selection, and selects the matching catalog recipe.
+DGX Spark Express enables the same profile gate and selects the vLLM runtime.
 Do not combine this path with `NEMOCLAW_PROVIDER` or `NEMOCLAW_MODEL`.
 The vLLM profile rejects `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
 

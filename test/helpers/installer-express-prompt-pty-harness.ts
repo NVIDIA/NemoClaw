@@ -64,10 +64,10 @@ classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-
 station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
 station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 bash() {
-  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \
+  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s\\n" \
     "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
     "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \
-    "\${NEMOCLAW_STATION_EXPRESS:-}"
+    "\${NEMOCLAW_STATION_EXPRESS:-}" "\${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" "\${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}"
   exit 0
 }
 main "$@"
@@ -84,10 +84,10 @@ if [ "\${FORCE_EXPRESS_PROMPT_READ_FAILURE:-}" = "1" ]; then
   read() { return 1; }
 fi
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
   "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \\
-  "\${NEMOCLAW_STATION_EXPRESS:-}"
+  "\${NEMOCLAW_STATION_EXPRESS:-}" "\${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" "\${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}"
 '''
 env = dict(os.environ)
 env["INSTALLER_UNDER_TEST"] = installer

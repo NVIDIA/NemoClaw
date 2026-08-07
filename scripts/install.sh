@@ -4315,9 +4315,14 @@ activate_express_install() {
   case "$platform" in
     "DGX Spark")
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-      export NEMOCLAW_PROVIDER=install-vllm
       if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+        unset NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE NEMOCLAW_LOCAL_MODEL_RUNTIME
+        export NEMOCLAW_PROVIDER=install-vllm
         export NEMOCLAW_VLLM_MODEL
+      else
+        unset NEMOCLAW_PROVIDER
+        export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
+        export NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm
       fi
       ;;
     "DGX Station")
@@ -4757,8 +4762,8 @@ describe_express_install() {
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="The explicit model remains authoritative, so this run keeps the existing single-host DGX Spark profile. Managed vLLM pulls the configured image/model and runs only its dedicated container."
       else
-        inference_summary="managed vLLM with automatic DGX Spark serving-profile selection"
-        inference_disclosure="With no explicit inference intent or related runtime, one exactly qualified pretrusted managed cluster topology selects a matching pinned distributed profile. An ordinary no-match keeps the existing single-host DGX Spark profile; any related or ambiguous setup remains untouched and stops installation. Managed vLLM pulls the selected image/model and runs only its dedicated containers. The selected distributed profile is experimental pending physical end-to-end validation."
+        inference_summary="the fixed DGX Spark model and vLLM serving profile"
+        inference_disclosure="The serving catalog owns the model, image, port, and vLLM arguments. The dedicated local-model onboarder rejects model and runtime overrides before starting its managed container."
       fi
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;

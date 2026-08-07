@@ -257,8 +257,13 @@ On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MO
 Express uses the single-Station Ultra recipe unless a trusted reciprocal pair qualifies for distributed serving.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
 
-On DGX Spark, Express selects the pinned two-node profile when exactly one pretrusted reciprocal pair qualifies and no inference intent or related runtime conflicts.
-Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit selection, profile requirements, and cleanup behavior.
+On DGX Spark, accepting the installer Express prompt selects the fixed local model profile for vLLM.
+The serving catalog supplies the pinned model, runtime image, port, and serve arguments.
+The installer rejects provider and model overrides.
+The dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides before it starts the managed container.
+Set `NEMOCLAW_VLLM_MODEL` only when you intend to use the customizable managed-vLLM path instead of the fixed profile.
+Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-local-model-profile) for fixed-profile installation and verification.
+Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) when you need to request the Experimental distributed profile explicitly.
 
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 

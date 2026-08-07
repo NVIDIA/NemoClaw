@@ -7,7 +7,7 @@
 
 Use these instructions only after hardware detection confirms DGX Spark.
 
-Explain that Express keeps the selected agent, uses local vLLM with the default Qwen model, leaves optional setup at its defaults, and downloads the vLLM container and model.
+Explain that Express keeps the selected agent, uses the fixed DGX Spark vLLM profile, leaves optional setup at its defaults, and downloads the catalog-selected container and model.
 Include the third-party-software notice, then ask: "Run Express install with these settings?"
 Choices:
 
@@ -16,8 +16,10 @@ Choices:
 
 If Express is selected:
 
-- Set `NEMOCLAW_PROVIDER=install-vllm`.
-- Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset so the installed release selects its DGX Spark default, currently `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+- Set `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`.
+- Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset.
+- Explain that the serving catalog selects the fixed model, runtime image, port, and vLLM arguments.
+- The current DGX Spark vLLM profile serves `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
 - Set `NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.

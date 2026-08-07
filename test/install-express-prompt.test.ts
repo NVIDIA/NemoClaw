@@ -182,17 +182,16 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(
-      /Express install will configure managed vLLM with automatic DGX Spark serving-profile selection/,
+      /Express install will configure the fixed DGX Spark model and vLLM serving profile/,
     );
-    expect(output).toMatch(/one exactly qualified pretrusted managed cluster topology/);
-    expect(output).toMatch(/related or ambiguous setup remains untouched and stops installation/);
-    expect(output).toMatch(/experimental pending physical end-to-end validation/);
+    expect(output).toMatch(/The serving catalog owns the model, image, port, and vLLM arguments/);
+    expect(output).toMatch(/dedicated local-model onboarder rejects model and runtime overrides/);
     expect(output).toMatch(/Sandbox name: my-assistant/);
     expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm/,
     );
     expect(output).toMatch(/STATION_EXPRESS=\s/);
   });
@@ -212,6 +211,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
+    expect(output).toMatch(/PROFILE_GATE= PROFILE_RUNTIME=/);
   });
 
   it("preserves an explicit NEMOCLAW_SANDBOX_NAME over the DGX Spark default (#6525)", () => {
@@ -223,7 +223,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(/Sandbox name: custom-spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm/,
     );
   });
 
