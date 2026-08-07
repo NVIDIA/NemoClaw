@@ -149,6 +149,7 @@ function createPhases(
       ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
       skippedStepMessage: vi.fn(),
+      ensureManagedLlamaCppResumeReady: vi.fn(async () => false),
       ensureResumeProviderReady: vi.fn(
         async (
           _gatewayName: string,

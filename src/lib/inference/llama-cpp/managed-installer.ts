@@ -1,465 +1,293 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 
+import type { ContainerEngine } from "../../adapters/container-engine";
+import { checkPortAvailable } from "../../onboard/preflight";
+import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
+import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceReceipt,
+  HostLocalLlamaCppLifecycle,
+} from "../../onboard/runtime-provider/host-local-inference";
 import {
-  dockerCapture,
-  dockerForceRm,
-  dockerPullWithProgressWatchdog,
-  dockerRun,
-} from "../../adapters/docker/local-model-runtime";
-import {
-  ensureLocalAdapterStateDir,
-  removeLocalAdapterFile,
-  writeLocalAdapterJsonFile,
-} from "../local-adapter-lifecycle";
-import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
-import type { LlamaCppServingRecipe } from "../serving/types";
-import { compileLlamaCppGgufCachePlan, type LlamaCppGgufCachePlan } from "./gguf-cache-plan";
-import {
-  createLlamaCppGgufCacheEntryReceipt,
-  type LlamaCppGgufCacheOwner,
-  parseLlamaCppGgufCacheEntryReceipt,
-} from "./gguf-cache-receipt";
-import {
-  buildLlamaCppHostLocalDockerArgv,
-  type LlamaCppHostLocalLaunchContract,
-  type VerifiedLocalModelArtifact,
+  createFilePersistedEngineAuthorityStore,
+  createPersistedEngineAuthority,
+} from "../../onboard/runtime-provider/persisted-engine-authority";
+import { requireRuntimeProviderHostLocalInferenceOperation } from "../../onboard/runtime-provider/registry";
+import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
+import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
+import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
+import { buildVllmDockerEnv } from "../vllm-docker-env";
+import { LLAMA_CPP_CREDENTIAL_ENV, LLAMA_CPP_PORT } from "./contract";
+import { acquireVerifiedLlamaCppGguf, verifyLlamaCppGgufCacheEntry } from "./gguf-acquisition";
+import { compileLlamaCppGgufCachePlan } from "./gguf-cache-plan";
+import type {
+  LlamaCppHostLocalLaunchContract,
+  VerifiedLocalModelArtifact,
 } from "./host-local-runtime";
-import { LLAMA_CPP_CREDENTIAL_ENV, LLAMA_CPP_PORT, probeLlamaCppAttachment } from "./index";
+import {
+  claimManagedLlamaCppOwner,
+  createManagedLlamaCppReceiptWriter,
+  loadManagedLlamaCppApiKey,
+  loadManagedLlamaCppOwner,
+  loadManagedLlamaCppReceipt,
+  loadOrCreateManagedLlamaCppApiKey,
+  type ManagedLlamaCppStatePaths,
+  managedLlamaCppStatePaths,
+} from "./managed-state";
 
 export const MANAGED_LLAMA_CPP_CONTAINER_NAME = "nemoclaw-llama-cpp" as const;
 export const MANAGED_LLAMA_CPP_NETWORK_NAME = "nemoclaw-llama-cpp-internal" as const;
-export const MANAGED_LLAMA_CPP_OWNER_LABEL = "com.nvidia.nemoclaw.managed-llama-cpp" as const;
-export const MANAGED_LLAMA_CPP_OWNER_VALUE = "local-model-profile-v1" as const;
-export const MANAGED_LLAMA_CPP_CACHE_OWNER_ID = "nemoclaw-local-model-profile" as const;
-export const MANAGED_LLAMA_CPP_AUTH_LABEL = "com.nvidia.nemoclaw.llama-cpp-auth" as const;
-export const MANAGED_LLAMA_CPP_GENERATION_LABEL =
-  "com.nvidia.nemoclaw.llama-cpp-generation" as const;
-export const MANAGED_LLAMA_CPP_RUNTIME_RECEIPT_FILE = "runtime.json" as const;
+export const MANAGED_LLAMA_CPP_OWNER_LABEL = "io.nvidia.nemoclaw.managed-llama-cpp" as const;
+export const MANAGED_LLAMA_CPP_OWNER_VALUE = "true" as const;
 
-const MAX_REDIRECTS = 5;
-const DOWNLOAD_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const IMAGE_PULL_TIMEOUT_MS = 30 * 60 * 1000;
+const DOCKER_INSPECT_TIMEOUT_MS = 15_000;
 
 export interface ManagedLlamaCppInstallOptions {
-  homeDir?: string;
-  fetchImpl?: typeof fetch;
-  dockerCaptureImpl?: typeof dockerCapture;
-  dockerForceRmImpl?: typeof dockerForceRm;
-  dockerRunImpl?: typeof dockerRun;
-  dockerPullImpl?: typeof dockerPullWithProgressWatchdog;
-  probeImpl?: typeof probeLlamaCppAttachment;
-  sleepImpl?: (milliseconds: number) => Promise<void>;
-  randomBytes?: typeof crypto.randomBytes;
-  now?: () => number;
-  log?: (message: string) => void;
+  readonly sandboxName: string;
+  readonly runtimeProvider: RuntimeProviderBundle;
+  readonly gatewayPort?: number;
+  readonly homeDir?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly pullImage?: ManagedLlamaCppImagePull;
+  readonly acquireGguf?: typeof acquireVerifiedLlamaCppGguf;
+  readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
+  readonly checkPort?: typeof checkPortAvailable;
+  readonly log?: (message: string) => void;
 }
 
 export type ManagedLlamaCppInstallResult =
-  | { ok: true; apiKey: string; model: string }
-  | { ok: false; reason: string };
-
-function stateDir(homeDir: string): string {
-  return path.join(homeDir, ".nemoclaw", "managed-llama-cpp");
-}
-
-function cacheRoot(homeDir: string): string {
-  return path.join(homeDir, ".cache", "nemoclaw", "llama-cpp");
-}
-
-function cacheEntryDir(homeDir: string, plan: LlamaCppGgufCachePlan): string {
-  return path.join(cacheRoot(homeDir), plan.cache.key);
-}
-
-function ensurePrivateDirectory(directory: string): void {
-  ensureLocalAdapterStateDir(directory);
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw new Error(`Refusing unsafe llama.cpp directory: ${directory}`);
-  }
-  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
-    throw new Error(`llama.cpp directory is not owned by the current user: ${directory}`);
-  }
-  fs.chmodSync(directory, 0o700);
-}
-
-function readPrivateRegularFile(filePath: string): string | null {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  if (typeof noFollow !== "number") {
-    throw new Error("Secure no-follow file opens are unavailable on this platform.");
-  }
-  let fd: number | undefined;
-  try {
-    try {
-      fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
+  | {
+      readonly ok: true;
+      readonly apiKey: string;
+      readonly model: string;
+      readonly receipt: HostLocalInferenceReceipt;
     }
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0) {
-      throw new Error(`Managed llama.cpp state is not an owner-only regular file: ${filePath}`);
-    }
-    if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
-      throw new Error(`Managed llama.cpp state has an unexpected owner: ${filePath}`);
-    }
-    return fs.readFileSync(fd, "utf8");
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
+  | { readonly ok: false; readonly reason: string };
+
+export interface ManagedLlamaCppResumeOptions {
+  readonly runtimeProvider: RuntimeProviderBundle;
+  readonly gatewayPort?: number;
+  readonly homeDir?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
+  readonly checkPort?: typeof checkPortAvailable;
 }
 
-function createPrivateFile(filePath: string, value: string): void {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  if (typeof noFollow !== "number") {
-    throw new Error("Secure no-follow file opens are unavailable on this platform.");
-  }
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(
-      filePath,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
-      0o600,
-    );
-    fs.writeFileSync(fd, value, "utf8");
-    fs.fsyncSync(fd);
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
+export interface ManagedLlamaCppExactInspectionOptions {
+  readonly homeDir: string;
+  readonly operation: HostLocalInferenceOperation;
+  readonly paths: ManagedLlamaCppStatePaths;
+  readonly receipt: HostLocalInferenceReceipt;
+  readonly selection: ResolvedLlamaCppInferenceSelection;
 }
 
-function ownerForCache(
-  directory: string,
-  randomBytes: typeof crypto.randomBytes,
-): LlamaCppGgufCacheOwner {
-  const ownerPath = path.join(directory, "owner.json");
-  const raw = readPrivateRegularFile(ownerPath);
-  let existing: Record<string, unknown> | null = null;
-  if (raw) {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-      existing = parsed as Record<string, unknown>;
-    } catch {
-      throw new Error("Managed llama.cpp owner state is malformed.");
-    }
-  }
-  if (existing) {
-    if (
-      existing.id !== MANAGED_LLAMA_CPP_CACHE_OWNER_ID ||
-      typeof existing.generation !== "string" ||
-      !/^[a-f0-9]{32}$/.test(existing.generation)
-    ) {
-      throw new Error("Managed llama.cpp owner state is malformed.");
-    }
-    return {
-      id: MANAGED_LLAMA_CPP_CACHE_OWNER_ID,
-      generation: existing.generation,
-    };
-  }
-  const owner = {
-    id: MANAGED_LLAMA_CPP_CACHE_OWNER_ID,
-    generation: randomBytes(16).toString("hex"),
-  } as const;
-  createPrivateFile(ownerPath, `${JSON.stringify(owner, null, 2)}\n`);
-  return owner;
+interface DockerNetworkInspection {
+  readonly kind: "absent" | "owned";
+  readonly id?: string;
 }
 
-function bindOwnerToRuntimeState(directory: string, owner: LlamaCppGgufCacheOwner): void {
-  const ownerPath = path.join(directory, "owner.json");
-  const raw = readPrivateRegularFile(ownerPath);
-  if (!raw) {
-    createPrivateFile(ownerPath, `${JSON.stringify(owner, null, 2)}\n`);
-    return;
+interface ManagedLlamaCppImagePullResult {
+  readonly status: number | null;
+  readonly error?: Error;
+}
+
+type ManagedLlamaCppImagePull = (
+  image: string,
+  options: {
+    readonly env: Record<string, string>;
+    readonly maxTimeoutMs: number;
+    readonly logLine: (line: string) => void;
+  },
+) => Promise<ManagedLlamaCppImagePullResult>;
+
+function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {
+  if (result.error || result.status !== 0) {
+    throw new Error(`Managed llama.cpp ${label} failed (exit ${String(result.status)}).`);
   }
+  return result.stdout;
+}
+
+function parsedSingleRow(source: string, label: string): Record<string, unknown> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(source);
   } catch {
-    throw new Error("Managed llama.cpp runtime owner state is malformed.");
+    throw new Error(`Managed llama.cpp ${label} returned unreadable JSON.`);
   }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed) ||
-    (parsed as Record<string, unknown>).id !== owner.id ||
-    (parsed as Record<string, unknown>).generation !== owner.generation ||
-    Object.keys(parsed as Record<string, unknown>)
-      .sort()
-      .join(",") !== "generation,id"
-  ) {
-    throw new Error("Managed llama.cpp runtime owner does not match the cache owner.");
+  if (!Array.isArray(parsed) || parsed.length !== 1 || typeof parsed[0] !== "object") {
+    throw new Error(`Managed llama.cpp ${label} was ambiguous.`);
   }
+  return parsed[0] as Record<string, unknown>;
 }
 
-function persistRuntimeReceipt(
-  directory: string,
-  input: {
-    owner: LlamaCppGgufCacheOwner;
-    apiKeyFingerprint: string;
-    containerId: string;
-    networkId: string;
-    recipe: LlamaCppServingRecipe;
-    artifact: VerifiedLocalModelArtifact;
-  },
-): void {
-  writeLocalAdapterJsonFile(path.join(directory, MANAGED_LLAMA_CPP_RUNTIME_RECEIPT_FILE), {
-    schemaVersion: 1,
-    receiptRef: "llama-cpp.host-local.receipt/v1",
-    owner: input.owner,
-    authentication: { fingerprint: input.apiKeyFingerprint },
-    container: {
-      name: MANAGED_LLAMA_CPP_CONTAINER_NAME,
-      id: input.containerId,
-    },
-    network: { name: MANAGED_LLAMA_CPP_NETWORK_NAME, id: input.networkId },
-    runtime: { image: input.recipe.spec.runtime.image },
-    model: {
-      servedName: input.recipe.spec.model.servedName,
-      digest: input.artifact.digest,
-      sizeBytes: input.artifact.sizeBytes,
-    },
-  });
-}
-
-function apiKeyForState(directory: string, randomBytes: typeof crypto.randomBytes): string {
-  const keyPath = path.join(directory, "api-key");
-  const existing = readPrivateRegularFile(keyPath)?.trim() ?? null;
-  if (existing) {
-    if (!/^[a-f0-9]{64}$/.test(existing)) {
-      throw new Error("Managed llama.cpp API-key state is malformed.");
-    }
-    return existing;
-  }
-  const key = randomBytes(32).toString("hex");
-  if (!/^[a-f0-9]{64}$/.test(key)) throw new Error("Could not generate a llama.cpp API key.");
-  createPrivateFile(keyPath, `${key}\n`);
-  return key;
-}
-
-async function digestFile(filePath: string): Promise<VerifiedLocalModelArtifact> {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  const nonBlock = fs.constants.O_NONBLOCK;
-  if (typeof noFollow !== "number" || typeof nonBlock !== "number") {
-    throw new Error("Secure file flags are unavailable for llama.cpp model verification.");
-  }
-  const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow | nonBlock);
-  const hash = crypto.createHash("sha256");
-  let sizeBytes = 0;
-  try {
-    const beforeDescriptor = await handle.stat({ bigint: true });
-    const beforePath = fs.lstatSync(filePath, { bigint: true });
-    if (
-      !beforeDescriptor.isFile() ||
-      !beforePath.isFile() ||
-      beforeDescriptor.dev !== beforePath.dev ||
-      beforeDescriptor.ino !== beforePath.ino ||
-      (beforeDescriptor.mode & 0o077n) !== 0n ||
-      (typeof process.getuid === "function" && beforeDescriptor.uid !== BigInt(process.getuid()))
-    ) {
-      throw new Error("The managed llama.cpp cached model is not an owner-only regular file.");
-    }
-    const buffer = Buffer.allocUnsafe(1024 * 1024);
-    for (;;) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-      if (bytesRead === 0) break;
-      sizeBytes += bytesRead;
-      if (!Number.isSafeInteger(sizeBytes)) {
-        throw new Error("The managed llama.cpp cached model exceeds the supported size.");
-      }
-      hash.update(buffer.subarray(0, bytesRead));
-    }
-    const afterDescriptor = await handle.stat({ bigint: true });
-    const afterPath = fs.lstatSync(filePath, { bigint: true });
-    for (const status of [beforeDescriptor, afterPath]) {
-      if (
-        status.dev !== afterDescriptor.dev ||
-        status.ino !== afterDescriptor.ino ||
-        status.size !== afterDescriptor.size ||
-        status.mtimeNs !== afterDescriptor.mtimeNs ||
-        status.ctimeNs !== afterDescriptor.ctimeNs
-      ) {
-        throw new Error("The managed llama.cpp cached model changed during verification.");
-      }
-    }
-    return {
-      digest: `sha256:${hash.digest("hex")}`,
-      filesystemIdentity: {
-        ctimeNs: afterDescriptor.ctimeNs,
-        dev: afterDescriptor.dev,
-        ino: afterDescriptor.ino,
-        mtimeNs: afterDescriptor.mtimeNs,
-        size: afterDescriptor.size,
-      },
-      hostPath: fs.realpathSync(filePath),
-      sizeBytes,
-    };
-  } finally {
-    await handle.close();
-  }
-}
-
-async function verifyCachedArtifact(
-  plan: LlamaCppGgufCachePlan,
-  owner: LlamaCppGgufCacheOwner,
-  entryDir: string,
-): Promise<VerifiedLocalModelArtifact | null> {
-  const modelPath = path.join(entryDir, plan.acquisition.source.file.path);
-  const receiptPath = path.join(entryDir, "receipt.json");
-  const modelExists = fs.existsSync(modelPath);
-  const receiptExists = fs.existsSync(receiptPath);
-  if (!modelExists && !receiptExists) return null;
-  if (!modelExists) throw new Error("The managed llama.cpp cache receipt has no model artifact.");
-
-  const identity = await digestFile(modelPath);
-  if (
-    identity.sizeBytes !== plan.acquisition.source.file.sizeBytes ||
-    identity.digest !== plan.acquisition.source.file.digest
-  ) {
-    throw new Error("The managed llama.cpp cached model failed size or digest verification.");
-  }
-
-  if (!receiptExists) {
-    const receipt = createLlamaCppGgufCacheEntryReceipt(plan, owner);
-    writeLocalAdapterJsonFile(receiptPath, receipt);
-  } else {
-    parseLlamaCppGgufCacheEntryReceipt(fs.readFileSync(receiptPath, "utf8"), plan, owner);
-  }
-  return identity;
-}
-
-function trustedHuggingFaceHost(hostname: string): boolean {
-  return hostname === "huggingface.co" || hostname.endsWith(".huggingface.co");
-}
-
-async function fetchWithBoundedRedirects(
-  initialUrl: string,
-  token: string | null,
-  fetchImpl: typeof fetch,
-): Promise<Response> {
-  let current = new URL(initialUrl);
-  const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
-  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    if (current.protocol !== "https:" || current.username || current.password)
-      throw new Error("llama.cpp model acquisition requires HTTPS.");
-    const headers: Record<string, string> = { "Accept-Encoding": "identity" };
-    if (token && trustedHuggingFaceHost(current.hostname)) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    const response = await fetchImpl(current, {
-      headers,
-      redirect: "manual",
-      signal,
-    });
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-    const location = response.headers.get("location");
-    if (!location || redirects === MAX_REDIRECTS) {
-      throw new Error("llama.cpp model download exceeded the redirect limit.");
-    }
-    await response.body?.cancel();
-    current = new URL(location, current);
-  }
-  throw new Error("llama.cpp model download exceeded the redirect limit.");
-}
-
-async function acquireArtifact(
-  plan: LlamaCppGgufCachePlan,
-  owner: LlamaCppGgufCacheOwner,
-  homeDir: string,
-  fetchImpl: typeof fetch,
-  randomBytes: typeof crypto.randomBytes,
-): Promise<VerifiedLocalModelArtifact> {
-  const entryDir = cacheEntryDir(homeDir, plan);
-  ensurePrivateDirectory(entryDir);
-  const cached = await verifyCachedArtifact(plan, owner, entryDir);
-  if (cached) return cached;
-
-  const storage = fs.statfsSync(entryDir);
-  const availableBytes = BigInt(storage.bavail) * BigInt(storage.bsize);
-  const requiredBytes =
-    BigInt(plan.acquisition.source.file.sizeBytes) + BigInt(plan.cache.stagingHeadroomBytes);
-  if (availableBytes < requiredBytes) {
-    throw new Error(
-      "Insufficient owner-cache storage for the llama.cpp model and staging headroom.",
-    );
-  }
-
-  const destination = path.join(entryDir, plan.acquisition.source.file.path);
-  const staging = path.join(entryDir, `.download-${randomBytes(12).toString("hex")}.partial`);
-  const response = await fetchWithBoundedRedirects(
-    plan.acquisition.url,
-    String(process.env.HF_TOKEN ?? "").trim() || null,
-    fetchImpl,
+function inspectNetwork(engine: ContainerEngine): DockerNetworkInspection {
+  const result = engine.capture(
+    ["network", "inspect", MANAGED_LLAMA_CPP_NETWORK_NAME],
+    DOCKER_INSPECT_TIMEOUT_MS,
   );
-  if (!response.ok || !response.body) {
-    throw new Error(`llama.cpp model download returned HTTP ${String(response.status)}.`);
+  if (
+    !result.error &&
+    result.status === 1 &&
+    /(?:No such network|not found)/iu.test(result.stderr.trim())
+  ) {
+    return { kind: "absent" };
   }
-
-  const handle = await fs.promises.open(staging, "wx", 0o600);
-  const hash = crypto.createHash("sha256");
-  let sizeBytes = 0;
-  try {
-    try {
-      for await (const chunk of response.body) {
-        const data = Buffer.from(chunk);
-        sizeBytes += data.length;
-        if (sizeBytes > plan.acquisition.source.file.sizeBytes) {
-          throw new Error("llama.cpp model download exceeded the declared size.");
-        }
-        hash.update(data);
-        await handle.write(data);
-      }
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-
-    const digest = `sha256:${hash.digest("hex")}`;
-    if (
-      sizeBytes !== plan.acquisition.source.file.sizeBytes ||
-      digest !== plan.acquisition.source.file.digest
-    ) {
-      throw new Error("llama.cpp model download failed size or digest verification.");
-    }
-    try {
-      fs.linkSync(staging, destination);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-  } finally {
-    if (fs.existsSync(staging)) fs.unlinkSync(staging);
+  const row = parsedSingleRow(requireSuccess("network inspection", result), "network inspection");
+  const labels = row.Labels;
+  if (
+    row.Name !== MANAGED_LLAMA_CPP_NETWORK_NAME ||
+    row.Internal !== true ||
+    row.Driver !== "bridge" ||
+    row.Scope !== "local" ||
+    typeof row.Id !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(row.Id) ||
+    typeof labels !== "object" ||
+    labels === null ||
+    Array.isArray(labels) ||
+    (labels as Record<string, unknown>)[MANAGED_LLAMA_CPP_OWNER_LABEL] !==
+      MANAGED_LLAMA_CPP_OWNER_VALUE
+  ) {
+    throw new Error("The managed llama.cpp network name belongs to another runtime.");
   }
-  const verified = await verifyCachedArtifact(plan, owner, entryDir);
-  if (!verified) throw new Error("llama.cpp model cache publication did not complete.");
-  return verified;
+  return { kind: "owned", id: row.Id };
 }
 
-function launchContract(recipe: LlamaCppServingRecipe): LlamaCppHostLocalLaunchContract {
+function assertContainerNameAvailable(
+  engine: ContainerEngine,
+  receipt: HostLocalInferenceReceipt | null,
+): void {
+  if (receipt !== null) return;
+  const result = engine.capture(
+    ["container", "inspect", MANAGED_LLAMA_CPP_CONTAINER_NAME],
+    DOCKER_INSPECT_TIMEOUT_MS,
+  );
+  if (
+    !result.error &&
+    result.status === 1 &&
+    /(?:No such container|No such object)/iu.test(result.stderr.trim())
+  ) {
+    return;
+  }
+  if (!result.error && result.status === 0) {
+    throw new Error("The managed llama.cpp container name belongs to another runtime.");
+  }
+  throw new Error("Managed llama.cpp could not prove that its container name is available.");
+}
+
+function rollbackFreshUnjournaledInstall(input: {
+  readonly engine: ContainerEngine | null;
+  readonly owner: ReturnType<typeof claimManagedLlamaCppOwner>["owner"] | null;
+  readonly ownerCreated: boolean;
+  readonly paths: ManagedLlamaCppStatePaths;
+}): string | null {
+  if (!input.ownerCreated || input.owner === null) return null;
+  try {
+    const journalStore = createHostLocalCreateJournalStore(input.paths.stateDir);
+    if (journalStore.list().length > 0 || loadManagedLlamaCppReceipt(input.paths) !== null) {
+      return null;
+    }
+    if (JSON.stringify(loadManagedLlamaCppOwner(input.paths)) !== JSON.stringify(input.owner)) {
+      throw new Error("gateway ownership changed before rollback");
+    }
+    if (input.engine !== null) {
+      assertContainerNameAvailable(input.engine, null);
+    }
+    if (
+      journalStore.list().length > 0 ||
+      loadManagedLlamaCppReceipt(input.paths) !== null ||
+      JSON.stringify(loadManagedLlamaCppOwner(input.paths)) !== JSON.stringify(input.owner)
+    ) {
+      throw new Error("managed state changed before rollback");
+    }
+    fs.rmSync(input.paths.stateDir, { recursive: true });
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function sharedHuggingFaceCacheRoot(homeDir: string): string {
+  return path.join(homeDir, ".cache", "huggingface");
+}
+
+function createDirectoryIfAbsent(directory: string): void {
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
+function requireCurrentUserCacheDirectory(directory: string, label: string): void {
+  const status = fs.lstatSync(directory);
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  if (
+    !status.isDirectory() ||
+    status.isSymbolicLink() ||
+    status.uid !== uid ||
+    (status.mode & 0o022) !== 0 ||
+    fs.realpathSync(directory) !== directory
+  ) {
+    throw new Error(`${label} is not current-user filesystem authority.`);
+  }
+}
+
+function ensureSharedHuggingFaceCache(homeDir: string): string {
+  const cacheParent = path.join(homeDir, ".cache");
+  const cacheRoot = sharedHuggingFaceCacheRoot(homeDir);
+  createDirectoryIfAbsent(cacheParent);
+  requireCurrentUserCacheDirectory(cacheParent, "The shared cache parent");
+  createDirectoryIfAbsent(cacheRoot);
+  requireCurrentUserCacheDirectory(cacheParent, "The shared cache parent");
+  requireCurrentUserCacheDirectory(cacheRoot, "The shared Hugging Face cache");
+  return cacheRoot;
+}
+
+function runtimeIdentity(): { uid: number; gid: number; dockerUser: string } {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    throw new Error("Managed llama.cpp requires numeric host user identity.");
+  }
+  const uid = process.getuid();
+  const gid = process.getgid();
+  if (!Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(gid) || gid < 1) {
+    throw new Error("Managed llama.cpp must run as a non-root host identity.");
+  }
+  return { uid, gid, dockerUser: `${String(uid)}:${String(gid)}` };
+}
+
+function launchContract(
+  selection: ResolvedLlamaCppInferenceSelection,
+): LlamaCppHostLocalLaunchContract {
+  const { recipe } = selection;
+  const file = recipe.spec.model.files[0]!;
   return {
     model: {
       servedName: recipe.spec.model.servedName,
-      file: recipe.spec.model.files[0]!,
+      file: { digest: file.digest, path: file.path, sizeBytes: file.sizeBytes },
     },
     policy: recipe.spec.policy,
     runtime: {
+      restartPolicy: recipe.spec.runtime.restartPolicy,
       gpu: recipe.spec.runtime.gpu,
       resources: recipe.spec.runtime.resources,
     },
     serve: {
       authentication: recipe.spec.serve.authentication,
       batchSize: recipe.spec.serve.batchSize,
+      chatTemplate: recipe.spec.serve.chatTemplate,
       contextSize: recipe.spec.serve.contextSize,
       flashAttention: recipe.spec.serve.flashAttention,
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
       kvCache: recipe.spec.serve.kvCache,
-      limits: {
-        requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
-      },
+      limits: { requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
       protocol: recipe.spec.serve.protocol,
@@ -470,268 +298,428 @@ function launchContract(recipe: LlamaCppServingRecipe): LlamaCppHostLocalLaunchC
   };
 }
 
-function ownedNetwork(
-  name: string,
-  generation: string,
-  capture: typeof dockerCapture,
-): { kind: "absent" } | { kind: "foreign" } | { kind: "owned"; id: string } {
-  const source = capture(["network", "inspect", name], {
-    ignoreError: true,
-    timeout: 10_000,
-  }).trim();
-  if (!source) return { kind: "absent" };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch {
-    throw new Error("Managed llama.cpp network inspection returned invalid JSON.");
+async function pullExactImages(
+  images: readonly string[],
+  engine: ContainerEngine,
+  pull: ManagedLlamaCppImagePull | undefined,
+  dockerEnv: Record<string, string>,
+  log: (message: string) => void,
+): Promise<void> {
+  for (const image of new Set(images)) {
+    const before = engine.capture(["image", "inspect", image], DOCKER_INSPECT_TIMEOUT_MS);
+    if (!before.error && before.status === 0) continue;
+    if (
+      before.error ||
+      before.status !== 1 ||
+      !/(?:No such image|No such object|not found)/iu.test(before.stderr.trim())
+    ) {
+      throw new Error(`Managed llama.cpp could not prove local image availability for ${image}.`);
+    }
+    log(`  Pulling pinned managed-inference image ${image}`);
+    const result = pull
+      ? await pull(image, {
+          env: dockerEnv,
+          maxTimeoutMs: IMAGE_PULL_TIMEOUT_MS,
+          logLine: (line) => log(`  ${line}`),
+        })
+      : engine.capture(["pull", image], IMAGE_PULL_TIMEOUT_MS);
+    if (result.status !== 0 || ("error" in result && result.error !== undefined)) {
+      throw new Error(`Pinned managed-inference image pull failed for ${image}.`);
+    }
+    const after = engine.capture(["image", "inspect", image], DOCKER_INSPECT_TIMEOUT_MS);
+    if (after.error || after.status !== 0) {
+      throw new Error(`Pinned managed-inference image is unavailable after pull for ${image}.`);
+    }
   }
-  if (!Array.isArray(parsed) || parsed.length !== 1) {
-    throw new Error("Managed llama.cpp network inspection was ambiguous.");
-  }
-  const row = parsed[0] as Record<string, unknown>;
-  const labels = row.Labels;
-  if (
-    row.Name !== name ||
-    typeof row.Id !== "string" ||
-    !/^[a-f0-9]{12,64}$/.test(row.Id) ||
-    row.Internal !== true ||
-    row.Driver !== "bridge" ||
-    row.Scope !== "local" ||
-    !labels ||
-    typeof labels !== "object" ||
-    Array.isArray(labels) ||
-    (labels as Record<string, unknown>)[MANAGED_LLAMA_CPP_OWNER_LABEL] !==
-      MANAGED_LLAMA_CPP_OWNER_VALUE ||
-    (labels as Record<string, unknown>)[MANAGED_LLAMA_CPP_GENERATION_LABEL] !== generation
-  ) {
-    return { kind: "foreign" };
-  }
-  return { kind: "owned", id: row.Id };
 }
 
-function ownedContainerId(
-  name: string,
-  generation: string,
-  authFingerprint: string,
-  capture: typeof dockerCapture,
-): { kind: "absent" } | { kind: "foreign" } | { kind: "owned"; id: string } {
-  const source = capture(["container", "inspect", name], {
-    ignoreError: true,
-    timeout: 10_000,
-  }).trim();
-  if (!source) return { kind: "absent" };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch {
-    throw new Error("Managed llama.cpp container inspection returned invalid JSON.");
+function requireExactImagesPresent(engine: ContainerEngine, images: readonly string[]): void {
+  for (const image of new Set(images)) {
+    const result = engine.capture(["image", "inspect", image], DOCKER_INSPECT_TIMEOUT_MS);
+    if (result.error || result.status !== 0) {
+      throw new Error(`Managed llama.cpp resume requires the pinned local image ${image}.`);
+    }
   }
-  if (!Array.isArray(parsed) || parsed.length !== 1) {
-    throw new Error("Managed llama.cpp container inspection was ambiguous.");
+}
+
+export function resolveManagedLlamaCppOwnerSelection(
+  owner: NonNullable<ReturnType<typeof loadManagedLlamaCppOwner>>,
+): ResolvedLlamaCppInferenceSelection {
+  const catalog = loadManagedInferenceCatalog();
+  if (catalog.catalogDigest !== owner.catalogDigest) {
+    throw new Error("Managed llama.cpp catalog authority changed; rerun onboarding.");
   }
-  const row = parsed[0] as {
-    Id?: unknown;
-    Name?: unknown;
-    Config?: { Labels?: unknown };
+  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === owner.recipeId);
+  const preset = catalog.presets.find(
+    ({ spec }) =>
+      spec.selection === "explicit-only" &&
+      spec.plan.backend === "install-llama-cpp" &&
+      spec.plan.recipeRef === owner.recipeId,
+  );
+  if (!recipe || !isLlamaCppServingRecipe(recipe) || !preset) {
+    throw new Error("Managed llama.cpp declarative authority is unavailable.");
+  }
+  const recipeDigest = catalog.sources.find(
+    ({ kind, id }) => kind === "ServingRecipe" && id === recipe.metadata.id,
+  )?.digest;
+  const presetDigest = catalog.sources.find(
+    ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
+  )?.digest;
+  if (recipeDigest !== owner.recipeDigest || presetDigest !== owner.presetDigest) {
+    throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
+  }
+  return {
+    outcome: "selected",
+    selection: "explicit",
+    catalogDigest: catalog.catalogDigest,
+    recipeDigest,
+    presetDigest,
+    recipe,
+    preset,
   };
-  const labels = row.Config?.Labels;
-  if (
-    row.Name !== `/${name}` ||
-    typeof row.Id !== "string" ||
-    !/^[a-f0-9]{12,64}$/.test(row.Id) ||
-    !labels ||
-    typeof labels !== "object" ||
-    Array.isArray(labels) ||
-    (labels as Record<string, unknown>)[MANAGED_LLAMA_CPP_OWNER_LABEL] !==
-      MANAGED_LLAMA_CPP_OWNER_VALUE ||
-    (labels as Record<string, unknown>)[MANAGED_LLAMA_CPP_GENERATION_LABEL] !== generation ||
-    (labels as Record<string, unknown>)[MANAGED_LLAMA_CPP_AUTH_LABEL] !== authFingerprint
-  ) {
-    return { kind: "foreign" };
-  }
-  return { kind: "owned", id: row.Id };
 }
 
-/** Install and validate the disabled llama.cpp profile selected by the dedicated gate. */
-export async function installManagedLlamaCpp(
-  recipe: LlamaCppServingRecipe,
-  options: ManagedLlamaCppInstallOptions = {},
-): Promise<ManagedLlamaCppInstallResult> {
-  const homeDir = options.homeDir ?? os.homedir();
-  const randomBytes = options.randomBytes ?? crypto.randomBytes;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const capture = options.dockerCaptureImpl ?? dockerCapture;
-  const run = options.dockerRunImpl ?? dockerRun;
-  const forceRm = options.dockerForceRmImpl ?? dockerForceRm;
-  const pull = options.dockerPullImpl ?? dockerPullWithProgressWatchdog;
-  const probe = options.probeImpl ?? probeLlamaCppAttachment;
-  const sleep = options.sleepImpl ?? delay;
-  const now = options.now ?? Date.now;
-  const log = options.log ?? ((message: string) => console.log(message));
-
-  try {
-    const plan = compileLlamaCppGgufCachePlan(recipe);
-    const privateStateDir = stateDir(homeDir);
-    ensurePrivateDirectory(privateStateDir);
-    const privateCacheRoot = cacheRoot(homeDir);
-    ensurePrivateDirectory(privateCacheRoot);
-    const owner = ownerForCache(privateCacheRoot, randomBytes);
-    bindOwnerToRuntimeState(privateStateDir, owner);
-    const apiKey = apiKeyForState(privateStateDir, randomBytes);
-    readPrivateRegularFile(path.join(privateStateDir, MANAGED_LLAMA_CPP_RUNTIME_RECEIPT_FILE));
-    const authFingerprint = runtimeAuthFingerprint(apiKey);
-    const containerState = ownedContainerId(
-      MANAGED_LLAMA_CPP_CONTAINER_NAME,
-      owner.generation,
-      authFingerprint,
-      capture,
-    );
-    if (containerState.kind === "foreign") {
-      return {
-        ok: false,
-        reason: "the llama.cpp container name is owned by another runtime",
-      };
-    }
-    const networkState = ownedNetwork(MANAGED_LLAMA_CPP_NETWORK_NAME, owner.generation, capture);
-    if (networkState.kind === "foreign") {
-      return {
-        ok: false,
-        reason: "the llama.cpp network name is owned by another runtime",
-      };
-    }
-    log("  Staging the exact llama.cpp model artifact");
-    const artifact = await acquireArtifact(plan, owner, homeDir, fetchImpl, randomBytes);
-
-    const pullResult = await pull(recipe.spec.runtime.image, {
-      maxTimeoutMs: 12 * 60 * 60 * 1000,
-      logLine: (line) => log(`  ${line}`),
-    });
-    if (pullResult.status !== 0) {
-      return {
-        ok: false,
-        reason: "the pinned llama.cpp image could not be pulled",
-      };
-    }
-
-    if (containerState.kind === "owned") {
-      const removal = forceRm(containerState.id, { suppressOutput: true });
-      if (removal.status !== 0) {
-        return {
-          ok: false,
-          reason: "the prior managed llama.cpp container could not be removed",
-        };
-      }
-    }
-    const createdNetwork = networkState.kind === "absent";
-    if (createdNetwork) {
-      const created = run([
-        "network",
-        "create",
-        "--internal",
-        "--label",
-        `${MANAGED_LLAMA_CPP_OWNER_LABEL}=${MANAGED_LLAMA_CPP_OWNER_VALUE}`,
-        "--label",
-        `${MANAGED_LLAMA_CPP_GENERATION_LABEL}=${owner.generation}`,
-        MANAGED_LLAMA_CPP_NETWORK_NAME,
-      ]);
-      if (created.status !== 0) return { ok: false, reason: "could not create llama.cpp network" };
-    }
-
-    const runtimeUid = typeof process.getuid === "function" ? process.getuid() : 1000;
-    const runtimeGid = typeof process.getgid === "function" ? process.getgid() : 1000;
-    if (runtimeUid < 1 || runtimeGid < 1) {
-      return {
-        ok: false,
-        reason: "managed llama.cpp must run as a non-root host identity",
-      };
-    }
-    const argv = buildLlamaCppHostLocalDockerArgv(launchContract(recipe), {
-      apiKeyHostPath: path.join(privateStateDir, "api-key"),
+function lifecycleFor(input: {
+  readonly selection: ResolvedLlamaCppInferenceSelection;
+  readonly paths: ManagedLlamaCppStatePaths;
+  readonly cacheRoot: string;
+  readonly artifact: VerifiedLocalModelArtifact;
+  readonly operation: HostLocalInferenceOperation;
+}): HostLocalLlamaCppLifecycle {
+  const identity = runtimeIdentity();
+  const recipe = input.selection.recipe;
+  return input.operation.createLlamaCppLifecycle({
+    authorityStore: createFilePersistedEngineAuthorityStore(input.paths.stateDir),
+    apiKeyRootHostPath: input.paths.stateDir,
+    bindingSha256: input.operation.bindingSha256,
+    bindings: {
+      apiKeyHostPath: input.paths.apiKeyPath,
       containerName: MANAGED_LLAMA_CPP_CONTAINER_NAME,
       hostPort: LLAMA_CPP_PORT,
       imageReference: recipe.spec.runtime.image,
-      model: artifact,
-      network: {
-        isolation: "docker-internal",
-        name: MANAGED_LLAMA_CPP_NETWORK_NAME,
-      },
+      model: input.artifact,
+      network: { isolation: "docker-internal", name: MANAGED_LLAMA_CPP_NETWORK_NAME },
       ownerLabel: {
         name: MANAGED_LLAMA_CPP_OWNER_LABEL,
         value: MANAGED_LLAMA_CPP_OWNER_VALUE,
       },
-      identityLabels: [
-        { name: MANAGED_LLAMA_CPP_GENERATION_LABEL, value: owner.generation },
-        { name: MANAGED_LLAMA_CPP_AUTH_LABEL, value: authFingerprint },
-      ],
-      runtimeGid,
-      runtimeUid,
-    });
-    const started = run(argv);
-    if (started.status !== 0) return { ok: false, reason: "the llama.cpp container did not start" };
+      identityLabels: [{ name: "io.nvidia.nemoclaw.llama-cpp.recipe", value: recipe.metadata.id }],
+      runtimeGid: identity.gid,
+      runtimeUid: identity.uid,
+    },
+    cacheRootHostPath: input.cacheRoot,
+    contract: launchContract(input.selection),
+    engine: input.operation.engine,
+    journalStore: createHostLocalCreateJournalStore(input.paths.stateDir),
+    plan: compileLlamaCppGgufCachePlan(recipe),
+    probeImageReference: recipe.spec.readiness.probeImage,
+    readinessTimeoutSeconds: recipe.spec.readiness.timeoutSeconds,
+  });
+}
 
-    const launchedContainer = ownedContainerId(
-      MANAGED_LLAMA_CPP_CONTAINER_NAME,
-      owner.generation,
-      authFingerprint,
-      capture,
+function currentManagedLlamaCppArtifact(
+  selection: ResolvedLlamaCppInferenceSelection,
+  homeDir: string,
+): { readonly artifact: VerifiedLocalModelArtifact; readonly cacheRoot: string } {
+  const cacheRoot = sharedHuggingFaceCacheRoot(homeDir);
+  const plan = compileLlamaCppGgufCachePlan(selection.recipe);
+  const source = plan.acquisition.source;
+  const snapshotEntry = path.join(
+    cacheRoot,
+    "hub",
+    `models--${source.repository.replaceAll("/", "--")}`,
+    "snapshots",
+    source.revision,
+    source.file.path,
+  );
+  let hostPath: string;
+  let status: fs.BigIntStats;
+  try {
+    hostPath = fs.realpathSync(snapshotEntry);
+    status = fs.lstatSync(hostPath, { bigint: true });
+  } catch {
+    throw new Error("Managed llama.cpp exact GGUF cache entry is unavailable.");
+  }
+  if (!status.isFile()) {
+    throw new Error("Managed llama.cpp exact GGUF cache entry is not a regular file.");
+  }
+  return {
+    cacheRoot,
+    artifact: {
+      digest: source.file.digest,
+      filesystemIdentity: {
+        ctimeNs: status.ctimeNs,
+        dev: status.dev,
+        ino: status.ino,
+        mtimeNs: status.mtimeNs,
+        size: status.size,
+      },
+      hostPath,
+      sizeBytes: source.file.sizeBytes,
+    },
+  };
+}
+
+/** Reconstruct current declarative and filesystem authority, then use the lifecycle's exact inspector. */
+export function inspectManagedLlamaCppRuntimeExact(
+  options: ManagedLlamaCppExactInspectionOptions,
+): ReturnType<HostLocalLlamaCppLifecycle["runtime"]["inspectManaged"]> {
+  const current = currentManagedLlamaCppArtifact(options.selection, options.homeDir);
+  return lifecycleFor({
+    selection: options.selection,
+    paths: options.paths,
+    cacheRoot: current.cacheRoot,
+    artifact: current.artifact,
+    operation: options.operation,
+  }).runtime.inspectManaged(options.receipt);
+}
+
+/** Activate one catalog-selected managed llama.cpp runtime for a gateway owner. */
+export async function installManagedLlamaCpp(
+  selection: ResolvedLlamaCppInferenceSelection,
+  options: ManagedLlamaCppInstallOptions,
+): Promise<ManagedLlamaCppInstallResult> {
+  const env = options.env ?? process.env;
+  const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
+  const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
+  const pull = options.pullImage;
+  const acquire = options.acquireGguf ?? acquireVerifiedLlamaCppGguf;
+  const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
+  const checkPort = options.checkPort ?? checkPortAvailable;
+  const log = options.log ?? ((message: string) => console.log(message));
+  const recipe = selection.recipe;
+  let engine: ContainerEngine | null = null;
+  let operation: HostLocalInferenceOperation | null = null;
+  let owner: ReturnType<typeof claimManagedLlamaCppOwner>["owner"] | null = null;
+  let ownerCreated = false;
+
+  try {
+    operation = requireRuntimeProviderHostLocalInferenceOperation(
+      options.runtimeProvider,
+      "llama-cpp",
+      { env },
     );
-    const launchedNetwork = ownedNetwork(MANAGED_LLAMA_CPP_NETWORK_NAME, owner.generation, capture);
-    if (launchedContainer.kind !== "owned" || launchedNetwork.kind !== "owned") {
-      return {
-        ok: false,
-        reason: "the llama.cpp runtime identity could not be verified",
-      };
+    engine = operation.engine;
+    const reservation = claimManagedLlamaCppOwner(paths, {
+      schemaVersion: 1,
+      sandboxName: options.sandboxName,
+      catalogDigest: selection.catalogDigest,
+      presetDigest: selection.presetDigest,
+      recipeDigest: selection.recipeDigest,
+      recipeId: recipe.metadata.id,
+    });
+    owner = reservation.owner;
+    ownerCreated = reservation.created;
+    createFilePersistedEngineAuthorityStore(paths.stateDir).record(
+      createPersistedEngineAuthority(operation.providerId, engine, operation.bindingSha256),
+    );
+    const persistedReceipt = loadManagedLlamaCppReceipt(paths);
+    const journalStore = createHostLocalCreateJournalStore(paths.stateDir);
+    const pending = journalStore.list().filter(({ phase }) => phase !== "finalized");
+    if (pending.length > 1) {
+      throw new Error("Managed llama.cpp has more than one unfinished create transaction.");
     }
-    try {
-      persistRuntimeReceipt(privateStateDir, {
-        owner,
-        apiKeyFingerprint: authFingerprint,
-        containerId: launchedContainer.id,
-        networkId: launchedNetwork.id,
-        recipe,
-        artifact,
-      });
-    } catch (error) {
-      forceRm(launchedContainer.id, {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      if (createdNetwork) {
-        run(["network", "rm", launchedNetwork.id], {
-          ignoreError: true,
-          suppressOutput: true,
-        });
+    inspectNetwork(engine);
+    assertContainerNameAvailable(engine, persistedReceipt);
+
+    if (persistedReceipt === null && pending.length === 0) {
+      const port = await checkPort(LLAMA_CPP_PORT);
+      if (!port.ok) {
+        throw new Error(
+          `Managed llama.cpp port ${String(LLAMA_CPP_PORT)} is unavailable: ${port.reason}`,
+        );
       }
-      return {
-        ok: false,
-        reason: `could not persist llama.cpp runtime receipt: ${(error as Error).message}`,
-      };
     }
 
-    const deadline = now() + recipe.spec.readiness.timeoutSeconds * 1000;
-    while (now() <= deadline) {
-      const attachment = probe(apiKey, {
-        requestedModel: recipe.spec.readiness.expectedModel,
+    const plan = compileLlamaCppGgufCachePlan(recipe);
+    const dockerEnv = buildVllmDockerEnv({}, env);
+    for (const name of [
+      "DOCKER_CERT_PATH",
+      "DOCKER_CONFIG",
+      "DOCKER_CONTEXT",
+      "DOCKER_HOST",
+      "DOCKER_TLS",
+      "DOCKER_TLS_VERIFY",
+    ]) {
+      delete dockerEnv[name];
+    }
+    const cacheRoot = ensureSharedHuggingFaceCache(homeDir);
+    let artifact: VerifiedLocalModelArtifact | null = null;
+    let acquireModel = false;
+    try {
+      log("  Verifying the exact llama.cpp GGUF in the shared Hugging Face cache");
+      artifact = await verify(plan, cacheRoot);
+    } catch {
+      acquireModel = true;
+    }
+    await pullExactImages(
+      [
+        ...(acquireModel ? [plan.acquisition.downloaderImage] : []),
+        recipe.spec.runtime.image,
+        recipe.spec.readiness.probeImage,
+      ],
+      engine,
+      pull,
+      dockerEnv,
+      log,
+    );
+    if (acquireModel) {
+      log("  Acquiring and verifying the exact llama.cpp GGUF in the shared Hugging Face cache");
+      const identity = runtimeIdentity();
+      artifact = await acquire({
+        assertDockerAuthority: operation.assertAuthority,
+        execution: {
+          credentialEnv: env,
+          dockerEnv,
+          downloaderImage: plan.acquisition.downloaderImage,
+          hostCacheDir: cacheRoot,
+          spawnDocker: operation.spawn,
+          userIdentity: identity.dockerUser,
+        },
+        observer: {
+          logLine: (line) => log(`  ${line}`),
+          onRateLimit: () => log("  Hugging Face rate limit reached; set HF_TOKEN and retry."),
+        },
+        plan,
       });
-      if (attachment.ok) {
-        process.env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;
-        return { ok: true, apiKey, model: attachment.model };
-      }
-      await sleep(2_000);
     }
-    const removal = forceRm(launchedContainer.id, {
-      ignoreError: true,
-      suppressOutput: true,
+    if (artifact === null) {
+      throw new Error("Managed llama.cpp could not verify its exact GGUF artifact.");
+    }
+    loadOrCreateManagedLlamaCppApiKey(paths);
+    const lifecycle = lifecycleFor({
+      selection,
+      paths,
+      cacheRoot,
+      artifact,
+      operation,
     });
-    if (removal.status === 0) {
-      removeLocalAdapterFile(path.join(privateStateDir, MANAGED_LLAMA_CPP_RUNTIME_RECEIPT_FILE));
+
+    if (pending.length === 1) {
+      const recovery = lifecycle.recoverUnfinished(
+        createManagedLlamaCppReceiptWriter(paths, pending[0]!.transactionId),
+      );
+      if (recovery.failures.length > 0) {
+        throw new Error(`Managed llama.cpp recovery failed: ${recovery.failures[0]!.message}`);
+      }
     }
+
+    let receipt = loadManagedLlamaCppReceipt(paths);
+    if (receipt !== null) {
+      receipt = lifecycle.resume(receipt);
+    } else {
+      const port = await checkPort(LLAMA_CPP_PORT);
+      if (!port.ok) {
+        throw new Error(
+          `Managed llama.cpp port ${String(LLAMA_CPP_PORT)} is unavailable: ${port.reason}`,
+        );
+      }
+      const transactionId = randomBytes(32).toString("hex");
+      receipt = lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
+    }
+    const apiKey = loadOrCreateManagedLlamaCppApiKey(paths);
+    env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;
+    return { ok: true, apiKey, model: recipe.spec.model.servedName, receipt };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const rollbackError = rollbackFreshUnjournaledInstall({
+      engine,
+      owner,
+      ownerCreated,
+      paths,
+    });
     return {
       ok: false,
-      reason: "llama.cpp did not satisfy readiness before the timeout",
+      reason:
+        rollbackError === null
+          ? reason
+          : `${reason} Fresh ownership rollback also failed: ${rollbackError}`,
     };
-  } catch (error) {
-    return { ok: false, reason: (error as Error).message };
   }
+}
+
+/** Recover one exact gateway-owned runtime during normal resume or rebuild. */
+export async function resumeManagedLlamaCppRuntime(
+  sandboxName: string,
+  options: ManagedLlamaCppResumeOptions,
+): Promise<boolean> {
+  const env = options.env ?? process.env;
+  const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
+  const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
+  if (!fs.existsSync(paths.ownerPath)) return false;
+  const owner = loadManagedLlamaCppOwner(paths);
+  if (owner === null) return false;
+  if (owner.sandboxName !== sandboxName) {
+    throw new Error(
+      `Managed llama.cpp on this gateway is owned by sandbox '${owner.sandboxName}', not '${sandboxName}'.`,
+    );
+  }
+
+  const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  const operation = requireRuntimeProviderHostLocalInferenceOperation(
+    options.runtimeProvider,
+    "llama-cpp",
+    { env },
+  );
+  const engine = operation.engine;
+  const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
+  const checkPort = options.checkPort ?? checkPortAvailable;
+  const plan = compileLlamaCppGgufCachePlan(selection.recipe);
+  const cacheRoot = ensureSharedHuggingFaceCache(homeDir);
+  const artifact = await verify(plan, cacheRoot);
+  const journalStore = createHostLocalCreateJournalStore(paths.stateDir);
+  const pending = journalStore.list().filter(({ phase }) => phase !== "finalized");
+  if (pending.length > 1) {
+    throw new Error("Managed llama.cpp has more than one unfinished create transaction.");
+  }
+  let receipt = loadManagedLlamaCppReceipt(paths);
+  requireExactImagesPresent(
+    engine,
+    receipt === null
+      ? [selection.recipe.spec.runtime.image, selection.recipe.spec.readiness.probeImage]
+      : [selection.recipe.spec.readiness.probeImage],
+  );
+  const network = inspectNetwork(engine);
+  if (network.kind === "absent") {
+    if (receipt !== null || pending.some(({ phase }) => phase !== "network-creating")) {
+      throw new Error("Managed llama.cpp internal network is absent from persisted authority.");
+    }
+  }
+  const existingKey = loadManagedLlamaCppApiKey(paths);
+  if ((receipt !== null || pending.length > 0) && existingKey === null) {
+    throw new Error("Managed llama.cpp API-key authority is missing.");
+  }
+  const lifecycle = lifecycleFor({
+    selection,
+    paths,
+    cacheRoot,
+    artifact,
+    operation,
+  });
+  if (pending.length === 1) {
+    const recovery = lifecycle.recoverUnfinished(
+      createManagedLlamaCppReceiptWriter(paths, pending[0]!.transactionId),
+    );
+    if (recovery.failures.length > 0) {
+      throw new Error(`Managed llama.cpp recovery failed: ${recovery.failures[0]!.message}`);
+    }
+    receipt = loadManagedLlamaCppReceipt(paths);
+  }
+  if (receipt === null) {
+    const port = await checkPort(LLAMA_CPP_PORT);
+    if (!port.ok) {
+      throw new Error(
+        `Managed llama.cpp port ${String(LLAMA_CPP_PORT)} is unavailable: ${port.reason}`,
+      );
+    }
+    loadOrCreateManagedLlamaCppApiKey(paths);
+    const transactionId = randomBytes(32).toString("hex");
+    lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
+  } else {
+    lifecycle.resume(receipt);
+  }
+  const apiKey = loadManagedLlamaCppApiKey(paths);
+  if (apiKey === null) throw new Error("Managed llama.cpp API-key authority is missing.");
+  env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;
+  return true;
 }

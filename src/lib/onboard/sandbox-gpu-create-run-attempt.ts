@@ -39,9 +39,10 @@ export type SandboxGpuCreateAttemptState = {
   nativeRuntimeSnapshot: NativeRuntimeSnapshot | null;
 };
 
-// A compatibility recreate can briefly observe the original container's stale
-// Ready row. Require one confirmation poll before advancing to the GPU proof.
-const COMPATIBILITY_STABLE_READY_POLLS = 2;
+// A runtime-managed container replacement can briefly observe the original
+// container's stale Ready row. Require one confirmation poll before advancing
+// to live validation or the GPU proof.
+const REPLACEMENT_STABLE_READY_POLLS = 2;
 
 class ManagedBootstrapCreateStreamFailure extends Error {
   constructor(readonly result: Awaited<ReturnType<typeof streamSandboxCreate>>) {
@@ -336,7 +337,7 @@ export function createSandboxGpuCreateAttemptRunner(
       runCaptureOpenshell: deps.runCaptureOpenshell,
       isSandboxReady,
       getSandboxFailurePhase,
-      stableReadyPolls: compatibility ? COMPATIBILITY_STABLE_READY_POLLS : 1,
+      stableReadyPolls: compatibility || managedBootstrap ? REPLACEMENT_STABLE_READY_POLLS : 1,
       sleep: deps.sleep,
     });
     if (!readiness.ready) {

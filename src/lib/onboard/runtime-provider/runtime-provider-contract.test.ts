@@ -30,6 +30,7 @@ import { registerCreatedSandbox } from "../sandbox-registration";
 import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
+import type { HostLocalInferenceOperation } from "./host-local-inference";
 import {
   createRuntimeProviderBundleRegistry,
   normalizeRuntimeProviderManagedProfileRestoreAuthority,
@@ -38,6 +39,8 @@ import {
   normalizeRuntimeProviderSnapshotRestoreReceipt,
   normalizeRuntimeProviderSnapshotRestoreSource,
   RuntimeProviderRegistrationError,
+  RuntimeProviderSelectionError,
+  requireRuntimeProviderHostLocalInferenceOperation,
   resolveRuntimeProviderBundle,
 } from "./registry";
 
@@ -119,6 +122,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         "preflightDoctor",
         "gateway",
         "workload",
+        "hostLocalInference",
         "lifecycle",
         "mutationAuthority",
         "bootstrap",
@@ -144,6 +148,17 @@ describe("RuntimeProviderBundle registry contract", () => {
       );
       expect(bundle.recovery).toMatchObject({ supported: false });
     }
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
+      supported: true,
+      services: ["llama-cpp"],
+    });
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.capabilities.hostLocalInference).toBe(
+      false,
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.hostLocalInference).toMatchObject({
+      supported: false,
+    });
   });
 
   it("registers the production Docker bootstrap surface through the same bundle registry", () => {
@@ -303,6 +318,7 @@ describe("RuntimeProviderBundle registry contract", () => {
       "preflightDoctor",
       "gateway",
       "workload",
+      "hostLocalInference",
       "lifecycle",
       "mutationAuthority",
       "bootstrap",
@@ -359,6 +375,14 @@ describe("RuntimeProviderBundle registry contract", () => {
       (bundle: RuntimeProviderBundle) => ({
         ...bundle.workload,
         profile: { ...bundle.workload.profile, hostArchitectures: ["amd64", "amd64"] },
+      }),
+    ],
+    [
+      "hostLocalInference",
+      (bundle: RuntimeProviderBundle) => ({
+        ...bundle.hostLocalInference,
+        supported: true,
+        reason: undefined,
       }),
     ],
     [
@@ -495,6 +519,17 @@ describe("RuntimeProviderBundle registry contract", () => {
       createRuntimeProviderBundleRegistry([
         [
           "mxc",
+          replaceSurface(bundle, "capabilities", {
+            ...bundle.capabilities,
+            hostLocalInference: true,
+          }),
+        ],
+      ]),
+    ).toThrow(/capabilities disagree/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
           replaceSurface(bundle, "containerEngine", {
             ...bundle.containerEngine,
             identities: [
@@ -505,6 +540,61 @@ describe("RuntimeProviderBundle registry contract", () => {
         ],
       ]),
     ).toThrow(/duplicate operation identities/u);
+  });
+
+  it("rejects an unsupported host-local-inference capability with an actionable provider error", () => {
+    const bundle = mxcBundle();
+
+    expect(() =>
+      requireRuntimeProviderHostLocalInferenceOperation(bundle, "llama-cpp", { env: {} }),
+    ).toThrow(
+      new RuntimeProviderSelectionError(
+        "Runtime provider 'mxc' does not provide the host-local-inference capability required for llama-cpp: Unsupported by this in-memory contract fixture.",
+      ),
+    );
+  });
+
+  it("keeps host-local-inference runtime selection scoped to each operation", () => {
+    const operation = (providerId: string, authorityId: string): HostLocalInferenceOperation => ({
+      providerId,
+      bindingSha256: authorityId.padEnd(64, "0").slice(0, 64),
+      assertAuthority: vi.fn(),
+      spawn: vi.fn(() => ({}) as never),
+      createLlamaCppLifecycle: vi.fn(() => {
+        throw new Error("lifecycle construction is outside this contract test");
+      }),
+      engine: {
+        operation: "host-local-inference",
+        engineId: "memory",
+        displayName: "In-memory",
+        authorityId,
+        capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+        captureHost: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      },
+    });
+    const firstFactory = vi.fn(() => operation("first", "first-authority"));
+    const secondFactory = vi.fn(() => operation("second", "second-authority"));
+    const first = createInMemoryRuntimeProviderBundle({
+      providerId: "first",
+      workloadProfile: PORTABLE_PROFILE,
+      hostLocalInference: { services: ["llama-cpp"], createOperation: firstFactory },
+    });
+    const second = createInMemoryRuntimeProviderBundle({
+      providerId: "second",
+      workloadProfile: PORTABLE_PROFILE,
+      hostLocalInference: { services: ["llama-cpp"], createOperation: secondFactory },
+    });
+
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(first, "llama-cpp", { env: {} }).engine
+        .authorityId,
+    ).toBe("first-authority");
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(second, "llama-cpp", { env: {} }).engine
+        .authorityId,
+    ).toBe("second-authority");
+    expect(firstFactory).toHaveBeenCalledOnce();
+    expect(secondFactory).toHaveBeenCalledOnce();
   });
 
   it("versions supported snapshot facets and enforces managed-profile capability dependencies", () => {
