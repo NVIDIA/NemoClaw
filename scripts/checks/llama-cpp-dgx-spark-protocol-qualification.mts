@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  LlamaCppDgxSparkExecutionPlan,
-  LlamaCppDgxSparkQualificationReceipt,
+import {
+  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  type LlamaCppDgxSparkExecutionPlan,
+  type LlamaCppDgxSparkQualificationReceipt,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
+
+type ProtocolProbe = (typeof LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)[number];
 
 type JsonRecord = Record<string, unknown>;
 type ProtocolEvidence = LlamaCppDgxSparkQualificationReceipt["probes"];
@@ -331,6 +334,7 @@ export function validateStreamingChatResponse(
   let usage: ProtocolEvidence["usage"] | undefined;
   for (const line of source.split(/\r?\n/u)) {
     if (line === "") continue;
+    if (line.startsWith(":")) continue;
     if (!line.startsWith("data: ")) {
       throw new Error("streaming chat returned a non-SSE event");
     }
@@ -392,8 +396,9 @@ async function recoveryCompletion(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMilliseconds;
   while (Date.now() < deadline) {
+    let response: Response;
     try {
-      const response = await fetchImpl(
+      response = await fetchImpl(
         url,
         jsonRequest(
           authorization,
@@ -406,23 +411,39 @@ async function recoveryCompletion(
           timeoutMilliseconds,
         ),
       );
-      if (response.status === 200) {
-        validateChatCompletionResponse(
-          await readJson(response, 200, maximumBytes, "recovery completion"),
-          model,
-        );
-        return;
-      }
-      if (response.status !== 429 && response.status !== 503) {
-        throw new Error("serving slot recovery returned an unexpected HTTP status");
-      }
-      await readBoundedBytes(response, maximumBytes);
     } catch (error) {
       if (!isAbortError(error) && !(error instanceof TypeError)) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      continue;
     }
+    if (response.status === 200) {
+      validateChatCompletionResponse(
+        await readJson(response, 200, maximumBytes, "recovery completion"),
+        model,
+      );
+      return;
+    }
+    if (response.status !== 429 && response.status !== 503) {
+      throw new Error("serving slot recovery returned an unexpected HTTP status");
+    }
+    await readBoundedBytes(response, maximumBytes);
     await new Promise<void>((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("cancelled protocol request did not release the serving slot");
+}
+
+function assertExecutedProbeInventory(
+  plannedProbes: readonly ProtocolProbe[],
+  executedProbes: ReadonlySet<ProtocolProbe>,
+): void {
+  const plannedProbeSet = new Set(plannedProbes);
+  if (
+    plannedProbeSet.size !== plannedProbes.length ||
+    executedProbes.size !== plannedProbeSet.size ||
+    plannedProbes.some((probe) => !executedProbes.has(probe))
+  ) {
+    throw new Error("protocol qualification did not execute every declarative probe");
+  }
 }
 
 async function cancellationProbe(
@@ -533,12 +554,14 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   const bounds = plan.qualification.probeBounds;
   const timeoutMilliseconds = plan.recipe.serve.limits.requestTimeoutSeconds * 1000;
   const chatUrl = `${baseUrl}/v1/chat/completions`;
+  const executedProbes = new Set<ProtocolProbe>();
 
   const healthResponse = await fetchImpl(`${baseUrl}/health`, {
     headers: { Authorization: authorization },
     signal: requestSignal(timeoutMilliseconds),
   });
   await expectStatus(healthResponse, 200, bounds.maxResponseBytes, "health probe");
+  executedProbes.add("health");
 
   const modelsResponse = await fetchImpl(`${baseUrl}/v1/models`, {
     headers: { Authorization: authorization },
@@ -548,6 +571,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     await readJson(modelsResponse, 200, bounds.maxResponseBytes, "models probe"),
     model,
   );
+  executedProbes.add("models");
 
   const propertiesResponse = await fetchImpl(`${baseUrl}/props`, {
     headers: { Authorization: authorization },
@@ -557,6 +581,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     await readJson(propertiesResponse, 200, bounds.maxResponseBytes, "properties probe"),
     plan.recipe.serve.contextSize,
   );
+  executedProbes.add("context-window");
 
   const authenticationResponse = await fetchImpl(
     chatUrl,
@@ -571,6 +596,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     ),
   );
   await expectStatus(authenticationResponse, 401, bounds.maxResponseBytes, "authentication probe");
+  executedProbes.add("authentication");
 
   const malformedResponse = await fetchImpl(chatUrl, {
     body: "{",
@@ -582,6 +608,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     signal: requestSignal(timeoutMilliseconds),
   });
   await expectStatus(malformedResponse, 400, bounds.maxResponseBytes, "malformed-request probe");
+  executedProbes.add("malformed-request");
 
   const synchronousResponse = await fetchImpl(
     chatUrl,
@@ -603,7 +630,9 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     "synchronous chat probe",
   );
   validateChatCompletionResponse(synchronousValue, model);
+  executedProbes.add("synchronous-chat");
   const usage = usageFrom(isRecord(synchronousValue) ? synchronousValue.usage : undefined);
+  executedProbes.add("usage");
 
   const streamingResponse = await fetchImpl(
     chatUrl,
@@ -630,6 +659,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     await readBoundedBytes(streamingResponse, bounds.maxResponseBytes),
   );
   const streaming = validateStreamingChatResponse(streamingSource, model, bounds.maxStreamEvents);
+  executedProbes.add("streaming-chat");
 
   const structuredResponse = await fetchImpl(
     chatUrl,
@@ -669,6 +699,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     "structured-output probe",
   );
   validateStructuredOutputResponse(structuredValue, model);
+  executedProbes.add("structured-output");
 
   const toolMessages = [
     {
@@ -694,6 +725,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   );
   const toolValue = await readJson(toolResponse, 200, bounds.maxResponseBytes, "tool-call probe");
   const toolCall = validateToolCallResponse(toolValue, model);
+  executedProbes.add("tool-call");
 
   const continuationResponse = await fetchImpl(
     chatUrl,
@@ -741,9 +773,13 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     "tool-result continuation probe",
   );
   validateToolResultContinuationResponse(continuationValue, model);
+  executedProbes.add("tool-result-continuation");
 
   await cancellationProbe(fetchImpl, chatUrl, authorization, plan, timeoutMilliseconds);
+  executedProbes.add("cancellation");
   await clientTimeoutProbe(fetchImpl, chatUrl, authorization, plan, timeoutMilliseconds);
+  executedProbes.add("client-timeout");
+  assertExecutedProbeInventory(plan.qualification.probes, executedProbes);
 
   return {
     authentication: { httpStatus: 401, ok: true },

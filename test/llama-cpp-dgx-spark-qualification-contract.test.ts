@@ -417,6 +417,12 @@ describe("llama.cpp DGX Spark qualification contract", () => {
     expect(() =>
       parseLlamaCppDgxSparkQualificationPlan({
         ...enabledPlan(),
+        probes: ["health", "completion"],
+      }),
+    ).toThrow("qualification plan is invalid");
+    expect(() =>
+      parseLlamaCppDgxSparkQualificationPlan({
+        ...enabledPlan(),
         probeBounds: { ...probeBounds(), clientTimeoutMilliseconds: 0 },
       }),
     ).toThrow("client timeout is invalid");
@@ -602,6 +608,18 @@ describe("llama.cpp DGX Spark qualification contract", () => {
     expect(() =>
       parseLlamaCppDgxSparkQualificationReceipt(
         { ...receipt(), bearerToken: "secret", prompt: "sensitive" },
+        evidenceIdentity(),
+      ),
+    ).toThrow("unexpected fields");
+    expect(() =>
+      parseLlamaCppDgxSparkQualificationReceipt(
+        {
+          ...receipt(),
+          probes: {
+            ...receipt().probes,
+            completion: { httpStatus: 200, ok: true },
+          },
+        },
         evidenceIdentity(),
       ),
     ).toThrow("unexpected fields");

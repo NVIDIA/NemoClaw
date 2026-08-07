@@ -69,8 +69,9 @@ function hangingStream(signal: AbortSignal | null | undefined): Response {
 }
 
 describe("llama.cpp DGX Spark protocol qualification", () => {
-  it("accepts exact streaming, structured-output, tool, and context evidence (#8144)", () => {
+  it("accepts SSE keepalives and exact streaming, tool, and context evidence (#8144)", () => {
     const stream = [
+      ": keepalive",
       `data: ${JSON.stringify({
         choices: [
           {
@@ -204,7 +205,7 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
     ).toThrow("supplied result");
   });
 
-  it("stops reading an oversized probe response at the YAML byte bound (#8144)", async () => {
+  it("stops reading an oversized probe response at the declarative byte bound (#8144)", async () => {
     const boundedPlan = {
       ...plan,
       qualification: {

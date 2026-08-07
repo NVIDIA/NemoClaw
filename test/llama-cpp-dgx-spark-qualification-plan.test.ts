@@ -98,7 +98,19 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
     ).toMatchObject({
       contractVersion: 1,
       qualification: {
-        probeBounds: { clientTimeoutMilliseconds: 250 },
+        probeBounds: {
+          cancellationMaxTokens: 4096,
+          clientTimeoutMilliseconds: 250,
+          maxResponseBytes: 16777216,
+          maxStreamEvents: 512,
+          maxTokens: {
+            streamingChat: 32,
+            structuredOutput: 64,
+            synchronousChat: 16,
+            toolCall: 256,
+            toolResultContinuation: 64,
+          },
+        },
         probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
       },
       recipe: {

@@ -52,6 +52,12 @@ export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "client-timeout",
 ] as const;
 
+const LLAMA_CPP_DGX_SPARK_CLIENT_TIMEOUT_RANGE = { maximum: 10_000, minimum: 10 } as const;
+const LLAMA_CPP_DGX_SPARK_CONTEXT_SIZE_RANGE = {
+  maximum: 1024 * 1024,
+  minimum: 1024,
+} as const;
+
 export const LLAMA_CPP_DGX_SPARK_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 export const LLAMA_CPP_DGX_SPARK_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 export const LLAMA_CPP_DGX_SPARK_RUNNER_PATTERN =
@@ -452,8 +458,8 @@ function parseProtocolProbeBounds(
     clientTimeoutMilliseconds: boundedInteger(
       probeBounds.clientTimeoutMilliseconds,
       "qualification client timeout",
-      10,
-      10_000,
+      LLAMA_CPP_DGX_SPARK_CLIENT_TIMEOUT_RANGE.minimum,
+      LLAMA_CPP_DGX_SPARK_CLIENT_TIMEOUT_RANGE.maximum,
     ),
     maxResponseBytes: boundedInteger(
       probeBounds.maxResponseBytes,
@@ -924,8 +930,8 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   const contextSize = boundedInteger(
     serve.contextSize,
     "compiled qualification context size",
-    1024,
-    1024 * 1024,
+    LLAMA_CPP_DGX_SPARK_CONTEXT_SIZE_RANGE.minimum,
+    LLAMA_CPP_DGX_SPARK_CONTEXT_SIZE_RANGE.maximum,
   );
   const batchSize = boundedInteger(serve.batchSize, "compiled qualification batch size", 1, 8192);
   const microBatchSize = boundedInteger(
@@ -1323,8 +1329,8 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
   const contextSize = boundedInteger(
     contextWindow.contextSize,
     "qualified context size",
-    1024,
-    1024 * 1024,
+    LLAMA_CPP_DGX_SPARK_CONTEXT_SIZE_RANGE.minimum,
+    LLAMA_CPP_DGX_SPARK_CONTEXT_SIZE_RANGE.maximum,
   );
   const authentication = record(probes.authentication, "authentication probe");
   requireExactKeys(authentication, ["httpStatus", "ok"], "authentication probe");
@@ -1341,8 +1347,8 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
   const clientTimeoutMilliseconds = boundedInteger(
     clientTimeout.limitMilliseconds,
     "qualification client timeout",
-    10,
-    10_000,
+    LLAMA_CPP_DGX_SPARK_CLIENT_TIMEOUT_RANGE.minimum,
+    LLAMA_CPP_DGX_SPARK_CLIENT_TIMEOUT_RANGE.maximum,
   );
   if (
     health.ok !== true ||
