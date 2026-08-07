@@ -58,7 +58,9 @@ ENV AWS_EC2_METADATA_DISABLED=true \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 WORKDIR /opt/mcp-tool-discovery-runtime
 COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/npm-ci-locked.sh tools/mcp-tool-discovery-runtime/*.ts ./
+COPY tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed/ ./npm-cache-seed/
 RUN --network=default ./install-reviewed-runtime.sh \
+    && rm -rf ./npm-cache-seed \
     && rm -f ./install-reviewed-runtime.sh ./npm-ci-locked.sh
 
 # Bundle the driver-neutral startup-profile applicator into one CommonJS file.

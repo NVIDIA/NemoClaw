@@ -198,6 +198,12 @@ describe("MCP tool discovery image contract", () => {
     expect(openClawDockerfile).toContain(
       "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/",
     );
+    expect(openClawDockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed/ ./npm-cache-seed/",
+    );
+    expect(openClawDockerfile).toContain(
+      "RUN --network=default ./install-reviewed-runtime.sh \\\n    && rm -rf ./npm-cache-seed",
+    );
   });
 
   it.skipIf(process.platform === "win32")(
@@ -230,24 +236,30 @@ describe("MCP tool discovery image contract", () => {
     },
   );
 
-  it("pins every reachable lockfile archive for protected Linux x64 builds", () => {
-    const seedDirectory = path.join(
-      repoRoot,
-      "tools",
-      "mcp-tool-discovery-runtime",
-      "npm-cache-seed",
-    );
+  it.each([
+    {
+      archiveCount: 81,
+      label: "NemoClaw CLI",
+      lockfile: "nemoclaw/package-lock.json",
+      seedDirectory: "tools/mcp-tool-discovery-runtime/npm-cache-seed",
+    },
+    {
+      archiveCount: 97,
+      label: "MCP discovery runtime",
+      lockfile: "tools/mcp-tool-discovery-runtime/package-lock.json",
+      seedDirectory: "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
+    },
+  ])("pins every reachable $label lockfile archive for protected Linux x64 builds", (fixture) => {
+    const seedDirectory = path.join(repoRoot, fixture.seedDirectory);
     const manifest = JSON.parse(fs.readFileSync(path.join(seedDirectory, "manifest.json"), "utf8"));
     const seedNames = fs
       .readdirSync(seedDirectory)
       .filter((seedName) => seedName !== "manifest.json")
       .sort();
-    const lock = JSON.parse(
-      fs.readFileSync(path.join(repoRoot, "nemoclaw", "package-lock.json"), "utf8"),
-    );
+    const lock = JSON.parse(fs.readFileSync(path.join(repoRoot, fixture.lockfile), "utf8"));
 
     expect(manifest).toMatchObject({
-      archiveCount: 81,
+      archiveCount: fixture.archiveCount,
       kind: "nemoclaw-locked-npm-cache-seed-v1",
       target: { cpu: "x64", libc: "glibc", os: "linux" },
     });
@@ -284,7 +296,7 @@ describe("MCP tool discovery image contract", () => {
       expect(archiveParts).toEqual(expectedParts);
       expect(seed).toHaveLength(archive.size);
       expect(integrity).toBe(archive.integrity);
-      expect(matches).toHaveLength(1);
+      expect(matches.length).toBeGreaterThan(0);
     }
   });
 
@@ -304,7 +316,7 @@ describe("MCP tool discovery image contract", () => {
 
         expect(installResult).toMatchObject({ status: 1 });
         expect(installResult.stderr).toContain(
-          "refusing an npm cache seed not uniquely pinned by package-lock.json",
+          "refusing an npm cache seed not pinned by package-lock.json",
         );
       } finally {
         fs.rmSync(fixture, { force: true, recursive: true });

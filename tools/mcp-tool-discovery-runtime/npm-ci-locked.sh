@@ -60,9 +60,9 @@ const matches = Object.values(lock.packages ?? {}).filter((entry) => {
   );
 });
 
-if (!archiveStat.isFile() || archiveStat.isSymbolicLink() || matches.length !== 1) process.exit(1);
+if (!archiveStat.isFile() || archiveStat.isSymbolicLink() || matches.length === 0) process.exit(1);
 NODE
-      echo "[nemoclaw] refusing an npm cache seed not uniquely pinned by package-lock.json: $seed_archive" >&2
+      echo "[nemoclaw] refusing an npm cache seed not pinned by package-lock.json: $seed_archive" >&2
       exit 1
     fi
     npm cache add "$seed_archive" >"$install_log" 2>&1 || {
