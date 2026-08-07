@@ -408,7 +408,7 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
     },
     agentIdentity: managedImageRuntimeIdentity(input.workload.source.contract.agent),
     intendedWorkloadArgv: input.intendedWorkloadArgv,
-    expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+    expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox", "--workdir", "/sandbox"],
   } as const;
 }
 
