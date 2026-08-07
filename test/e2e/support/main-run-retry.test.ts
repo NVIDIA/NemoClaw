@@ -139,6 +139,19 @@ describe("main E2E retry controller", () => {
     expect(evidence).toMatchObject({ action: "passed-first-attempt", flaky: false });
   });
 
+  it("ignores a cancelled run that never created jobs", async () => {
+    const { evidence, requests } = await evaluate({ attempt: 1, conclusion: "cancelled" });
+
+    expect(evidence).toMatchObject({
+      action: "ignored",
+      reason: "E2E concluded with cancelled",
+      attempts: [],
+      totalRunnerMinutes: 0,
+    });
+    expect(requests.some((request) => request.path.includes("/attempts/"))).toBe(false);
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
   it("does not retry a run superseded by a newer main push", async () => {
     const { evidence, requests } = await evaluate({
       attempt: 1,
