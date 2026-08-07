@@ -654,7 +654,7 @@ function endpointOverlapsPersonalOpenInternet(endpoint: PolicyValue): boolean {
 }
 
 /**
- * OpenShell 0.0.99 rejects a hostless endpoint when a named endpoint selects
+ * OpenShell 0.0.101 rejects a hostless endpoint when a named endpoint selects
  * the same port with different L4/L7 metadata. Personal's hostless 80/443
  * route is the authoritative selector for those ports, so retain it and only
  * the non-overlapping endpoints from the baseline and other selected presets.
@@ -796,7 +796,7 @@ function openClawNpmReviewedEntries(baselinePolicyContent: string): {
 }
 
 /**
- * OpenShell 0.0.99 rejects overlapping endpoint selectors whose TLS or L7
+ * OpenShell 0.0.101 rejects overlapping endpoint selectors whose TLS or L7
  * metadata differs, even when their binary lists are disjoint. Keep the
  * restricted OpenClaw baseline GET-only. While the broader npm preset is
  * active, its reviewed full-access L4 endpoint temporarily replaces the

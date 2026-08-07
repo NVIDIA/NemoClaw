@@ -18,7 +18,7 @@ const DEPLOY_INSTANCE_NAME_ALLOWED_FORMAT =
 
 // Brev instance names are not OpenShell sandbox identities. Preserve their
 // established RFC-compatible 63-character boundary while sandbox names use
-// the stricter OpenShell 0.0.99 contract through the injected validator.
+// the stricter OpenShell 0.0.101 contract through the injected validator.
 export function validateDeployInstanceName(name: string): string {
   if (!name || typeof name !== "string") {
     throw new Error(

@@ -21,7 +21,7 @@ network_policies:
         access: full
         # Keep GitHub and raw-content routes on automatic TLS handling so this
         # preset composes with the agent baselines and narrower inspected
-        # routes under OpenShell 0.0.99. System git is excluded below; the
+        # routes under OpenShell 0.0.101. System git is excluded below; the
         # remaining curl/Homebrew clients trust the sandbox CA.
       - host: ghcr.io
         port: 443

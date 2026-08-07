@@ -23,7 +23,7 @@
 // or provider identifier, or both grammars are enforced by shared upstream
 // contracts.
 
-// OpenShell v0.0.99 routes sandbox and workspace identities through labels
+// OpenShell v0.0.101 routes sandbox and workspace identities through labels
 // capped at 19 characters. Keep NemoClaw's canonical sandbox-name boundary at
 // that upstream limit so invalid creates fail before any gateway mutation.
 export const NAME_MAX_LENGTH = 19;
@@ -31,7 +31,7 @@ export const PROVIDER_NAME_MAX_LENGTH = 128;
 
 // NemoClaw label: starts with a lowercase letter, then lowercase
 // letters/digits/single internal hyphens, and ends with a letter or digit.
-// OpenShell v0.0.99 reserves `--` as a routed-name segment delimiter.
+// OpenShell v0.0.101 reserves `--` as a routed-name segment delimiter.
 export const NAME_VALID_PATTERN = /^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/;
 export const PROVIDER_NAME_VALID_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
 

@@ -466,7 +466,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
       !OPENSHELL_SANDBOX_NAME_PATTERN.test(sandboxName)
     ) {
       errors.push(
-        `advisor matrix entry ${index + 1} sandbox_name must satisfy the OpenShell 0.0.99 sandbox-name contract`,
+        `advisor matrix entry ${index + 1} sandbox_name must satisfy the OpenShell 0.0.101 sandbox-name contract`,
       );
     }
   }
