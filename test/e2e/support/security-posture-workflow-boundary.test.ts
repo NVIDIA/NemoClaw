@@ -50,7 +50,7 @@ describe("security posture workflow boundary", () => {
   it("rejects missing agent coverage, mode drift, and broadly scoped credentials", () => {
     const hermesMatrixEntry = [
       "          - agent: hermes",
-      "            sandbox_name: e2e-hermes-security-posture",
+      "            sandbox_name: e2e-hm-security",
       "            test_file: test/e2e/live/hermes-e2e.test.ts",
       "",
     ].join("\n");

@@ -20,6 +20,11 @@ const HERMES_INTEGRITY_FILES = [
     target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
   },
   {
+    arg: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
+    source: "agents/hermes/patch-hermes-sqlite-temp-store.py",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
     source: "agents/hermes/hermes-wrapper.py",
     target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
@@ -277,6 +282,7 @@ describe("Hermes final image layout", () => {
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
           "COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
+          "COPY agents/hermes/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
           "COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
           "COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
           "COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py",
@@ -287,7 +293,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
           "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
           "COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
-          "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
+          "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.99.json",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
           "COPY agents/hermes/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",

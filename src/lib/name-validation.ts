@@ -36,7 +36,7 @@ function validationSubject(label: string): string {
   return "Names";
 }
 
-// Derive a copy-paste-ready RFC 1123 label from arbitrary user input. Returns
+// Derive a copy-paste-ready OpenShell-compatible label from arbitrary user input. Returns
 // null when no recoverable slug exists (empty, all-symbol input) or when the
 // input is already a valid name (no canonicalisation is performed against
 // inputs the validator would accept). The transform mirrors what a user would

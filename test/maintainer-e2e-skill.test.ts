@@ -18,6 +18,8 @@ function validEvidence() {
       workspaceName: "nclaw-e2e-100-2",
     },
     dispatch: {
+      allowDgxSparkRunnerQueue: false,
+      allowJetsonRunnerQueue: false,
       candidateSha,
       emptySelectors: true,
       eventName: "workflow_dispatch",
@@ -77,6 +79,8 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         workspaceName: "nclaw-e2e-100-2",
       },
       dispatch: {
+        allowDgxSparkRunnerQueue: false,
+        allowJetsonRunnerQueue: false,
         emptySelectors: true,
         includeStagingBrevLaunchable: true,
       },
@@ -128,6 +132,20 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         evidence.dispatch.jobs = "staging-brev-launchable";
       },
       "dispatch.jobs",
+    ],
+    [
+      "a full dispatch that opts into the Jetson runner queue",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.dispatch.allowJetsonRunnerQueue = true;
+      },
+      "dispatch.allowJetsonRunnerQueue",
+    ],
+    [
+      "a full dispatch that opts into the DGX Spark runner queue",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.dispatch.allowDgxSparkRunnerQueue = true;
+      },
+      "dispatch.allowDgxSparkRunnerQueue",
     ],
     [
       "a skipped Launchable E2E job",
