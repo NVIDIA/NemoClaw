@@ -77,7 +77,7 @@ export interface InstallerSourcedResult {
   result: SpawnSyncReturns<string>;
   /** stdout and stderr concatenated. */
   output: string;
-  /** Removes the run's HOME directory. */
+  /** Removes the run's HOME directory when the helper created it; a caller-provided home stays caller-owned. */
   remove: () => void;
 }
 
@@ -90,6 +90,7 @@ export function runInstallerSourcedBody(
   body: string,
   options?: RunInstallerSourcedOptions,
 ): InstallerSourcedResult {
+  const createdHome = options?.home === undefined;
   const home =
     options?.home ??
     fs.mkdtempSync(path.join(os.tmpdir(), options?.homePrefix ?? "nemoclaw-installer-sourced-"));
@@ -118,6 +119,7 @@ export function runInstallerSourcedBody(
     result,
     output: `${result.stdout}${result.stderr}`,
     remove: () => {
+      if (!createdHome) return;
       fs.rmSync(home, { recursive: true, force: true });
     },
   };
