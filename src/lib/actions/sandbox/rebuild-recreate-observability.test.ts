@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import * as shields from "../../shields";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { Session } from "../../state/onboard-session";
@@ -420,5 +421,40 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(false);
     expect(input.onCreated).not.toHaveBeenCalled();
     expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 1);
+  });
+});
+
+describe("rebuild recreate shields state", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(onboardSession, "loadSession").mockImplementation(() =>
+      onboardSession.createSession({ sandboxName: "alpha", observabilityEnabled: false }),
+    );
+    vi.spyOn(onboardSession, "updateSession").mockImplementation(
+      () => onboardSession.loadSession() as Session,
+    );
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("clears prior shields state only after a recovery recreate succeeds (#8283)", async () => {
+    const clearShieldsState = vi
+      .spyOn(shields, "clearShieldsState")
+      .mockImplementation(() => undefined);
+
+    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: false }))).resolves.toBe(
+      true,
+    );
+    expect(clearShieldsState).not.toHaveBeenCalled();
+
+    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: true }))).resolves.toBe(
+      true,
+    );
+    expect(clearShieldsState).toHaveBeenCalledOnce();
+    expect(clearShieldsState).toHaveBeenCalledWith("alpha");
   });
 });

@@ -232,4 +232,62 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("gateway-token --quiet");
     expect(args.bail).toHaveBeenCalledWith("Failed to re-apply shields lockdown.");
   });
+
+  it("reconciles the registry, relocks shields, then verifies host forwarding in that order (#8283)", async () => {
+    const observed: string[] = [];
+    vi.mocked(registry.updateSandbox).mockImplementation(() => {
+      observed.push("registry");
+      return true;
+    });
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
+      () => {
+        observed.push("forward");
+        return true;
+      },
+    );
+    const args = input();
+    args.relockShieldsIfNeeded = vi.fn(() => {
+      observed.push("relock");
+      return true;
+    });
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(observed).toEqual(["registry", "relock", "forward"]);
+    expect(args.bail).not.toHaveBeenCalled();
+  });
+
+  it("leaves host forwarding unattempted when the shields relock fails (#8283)", async () => {
+    const args = input();
+    args.relockShieldsIfNeeded = vi.fn(() => false);
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith("Failed to re-apply shields lockdown.");
+  });
+
+  it("names the connect recovery command when host forwarding is unverified (#8283)", async () => {
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Messaging webhook forward was not verified");
+    expect(output).toContain("nemoclaw alpha connect");
+    expect(args.bail).not.toHaveBeenCalled();
+  });
+
+  it("warns that a recreated sandbox starts unlocked when shields were previously enabled (#8283)", async () => {
+    const args = input();
+    args.recoveryRecreate = true;
+    args.staleSandboxWasLocked = true;
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
+      "Shields were previously enabled but the recreated sandbox starts unlocked",
+    );
+  });
 });
