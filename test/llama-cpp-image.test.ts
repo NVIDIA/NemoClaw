@@ -151,16 +151,15 @@ function enablePublication(source: string): string {
   });
 }
 
-function configureManifestAnnotations(
-  source: string,
-  annotations: Record<string, string> | undefined,
-): string {
+function configureManifestAnnotations(source: string, annotations: Record<string, string>): string {
   const candidate = YAML.parse(source) as { metadata: { annotations?: Record<string, string> } };
-  if (annotations === undefined) {
-    delete candidate.metadata.annotations;
-  } else {
-    candidate.metadata.annotations = annotations;
-  }
+  candidate.metadata.annotations = annotations;
+  return YAML.stringify(candidate);
+}
+
+function removeManifestAnnotations(source: string): string {
+  const candidate = YAML.parse(source) as { metadata: { annotations?: Record<string, string> } };
+  delete candidate.metadata.annotations;
   return YAML.stringify(candidate);
 }
 
@@ -386,10 +385,7 @@ describe("declarative llama.cpp server image", () => {
       "an unexpected top-level field",
       manifestSource.replace("kind: ServerImageBuild", "kind: ServerImageBuild\nunexpected: true"),
     ],
-    [
-      "a missing request guard state annotation",
-      configureManifestAnnotations(manifestSource, undefined),
-    ],
+    ["a missing request guard state annotation", removeManifestAnnotations(manifestSource)],
     [
       "a non-dormant request guard state annotation",
       configureManifestAnnotations(manifestSource, {
