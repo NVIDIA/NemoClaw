@@ -4,7 +4,6 @@
 import type {
   CompiledServingCatalog,
   HostLocalInferenceServingRecipe,
-  LlamaCppServingRecipe,
   ManagedInferenceServingPreset,
   ServingDefinitionKind,
   ServingRecipe,
@@ -14,33 +13,24 @@ export const LOCAL_MODEL_PROFILE_GATE = "local-model-profile-v1" as const;
 export const LOCAL_MODEL_PROFILE_ENABLED_ENV = "NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE" as const;
 export const LOCAL_MODEL_PROFILE_RUNTIME_ENV = "NEMOCLAW_LOCAL_MODEL_RUNTIME" as const;
 
-export type LocalModelProfileRuntime = "vllm" | "llama-cpp";
+export type LocalModelProfileRuntime = "vllm";
 
-export type LocalModelProfilePlan =
-  | {
-      readonly runtime: "vllm";
-      readonly catalogDigest: string;
-      readonly presetDigest: string;
-      readonly recipeDigest: string;
-      readonly preset: ManagedInferenceServingPreset;
-      readonly recipe: HostLocalInferenceServingRecipe;
-    }
-  | {
-      readonly runtime: "llama-cpp";
-      readonly catalogDigest: string;
-      readonly presetDigest: string;
-      readonly recipeDigest: string;
-      readonly preset: ManagedInferenceServingPreset;
-      readonly recipe: LlamaCppServingRecipe;
-    };
+export type LocalModelProfilePlan = {
+  readonly runtime: "vllm";
+  readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: HostLocalInferenceServingRecipe;
+};
 
 function requestedRuntime(env: NodeJS.ProcessEnv): LocalModelProfileRuntime | null {
   const raw = String(env[LOCAL_MODEL_PROFILE_RUNTIME_ENV] ?? "")
     .trim()
     .toLowerCase();
   if (!raw) return null;
-  if (raw === "vllm" || raw === "llama-cpp") return raw;
-  throw new Error(`${LOCAL_MODEL_PROFILE_RUNTIME_ENV} must be 'vllm' or 'llama-cpp'.`);
+  if (raw === "vllm") return raw;
+  throw new Error(`${LOCAL_MODEL_PROFILE_RUNTIME_ENV} must be 'vllm'.`);
 }
 
 function recipeForPreset(
@@ -82,12 +72,6 @@ function definitionDigest(
   return matches[0]!.digest;
 }
 
-function isLlamaCppRecipe(recipe: ServingRecipe): recipe is LlamaCppServingRecipe {
-  return (
-    recipe.spec.backend === "install-llama-cpp" && recipe.spec.providerId === "llama-cpp-local"
-  );
-}
-
 /** Resolve the disabled serving preset only after the dedicated feature gate is enabled. */
 export function resolveLocalModelProfilePlan(
   catalog: CompiledServingCatalog,
@@ -109,7 +93,7 @@ export function resolveLocalModelProfilePlan(
     );
   }
 
-  const backend = runtime === "vllm" ? "vllm" : "install-llama-cpp";
+  const backend = "vllm";
   const presets = catalog.presets.filter(
     (preset): preset is ManagedInferenceServingPreset =>
       isManagedPreset(preset) &&
@@ -129,10 +113,7 @@ export function resolveLocalModelProfilePlan(
     presetDigest: definitionDigest(catalog, "ServingPreset", preset.metadata.id),
     recipeDigest: definitionDigest(catalog, "ServingRecipe", recipe.metadata.id),
   };
-  if (runtime === "vllm" && isHostLocalVllmRecipe(recipe)) {
-    return { runtime, ...digests, preset, recipe };
-  }
-  if (runtime === "llama-cpp" && isLlamaCppRecipe(recipe)) {
+  if (isHostLocalVllmRecipe(recipe)) {
     return { runtime, ...digests, preset, recipe };
   }
   throw new Error(`The ${runtime} local model profile selects an incompatible serving recipe.`);

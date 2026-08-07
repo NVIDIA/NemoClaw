@@ -12,6 +12,7 @@ import { VLLM_EXTRA_ARGS_ENV } from "../vllm-models.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  isHostLocalInferenceServingRecipe,
 } from "./adapter-registry.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type {
@@ -202,8 +203,23 @@ export function resolveHostLocalVllmSelection(
   if ("topologyQualification" in resolution) {
     return { kind: "rejected", reason: `Serving preset ${presetId} requires a managed topology.` };
   }
+  if (!isHostLocalInferenceServingRecipe(resolution.recipe)) {
+    return {
+      kind: "rejected",
+      reason: `Serving preset ${presetId} is not a host-local vLLM preset.`,
+    };
+  }
   try {
-    return { kind: "selected", ...materializeHostLocalVllmSelection(resolution, baseProfile) };
+    const vllmResolution: ResolvedHostLocalInferenceSelection = {
+      outcome: "selected",
+      selection: resolution.selection,
+      catalogDigest: resolution.catalogDigest,
+      presetDigest: resolution.presetDigest,
+      recipeDigest: resolution.recipeDigest,
+      preset: resolution.preset,
+      recipe: resolution.recipe,
+    };
+    return { kind: "selected", ...materializeHostLocalVllmSelection(vllmResolution, baseProfile) };
   } catch (error) {
     return { kind: "rejected", reason: (error as Error).message };
   }
