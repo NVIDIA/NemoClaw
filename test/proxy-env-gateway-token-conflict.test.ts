@@ -23,6 +23,10 @@ const WRITE_RUNTIME_SHELL_ENV = extractShellFunctionFromSource(
 );
 const REAL_TOKEN = "REAL-GATEWAY-TOKEN-abc123";
 const SHELLS = ["sh", "bash"] as const;
+const EMPTY_TOKEN_URLS = [
+  "wss://remote.example.test",
+  "wss://user:password@remote.example.test",
+] as const;
 
 const tmpRoots: string[] = [];
 afterEach(() => {
@@ -185,5 +189,22 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     expect(status).toBe(0);
     expect(stdout).toContain("TOKEN=[]");
     expect(stderr).toBe("");
+  });
+
+  it.each(
+    SHELLS.flatMap((shell) => EMPTY_TOKEN_URLS.map((sourceUrl) => ({ shell, sourceUrl }))),
+  )("rejects a readonly nonempty token for $sourceUrl under $shell", ({ shell, sourceUrl }) => {
+    const { status, stdout, stderr } = runReconcile({
+      intended: REAL_TOKEN,
+      shell,
+      preset: { value: "SENTINEL_CONFLICT", readonly: true },
+      sourceUrl,
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain("Error: conflicting trust anchor");
+    expect(stderr).not.toContain("read only");
+    expect(`${stdout}\n${stderr}`).not.toContain("SENTINEL_CONFLICT");
+    expect(`${stdout}\n${stderr}`).not.toContain(REAL_TOKEN);
+    expect(stdout).not.toContain("TOKEN=");
   });
 });
