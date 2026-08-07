@@ -13,6 +13,11 @@ import {
   type VerifiedLocalModelArtifact,
 } from "../../src/lib/inference/llama-cpp/host-local-runtime.ts";
 import {
+  runLlamaCppDgxSparkProtocolQualification,
+  validateChatCompletionResponse,
+  validateModelsResponse,
+} from "./llama-cpp-dgx-spark-protocol-qualification.mts";
+import {
   LLAMA_CPP_DGX_SPARK_MODEL_PATH_PATTERN,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_IMAGE_REPOSITORY,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND,
@@ -20,6 +25,8 @@ import {
   type LlamaCppDgxSparkExecutionPlan,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
+
+export { validateChatCompletionResponse, validateModelsResponse };
 
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/u;
 const gitShaPattern = /^[0-9a-f]{40}$/u;
@@ -384,36 +391,6 @@ export function parseNvidiaSmi(
   return { count: 1, driverVersion, name: "NVIDIA GB10" };
 }
 
-export function validateModelsResponse(value: unknown, expectedModel: string): void {
-  if (
-    !isRecord(value) ||
-    value.object !== "list" ||
-    !Array.isArray(value.data) ||
-    value.data.length !== 1 ||
-    !isRecord(value.data[0]) ||
-    value.data[0].id !== expectedModel
-  ) {
-    throw new Error("models probe did not return the exact served model identity");
-  }
-}
-
-export function validateChatCompletionResponse(value: unknown, expectedModel: string): void {
-  if (
-    !isRecord(value) ||
-    value.object !== "chat.completion" ||
-    value.model !== expectedModel ||
-    !Array.isArray(value.choices) ||
-    value.choices.length < 1 ||
-    !isRecord(value.choices[0]) ||
-    !isRecord(value.choices[0].message) ||
-    typeof value.choices[0].message.content !== "string" ||
-    value.choices[0].message.content.length < 1 ||
-    value.choices[0].message.content.length > 4096
-  ) {
-    throw new Error("authenticated chat completion probe failed its response contract");
-  }
-}
-
 function runCommand(
   command: string,
   args: string[],
@@ -771,25 +748,6 @@ function resolveLoopbackPort(containerName: string, containerPort: number): numb
   return requiredInteger(Number.parseInt(match[1] ?? "0", 10), "loopback port", 1024, 65_535);
 }
 
-async function requestJson(
-  url: string,
-  init: RequestInit,
-  timeoutMilliseconds: number,
-  maximumBytes: number,
-): Promise<unknown> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMilliseconds) });
-  if (!response.ok) throw new Error("qualification HTTP probe returned a non-success status");
-  const body = await response.text();
-  if (Buffer.byteLength(body) < 1 || Buffer.byteLength(body) > maximumBytes) {
-    throw new Error("qualification HTTP probe response exceeded its bound");
-  }
-  try {
-    return JSON.parse(body) as unknown;
-  } catch {
-    throw new Error("qualification HTTP probe did not return JSON");
-  }
-}
-
 async function waitForHealth(port: number, timeoutSeconds: number): Promise<void> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
@@ -920,29 +878,11 @@ async function runQualification(
     );
     await waitForHealth(loopbackPort, plan.recipe.readiness.timeoutSeconds);
     const authorization = `Bearer ${apiKey}`;
-    const models = await requestJson(
-      `http://127.0.0.1:${loopbackPort}/v1/models`,
-      { headers: { Authorization: authorization } },
-      10_000,
-      1024 * 1024,
-    );
-    validateModelsResponse(models, plan.recipe.readiness.expectedModel);
-    const completion = await requestJson(
-      `http://127.0.0.1:${loopbackPort}/v1/chat/completions`,
-      {
-        body: JSON.stringify({
-          max_tokens: 16,
-          messages: [{ content: "Return one short readiness token.", role: "user" }],
-          model: plan.recipe.model.servedName,
-          temperature: 0,
-        }),
-        headers: { Authorization: authorization, "Content-Type": "application/json" },
-        method: "POST",
-      },
-      plan.recipe.serve.limits.requestTimeoutSeconds * 1000,
-      16 * 1024 * 1024,
-    );
-    validateChatCompletionResponse(completion, plan.recipe.model.servedName);
+    const probes = await runLlamaCppDgxSparkProtocolQualification({
+      authorization,
+      baseUrl: `http://127.0.0.1:${loopbackPort}`,
+      plan,
+    });
     const offload = validateStartupLog(
       runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
         maximumBytes: 16 * 1024 * 1024,
@@ -980,14 +920,7 @@ async function runQualification(
         fullOffload: true,
         ...offload,
       },
-      probes: {
-        completion: {
-          httpStatus: 200,
-          model: plan.recipe.model.servedName,
-          ok: true,
-        },
-        health: { httpStatus: 200, ok: true },
-      },
+      probes,
     };
   } catch (error) {
     failure = error;

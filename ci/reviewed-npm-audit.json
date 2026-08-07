@@ -80,6 +80,15 @@
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
       "lockSha256": "962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793"
+    },
+    {
+      "id": "mcp-tool-discovery-runtime",
+      "label": "MCP tool discovery runtime locked production graph",
+      "packageSpec": "@modelcontextprotocol/sdk@1.30.0",
+      "integrity": "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
+      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+      "directory": "tools/mcp-tool-discovery-runtime",
+      "lockSha256": "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb"
     }
   ]
 }
