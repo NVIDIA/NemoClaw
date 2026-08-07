@@ -621,10 +621,13 @@ describe("portable demo sandbox lifecycle", () => {
     const binPath = createManagedOllamaBinary(stateDir);
     recordUserLocalOllamaOwnership(binPath, { homeDir: stateDir, stateDir });
     let ollamaStarted = false;
-    const captureHost = vi.fn((command: string) => {
-      if (command === "pgrep") return { status: 1 };
-      return ollamaStarted ? { status: 0, stdout: JSON.stringify({ models: [] }) } : { status: 7 };
-    });
+    const captureHost = vi.fn((command: string) =>
+      command === "pgrep"
+        ? { status: 1 }
+        : ollamaStarted
+          ? { status: 0, stdout: JSON.stringify({ models: [] }) }
+          : { status: 7 },
+    );
     const launchHost = vi.fn(
       (_command: string, _args: readonly string[], _env: NodeJS.ProcessEnv, descriptor: number) => {
         fs.renameSync(binPath, `${binPath}.validated`);
