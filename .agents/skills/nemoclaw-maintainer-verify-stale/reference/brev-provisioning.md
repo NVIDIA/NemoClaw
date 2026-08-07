@@ -3,11 +3,11 @@
 
 # verify-stale — Brev Provisioning and Install Reference
 
-Use when the local-first path does not settle the issue and a Brev run is approved. Covers box reuse/provisioning, reset, baseline/latest installs, dependency bootstrap, and `brev exec` footguns.
+Use when the local-first path does not settle the issue and a Brev run is approved. Covers instance reuse/provisioning, reset, baseline/latest installs, dependency bootstrap, and `brev exec` footguns.
 
 ## Contents
 
-- [Step 7: Reuse or Provision a Brev Box](#step-7-reuse-or-provision-a-brev-box)
+- [Step 7: Reuse or Provision a Brev Instance](#step-7-reuse-or-provision-a-brev-instance)
 - [Step 8: Validate on Baseline, Verify on Latest](#step-8-validate-on-baseline-verify-on-latest)
 - [Reset](#reset-run-before-each-install)
 - [Step 8a: Install reported version](#step-8a-install-reported-version)
@@ -16,7 +16,7 @@ Use when the local-first path does not settle the issue and a Brev run is approv
 
 ---
 
-## Step 7: Reuse or Provision a Brev Box
+## Step 7: Reuse or Provision a Brev Instance
 
 Prefer reuse over provisioning only when the matching `verify-stale-*` instance has no active verification sentinel or registered NemoClaw sandbox. Before remote execution or a cost-bearing action, present the exact instance, type, hourly price, 60-minute execution budget, 120-second cleanup grace, third-party-software acceptance, credential plan, and cleanup action. Wait for explicit maintainer approval.
 
@@ -28,8 +28,8 @@ INSTANCE_CLASS="cpu"   # or "gpu"
 
 INSTANCES=$(brev ls --json)
 
-# Look for an existing running verify-stale-* box matching the required class.
-# CPU boxes have no .gpu field set; GPU boxes do.
+# Look for an existing running verify-stale-* instance matching the required class.
+# CPU instances have no .gpu field set; GPU instances do.
 EXISTING=$(echo "$INSTANCES" | jq -r --arg class "$INSTANCE_CLASS" '
   .[]?
   | select(.name | startswith("verify-stale-"))
@@ -46,10 +46,10 @@ if [ -n "$EXISTING" ]; then
   echo "The approved plan will atomically acquire the instance, then verify that ~/.verify-stale-running is absent and 'nemoclaw list --json' has no sandboxes before reuse."
 else
   # Concurrency cap: count running, starting, provisioning, and failed-but-still-
-  # allocated verification boxes. Only explicitly stopped boxes are excluded.
+  # allocated verification instances. Only explicitly stopped instances are excluded.
   ACTIVE=$(echo "$INSTANCES" | jq '[.[]? | select(.name | startswith("verify-stale-")) | select(.status != "STOPPED")] | length')
   if [ "$ACTIVE" -ge 2 ]; then
-    echo "ERROR: 2 verify-stale boxes are already active. Wait, reuse, or clean up a stale allocation."
+    echo "ERROR: 2 verify-stale instances are already active. Wait, reuse, or clean up a stale allocation."
     exit 1
   fi
 
@@ -68,7 +68,7 @@ else
     # SKUs change. Bias the floor by reproducer-implied memory needs — the cheapest 2 GB SKU
     # cannot load a 4.8 GiB Ollama probe, and onboard fails at provider validation before any
     # sandbox-creation code runs. Surfaced during the #2007 e2e run (wasted ~25 min on a 2 GB
-    # box that couldn't load `nemotron-3-nano:4b`).
+    # instance that couldn't load `nemotron-3-nano:4b`).
     #
     # Memory floor heuristic:
     #   - Reproducer references Ollama or vLLM or names a model tag (e.g. `nemotron-3-nano:4b`,
@@ -92,7 +92,7 @@ fi
 # `brev create "${CREATE_ARGS[@]}" --dry-run`. Approval includes creation and
 # deletion of this exact instance name. For reused and retained instances, the
 # cleanup plan resets NemoClaw state and removes copied credentials, reproducer
-# scripts, and verification logs. Approval does not permit retaining a new box.
+# scripts, and verification logs. Approval does not permit retaining a new instance.
 
 # Install cleanup before creation so a partially successful `brev create` cannot
 # leave an approved cost running when a later local step fails.
@@ -148,7 +148,7 @@ cleanup_verification() {
   # The execution budget can be exhausted when cleanup starts. Give control-
   # plane cleanup a separate bounded grace period and report failures.
   if [ "$PROVISIONED_NEW" = "1" ] && [ "$KEEP_INSTANCE" != "1" ]; then
-    # Deleting a newly provisioned box removes its remote evidence and lock too;
+    # Deleting a newly provisioned instance removes its remote evidence and lock too;
     # prioritize deletion so the total cleanup grace remains 120 seconds.
     run_with_timeout 120 brev delete "$INSTANCE_NAME" >/dev/null 2>&1 || \
       echo "WARNING: bounded delete did not complete for $INSTANCE_NAME; check Brev billing state now" >&2
@@ -202,7 +202,7 @@ if ! run_bounded brev exec "$INSTANCE_NAME" "$ACQUIRE_COMMAND"; then
 fi
 
 if [ -n "$EXISTING" ]; then
-  # Fail closed when the reusable box contains state that this run does not own.
+  # Fail closed when the reusable instance contains state that this run does not own.
   REUSE_CHECK='set -eu
     test ! -e ~/.verify-stale-running
     export PATH="$HOME/.local/bin:$PATH"
@@ -225,18 +225,18 @@ REMOTE_STATE_CREATED=1
 
 # Cleanup runs on success, error, and SIGINT. Reset verification state and remove
 # copied credentials, scripts, logs, and the sentinel from every instance. Delete
-# only what we provisioned; reused boxes stay available without run artifacts.
+# only what we provisioned; reused instances stay available without run artifacts.
 # `brev delete` is non-interactive by default — there is no --yes flag, and passing one errors.
 echo ">>> Brev instance: $INSTANCE_NAME (provisioned_new=$PROVISIONED_NEW; approved cleanup: reset verification state, remove credentials/scripts/logs, and brev delete $INSTANCE_NAME when newly provisioned)"
 ```
 
 Do not set `KEEP_INSTANCE=1` unless the maintainer separately approves the retention cost, names the cleanup owner, and accepts an exact deletion deadline. Before reuse or retention, remove `~/.verify-stale-evidence` and confirm the verification sentinel is absent.
 
-Wallclock execution budget per verification: **60 minutes** default, measured from the approved create/reuse action. `run_bounded` caps every post-approval local Brev CLI process; phase-specific remote `timeout` calls use the smaller remaining budget. Cleanup gets a separate bounded grace period of up to 120 seconds because deletion still depends on the Brev control plane. The approval plan must disclose that grace and that billing can continue until deletion is acknowledged. Do not start a phase whose required sample plan cannot fit. Bugs that need more than an hour fall out of v1 scope; an expired budget is an infra failure (Step 11), and the cleanup trap still runs.
+Wall-clock execution budget per verification: **60 minutes** default, measured from the approved create/reuse action. `run_bounded` caps every post-approval local Brev CLI process; phase-specific remote `timeout` calls use the smaller remaining budget. Cleanup gets a separate bounded grace period of up to 120 seconds because deletion still depends on the Brev control plane. The approval plan must disclose that grace and that billing can continue until deletion is acknowledged. Do not start a phase whose required sample plan cannot fit. Bugs that need more than an hour fall out of v1 scope; an expired budget is an infra failure (Step 11), and the cleanup trap still runs.
 
 Check every `run_bounded` result. Status `124` means the local wall-clock wrapper or remote phase timed out; treat it as an infra failure and let the cleanup trap run. Never continue from a failed copy, reset, bootstrap, or transport call using partial state.
 
-The previous design had a 25-min default with a 60-min extension for time-sensitive bugs (`memory leak`, `over time`, etc.). That split optimised for the wrong constraint — most issues fit comfortably under 60 min, and the keyword-based extension forced re-runs whenever a real install or bootstrap took longer than the optimistic 25-min budget. One 60-minute execution budget removes that paper cut.
+The previous design used a 25-minute default and a 60-minute extension for time-sensitive bugs such as `memory leak` and `over time`. The keyword-based extension required a rerun when an install or bootstrap exceeded 25 minutes. One 60-minute execution budget avoids that rerun condition.
 
 ---
 
@@ -446,7 +446,7 @@ When the table says ✗ No or △ Sometimes, Step 5's API-key prompt fires. When
 
 Two non-obvious gotchas surfaced during the #2007 e2e run that every subsequent `brev exec` call has to handle. Encode them once here so reproducer scripts don't have to relearn each time.
 
-**PATH does not include `~/.local/bin` in non-login shells.** `nemoclaw`'s installer drops a shim at `~/.local/bin/nemoclaw` and updates PATH via `~/.bashrc` / `~/.profile`. `brev exec` spawns non-login, non-interactive shells that don't source those files, so a bare `brev exec "$INSTANCE" "nemoclaw --version"` returns `command not found` on a freshly-installed box. Fix: every reproducer script must explicitly export PATH at the top, OR every `brev exec` call must wrap with `bash -lc '...'`.
+**PATH does not include `~/.local/bin` in non-login shells.** `nemoclaw`'s installer drops a shim at `~/.local/bin/nemoclaw` and updates PATH via `~/.bashrc` / `~/.profile`. `brev exec` spawns non-login, non-interactive shells that don't source those files, so a bare `brev exec "$INSTANCE" "nemoclaw --version"` returns `command not found` on a freshly installed instance. Fix: every reproducer script must explicitly export PATH at the top, OR every `brev exec` call must wrap with `bash -lc '...'`.
 
 ```bash
 # Reproducer scripts: prepend this line.
@@ -492,4 +492,4 @@ fi
 trap 'rmdir "$SENTINEL" 2>/dev/null || true' EXIT
 ```
 
-The sentinel survives an SSH drop because it lives on the Brev box's filesystem; the trap removes it on script exit. Atomic `mkdir` prevents two simultaneous starts from both passing the check. A second `brev exec` invocation that tries to retry from the top will hit the sentinel and bail instead of double-running.
+The sentinel survives an SSH drop because it lives on the Brev instance filesystem; the trap removes it on script exit. Atomic `mkdir` prevents two simultaneous starts from both passing the check. A second `brev exec` invocation that retries from the top will hit the sentinel and stop instead of running twice.

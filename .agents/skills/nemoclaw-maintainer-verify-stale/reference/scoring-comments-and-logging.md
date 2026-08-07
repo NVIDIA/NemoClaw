@@ -268,10 +268,12 @@ For a score below 60, use the same evidence structure only as far as needed for 
 **Verified on:** v0.0.34
 **Verification mode:** runtime reproduction on Brev `<instance-class>` — bug confirmed live on latest.
 
-Skill ran the reported reproducer on v0.0.34 and observed the same symptom. No Project field or label change proposed; eligible for re-verification after the seven-day marker TTL.
+The skill ran the reviewed reproducer on v0.0.34 and observed the same symptom. No Project field or label change proposed; eligible for re-verification after the seven-day marker TTL.
 
 <!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->
 ````
+
+If Step 8c introduced a behavior-bearing command or state transition, replace `reviewed reproducer` with `synthesized and reviewed reproducer`.
 
 If a partial-fix PR is in flight that targets the same surface, add one sentence naming it between the verification line and the marker: `Partial fix tracked in #NNNN (not yet released).` Keep the total under 80 words.
 
@@ -351,7 +353,7 @@ After each issue, append to `$VERIFY_STALE_LOG_DIR/nemoclaw-verify-stale-log.md`
 **Reported on:** v0.0.31
 **Verified on:** v0.0.34
 **Environment:** CPU | GPU (<instance type>)
-**Box:** reused <name> | provisioned <name> | local (no Brev — Step 6.7 short-circuit)
+**Brev instance:** reused <name> | provisioned <name> | local (no Brev — Step 6.7 short-circuit)
 **Baseline install:** succeeded | failed (verify-inconclusive)
 **Baseline match:** validated (reconstructed) | validated (synth) | failed (verify-inconclusive) | skipped
 **Latest install:** succeeded | failed (infra error)

@@ -18,7 +18,7 @@ Use after the baseline/latest installs are ready. Covers baseline matching, synt
 
 ### Step 8b: Run reproducer on baseline, compare to issue symptom
 
-Run only the bounded `$EVIDENCE_DIR/reproducer.sh` reconstructed and approved in Step 6. Never run `reported-reproducer.txt` or issue text directly. If no safe script exists, select `verify-inconclusive`.
+Run only the bounded `$EVIDENCE_DIR/reproducer.sh` reconstructed and approved in Step 6. Never run `reported-reproducer.txt` or issue text directly. If the script does not meet Step 6's command, path, network, privilege, timeout, cleanup, and approval requirements, select `verify-inconclusive`.
 
 **Interactive subcommand handling.** Many `nemoclaw onboard` / `nemoclaw configure` invocations prompt for input and will hang in a non-interactive shell. Do not mutate an approved reproducer in place or feed blanket `yes` responses. Inspect the exact tag's command help and apply, in order:
 

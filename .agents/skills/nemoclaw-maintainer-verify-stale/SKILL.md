@@ -34,7 +34,7 @@ Verify-stale progress:
 ## Workflow
 
 1. **Select candidates and versions.** Read [reference/candidate-selection.md](reference/candidate-selection.md). Use it for single-issue mode, batch mode, latest-tag detection, filters, idempotency, active-discussion handling, and reported-version parsing.
-2. **Classify and prepare.** Read [reference/environment-and-reproducer.md](reference/environment-and-reproducer.md). Use it for CPU/GPU/provider/bug-class classification, safe credential handling, untrusted-reproducer review, and isolated local verification.
+2. **Classify and prepare.** Read [reference/environment-and-reproducer.md](reference/environment-and-reproducer.md). Use it for CPU/GPU/provider/bug-class classification, credential isolation, transfer, and removal, untrusted-reproducer review, and isolated local verification.
 3. **Stop for approval before remote effects or cost.** In every mode, present one issue's Brev plan. Include reuse or provisioning, instance type and hourly price, the 60-minute execution budget, the bounded 120-second cleanup grace, credential handling, and cleanup. Wait for maintainer approval before any `brev exec`, `brev copy`, start, create, stop, reset, or delete action.
 4. **Provision and install.** If local-first does not settle the issue, read [reference/brev-provisioning.md](reference/brev-provisioning.md). Use it for Brev reuse/provisioning, reset, baseline/latest installs, dependency bootstrap, and `brev exec` footguns.
 5. **Run the verification rubric.** Read [reference/reproduction-rubrics.md](reference/reproduction-rubrics.md). Use it to validate baseline behavior, retry with a synthesized reproducer if needed, run latest, handle architectural drift, and branch for performance or rebuild-cycle bugs.
@@ -61,7 +61,7 @@ Verify-stale progress:
 |---|---|
 | Candidate query, filters, version parser | [reference/candidate-selection.md](reference/candidate-selection.md) |
 | Environment classification, credentials, reproducer, preconditions, local-first | [reference/environment-and-reproducer.md](reference/environment-and-reproducer.md) |
-| Brev box reuse/provision, reset, installs, dependency bootstrap | [reference/brev-provisioning.md](reference/brev-provisioning.md) |
+| Brev instance reuse/provisioning, reset, installs, dependency bootstrap | [reference/brev-provisioning.md](reference/brev-provisioning.md) |
 | Baseline/latest matching, synth-repro, drift, performance, rebuild-cycle | [reference/reproduction-rubrics.md](reference/reproduction-rubrics.md) |
 | Static by-design branch and proposed `Won't Fix` Project state | [reference/by-design.md](reference/by-design.md) |
 | Score, redact, authorize, comment, Project update, infra handling, log | [reference/scoring-comments-and-logging.md](reference/scoring-comments-and-logging.md) |

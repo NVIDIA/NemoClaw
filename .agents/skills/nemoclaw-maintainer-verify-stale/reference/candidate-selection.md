@@ -69,7 +69,7 @@ gh api graphql -F number=<number> -f query='query($number: Int!) {
 
 A candidate must have native Issue Type `Bug`; labels never substitute for this check. From the Project 199 item, read the `Priority` and `Status` single-select values.
 
-**Batch mode** — user says "batch", "weekly", or provides no number. Cap at **15 issues** for *processing* per run, enforced as a slice after Step 3/4 filters narrow the pool. The cap bounds review and logging work; it is not a wallclock promise because each approved verification can use up to 60 minutes. Stop at the invoking automation's or maintainer's stated session budget and leave the remaining candidates for a later run.
+**Batch mode** — user says "batch", "weekly", or provides no number. Cap at **15 issues** for *processing* per run, enforced as a slice after Step 3/4 filters narrow the pool. The cap bounds review and logging work; it is not a wall-clock duration guarantee because each approved verification can use up to 60 minutes. Stop at the invoking automation's or maintainer's stated session budget and leave the remaining candidates for a later run.
 
 The discovery query needs to see the entire open-issue pool because native Issue Type, not a `bug` label, identifies bug reports. Use paginated GraphQL and retain only nodes whose `issueType.name` is `Bug`:
 
@@ -142,7 +142,7 @@ Apply these rules in order. Drop any issue that fails a rule.
 
 **TUI / interactive-UI skip:** drop if the issue title contains `TUI`, `dashboard UI`, `chat UI`, `keystroke`, or `key press`, OR if the body describes interactive UI behavior (key sequences, mouse interactions, browser-side UI state) without a non-interactive reproducer (no `NEMOCLAW_NON_INTERACTIVE=1` or equivalent env var pattern). `brev exec` does not allocate a real TTY by default, so TUI reproducers hang or silently fail at the first prompt; v1 documents this as out-of-scope rather than emitting a wrong verdict. v1.1 may add a `script(1)` / `expect` / `tmux send-keys` harness to lift this skip.
 
-**Credential-bound integration skip (deferred to v2):** drop `integration: slack`, `integration: discord`, `integration: telegram`, and `integration: wechat`. These need third-party credentials a fresh Brev box cannot provide. Do not drop `integration: openclaw` or `integration: hermes` solely for the runtime label; Step 5 selects the matching agent runtime.
+**Credential-bound integration skip (deferred to v2):** drop `integration: slack`, `integration: discord`, `integration: telegram`, and `integration: wechat`. These need third-party credentials that a fresh Brev instance cannot provide. Do not drop `integration: openclaw` or `integration: hermes` solely for the runtime label; Step 5 selects the matching agent runtime.
 
 Do not require retired component labels. Native Issue Type, version evidence, canonical routing labels, and reproducer suitability determine eligibility.
 
