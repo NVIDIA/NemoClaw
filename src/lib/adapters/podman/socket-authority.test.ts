@@ -111,8 +111,7 @@ describe("Podman socket authority", () => {
         fs.mkdirSync(socketDirectory);
         fs.chmodSync(socketDirectory, 0o755);
         const socketPath = path.join(socketDirectory, "podman.sock");
-        const uid = process.getuid?.();
-        if (uid === undefined) throw new Error("Unix user ID is unavailable.");
+        const uid = process.getuid?.() ?? -1;
 
         hardenPodmanSocketDirectory(socketPath, uid);
         expect(fs.statSync(socketDirectory).mode & 0o777).toBe(0o700);
