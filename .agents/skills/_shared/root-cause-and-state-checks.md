@@ -21,9 +21,10 @@ A change that repairs one path and leaves a sibling path unchanged keeps the sam
 
 ## Sensitive-Workflow State Matrix
 
-Build a sensitive-workflow state matrix for a flow that handles credentials, remote execution,
-billable resources, destructive cleanup, security policy, or public writes. Use only the rows and
-columns required to cover the changed contract. Classify these outcomes when they apply:
+Build a sensitive-workflow state matrix as working analysis for a flow that handles credentials,
+remote execution, billable resources, destructive cleanup, security policy, or public writes. Use
+only the rows and columns required to cover the changed contract. Classify these outcomes when they
+apply:
 
 | Phase | Success | Command Failure | Transport Ambiguity | Verification Failure |
 |---|---|---|---|---|

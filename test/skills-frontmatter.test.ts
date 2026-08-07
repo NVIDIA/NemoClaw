@@ -113,7 +113,7 @@ describe("repo skill markdown files", () => {
     expect(discovery).not.toContain("Follow imports and call sites");
   });
 
-  it("keeps root cause and sensitive state checks in one stage-neutral owner", () => {
+  it("keeps root-cause and sensitive-workflow state checks in one stage-neutral owner", () => {
     const checks = fs.readFileSync(
       path.join(skillsRoot, "_shared", "root-cause-and-state-checks.md"),
       "utf8",
