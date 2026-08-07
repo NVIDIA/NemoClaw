@@ -10,7 +10,7 @@ import { expect, it } from "vitest";
 import { LAUNCH_TURN_SCRIPT } from "../live/launch-agent-turn.ts";
 
 it.runIf(process.platform !== "win32")(
-  "records a successful Hermes reply when the TUI closes after the first interrupt (#6006)",
+  "records a successful reply and exit status 0 after the TUI exit command (#8584)",
   () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
     const scriptStub = join(fixtureRoot, "script");
@@ -29,7 +29,8 @@ done
 : >"$capture"
 IFS= read -r -d $'\r' _
 printf 'PONG\n' | tee "$capture"
-IFS= read -r -n 1 _
+IFS= read -r -d $'\r' exit_command
+[[ "$exit_command" == "/exit" ]]
 `,
       );
       writeFileSync(sleepStub, "#!/bin/sh\n/bin/sleep 0.5\n");
@@ -44,6 +45,7 @@ IFS= read -r -n 1 _
           ...process.env,
           NEMOCLAW_LAUNCH_COMMAND: "ignored",
           NEMOCLAW_LAUNCH_ENTRYPOINT: "",
+          NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
           NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
           NEMOCLAW_LAUNCH_PROMPT: "prompt",
           NEMOCLAW_LAUNCH_SANDBOX: "sandbox",

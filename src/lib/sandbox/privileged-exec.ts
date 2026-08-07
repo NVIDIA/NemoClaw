@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture } from "../adapters/docker/run";
+import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
 import * as registry from "../state/registry";
 
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
@@ -210,6 +211,29 @@ function privilegedSandboxExecArgv(
 ): string[] {
   const entry = readSandboxEntry(sandboxName);
   if (!entry) throw missingRegistryEntryError(sandboxName);
+  const portableTarget = resolvePortableDemoPrivilegedExecTarget(sandboxName);
+  if (portableTarget) {
+    if (expectedContainerId !== undefined && portableTarget.containerId !== expectedContainerId) {
+      throw new Error(
+        `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
+          "refusing privileged execution against a different container.",
+      );
+    }
+    const sanitizedEnvArgs = sanitizeEnvironment
+      ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
+      : [];
+    return [
+      "--host",
+      portableTarget.dockerHost,
+      "exec",
+      ...(stdin ? ["-i"] : []),
+      ...sanitizedEnvArgs,
+      "--user",
+      "root",
+      portableTarget.containerId,
+      ...cmd,
+    ];
+  }
   const driver = normalizeDriver(entry?.openshellDriver);
   if (driver !== null && driver !== "docker" && driver !== "vm") {
     throw unsupportedDirectDriverError(sandboxName, driver);

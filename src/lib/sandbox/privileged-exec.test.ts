@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
 const helperPath = require.resolve("./privileged-exec");
 const dockerRunPath = require.resolve("../adapters/docker/run");
+const portableLifecyclePath = require.resolve("../onboard/experimental/portable-demo-lifecycle");
 const registryPath = require.resolve("../state/registry");
 const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
 
@@ -20,11 +21,15 @@ function withPrivilegedExecMocks<T>(
       sandboxes?: Array<{ name?: string | null }>;
       defaultSandbox?: string | null;
     };
+    resolvePortableDemoPrivilegedExecTarget?: (
+      sandboxName: string,
+    ) => { containerId: string; dockerHost: string } | null;
   },
   run: (helper: typeof import("./privileged-exec")) => T,
 ): T {
   const priorHelper = require.cache[helperPath];
   const priorDockerRun = require.cache[dockerRunPath];
+  const priorPortableLifecycle = require.cache[portableLifecyclePath];
   const priorRegistry = require.cache[registryPath];
 
   delete require.cache[helperPath];
@@ -33,6 +38,15 @@ function withPrivilegedExecMocks<T>(
     filename: dockerRunPath,
     loaded: true,
     exports: { dockerCapture: deps.dockerCapture },
+  } as any;
+  requireCache[portableLifecyclePath] = {
+    id: portableLifecyclePath,
+    filename: portableLifecyclePath,
+    loaded: true,
+    exports: {
+      resolvePortableDemoPrivilegedExecTarget:
+        deps.resolvePortableDemoPrivilegedExecTarget ?? (() => null),
+    },
   } as any;
   requireCache[registryPath] = {
     id: registryPath,
@@ -52,6 +66,9 @@ function withPrivilegedExecMocks<T>(
 
     if (priorDockerRun) requireCache[dockerRunPath] = priorDockerRun;
     else delete requireCache[dockerRunPath];
+
+    if (priorPortableLifecycle) requireCache[portableLifecyclePath] = priorPortableLifecycle;
+    else delete requireCache[portableLifecyclePath];
 
     if (priorRegistry) requireCache[registryPath] = priorRegistry;
     else delete requireCache[registryPath];
@@ -124,6 +141,70 @@ describe("privileged sandbox exec routing", () => {
         ]);
       },
     );
+  });
+
+  it("uses the receipt-owned Podman socket when the default Docker daemon has no container (#8584)", () => {
+    let dockerPsCalls = 0;
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () => {
+          dockerPsCalls += 1;
+          return "";
+        },
+        resolvePortableDemoPrivilegedExecTarget: () => ({
+          containerId: "a".repeat(64),
+          dockerHost: "unix:///run/user/1001/podman/podman.sock",
+        }),
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(privilegedSandboxExecArgv("alpha", ["id"], false, true)).toEqual([
+          "--host",
+          "unix:///run/user/1001/podman/podman.sock",
+          "exec",
+          "--env",
+          "BASH_ENV=",
+          "--env",
+          "ENV=",
+          "--env",
+          "GCONV_PATH=",
+          "--env",
+          "GLIBC_TUNABLES=",
+          "--env",
+          "LD_AUDIT=",
+          "--env",
+          "LD_LIBRARY_PATH=",
+          "--env",
+          "LD_PRELOAD=",
+          "--env",
+          "LOCPATH=",
+          "--env",
+          "NODE_OPTIONS=",
+          "--env",
+          "PERL5OPT=",
+          "--env",
+          "PYTHONHOME=",
+          "--env",
+          "PYTHONINSPECT=",
+          "--env",
+          "PYTHONNOUSERSITE=1",
+          "--env",
+          "PYTHONPATH=",
+          "--env",
+          "PYTHONSTARTUP=",
+          "--env",
+          "PYTHONUSERBASE=",
+          "--env",
+          "RUBYOPT=",
+          "--user",
+          "root",
+          "a".repeat(64),
+          "id",
+        ]);
+      },
+    );
+    expect(dockerPsCalls).toBe(0);
   });
 
   it("bounds direct sandbox container discovery", () => {

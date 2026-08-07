@@ -714,16 +714,18 @@ describe("e2e workflow boundary", () => {
       jobs: Record<string, { env?: Record<string, string>; if?: string }>;
     };
     const workflowJobs = new Set(Object.keys(workflow.jobs));
-    const portableWorkflow = YAML.parse(
-      fs.readFileSync(
-        path.join(process.cwd(), ".github", "workflows", "portable-profile-e2e.yaml"),
-        "utf8",
-      ),
-    ) as {
+    const portableWorkflowSource = fs.readFileSync(
+      path.join(process.cwd(), ".github", "workflows", "portable-profile-e2e.yaml"),
+      "utf8",
+    );
+    const portableWorkflow = YAML.parse(portableWorkflowSource) as {
       on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } };
     };
     const portableProofInputs = [
       "scripts/install-openshell.sh",
+      "src/lib/sandbox/**",
+      "test/e2e/live/full-e2e.test.ts",
+      "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/portable-profile-gateway-proof.ts",
       "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "tools/e2e/check-semantic-phases.mts",
@@ -732,6 +734,11 @@ describe("e2e workflow boundary", () => {
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
     expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
+    expect(portableWorkflowSource).toContain("github.ref == 'refs/heads/main'");
+    expect(portableWorkflowSource).toContain("NEMOCLAW_EXPERIMENTAL_PROFILE: portable");
+    expect(portableWorkflowSource).toContain(
+      "NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+    );
     expect(inventory.allowedJobs).not.toHaveLength(0);
     expect(inventory.targetToJob.size).toBeGreaterThan(0);
     expect(inventory.workflowJobs.every((job) => workflowJobs.has(job))).toBe(true);

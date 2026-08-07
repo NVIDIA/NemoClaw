@@ -32,6 +32,7 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const PODMAN_MANAGED_LABEL = "openshell.managed";
 const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
 const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
+const PODMAN_SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
 const CURRENT_RECEIPT_SCHEMA_VERSION = 2;
@@ -58,6 +59,11 @@ interface PodmanContainerInspection {
   containerId: string;
   sandboxId: string;
   running: boolean;
+}
+
+export interface PortableDemoPrivilegedExecTarget {
+  readonly containerId: string;
+  readonly dockerHost: string;
 }
 
 export interface PortableDemoLifecycleDeps {
@@ -308,6 +314,7 @@ function inspectPodmanContainer(
   const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
   if (
     inspection.Id !== containerId ||
+    inspection.Name !== `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}` ||
     labels?.[PODMAN_MANAGED_LABEL] !== "true" ||
     labels?.[PODMAN_SANDBOX_NAME_LABEL] !== sandboxName ||
     typeof sandboxId !== "string" ||
@@ -355,6 +362,52 @@ function discoverPodmanContainer(
     );
   }
   return inspectPodmanContainer(matches[0]!, sandboxName, podman);
+}
+
+function podmanDockerHost(podman: NonNullable<PortableDemoLifecycleDeps["podman"]>): string {
+  const result = podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"]);
+  requireCommand(result, "Resolving the portable Podman socket");
+  const socket = String(result.stdout ?? "").trim();
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(socket)) {
+    throw new Error("The portable Podman socket path is invalid");
+  }
+  const socketPath = socket.startsWith("unix://") ? socket.slice("unix://".length) : socket;
+  if (!path.posix.isAbsolute(socketPath)) {
+    throw new Error("The portable Podman socket path is invalid");
+  }
+  return `unix://${socketPath}`;
+}
+
+/** Resolve the receipt-owned portable container for a host-side privileged exec. */
+export function resolvePortableDemoPrivilegedExecTarget(
+  sandboxName: string,
+  deps: PortableDemoLifecycleDeps = {},
+): PortableDemoPrivilegedExecTarget | null {
+  const commandEnv = deps.env ?? process.env;
+  const receipt = loadReceipt(sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
+  if (!receipt) return null;
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
+  }
+
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  const dockerHost = podmanDockerHost(podman);
+  const providerPodman = (args: readonly string[]) => podman(["--url", dockerHost, ...args]);
+  const inspection = discoverPodmanContainer(sandboxName, providerPodman);
+  if (inspection.containerId !== receipt.containerId) {
+    throw new Error(
+      `Portable demo lifecycle refused container '${inspection.containerId}' because the recorded container identity changed`,
+    );
+  }
+  if (inspection.sandboxId !== receipt.sandboxId) {
+    throw new Error(
+      `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
+    );
+  }
+  if (!inspection.running) {
+    throw new Error(`Portable sandbox '${sandboxName}' is not running`);
+  }
+  return { containerId: inspection.containerId, dockerHost };
 }
 
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
