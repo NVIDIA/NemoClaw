@@ -15,7 +15,7 @@
       "src/lib/cli/nemoclaw-oclif-command.ts": 106,
       "src/lib/cli/terminal-style.ts": 45,
       "src/lib/core/json-types.ts": 37,
-      "src/lib/core/ports.ts": 88,
+      "src/lib/core/ports.ts": 87,
       "src/lib/core/shell-quote.ts": 26,
       "src/lib/core/url-utils.ts": 28,
       "src/lib/core/wait.ts": 35,
