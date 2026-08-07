@@ -41,6 +41,30 @@ require(${cliPath});`,
   expect(result.stderr).not.toMatch(/\n\s+at |Node\.js v/);
 }
 
+function expectCleanLauncherFailure(env: NodeJS.ProcessEnv, expectedMessage: string): void {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "bin", "nemoclaw.js"), "--help"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        ...env,
+        NEMOCLAW_LOG_LEVEL: "info",
+        NEMOCLAW_DEBUG: "0",
+        NO_COLOR: "1",
+      },
+    },
+  );
+
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain(expectedMessage);
+  expect(result.stderr).not.toMatch(/\n\s+at /m);
+  expect(result.stderr).not.toContain("Node.js v");
+}
+
 describe("compiled CLI top-level errors", () => {
   it("prints an Error rejection as one line without a Node.js stack (#8202)", () => {
     expectTopLevelError('new Error("Command failed.")', "Error: Command failed.\n");
@@ -61,5 +85,12 @@ describe("compiled CLI top-level errors", () => {
     const secret = `nvapi-${"a".repeat(20)}`;
     const rejection = `new Error(${JSON.stringify(`First line\n${secret}\r\nLast line`)})`;
     expectTopLevelError(rejection, "Error: First line <REDACTED> Last line\n");
+  });
+
+  it("prints a module-load reserved-port error without a Node.js stack (#8202)", () => {
+    expectCleanLauncherFailure(
+      { NEMOCLAW_GATEWAY_PORT: "8081" },
+      'Error: Invalid port: NEMOCLAW_GATEWAY_PORT="8081"',
+    );
   });
 });

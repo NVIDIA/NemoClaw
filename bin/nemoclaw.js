@@ -9,15 +9,29 @@ if (invokedAs === "nemo-deepagents") {
   process.env.NEMOCLAW_INVOKED_AS = "nemo-deepagents";
 }
 
-const { log } = require("../dist/lib/cli/logger");
-const { mainPromise } = require("../dist/nemoclaw");
-mainPromise.catch((error) => {
+function handleTopLevelError(error) {
   let message = "Command failed.";
   try {
     message = String(error instanceof Error ? error.message : error).replace(/[\r\n]+/g, " ");
   } catch {
     // Keep the top-level rejection handler reliable even for values with throwing coercion hooks.
   }
-  log.error(`Error: ${message}`);
+  try {
+    const { log } = require("../dist/lib/cli/logger");
+    log.error(`Error: ${message}`);
+  } catch {
+    try {
+      process.stderr.write(`Error: ${message}\n`);
+    } catch {
+      // Do not let a broken diagnostic sink throw another top-level error.
+    }
+  }
   process.exitCode = 1;
-});
+}
+
+try {
+  const { mainPromise } = require("../dist/nemoclaw");
+  mainPromise.catch(handleTopLevelError);
+} catch (error) {
+  handleTopLevelError(error);
+}
