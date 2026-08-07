@@ -5,9 +5,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
@@ -28,13 +28,16 @@ function runSourced(body: string) {
   return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
-const runInstallerBody = (body: string, extraEnv: Record<string, string> = {}) =>
-  runInstallerSourcedBody(body, {
+const runInstallerBody = (body: string, extraEnv: Record<string, string> = {}) => {
+  const run = runInstallerSourcedBody(body, {
     homePrefix: "nemoclaw-station-migration-",
     extraEnv,
     includeNodeOnPath: true,
     timeoutMs: 15_000,
   });
+  onTestFinished(run.remove);
+  return run;
+};
 
 function runInstallerOrderHarness(onboardStatus: 0 | 1) {
   return runInstallerBody(

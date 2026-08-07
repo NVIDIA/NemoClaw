@@ -5,9 +5,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const STATION_PREPARE = path.join(
   path.resolve(import.meta.dirname, ".."),
@@ -15,8 +15,14 @@ const STATION_PREPARE = path.join(
   "prepare-dgx-station-host.sh",
 );
 
-const runInstallerSourced = (body: string, existingHome?: string) =>
-  runInstallerSourcedBody(body, { homePrefix: "nemoclaw-vllm-resume-", home: existingHome });
+const runInstallerSourced = (body: string, existingHome?: string) => {
+  const run = runInstallerSourcedBody(body, {
+    homePrefix: "nemoclaw-vllm-resume-",
+    home: existingHome,
+  });
+  onTestFinished(run.remove);
+  return run;
+};
 
 function runStationPreparationSourced(body: string) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-guidance-"));

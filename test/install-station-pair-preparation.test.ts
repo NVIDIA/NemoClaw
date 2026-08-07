@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import {
   type DualStationPreparationDeps,
   type DualStationResumeState,
@@ -32,8 +32,8 @@ import {
   stationKnownHostsDigest,
   strictStationSshTransportArgs,
 } from "../src/lib/inference/vllm-station-ssh-binding.ts";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const COORDINATOR = path.join(REPO_ROOT, "scripts", "prepare-dual-dgx-station.mts");
@@ -222,13 +222,16 @@ function readyState(): DualStationResumeState {
   };
 }
 
-const runInstallerBody = (body: string, extraEnv: Record<string, string> = {}) =>
-  runInstallerSourcedBody(body, {
+const runInstallerBody = (body: string, extraEnv: Record<string, string> = {}) => {
+  const run = runInstallerSourcedBody(body, {
     homePrefix: "nemoclaw-pair-installer-",
     extraEnv,
     includeNodeOnPath: true,
     timeoutMs: 20_000,
   });
+  onTestFinished(run.remove);
+  return run;
+};
 
 function coordinatorResult(kind: "ready" | "reboot-required", peer = "10.10.0.2"): string {
   const state = readyState();

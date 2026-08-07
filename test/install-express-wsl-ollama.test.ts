@@ -5,18 +5,24 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
+import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "./helpers/installer-sourced-env";
-import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
 
 describe("installer Windows WSL express Ollama selection (sourced)", () => {
-  const runInstallerSourced = (body: string, extraEnv: Record<string, string> = {}) =>
-    runInstallerSourcedBody(body, { homePrefix: "nemoclaw-express-wsl-sourced-", extraEnv });
+  const runInstallerSourced = (body: string, extraEnv: Record<string, string> = {}) => {
+    const run = runInstallerSourcedBody(body, {
+      homePrefix: "nemoclaw-express-wsl-sourced-",
+      extraEnv,
+    });
+    onTestFinished(run.remove);
+    return run;
+  };
 
   function dockerStubBin(operatingSystem: string, exitCode = 0) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-stub-"));
