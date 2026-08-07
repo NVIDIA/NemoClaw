@@ -62,9 +62,11 @@ function assistantMessage(text: string): Record<string, unknown> {
   };
 }
 
-function replyHandlers(
+type DeliverReply = (emit: () => void, respond: () => void) => void;
+
+function replyHandlersWithDelivery(
   frames: ReadonlyArray<Record<string, unknown>>,
-  options: { readonly beforeResponse?: boolean } = {},
+  deliver: DeliverReply,
 ): Record<string, Handler> {
   return {
     connect: (request, socket) => socket.respond(request.id, {}),
@@ -73,11 +75,26 @@ function replyHandlers(
       const emit = () => {
         for (const frame of frames) socket.chat({ sessionKey, runId: "expected-run", ...frame });
       };
-      if (options.beforeResponse) emit();
-      socket.respond(request.id, { runId: "expected-run" });
-      if (!options.beforeResponse) queueMicrotask(emit);
+      const respond = () => socket.respond(request.id, { runId: "expected-run" });
+      deliver(emit, respond);
     },
   };
+}
+
+function replyHandlers(frames: ReadonlyArray<Record<string, unknown>>): Record<string, Handler> {
+  return replyHandlersWithDelivery(frames, (emit, respond) => {
+    respond();
+    queueMicrotask(emit);
+  });
+}
+
+function replyBeforeResponseHandlers(
+  frames: ReadonlyArray<Record<string, unknown>>,
+): Record<string, Handler> {
+  return replyHandlersWithDelivery(frames, (emit, respond) => {
+    emit();
+    respond();
+  });
 }
 
 function activeTurnHandlers(): Record<string, Handler> {
@@ -302,7 +319,7 @@ describe("OpenClaw voice gateway client", () => {
       state: "delta",
       deltaText: "x",
     }));
-    const { result, events } = await runTurn(replyHandlers(frames, { beforeResponse: true }));
+    const { result, events } = await runTurn(replyBeforeResponseHandlers(frames));
 
     expect(result).toEqual({ outcome: "failed", reason: "agent_protocol_error" });
     expect(events).toEqual([]);
