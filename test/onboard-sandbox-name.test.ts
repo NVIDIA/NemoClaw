@@ -97,7 +97,7 @@ describe("onboard sandbox naming helpers", () => {
 
   it("exposes the full allowed sandbox name format", () => {
     expect(NAME_ALLOWED_FORMAT).toBe(
-      "1-19 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number",
+      "1-19 characters, lowercase, starts with a letter, letters/numbers/single internal hyphens only, ends with letter/number",
     );
   });
 
@@ -128,8 +128,8 @@ describe("onboard sandbox naming helpers", () => {
       expect(suggestNameSlug("foo  bar")).toBe("foo-bar");
     });
 
-    it("returns null for inputs that are already valid even with internal hyphen runs", () => {
-      expect(suggestNameSlug("a---b")).toBeNull();
+    it("collapses consecutive hyphens that OpenShell reserves for routed names (#8497)", () => {
+      expect(suggestNameSlug("a---b")).toBe("a-b");
     });
 
     it("prefixes 's-' when the slug would otherwise start with a digit", () => {

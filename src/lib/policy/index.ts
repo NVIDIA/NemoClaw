@@ -28,6 +28,7 @@ import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import { ROOT, run, runCapture } from "../runner";
+import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import * as registry from "../state/registry";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
 import {
@@ -1051,11 +1052,10 @@ function removePreset(
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 
@@ -1899,11 +1899,10 @@ function applyPresetContent(
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 
@@ -2147,11 +2146,10 @@ function applyPreset(
  * preset during onboarding.
  */
 function applyPresets(sandboxName: string, presetNames: string[]): boolean {
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 
@@ -2637,11 +2635,10 @@ function resolvePermissivePolicyPath(sandboxName: string): string {
 }
 
 function applyPermissivePolicy(sandboxName: string): void {
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+  if (!isValidName(sandboxName)) {
     throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+      `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
+        `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
 

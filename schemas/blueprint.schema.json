@@ -57,9 +57,9 @@
             },
             "name": {
               "type": "string",
-              "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?$",
-              "maxLength": 63,
-              "description": "Default sandbox name. RFC 1035 label: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with a letter or number, max 63 characters. Flows into 'openshell sandbox create --name' and Kubernetes pod names."
+              "pattern": "^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$",
+              "maxLength": 19,
+              "description": "Default sandbox name. Lowercase, starts with a letter, contains letters/numbers/single internal hyphens only, ends with a letter or number, max 19 characters. Flows into 'openshell sandbox create --name' and Kubernetes pod names."
             },
             "forward_ports": {
               "type": "array",

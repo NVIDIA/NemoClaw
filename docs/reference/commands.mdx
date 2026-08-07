@@ -678,7 +678,9 @@ API-key mode is inference-only and does not enable managed Nous tool gateways.
 </AgentOnly>
 
 The wizard prompts for a sandbox name.
-Names must be 1 to 19 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Names must contain 1 to 19 characters.
+They must be lowercase, start with a letter, contain only letters, numbers, and single internal hyphens, and end with a letter or number.
+Consecutive hyphens (`--`) are not allowed.
 The CLI rejects names that do not match these rules.
 It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant`.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
@@ -861,7 +863,10 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.
-The same name format and reserved-name rules that the wizard enforces apply here too. Names must be 1 to 19 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+The same name format and reserved-name rules that the wizard enforces apply here too.
+Names must contain 1 to 19 characters.
+They must be lowercase, start with a letter, contain only letters, numbers, and single internal hyphens, and end with a letter or number.
+Consecutive hyphens (`--`) are not allowed.
 Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
 ```bash
@@ -3223,6 +3228,14 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 | `--check` | List stale sandboxes without rebuilding any of them. Exits non-zero if any are stale. |
 | `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
 | `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
+
+Before it inspects a gateway or starts a rebuild, the command validates every registered sandbox name against the NemoClaw sandbox name format.
+Route-only reservations are not sandboxes and are excluded from this validation.
+If the command finds incompatible names, it lists each name before any gateway inspection or rebuild.
+With `--check`, the command then returns without changing state.
+In a mutating mode, it exits with a nonzero status.
+NemoClaw does not truncate or rename a registered sandbox identity.
+Follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) to transfer state to a compatible replacement before you rerun the command.
 
 Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade.
 If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.

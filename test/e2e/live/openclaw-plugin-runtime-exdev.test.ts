@@ -89,7 +89,7 @@ const RELEASE_BUILDER_IMAGE_REF =
 const CURRENT_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-plugin-exdev";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 const EXDEV_TMPFS_MOUNT = "/tmp/nemoclaw-exdev-tmpfs";

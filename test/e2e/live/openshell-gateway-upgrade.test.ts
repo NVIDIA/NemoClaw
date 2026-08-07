@@ -89,15 +89,7 @@ const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgr
   sandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
 });
 const SURVIVOR_SANDBOX =
-  process.env.NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME ??
-  [
-    "e2e-gateway-upgrade-survivor",
-    process.env.GITHUB_RUN_ID,
-    process.env.GITHUB_RUN_ATTEMPT,
-    process.pid,
-  ]
-    .filter(Boolean)
-    .join("-");
+  process.env.NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME ?? `e2e-gw-${process.pid}`;
 const SURVIVOR_MARKER = `gateway-upgrade-survivor-${Date.now()}`;
 const SURVIVOR_MARKER_PATH = "/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker";
 const INSTALLED_AGENT_DB_MARKER = `openclaw-2026-6-agent-db-${Date.now()}`;
@@ -113,9 +105,10 @@ const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 
 validateSandboxName(SURVIVOR_SANDBOX);
 expect(
-  SURVIVOR_SANDBOX.startsWith("e2e-gateway-upgrade-survivor"),
-  `openshell-gateway-upgrade live test only accepts survivor sandbox names with prefix e2e-gateway-upgrade-survivor; got ${SURVIVOR_SANDBOX}`,
+  SURVIVOR_SANDBOX.startsWith("e2e-gw-"),
+  `openshell-gateway-upgrade live test only accepts survivor sandbox names with prefix e2e-gw-; got ${SURVIVOR_SANDBOX}`,
 ).toBe(true);
+expect(SURVIVOR_SANDBOX.length).toBeLessThanOrEqual(19);
 const stateUpgradeFixtureExpectations: ReadonlyArray<readonly [string, string]> =
   OPENCLAW_STATE_UPGRADE_PROOF
     ? [

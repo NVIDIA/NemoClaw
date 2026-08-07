@@ -1715,7 +1715,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-skill-cli"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-skill-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3003,7 +3003,7 @@ jobs:
       matrix:
         include:
           - mode: anthropic
-            sandbox_name: e2e-hermes-anthropic-inference-switch
+            sandbox_name: e2e-hm-inf-switch
             switch_provider: compatible-anthropic-endpoint
             switch_model: mock-anthropic-model
             switch_inference_api: anthropic-messages
@@ -3355,7 +3355,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind"
+      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-bind"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3404,7 +3404,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-sessions-agents-cli"
+      NEMOCLAW_SANDBOX_NAME: "e2e-sessions-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3611,8 +3611,11 @@ jobs:
       matrix:
         include:
           - scenario: native
+            sandbox_name: e2e-hgpu-native
           - scenario: fallback
+            sandbox_name: e2e-hgpu-fallback
           - scenario: compatibility-only
+            sandbox_name: e2e-hgpu-compat
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
@@ -3626,7 +3629,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_GPU: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup-${{ matrix.scenario }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3972,7 +3975,7 @@ jobs:
         include:
           - scenario: live-probes
             selector: "^network-policy:.+probes$"
-            sandbox: e2e-net-policy-live-probes
+            sandbox: e2e-net-policy
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "network-policy"
@@ -4516,7 +4519,7 @@ jobs:
       NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
-      NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes-base
+      NEMOCLAW_SANDBOX_NAME: e2e-rebuild-base
       OPENSHELL_GATEWAY: nemoclaw
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5081,10 +5084,10 @@ jobs:
       matrix:
         include:
           - agent: openclaw
-            sandbox_name: e2e-openclaw-security-posture
+            sandbox_name: e2e-oc-security
             test_file: test/e2e/live/full-e2e.test.ts
           - agent: hermes
-            sandbox_name: e2e-hermes-security-posture
+            sandbox_name: e2e-hm-security
             test_file: test/e2e/live/hermes-e2e.test.ts
     env:
       E2E_JOB: "1"
@@ -5309,7 +5312,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_MODEL: "qwen3.5:9b"
-      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double-onboard"
+      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435"
     steps:
@@ -5660,7 +5663,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
+      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor"
       NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
       NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
       NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
@@ -6066,7 +6069,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev-release"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev-rel"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6138,7 +6141,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6373,7 +6376,7 @@ jobs:
       matrix:
         include:
           - mode: anthropic
-            sandbox_name: e2e-openclaw-anthropic-inference-switch
+            sandbox_name: e2e-oc-inf-switch
             switch_provider: compatible-anthropic-endpoint
             switch_model: mock-anthropic-model
             switch_inference_api: anthropic-messages
@@ -6442,7 +6445,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [openclaw, hermes]
+        include:
+          - agent: openclaw
+            sandbox_name: e2e-oc-bedrock
+          - agent: hermes
+            sandbox_name: e2e-hm-bedrock
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bedrock-runtime-compatible-anthropic"
@@ -6454,7 +6461,7 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
-      NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - id: trusted_hermes_swap
@@ -6592,7 +6599,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
+      NEMOCLAW_SANDBOX_NAME: "e2e-ch-add-remove"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6669,7 +6676,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-telegram-injection"
+      NEMOCLAW_SANDBOX_NAME: "e2e-tg-injection"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6736,7 +6743,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [openclaw, hermes]
+        include:
+          - agent: openclaw
+            sandbox_name: e2e-oc-ch-cycle
+          - agent: hermes
+            sandbox_name: e2e-hm-ch-cycle
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "channels-stop-start"
@@ -6749,7 +6760,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
       NEMOCLAW_CHANNELS_STOP_START_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_SANDBOX_NAME: e2e-channels-stop-start-${{ matrix.agent }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - id: trusted_hermes_swap
@@ -6862,7 +6873,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-slack-pairing"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-slack-pair"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6999,7 +7010,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-discord-pairing"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-disc-pair"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -7071,7 +7082,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-lifecycle"
+      NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -7155,7 +7166,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_FRESH: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install-ci"
+      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install"
       NEMOCLAW_PROVIDER: "cloud"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
