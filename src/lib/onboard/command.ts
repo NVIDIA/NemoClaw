@@ -403,7 +403,7 @@ function applyPortableEnvironment(
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_MODEL: hostedInference.model,
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
-    NEMOCLAW_POLICY_MODE: "skip",
+    NEMOCLAW_POLICY_MODE: "suggested",
     NEMOCLAW_POLICY_TIER: "personal",
     COMPATIBLE_API_KEY: hostedInference.apiKey,
     NEMOCLAW_ENDPOINT_URL: hostedInference.baseUrl,
