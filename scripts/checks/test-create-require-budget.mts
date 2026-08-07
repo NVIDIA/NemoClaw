@@ -53,7 +53,6 @@ export const TEST_SUPPORT_CREATE_REQUIRE_FILES = [
   "test/helpers/base-image-test-harness.ts",
   "test/helpers/destroy-flow-test-harness.ts",
   "test/helpers/rebuild-flow-harness.ts",
-  "test/helpers/rebuild-flow-test-harness.ts",
   "test/support/connect-flow-test-harness.ts",
   "test/support/status-flow-test-harness.ts",
 ] as const;

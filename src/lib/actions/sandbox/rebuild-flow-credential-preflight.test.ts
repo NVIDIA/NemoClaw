@@ -7,7 +7,7 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "../../../../test/helpers/rebuild-flow-test-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 
 type Harness = ReturnType<typeof createRebuildFlowHarness>;

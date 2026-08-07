@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   configureDcodeSession,
@@ -11,15 +11,13 @@ import {
 } from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 import {
   createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-harness";
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 
 describe("rebuildSandbox DCode recovered provider", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("rejects incompatible keyless provider reuse after the live DCode route proof", async () => {
     const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);

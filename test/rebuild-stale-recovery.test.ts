@@ -32,7 +32,7 @@ import { expectNoSandboxDelete } from "./helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "./helpers/rebuild-flow-test-harness";
+} from "./helpers/rebuild-flow-generic-harness";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);

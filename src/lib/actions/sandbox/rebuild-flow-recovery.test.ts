@@ -8,7 +8,7 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "../../../../test/helpers/rebuild-flow-test-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
   makeActiveTeamsMessagingPlan,

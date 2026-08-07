@@ -11,7 +11,7 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-test-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 
 describe("rebuildSandbox flow: target credentials", () => {
   installRebuildFlowTestHooks();
