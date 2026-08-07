@@ -695,7 +695,6 @@ navigation:
                 slug: best-practices
               - section: "Security Controls"
                 slug: security-controls
-                collapsed: open-by-default
                 contents:
                   - page: "Filesystem Controls"
                     path: _build/agent-variants/security/filesystem-controls.deepagents.generated.mdx
