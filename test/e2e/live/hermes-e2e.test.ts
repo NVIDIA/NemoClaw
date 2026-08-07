@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -21,6 +20,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
 import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
@@ -419,6 +419,15 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   });
   expect(policy.exitCode, resultText(policy)).toBe(0);
   expect(resultText(policy)).toMatch(/network_policies/i);
+
+  await expectPackageDatabaseReadOnly({
+    artifactPrefix: "phase-3",
+    env: commandEnv(),
+    host,
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    timeoutMs: 30_000,
+  });
 
   const deniedEgress = await sandbox.exec(
     SANDBOX_NAME,
