@@ -188,7 +188,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: true,
+      hostLocalInference: false,
       directLifecycle: false,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
@@ -226,6 +226,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
       },
       acceptsReceipt: (receipt) => receipt?.kind === "managed-image",
     },
+    hostLocalInference: unsupported(providerId),
     lifecycle: unsupported(providerId),
     mutationAuthority: {
       providerId,

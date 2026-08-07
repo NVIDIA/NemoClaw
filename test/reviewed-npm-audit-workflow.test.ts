@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -222,9 +223,33 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts"),
       "utf8",
     );
+    const npmBootstrap = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        ".github",
+        "actions",
+        "ci-reviewed-npm-audit",
+        "verify-and-install-npm.sh",
+      ),
+      "utf8",
+    );
 
     expect(action).toContain('node-version: "22.23.1"');
-    expect(action).toContain("npm install --global npm@10.9.4");
+    expect(action).toContain('NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4"');
+    expect(action).toContain("NEMOCLAW_REVIEWED_NPM_INTEGRITY: >-");
+    expect(action).toContain(
+      "sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==",
+    );
+    expect(action).toContain("run: '\"$GITHUB_ACTION_PATH/verify-and-install-npm.sh\"'");
+    expect(action).not.toContain("npm install --global npm@10.9.4");
+    expect(npmBootstrap).toContain('npm pack "npm@$version"');
+    expect(npmBootstrap).toContain('crypto.createHash("sha512")');
+    expect(npmBootstrap).toContain('if [ "$actual_integrity" != "$expected_integrity" ]');
+    expect(npmBootstrap).toContain('npm install --global "$archive"');
+    expect(
+      npmBootstrap.indexOf('if [ "$actual_integrity" != "$expected_integrity" ]'),
+    ).toBeLessThan(npmBootstrap.indexOf('npm install --global "$archive"'));
+    expect(npmBootstrap).toContain("--ignore-scripts --no-audit --no-fund --offline");
     expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT");
     expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR");
     expect(action).toContain(
@@ -235,6 +260,144 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     expect(helper).toContain("const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000");
     expect(helper).toContain("timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS");
     expect(driver).not.toContain('resolveTargetPath(\n  "ci/reviewed-npm-audit.json"');
+  });
+
+  it("rejects a mismatched npm bootstrap archive before installation (#8253)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-bootstrap-"));
+    const bin = path.join(root, "bin");
+    const npmLog = path.join(root, "npm.log");
+    const installMarker = path.join(root, "install-called");
+    const npmStub = path.join(bin, "npm");
+    const bootstrap = path.join(
+      REPO_ROOT,
+      ".github",
+      "actions",
+      "ci-reviewed-npm-audit",
+      "verify-and-install-npm.sh",
+    );
+
+    try {
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        npmStub,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$1" >> "$NEMOCLAW_TEST_NPM_LOG"
+case "$1" in
+  pack)
+    shift
+    download_dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--pack-destination" ]; then
+        download_dir="$2"
+        break
+      fi
+      shift
+    done
+    [ -n "$download_dir" ]
+    printf 'tampered archive\\n' > "$download_dir/npm-10.9.4.tgz"
+    ;;
+  install)
+    : > "$NEMOCLAW_TEST_INSTALL_MARKER"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", [bootstrap], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_INTEGRITY: "sha512-invalid",
+          NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4",
+          NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
+          NEMOCLAW_TEST_NPM_LOG: npmLog,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: root,
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("npm@10.9.4 archive integrity mismatch");
+      expect(fs.readFileSync(npmLog, "utf8")).toBe("pack\n");
+      expect(fs.existsSync(installMarker)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs a matching npm bootstrap archive offline (#8253)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-bootstrap-"));
+    const bin = path.join(root, "bin");
+    const npmLog = path.join(root, "npm.log");
+    const npmStub = path.join(bin, "npm");
+    const archiveContents = "verified archive\n";
+    const bootstrap = path.join(
+      REPO_ROOT,
+      ".github",
+      "actions",
+      "ci-reviewed-npm-audit",
+      "verify-and-install-npm.sh",
+    );
+
+    try {
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        npmStub,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
+case "$1" in
+  pack)
+    shift
+    download_dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--pack-destination" ]; then
+        download_dir="$2"
+        break
+      fi
+      shift
+    done
+    [ -n "$download_dir" ]
+    printf 'verified archive\\n' > "$download_dir/npm-10.9.4.tgz"
+    ;;
+  install)
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+
+      const integrity = `sha512-${createHash("sha512").update(archiveContents).digest("base64")}`;
+      const result = spawnSync("bash", [bootstrap], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_INTEGRITY: integrity,
+          NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4",
+          NEMOCLAW_TEST_NPM_LOG: npmLog,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: root,
+        },
+      });
+
+      const npmInvocations = fs.readFileSync(npmLog, "utf8").trim().split("\n");
+      expect(result.status).toBe(0);
+      expect(npmInvocations).toHaveLength(2);
+      expect(npmInvocations[0]).toContain("pack npm@10.9.4 --pack-destination");
+      expect(npmInvocations[1]).toMatch(
+        /^install --global .*\/npm-10\.9\.4\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("materializes the NemoClaw production graph without changing its lock (#8116)", () => {

@@ -8,8 +8,8 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-- `.github/workflows/e2e.yaml` runs the default live suite on every push to
-  `main` and supports trusted manual dispatches, including exact PR revisions.
+- `.github/workflows/e2e.yaml` selects every workflow E2E on each push to `main`
+  and supports trusted manual dispatches for specific PR head commits.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
@@ -56,7 +56,8 @@ Each artifact-using job passes that object as the restore action's only `provena
 Each artifact-using job invokes the repository-owned `restore-e2e-cli-artifact` composite action at a full commit SHA.
 The workflow does not load the action implementation from the candidate checkout.
 Before download, the action rejects extra or missing provenance fields.
-It also compares the candidate checkout, repository, workflow SHA, run ID, and attempt with the provenance object.
+The action requires the candidate checkout SHA, repository, workflow SHA, and run ID to match the provenance object.
+The producer attempt must not be newer than the consumer attempt.
 The action downloads the artifact by immutable ID and sets digest mismatch handling to `error`.
 
 Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the workspace, it verifies these conditions:
@@ -159,7 +160,7 @@ and exact-staging Launchable job own its product coverage:
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
-The retired nightly caller no longer runs. Pushes to `main` now start the unified E2E suite.
+The retired nightly caller no longer runs. Each push to `main` starts a workflow that selects every workflow E2E.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
 
@@ -369,7 +370,7 @@ The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
 `mcp-bridge-dev`, and `openshell-credential-generation-window` remain on
 `ubuntu-latest`; unrelated jobs retain their existing runner assignments.
 The credential-generation window runs as an independent fresh-runner job in
-parallel with the stable MCP agent matrix. Default full-suite dispatches and
+parallel with the stable MCP agent matrix. Empty-selector dispatches and
 explicit `mcp-bridge` selections run both jobs, while the credential-window job
 keeps its own exact-release provenance, secret scan, and artifact.
 Before setting the variable, an organization owner must:
@@ -430,11 +431,11 @@ graph as the live targets:
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
 
-A manual run with `jobs=staging-brev-launchable` runs only the exact staging
-Launchable E2E job. Push runs do not select this job.
+A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev
+Launchable`. Each push run also selects this job as part of the complete main run.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors runs the default suite and the Launchable E2E job.
+`targets` selectors runs every workflow E2E, including the Launchable E2E job.
 This is the full run required for pre-tag evidence. Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
 cannot supersede it while it waits. The trusted `main` workflow dispatch
@@ -454,12 +455,18 @@ workflow's approved runner labels. An ordinary assertion failure, mixed failure
 set, incomplete listing, custom or self-hosted label, changed evidence, or
 ambiguous pagination prevents recovery.
 
-For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to
-rerun failed jobs after a workflow failure. It can request two retries. The
-controller does not verify that GitHub schedules a different runner, so do not
-treat a retry as evidence of a fresh host. It ignores manual runs and source runs
-superseded by a newer `main` push. The controller checks out only trusted
-default-branch code and receives no repository secrets.
+For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
+A successful CLI artifact producer is not rerun.
+The workflow retains its CLI artifact for 3 days.
+During that period, consumers can reuse the immutable, content-addressed artifact from an earlier producer attempt in the same workflow run.
+If the artifact is unavailable when a consumer downloads it, restoration fails because the failed-job rerun does not rerun the successful producer.
+Restore validation binds the producer provenance to the workflow run, workflow SHA, and candidate checkout.
+It downloads by immutable artifact ID and verifies the manifest and the payload digest.
+It rejects a producer attempt newer than the consumer attempt.
+The controller can request two reruns.
+It does not verify that GitHub schedules a different runner, so do not treat a rerun as evidence of a fresh host.
+It ignores manual runs and source runs superseded by a newer `main` push.
+The controller checks out only trusted default-branch code and receives no repository secrets.
 
 The runner-allocation and internal-error failures handled by Hosted Runner
 Recovery originate in GitHub Actions, outside repository-controlled workflow
@@ -692,24 +699,57 @@ a custom, copied, or no-op adapter.
 
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
-Each push to `main` triggers the default E2E suite.
+Each push to `main` selects every workflow E2E. A selected job can remain queued until its configured runner is available.
 The central workflow has no scheduled trigger.
 
-When an eligible `E2E main` push workflow concludes with `failure`,
-`E2E / Main Retry` asks GitHub Actions to rerun the failed jobs. The controller
-permits two retries but does not verify that GitHub schedules a different runner.
-After evaluation succeeds, it uploads an artifact named for the current attempt.
-The artifact contains one `attempts` summary for each source attempt through the
-current attempt. The `totalRunnerMinutes` field contains the cumulative runner
-time for those summaries. A later successful attempt sets `action` to
-`passed-after-retry` and `flaky` to `true`. The controller does not retry manual
-PR runs or a run superseded by a newer `main` push.
+The main-push selection includes:
 
-A repository maintainer or administrator can manually run the same default suite against the current exact head of an open internal or fork pull request.
+- the staging Brev Launchable journey;
+- the OpenShell gateway authentication contract;
+- the development MCP bridge;
+- managed-image startup on AMD64 and ARM64;
+- llama.cpp qualification on NVIDIA DGX Spark;
+- managed-image GPU, Ollama, NVIDIA NIM, and vLLM behavior;
+- Hermes GPU startup; and
+- Jetson nvmap behavior.
+
+These jobs retain their runner, credential, evidence, and cleanup boundaries. A
+main push can queue repository-owned GPU and Jetson runners and can create Brev
+resources. The retry workflow reruns failed jobs at most twice.
+
+Each trusted push to `main` selects `Exact staging Brev Launchable`. The job reads
+these credentials from repository Actions secrets:
+
+- `BREV_API_KEY` authenticates the Brev CLI for workspace operations in the
+  organization identified by `BREV_ORG_ID`.
+- `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted
+  host script. It grants Actions read/write access to `brevdev/nemoclaw-image`,
+  which the script uses to dispatch the image workflow, inspect its run, and
+  download its handoff artifact.
+- `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E
+  process. Code in the baked candidate checkout can read and use it.
+
+These credentials remain valid until they expire or an administrator revokes
+them in their issuing services. If cleanup fails, remove the recorded Brev
+workspace. Rotate or revoke each credential to remove later access.
+
+When an eligible `E2E main` push workflow concludes with `failure`, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
+The controller permits two reruns but does not verify that GitHub schedules a different runner.
+After evaluation succeeds, it uploads an artifact named for the current attempt.
+The artifact contains one `attempts` summary for each source attempt through the current attempt.
+The `totalRunnerMinutes` field contains the cumulative runner time for those summaries.
+A later successful attempt sets `action` to `passed-after-retry` and `flaky` to `true`.
+The controller does not retry manual PR runs or a run superseded by a newer `main` push.
+
+For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
+
+- every free-standing workflow E2E except `Exact staging Brev Launchable`;
+- every shared credential-free test; and
+- these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 
-PR Review Advisor maps changes to either of these shared journaled-recreation handlers to default-suite coverage:
+PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 
 - `src/lib/onboard/machine/handlers/sandbox-resume.ts`.
 - `src/lib/onboard/machine/handlers/sandbox.ts`.
@@ -719,7 +759,7 @@ The risk plan selects the `openshell-gateway-upgrade` job and the
 installer-driven OpenShell gateway upgrade handoff. The target covers the
 LangChain Deep Agents Code sandbox recreation path.
 
-The default suite exposes these values to candidate-controlled job processes:
+An empty-selector manual run exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
@@ -733,7 +773,8 @@ After a failure, inspect the workflow artifacts and remove resources that target
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. The live fixture attempts to stop and remove `nemoclaw-managed-image-nim-e2e`, but Docker stop or removal errors do not fail the test. A surviving container can retain the API key until runner teardown. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Rotate or revoke it in the issuing NVIDIA service to remove later access.
 
 For a manual PR run, provide the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
-Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` for the default suite.
+Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
+The empty-selector run selects `llama-cpp-dgx-spark-qualification`. If GitHub pauses the job for the `approve-dgx-spark-image-qualification` environment, an authorized environment reviewer must approve it before qualification starts.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
@@ -772,7 +813,7 @@ configuration, or the unified E2E workflow. Compatibility schema fields may
 classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
-A maintainer decides whether to dispatch the default E2E suite for the exact PR
+A maintainer decides whether to dispatch this trusted selection for the current PR
 revision. No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the

@@ -12,6 +12,7 @@ import type { SystemReadinessReport } from "../../readiness/types.js";
 import {
   confirmManagedClusterManagedServingCapability,
   createManagedClusterDiscoveryDeps,
+  type ManagedClusterConnectivityRequest,
   type ManagedClusterDetectedManagedServingCapability,
   type ManagedClusterDiscoveryDeps,
   type ManagedClusterHostObservation,
@@ -22,7 +23,10 @@ import {
   parseManagedClusterHostObservation,
   probeManagedClusterManagedServingCapability,
 } from "./managed-cluster-discovery.js";
-import { FIXTURE_MANAGED_CLUSTER_PRESET_ID } from "./managed-cluster-fixture.test-support.js";
+import {
+  FIXTURE_MANAGED_CLUSTER_PRESET_ID,
+  STOPPED_FOREIGN_CONTAINER_FIXTURES,
+} from "./managed-cluster-fixture.test-support.js";
 import { MANAGED_CLUSTER_MANAGED_LABEL } from "./managed-cluster-materialize.js";
 import {
   type ManagedVllmSshBinding,
@@ -43,34 +47,6 @@ const REQUIRED_CAPABILITIES = [
   "host.gpu.container_toolkit_available",
   "host.gpu.cdi_healthy",
 ] as const;
-
-type StoppedForeignContainerFixture = {
-  readonly signal: string;
-  readonly name: string;
-  readonly image: string;
-  readonly labels: Readonly<Record<string, string>>;
-};
-
-const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixture[] = [
-  {
-    signal: "name",
-    name: "foreign-vllm-server",
-    image: "example.invalid/inference:latest",
-    labels: {},
-  },
-  {
-    signal: "image",
-    name: "foreign-inference",
-    image: "vllm/vllm-openai:latest",
-    labels: {},
-  },
-  {
-    signal: "managed label",
-    name: "foreign-inference",
-    image: "example.invalid/inference:latest",
-    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
-  },
-];
 
 function expectDetectedCluster(
   detected: ReturnType<typeof probeManagedClusterManagedServingCapability>,
@@ -275,7 +251,7 @@ function fixture(overrides: Partial<ManagedClusterDiscoveryDeps> = {}) {
     },
     probeConnectivity: (_candidate, requests) => {
       events.push(`connectivity:${requests[0]?.sourceAddress ?? "missing"}`);
-      return true;
+      return null;
     },
     claimBinding: () => true,
     writeBinding: (_statePath, peerIdentity) => {
@@ -745,6 +721,72 @@ describe("managed DGX Spark cluster discovery", () => {
   });
 });
 
+function connectivityRequests(): ManagedClusterConnectivityRequest[] {
+  return [
+    {
+      netdev: "enp1s0f0np0",
+      sourceAddress: "192.168.100.1",
+      peerAddress: "192.168.100.2",
+      expectedPeerMac: "02:00:00:00:01:01",
+    },
+    {
+      netdev: "enp2s0f0np0",
+      sourceAddress: "192.168.101.1",
+      peerAddress: "192.168.101.2",
+      expectedPeerMac: "02:00:00:00:01:02",
+    },
+  ];
+}
+
+/**
+ * Serves healthy route, ping, and neighbor output for every rail, degraded only where
+ * the options ask for it. `neighborKeys` selects which keys the neighbor JSON carries,
+ * so a test can reproduce the real `ip` output that omits the filtered-on `dev`.
+ */
+function connectivityTransport(
+  requests: readonly ManagedClusterConnectivityRequest[],
+  options: {
+    neighborKeys?: readonly ("dst" | "dev" | "lladdr" | "state")[];
+    jumboFailsOn?: string;
+    neighborMissingOn?: string;
+  },
+): ManagedClusterReadOnlyHostTransport {
+  const keys = options.neighborKeys ?? ["dst", "dev", "lladdr", "state"];
+  return {
+    execute: (argv) => {
+      const routeResponse = () => ({
+        status: 0,
+        stdout: JSON.stringify([{ dev: argv.at(-1), prefsrc: argv[6], scope: "link" }]),
+        stderr: "",
+      });
+      const pingResponse = () => ({
+        status: Number(argv.at(-1) === options.jumboFailsOn),
+        stdout: "",
+        stderr: "",
+      });
+      const neighborResponse = () => {
+        const request = requests.find(({ peerAddress }) => peerAddress === argv[5])!;
+        const entry = {
+          dst: request.peerAddress,
+          dev: request.netdev,
+          lladdr: request.expectedPeerMac,
+          state: ["REACHABLE"],
+        };
+        const emitted = Object.fromEntries(keys.map((key) => [key, entry[key]]));
+        const rows = [emitted].filter(() => request.peerAddress !== options.neighborMissingOn);
+        return { status: 0, stdout: JSON.stringify(rows), stderr: "" };
+      };
+      return argv[1] === "-j" && argv[2] === "route"
+        ? routeResponse()
+        : argv[0] === "ping"
+          ? pingResponse()
+          : neighborResponse();
+    },
+    readFile: () => "",
+    readdir: () => [],
+  };
+}
+
 describe("production pinned peer transport", () => {
   it("atomically preserves an existing binding-root owner", () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-spark-binding-"));
@@ -894,7 +936,6 @@ describe("production pinned peer transport", () => {
             stdout: JSON.stringify([
               {
                 dst: request.peerAddress,
-                dev: request.netdev,
                 lladdr: request.expectedPeerMac,
                 state: ["REACHABLE"],
               },
@@ -912,9 +953,45 @@ describe("production pinned peer transport", () => {
       readdir: () => [],
     };
 
-    expect(deps.probeConnectivity(directTransport, requests)).toBe(true);
+    expect(deps.probeConnectivity(directTransport, requests)).toBeNull();
     routedThroughGateway = true;
-    expect(deps.probeConnectivity(directTransport, requests)).toBe(false);
+    expect(deps.probeConnectivity(directTransport, requests)).toEqual({
+      check: "route",
+      netdev: "enp1s0f0np0",
+    });
+  });
+
+  it("accepts a neighbor entry that omits the dev key filtered out by ip (#8519)", () => {
+    const deps = createManagedClusterDiscoveryDeps(() => ({ status: 0, stdout: "", stderr: "" }));
+    const requests = connectivityRequests();
+    // `ip -j neigh show to <peer> dev <netdev>` filters on `dev` and then drops it
+    // from the JSON, so the healthy fabric reports no `dev` at all.
+    const transport = connectivityTransport(requests, {
+      neighborKeys: ["dst", "lladdr", "state"],
+    });
+
+    expect(deps.probeConnectivity(transport, requests)).toBeNull();
+  });
+
+  it("names the rail and the sub-check that rejected the fabric (#8519)", () => {
+    const deps = createManagedClusterDiscoveryDeps(() => ({ status: 0, stdout: "", stderr: "" }));
+    const requests = connectivityRequests();
+
+    expect(
+      deps.probeConnectivity(
+        connectivityTransport(requests, { jumboFailsOn: "192.168.101.2" }),
+        requests,
+      ),
+    ).toEqual({ check: "jumbo", netdev: "enp2s0f0np0" });
+    expect(
+      deps.probeConnectivity(
+        connectivityTransport(requests, { neighborMissingOn: "192.168.100.2" }),
+        requests,
+      ),
+    ).toEqual({ check: "neighbor", netdev: "enp1s0f0np0" });
+    expect(
+      deps.probeConnectivity(connectivityTransport(requests, {}), requests.slice(0, 1)),
+    ).toEqual({ check: "rails" });
   });
 
   it("uses strict SSH and a fixed argv executor without interpolated shell", () => {

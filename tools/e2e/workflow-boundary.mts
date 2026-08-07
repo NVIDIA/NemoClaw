@@ -163,7 +163,6 @@ const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
-const EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER = new Set(["hermes-gpu-startup"]);
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
@@ -174,6 +173,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "jetson-nvmap-gpu",
   "llama-cpp-dgx-spark-qualification",
   "managed-image-multiarch-startup",
   "managed-image-protected-runtime",
@@ -531,8 +531,6 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       } else {
         explicitOnlyJobs.push(jobId);
       }
-    } else if (EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER.has(jobId)) {
-      explicitOnlyJobs.push(jobId);
     }
     if (!hasTargetMarker) continue;
 
@@ -796,7 +794,7 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
     targets === "";
   const explicitlySelected =
     input.eventName === "workflow_dispatch" && jobs === "staging-brev-launchable" && targets === "";
-  const requested = fullDispatch || explicitlySelected;
+  const requested = input.eventName === "push" || fullDispatch || explicitlySelected;
   const trustedMain = input.trustedMain !== false;
 
   return {
@@ -3953,14 +3951,20 @@ function validateAllowJetsonRunnerQueueInput(
 }
 
 function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecord): void {
-  validateFreeStandingJobSelector(errors, jobs, "jetson-nvmap-gpu", "jetson-nvmap-gpu", true);
-
   const job = asRecord(jobs["jetson-nvmap-gpu"]);
+  if (job.needs !== "generate-matrix") {
+    errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
+  }
+  const trustedSelector =
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
+  if (job.if !== trustedSelector) {
+    errors.push("jetson-nvmap-gpu job must use the trusted-main selector condition");
+  }
   const guardedRunsOn =
-    "${{ inputs.allow_jetson_runner_queue && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
+    "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
   if (job["runs-on"] !== guardedRunsOn) {
     errors.push(
-      "jetson-nvmap-gpu job must use ubuntu-latest unless allow_jetson_runner_queue is true",
+      "jetson-nvmap-gpu job must queue the configured runner for main and default manual runs",
     );
   }
 
@@ -3981,10 +3985,11 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
   if (dockerAuthIndex >= 0 && guardIndex >= dockerAuthIndex) {
     errors.push("jetson-nvmap-gpu dispatch guard must run before Docker Hub auth");
   }
-  if (guard.if !== "${{ !inputs.allow_jetson_runner_queue }}") {
-    errors.push(
-      "jetson-nvmap-gpu dispatch guard must run unless allow_jetson_runner_queue is true",
-    );
+  if (
+    guard.if !==
+    "${{ github.event_name == 'workflow_dispatch' && (inputs.jobs != '' || inputs.targets != '') && !inputs.allow_jetson_runner_queue }}"
+  ) {
+    errors.push("jetson-nvmap-gpu dispatch guard must reject unconfirmed selective queueing");
   }
   if (
     asRecord(guard.env).JETSON_E2E_RUNNER_LABEL !==
@@ -4066,10 +4071,10 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors.push("staging-brev-launchable must allow only trusted-main dispatches");
   }
   const expectedSelector =
-    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}";
   if (job.if !== expectedSelector) {
     errors.push(
-      "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
+      "staging-brev-launchable must run on main pushes and retain trusted manual selection",
     );
   }
   const generateMatrix = asRecord(jobs["generate-matrix"]);
@@ -4160,7 +4165,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     "jobs: $jobs",
     "targets: $targets",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
-    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$WORK_DIR/dispatch.json"',
   ]) {
     requireRunContains(errors, dispatchIdentity, required);
@@ -4186,7 +4191,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
     [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
   ] as const) {
-    const expected = `\${{ ${trustedRun} && github.event_name == 'workflow_dispatch' && secrets.${secret} || '' }}`;
+    const expected = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
     if (env[key] !== expected) {
       errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
@@ -4310,7 +4315,7 @@ function validateTrustedE2eDispatchReceipt(
     "targets: $targets",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
-    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
   ]) {
     requireRunContains(errors, dispatchReceipt, fragment);
@@ -4357,14 +4362,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
-  if (!jobsDescription.includes("default-enabled tests")) {
+  if (!jobsDescription.includes("include_staging_brev_launchable")) {
     errors.push(
-      "workflow_dispatch jobs input description must say empty dispatch runs default-enabled tests",
-    );
-  }
-  if (!jobsDescription.includes("explicit-only tests")) {
-    errors.push(
-      "workflow_dispatch jobs input description must say explicit-only tests are skipped unless selected",
+      "workflow_dispatch jobs input description must identify how to include Exact staging Brev Launchable",
     );
   }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
@@ -4966,7 +4966,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     if (
       reportEnv.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
     ) {
-      errors.push("report-to-pr must derive explicit-only jobs from workflow inventory");
+      errors.push(
+        "report-to-pr must derive jobs omitted from the manual run from workflow inventory",
+      );
     }
     const reportScript = stringValue(asRecord(report?.with).script ?? report?.run);
     if (

@@ -11,6 +11,8 @@ import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
+export { GATEWAYS_SUBDIR } from "./state-root";
+
 const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
 const MAX_GATEWAY_ROOTS = 256;
 const MAX_GATEWAY_DIRECTORY_ENTRIES = 1024;

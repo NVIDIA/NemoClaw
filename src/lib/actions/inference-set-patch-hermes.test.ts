@@ -2,17 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchHermesInferenceConfig } from "./inference-set";
 
 describe("patchHermesInferenceConfig", () => {
-  it("updates only the Hermes model block for the selected route", () => {
+  it("updates the complete Hermes route for the selected provider", () => {
     const config: ConfigObject = {
       model: {
         default: "moonshotai/kimi-k2.6",
         provider: "custom",
         base_url: "https://old.example/v1",
+        context_length: 32_768,
         temperature: 0.2,
       },
       models: {
@@ -32,9 +33,30 @@ describe("patchHermesInferenceConfig", () => {
       default: "openai/gpt-5.4-mini",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
-      temperature: 0.2,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "hermes-provider",
+      provider_key: "hermes-provider",
+      model: "openai/gpt-5.4-mini",
+    });
+    expect(config.providers).toEqual({
+      "hermes-provider": {
+        name: "hermes-provider",
+        api: "https://inference.local/v1",
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
+        default_model: "openai/gpt-5.4-mini",
+        discover_models: true,
+      },
+    });
+    expect(config.custom_providers).toEqual([
+      {
+        name: "hermes-provider",
+        base_url: "https://inference.local/v1",
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
+        discover_models: true,
+      },
+    ]);
     expect(config.models).toEqual({
       providers: {
         inference: {
@@ -45,7 +67,27 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.terminal).toEqual({ backend: "local" });
   });
 
-  it("replaces stale Hermes API keys with the OpenShell proxy placeholder", () => {
+  it("writes the selected Hermes model context window instead of retaining the previous route", () => {
+    const config: ConfigObject = {
+      model: {
+        default: "old-model",
+        provider: "custom",
+        base_url: "https://old.example/v1",
+        context_length: 32_768,
+      },
+    };
+
+    patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini", null, 128_000);
+
+    expect(config.model).toEqual(
+      expect.objectContaining({
+        default: "openai/gpt-5.4-mini",
+        context_length: 128_000,
+      }),
+    );
+  });
+
+  it("replaces stale Hermes API keys with the OpenShell proxy rewrite sentinel", () => {
     for (const api_key of ["no-key-required", "sk-real-looking-key-that-must-not-survive"]) {
       const config: ConfigObject = {
         model: {
@@ -58,7 +100,7 @@ describe("patchHermesInferenceConfig", () => {
 
       patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
 
-      expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+      expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
     }
   });
 
@@ -83,7 +125,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "claude-sonnet-4-6",
       provider: "custom",
       base_url: "https://inference.local",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
       api_mode: "anthropic_messages",
     });
   });
@@ -104,7 +146,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
   });
 
@@ -128,7 +170,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "anthropic.claude-3-5-sonnet-20240620-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
   });
 });

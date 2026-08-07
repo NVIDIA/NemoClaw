@@ -65,6 +65,7 @@ function contract(): LlamaCppHostLocalLaunchContract {
       modelSource: "verified-local",
     },
     runtime: {
+      restartPolicy: "unless-stopped",
       gpu: { count: 1, cpuFallback: "reject", offload: "full", vendor: "nvidia" },
       resources: {
         memoryBytes: 51_539_607_552,
@@ -75,6 +76,7 @@ function contract(): LlamaCppHostLocalLaunchContract {
     serve: {
       authentication: "bearer",
       batchSize: 2_048,
+      chatTemplate: "nemotron-v3-embedded",
       contextSize: 262_144,
       flashAttention: "enabled",
       idleSleepSeconds: -1,
@@ -190,6 +192,8 @@ describe("llama.cpp host-local runtime materializer", () => {
       `${runtime.ownerLabel.name}=${runtime.ownerLabel.value}`,
       "--network",
       runtime.network.name,
+      "--restart",
+      "unless-stopped",
       "--user",
       "1001:1001",
       "--publish",
