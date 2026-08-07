@@ -50,6 +50,16 @@ describe("protected managed-image runtime workflow boundary", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  it("does not record manual PR risk signals on main pushes", () => {
+    const value = workflow();
+    const jobEnv = multiarchJob(value).env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
   it("ships the exact activation contract consumed by the trusted lane (#7744)", () => {
     const activation = JSON.parse(
       fs.readFileSync(

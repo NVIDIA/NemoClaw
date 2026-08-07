@@ -30,7 +30,7 @@ type PolicyEntry = {
 };
 
 type PolicyDocument = {
-  filesystem_policy?: { read_write?: string[] };
+  filesystem_policy?: { read_only?: string[]; read_write?: string[] };
   network_policies?: Record<string, PolicyEntry>;
 };
 
@@ -137,6 +137,37 @@ describe("initial sandbox policy real preset merge", () => {
 
       expect(readWrite, policyCase.path.join("/")).toContain("/dev/pts");
       expect(readWrite, policyCase.path.join("/")).not.toContain("/dev/ptmx");
+    }
+  });
+
+  it("grants read-only package database access in every shipping sandbox policy (#8467)", () => {
+    const policyCases = [
+      { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
+      {
+        path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+        agent: "openclaw",
+      },
+      { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
+      { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
+      { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
+      {
+        path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+        agent: "langchain-deepagents-code",
+      },
+    ];
+
+    for (const policyCase of policyCases) {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const readOnly = policy.filesystem_policy?.read_only ?? [];
+      const readWrite = policy.filesystem_policy?.read_write ?? [];
+
+      expect(readOnly, policyCase.path.join("/")).toContain("/var/lib/dpkg");
+      for (const writableAncestor of ["/", "/var", "/var/lib", "/var/lib/dpkg"]) {
+        expect(readWrite, policyCase.path.join("/")).not.toContain(writableAncestor);
+      }
     }
   });
 

@@ -98,6 +98,11 @@ export const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["scripts/checks/no-unit-blocks-in-live-e2e.mts"],
   },
+  {
+    name: "test-registration-boundary",
+    command: TSX,
+    args: ["scripts/checks/test-registration-boundary.mts"],
+  },
 ];
 
 type RunChecksOptions = {
