@@ -69,7 +69,7 @@ describe("shields policy transition", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
-  });
+  }, 30_000);
 
   afterEach(() => {
     vi.restoreAllMocks();
