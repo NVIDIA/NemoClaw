@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { loadLlamaCppImageConfig } from "../scripts/checks/export-llama-cpp-image-config.mts";
 import {
   buildCandidateImageArgv,
+  buildRuntimeLogForbiddenValues,
   buildServerContainerArgv,
   expectedRegistryName,
   expectedRegistryOwner,
@@ -432,13 +433,35 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("rejects credentials, host paths, prompts, and responses in bounded runtime logs (#8144)", () => {
-    const forbidden = [
-      "a".repeat(64),
-      MODEL_PATH,
-      "Return one short readiness token.",
-      "LLAMA_CPP_OPENCLAW_TOOL_OK",
-    ];
+  it("rejects every runner-derived credential, model path, prompt, and response in bounded runtime logs (#8144)", () => {
+    const apiKey = "a".repeat(64);
+    const authorization = `Bearer ${apiKey}`;
+    const forbidden = buildRuntimeLogForbiddenValues(
+      plan,
+      parsedInvocation(),
+      apiKey,
+      authorization,
+    );
+    expect(forbidden).toEqual(
+      expect.arrayContaining([
+        `${authorization.slice(0, -1)}0`,
+        MODEL_PATH,
+        `/models/${plan.recipe.model.file.path}`,
+        "This request must be rejected.",
+        "Return one short readiness token.",
+        "Reply with exactly: ready",
+        "Reply with one token.",
+        "Count upward without stopping.",
+        "Report the requested qualification status.",
+        "Use the available tool to get the weather in Seattle.",
+        '{"conditions":"clear","temperature_c":21}',
+        '{"location":"Seattle"}',
+        plan.qualification.agentQualification.prompts.normal,
+        plan.qualification.agentQualification.prompts.tool,
+        plan.qualification.agentQualification.prompts.continuation,
+        plan.qualification.agentQualification.fixture.value,
+      ]),
+    );
     expect(validateRuntimeLogRedaction("server request complete\n", forbidden)).toEqual({
       ok: true,
     });

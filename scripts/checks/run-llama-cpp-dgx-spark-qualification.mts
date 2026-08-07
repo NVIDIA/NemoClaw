@@ -415,6 +415,36 @@ export function validateRuntimeLogRedaction(
   return { ok: true };
 }
 
+export function buildRuntimeLogForbiddenValues(
+  plan: QualificationPlan,
+  invocation: QualificationInvocation,
+  apiKey: string,
+  authorization: string,
+): readonly string[] {
+  const agentPlan = plan.qualification.agentQualification;
+  const rejectedAuthorization = `${authorization.slice(0, -1)}${authorization.endsWith("0") ? "1" : "0"}`;
+  return [
+    apiKey,
+    authorization,
+    rejectedAuthorization,
+    invocation.modelHostPath,
+    `/models/${plan.recipe.model.file.path}`,
+    "This request must be rejected.",
+    "Return one short readiness token.",
+    "Reply with exactly: ready",
+    "Reply with one token.",
+    "Count upward without stopping.",
+    "Report the requested qualification status.",
+    "Use the available tool to get the weather in Seattle.",
+    JSON.stringify({ conditions: "clear", temperature_c: 21 }),
+    JSON.stringify({ location: "Seattle" }),
+    agentPlan.prompts.normal,
+    agentPlan.prompts.tool,
+    agentPlan.prompts.continuation,
+    agentPlan.fixture.value,
+  ];
+}
+
 function compareVersions(left: string, right: string): number {
   const leftParts = left.split(".").map(Number);
   const rightParts = right.split(".").map(Number);
@@ -1034,19 +1064,7 @@ async function runQualification(
       runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
         maximumBytes: 16 * 1024 * 1024,
       }).toString("utf8"),
-      [
-        apiKey,
-        authorization,
-        invocation.modelHostPath,
-        "Return one short readiness token.",
-        "Reply with exactly: ready",
-        "Report the requested qualification status.",
-        "Use the available tool to get the weather in Seattle.",
-        agentPlan.prompts.normal,
-        agentPlan.prompts.tool,
-        agentPlan.prompts.continuation,
-        agentPlan.fixture.value,
-      ],
+      buildRuntimeLogForbiddenValues(plan, invocation, apiKey, authorization),
     );
     successReceipt = {
       agentQualification,
