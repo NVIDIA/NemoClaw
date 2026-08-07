@@ -1608,13 +1608,13 @@ wait_for_hermes_gateway_internal() {
 
 restore_hermes_config_permissions_after_dashboard_start() {
   [ "$(id -u)" -eq 0 ] || return 0
-  # Hermes dashboard startup may tighten HERMES_HOME to 0700 because it runs as
-  # the sandbox owner. The gateway process runs as the separate gateway user and
-  # reads config via sandbox-group membership, so restore NemoClaw's shared
-  # mutable-root mode after the dashboard has performed its startup checks.
+  # Hermes dashboard startup may tighten HERMES_HOME and its runtime directories
+  # to 0700 because it runs as the sandbox owner. The gateway process runs as the
+  # separate gateway user and relies on sandbox-group membership, so restore the
+  # complete bounded writable layout after the dashboard startup checks.
   local attempts=0
   while [ "$attempts" -lt 5 ]; do
-    ensure_hermes_config_root_mode || return 1
+    repair_hermes_startup_layout || return 1
     attempts=$((attempts + 1))
     sleep 1
   done
