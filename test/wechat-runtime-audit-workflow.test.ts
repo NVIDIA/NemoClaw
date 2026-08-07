@@ -289,6 +289,7 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     for (const fragment of [
       "AS wechat-npm-cache",
+      "COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/",
       "RUN --network=none",
       "node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts",
       "--lockfile /opt/wechat-runtime/package-lock.json",
