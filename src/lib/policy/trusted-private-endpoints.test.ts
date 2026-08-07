@@ -84,7 +84,7 @@ network_policies:
     "websocket",
     "jsonrpc",
     "mcp",
-  ])("rejects mixed public and private DNS answers for %s endpoints (#8176)", async (protocol) => {
+  ])("pins mixed public and trusted-private DNS answers for %s endpoints (#8176)", async (protocol) => {
     const input = preset(`preset:
   name: private
 network_policies:
@@ -93,11 +93,20 @@ network_policies:
       - { host: api.corp.example, port: 443, protocol: ${protocol} }
 `);
 
-    await expect(
-      prepareTrustedPrivatePolicyPresets([input], ["api.corp.example"], {
-        lookup: lookup({ "api.corp.example": ["10.20.30.40", "8.8.8.8"] }),
-      }),
-    ).rejects.toThrow(/mixed public and private addresses/);
+    const [prepared] = await prepareTrustedPrivatePolicyPresets([input], ["api.corp.example"], {
+      lookup: lookup({ "api.corp.example": ["10.20.30.40", "8.8.8.8"] }),
+    });
+    const document = YAML.parse(prepared.content) as {
+      network_policies: { services: { endpoints: Array<{ allowed_ips?: string[] }> } };
+    };
+
+    expect(document.network_policies.services.endpoints[0]?.allowed_ips).toEqual([
+      "10.20.30.40",
+      "8.8.8.8",
+    ]);
+    expect(hasTrustedPrivatePolicyPinReceipt(prepared.content, prepared.trustedPrivatePins)).toBe(
+      true,
+    );
     expect(input.content).not.toContain("allowed_ips");
   });
 
@@ -145,7 +154,7 @@ network_policies:
     };
 
     expect(() => replayTrustedPrivatePolicyPinCapability(content, receipt)).toThrow(
-      /non-canonical private pins/,
+      /disallowed address pin/,
     );
   });
 

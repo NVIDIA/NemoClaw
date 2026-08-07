@@ -15,6 +15,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { LLAMA_CPP_PORT } from "./contract";
 import {
   buildLlamaCppHostLocalDockerArgv,
   type LlamaCppHostLocalLaunchContract,
@@ -157,6 +158,15 @@ describe("llama.cpp host-local runtime materializer", () => {
     );
     expect(argv.join("\n")).not.toContain("HF_TOKEN");
     expect(argv.join("\n")).not.toContain("huggingface.co");
+  });
+
+  it("publishes the fixed loopback host port when the bindings pin one", () => {
+    const argv = buildLlamaCppHostLocalDockerArgv(contract(), {
+      ...bindings(),
+      hostPort: LLAMA_CPP_PORT,
+    });
+
+    expect(valuesAfter(argv, "--publish")).toEqual([`127.0.0.1:${String(LLAMA_CPP_PORT)}:8081`]);
   });
 
   it("takes launch settings from the declared contract instead of code defaults (#8144)", () => {

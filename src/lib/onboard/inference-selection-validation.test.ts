@@ -304,7 +304,10 @@ describe("inference selection validation", () => {
         ok: true,
         api: intendedApi,
         pinnedAddresses: ["10.0.0.8"],
-        trustedPrivateCapability: { addresses: ["10.0.0.8"] },
+        trustedPrivateCapability: {
+          host: "anthropic.corp.example",
+          addresses: ["10.0.0.8"],
+        },
       });
       expect(probeEndpoint).toHaveBeenCalledOnce();
       expect(probeEndpoint).toHaveBeenCalledWith(

@@ -605,6 +605,13 @@ describe("base-image publication behavior", () => {
       expect(manifestScript).toContain('"${#digest_files[@]}" -ne 2');
       expect(manifestScript).toContain("^(amd64|arm64)-([0-9a-f]{64})$");
       expect(manifestScript).toContain("--format '{{.Image.OS}}/{{.Image.Architecture}}'");
+      expect(manifestScript).toContain(
+        'scripts/checks/retry-docker-imagetools-inspect.sh "$source"',
+      );
+      expect(manifestScript).toContain(
+        'scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw',
+      );
+      expect(manifestScript).not.toContain("docker buildx imagetools inspect");
       expect(manifestScript).toContain('if [ "$source_platform" != "linux/$expected_arch" ]; then');
       expect(manifestScript).toContain("duplicate platform digest");
       expect(manifestScript).toContain("declare -A source_digests=()");

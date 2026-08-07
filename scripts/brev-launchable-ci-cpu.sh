@@ -73,7 +73,7 @@ assert_openshell_version() {
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
     dev) OPENSHELL_VERSION="dev" ;;
-    stable | auto) OPENSHELL_VERSION="v0.0.85" ;;
+    stable | auto) OPENSHELL_VERSION="v0.0.99" ;;
     *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto" ;;
   esac
 fi
@@ -148,11 +148,11 @@ openshell_cli_asset_for_arch() {
 openshell_cli_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.85:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "078fa086f506832c3d47d992e6109f26074bdd55916ce268e47c3971423459eb"
+    v0.0.99:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "35725a358e42ef7f0f0393035536da317706b0febcc459a2011e0555f6c2b71c"
       ;;
-    v0.0.85:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "3cf353e7994d5835a233fe0641f9a860779190b054d0f90a04c897be782734b8"
+    v0.0.99:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "d00cbf0d8779c01ddea6453ead2ad4db3d89a1f14eb6f0785f7919f42813a279"
       ;;
     *)
       return 1

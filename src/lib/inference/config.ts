@@ -363,7 +363,7 @@ export function parseGatewayInference(output: string | null | undefined): Gatewa
   let provider: string | null = null;
   let model: string | null = null;
   for (const line of lines) {
-    if (/^Gateway inference:\s*$/i.test(line)) {
+    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
       inGateway = true;
       continue;
     }

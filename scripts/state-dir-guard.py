@@ -47,6 +47,7 @@ PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
     {"/sandbox/.openclaw", "/sandbox/.hermes", "/sandbox/.deepagents"}
 )
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
+MAX_TRANSITION_LOCK_BYTES = 16 * 1024
 # Keep this exact source/target contract aligned with
 # src/lib/state/openclaw-managed-extensions.ts.
 OPENCLAW_IMAGE_PACKAGE_PATHS = frozenset(
@@ -2378,16 +2379,108 @@ def _acquire_transition_lock(path: str, identity: Identity) -> int:
         os.close(parent_fd)
 
 
+def _run_guard_with_transition_lock_fd(
+    action: Action,
+    config_dir: str,
+    identity: Identity,
+    plan: AgentStateLockPlan,
+    lock_path: str,
+    lock_fd: int,
+) -> GuardResult:
+    """Run under the caller's inherited OpenClaw mutation-mutex description.
+
+    The caller must hold the mutex exclusively. Re-locking an inherited
+    descriptor succeeds while a separately opened one blocks, which is what
+    proves inheritance. A shared lock would pass without giving exclusion, so
+    do not reuse this path for read-only actions.
+    """
+
+    try:
+        opened = os.fstat(lock_fd)
+        current = os.stat(lock_path, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or not _same_entry(opened, current)
+            or opened.st_uid != identity.root_uid
+            or opened.st_gid != identity.root_gid
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_size > MAX_TRANSITION_LOCK_BYTES
+        ):
+            raise GuardOperationError(
+                Issue(
+                    "unsafe-transition-lock",
+                    lock_path,
+                    "inherited mutation mutex must be the private root-owned lock file",
+                )
+            )
+        try:
+            # An inherited descriptor shares the parent's flock ownership; a
+            # separately opened one blocks and cannot bypass serialization.
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise GuardOperationError(
+                Issue(
+                    "transition-lock-not-inherited",
+                    lock_path,
+                    "mutation mutex descriptor does not share the caller's lock",
+                )
+            ) from exc
+        after = os.stat(lock_path, follow_symlinks=False)
+        if not _same_entry(opened, after):
+            raise GuardOperationError(
+                Issue(
+                    "transition-lock-raced",
+                    lock_path,
+                    "transition mutex changed during inherited-lock verification",
+                )
+            )
+        return _run_guard_unserialized(action, config_dir, identity, plan)
+    except GuardOperationError as exc:
+        result = GuardResult(action=action)
+        result.issues.append(exc.issue)
+        return result
+    except OSError as exc:
+        result = GuardResult(action=action)
+        result.issues.append(
+            _os_issue(
+                "transition-lock-failed", lock_path, "verify inherited mutation mutex", exc
+            )
+        )
+        return result
+
+
 def run_guard(
     action: Action,
     config_dir: str,
     identity: Identity,
     plan: AgentStateLockPlan,
+    *,
+    transition_lock_fd: int | None = None,
 ) -> GuardResult:
     """Serialize production OpenClaw recursive transitions with its top guard."""
 
     normalized_config = posixpath.normpath(config_dir)
     lock_path = _transition_lock_path(normalized_config)
+    if transition_lock_fd is not None:
+        if lock_path is None:
+            result = GuardResult(action=action)
+            result.issues.append(
+                Issue(
+                    "unexpected-transition-lock-fd",
+                    normalized_config,
+                    "an inherited transition mutex is valid only for serialized OpenClaw state",
+                )
+            )
+            return result
+        return _run_guard_with_transition_lock_fd(
+            action,
+            normalized_config,
+            identity,
+            plan,
+            lock_path,
+            transition_lock_fd,
+        )
     if lock_path is None:
         return _run_guard_unserialized(action, normalized_config, identity, plan)
 
@@ -2445,6 +2538,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     plan_source = parser.add_mutually_exclusive_group()
     plan_source.add_argument("--plan-json")
     plan_source.add_argument("--plan-file")
+    parser.add_argument("--transition-lock-fd", type=int, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
@@ -2510,7 +2604,13 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             else:
-                result = run_guard(args.action, args.config_dir, identity, plan)
+                result = run_guard(
+                    args.action,
+                    args.config_dir,
+                    identity,
+                    plan,
+                    transition_lock_fd=args.transition_lock_fd,
+                )
 
     for issue in result.issues:
         print(json.dumps(issue.as_json(), sort_keys=True, separators=(",", ":")))
