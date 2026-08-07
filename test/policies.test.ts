@@ -212,6 +212,170 @@ exit 1
       }
     });
 
+    it("continues when an h2 reset loses the response after the full policy becomes active", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-h2-committed-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const callsPath = path.join(tmpDir, "calls.log");
+      const activePolicyPath = path.join(tmpDir, "active-policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "test-sandbox", policies: [] });
+const result = policies.applyPresets("test-sandbox", ["npm", "pypi"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  calls: fs.readFileSync(process.env.CALLS_PATH, "utf-8").trim().split("\n").filter(Boolean),
+  registry: registry.getSandbox("test-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\nStatus: Effective\n---\n'
+  if [ -f ${JSON.stringify(activePolicyPath)} ]; then
+    cat ${JSON.stringify(activePolicyPath)}
+  else
+    printf 'version: 1\n\nnetwork_policies: {}\n'
+  fi
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(activePolicyPath)}
+  printf '%s\n' 'Error: code: Internal error, message: h2 protocol error: http2 error; Reset(StreamId(3), PROTOCOL_ERROR, Library)' >&2
+  exit 1
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            CALLS_PATH: callsPath,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const payload = parseResultPayload(result.stdout);
+        expect(payload.result).toBe(true);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(
+          1,
+        );
+        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(
+          2,
+        );
+        expect(payload.registry.policies).toEqual(["npm", "pypi"]);
+        expect(result.stderr).toContain("fresh read verified the complete policy is active");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("retries the unchanged full policy once after an h2 reset before it becomes active", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-h2-retry-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const callsPath = path.join(tmpDir, "calls.log");
+      const activePolicyPath = path.join(tmpDir, "active-policy.yaml");
+      const setCountPath = path.join(tmpDir, "set-count");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "test-sandbox", policies: [] });
+const result = policies.applyPresets("test-sandbox", ["npm", "pypi"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  calls: fs.readFileSync(process.env.CALLS_PATH, "utf-8").trim().split("\n").filter(Boolean),
+  registry: registry.getSandbox("test-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\nStatus: Effective\n---\n'
+  if [ -f ${JSON.stringify(activePolicyPath)} ]; then
+    cat ${JSON.stringify(activePolicyPath)}
+  else
+    printf 'version: 1\n\nnetwork_policies: {}\n'
+  fi
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  count=0
+  if [ -f ${JSON.stringify(setCountPath)} ]; then
+    count=$(cat ${JSON.stringify(setCountPath)})
+  fi
+  count=$((count + 1))
+  printf '%s' "$count" > ${JSON.stringify(setCountPath)}
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  if [ "$count" -eq 2 ]; then
+    cp "$policy_file" ${JSON.stringify(activePolicyPath)}
+  fi
+  printf '%s\n' 'Error: code: Internal error, message: h2 protocol error: http2 error; Reset(StreamId(3), PROTOCOL_ERROR, Library)' >&2
+  exit 1
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            CALLS_PATH: callsPath,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const payload = parseResultPayload(result.stdout);
+        expect(payload.result).toBe(true);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(
+          2,
+        );
+        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(
+          3,
+        );
+        expect(payload.registry.policies).toEqual(["npm", "pypi"]);
+        expect(result.stderr).toContain("retrying once");
+        expect(result.stderr).toContain("fresh read verified the complete policy is active");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("uses agent-specific preset content for Hermes Discord", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-"));
       const fakeOpenshell = path.join(tmpDir, "openshell");

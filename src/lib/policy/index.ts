@@ -27,7 +27,7 @@ import {
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
-import { ROOT, run, runCapture } from "../runner";
+import { ROOT, redact, run, runCapture, runCaptureEx } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import * as registry from "../state/registry";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
@@ -639,6 +639,60 @@ function policyDocumentsMatch(left: string, right: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isPolicySetH2TransportReset(stdout: string, stderr: string): boolean {
+  const diagnostic = `${stdout}\n${stderr}`;
+  return /h2 protocol error/i.test(diagnostic) && /PROTOCOL_ERROR/i.test(diagnostic);
+}
+
+function activePolicyMatches(sandboxName: string, expectedPolicy: string): boolean {
+  const result = runCaptureEx(buildPolicyGetCommand(sandboxName));
+  if (result.exitCode !== 0) return false;
+  const activePolicy = parseCurrentPolicyOrEmpty(result.stdout);
+  return Boolean(activePolicy) && policyDocumentsMatch(activePolicy, expectedPolicy);
+}
+
+/**
+ * OpenShell can commit a policy update and then lose the HTTP/2 response while
+ * `policy set --wait` is polling the sandbox. Reconcile against a fresh
+ * effective-policy read before retrying the same idempotent update. This keeps
+ * the requested policy intact; it does not fall back to a smaller policy.
+ */
+function setPolicyFileWithH2Recovery(
+  policyFile: string,
+  sandboxName: string,
+  expectedPolicy: string,
+): boolean {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = runCaptureEx(buildPolicySetCommand(policyFile, sandboxName));
+    if (result.exitCode === 0) return true;
+
+    if (!isPolicySetH2TransportReset(result.stdout, result.stderr || "")) {
+      const detail = redact([result.stdout, result.stderr].filter(Boolean).join("\n")).trim();
+      console.error(`  Failed to update policy for sandbox '${sandboxName}'.`);
+      if (detail) console.error(`  ${detail}`);
+      return false;
+    }
+
+    if (activePolicyMatches(sandboxName, expectedPolicy)) {
+      console.warn(
+        "  OpenShell lost the policy-set response, but a fresh read verified the complete policy is active.",
+      );
+      return true;
+    }
+
+    if (attempt === 0) {
+      console.warn(
+        "  OpenShell reset the policy-set HTTP/2 stream before the policy became active; retrying once.",
+      );
+    }
+  }
+
+  console.error(
+    `  OpenShell reset the policy-set stream twice and the complete policy is not active for sandbox '${sandboxName}'.`,
+  );
+  return false;
 }
 
 function logPresetNoNewEgress(
@@ -2250,7 +2304,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
     try {
-      run(buildPolicySetCommand(tmpFile, sandboxName));
+      if (!setPolicyFileWithH2Recovery(tmpFile, sandboxName, merged)) return false;
 
       for (const preset of presetContents.filter((entry) => entry.state !== "match")) {
         console.log(`  Applied preset: ${preset.name}`);
