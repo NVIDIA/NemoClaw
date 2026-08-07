@@ -60,7 +60,7 @@ Stop and request user remediation for any Git or GitHub access error. Do not att
 remote, protocol, or permission bypass. Then follow
 [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared
 [Code Change Considerations](../_shared/code-change-considerations.md),
-[Root Cause and Sensitive State Checks](../_shared/root-cause-and-state-checks.md),
+[Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md),
 [Security Rubric](../_shared/security-rubric.md), and
 [Documentation Writing and Review](../_shared/documentation-writing-review.md) contract.
 
@@ -132,7 +132,7 @@ Use this structure:
 - Error or recovery:
 - Boundary or ambiguous state:
 
-## Root cause and sensitive state
+## Root cause and sensitive-workflow state
 - Operation and failure class:
 - Sibling paths checked: <path and whether it needs the same change>
 - Sensitive-workflow states: <applicable phases and outcomes, or "not applicable" with the reason>

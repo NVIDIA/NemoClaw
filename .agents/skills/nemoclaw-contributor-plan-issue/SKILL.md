@@ -47,7 +47,7 @@ related work. Do not assign an owner through GitHub unless the user authorizes t
 
 ## Discover the current implementation
 
-Before running any `git` or `gh` discovery command, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md). Then follow [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md), [Root Cause and Sensitive State Checks](../_shared/root-cause-and-state-checks.md), and [Security Rubric](../_shared/security-rubric.md) at the planning stage.
+Before running any `git` or `gh` discovery command, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md). Then follow [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md), [Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md), and [Security Rubric](../_shared/security-rubric.md) at the planning stage.
 
 Read before proposing work:
 
@@ -127,7 +127,8 @@ Use this structure:
 ## Current state and decisions
 - Existing structure to extend: <owner and evidence>
 - Unresolved product decisions: <decision or "none found">
-- Operation and failure class: <shared operation, sibling paths checked, and paths that need the same change>
+- Operation and failure class: <operation and failure class the work belongs to>
+- Sibling paths checked: <path and whether it needs the same change>
 - Sensitive-workflow states: <applicable phases and outcomes, or "not applicable" with the reason>
 - Security boundaries: <applicable risks, controls, and required negative evidence>
 

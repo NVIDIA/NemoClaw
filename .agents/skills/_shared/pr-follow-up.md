@@ -90,8 +90,8 @@ Before editing, collect and classify all review signals in the latest completed 
 1. Re-read `headRefOid`. Collect current required-check failures, issue comments, submitted reviews, inline threads with resolution state, advisor findings, and required independent-review findings. Record each source commit when GitHub provides it; otherwise record the collected head SHA.
 2. Re-evaluate findings created for an older head against the current head. Exclude a finding only when the changed code is gone or evidence shows that the defect is resolved. Record the disposition before editing.
 3. Group findings by root cause. Name the behavior contract and acceptance evidence for each group.
-4. Apply the shared [Root Cause and Sensitive State Checks](root-cause-and-state-checks.md) to the change set that the valid groups imply. Record the sibling paths checked and the sensitive-workflow state outcomes.
-5. Decide which groups are valid, false positives, design-changing, or blocked before changing files.
+4. Decide which groups are valid, false positives, design-changing, or blocked before changing files.
+5. Apply the shared [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md) to the change set that the valid groups imply. Record the sibling paths checked and the sensitive-workflow state outcomes.
 
 Do not create a separate commit or push for each finding. Apply all findings in the same root-cause group as one coherent change set. Classify every finding in the latest completed head-stable collection before beginning that change set. If the user tells you to stop, remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. Then stop without further edits, commits, or pushes. The user may explicitly defer a non-blocking suggestion or allow work to proceed without an optional pending review. Record that decision before editing. Do not proceed without a required review. Deferral does not authorize a push with an unresolved blocking, correctness, security, data safety, supported-contract, required-review, or required-check finding.
 
@@ -109,8 +109,8 @@ Do not create a separate commit or push for each finding. Apply all findings in 
   - A supported contract.
   - Unnecessary complexity in changed code.
   - Ambiguity in changed text that can change behavior, security, data safety, test meaning, or release meaning.
-- **CI failure:** Add the failure to the current review cycle. Inspect other checks and paths with the same root cause. Apply the complete fix group, then run the related local checks.
-- **Valid CodeRabbit or PR Review Advisor finding:** Add the finding to its root-cause group. Inspect adjacent correctness, security, and test paths before editing. Apply the group as one change set.
+- **CI failure:** Add the failure to the current review cycle. Apply the shared root-cause and sensitive-workflow state checks to the failing paths. Apply the complete fix group, then run the related local checks.
+- **Valid CodeRabbit or PR Review Advisor finding:** Add the finding to its root-cause group. Apply the shared root-cause and sensitive-workflow state checks before editing. Apply the group as one change set.
 - **Style comment or false positive:** Avoid unnecessary changes. Explain your decision in the final report. Comment on the PR when reviewers need the explanation.
 - **Ambiguous, risky, broad, or design-changing feedback:** Stop and ask the user before you change code.
 

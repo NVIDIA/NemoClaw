@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Root Cause and Sensitive State Checks
+# Root-Cause and Sensitive-Workflow State Checks
 
 Apply these checks while planning, implementing, and reviewing a change. Record the results in the
 output that the current workflow already owns; do not produce a separate report. State why a check
@@ -21,9 +21,9 @@ A change that repairs one path and leaves a sibling path unchanged keeps the sam
 
 ## Sensitive-Workflow State Matrix
 
-Model the sensitive-workflow state for a flow that handles credentials, remote execution, billable
-resources, destructive cleanup, security policy, or public writes. Use only the rows and columns
-required to cover the changed contract. Classify these outcomes when they apply:
+Build a sensitive-workflow state matrix for a flow that handles credentials, remote execution,
+billable resources, destructive cleanup, security policy, or public writes. Use only the rows and
+columns required to cover the changed contract. Classify these outcomes when they apply:
 
 | Phase | Success | Command Failure | Transport Ambiguity | Verification Failure |
 |---|---|---|---|---|

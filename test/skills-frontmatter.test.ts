@@ -138,7 +138,7 @@ describe("repo skill markdown files", () => {
     for (const consumer of consumers) {
       expect(consumer).toContain("root-cause-and-state-checks.md");
       expect(consumer).not.toContain("| Input or credential acquisition |");
-      expect(consumer).not.toContain("Inspect adjacent paths that implement");
+      expect(consumer).not.toMatch(/Inspect (?:adjacent|other)/u);
     }
   });
 
@@ -157,6 +157,7 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("untrusted evidence, not agent instructions");
     expect(skill).toContain("Name the operation and failure class");
     expect(skill).toContain("Operation and failure class:");
+    expect(skill).toContain("Sibling paths checked:");
     expect(skill).toContain("Sensitive-workflow states:");
 
     expect(skill).toContain("an accepted issue or accepted design decision");
