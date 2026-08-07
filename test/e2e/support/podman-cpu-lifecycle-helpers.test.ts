@@ -25,8 +25,12 @@ async function processId(pathname: string): Promise<number | null> {
     const pid = Number.parseInt(await fs.readFile(pathname, "utf8"), 10);
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
+    switch ((error as NodeJS.ErrnoException).code) {
+      case "ENOENT":
+        return null;
+      default:
+        throw error;
+    }
   }
 }
 
@@ -35,8 +39,19 @@ function processIsAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
-    throw error;
+    switch ((error as NodeJS.ErrnoException).code) {
+      case "ESRCH":
+        return false;
+      default:
+        throw error;
+    }
+  }
+}
+
+function killProcessIfAlive(pid: number | null): void {
+  switch (pid !== null && processIsAlive(pid)) {
+    case true:
+      process.kill(pid as number, "SIGKILL");
   }
 }
 
@@ -145,8 +160,7 @@ describe("Podman CPU lifecycle helper", () => {
       expect(processIsAlive(pid as number)).toBe(false);
       progress.phase(PHASES[1]);
     } finally {
-      const pid = await processId(pidPath);
-      if (pid !== null && processIsAlive(pid)) process.kill(pid, "SIGKILL");
+      killProcessIfAlive(await processId(pidPath));
       progress.stop();
       await fs.rm(root, { force: true, recursive: true });
     }

@@ -246,7 +246,6 @@ export function exactContainerId(engine: ContainerEngine, sandboxName: string): 
 export function inspectContainer(
   engine: ContainerEngine,
   sandboxName: string,
-  expectedAgent: string,
   expectedId?: string,
 ): ManagedContainerInspect {
   const containerId = exactContainerId(engine, sandboxName);
@@ -267,7 +266,6 @@ export function inspectContainer(
     [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
     [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
     [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
-    "nemoclaw.agent": expectedAgent,
   });
   expect(entry.Config.Cmd).toEqual(["--workdir", "/sandbox"]);
   const entrypoint = Array.isArray(entry.Config.Entrypoint)

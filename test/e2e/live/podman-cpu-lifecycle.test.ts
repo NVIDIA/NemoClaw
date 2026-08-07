@@ -159,6 +159,9 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
 
     progress.phase("activate registered-agent identities through the pinned OpenShell CLI");
     for (const { agent, sandboxName } of AGENTS) {
+      // Record the exact proof-owned name before creation so cleanup also
+      // covers a sandbox that reaches OpenShell's Error phase.
+      createdSandboxes.push(sandboxName);
       await runCommand(
         shellProbe,
         openshellBin,
@@ -179,7 +182,7 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
           "--",
           "/bin/sh",
           "-lc",
-          `printf '%s\\n' '${agent}' >/tmp/nemoclaw-agent-proof`,
+          `printf '%s\\n' '${agent}' >/tmp/nemoclaw-agent-proof && exec sleep infinity`,
         ],
         {
           artifactName: `podman-lifecycle-create-${agent}`,
@@ -187,8 +190,29 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
           timeoutMs: 240_000,
         },
       );
-      createdSandboxes.push(sandboxName);
-      const activated = inspectContainer(runtimeEngines.sandboxLifecycle, sandboxName, agent);
+      expect(
+        await runCommand(
+          shellProbe,
+          openshellBin,
+          [
+            "sandbox",
+            "exec",
+            "--name",
+            sandboxName,
+            "-g",
+            GATEWAY_NAME,
+            "--",
+            "cat",
+            "/tmp/nemoclaw-agent-proof",
+          ],
+          {
+            artifactName: `podman-lifecycle-agent-proof-${agent}`,
+            env: cliEnv,
+            timeoutMs: 10_000,
+          },
+        ),
+      ).toBe(agent);
+      const activated = inspectContainer(runtimeEngines.sandboxLifecycle, sandboxName);
       expect(activated.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
     }
 
@@ -238,16 +262,11 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
         sandboxName,
       };
       const beforeStop = vi.fn();
-      const initial = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, agent);
+      const initial = inspectContainer(agentEngines.sandboxLifecycle, sandboxName);
 
       expect(lifecycle.stop(input, { beforeStop })).toEqual({ exitCode: 0, state: "stopped" });
       expect(beforeStop).toHaveBeenCalledExactlyOnceWith();
-      const stopped = inspectContainer(
-        agentEngines.sandboxLifecycle,
-        sandboxName,
-        agent,
-        initial.Id,
-      );
+      const stopped = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
       expect(stopped.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
 
       expect(agentBundle.preflightDoctor.preflightLifecycle("start", input)).toBeNull();
@@ -256,12 +275,7 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
         input,
         vi.fn(async () => undefined),
       );
-      const running = inspectContainer(
-        agentEngines.sandboxLifecycle,
-        sandboxName,
-        agent,
-        initial.Id,
-      );
+      const running = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
       expect(running.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
 
       expect(lifecycle.stop(input, { beforeStop: vi.fn() })).toEqual({
@@ -269,18 +283,13 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
         state: "stopped",
       });
       expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
-      const restarted = inspectContainer(
-        agentEngines.sandboxLifecycle,
-        sandboxName,
-        agent,
-        initial.Id,
-      );
+      const restarted = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
       expect(restarted.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
       expect(lifecycle.stop(input, { beforeStop: vi.fn() })).toEqual({
         exitCode: 0,
         state: "stopped",
       });
-      const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, agent, initial.Id);
+      const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
       expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
     }
     progress.phase("verify production portable ownership and final at-rest state");
