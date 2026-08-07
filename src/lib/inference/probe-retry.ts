@@ -37,6 +37,7 @@ function shouldRetryHttpProbe(result) {
   return (
     result &&
     !result.ok &&
+    result.reasoningRetryAttempted !== true &&
     result.curlStatus === 0 &&
     RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
   );
@@ -60,6 +61,7 @@ function isTimeoutOrConnFailureStatus(curlStatus) {
 }
 
 function isRetriableProbeResult(result) {
+  if (result.reasoningRetryAttempted === true) return false;
   return (
     isTimeoutOrConnFailureStatus(result.curlStatus) ||
     RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
