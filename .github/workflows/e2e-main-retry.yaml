@@ -32,7 +32,7 @@ jobs:
     concurrency:
       group: e2e-main-retry-${{ github.event.workflow_run.id }}
       cancel-in-progress: false
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: write

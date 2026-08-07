@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -18,49 +19,6 @@ const DCODE_DOCKERFILE_BASE = path.join(
   "Dockerfile.base",
 );
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  expect(start, `Expected Dockerfile block start marker ${startMarker}`).not.toBe(-1);
-  expect(end, `Expected Dockerfile block end marker ${endMarker}`).toBeGreaterThan(start);
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  expect(runIndex, `Expected RUN instruction after ${startMarker}`).not.toBe(-1);
-  expect(runIndex, `Expected RUN instruction before ${endMarker}`).toBeLessThanOrEqual(end);
-  const sourceLines = dockerfile.slice(runIndex, end).split("\n");
-  const finalLineIndex = sourceLines.findIndex((line) => !line.trimEnd().endsWith("\\"));
-  expect(
-    finalLineIndex,
-    `Expected complete RUN instruction before ${endMarker}`,
-  ).toBeGreaterThanOrEqual(0);
-  const runLines = sourceLines.slice(0, finalLineIndex + 1);
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
-}
-
-function runLoggedDockerShell(command: string, tmp: string) {
-  const logPath = path.join(tmp, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `call_log=${JSON.stringify(logPath)}`,
-      command,
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  return spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-}
 
 function copyRlimitFixture(rlimitLib: string): void {
   // TEST-ONLY OVERRIDE: production remains 512 in scripts/lib/sandbox-rlimits.sh.
@@ -451,7 +409,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
@@ -485,7 +443,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
@@ -532,7 +490,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       const bashrcBody = fs.readFileSync(bashrc, "utf-8");
       expect(occurrenceCount(bashrcBody, expectedProxyShim)).toBe(1);
@@ -678,7 +636,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       // "wheel", so stub chown while preserving every chmod and hook write.
       const command = ["chown() { :; }", replay].join("\n");
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(profileHook, "utf-8")).toContain(expectedRlimitShim);
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);

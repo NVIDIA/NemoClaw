@@ -59,7 +59,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     continue-on-error: ${{ !matrix.advisor.publish_comment }}
     strategy:
@@ -336,7 +336,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
