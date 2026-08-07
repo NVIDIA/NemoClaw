@@ -10,7 +10,7 @@ content:
   type: "how_to"
 ---
 
-Use this workflow to request and qualify two trusted DGX Spark systems for distributed vLLM serving.
+Use this workflow to let DGX Spark Express qualify two trusted DGX Spark systems for distributed vLLM serving.
 The profile serves DeepSeek V4 Flash 0731 through the managed `inference.local` route.
 
 <Warning>
@@ -20,9 +20,10 @@ Use it only for evaluation until the required physical validation is complete.
 
 ## Understand Profile Selection
 
-DGX Spark Express selects the fixed single-host local model profile and does not select this distributed profile automatically.
-Request this profile explicitly with `NEMOCLAW_SERVING_PRESET`.
-The distributed detector derives one exact counterpart from each qualified private `/30` rail when you do not set an exact peer.
+DGX Spark Express attempts automatic profile selection only after you keep option 1, the default managed-vLLM path.
+Option 2 selects the fixed single-host catalog profile and does not attempt distributed selection.
+A provider other than `install-vllm`, an existing local inference route, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` remains authoritative.
+Without explicit inference intent, the detector derives one exact counterpart from each qualified private `/30` rail.
 It does not scan a subnet, add SSH host keys, add authorized keys, or change SSH configuration.
 
 Both derived addresses must already have strict public-key SSH trust.
@@ -35,7 +36,8 @@ Declining setup creates no binding.
 After confirmation, NemoClaw attempts to remove every binding when setup fails or the durable runtime receipt is committed.
 If cleanup cannot be confirmed, a new managed-vLLM install stops before mutation and preserves the claims for explicit recovery or removal.
 
-When no matching cluster qualifies, the explicit distributed request stops before the image or model download starts.
+When no matching cluster qualifies during automatic selection, NemoClaw retains the existing single-DGX Spark managed vLLM path.
+This ordinary no-match result occurs before the distributed image or model download starts.
 
 Existing related runtime state is not an ordinary no-match result.
 NemoClaw stops when either host has a related vLLM or DGX Station container, an ambiguous runtime inspection, or a listener on port `8000` or `25000`.
@@ -46,12 +48,12 @@ NemoClaw leaves the existing files, containers, and listeners untouched instead 
 Set `NEMOCLAW_MANAGED_CLUSTER_PEERS` to a comma-separated list of exact pretrusted peers.
 The current profile declares `nodeCount: 2`, so its strict selection requires one peer.
 Set `NEMOCLAW_SERVING_PRESET=vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731` to request the exact serving profile.
-Either setting makes qualification strict, so a missed requirement stops setup.
+Either setting makes qualification strict, so a missed requirement stops setup instead of selecting the single-DGX Spark profile.
 
 ## Prepare Both Systems
 
 Prepare both DGX Spark systems before you run the installer.
-The distributed path requires all of these conditions on both systems:
+The automatic path requires all of these conditions on both systems:
 
 - The host is an `arm64` DGX Spark with exactly one GB10 GPU.
 - The current controller is a non-root user whose user ID (UID) matches the local host probe.
@@ -114,9 +116,9 @@ The detector qualifies both ConnectX-7 rails.
 This profile revision binds vLLM, NCCL, Gloo, and tensor-parallel traffic to the first qualified rail in deterministic interface order.
 Do not interpret two qualified `200,000 Mbps` rails as measured aggregate serving throughput.
 
-## Request the Distributed Profile
+## Run Automatic Express Installation
 
-Run the installer on the system that should become the head.
+Run the interactive installer on the system that should become the head.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
@@ -129,16 +131,11 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 <AgentOnly variant="deepagents">
   NEMOCLAW_AGENT=langchain-deepagents-code \
 </AgentOnly>
-  NEMOCLAW_NON_INTERACTIVE=1 \
-  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-  NEMOCLAW_PROVIDER=install-vllm \
-  NEMOCLAW_SERVING_PRESET=vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731 \
-  NEMOCLAW_SANDBOX_NAME=my-assistant \
   bash
 ```
 
-NemoClaw derives the counterpart from the qualified direct rails and stops when it cannot select exactly one peer.
-Before image, model, or container mutation, NemoClaw prints the selected topology, immutable image, pinned model revision, cache paths, and worker-first launch order.
+Keep option 1, **Managed vLLM with automatic serving-profile selection**, then accept the **Run express install with these settings?** prompt.
+DGX Spark Express prints the selected topology, immutable image, pinned model revision, cache paths, and worker-first launch order before image, model, or container mutation.
 
 For optional authenticated model downloads, follow [Authenticate Hugging Face Downloads](set-up-vllm#authenticate-hugging-face-downloads) before you start the installer.
 The public model can download anonymously, but Hugging Face can rate-limit anonymous transfers.

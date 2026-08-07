@@ -7,19 +7,29 @@
 
 Use these instructions only after hardware detection confirms DGX Spark.
 
-Explain that Express keeps the selected agent, uses the fixed DGX Spark vLLM profile, leaves optional setup at its defaults, and downloads the catalog-selected container and model.
-Include the third-party-software notice, then ask: "Run Express install with these settings?"
-Choices:
+Explain that Express keeps the selected agent, leaves optional setup at its defaults, and offers two DGX Spark inference setups.
+Ask the user to choose:
 
-1. Yes, use the DGX Spark Express defaults.
-2. No, let me choose the runtime and model.
+1. Managed vLLM with automatic serving-profile selection. This is the default and preserves the current Express behavior.
+2. `nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile.
 
-If Express is selected:
+After the user chooses, include the third-party-software notice and ask: "Run Express install with these settings?"
+
+For option 1:
+
+- Set `NEMOCLAW_PROVIDER=install-vllm`.
+- Leave `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE`, `NEMOCLAW_LOCAL_MODEL_RUNTIME`, `NEMOCLAW_MODEL`, and `NEMOCLAW_VLLM_MODEL` unset.
+- Explain that the installed release performs automatic DGX Spark serving-profile selection.
+
+For option 2:
 
 - Set `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`.
 - Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset.
 - Explain that the serving catalog selects the fixed model, runtime image, port, and vLLM arguments.
-- The current DGX Spark vLLM profile serves `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+- Explain that the fixed profile serves `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+
+For either accepted Express option:
+
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
 - Set `NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.

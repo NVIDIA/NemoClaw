@@ -49,7 +49,7 @@ function definePromptAsset(assetPath: string, pinnedSha256: string): PromptAsset
 const promptAssets = {
   dgxSpark: definePromptAsset(
     "docs/resources/prompt-assets/dgx-spark.md",
-    "2d576fbd7231dc23fe3fb25056bc2584596d81e2448a3e023ad9427ab0a49c9f", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "84883d46c3a6481e062bdc21083bc16031a9f62a57212ccb9b83b0aaaf281f4f", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
@@ -816,7 +816,10 @@ describe("starter prompt docs CTA", () => {
 
     expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(sparkSource).toContain(
-      "Set `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`",
+      "Managed vLLM with automatic serving-profile selection. This is the default",
+    );
+    expect(sparkSource).toContain(
+      "`nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile",
     );
     expect(sparkSource).toContain(
       "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
