@@ -32,7 +32,8 @@ import {
   stationKnownHostsDigest,
   strictStationSshTransportArgs,
 } from "../src/lib/inference/vllm-station-ssh-binding.ts";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const COORDINATOR = path.join(REPO_ROOT, "scripts", "prepare-dual-dgx-station.mts");
@@ -221,26 +222,13 @@ function readyState(): DualStationResumeState {
   };
 }
 
-function runInstallerBody(body: string, extraEnv: Record<string, string> = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-installer-"));
-  const result = spawnSync(
-    "bash",
-    ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      env: {
-        HOME: home,
-        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
-        ...extraEnv,
-      },
-      timeout: 20_000,
-      killSignal: "SIGKILL",
-    },
-  );
-  return { home, result, output: `${result.stdout}${result.stderr}` };
-}
+const runInstallerBody = (body: string, extraEnv: Record<string, string> = {}) =>
+  runInstallerSourcedBody(body, {
+    homePrefix: "nemoclaw-pair-installer-",
+    extraEnv,
+    includeNodeOnPath: true,
+    timeoutMs: 20_000,
+  });
 
 function coordinatorResult(kind: "ready" | "reboot-required", peer = "10.10.0.2"): string {
   const state = readyState();
