@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import * as policies from "../../policy";
+import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -15,7 +16,12 @@ import {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
   MCP_BRIDGE_POLICY_SOURCE,
 } from "./mcp-bridge";
-import { applyGeneratedPolicy, assertGeneratedPolicyExactReadOnly } from "./mcp-bridge-policy";
+import {
+  applyGeneratedPolicy,
+  assertGeneratedPolicyExactReadOnly,
+  assertGeneratedPolicyMutationSafe,
+  removeGeneratedPolicy,
+} from "./mcp-bridge-policy";
 
 function githubBridgeEntry(overrides: Partial<McpBridgeEntry> = {}): McpBridgeEntry {
   return {
@@ -55,13 +61,32 @@ describe("MCP OpenShell policy", () => {
     ).toThrow(/without exact public address pins/);
   });
 
+  it("inspects an unowned direct-private policy key without targetless rendering (#8267)", () => {
+    const entry = githubBridgeEntry({
+      server: "local",
+      url: "https://10.20.30.40/mcp",
+      trustedPrivateHost: "10.20.30.40",
+      allowedIps: ["10.20.30.40"],
+      policyName: "mcp-bridge-local",
+    });
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+    const inspectKey = vi.spyOn(policies, "getLiveSandboxPolicyEntryDigest").mockReturnValue(null);
+    const inspectContent = vi.spyOn(policies, "getPresetContentGatewayState");
+    const removePreset = vi.spyOn(policies, "removePreset");
+
+    expect(() => assertGeneratedPolicyMutationSafe("alpha", entry)).not.toThrow();
+    expect(() => removeGeneratedPolicy("alpha", entry)).not.toThrow();
+    expect(inspectKey).toHaveBeenCalledWith("alpha", "mcp_bridge_local");
+    expect(inspectContent).not.toHaveBeenCalled();
+    expect(removePreset).not.toHaveBeenCalled();
+  });
+
   it("pins DNS answers while constraining the generic mcporter Node grant", () => {
     const policyName = buildMcpBridgePolicyName("GitHub_Server");
     const policy = YAML.parse(
-      buildMcpBridgePolicyYaml("GitHub_Server", "https://api.githubcopilot.com/mcp", "mcporter", [
-        "8.8.8.8",
-        "2606:4700:4700::1111",
-      ]),
+      buildMcpBridgePolicyYaml("GitHub_Server", "https://api.githubcopilot.com/mcp", "mcporter", {
+        addresses: ["2606:4700:4700::1111", "8.8.8.8"],
+      }),
     ) as {
       preset: { name: string };
       network_policies: Record<
@@ -105,7 +130,7 @@ describe("MCP OpenShell policy", () => {
         allow: { method },
       })),
     );
-    expect(entry.endpoints[0].allowed_ips).toEqual(["8.8.8.8", "2606:4700:4700::1111"]);
+    expect(entry.endpoints[0].allowed_ips).toEqual(["2606:4700:4700::1111", "8.8.8.8"]);
     expect(entry.binaries.map((binary) => binary.path)).toEqual([
       "/usr/local/bin/mcporter",
       "/usr/bin/mcporter",
@@ -118,6 +143,71 @@ describe("MCP OpenShell policy", () => {
       strict_tool_names: true,
       allow_all_known_mcp_methods: false,
     });
+  });
+
+  it.each([
+    "mcporter",
+    "hermes-config",
+    "deepagents-config",
+  ] as const)("renders an exactly authorized private IPv4 target for %s (#8267)", (adapter) => {
+    const replay = replayTrustedPrivateEndpoint("10.20.30.40", ["10.20.30.40"]);
+    const policy = YAML.parse(
+      buildMcpBridgePolicyYaml("local", "https://10.20.30.40/mcp", adapter, {
+        addresses: [...replay.addresses],
+        trustedPrivateCapability: replay.trustedPrivateCapability,
+        trustedPrivateHost: replay.host,
+      }),
+    ) as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ allowed_ips: string[]; host: string }> }
+      >;
+    };
+
+    expect(policy.network_policies.mcp_bridge_local.endpoints[0]).toMatchObject({
+      host: "10.20.30.40",
+      allowed_ips: ["10.20.30.40"],
+    });
+  });
+
+  it("requires host-bound capability authority for a trusted private DNS policy (#8267)", () => {
+    const replay = replayTrustedPrivateEndpoint("mcp.corp.internal", ["10.20.30.40"]);
+    const target = {
+      addresses: [...replay.addresses],
+      trustedPrivateCapability: replay.trustedPrivateCapability,
+      trustedPrivateHost: replay.host,
+    };
+
+    expect(() =>
+      buildMcpBridgePolicyYaml("local", "https://mcp.corp.internal/mcp", "mcporter", target),
+    ).not.toThrow();
+    expect(() =>
+      buildMcpBridgePolicyYaml("local", "https://other.corp.internal/mcp", "mcporter", target),
+    ).toThrow(/does not match URL host/);
+    expect(() =>
+      buildMcpBridgePolicyYaml("local", "https://mcp.corp.internal/mcp", "mcporter", {
+        addresses: ["10.20.30.40"],
+        trustedPrivateHost: "mcp.corp.internal",
+      }),
+    ).toThrow(/no provenance-checked endpoint capability/);
+  });
+
+  it("rejects empty and structurally forged render targets (#8267)", () => {
+    expect(() =>
+      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "mcporter", {
+        addresses: [],
+      }),
+    ).toThrow(/non-empty canonical set/);
+    expect(() =>
+      buildMcpBridgePolicyYaml("local", "https://mcp.corp.internal/mcp", "mcporter", {
+        addresses: ["10.20.30.40"],
+        trustedPrivateHost: "mcp.corp.internal",
+        trustedPrivateCapability: {
+          host: "mcp.corp.internal",
+          addresses: ["10.20.30.40"],
+        },
+      } as never),
+    ).toThrow(/does not match its host-bound endpoint capability/);
   });
 
   it("applies internally generated DNS pins outside the user-supplied preset path", () => {
@@ -154,8 +244,10 @@ describe("MCP OpenShell policy", () => {
 
   it("accepts only the canonical generated policy for the exact bridge and DNS pins", () => {
     const entry = githubBridgeEntry();
-    const pins = ["8.8.8.8", "2606:4700:4700::1111"];
-    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", pins);
+    const pins = ["2606:4700:4700::1111", "8.8.8.8"];
+    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
+      addresses: pins,
+    });
     const registration = {
       name: entry.policyName,
       content,
@@ -178,7 +270,9 @@ describe("MCP OpenShell policy", () => {
   ])("rejects duplicate same-name ownership records regardless of order (%s)", (order) => {
     const entry = githubBridgeEntry();
     const pins = ["8.8.8.8"];
-    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", pins);
+    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
+      addresses: pins,
+    });
     const owned = {
       name: entry.policyName,
       content,
@@ -203,7 +297,9 @@ describe("MCP OpenShell policy", () => {
   it("rejects individually valid policy records that disagree with their bridge definition", () => {
     const entry = githubBridgeEntry();
     const pins = ["8.8.8.8"];
-    const canonical = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", pins);
+    const canonical = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
+      addresses: pins,
+    });
     const wrongKeyDocument = YAML.parse(canonical) as {
       network_policies: Record<string, { name: string }>;
     };
@@ -225,7 +321,7 @@ describe("MCP OpenShell policy", () => {
           entry.server,
           "https://mcp.example.test/mcp",
           "mcporter",
-          pins,
+          { addresses: pins },
         ),
       },
       {
@@ -234,17 +330,21 @@ describe("MCP OpenShell policy", () => {
           entry.server,
           "https://api.githubcopilot.com/other",
           "mcporter",
-          pins,
+          { addresses: pins },
         ),
       },
       {
         label: "adapter",
-        content: buildMcpBridgePolicyYaml(entry.server, entry.url, "hermes-config", pins),
+        content: buildMcpBridgePolicyYaml(entry.server, entry.url, "hermes-config", {
+          addresses: pins,
+        }),
       },
       { label: "network policy key", content: YAML.stringify(wrongKeyDocument) },
       {
         label: "resolved address pins",
-        content: buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", ["1.1.1.1"]),
+        content: buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
+          addresses: ["1.1.1.1"],
+        }),
       },
       {
         label: "policy name",
@@ -326,7 +426,9 @@ describe("MCP OpenShell policy", () => {
 
   it("emits only fields supported by OpenShell current main", () => {
     const policy = YAML.parse(
-      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "mcporter"),
+      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "mcporter", {
+        addresses: ["8.8.8.8"],
+      }),
     ) as { network_policies: Record<string, { endpoints: Array<Record<string, unknown>> }> };
     const endpoint = policy.network_policies.mcp_bridge_srv.endpoints[0];
     expect(endpoint).not.toHaveProperty("credential_keys");
@@ -341,19 +443,25 @@ describe("MCP OpenShell policy", () => {
       "host.containers.internal",
     ]) {
       expect(() =>
-        buildMcpBridgePolicyYaml("local", `https://${host}:31337/mcp`, "mcporter"),
+        buildMcpBridgePolicyYaml("local", `https://${host}:31337/mcp`, "mcporter", {
+          addresses: ["8.8.8.8"],
+        }),
       ).toThrow(/does not expose an attested driver gateway address/);
     }
   });
 
   it("scopes binaries to the selected agent adapter", () => {
     const hermes = YAML.parse(
-      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "hermes-config"),
+      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "hermes-config", {
+        addresses: ["8.8.8.8"],
+      }),
     ) as {
       network_policies: Record<string, { binaries: Array<{ path: string }> }>;
     };
     const deepAgents = YAML.parse(
-      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "deepagents-config"),
+      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "deepagents-config", {
+        addresses: ["8.8.8.8"],
+      }),
     ) as {
       network_policies: Record<string, { binaries: Array<{ path: string }> }>;
     };

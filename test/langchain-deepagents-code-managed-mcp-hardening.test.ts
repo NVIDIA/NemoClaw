@@ -120,6 +120,66 @@ print("strict-tombstone-ok")
     },
   );
 
+  it("accepts host-validated private targets without accepting malformed or unsupported hosts (#8267)", () => {
+    const result = runManagedHelper(String.raw`
+import fcntl
+import importlib.util
+import json
+import sys
+
+for name, value in {
+    "F_SEAL_WRITE": 1,
+    "F_SEAL_GROW": 2,
+    "F_SEAL_SHRINK": 4,
+    "F_SEAL_SEAL": 8,
+}.items():
+    setattr(fcntl, name, getattr(fcntl, name, value))
+spec = importlib.util.spec_from_file_location("_nemoclaw_managed", sys.argv[1])
+managed = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(managed)
+
+accepted_urls = (
+    "https://8.8.8.8/mcp",
+    "https://10.20.30.40/mcp",
+    "https://mcp.corp.internal/mcp",
+)
+rejected_urls = (
+    "https://host.openshell.internal/mcp",
+    "https://host.docker.internal/mcp",
+    "https://host.containers.internal/mcp",
+    "https://mcp..corp.internal/mcp",
+    "https://127.0.0.1/mcp",
+    "https://169.254.169.254/mcp",
+    "https://0177.0.0.1/mcp",
+    "https://[fc00::1]/mcp",
+)
+
+accepted = [managed._validate_managed_mcp_url(url) for url in accepted_urls]
+rejected = []
+for url in rejected_urls:
+    try:
+        managed._validate_managed_mcp_url(url)
+    except RuntimeError:
+        rejected.append(url)
+print(json.dumps({"accepted": accepted, "rejected": rejected}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      accepted: ["https://8.8.8.8/mcp", "https://10.20.30.40/mcp", "https://mcp.corp.internal/mcp"],
+      rejected: [
+        "https://host.openshell.internal/mcp",
+        "https://host.docker.internal/mcp",
+        "https://host.containers.internal/mcp",
+        "https://mcp..corp.internal/mcp",
+        "https://127.0.0.1/mcp",
+        "https://169.254.169.254/mcp",
+        "https://0177.0.0.1/mcp",
+        "https://[fc00::1]/mcp",
+      ],
+    });
+  });
+
   it("rejects stacked private tmpfs mounts even when the lower mount is compliant (#8018)", () => {
     const result = runManagedHelper(String.raw`
 import importlib.util

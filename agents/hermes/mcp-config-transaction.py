@@ -55,6 +55,18 @@ ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
 SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+MCP_DNS_LABEL_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+MCP_ROUTED_PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    )
+)
 ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
@@ -83,29 +95,6 @@ MAX_GATEWAY_PID_RECORD_BYTES = 4096
 MCP_RACE_RECOVERY_ATTEMPTS = 3
 GATEWAY_INTERNAL_PORT = 18642
 GATEWAY_PUBLIC_PORT = 8642
-BLOCKED_IPV4_NETWORKS = tuple(
-    ipaddress.ip_network(cidr)
-    for cidr in (
-        "0.0.0.0/8",
-        "10.0.0.0/8",
-        "100.64.0.0/10",
-        "127.0.0.0/8",
-        "169.254.0.0/16",
-        "172.16.0.0/12",
-        "192.0.0.0/24",
-        "192.0.2.0/24",
-        "192.31.196.0/24",
-        "192.52.193.0/24",
-        "192.88.99.0/24",
-        "192.168.0.0/16",
-        "192.175.48.0/24",
-        "198.18.0.0/15",
-        "198.51.100.0/24",
-        "203.0.113.0/24",
-        "224.0.0.0/4",
-        "240.0.0.0/4",
-    )
-)
 TRUSTED_HERMES_GATEWAY_LAUNCHERS = {
     b"/usr/local/bin/hermes.real",
     b"/usr/local/lib/nemoclaw/hermes",
@@ -310,7 +299,7 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
         raise ValueError("MCP mutation payload URL contains forbidden components")
     hostname = parsed.hostname.lower().rstrip(".")
     # Fail closed on every IPv6 literal, including globally routable addresses,
-    # before the IPv4-only classification below. DNS names are resolved and
+    # before the numeric-host handling below. DNS names are resolved and
     # validated by the host boundary, then pinned into OpenShell allowed_ips;
     # this in-sandbox transaction never establishes the network connection.
     if ":" in hostname:
@@ -332,28 +321,31 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
         raise ValueError(
             "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.99"
         )
-    if not (action == "remove" and hostname in host_aliases) and (
-        hostname in {"localhost", "local", "internal", "metadata"}
-        or any(
-            hostname.endswith(f".{suffix}")
-            for suffix in ("localhost", "local", "internal", "metadata")
-        )
-    ):
-        raise ValueError("MCP mutation payload URL uses a reserved hostname")
+    # Host preflight owns destination trust and binds every accepted endpoint to
+    # exact OpenShell address pins. This in-sandbox check revalidates canonical
+    # syntax and rejects IPv4 literals outside public or routed-private ranges.
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
         address = None
-    if address is None and re.fullmatch(
-        r"(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*",
-        hostname,
+    if address is None:
+        if re.fullmatch(
+            r"(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*",
+            hostname,
+        ):
+            raise ValueError("MCP mutation payload URL uses an ambiguous numeric host")
+        if len(hostname) > 253 or any(
+            MCP_DNS_LABEL_RE.fullmatch(label) is None
+            for label in hostname.split(".")
+        ):
+            raise ValueError(
+                "MCP mutation payload URL hostname must use canonical DNS labels"
+            )
+    elif not (
+        (address.is_global and not address.is_multicast)
+        or any(address in network for network in MCP_ROUTED_PRIVATE_IPV4_NETWORKS)
     ):
-        raise ValueError("MCP mutation payload URL uses an ambiguous numeric host")
-    if address is not None and (
-        not address.is_global
-        or any(address in network for network in BLOCKED_IPV4_NETWORKS)
-    ):
-        raise ValueError("MCP mutation payload URL uses a non-global address")
+        raise ValueError("MCP mutation payload URL uses a disallowed address")
     path = parsed.path or "/"
     path_segments = path.split("/")
     if (
