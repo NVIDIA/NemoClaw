@@ -31,6 +31,7 @@ import type {
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
+  ResolvedHostLocalInferenceSelection,
 } from "./types.js";
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
@@ -344,6 +345,9 @@ describe("managed inference resolver", () => {
     );
     expect(result.outcome).toBe("selected");
     expect(result).not.toHaveProperty("topologyQualification");
+    expect(result).toHaveProperty("recipe");
+    const selectedResult = result as ResolvedHostLocalInferenceSelection;
+    expect(isHostLocalInferenceServingRecipe(selectedResult.recipe)).toBe(true);
     const baseProfile = {
       name: "DGX Spark",
       platform: "spark",
@@ -355,12 +359,7 @@ describe("managed inference resolver", () => {
       pullTimeoutSec: 1,
       loadTimeoutSec: 1,
     } satisfies VllmProfile;
-    const selected = materializeHostLocalVllmSelection(
-      result as Extract<typeof result, { outcome: "selected" }> & {
-        topologyQualification?: never;
-      },
-      baseProfile,
-    );
+    const selected = materializeHostLocalVllmSelection(selectedResult, baseProfile);
 
     expect(selected).toMatchObject({
       presetId,
@@ -837,14 +836,13 @@ describe("managed inference resolver", () => {
   it("admits a storage conflict that the public lifecycle can remediate (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
     const preset = catalog.presets[0]!;
-    const presetId = preset.metadata.id;
     const result = resolveManagedInferenceServing(
       {
         readinessReports: [
           { nodeId: "spark-head", report: storageRemediableReadinessReport([], preset) },
         ],
         topologyQualifications: [],
-        intent: { preset: presetId },
+        intent: { preset: preset.metadata.id },
         now: NOW,
       },
       catalog,

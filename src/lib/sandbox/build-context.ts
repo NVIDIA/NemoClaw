@@ -68,6 +68,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     "package-lock.json",
     "tsconfig.json",
     "install-reviewed-runtime.sh",
+    "npm-ci-locked.sh",
     "build-runtime.ts",
     "mcp-tool-discovery.ts",
     "streamable-http-client.test.ts",
@@ -330,6 +331,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-mcp-reliability.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-mcp-reliability.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-mcp-tools-list-timeout.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-mcp-tools-list-timeout.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),

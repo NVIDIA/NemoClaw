@@ -46,12 +46,13 @@ openssl x509 \
     "subjectAltName=DNS:host.openshell.internal,DNS:mcp-rebind.example.test") \
   -out "${tls_dir}/server.crt"
 
-# The self-signed certificate secures only the loopback origin hop from
-# cloudflared, which is launched with --no-tls-verify for that local fixture.
-# Successful sandbox MCP connections use the public trycloudflare URL and its
-# publicly trusted edge certificate. The direct DNS-rebinding fixture is denied
-# by policy before TLS, so sandboxes never install or trust this private test CA.
+# The self-signed certificate secures the loopback origin hop from cloudflared
+# and the routed-private managed MCP fixture. The latter imports this bounded
+# test CA through the normal corporate-CA onboarding path so all three managed
+# agent runtimes can complete real TLS and MCP traffic before the DNS-rebinding
+# denial proof.
 {
+  echo "NEMOCLAW_MCP_TLS_CA_CERT=${tls_dir}/ca.crt"
   echo "NEMOCLAW_MCP_TLS_CERT=${tls_dir}/server.crt"
   echo "NEMOCLAW_MCP_TLS_KEY=${tls_dir}/server.key"
 } >>"${GITHUB_ENV}"

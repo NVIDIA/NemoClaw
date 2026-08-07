@@ -99,6 +99,7 @@ describe("selectPreUpgradeBackupForCreate", () => {
       gatewayPort: GATEWAY_PORT,
       sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(SOURCE_ENTRY),
       sourceLiveIdentityFingerprint: null,
+      sourceConfirmedAbsent: true,
       targetGeneration: "3c9a1b7e-target",
       ...overrides,
     };
@@ -141,6 +142,36 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(note).toHaveBeenCalledWith(
       expect.stringMatching(/Found pre-upgrade backup for 'my-assistant'/),
     );
+  });
+
+  it("selects the backup after the journal confirms deletion of a previously live source", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    getLatestBackupSpy.mockReturnValue({
+      backupPath: BACKUP_PATH,
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
+
+    expect(
+      select({
+        sourceProof: sourceProof({
+          sourceLiveIdentityFingerprint: "recorded-source-id",
+          sourceConfirmedAbsent: true,
+        }),
+      }),
+    ).toBe(BACKUP_PATH);
+  });
+
+  it("rejects a missing source before the journal confirms deletion", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+
+    expect(() =>
+      select({
+        sourceProof: sourceProof({
+          sourceLiveIdentityFingerprint: "recorded-source-id",
+          sourceConfirmedAbsent: false,
+        }),
+      }),
+    ).toThrow(/has not confirmed source deletion/);
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
   });
 
   it("throws before backup access when no transaction proves the source (#7736)", () => {

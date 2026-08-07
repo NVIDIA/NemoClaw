@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Manage MCP Servers"
 sidebar-title: "Manage MCP Servers"
-description: "Inspect advertised tools, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
-description-agent: "Explains managed MCP status, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
-keywords: ["nemoclaw mcp status", "mcp tool discovery", "nemoclaw mcp restart", "nemoclaw mcp remove", "mcp credential rotation"]
+description: "Inspect advertised tools and DNS pins, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
+description-agent: "Explains managed MCP status, DNS pin drift, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
+keywords: ["nemoclaw mcp status", "mcp dns pin drift", "mcp tool discovery", "nemoclaw mcp restart", "nemoclaw mcp remove", "mcp credential rotation"]
 content:
   type: "how_to"
 skill:
@@ -28,6 +28,11 @@ The `env.missing` field lists recorded host variable names that are currently un
 
 An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential.
 The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
+
+For a trusted private server, status resolves the endpoint without changing managed state.
+Text output reports `private address pins: match`, `drift`, or `unresolved`.
+JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins.
+Status never adds a new address to the policy.
 
 ## Discover Advertised Tools
 
@@ -119,7 +124,9 @@ unset GITHUB_MCP_TOKEN
 `restart` requires a successful provider update, waits until the sandbox receives a new opaque provider revision, reapplies policy, and refreshes the adapter.
 An ambiguous or failed update is not treated as successful merely because another writer advanced the provider revision.
 
-Restart resolves the endpoint hostname again before updating its pinned network policy.
+For a trusted-private entry, restart replays the exact address pins recorded by `mcp add`.
+It does not resolve that endpoint again or widen its policy from ambient DNS.
+For a public entry, restart resolves the hostname again and refreshes the generated policy with the current validated public addresses.
 
 The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config.
 Revoke the old credential upstream after restart succeeds.
@@ -131,6 +138,26 @@ If the provider is missing, export the recorded variable before retrying.
 
 Running restart without a server name refreshes every managed server.
 Export only the variables whose credentials you intend to replace.
+
+## Change Endpoint Pins
+
+For a trusted-private server, review every destination change before NemoClaw records new pins.
+Neither status, restart, rebuild, nor restore changes the recorded address set.
+
+If the endpoint moves to another address, remove and re-add the server:
+
+```bash
+export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw my-sandbox mcp remove local-tools
+$$nemoclaw my-sandbox mcp add local-tools \
+  --url https://mcp-host.corp.example/mcp \
+  --env LOCAL_MCP_TOKEN \
+  --trusted-private-host mcp-host.corp.example
+unset LOCAL_MCP_TOKEN
+```
+
+Removing the server deletes the registry-owned provider, policy, and adapter state after the existing ownership checks pass.
+The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
 
@@ -154,6 +181,8 @@ It never detaches the provider from other sandboxes.
 
 `rebuild` preserves providers that match the recorded ID, type, and credential-key metadata.
 It removes adapter entries and detaches providers before replacing the sandbox, then reattaches providers, waits for credential readiness, reapplies policy, and restores adapters.
+For a trusted-private entry, the restored policy uses the recorded exact address pins and does not widen them from current DNS answers.
+Public entries continue to resolve and validate their endpoint addresses during restoration.
 
 <AgentOnly variant="deepagents">
 NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.

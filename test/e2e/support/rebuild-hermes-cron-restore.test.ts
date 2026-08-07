@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import {
   hermesCronJobRuntimeState,
+  parseCronTickerTimestamp,
+  parseGatewayEvidence,
   parseHermesCronBeginReceipt,
 } from "../live/rebuild-hermes-cron-restore.ts";
 
@@ -58,15 +60,85 @@ describe("Hermes rebuild cron restore evidence", () => {
     ).toThrow("cron job fixture completed run count is unavailable");
   });
 
-  it("accepts the redacted cron drain receipt returned by shell probes", () => {
+  const receipt = {
+    action: "begin",
+    active_agents: 0,
+    disposition: "drain-acquired",
+    drain_acquired: true,
+    drain_token: "<REDACTED>",
+    operator_drain_active: false,
+    pid: 263,
+    start_time: 29_607,
+    version: 1,
+  };
+
+  it("accepts the canonically redacted ShellProbe receipt", () => {
     expect(
+      parseHermesCronBeginReceipt(`NEMOCLAW_HERMES_CRON_RESTORE_V1:${JSON.stringify(receipt)}\n`),
+    ).toMatchObject({ drain_token: "<REDACTED>", pid: 263, start_time: 29_607 });
+  });
+
+  it("rejects an unredacted drain token crossing the ShellProbe boundary", () => {
+    expect(() =>
       parseHermesCronBeginReceipt(
-        'NEMOCLAW_HERMES_CRON_RESTORE_V1:{"action":"begin","active_agents":0,"disposition":"drain-acquired","drain_acquired":true,"drain_token":"<REDACTED>","operator_drain_active":false,"pid":263,"start_time":47767,"version":1}\n',
+        `NEMOCLAW_HERMES_CRON_RESTORE_V1:${JSON.stringify({
+          ...receipt,
+          drain_token: "a".repeat(32),
+        })}\n`,
       ),
-    ).toMatchObject({
-      drain_token: "<REDACTED>",
-      pid: 263,
-      start_time: 47767,
-    });
+    ).toThrow();
+  });
+});
+
+describe("Hermes rebuild cron ticker timestamp", () => {
+  it("accepts the initial missing-file sentinel", () => {
+    expect(parseCronTickerTimestamp("0\n", "ticker timestamp")).toBe(0);
+  });
+
+  it("parses the ticker epoch", () => {
+    expect(parseCronTickerTimestamp("1785951799.098\n", "ticker timestamp")).toBe(
+      1_785_951_799.098,
+    );
+  });
+
+  it.each([
+    "",
+    "not-an-epoch\n",
+    "Infinity\n",
+    "-1\n",
+  ])("rejects malformed ticker evidence %j", (evidence) => {
+    expect(() => parseCronTickerTimestamp(evidence, "ticker timestamp")).toThrow(
+      "ticker timestamp is invalid",
+    );
+  });
+});
+
+describe("Hermes rebuild gateway evidence", () => {
+  it("accepts a transient missing running process during restart", () => {
+    expect(
+      parseGatewayEvidence(
+        JSON.stringify({
+          active_agents: 0,
+          gateway_state: "draining",
+          pid: 263,
+          running_pid: null,
+          start_time: 29_607,
+        }),
+      ),
+    ).toMatchObject({ pid: 263, running_pid: null });
+  });
+
+  it("rejects malformed running process evidence", () => {
+    expect(() =>
+      parseGatewayEvidence(
+        JSON.stringify({
+          active_agents: 0,
+          gateway_state: "draining",
+          pid: 263,
+          running_pid: "263",
+          start_time: 29_607,
+        }),
+      ),
+    ).toThrow("Hermes gateway running_pid is invalid");
   });
 });

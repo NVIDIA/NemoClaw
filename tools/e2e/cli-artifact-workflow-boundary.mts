@@ -19,7 +19,7 @@ export const CLI_ARTIFACT_DOWNLOAD_ACTION =
 export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 export const CLI_ARTIFACT_RESTORE_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d34b11e8b895760d6505d54e2cfc520332cb2a9c";
+  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3";
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
@@ -33,10 +33,78 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "f90d4532a64473817b183856e225b401b201d71aaafa75bd7cf8d63a3deeb76f";
+  "3a81ad631b839aa938eaaf1ad6777bab247204bf86fbca3c43c326a44dfb9c6c";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
+const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
+  "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
+const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
+  "5d09301f3d37c6d2f588379fa8c94ef33d00efb8e25dc475bcfba24377fd8365";
+const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
+  "agent-turn-latency",
+  "bedrock-runtime-compatible-anthropic",
+  "brave-search",
+  "channels-add-remove",
+  "channels-stop-start",
+  "cloud-inference",
+  "cloud-onboard",
+  "common-egress-agent",
+  "concurrent-gateway-ports",
+  "cron-preflight-inference-local",
+  "dashboard-remote-bind",
+  "device-auth-health",
+  "double-onboard",
+  "full-e2e",
+  "gateway-guard-recovery",
+  "gpu-double-onboard",
+  "gpu-e2e",
+  "hermes-discord",
+  "hermes-e2e",
+  "hermes-gpu-startup",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "hermes-slack",
+  "inference-routing",
+  "issue-2478-crash-loop-recovery",
+  "issue-4434-tui-unreachable-inference",
+  "issue-4462-scope-upgrade-approval",
+  "jetson-nvmap-gpu",
+  "kimi-inference-compat",
+  "live",
+  "mcp-bridge",
+  "mcp-bridge-dev",
+  "messaging-compatible-endpoint",
+  "messaging-providers",
+  "model-router-provider-routed-inference",
+  "network-policy",
+  "onboard-repair",
+  "onboard-resume",
+  "openclaw-discord-pairing",
+  "openclaw-inference-switch",
+  "openclaw-plugin-runtime-exdev",
+  "openclaw-plugin-runtime-exdev-release",
+  "openclaw-skill-cli",
+  "openclaw-slack-pairing",
+  "openclaw-tui-chat-correlation",
+  "openshell-credential-generation-window",
+  "openshell-gateway-auth-contract",
+  "openshell-gateway-upgrade",
+  "overlayfs-autofix",
+  "rebuild-hermes",
+  "rebuild-hermes-stale-base",
+  "rebuild-openclaw",
+  "retired-selector-compatibility",
+  "sandbox-operations",
+  "sandbox-survival",
+  "sessions-agents-cli",
+  "shared-e2e",
+  "skill-agent",
+  "state-backup-restore",
+  "telegram-injection",
+  "token-rotation",
+  "tunnel-lifecycle",
+] as const;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -56,6 +124,35 @@ function record(value: unknown): WorkflowRecord {
 
 function steps(value: unknown): WorkflowStep[] {
   return Array.isArray(value) ? (value as WorkflowStep[]) : [];
+}
+
+function workflowContentSha256(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(value) ?? "")
+    .digest("hex");
+}
+
+function isCliArtifactRestoreStep(step: WorkflowStep): boolean {
+  return (
+    step.name === CLI_ARTIFACT_RESTORE_STEP ||
+    (typeof step.uses === "string" &&
+      step.uses.startsWith("NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@"))
+  );
+}
+
+function jobSettingsAndStepsThroughRestore(job: WorkflowRecord): WorkflowRecord {
+  const jobSteps = steps(job.steps);
+  const restoreIndex = jobSteps.findIndex(isCliArtifactRestoreStep);
+  const { steps: _steps, "timeout-minutes": _timeoutMinutes, ...jobSettings } = job;
+  return {
+    jobSettings,
+    stepsThroughRestore: restoreIndex >= 0 ? jobSteps.slice(0, restoreIndex + 1) : jobSteps,
+  };
+}
+
+function workflowSettings(workflow: WorkflowRecord): WorkflowRecord {
+  const { jobs: _jobs, name: _name, "run-name": _runName, ...settings } = workflow;
+  return settings;
 }
 
 function requireFragments(
@@ -120,7 +217,9 @@ export function validateCliArtifactRestoreAction(
     '.artifactName == ("nemoclaw-cli-" + .candidateSha + "-" + .payloadSha256)',
     'git rev-parse --verify HEAD)" == "$candidate_sha"',
     '[[ "$workflow_sha" == "$CALLER_WORKFLOW_SHA" ]]',
-    '[[ "$run_id" == "$GITHUB_RUN_ID" && "$run_attempt" == "$GITHUB_RUN_ATTEMPT" ]]',
+    '[[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]',
+    '[[ "$run_id" == "$GITHUB_RUN_ID" ]]',
+    "(( run_attempt <= GITHUB_RUN_ATTEMPT ))",
     '[[ "$remote_repository" == "$candidate_repository" ]]',
     '<<<"$PROVENANCE_JSON" >>"$GITHUB_OUTPUT"',
   ]);
@@ -144,7 +243,7 @@ export function validateCliArtifactRestoreAction(
       CANDIDATE_REPOSITORY: "${{ steps.identity.outputs.candidate_repository }}",
       CANDIDATE_SHA: "${{ steps.identity.outputs.candidate_sha }}",
       PAYLOAD_SHA256: "${{ steps.identity.outputs.payload_sha256 }}",
-      RUN_ATTEMPT: "${{ steps.identity.outputs.run_attempt }}",
+      PRODUCER_RUN_ATTEMPT: "${{ steps.identity.outputs.producer_run_attempt }}",
       RUN_ID: "${{ steps.identity.outputs.run_id }}",
       WORKFLOW_SHA: "${{ steps.identity.outputs.workflow_sha }}",
     })
@@ -317,10 +416,16 @@ function validateConsumer(
   if (job.needs !== CLI_ARTIFACT_PRODUCER_JOB) {
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
-  const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
-  const restoreSteps = jobSteps.filter(
-    (step) => step.name === CLI_ARTIFACT_RESTORE_STEP || step.uses === CLI_ARTIFACT_RESTORE_ACTION,
+  const candidateCheckoutIndexes = jobSteps.flatMap((step, index) =>
+    workflowContentSha256(step) === CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 ? [index] : [],
   );
+  if (candidateCheckoutIndexes.length !== 1) {
+    errors.push(
+      `${jobName} must use one candidate checkout with the required action, repository, ref, and credential settings`,
+    );
+  }
+  const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+  const restoreSteps = jobSteps.filter(isCliArtifactRestoreStep);
   if (restoreSteps.length !== 1) {
     errors.push(`${jobName} must verify and restore the exact CLI artifact exactly once`);
   }
@@ -336,8 +441,15 @@ function validateConsumer(
     errors.push(`${jobName} must use the immutable complete CLI artifact restore contract`);
   }
   const restoreIndex = jobSteps.indexOf(restore);
+  const candidateCheckoutIndex = candidateCheckoutIndexes[0] ?? -1;
+  if (candidateCheckoutIndex >= restoreIndex) {
+    errors.push(`${jobName} must check out the candidate before CLI artifact restore`);
+  }
   if (!(prepareIndex >= 0 && prepareIndex < restoreIndex)) {
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
+  }
+  if (prepareIndex >= 0 && restoreIndex !== prepareIndex + 1) {
+    errors.push(`${jobName} must restore the CLI artifact in the step after workspace preparation`);
   }
 }
 
@@ -354,26 +466,44 @@ export function validateCliArtifactWorkflowBoundary(
   }
   validateProducer(errors, producer);
 
+  const consumerJobNames = new Set<string>();
   for (const [jobName, value] of Object.entries(jobs)) {
     const job = record(value);
     const jobSteps = steps(job.steps);
     const usesPrepare = jobSteps.some((step) => step.uses === PREPARE_E2E_ACTION);
-    const artifactSteps = jobSteps.filter(
-      (step) =>
-        step.name === CLI_ARTIFACT_RESTORE_STEP ||
-        (typeof step.uses === "string" &&
-          step.uses.startsWith("NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@")),
-    );
+    const artifactSteps = jobSteps.filter(isCliArtifactRestoreStep);
     const shouldConsume =
       usesPrepare &&
       jobName !== CLI_ARTIFACT_PRODUCER_JOB &&
       !PREPARE_E2E_NO_BUILD_JOBS.has(jobName) &&
       !PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);
     if (shouldConsume) {
+      consumerJobNames.add(jobName);
       validateConsumer(errors, jobName, job, jobSteps);
     } else if (artifactSteps.length > 0) {
       errors.push(`${jobName} must not consume the shared CLI artifact`);
     }
+  }
+
+  const actualConsumerJobNames = [...consumerJobNames].sort();
+  if (!isDeepStrictEqual(actualConsumerJobNames, CLI_ARTIFACT_CONSUMER_JOB_NAMES)) {
+    errors.push("CLI artifact consumer job names must match the required list");
+  }
+  const consumers = Object.fromEntries(
+    CLI_ARTIFACT_CONSUMER_JOB_NAMES.map((jobName) => [
+      jobName,
+      jobSettingsAndStepsThroughRestore(record(jobs[jobName])),
+    ]),
+  );
+  if (
+    workflowContentSha256({
+      workflowSettings: workflowSettings(workflow),
+      consumers,
+    }) !== CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256
+  ) {
+    errors.push(
+      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract",
+    );
   }
 
   return errors;

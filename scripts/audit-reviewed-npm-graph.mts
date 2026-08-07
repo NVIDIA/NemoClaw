@@ -233,13 +233,27 @@ function materializeLockedGraph(
   fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
   fs.copyFileSync(sourceLock, path.join(destination, "package-lock.json"));
   run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], destination);
-  verifyInstalledNpmLock({
+  verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: graph.label });
+  return destination;
+}
+
+export function verifyMaterializedLockedGraph({
+  destination,
+  expectedLockSha256,
+  label,
+}: Readonly<{
+  destination: string;
+  expectedLockSha256: string;
+  label: string;
+}>): readonly string[] {
+  const lockfilePath = path.join(destination, "package-lock.json");
+  return verifyInstalledNpmLock({
     expectedLockSha256,
     installRoot: destination,
-    label: graph.label,
-    lockfilePath: path.join(destination, "package-lock.json"),
+    label,
+    lockfilePath,
+    omitDev: true,
   });
-  return destination;
 }
 
 export function selectReviewedLockSha256(
@@ -510,13 +524,7 @@ function main(): void {
     const reports = [
       {
         label: SOURCE_GRAPH.label,
-        result: auditSourceGraph(
-          config,
-          tempRoot,
-          exceptionFile,
-          artifactDirectory,
-          npmVersion,
-        ),
+        result: auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory, npmVersion),
       },
       {
         label: "reviewed archive graph",

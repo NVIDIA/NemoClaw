@@ -948,7 +948,12 @@ function reconcileSnapshotCustomPolicies(
   const toRemove = currentCustom.filter((c) => !snapshotByName.has(c.name));
   const toAdd = snapshotCustom.filter((sp) => {
     const current = currentByName.get(sp.name);
-    return !current || current.content !== sp.content || current.sourcePath !== sp.sourcePath;
+    return (
+      !current ||
+      current.content !== sp.content ||
+      current.sourcePath !== sp.sourcePath ||
+      current.trustedPrivatePins?.contentDigest !== sp.trustedPrivatePins?.contentDigest
+    );
   });
   if (toRemove.length === 0 && toAdd.length === 0) return;
 
@@ -971,9 +976,20 @@ function reconcileSnapshotCustomPolicies(
   }
   for (const entry of toAdd) {
     try {
+      const currentAuthority = currentByName.get(entry.name);
+      const trustedPrivatePinCapability =
+        currentAuthority?.content === entry.content && currentAuthority.trustedPrivatePins
+          ? policies.replayTrustedPrivatePolicyPinCapability(
+              currentAuthority.content,
+              currentAuthority.trustedPrivatePins,
+            )
+          : undefined;
       if (
         !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
-          custom: { sourcePath: entry.sourcePath },
+          custom: {
+            sourcePath: entry.sourcePath,
+            ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
+          },
           nonFatal: true,
         })
       ) {

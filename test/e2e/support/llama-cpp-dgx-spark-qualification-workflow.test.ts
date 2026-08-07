@@ -37,6 +37,16 @@ describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
     expect(validateLlamaCppDgxSparkQualificationWorkflow(workflow())).toEqual([]);
   });
 
+  it("does not record manual PR risk signals on main pushes", () => {
+    const value = workflow();
+    const jobEnv = job(value, "llama-cpp-dgx-spark-qualification").env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
   it("rejects bypassing the declarative protected-runner plan", () => {
     const value = workflow();
     job(value, "llama-cpp-dgx-spark-qualification")["runs-on"] = "self-hosted";
@@ -147,6 +157,33 @@ describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
 
     expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
       "llama-cpp-dgx-spark-qualification cleanup must always run",
+    );
+  });
+
+  it("rejects installing OpenShell outside declarative agent activation", () => {
+    const value = workflow();
+    namedStep(
+      value,
+      "llama-cpp-dgx-spark-qualification",
+      "Install OpenShell CLI for declarative OpenClaw qualification",
+    ).if = "always()";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification must gate OpenShell installation on the declarative agent qualification",
+    );
+  });
+
+  it("rejects installing OpenShell through candidate-controlled code", () => {
+    const value = workflow();
+    const install = namedStep(
+      value,
+      "llama-cpp-dgx-spark-qualification",
+      "Install OpenShell CLI for declarative OpenClaw qualification",
+    );
+    install.run = `${String(install.run)}\nbash .candidate-llama-cpp/scripts/install-openshell.sh`;
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification must install OpenShell only from trusted helper code",
     );
   });
 
