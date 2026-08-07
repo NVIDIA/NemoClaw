@@ -241,14 +241,4 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("If the release candidate SHA changes");
     expect(skill).toContain("nemoclaw-maintainer-cut-release-tag");
   });
-
-  it("binds manual PR risk signals to the trusted execution plan", () => {
-    expect(skill).toContain(
-      'PLAN_IDENTITY="manual-pr-e2e:v2:${WORKFLOW_SHA}:${E2E_JOBS}::false:${INFERENCE_MODE}:${ALLOW_JETSON_RUNNER_QUEUE}:${ALLOW_DGX_SPARK_RUNNER_QUEUE}"',
-    );
-    expect(skill).toContain("inference_mode=${INFERENCE_MODE}");
-    expect(skill).toContain("allow_jetson_runner_queue=${ALLOW_JETSON_RUNNER_QUEUE}");
-    expect(skill).toContain("allow_dgx_spark_runner_queue=${ALLOW_DGX_SPARK_RUNNER_QUEUE}");
-    expect(skill).toContain("plan_hash=${PLAN_HASH}");
-  });
 });

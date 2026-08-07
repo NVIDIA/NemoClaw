@@ -84,8 +84,6 @@ CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 INFERENCE_MODE=mock
 ALLOW_JETSON_RUNNER_QUEUE=false
 ALLOW_DGX_SPARK_RUNNER_QUEUE=false
-PLAN_IDENTITY="manual-pr-e2e:v2:${WORKFLOW_SHA}:${E2E_JOBS}::false:${INFERENCE_MODE}:${ALLOW_JETSON_RUNNER_QUEUE}:${ALLOW_DGX_SPARK_RUNNER_QUEUE}"
-PLAN_HASH="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$PLAN_IDENTITY")"
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
@@ -100,12 +98,12 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
   -f "base_sha=${BASE_SHA}" \
   -f "workflow_sha=${WORKFLOW_SHA}" \
-  -f "plan_hash=${PLAN_HASH}" \
   -f "review_reason=${REVIEW_REASON}" \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
-The trusted pre-checkout step requires current `maintain` or `admin` permission. It validates the open PR, repository, head SHA, base SHA, workflow SHA, plan hash, review reason, inference mode, and hardware selections.
+The trusted pre-checkout step requires current `maintain` or `admin` permission.
+It validates the actor, open PR, repository, head SHA, base SHA, workflow SHA, review reason, and allowed jobs, targets, and Launchable combination.
 A second validation after checkout rejects a changed PR identity before preparation.
 
 Find and verify the correlated run with bounded GitHub reads:

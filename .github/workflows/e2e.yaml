@@ -78,11 +78,6 @@ on:
         required: false
         default: ""
         type: string
-      plan_hash:
-        description: Optional trusted execution-plan hash for manual exact-revision E2E.
-        required: false
-        default: ""
-        type: string
 
       correlation_id:
         description: Run correlation ID (UUIDv4).
@@ -101,7 +96,6 @@ concurrency:
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
-  NEMOCLAW_E2E_PLAN_HASH: ${{ inputs.plan_hash }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
   NEMOCLAW_E2E_SHARD: default
 
@@ -227,8 +221,6 @@ jobs:
         if: ${{ inputs.checkout_sha != '' }}
         env:
           ACTOR: ${{ github.actor }}
-          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
-          ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -236,9 +228,7 @@ jobs:
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
 
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable }}
-          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
-          PLAN_HASH: ${{ inputs.plan_hash }}
           PR_NUMBER: ${{ inputs.pr_number }}
           REVIEW_REASON: ${{ inputs.review_reason }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -290,9 +280,6 @@ jobs:
             (( ${#REVIEW_REASON} >= 10 && ${#REVIEW_REASON} <= 500 )) ||
             { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
-          plan_identity="manual-pr-e2e:v2:${WORKFLOW_SHA}:${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}:${INFERENCE_MODE}:${ALLOW_JETSON_RUNNER_QUEUE}:${ALLOW_DGX_SPARK_RUNNER_QUEUE}"
-          expected_plan_hash="$(printf '%s' "$plan_identity" | sha256sum | cut -d ' ' -f 1)"
-          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ && "$PLAN_HASH" == "$expected_plan_hash" ]] || { echo "::error::plan_hash must match the trusted manual PR E2E plan" >&2; exit 1; }
 
 
           require_maintainer "$ACTOR"

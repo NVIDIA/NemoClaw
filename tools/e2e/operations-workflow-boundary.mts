@@ -214,7 +214,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "review_reason",
     "base_sha",
     "workflow_sha",
-    "plan_hash",
     "correlation_id",
   ]) {
     const input = inputs[name];
@@ -225,7 +224,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const expectedEnvironment = {
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
-    NEMOCLAW_E2E_PLAN_HASH: "${{ inputs.plan_hash }}",
     NEMOCLAW_E2E_SHARD: "default",
   };
   for (const [name, value] of Object.entries(expectedEnvironment)) {
@@ -273,17 +271,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   const authEnvironment = {
     ACTOR: "${{ github.actor }}",
-    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
-    ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     GITHUB_TOKEN: "${{ github.token }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable }}",
-    INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",
     JOBS: "${{ inputs.jobs }}",
-    PLAN_HASH: "${{ inputs.plan_hash }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
     REVIEW_REASON: "${{ inputs.review_reason }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
@@ -310,10 +304,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "${#REVIEW_REASON} >= 10",
     "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
-    'plan_identity="manual-pr-e2e:v2:${WORKFLOW_SHA}:${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}:${INFERENCE_MODE}:${ALLOW_JETSON_RUNNER_QUEUE}:${ALLOW_DGX_SPARK_RUNNER_QUEUE}"',
-    `expected_plan_hash="$(printf '%s' "$plan_identity" | sha256sum | cut -d ' ' -f 1)"`,
-    '"$PLAN_HASH" =~ ^[a-f0-9]{64}$',
-    '"$PLAN_HASH" == "$expected_plan_hash"',
     "Manual PR E2E requires a repository maintainer or administrator",
     "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
