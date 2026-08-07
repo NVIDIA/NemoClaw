@@ -66,16 +66,26 @@ describe("ensureMessagingHostForwardAfterRebuild", () => {
     mocks.runDetachedForwardStartWithRetries.mockReturnValue({ ok: true, diagnostic: "" });
   });
 
-  it("skips the sandbox-scoped stop when OpenShell cannot list forwards (#8522)", () => {
+  it("does not verify startup when OpenShell cannot list forwards (#8522)", () => {
     mocks.captureOpenshell.mockReturnValue({ status: 1, output: "" });
+    mocks.runDetachedForwardStartWithRetries.mockImplementation(
+      (_runDetachedSpawn, fetchForwardList: () => string) => {
+        expect(() => fetchForwardList()).toThrow("OpenShell forward list failed");
+        return { ok: false, diagnostic: "ownership query failed" };
+      },
+    );
 
     const result = ensureMessagingHostForwardAfterRebuild("alpha", makePlan());
 
-    expect(result).toBe(true);
+    expect(result).toBe(false);
     expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(1, ["forward", "list"], {
       ignoreError: true,
     });
     expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(2, ["forward", "list"], {
+      ignoreError: true,
+      timeout: 15_000,
+    });
+    expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(3, ["forward", "list"], {
       ignoreError: true,
       timeout: 15_000,
     });

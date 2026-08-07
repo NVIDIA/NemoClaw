@@ -39,9 +39,13 @@ export function ensureAgentFixedForward(
     buildDetachedForwardStartSpawn(
       deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
     ),
-    () =>
-      (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ??
-        "") as string,
+    () => {
+      const output = deps.runCaptureOpenshell(["forward", "list"], {
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
+      if (output === null) throw new Error("OpenShell forward list failed");
+      return output;
+    },
     { port, sandboxName },
     () => {
       deps.sleep(1);
