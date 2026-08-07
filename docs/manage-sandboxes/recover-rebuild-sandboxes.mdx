@@ -238,7 +238,9 @@ NemoClaw waits for active agent work to finish before restoring state.
 It validates the restored jobs and scripts before the gateway replacement, then keeps dispatch blocked while it restarts and verifies that replacement.
 It records the replacement process identity around managed health verification and clears the gate only if that same live process completes the final cron validation.
 If an operator already drained the gateway, NemoClaw clears only its gate and leaves the operator drain active.
-If state restore, managed MCP restoration, gateway replacement, or cron validation fails after gate acquisition, the command exits nonzero, preserves the backup, and retains the NemoClaw gate.
+If state restore, managed MCP restoration, gateway replacement, or cron validation fails after gate acquisition, the command exits nonzero and preserves the backup.
+Those failures retain the NemoClaw gate unless the output explicitly reports that release rollback could not restore its marker.
+In that exceptional case, do not assume dispatch is blocked; run `$$nemoclaw <sandbox-name> recover` immediately.
 Failures before gate acquisition do not create a new gate.
 Do not manually remove the root-owned cron restore marker because removal bypasses restored cron validation.
 If managed MCP restoration failed, correct the reported cause and run `$$nemoclaw <sandbox-name> mcp restart` first.

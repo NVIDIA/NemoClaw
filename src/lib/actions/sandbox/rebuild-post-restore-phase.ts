@@ -49,7 +49,7 @@ export function printHermesCronRestoreRecoveryCommand(
   );
 }
 
-function bailWithHeldHermesCronRestore(
+function bailAfterHermesCronRestoreFailure(
   sandboxName: string,
   backupManifest: RebuildBackupManifest,
   detail: string,
@@ -206,7 +206,7 @@ export async function runRebuildPostRestorePhase(
       `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
     );
     if (hermesCronRestoreIdentity) {
-      return bailWithHeldHermesCronRestore(
+      return bailAfterHermesCronRestoreFailure(
         sandboxName,
         backupManifest,
         "  Hermes cron dispatch remains drained because the replacement identity is unverified.",
@@ -302,7 +302,7 @@ export async function runRebuildPostRestorePhase(
       hermesGatewayRestoreState === "not-applicable" ||
       !replacementIdentity
     ) {
-      return bailWithHeldHermesCronRestore(
+      return bailAfterHermesCronRestoreFailure(
         sandboxName,
         backupManifest,
         "  Hermes cron dispatch remains drained because the replacement gateway was not verified.",
@@ -312,7 +312,7 @@ export async function runRebuildPostRestorePhase(
       );
     }
     if (mcpBridgeRestoreUnverified) {
-      return bailWithHeldHermesCronRestore(
+      return bailAfterHermesCronRestoreFailure(
         sandboxName,
         backupManifest,
         "  Hermes cron dispatch remains drained because managed MCP restoration was not verified.",
@@ -329,10 +329,20 @@ export async function runRebuildPostRestorePhase(
         replacementIdentity,
       );
     } catch (error) {
-      return bailWithHeldHermesCronRestore(
+      const errorDetail = error instanceof Error ? error.message : String(error);
+      if (errorDetail.includes("drain release failed and its marker could not be restored")) {
+        return bailAfterHermesCronRestoreFailure(
+          sandboxName,
+          backupManifest,
+          `  Hermes cron restore release rollback failed: ${errorDetail}. Dispatch gate state is unverified; run recovery immediately.`,
+          "Hermes cron restore gate state is unverified after release rollback failure; recover immediately.",
+          bail,
+        );
+      }
+      return bailAfterHermesCronRestoreFailure(
         sandboxName,
         backupManifest,
-        `  Hermes cron restore could not validate the replacement gateway and reactivate dispatch: ${error instanceof Error ? error.message : String(error)}`,
+        `  Hermes cron restore could not validate the replacement gateway and reactivate dispatch: ${errorDetail}`,
         "Hermes cron restore validation failed; dispatch was not re-enabled.",
         bail,
       );
