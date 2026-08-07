@@ -735,6 +735,7 @@ describe("managed llama.cpp installer", () => {
     expect(createLifecycle).toHaveBeenCalledWith(
       expect.objectContaining({
         bindings: expect.objectContaining({
+          hostPort: selected.recipe.spec.serve.port,
           imageReference: selected.recipe.spec.runtime.image,
         }),
         contract: expect.objectContaining({

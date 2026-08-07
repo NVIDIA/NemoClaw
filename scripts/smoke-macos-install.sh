@@ -24,7 +24,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
 
-SANDBOX_NAME="smoke-$(date +%Y%m%d%H%M%S)"
+SANDBOX_NAME="smoke-$(date +%m%d%H%M%S)"
 LOG_DIR="${TMPDIR:-/tmp}/nemoclaw-smoke"
 RUNTIME=""
 ALLOW_EXISTING_STATE=false
@@ -115,8 +115,10 @@ done
 [ -x "$REPO_DIR/uninstall.sh" ] || fail "uninstall.sh not found at repo root."
 
 validate_sandbox_name() {
-  if ! [[ "$SANDBOX_NAME" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
-    fail "Invalid sandbox name '$SANDBOX_NAME'. Use lowercase letters, numbers, and hyphens."
+  if [ "${#SANDBOX_NAME}" -gt 19 ] \
+    || [[ "$SANDBOX_NAME" == *--* ]] \
+    || ! [[ "$SANDBOX_NAME" =~ ^[a-z]([a-z0-9-]*[a-z0-9])?$ ]]; then
+    fail "Invalid sandbox name '$SANDBOX_NAME'. Use 1-19 lowercase letters, numbers, and single internal hyphens; start with a letter and end with a letter or number."
   fi
 }
 
