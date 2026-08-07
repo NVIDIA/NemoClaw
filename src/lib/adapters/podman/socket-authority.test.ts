@@ -118,6 +118,7 @@ describe("Podman socket authority", () => {
           server.once("error", reject);
           server.listen(socketPath, resolve);
         });
+        fs.chmodSync(socketPath, 0o660);
 
         hardenPodmanSocketDirectory(socketPath, uid);
         expect(fs.statSync(socketDirectory).mode & 0o777).toBe(0o700);
@@ -141,6 +142,13 @@ describe("Podman socket authority", () => {
           hardenPodmanSocketDirectory(path.join(missingSocketDirectory, "missing.sock"), uid),
         ).toThrow();
         expect(fs.statSync(missingSocketDirectory).mode & 0o777).toBe(0o755);
+
+        fs.chmodSync(socketDirectory, 0o755);
+        fs.chmodSync(socketPath, 0o666);
+        expect(() => hardenPodmanSocketDirectory(socketPath, uid)).toThrow(
+          "writable by another user or group",
+        );
+        expect(fs.statSync(socketDirectory).mode & 0o777).toBe(0o755);
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
         fs.rmSync(root, { force: true, recursive: true });

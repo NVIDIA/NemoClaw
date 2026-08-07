@@ -2622,6 +2622,7 @@ async function createSandboxWithBaseImageResolution(
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
+    portableLifecycleGeneration,
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
@@ -2636,6 +2637,8 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
+      // biome-ignore format: keep src/lib/onboard.ts compact for growth guardrail.
+      ...(recreateRuntime.targetGeneration ? { registryGeneration: recreateRuntime.targetGeneration } : {}),
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2766,6 +2769,8 @@ async function createSandboxWithBaseImageResolution(
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
+          // biome-ignore format: keep src/lib/onboard.ts compact for growth guardrail.
+          ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
           ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,

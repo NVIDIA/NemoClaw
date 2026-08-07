@@ -21,13 +21,18 @@ function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void
 function withPrivilegedExecMocks<T>(
   deps: {
     dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
-    getSandbox: (name: string) => { name?: string; openshellDriver?: string | null } | null;
+    getSandbox: (name: string) => {
+      name?: string;
+      lifecycleGeneration?: string;
+      openshellDriver?: string | null;
+    } | null;
     listSandboxes: () => {
       sandboxes?: Array<{ name?: string | null }>;
       defaultSandbox?: string | null;
     };
     resolvePortableDemoPrivilegedExecTarget?: (
       sandboxName: string,
+      deps?: { registryGeneration?: string },
     ) => { assertRuntimeAuthority: () => void; containerId: string; dockerHost: string } | null;
   },
   run: (helper: typeof import("./privileged-exec")) => T,
@@ -144,19 +149,24 @@ describe("privileged sandbox exec routing", () => {
   it("uses the receipt-owned Podman socket when the default Docker daemon has no container (#8584)", () => {
     let dockerPsCalls = 0;
     const assertRuntimeAuthority = vi.fn();
+    const resolvePortableDemoPrivilegedExecTarget = vi.fn(() => ({
+      assertRuntimeAuthority,
+      containerId: "a".repeat(64),
+      dockerHost: "unix:///run/user/1001/podman/podman.sock",
+    }));
     withPrivilegedExecMocks(
       {
-        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        getSandbox: () => ({
+          name: "alpha",
+          lifecycleGeneration: "current-generation",
+          openshellDriver: "docker",
+        }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
         dockerCapture: () => {
           dockerPsCalls += 1;
           return "";
         },
-        resolvePortableDemoPrivilegedExecTarget: () => ({
-          assertRuntimeAuthority,
-          containerId: "a".repeat(64),
-          dockerHost: "unix:///run/user/1001/podman/podman.sock",
-        }),
+        resolvePortableDemoPrivilegedExecTarget,
       },
       ({ privilegedSandboxExecArgv }) => {
         expect(privilegedSandboxExecArgv("alpha", ["id"], false, true)).toEqual([
@@ -206,6 +216,29 @@ describe("privileged sandbox exec routing", () => {
     );
     expect(dockerPsCalls).toBe(0);
     expect(assertRuntimeAuthority).toHaveBeenCalledOnce();
+    expect(resolvePortableDemoPrivilegedExecTarget).toHaveBeenCalledWith("alpha", {
+      registryGeneration: "current-generation",
+    });
+  });
+
+  it("rejects a non-direct driver before consulting a stale portable receipt (#8584)", () => {
+    const resolvePortableDemoPrivilegedExecTarget = vi.fn();
+
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "kubernetes" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: vi.fn(),
+        resolvePortableDemoPrivilegedExecTarget,
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+          "refusing local Docker discovery for a non-direct driver",
+        );
+      },
+    );
+
+    expect(resolvePortableDemoPrivilegedExecTarget).not.toHaveBeenCalled();
   });
 
   it("bounds direct sandbox container discovery", () => {

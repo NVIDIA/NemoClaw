@@ -226,12 +226,14 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
+  const podmanEnv = localPodmanEnvironment(env);
   const dockerHost = resolvePodmanDockerHost(
-    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], localPodmanEnvironment(env)),
+    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], podmanEnv),
   );
   const socketPath = dockerHost.slice("unix://".length);
   (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));
   env.DOCKER_HOST = dockerHost;
+  podmanEnv.DOCKER_HOST = dockerHost;
 
   const docker =
     deps.docker ??
@@ -241,8 +243,8 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
-  requireDockerCompatibleCli(docker, env);
-  ensureRegistryContainer(env, docker);
+  requireDockerCompatibleCli(docker, podmanEnv);
+  ensureRegistryContainer(podmanEnv, docker);
 }
 
 export const portableHostPreparationInternals = {

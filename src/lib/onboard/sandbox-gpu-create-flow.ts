@@ -80,6 +80,7 @@ export interface SandboxGpuCreateFlowInput {
   createArgv: string[];
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
+  registryGeneration?: string;
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
@@ -119,6 +120,7 @@ export interface SandboxGpuCreateFlowResult {
   firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
+  portableLifecycleGeneration: string | null;
 }
 
 /**
@@ -250,11 +252,17 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
+  let portableLifecycleGeneration: string | null = null;
   try {
-    (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-      input.sandboxName,
-      input.sandboxStartupCommand,
-    );
+    portableLifecycleGeneration =
+      (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+        input.sandboxName,
+        input.sandboxStartupCommand,
+        process.env,
+        {
+          ...(input.registryGeneration ? { registryGeneration: input.registryGeneration } : {}),
+        },
+      ) ?? null;
   } catch (error) {
     const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
     console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
@@ -265,5 +273,6 @@ export async function runSandboxGpuCreateFlow(
     route: gpuCreateOutcome.route,
     firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
+    portableLifecycleGeneration,
   };
 }

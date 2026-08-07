@@ -11,6 +11,7 @@ const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 
 type SandboxEntry = {
   name?: string;
+  lifecycleGeneration?: string;
   openshellDriver?: string | null;
 };
 
@@ -215,7 +216,12 @@ function privilegedSandboxExecArgv(
   if (driver !== null && driver !== "docker" && driver !== "vm") {
     throw unsupportedDirectDriverError(sandboxName, driver);
   }
-  const portableTarget = resolvePortableDemoPrivilegedExecTarget(sandboxName);
+  const portableTarget =
+    driver === "docker"
+      ? resolvePortableDemoPrivilegedExecTarget(sandboxName, {
+          ...(entry.lifecycleGeneration ? { registryGeneration: entry.lifecycleGeneration } : {}),
+        })
+      : null;
   if (portableTarget) {
     if (expectedContainerId !== undefined && portableTarget.containerId !== expectedContainerId) {
       throw new Error(

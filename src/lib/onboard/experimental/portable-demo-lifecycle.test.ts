@@ -13,7 +13,8 @@ import {
   installPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleDeps,
   portableDemoLifecycleInternals,
-  recoverPortableDemoSandboxLifecycle,
+  recoverPortableDemoSandboxLifecycle as recoverPortableDemoSandboxLifecycleUnchecked,
+  removePortableDemoSandboxLifecycleReceipt,
   resolvePortableDemoPrivilegedExecTarget,
 } from "./portable-demo-lifecycle";
 
@@ -179,6 +180,7 @@ function resolveTarget(
 ) {
   return resolvePortableDemoPrivilegedExecTarget("alpha", {
     platform: "linux",
+    registryGeneration: CONTAINER_ID,
     stateDir,
     podman: runtime.podman,
     podmanSocketAuthorityDeps: socketAuthorityDeps(),
@@ -193,6 +195,22 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
     STARTUP_ARGV,
     { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
     { platform: "linux", podman, stateDir },
+  );
+}
+
+function recoverPortableDemoSandboxLifecycle(
+  sandboxName: string,
+  context: Parameters<typeof recoverPortableDemoSandboxLifecycleUnchecked>[1],
+  deps: PortableDemoLifecycleDeps = {},
+) {
+  return recoverPortableDemoSandboxLifecycleUnchecked(
+    sandboxName,
+    {
+      lifecycleGeneration: CONTAINER_ID,
+      openshellDriver: "docker",
+      ...context,
+    },
+    deps,
   );
 }
 
@@ -287,6 +305,26 @@ describe("portable demo sandbox lifecycle", () => {
     expect(runtime.podman).not.toHaveBeenCalled();
   });
 
+  it("ignores an installed receipt for a non-Docker registry driver (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        {
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          openshellDriver: "kubernetes",
+        },
+        { platform: "linux", stateDir, podman: runtime.podman },
+      ),
+    ).toEqual({ kind: "not-installed" });
+    expect(runtime.podman).not.toHaveBeenCalled();
+  });
+
   it("rejects an installed receipt outside Linux (#8441)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman();
@@ -343,11 +381,12 @@ describe("portable demo sandbox lifecycle", () => {
     const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(receipt).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       sandboxName: "alpha",
       sandboxId: SANDBOX_ID,
       containerId: CONTAINER_ID,
       dashboardPort: 18789,
+      registryGeneration: CONTAINER_ID,
     });
     expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
   });
@@ -393,6 +432,81 @@ describe("portable demo sandbox lifecycle", () => {
       expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
       expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
     ]);
+  });
+
+  it("rejects a receipt outside the current registry generation before Podman access (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+
+    expect(() =>
+      resolveTarget(stateDir, runtime, { registryGeneration: "replacement-generation" }),
+    ).toThrow("does not belong to the current registry generation");
+    expect(runtime.podman).not.toHaveBeenCalled();
+  });
+
+  it("rejects recovery outside the current registry generation before Podman access (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        {
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "replacement-generation",
+          openshellDriver: "docker",
+        },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+        },
+      ),
+    ).toThrow("does not belong to the current registry generation");
+    expect(runtime.podman).not.toHaveBeenCalled();
+  });
+
+  it("rejects a legacy receipt after same-name registry replacement (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+    delete receipt.registryGeneration;
+    fs.writeFileSync(receiptPath, `${JSON.stringify({ ...receipt, schemaVersion: 2 })}\n`, {
+      mode: 0o600,
+    });
+    runtime.podman.mockClear();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        {
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "replacement-generation",
+          openshellDriver: "docker",
+        },
+        { platform: "linux", stateDir, podman: runtime.podman },
+      ),
+    ).toThrow("does not belong to the current registry generation");
+    expect(runtime.podman).not.toHaveBeenCalled();
+  });
+
+  it("retires portable lifecycle authority after its sandbox registry entry is removed (#8584)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+
+    removePortableDemoSandboxLifecycleReceipt("alpha", stateDir);
+
+    expect(fs.existsSync(receiptPath)).toBe(false);
   });
 
   it("refuses missing or duplicate portable containers before privileged exec (#8584)", () => {
@@ -1203,6 +1317,7 @@ describe("portable demo sandbox lifecycle", () => {
     installReceipt(stateDir, runtime.podman);
     const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
+    delete receipt.registryGeneration;
     fs.writeFileSync(
       receiptPath,
       `${JSON.stringify({ ...receipt, schemaVersion: 1 }, null, 2)}\n`,
@@ -1266,7 +1381,10 @@ describe("portable demo sandbox lifecycle", () => {
       5000,
     );
     expect(launchOpenshell).toHaveBeenCalledOnce();
-    expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({ schemaVersion: 2 });
+    expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({
+      schemaVersion: 3,
+      registryGeneration: CONTAINER_ID,
+    });
 
     expect(
       recoverPortableDemoSandboxLifecycle(
@@ -1284,6 +1402,7 @@ describe("portable demo sandbox lifecycle", () => {
     installReceipt(stateDir, runtime.podman);
     const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
+    delete receipt.registryGeneration;
     fs.writeFileSync(
       receiptPath,
       `${JSON.stringify({ ...receipt, schemaVersion: 1 }, null, 2)}\n`,

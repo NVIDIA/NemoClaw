@@ -57,9 +57,9 @@ describe("destroySandbox flow", () => {
     ).resolves.toBeUndefined();
 
     expectSuccessfulLiveDestroy(harness, exitSpy);
-    expect(harness.removePortableDemoLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
     expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.removePortableDemoLifecycleReceiptSpy.mock.invocationCallOrder[0],
+      harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
     );
   });
 
@@ -110,7 +110,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
 
     expectFailedDeletePreservesHostState(harness, exitSpy);
-    expect(harness.removePortableDemoLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {
