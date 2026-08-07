@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawnSync } from "node:child_process";
-import { once } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -20,7 +19,16 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import {
+  type ShellProbe,
+  type ShellProbeResult,
+  trustedShellCommand,
+} from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
+import {
+  type PodmanContainerArtifactSummary,
+  sanitizePodmanInspectArtifact,
+} from "./podman-cpu-lifecycle-artifacts.ts";
 
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
 export const GATEWAY_NAME = "podman-proof";
@@ -42,8 +50,9 @@ interface ManagedContainerInspect {
 
 interface CommandOptions {
   allowFailure?: boolean;
+  artifactName: string;
   env?: NodeJS.ProcessEnv;
-  timeoutMs?: number;
+  timeoutMs?: 1_000 | 10_000 | 60_000 | 240_000;
 }
 
 interface GatewayInfo {
@@ -61,6 +70,7 @@ interface CleanupOptions {
   openshellBin: string;
   previousPortableProfile: string | undefined;
   root: string;
+  shellProbe: ShellProbe;
 }
 
 export function executableOnPath(name: string): string {
@@ -77,39 +87,41 @@ export function executableOnPath(name: string): string {
   throw new Error(`Required executable '${name}' was not found on PATH.`);
 }
 
-function appendCommandLog(command: string, args: readonly string[], output: string): void {
-  if (!ARTIFACT_DIR) return;
-  fs.mkdirSync(ARTIFACT_DIR, { recursive: true, mode: 0o700 });
-  fs.appendFileSync(
-    path.join(ARTIFACT_DIR, "openshell-podman-commands.log"),
-    `$ ${path.basename(command)} ${args.join(" ")}\n${output}\n`,
-    { encoding: "utf-8", mode: 0o600 },
-  );
-}
-
-export function runCommand(
+export async function runCommand(
+  shellProbe: ShellProbe,
   command: string,
   args: readonly string[],
-  options: CommandOptions = {},
-): string {
-  const result = spawnSync(command, [...args], {
-    encoding: "utf-8",
-    env: options.env ?? process.env,
-    killSignal: "SIGKILL",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout:
-      options.timeoutMs === 240_000 ? 240_000 : options.timeoutMs === 10_000 ? 10_000 : 60_000,
-  });
-  const output = `${String(result.stdout ?? "")}${String(result.stderr ?? "")}`;
-  appendCommandLog(command, args, output);
-  if (!options.allowFailure && (result.error || result.status !== 0)) {
+  options: CommandOptions,
+): Promise<string> {
+  let result: ShellProbeResult;
+  try {
+    result = await shellProbe.run(
+      trustedShellCommand({
+        command,
+        args,
+        reason: "exercise the pinned OpenShell Podman CPU lifecycle",
+      }),
+      {
+        artifactName: options.artifactName,
+        env: options.env ?? process.env,
+        timeoutMs: options.timeoutMs ?? 60_000,
+      },
+    );
+  } catch (error) {
+    if (options.allowFailure) return "";
+    throw error;
+  }
+  if (
+    !options.allowFailure &&
+    (result.timedOut || result.signal !== null || result.exitCode !== 0)
+  ) {
     throw new Error(
-      `${path.basename(command)} ${args.join(" ")} failed (exit ${String(result.status)}):\n${
-        result.error?.message ?? output
-      }`,
+      `${path.basename(command)} command failed (exit ${String(result.exitCode)}, ` +
+        `signal ${String(result.signal)}, timed out ${String(result.timedOut)}). ` +
+        `See ${result.artifacts.result}.`,
     );
   }
-  return String(result.stdout ?? "").trim();
+  return result.stdout.trim();
 }
 
 export async function startPinnedGateway(
@@ -143,12 +155,14 @@ export async function startPinnedGateway(
   while (Date.now() < deadline) {
     const plainOutput = stripAnsi(output);
     if (/configuration error|invalid \[openshell[.]drivers[.]podman\] table/iu.test(plainOutput)) {
-      child.kill("SIGTERM");
+      await stopGateway(child);
       throw new Error(`Pinned OpenShell rejected the Podman configuration:\n${output}`);
     }
-    if (child.exitCode !== null) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      await stopGateway(child);
       throw new Error(
-        `Pinned OpenShell Podman gateway exited with ${String(child.exitCode)}:\n${output}`,
+        `Pinned OpenShell Podman gateway exited with ${String(child.exitCode)} ` +
+          `(signal ${String(child.signalCode)}):\n${output}`,
       );
     }
     // This confirms that the pinned configuration was accepted. OpenShell logs
@@ -157,11 +171,12 @@ export async function startPinnedGateway(
     if (/Using compute driver\s+driver=podman/u.test(plainOutput)) return child;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  child.kill("SIGTERM");
+  await stopGateway(child);
   throw new Error(`Pinned OpenShell Podman gateway did not initialize:\n${output}`);
 }
 
 export async function waitForHealthyGateway(
+  shellProbe: ShellProbe,
   openshellBin: string,
   cliEnv: NodeJS.ProcessEnv,
   child: ChildProcess,
@@ -177,10 +192,16 @@ export async function waitForHealthyGateway(
     }
     try {
       const info = JSON.parse(
-        runCommand(openshellBin, ["gateway", "info", "-g", GATEWAY_NAME, "-o", "json"], {
-          env: cliEnv,
-          timeoutMs: 10_000,
-        }),
+        await runCommand(
+          shellProbe,
+          openshellBin,
+          ["gateway", "info", "-g", GATEWAY_NAME, "-o", "json"],
+          {
+            artifactName: "podman-lifecycle-gateway-info",
+            env: cliEnv,
+            timeoutMs: 10_000,
+          },
+        ),
       ) as GatewayInfo;
       const hasPodman = info.compute_drivers?.some((driver) => driver.name === "podman") ?? false;
       if (info.status === "healthy" && info.version === OPENSHELL_VERSION && hasPodman) {
@@ -263,6 +284,7 @@ function captureFailureContainerDiagnostics(
   if (!ARTIFACT_DIR) return;
   const diagnosticDir = path.join(ARTIFACT_DIR, "failure-containers");
   fs.mkdirSync(diagnosticDir, { recursive: true, mode: 0o700 });
+  const containers: PodmanContainerArtifactSummary[] = [];
   for (const sandboxName of sandboxNames) {
     const discovery = engine.capture([
       "ps",
@@ -276,31 +298,58 @@ function captureFailureContainerDiagnostics(
       "--filter",
       `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
     ]);
+    if (discovery.status !== 0 || discovery.error) continue;
     const containerIds = discovery.stdout
       .split(/\r?\n/u)
       .map((row) => row.trim())
       .filter((row) => FULL_CONTAINER_ID.test(row));
     for (const containerId of containerIds) {
-      for (const [suffix, args] of [
-        ["inspect.json", ["container", "inspect", containerId]],
-        ["log", ["logs", containerId]],
-      ] as const) {
-        const result = engine.capture(args, 30_000);
-        fs.writeFileSync(
-          path.join(diagnosticDir, `${sandboxName}-${containerId}-${suffix}`),
-          `${result.stdout}${result.stderr}`,
-          { encoding: "utf-8", mode: 0o600 },
-        );
+      const result = engine.capture(["container", "inspect", containerId], 30_000);
+      if (result.status !== 0 || result.error) continue;
+      try {
+        containers.push(sanitizePodmanInspectArtifact(result.stdout));
+      } catch {
+        // Diagnostics are best effort and raw inspection must never be persisted.
       }
     }
   }
+  fs.writeFileSync(
+    path.join(diagnosticDir, "managed-container-summary.json"),
+    `${JSON.stringify({ schemaVersion: 1, containers }, null, 2)}\n`,
+    { encoding: "utf-8", mode: 0o600 },
+  );
+}
+
+function gatewayStopped(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function waitForGatewayStop(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (gatewayStopped(child)) return true;
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (stopped: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener("close", onClose);
+      resolve(stopped);
+    };
+    const onClose = () => finish(true);
+    const timer = setTimeout(() => finish(gatewayStopped(child)), timeoutMs);
+    child.once("close", onClose);
+    if (gatewayStopped(child)) finish(true);
+  });
 }
 
 async function stopGateway(child: ChildProcess | null): Promise<void> {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child || gatewayStopped(child)) return;
   child.kill("SIGTERM");
-  await Promise.race([once(child, "close"), new Promise((resolve) => setTimeout(resolve, 5_000))]);
-  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  if (await waitForGatewayStop(child, 5_000)) return;
+  child.kill("SIGKILL");
+  if (!(await waitForGatewayStop(child, 5_000))) {
+    throw new Error("Pinned OpenShell Podman gateway did not stop after SIGKILL.");
+  }
 }
 
 export async function cleanupPodmanLifecycle(options: CleanupOptions): Promise<void> {
@@ -312,16 +361,25 @@ export async function cleanupPodmanLifecycle(options: CleanupOptions): Promise<v
     }
   }
   for (const sandboxName of [...options.createdSandboxes].reverse()) {
-    runCommand(options.openshellBin, ["sandbox", "delete", "-g", GATEWAY_NAME, sandboxName], {
-      allowFailure: true,
-      env: options.cliEnv,
-    });
+    await runCommand(
+      options.shellProbe,
+      options.openshellBin,
+      ["sandbox", "delete", "-g", GATEWAY_NAME, sandboxName],
+      {
+        allowFailure: true,
+        artifactName: `podman-lifecycle-delete-${sandboxName}`,
+        env: options.cliEnv,
+      },
+    );
   }
-  await stopGateway(options.gateway);
-  if (options.previousPortableProfile === undefined) {
-    delete process.env.NEMOCLAW_EXPERIMENTAL_PROFILE;
-  } else {
-    process.env.NEMOCLAW_EXPERIMENTAL_PROFILE = options.previousPortableProfile;
+  try {
+    await stopGateway(options.gateway);
+  } finally {
+    if (options.previousPortableProfile === undefined) {
+      delete process.env.NEMOCLAW_EXPERIMENTAL_PROFILE;
+    } else {
+      process.env.NEMOCLAW_EXPERIMENTAL_PROFILE = options.previousPortableProfile;
+    }
+    fs.rmSync(options.root, { force: true, recursive: true });
   }
-  fs.rmSync(options.root, { force: true, recursive: true });
 }

@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import { openshellSandboxSshHost } from "../openshell/sandbox-ssh-host";
 
 export type SandboxCommandResult = {
   status: number;
@@ -67,7 +68,7 @@ export function executeSandboxCommandTransport(
         "ConnectTimeout=5",
         "-o",
         "LogLevel=ERROR",
-        `openshell-${sandboxName}`,
+        openshellSandboxSshHost(sandboxName),
         command,
       ],
       {

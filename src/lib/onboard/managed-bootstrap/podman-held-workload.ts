@@ -26,7 +26,7 @@ const SAFE_SANDBOX_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_STRING_BYTES = 64 * 1024;
 const MAX_ARGV_BYTES = 128 * 1024;
-const MAX_CONTAINER_NAME_BYTES = 200;
+const MAX_CONTAINER_NAME_BYTES = 255;
 const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 type JsonRecord = Record<string, unknown>;
@@ -174,7 +174,6 @@ function discoverRuntimeId(
   identity: {
     readonly sandboxId: string;
     readonly sandboxName: string;
-    readonly sandboxNamespace: string;
   },
 ): string {
   const output = capture(
@@ -331,7 +330,6 @@ export function inspectExactPodmanHeldWorkload(
   const runtimeId = discoverRuntimeId(input.engine, {
     sandboxId,
     sandboxName,
-    sandboxNamespace,
   });
   const inspectArgs = ["container", "inspect", runtimeId] as const;
   const values = { ...input, sandboxId, sandboxName, sandboxNamespace };

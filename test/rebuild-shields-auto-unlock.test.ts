@@ -169,7 +169,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
   // Fake openshell — also returns a parseable YAML policy for the
   // shields-down policy snapshot capture path.
   const sshConfig = [
-    `Host openshell-${sandboxName}`,
+    `Host openshell-${sandboxName}.default`,
     "  HostName 127.0.0.1",
     "  Port 2222",
     "  User sandbox",

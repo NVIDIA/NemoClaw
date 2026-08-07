@@ -97,6 +97,31 @@ describe("buildDockerDriverGatewayEnv", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ["a relative path", "run/user/1001/podman/podman.sock"],
+    ["trailing whitespace", "/run/user/1001/podman/podman.sock "],
+    ["an embedded newline", "/run/user/1001/podman/podman.sock\nOPENSHELL_DISABLE_TLS=true"],
+    ["a parent-directory segment", "/run/user/1001/../1002/podman/podman.sock"],
+    ["an empty value", ""],
+  ])("rejects a Podman socket path with %s", (_label, podmanSocketPath) => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-gateway-invalid-"));
+    try {
+      expect(() =>
+        buildDockerDriverGatewayEnv({
+          platform: "linux",
+          stateDir,
+          podmanSocketPath,
+          getDockerSupervisorImage: () => "supervisor:test",
+          resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+        }),
+      ).toThrow("OpenShell Podman gateway socket must be a safe normalized absolute path");
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildDockerGatewayDebEnvFile", () => {

@@ -11,6 +11,16 @@ import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
 import {
+  PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_CONTAINER_PREFIX,
+  PODMAN_SANDBOX_ID_LABEL,
+  PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
+  PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
+} from "../runtime-provider/podman-lifecycle";
+import {
   loadUserLocalOllamaOwnership,
   OLLAMA_PORT,
   recordUserLocalOllamaOwnership,
@@ -29,14 +39,6 @@ const MANAGED_EXECUTABLE_CHILD_FD = 3;
 const POLL_INTERVAL_MS = 1_000;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
-const PODMAN_MANAGED_LABEL = "openshell.managed";
-const PODMAN_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
-const PODMAN_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
-const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
-const PODMAN_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
-const PODMAN_SANDBOX_NAMESPACE = "";
-const PODMAN_SANDBOX_WORKSPACE = "default";
-const PODMAN_SANDBOX_CONTAINER_PREFIX = `openshell-${PODMAN_SANDBOX_WORKSPACE}--`;
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
 const CURRENT_RECEIPT_SCHEMA_VERSION = 2;

@@ -58,6 +58,7 @@ describe("executeSandboxCommand temp SSH config", () => {
     expect(configDir).not.toBe(os.tmpdir());
     expect(path.basename(configDir)).toMatch(/^nemoclaw-ssh-/);
     expect(path.basename(configFile)).toBe("ssh_config");
+    expect(sshArgs).toContain("openshell-alpha.default");
     expect(fs.existsSync(configDir)).toBe(false);
   });
 

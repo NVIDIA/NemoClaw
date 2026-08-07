@@ -352,11 +352,13 @@ function dockerContainerCommandArgs(
   // requires this exact supervisor workdir tuple. Preserve only the reviewed
   // release contract: replaying arbitrary image-controlled command arguments
   // at the root supervisor boundary would widen the recreation trust surface.
+  if (!exactArrayEqual(entrypoint, [OPENSHELL_SANDBOX_ENTRYPOINT])) {
+    throw new Error(
+      "OpenShell sandbox supervisor command is not a reviewed restart-safe contract.",
+    );
+  }
   if (configuredCommand.length === 0) return [];
-  if (
-    exactArrayEqual(entrypoint, [OPENSHELL_SANDBOX_ENTRYPOINT]) &&
-    exactArrayEqual(configuredCommand, OPENSHELL_V0_0_99_WORKDIR_COMMAND)
-  ) {
+  if (exactArrayEqual(configuredCommand, OPENSHELL_V0_0_99_WORKDIR_COMMAND)) {
     return [...configuredCommand];
   }
   throw new Error("OpenShell sandbox supervisor command is not a reviewed restart-safe contract.");

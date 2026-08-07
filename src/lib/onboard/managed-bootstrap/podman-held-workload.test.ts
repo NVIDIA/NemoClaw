@@ -10,6 +10,7 @@ import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 import {
   inspectExactPodmanHeldWorkload,
   PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
   PODMAN_SANDBOX_NAMESPACE,
@@ -49,15 +50,18 @@ function inspectOutput(
     readonly labels?: Readonly<Record<string, string>>;
     readonly name?: string;
     readonly running?: boolean;
+    readonly sandboxId?: string;
+    readonly sandboxName?: string;
     readonly user?: string;
   } = {},
 ): string {
+  const sandboxId = overrides.sandboxId ?? SANDBOX_ID;
+  const sandboxName = overrides.sandboxName ?? SANDBOX_NAME;
   return JSON.stringify([
     {
       Id: overrides.id ?? RUNTIME_ID,
       Image: overrides.image ?? `sha256:${IMAGE_ID}`,
-      Name:
-        overrides.name ?? `openshell-${PODMAN_SANDBOX_WORKSPACE}--${SANDBOX_NAME}-${SANDBOX_ID}`,
+      Name: overrides.name ?? `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`,
       Config: {
         Cmd: SUPERVISOR_ARGV.slice(1),
         Entrypoint: [SUPERVISOR_ARGV[0]],
@@ -68,8 +72,8 @@ function inspectOutput(
         ],
         Labels: overrides.labels ?? {
           [PODMAN_MANAGED_LABEL]: "true",
-          [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
-          [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
+          [PODMAN_SANDBOX_ID_LABEL]: sandboxId,
+          [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
           [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
           [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
         },
@@ -98,15 +102,19 @@ function engineWith(
   return { capture, engine };
 }
 
-function inspect(engine: ContainerEngine, sandboxNamespace = SANDBOX_NAMESPACE) {
+function inspect(
+  engine: ContainerEngine,
+  sandboxNamespace = SANDBOX_NAMESPACE,
+  identity: { readonly sandboxId?: string; readonly sandboxName?: string } = {},
+) {
   return inspectExactPodmanHeldWorkload({
     bootstrapIdentity: BOOTSTRAP_IDENTITY,
     engine,
     expectedHeldWorkloadArgv: HELD_WORKLOAD_ARGV,
     expectedImageContentId: `sha256:${IMAGE_ID}`,
     expectedSupervisorArgv: SUPERVISOR_ARGV,
-    sandboxId: SANDBOX_ID,
-    sandboxName: SANDBOX_NAME,
+    sandboxId: identity.sandboxId ?? SANDBOX_ID,
+    sandboxName: identity.sandboxName ?? SANDBOX_NAME,
     sandboxNamespace,
   });
 }
@@ -172,6 +180,35 @@ describe("Podman managed bootstrap held-workload inspection", () => {
 
     expect(() => inspect(fake.engine, "default")).toThrow(
       "sandbox namespace must match OpenShell v0.0.99",
+    );
+    expect(fake.capture).not.toHaveBeenCalled();
+  });
+
+  it("accepts an exact 255-byte OpenShell Podman container name", () => {
+    const sandboxName = "n".repeat(107);
+    const sandboxId = "i".repeat(128);
+    const containerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
+    const fake = engineWith([
+      result(listOutput()),
+      result(inspectOutput({ sandboxId, sandboxName })),
+      result(inspectOutput({ sandboxId, sandboxName })),
+    ]);
+
+    expect(Buffer.byteLength(containerName, "utf8")).toBe(255);
+    expect(inspect(fake.engine, SANDBOX_NAMESPACE, { sandboxId, sandboxName }).containerName).toBe(
+      containerName,
+    );
+  });
+
+  it("rejects a 256-byte OpenShell Podman container name before discovery", () => {
+    const sandboxName = "n".repeat(108);
+    const sandboxId = "i".repeat(128);
+    const containerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
+    const fake = engineWith([]);
+
+    expect(Buffer.byteLength(containerName, "utf8")).toBe(256);
+    expect(() => inspect(fake.engine, SANDBOX_NAMESPACE, { sandboxId, sandboxName })).toThrow(
+      "container name exceeds OpenShell's limit",
     );
     expect(fake.capture).not.toHaveBeenCalled();
   });

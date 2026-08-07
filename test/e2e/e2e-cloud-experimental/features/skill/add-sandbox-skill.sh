@@ -107,7 +107,7 @@ upload_out=$(
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
+    "openshell-${SANDBOX_NAME}.default" \
     "cat > '/tmp/${SKILL_ID}.md'" <"$payload_source" 2>&1
 )
 upload_rc=$?
@@ -163,7 +163,7 @@ query_out=$(
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
+    "openshell-${SANDBOX_NAME}.default" \
     "sh -s -- '$remote_skill_dir' '$remote_skill_file' '/tmp/${SKILL_ID}.md'" <"$remote_script" 2>&1
 )
 query_rc=$?

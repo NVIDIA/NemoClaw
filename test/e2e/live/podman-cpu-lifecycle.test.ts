@@ -26,6 +26,7 @@ import type {
 import { createPodmanRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/podman";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   ARTIFACT_DIR,
   cleanupPodmanLifecycle,
@@ -47,6 +48,7 @@ const AGENTS = [
 ] as const;
 const BASE_IMAGE =
   "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
+const ACTIVATION_POLICY = path.join(REPO_ROOT, "test/e2e/live/podman-cpu-lifecycle-policy.yaml");
 const GATEWAY_PORT = 18_080;
 const SUPERVISOR_IMAGE =
   "ghcr.io/nvidia/openshell/supervisor@sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6";
@@ -81,7 +83,7 @@ function supportedLifecycle(bundle: RuntimeProviderBundle): SupportedLifecycle {
 test("activates pinned OpenShell sandboxes and preserves registered-agent Podman CPU identity", {
   meta: { e2ePhases: E2E_PHASES },
   timeout: 360_000,
-}, async ({ progress }) => {
+}, async ({ progress, shellProbe }) => {
   progress.phase("pin the exact rootless Podman endpoint");
   expect(process.platform).toBe("linux");
   expect(process.getuid?.()).not.toBe(0);
@@ -105,7 +107,11 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
   const gatewayBin = executableOnPath("openshell-gateway");
   const sandboxBin = executableOnPath("openshell-sandbox");
   for (const component of [openshellBin, gatewayBin, sandboxBin]) {
-    expect(runCommand(component, ["--version"])).toContain(OPENSHELL_VERSION);
+    expect(
+      await runCommand(shellProbe, component, ["--version"], {
+        artifactName: `podman-lifecycle-version-${path.basename(component)}`,
+      }),
+    ).toContain(OPENSHELL_VERSION);
   }
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-openshell-"));
@@ -134,7 +140,8 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
     const tls = ensureDockerDriverGatewayLocalTlsBundle({ gatewayBin, stateDir });
     cliEnv.OPENSHELL_LOCAL_TLS_DIR = tls.localTlsDir;
     gateway = await startPinnedGateway(gatewayBin, gatewayEnv, progress);
-    runCommand(
+    await runCommand(
+      shellProbe,
       openshellBin,
       [
         "gateway",
@@ -144,15 +151,16 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
         "--name",
         GATEWAY_NAME,
       ],
-      { env: cliEnv },
+      { artifactName: "podman-lifecycle-add-gateway", env: cliEnv },
     );
-    const gatewayInfo = await waitForHealthyGateway(openshellBin, cliEnv, gateway);
+    const gatewayInfo = await waitForHealthyGateway(shellProbe, openshellBin, cliEnv, gateway);
     expect(gatewayInfo).toMatchObject({ status: "healthy", version: OPENSHELL_VERSION });
     expect(gatewayInfo.compute_drivers).toContainEqual(expect.objectContaining({ name: "podman" }));
 
     progress.phase("activate registered-agent identities through the pinned OpenShell CLI");
     for (const { agent, sandboxName } of AGENTS) {
-      runCommand(
+      await runCommand(
+        shellProbe,
         openshellBin,
         [
           "sandbox",
@@ -163,6 +171,8 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
           sandboxName,
           "--from",
           BASE_IMAGE,
+          "--policy",
+          ACTIVATION_POLICY,
           "--label",
           `nemoclaw.agent=${agent}`,
           "--no-tty",
@@ -171,7 +181,11 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
           "-lc",
           `printf '%s\\n' '${agent}' >/tmp/nemoclaw-agent-proof`,
         ],
-        { env: cliEnv, timeoutMs: 240_000 },
+        {
+          artifactName: `podman-lifecycle-create-${agent}`,
+          env: cliEnv,
+          timeoutMs: 240_000,
+        },
       );
       createdSandboxes.push(sandboxName);
       const activated = inspectContainer(runtimeEngines.sandboxLifecycle, sandboxName, agent);
@@ -281,6 +295,7 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
       openshellBin,
       previousPortableProfile,
       root,
+      shellProbe,
     });
   }
 });

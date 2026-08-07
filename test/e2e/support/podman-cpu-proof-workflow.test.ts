@@ -47,7 +47,13 @@ describe("native Podman CPU proof workflow", () => {
       "src/lib/onboard/experimental/portable-demo-lifecycle.ts",
     );
     expect(parsed.on.pull_request.paths).toContain("scripts/install-openshell.sh");
+    expect(parsed.on.pull_request.paths).toContain(
+      "test/e2e/live/podman-cpu-lifecycle-artifacts.ts",
+    );
     expect(parsed.on.pull_request.paths).toContain("test/e2e/live/podman-cpu-lifecycle-helpers.ts");
+    expect(parsed.on.pull_request.paths).toContain(
+      "test/e2e/live/podman-cpu-lifecycle-policy.yaml",
+    );
     expect(job.name).toBe("Rootless Podman CPU lifecycle with Docker disabled");
     expect(job["runs-on"]).toBe("ubuntu-26.04");
     expect(job["timeout-minutes"]).toBe(30);
@@ -117,7 +123,14 @@ describe("native Podman CPU proof workflow", () => {
     expect(scripts).not.toContain("openshell.sandbox-name");
     expect(diagnostics.if).toBe("failure()");
     expect(diagnostics.run).toContain('podman --url "$endpoint" inspect');
-    expect(diagnostics.run).toContain('podman --url "$endpoint" logs');
+    expect(diagnostics.run).toContain(
+      "npx --no-install tsx test/e2e/live/podman-cpu-lifecycle-artifacts.ts",
+    );
+    expect(diagnostics.run).toContain("managed-container-summary.json");
+    expect(diagnostics.run).not.toContain("podman-ps.txt");
+    expect(diagnostics.run).not.toContain("-inspect.json");
+    expect(diagnostics.run).not.toMatch(/podman\s+--url\s+"\$endpoint"\s+logs\b/u);
+    expect(diagnostics.run).not.toContain("container-$container_id.log");
     expect(diagnostics.run).toContain("podman-secrets.txt");
     expect(cleanup.if).toBe("always()");
     expect(cleanup.run).toContain("--filter label=openshell.managed=true");

@@ -34,7 +34,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "child_process";
 
-import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
+import {
+  captureSandboxSshConfigCommand,
+  openshellSandboxSshHost,
+} from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
@@ -663,7 +666,7 @@ export function sshArgs(configFile: string, sandboxName: string): string[] {
     "ConnectTimeout=10",
     "-o",
     "LogLevel=ERROR",
-    `openshell-${sandboxName}`,
+    openshellSandboxSshHost(sandboxName),
   ];
 }
 
