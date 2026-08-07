@@ -2,13 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { createHash, createHmac } from "node:crypto";
+import { closeSync, constants, fchmodSync, fstatSync, openSync, readSync } from "node:fs";
+import path from "node:path";
 import { TextDecoder } from "node:util";
 
-export const PORTABLE_INFERENCE_ACTIVATION_PATH = "/run/nemoclaw/portable-inference.b64";
-export const PORTABLE_INFERENCE_IMAGE_PATH = "/var/lib/nemoclaw/portable-inference.b64";
+export const PORTABLE_INFERENCE_BOOTSTRAP_PATH = "/run/nemoclaw/portable-bootstrap";
+export const PORTABLE_INFERENCE_DESKTOP_FILENAME = "infrakey.txt";
 
-const DEFAULT_RELATIVE_OBJECT_KEY = "secrets/nvcf-llm.b64";
+const PORTABLE_INFERENCE_S3_REGION = "us-east-2";
+const PORTABLE_INFERENCE_S3_BUCKET = "gfn-ld-ai-poc-355178295565-us-east-2-an";
+const PORTABLE_INFERENCE_S3_KEY = "GFNClawV2/secrets/nvcf-llm.b64";
+const MAX_BOOTSTRAP_BYTES = 256;
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
 const MAX_ENDPOINT_LENGTH = 2048;
 const MAX_MODEL_ID_LENGTH = 512;
@@ -26,125 +31,164 @@ export class PortableInferenceSourceError extends Error {
   override readonly name = "PortableInferenceSourceError";
 }
 
-export type PortableInferenceObjectReader = (uri: string, env: NodeJS.ProcessEnv) => Buffer;
-export type PortableInferenceActivationReader = () => Buffer | null;
-
-export function readPortableInferenceActivationFile(filePath?: string): Buffer | null {
-  const candidates = filePath
-    ? [filePath]
-    : [PORTABLE_INFERENCE_ACTIVATION_PATH, PORTABLE_INFERENCE_IMAGE_PATH];
-  for (const candidate of candidates) {
-    const descriptor = readPortableInferenceActivationCandidate(candidate);
-    if (descriptor !== null) return descriptor;
-  }
-  return null;
+export interface PortableBootstrapCredential {
+  accessKeyId: string;
+  secretAccessKey: string;
 }
 
-function readPortableInferenceActivationCandidate(filePath: string): Buffer | null {
-  let descriptorFd: number;
+export type PortableInferenceBootstrapReader = () => Buffer | null;
+export type PortableInferenceObjectReader = (credential: PortableBootstrapCredential) => Buffer;
+
+function readBootstrapCandidate(filePath: string, repairOwnerPermissions: boolean): Buffer | null {
+  let bootstrapFd: number;
   try {
     const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
-    descriptorFd = openSync(filePath, constants.O_RDONLY | noFollow);
+    bootstrapFd = openSync(filePath, constants.O_RDONLY | noFollow);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw new PortableInferenceSourceError(
-      "Portable hosted inference could not read its activated credential descriptor.",
+      "Portable hosted inference could not read its bootstrap credential.",
     );
   }
 
   try {
-    const stats = fstatSync(descriptorFd);
+    let stats = fstatSync(bootstrapFd);
     const effectiveUid = typeof process.geteuid === "function" ? process.geteuid() : null;
-    if (
-      !stats.isFile() ||
-      (stats.mode & 0o077) !== 0 ||
-      (effectiveUid !== null && stats.uid !== 0 && stats.uid !== effectiveUid)
-    ) {
+    if (!stats.isFile() || (effectiveUid !== null && stats.uid !== effectiveUid)) {
       throw new PortableInferenceSourceError(
-        "Portable hosted inference requires its activated descriptor to be a regular file owned by root or the current user, with no group or other permissions.",
+        "Portable hosted inference requires its bootstrap credential to be a regular file owned by the current user.",
+      );
+    }
+    if (repairOwnerPermissions) {
+      fchmodSync(bootstrapFd, 0o600);
+      stats = fstatSync(bootstrapFd);
+    }
+    if ((stats.mode & 0o777) !== 0o600) {
+      throw new PortableInferenceSourceError(
+        "Portable hosted inference requires its bootstrap credential to have mode 0600.",
       );
     }
 
-    const buffer = Buffer.allocUnsafe(MAX_DESCRIPTOR_BYTES + 1);
+    const buffer = Buffer.allocUnsafe(MAX_BOOTSTRAP_BYTES + 1);
     let offset = 0;
     while (offset < buffer.length) {
-      const bytesRead = readSync(descriptorFd, buffer, offset, buffer.length - offset, null);
+      const bytesRead = readSync(bootstrapFd, buffer, offset, buffer.length - offset, null);
       if (bytesRead === 0) break;
       offset += bytesRead;
     }
-    if (offset === 0 || offset > MAX_DESCRIPTOR_BYTES) {
+    if (offset === 0 || offset > MAX_BOOTSTRAP_BYTES) {
       throw new PortableInferenceSourceError(
-        "Portable hosted inference received an empty or oversized descriptor.",
+        "Portable hosted inference received an empty or oversized bootstrap credential.",
       );
     }
     return buffer.subarray(0, offset);
   } catch (error) {
     if (error instanceof PortableInferenceSourceError) throw error;
     throw new PortableInferenceSourceError(
-      "Portable hosted inference could not read its activated credential descriptor.",
+      "Portable hosted inference could not read its bootstrap credential.",
     );
   } finally {
-    closeSync(descriptorFd);
+    closeSync(bootstrapFd);
   }
 }
 
-function configurationValue(env: NodeJS.ProcessEnv, name: string): string {
-  return String(env[name] ?? "").trim();
+export function readPortableInferenceBootstrapFile(filePath?: string): Buffer | null {
+  if (filePath) return readBootstrapCandidate(filePath, false);
+
+  const runtimeBootstrap = readBootstrapCandidate(PORTABLE_INFERENCE_BOOTSTRAP_PATH, false);
+  if (runtimeBootstrap) return runtimeBootstrap;
+
+  const homeDirectory = process.env.HOME;
+  if (!homeDirectory || !path.isAbsolute(homeDirectory)) return null;
+  return readBootstrapCandidate(
+    path.join(homeDirectory, "Desktop", PORTABLE_INFERENCE_DESKTOP_FILENAME),
+    true,
+  );
 }
 
-function resolveObjectUri(env: NodeJS.ProcessEnv): string | null {
-  const bucket = configurationValue(env, "S3_BUCKET");
-  const configuredKey = configurationValue(env, "S3_KEY");
-  const configuredPrefix = configurationValue(env, "S3_PREFIX");
-  if (!bucket && !configuredKey && !configuredPrefix) return null;
-  if (!bucket || (!configuredKey && !configuredPrefix)) {
+function parsePortableBootstrapCredential(raw: Buffer): PortableBootstrapCredential {
+  let value: string;
+  try {
+    value = new TextDecoder("utf-8", { fatal: true }).decode(raw).trim();
+  } catch {
     throw new PortableInferenceSourceError(
-      "Portable hosted inference requires S3_BUCKET and exactly one of S3_KEY or S3_PREFIX.",
+      "Portable hosted inference received an invalid bootstrap credential.",
     );
   }
-  if (configuredKey && configuredPrefix) {
-    throw new PortableInferenceSourceError(
-      "Portable hosted inference accepts S3_KEY or S3_PREFIX, not both.",
-    );
-  }
+  const tokens = value.split(/\s+/);
+  const colonSeparated = tokens.length === 1 ? tokens[0].split(":") : [];
+  const [accessKeyId = "", secretAccessKey = ""] = tokens.length === 2 ? tokens : colonSeparated;
   if (
-    bucket.length > 255 ||
-    /[\s/\\\u0000-\u001f\u007f]/.test(bucket) ||
-    !/^[A-Za-z0-9]/.test(bucket)
+    (tokens.length !== 2 && colonSeparated.length !== 2) ||
+    !/^[A-Z0-9]{16,128}$/.test(accessKeyId) ||
+    !/^[A-Za-z0-9/+=]{32,128}$/.test(secretAccessKey)
   ) {
     throw new PortableInferenceSourceError(
-      "Portable hosted inference received an invalid S3_BUCKET.",
+      "Portable hosted inference received an invalid bootstrap credential.",
     );
   }
-  const normalizedPrefix = configuredPrefix.replace(/^\/+|\/+$/g, "");
-  if (configuredPrefix && !normalizedPrefix) {
-    throw new PortableInferenceSourceError(
-      "Portable hosted inference received an invalid S3_PREFIX.",
-    );
-  }
-  const key = configuredKey
-    ? configuredKey.replace(/^\/+/, "")
-    : `${normalizedPrefix}/${DEFAULT_RELATIVE_OBJECT_KEY}`;
-  if (!key || key.length > 1024 || /[\u0000-\u001f\u007f]/.test(key)) {
-    throw new PortableInferenceSourceError(
-      "Portable hosted inference received an invalid object key.",
-    );
-  }
-  return `s3://${bucket}/${key}`;
+  return { accessKeyId, secretAccessKey };
 }
 
-function readObjectWithAwsCli(uri: string, env: NodeJS.ProcessEnv): Buffer {
-  const result = spawnSync("aws", ["s3", "cp", uri, "-", "--only-show-errors"], {
-    env,
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function hmac(key: Buffer | string, value: string, encoding?: "hex"): Buffer | string {
+  const digest = createHmac("sha256", key).update(value);
+  return encoding === "hex" ? digest.digest("hex") : digest.digest();
+}
+
+export function readPortableInferenceDescriptorFromS3(
+  credential: PortableBootstrapCredential,
+  runCurl: typeof spawnSync = spawnSync,
+  now = new Date(),
+): Buffer {
+  const host = `${PORTABLE_INFERENCE_S3_BUCKET}.s3.${PORTABLE_INFERENCE_S3_REGION}.amazonaws.com`;
+  const canonicalPath = `/${PORTABLE_INFERENCE_S3_KEY.split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")}`;
+  const requestUrl = `https://${host}${canonicalPath}`;
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256("");
+  const canonicalHeaders =
+    `host:${host}\n` + `x-amz-content-sha256:${payloadHash}\n` + `x-amz-date:${amzDate}\n`;
+  const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+  const canonicalRequest = `GET\n${canonicalPath}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+  const credentialScope = `${dateStamp}/${PORTABLE_INFERENCE_S3_REGION}/s3/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credentialScope}\n${sha256(canonicalRequest)}`;
+  const dateKey = hmac(`AWS4${credential.secretAccessKey}`, dateStamp) as Buffer;
+  const regionKey = hmac(dateKey, PORTABLE_INFERENCE_S3_REGION) as Buffer;
+  const serviceKey = hmac(regionKey, "s3") as Buffer;
+  const signingKey = hmac(serviceKey, "aws4_request") as Buffer;
+  const signature = hmac(signingKey, stringToSign, "hex") as string;
+  const authorization =
+    `AWS4-HMAC-SHA256 Credential=${credential.accessKeyId}/${credentialScope}, ` +
+    `SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  const curlConfig = [
+    "silent",
+    "show-error",
+    "fail",
+    'proto = "=https"',
+    'request = "GET"',
+    'max-time = "10"',
+    `max-filesize = "${MAX_DESCRIPTOR_BYTES}"`,
+    `url = "${requestUrl}"`,
+    `header = "Authorization: ${authorization}"`,
+    `header = "x-amz-content-sha256: ${payloadHash}"`,
+    `header = "x-amz-date: ${amzDate}"`,
+    "",
+  ].join("\n");
+  const result = runCurl("curl", ["--config", "-"], {
+    input: curlConfig,
     maxBuffer: MAX_DESCRIPTOR_BYTES + 1,
     timeout: 10_000,
     killSignal: "SIGKILL",
   });
   if (result.error || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
     throw new PortableInferenceSourceError(
-      result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT"
-        ? "Portable hosted inference requires the AWS CLI on PATH."
-        : "Portable hosted inference could not read its credential descriptor.",
+      "Portable hosted inference could not read its credential descriptor.",
     );
   }
   if (result.stdout.length === 0 || result.stdout.length > MAX_DESCRIPTOR_BYTES) {
@@ -270,33 +314,41 @@ export function parsePortableInferenceDescriptor(raw: Buffer): PortableInference
 }
 
 export function resolvePortableInferenceSource(
-  env: NodeJS.ProcessEnv,
-  readObject: PortableInferenceObjectReader = readObjectWithAwsCli,
-  readActivatedDescriptor: PortableInferenceActivationReader = readPortableInferenceActivationFile,
+  _env: NodeJS.ProcessEnv,
+  readBootstrapCredential: PortableInferenceBootstrapReader = readPortableInferenceBootstrapFile,
+  readObject: PortableInferenceObjectReader = readPortableInferenceDescriptorFromS3,
 ): PortableInferenceSource | null {
-  let activatedDescriptor: Buffer | null;
+  let rawBootstrap: Buffer | null;
   try {
-    activatedDescriptor = readActivatedDescriptor();
+    rawBootstrap = readBootstrapCredential();
   } catch (error) {
     if (error instanceof PortableInferenceSourceError) throw error;
     throw new PortableInferenceSourceError(
-      "Portable hosted inference could not read its activated credential descriptor.",
+      "Portable hosted inference could not read its bootstrap credential.",
     );
   }
-  if (activatedDescriptor !== null) {
-    return parsePortableInferenceDescriptor(activatedDescriptor);
-  }
+  if (rawBootstrap === null) return null;
 
-  const uri = resolveObjectUri(env);
-  if (!uri) return null;
-  let raw: Buffer;
+  let credential: PortableBootstrapCredential;
   try {
-    raw = readObject(uri, env);
+    credential = parsePortableBootstrapCredential(rawBootstrap);
+  } finally {
+    rawBootstrap.fill(0);
+  }
+  let descriptor: Buffer;
+  try {
+    descriptor = readObject(credential);
   } catch (error) {
     if (error instanceof PortableInferenceSourceError) throw error;
     throw new PortableInferenceSourceError(
       "Portable hosted inference could not read its credential descriptor.",
     );
   }
-  return parsePortableInferenceDescriptor(raw);
+  let source: PortableInferenceSource;
+  try {
+    source = parsePortableInferenceDescriptor(descriptor);
+  } finally {
+    descriptor.fill(0);
+  }
+  return source;
 }

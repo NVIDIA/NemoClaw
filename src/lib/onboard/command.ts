@@ -394,7 +394,7 @@ function applyPortableEnvironment(
   const hostedInference = resolveInferenceSource(env);
   if (!hostedInference) {
     throw new PortableInferenceSourceError(
-      "Portable hosted inference requires an activated credential descriptor or configured object source.",
+      "Portable hosted inference requires infrakey.txt on the desktop or an owner-only bootstrap credential at /run/nemoclaw/portable-bootstrap.",
     );
   }
   const portableEnvDefaults: Record<string, string> = {

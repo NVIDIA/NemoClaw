@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SandboxEntry } from "../state/registry";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import { applyReusedSandboxDashboardState, createSandboxReuseHelpers } from "./sandbox-reuse";
@@ -149,6 +150,7 @@ describe("applyReusedSandboxDashboardState", () => {
       resolveStateForPort: vi.fn(),
       ensureForState: vi.fn(),
     };
+    const stopDashboardForward = vi.fn();
     const updateReusedSandboxMetadata = vi.fn();
 
     const result = applyReusedSandboxDashboardState({
@@ -163,12 +165,17 @@ describe("applyReusedSandboxDashboardState", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       manageDashboard: false,
+      getSandbox: vi.fn(
+        () => ({ dashboardForwardEnabled: true, dashboardPort: 18789 }) as SandboxEntry,
+      ),
+      stopDashboardForward,
       ensureDashboardForward,
       hermesDashboardForwarding,
       updateSandbox,
       updateReusedSandboxMetadata,
     });
 
+    expect(stopDashboardForward).toHaveBeenCalledWith("terminal-box", 18789);
     expect(ensureDashboardForward).not.toHaveBeenCalled();
     expect(hermesDashboardForwarding.resolveStateForPort).not.toHaveBeenCalled();
     expect(hermesDashboardForwarding.ensureForState).not.toHaveBeenCalled();
@@ -191,11 +198,58 @@ describe("applyReusedSandboxDashboardState", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
+    expect(stopDashboardForward.mock.invocationCallOrder[0]).toBeLessThan(
+      updateSandbox.mock.invocationCallOrder[0],
+    );
     expect(result).toEqual({
       chatUiUrl: "",
       dashboardPort: 0,
       hermesDashboardState: { enabled: false, config: null },
     });
+  });
+
+  it("keeps forwarding enabled when a reused sandbox forward cannot stop", () => {
+    const updateSandbox = vi.fn();
+    const updateReusedSandboxMetadata = vi.fn();
+    const sandboxGpuConfig: SandboxGpuConfig = {
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      mode: "auto",
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+
+    expect(() =>
+      applyReusedSandboxDashboardState({
+        sandboxName: "terminal-box",
+        chatUiUrl: "",
+        env: {},
+        agent: { name: "langchain-deepagents-code" } as any,
+        model: "test-model",
+        provider: "nvidia-prod",
+        selectionVerified: true,
+        sandboxGpuConfig,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        manageDashboard: false,
+        getSandbox: vi.fn(
+          () => ({ dashboardForwardEnabled: true, dashboardPort: 18789 }) as SandboxEntry,
+        ),
+        stopDashboardForward: vi.fn(() => {
+          throw new Error("forward remained active");
+        }),
+        ensureDashboardForward: vi.fn(),
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(),
+          ensureForState: vi.fn(),
+        },
+        updateSandbox,
+        updateReusedSandboxMetadata,
+      }),
+    ).toThrow("forward remained active");
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
   });
 });
 

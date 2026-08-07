@@ -87,3 +87,31 @@ export function bestEffortForwardStopForSandbox(
   });
   return owner === sandboxName ? "stopped" : "no-entry";
 }
+
+export function stopForwardForSandboxOrThrow(
+  runOpenshell: ForwardStopRunner,
+  runCaptureOpenshell: ForwardListRunner,
+  port: string | number,
+  sandboxName: string,
+): void {
+  const readOwner = (): string | null => {
+    const output = runCaptureOpenshell(["forward", "list"], {
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    return getOccupiedPorts(output).get(String(port)) ?? null;
+  };
+  const owner = readOwner();
+  if (owner === null) return;
+  if (owner !== sandboxName) {
+    throw new Error(
+      `Cannot stop dashboard forward ${String(port)} for '${sandboxName}': it belongs to '${owner}'.`,
+    );
+  }
+  runOpenshell(["forward", "stop", String(port), sandboxName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (readOwner() === sandboxName) {
+    throw new Error(`Could not stop dashboard forward ${String(port)} for '${sandboxName}'.`);
+  }
+}

@@ -56,7 +56,10 @@ const channelState: typeof import("./onboard/channel-state") = require("./onboar
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
-const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
+const {
+  bestEffortForwardStop,
+  stopForwardForSandboxOrThrow,
+} = require("./onboard/forward-cleanup");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
@@ -2298,6 +2301,9 @@ async function createSandboxWithBaseImageResolution(
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
       manageDashboard: manageDashboardForward,
+      getSandbox: registry.getSandbox,
+      stopDashboardForward: (name, port) =>
+        stopForwardForSandboxOrThrow(runOpenshell, runCaptureOpenshell, port, name),
       ensureDashboardForward,
       hermesDashboardForwarding,
       updateReusedSandboxMetadata,

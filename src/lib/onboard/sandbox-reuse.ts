@@ -47,6 +47,7 @@ export interface ReusedSandboxDashboardStateInput {
   gatewayPort: number;
   manageDashboard?: boolean;
   getSandbox?(sandboxName: string): SandboxEntry | null;
+  stopDashboardForward?(sandboxName: string, dashboardPort: number): void;
   ensureDashboardForward(sandboxName: string, chatUiUrl: string): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
@@ -80,6 +81,22 @@ export function applyReusedSandboxDashboardState(
     throw new Error(
       `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
     );
+  }
+  if (!manageDashboard) {
+    const previous = (input.getSandbox ?? registry.getSandbox)(input.sandboxName);
+    if (previous?.dashboardForwardEnabled === true) {
+      if (!Number.isInteger(previous.dashboardPort) || Number(previous.dashboardPort) <= 0) {
+        throw new Error(
+          `Cannot disable dashboard forwarding for '${input.sandboxName}': the recorded port is invalid.`,
+        );
+      }
+      if (!input.stopDashboardForward) {
+        throw new Error(
+          `Cannot disable dashboard forwarding for '${input.sandboxName}': no forward stop handler is available.`,
+        );
+      }
+      input.stopDashboardForward(input.sandboxName, Number(previous.dashboardPort));
+    }
   }
   const dashboardPort = manageDashboard
     ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)

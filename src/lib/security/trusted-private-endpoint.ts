@@ -117,6 +117,8 @@ export interface EndpointSsrfPreflightResult {
 export interface EndpointSsrfPreflightOptions {
   /** Exact hostnames or IP literals the operator explicitly trusts on a private network. */
   trustedPrivateHosts?: readonly string[];
+  /** Keep false for hosted-only flows that must never connect to a host loopback service. */
+  allowExplicitLoopback?: boolean;
 }
 
 function normalizeIpLiteral(address: string): string {
@@ -231,10 +233,9 @@ export function replayTrustedPrivateEndpoint(
  * which runs later, before the URL is persisted.
  *
  * Loopback (`127.0.0.0/8`, `::1`, and `localhost`) remains exempt only when the
- * endpoint hostname is itself loopback. This preserves local inference
- * behavior. A public name that resolves to loopback is treated as a rebinding
- * attempt and rejected. The check fails closed on a resolver error or empty
- * result.
+ * endpoint hostname is itself loopback and the caller permits local inference.
+ * A public name that resolves to loopback is treated as a rebinding attempt and
+ * rejected. The check fails closed on a resolver error or empty result.
  *
  * See PR #6293 PRA-4 (GPT-5.5 advisor).
  */
@@ -271,8 +272,16 @@ export async function assertEndpointResolvesPublic(
   }
   const trustedPrivateHost = trustedPrivateHosts.includes(normalizedHostname);
 
-  // An explicit loopback host is a legitimate local inference server.
-  if (isLoopbackHostname(hostname)) return { ok: true, addresses: [] };
+  // An explicit loopback host is valid only for flows that can select local inference.
+  if (isLoopbackHostname(hostname)) {
+    return options.allowExplicitLoopback !== false
+      ? { ok: true, addresses: [] }
+      : {
+          ok: false,
+          reason: `endpoint host "${hostname}" is a private/internal address`,
+          reasonCode: "rejected",
+        };
+  }
 
   // NemoClaw's own OpenShell-managed aliases (inference.local, host.*.internal)
   // resolve to the managed proxy/loopback by design and are trusted, not

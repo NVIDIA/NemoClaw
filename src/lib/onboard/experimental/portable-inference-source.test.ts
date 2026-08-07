@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,7 +18,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   parsePortableInferenceDescriptor,
-  readPortableInferenceActivationFile,
+  readPortableInferenceBootstrapFile,
+  readPortableInferenceDescriptorFromS3,
   resolvePortableInferenceSource,
 } from "./portable-inference-source";
 
@@ -22,170 +32,185 @@ const VALID_FIELDS = {
   url: "https://inference.example.test/v1",
   model: "example/model-1",
 };
+const TEST_ACCESS_KEY_ID = "AKIAABCDEFGHIJKLMNOP";
+const TEST_SECRET_ACCESS_KEY = "s".repeat(40);
+const TEST_BOOTSTRAP = `${TEST_ACCESS_KEY_ID}:${TEST_SECRET_ACCESS_KEY}`;
 
 const tempDirectories: string[] = [];
-const noActivatedDescriptor = (): null => null;
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { force: true, recursive: true });
   }
 });
 
 describe("portable hosted inference source", () => {
-  it("does not read object storage when the portable source is not configured", () => {
+  it("does not read object storage when the bootstrap credential is missing", () => {
     const readObject = vi.fn();
 
-    expect(resolvePortableInferenceSource({}, readObject, noActivatedDescriptor)).toBeNull();
+    expect(resolvePortableInferenceSource({}, () => null, readObject)).toBeNull();
     expect(readObject).not.toHaveBeenCalled();
   });
 
-  it("prefers an activated descriptor over configured object storage", () => {
-    const readObject = vi.fn();
-    const readActivatedDescriptor = vi.fn(() => descriptor(VALID_FIELDS));
-
-    expect(
-      resolvePortableInferenceSource(
-        { S3_BUCKET: "portable-inference", S3_KEY: "path/credential.b64" },
-        readObject,
-        readActivatedDescriptor,
-      ),
-    ).toEqual({
-      apiKey: VALID_FIELDS.apiKey,
-      baseUrl: VALID_FIELDS.url,
-      model: VALID_FIELDS.model,
-    });
-    expect(readActivatedDescriptor).toHaveBeenCalledOnce();
-    expect(readObject).not.toHaveBeenCalled();
-  });
-
-  it("redacts unexpected activated-descriptor reader errors", () => {
-    const readActivatedDescriptor = vi.fn(() => {
-      throw new Error("reader output contained test-credential-value-1234");
-    });
-
-    expect(() => resolvePortableInferenceSource({}, vi.fn(), readActivatedDescriptor)).toThrow(
-      "could not read its activated credential descriptor",
-    );
-    try {
-      resolvePortableInferenceSource({}, vi.fn(), readActivatedDescriptor);
-    } catch (error) {
-      expect(String(error)).not.toContain("test-credential-value-1234");
-    }
-  });
-
-  it("reads an owner-only activated descriptor file", () => {
+  it("reads an owner-only bootstrap credential without removing it", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "portable-inference-test-"));
     tempDirectories.push(directory);
-    const filePath = path.join(directory, "descriptor.b64");
-    const raw = descriptor(VALID_FIELDS);
-    writeFileSync(filePath, raw, { mode: 0o600 });
+    const filePath = path.join(directory, "portable-bootstrap");
+    writeFileSync(filePath, TEST_BOOTSTRAP, { mode: 0o600 });
     chmodSync(filePath, 0o600);
 
-    expect(readPortableInferenceActivationFile(filePath)).toEqual(raw);
+    expect(readPortableInferenceBootstrapFile(filePath)).toEqual(Buffer.from(TEST_BOOTSTRAP));
+    expect(existsSync(filePath)).toBe(true);
   });
 
-  it("rejects a group-readable activated descriptor file", () => {
+  it("finds infrakey.txt on the desktop and immediately restricts its permissions", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "portable-inference-test-"));
     tempDirectories.push(directory);
-    const filePath = path.join(directory, "descriptor.b64");
-    writeFileSync(filePath, descriptor(VALID_FIELDS), { mode: 0o640 });
+    const desktop = path.join(directory, "Desktop");
+    const filePath = path.join(desktop, "infrakey.txt");
+    mkdirSync(desktop);
+    writeFileSync(filePath, `${TEST_ACCESS_KEY_ID}\n${TEST_SECRET_ACCESS_KEY}\n`, { mode: 0o644 });
+    chmodSync(filePath, 0o644);
+    vi.stubEnv("HOME", directory);
+
+    const raw = readPortableInferenceBootstrapFile();
+
+    expect(raw).toEqual(Buffer.from(`${TEST_ACCESS_KEY_ID}\n${TEST_SECRET_ACCESS_KEY}\n`));
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+    expect(existsSync(filePath)).toBe(true);
+  });
+
+  it("rejects a group-readable bootstrap credential without consuming it", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "portable-inference-test-"));
+    tempDirectories.push(directory);
+    const filePath = path.join(directory, "portable-bootstrap");
+    writeFileSync(filePath, TEST_BOOTSTRAP, { mode: 0o640 });
     chmodSync(filePath, 0o640);
 
-    expect(() => readPortableInferenceActivationFile(filePath)).toThrow(
-      "owned by root or the current user",
-    );
+    expect(() => readPortableInferenceBootstrapFile(filePath)).toThrow("mode 0600");
+    expect(existsSync(filePath)).toBe(true);
   });
 
-  it("rejects a symlinked activated descriptor file", () => {
+  it("rejects a symlinked bootstrap credential", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "portable-inference-test-"));
     tempDirectories.push(directory);
-    const targetPath = path.join(directory, "target.b64");
-    const linkPath = path.join(directory, "descriptor.b64");
-    writeFileSync(targetPath, descriptor(VALID_FIELDS), { mode: 0o600 });
+    const targetPath = path.join(directory, "target");
+    const linkPath = path.join(directory, "portable-bootstrap");
+    writeFileSync(targetPath, TEST_BOOTSTRAP, { mode: 0o600 });
     chmodSync(targetPath, 0o600);
     symlinkSync(targetPath, linkPath);
 
-    expect(() => readPortableInferenceActivationFile(linkPath)).toThrow(
-      "could not read its activated credential descriptor",
+    expect(() => readPortableInferenceBootstrapFile(linkPath)).toThrow(
+      "could not read its bootstrap credential",
     );
   });
 
-  it("reads and validates the configured descriptor without writing credential state", () => {
+  it("fetches and validates the descriptor from the fixed object source", () => {
+    const rawBootstrap = Buffer.from(TEST_BOOTSTRAP);
     const readObject = vi.fn(() => descriptor(VALID_FIELDS));
-    const env = { S3_BUCKET: "portable-inference", S3_KEY: "/path/credential.b64" };
 
-    expect(resolvePortableInferenceSource(env, readObject, noActivatedDescriptor)).toEqual({
+    expect(resolvePortableInferenceSource({}, () => rawBootstrap, readObject)).toEqual({
       apiKey: VALID_FIELDS.apiKey,
       baseUrl: VALID_FIELDS.url,
       model: VALID_FIELDS.model,
     });
-    expect(readObject).toHaveBeenCalledWith("s3://portable-inference/path/credential.b64", env);
-    expect(env).toEqual({
-      S3_BUCKET: "portable-inference",
-      S3_KEY: "/path/credential.b64",
+    expect(readObject).toHaveBeenCalledWith({
+      accessKeyId: TEST_ACCESS_KEY_ID,
+      secretAccessKey: TEST_SECRET_ACCESS_KEY,
     });
+    expect(rawBootstrap.every((byte) => byte === 0)).toBe(true);
   });
 
-  it("resolves the prefix form to the portable credential object", () => {
-    const readObject = vi.fn(() =>
-      descriptor({
-        token: VALID_FIELDS.apiKey,
-        base_url: `${VALID_FIELDS.url}/`,
-        default_model: VALID_FIELDS.model,
-      }),
-    );
-
+  it("accepts desktop-friendly credentials on two separate lines", () => {
+    const rawBootstrap = Buffer.from(`${TEST_ACCESS_KEY_ID}\n${TEST_SECRET_ACCESS_KEY}\n`);
     expect(
       resolvePortableInferenceSource(
-        { S3_BUCKET: "portable-inference", S3_PREFIX: "/tenant/session/" },
-        readObject,
-        noActivatedDescriptor,
+        {},
+        () => rawBootstrap,
+        () => descriptor(VALID_FIELDS),
       ),
     ).toEqual({
       apiKey: VALID_FIELDS.apiKey,
       baseUrl: VALID_FIELDS.url,
       model: VALID_FIELDS.model,
     });
-    expect(readObject).toHaveBeenCalledWith(
-      "s3://portable-inference/tenant/session/secrets/nvcf-llm.b64",
-      expect.any(Object),
-    );
+    expect(rawBootstrap.every((byte) => byte === 0)).toBe(true);
   });
 
-  it("does not expose object-reader errors that can contain credential material", () => {
-    const readObject = vi.fn(() => {
-      throw new Error("upstream output contained test-credential-value-1234");
+  it("keeps the long-term bootstrap secret out of the curl process boundary", () => {
+    const rawDescriptor = descriptor(VALID_FIELDS);
+    const runCurl = vi.fn(() => ({
+      pid: 1,
+      output: [null, rawDescriptor, Buffer.alloc(0)],
+      stdout: rawDescriptor,
+      stderr: Buffer.alloc(0),
+      status: 0,
+      signal: null,
+    })) as unknown as typeof import("node:child_process").spawnSync;
+
+    expect(
+      readPortableInferenceDescriptorFromS3(
+        {
+          accessKeyId: TEST_ACCESS_KEY_ID,
+          secretAccessKey: TEST_SECRET_ACCESS_KEY,
+        },
+        runCurl,
+        new Date("2026-08-07T18:00:00.000Z"),
+      ),
+    ).toEqual(rawDescriptor);
+
+    expect(runCurl).toHaveBeenCalledOnce();
+    const [command, args, options] = (runCurl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(command).toBe("curl");
+    expect(args).toEqual(["--config", "-"]);
+    expect(JSON.stringify(args)).not.toContain(TEST_ACCESS_KEY_ID);
+    expect(JSON.stringify(args)).not.toContain(TEST_SECRET_ACCESS_KEY);
+    expect(JSON.stringify(options.env ?? {})).not.toContain(TEST_ACCESS_KEY_ID);
+    expect(JSON.stringify(options.env ?? {})).not.toContain(TEST_SECRET_ACCESS_KEY);
+    expect(String(options.input)).toContain("Authorization: AWS4-HMAC-SHA256");
+    expect(String(options.input)).not.toContain(TEST_SECRET_ACCESS_KEY);
+    expect(options).toMatchObject({
+      maxBuffer: 65_537,
+      timeout: 10_000,
+      killSignal: "SIGKILL",
     });
-    let caught: unknown;
+  });
+
+  it("redacts bootstrap and object-reader errors that can contain credentials", () => {
+    const bootstrapSecret = "bootstrap-secret-value";
+    const descriptorSecret = "descriptor-secret-value";
+
+    expect(() =>
+      resolvePortableInferenceSource(
+        {},
+        () => {
+          throw new Error(bootstrapSecret);
+        },
+        vi.fn(),
+      ),
+    ).toThrow("could not read its bootstrap credential");
     try {
       resolvePortableInferenceSource(
-        { S3_BUCKET: "portable-inference", S3_KEY: "path/credential.b64" },
-        readObject,
-        noActivatedDescriptor,
+        {},
+        () => Buffer.from(TEST_BOOTSTRAP),
+        () => {
+          throw new Error(descriptorSecret);
+        },
       );
     } catch (error) {
-      caught = error;
+      expect(String(error)).toContain("could not read its credential descriptor");
+      expect(String(error)).not.toContain(descriptorSecret);
     }
-    expect(String(caught)).toContain(
-      "Portable hosted inference could not read its credential descriptor.",
-    );
-    expect(String(caught)).not.toContain("test-credential-value-1234");
   });
 
   it.each([
-    [{ S3_BUCKET: "portable-inference" }, "requires S3_BUCKET"],
-    [{ S3_KEY: "credential.b64" }, "requires S3_BUCKET"],
-    [
-      { S3_BUCKET: "portable-inference", S3_KEY: "one", S3_PREFIX: "two" },
-      "accepts S3_KEY or S3_PREFIX",
-    ],
-    [{ S3_BUCKET: "bad/bucket", S3_KEY: "credential.b64" }, "invalid S3_BUCKET"],
-    [{ S3_BUCKET: "portable-inference", S3_PREFIX: "/" }, "invalid S3_PREFIX"],
-  ])("rejects incomplete or ambiguous source configuration", (env, message) => {
-    expect(() => resolvePortableInferenceSource(env, vi.fn(), noActivatedDescriptor)).toThrow(
-      message,
-    );
+    [Buffer.from("missing-separator"), "invalid bootstrap credential"],
+    [Buffer.from(`short:${TEST_SECRET_ACCESS_KEY}`), "invalid bootstrap credential"],
+    [Buffer.from(`${TEST_ACCESS_KEY_ID}:short`), "invalid bootstrap credential"],
+  ])("rejects an invalid bootstrap credential", (raw, message) => {
+    expect(() => resolvePortableInferenceSource({}, () => raw, vi.fn())).toThrow(message);
+    expect(raw.every((byte) => byte === 0)).toBe(true);
   });
 
   it.each([

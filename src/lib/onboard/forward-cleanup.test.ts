@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
+import {
+  bestEffortForwardStop,
+  bestEffortForwardStopForSandbox,
+  stopForwardForSandboxOrThrow,
+} from "./forward-cleanup";
 
 function forwardListWith(
   entries: Array<{ sandbox: string; port: number; status?: string }>,
@@ -110,5 +114,31 @@ describe("bestEffortForwardStopForSandbox", () => {
 
     expect(outcome).toBe("no-entry");
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("stopForwardForSandboxOrThrow", () => {
+  it("returns only after the selected sandbox forward is absent", () => {
+    const run = vi.fn();
+    const fetch = vi
+      .fn()
+      .mockReturnValueOnce(forwardListWith([{ sandbox: "my-sandbox", port: 18789 }]))
+      .mockReturnValueOnce(forwardListWith([]));
+
+    expect(() => stopForwardForSandboxOrThrow(run, fetch, 18789, "my-sandbox")).not.toThrow();
+    expect(run).toHaveBeenCalledWith(["forward", "stop", "18789", "my-sandbox"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  });
+
+  it("throws when the selected sandbox forward remains active", () => {
+    const run = vi.fn();
+    const active = forwardListWith([{ sandbox: "my-sandbox", port: 18789 }]);
+    const fetch = vi.fn().mockReturnValue(active);
+
+    expect(() => stopForwardForSandboxOrThrow(run, fetch, 18789, "my-sandbox")).toThrow(
+      "Could not stop dashboard forward",
+    );
   });
 });

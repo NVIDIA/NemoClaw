@@ -40,6 +40,7 @@ import {
 } from "../inference/endpoint-ssrf-preflight";
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
+import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
 import { normalizeReasoningFlag } from "./reasoning-mode";
 
@@ -65,6 +66,8 @@ export interface InferenceSelectionValidationDeps {
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
   trustedPrivateEndpointHosts?: readonly string[];
+  /** True when the selected flow can intentionally use a host loopback endpoint. */
+  allowExplicitLoopback?: () => boolean;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -183,6 +186,7 @@ export function createInferenceSelectionValidationHelpers(
     // pinning, or fail-closed resolver handling (#6861).
     const preflight = await assertEndpointResolvesPublic(endpointUrl, deps.resolveEndpointHost, {
       trustedPrivateHosts: trustedPrivateEndpointHosts,
+      allowExplicitLoopback: deps.allowExplicitLoopback?.() ?? !isPortableExperimentalProfile(),
     });
     // On success, carry the validated address set forward so the probe pins its
     // connection (curl --resolve) to a checked address; a second DNS lookup at
