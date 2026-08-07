@@ -49,8 +49,13 @@ const { probeAnthropicEndpoint } = require("./probe-anthropic");
 const { probeOpenAiLikeEndpointWithValidationSession } = require("./openai-validation-session");
 const {
   getChatCompletionsProbePayload,
+  getChatCompletionsToolProbePayload,
   isDeepSeekV4ProModel,
   isKimiK26Model,
+  isReasoningOnlyLengthResponse,
+  STRICT_TOOL_PROBE_INITIAL_TOKENS,
+  STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE,
+  STRICT_TOOL_PROBE_RETRY_TOKENS,
 } = require("./openai-probe-models");
 const {
   buildValidationProbeTimingProfile,
@@ -62,7 +67,6 @@ const {
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
 } = require("./probe-http-helpers");
-const { resolveMaxTokensField } = require("./max-tokens-field");
 
 const {
   getCurlTimingArgs,
@@ -379,102 +383,46 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
 
 function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  // GPT-5/o-series (incl. Azure OpenAI) reject `max_tokens` and require
-  // `max_completion_tokens`; every other model still expects `max_tokens`.
-  const maxTokensField = resolveMaxTokensField(model);
   let authConfig;
+  let reasoningRetryAttempted = false;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
     const timingArgs =
       options.timingArgs ??
       getChatCompletionsProbeTimingArgs(model, getProbeTimingOptions(options));
-    const args = [
-      "-sS",
-      ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
-      ...timingArgs,
-      "-H",
-      "Content-Type: application/json",
-      ...authConfig.args,
-      "-d",
-      JSON.stringify({
-        model,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
-          },
-          {
-            role: "user",
-            content:
-              "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
-          },
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "sessions_send",
-              description: "Send a message to the active chat session.",
-              parameters: {
-                type: "object",
-                properties: { message: { type: "string" } },
-                required: ["message"],
-                additionalProperties: false,
-              },
-            },
-          },
-          {
-            type: "function",
-            function: {
-              name: "memory_search",
-              description: "Search memory for relevant prior context.",
-              parameters: {
-                type: "object",
-                properties: { query: { type: "string" } },
-                required: ["query"],
-                additionalProperties: false,
-              },
-            },
-          },
-          {
-            type: "function",
-            function: {
-              name: "web_fetch",
-              description: "Fetch a URL and summarize the result.",
-              parameters: {
-                type: "object",
-                properties: { url: { type: "string" } },
-                required: ["url"],
-                additionalProperties: false,
-              },
-            },
-          },
-        ],
-        tool_choice: "required",
-        // GPT-5/o-series models reject custom sampling temperatures. Keep the
-        // deterministic setting for models that still use the legacy field.
-        ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
-        // Bound strict tool-call probes so a slow local model cannot keep
-        // generating until the host-side curl process timeout kills validation.
-        // This strict gate is currently used for Local Ollama; if it expands to
-        // reasoning models, add a thinking-suppression carve-out before lowering
-        // this cap so reasoning traces cannot consume the whole budget (#4537).
-        [maxTokensField]: 256,
-        stream: false,
-      }),
-      `${baseUrl}/chat/completions`,
-    ];
-    const result = runCurlProbe(args, {
-      timeoutMs: getProbeProcessTimeoutMs(args),
-      trustedConfigFiles: authConfig.trustedConfigFiles,
-      pinnedAddresses: options.pinnedAddresses,
-      trustedPrivateCapability: options.trustedPrivateCapability,
-      spawnSyncImpl: options.spawnSyncImpl,
-    });
+    const runToolProbe = (maxTokens) => {
+      const args = [
+        "-sS",
+        ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
+        ...timingArgs,
+        "-H",
+        "Content-Type: application/json",
+        ...authConfig.args,
+        "-d",
+        JSON.stringify(getChatCompletionsToolProbePayload(model, maxTokens)),
+        `${baseUrl}/chat/completions`,
+      ];
+      return runCurlProbe(args, {
+        timeoutMs: getProbeProcessTimeoutMs(args),
+        trustedConfigFiles: authConfig.trustedConfigFiles,
+        pinnedAddresses: options.pinnedAddresses,
+        trustedPrivateCapability: options.trustedPrivateCapability,
+        spawnSyncImpl: options.spawnSyncImpl,
+      });
+    };
+    let result = runToolProbe(STRICT_TOOL_PROBE_INITIAL_TOKENS);
+    if (result.ok && isReasoningOnlyLengthResponse(result.body)) {
+      reasoningRetryAttempted = true;
+      console.log(STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE);
+      trace.addTraceEvent("tool_call_reasoning_retry", {
+        initial_max_tokens: STRICT_TOOL_PROBE_INITIAL_TOKENS,
+        retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
+      });
+      result = runToolProbe(STRICT_TOOL_PROBE_RETRY_TOKENS);
+    }
 
     if (!result.ok) {
-      return result;
+      return reasoningRetryAttempted ? { ...result, reasoningRetryAttempted: true } : result;
     }
     if (hasChatCompletionsToolCall(result.body)) {
       return result;
@@ -490,6 +438,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
           `HTTP ${result.httpStatus}: Chat Completions leaked tool calls into plain text content. ` +
           "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
           "prefer vLLM with --tool-call-parser hermes).",
+        ...(reasoningRetryAttempted ? { reasoningRetryAttempted: true } : {}),
       };
     }
     return {
@@ -499,9 +448,11 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       body: result.body,
       stderr: result.stderr,
       message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
+      ...(reasoningRetryAttempted ? { reasoningRetryAttempted: true } : {}),
     };
   } catch (error) {
-    return probeFailureFromError(error);
+    const failure = probeFailureFromError(error);
+    return reasoningRetryAttempted ? { ...failure, reasoningRetryAttempted: true } : failure;
   } finally {
     authConfig?.cleanup();
   }
@@ -959,6 +910,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       }
       if (
         probe.api === "openai-completions" &&
+        options.requireChatCompletionsToolCalling !== true &&
         isDeepSeekV4ProModel(model) &&
         isProbeTimeout(result)
       ) {
@@ -983,6 +935,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         curlStatus: result.curlStatus,
         message: result.message,
         body: result.body,
+        reasoningRetryAttempted: result.reasoningRetryAttempted === true,
       });
     }
 
@@ -991,11 +944,18 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     // stack can cause the initial probe to time out before the TLS handshake
     // completes (#987); hosted providers also occasionally drop connections for
     // tens of seconds during incidents (#3033).
-    // Look across every failure entry rather than only failures[0] so a probe
-    // ordering like /responses (HTTP error) followed by /chat/completions
-    // (curl 28) still triggers the chat-completions retry path.
+    // Look for the Chat Completions failure rather than only failures[0] so a
+    // preceding /responses error cannot suppress or spuriously trigger this
+    // transport retry path.
     let retriedAfterTimeout = false;
-    if (failures.some((failure) => isTimeoutOrConnFailureStatus(failure.curlStatus))) {
+    if (
+      failures.some(
+        (failure) =>
+          failure.name === chatCompletionsProbe.name &&
+          failure.reasoningRetryAttempted !== true &&
+          isTimeoutOrConnFailureStatus(failure.curlStatus),
+      )
+    ) {
       retriedAfterTimeout = true;
       const retryResult = runDoubledTimeoutChatCompletionsRetry({
         endpointUrl,
