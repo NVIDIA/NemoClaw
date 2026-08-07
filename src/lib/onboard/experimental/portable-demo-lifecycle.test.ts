@@ -595,10 +595,15 @@ describe("portable demo sandbox lifecycle", () => {
         },
       ),
     ).toEqual({ kind: "already-running" });
-    expect(launchHost).toHaveBeenCalledWith(binPath, ["serve"], {
-      HOME: stateDir,
-      OLLAMA_HOST: "127.0.0.1:11434",
-    });
+    expect(launchHost).toHaveBeenCalledWith(
+      "/proc/self/fd/3",
+      ["serve"],
+      {
+        HOME: stateDir,
+        OLLAMA_HOST: "127.0.0.1:11434",
+      },
+      expect.any(Number),
+    );
     expect(log).toHaveBeenCalledWith(
       "  Portable demo lifecycle restarted NemoClaw-managed Ollama.",
     );
@@ -606,6 +611,50 @@ describe("portable demo sandbox lifecycle", () => {
       "curl",
       expect.arrayContaining(["--noproxy", "127.0.0.1"]),
       5000,
+    );
+  });
+
+  it("launches the validated Ollama identity when its pathname is replaced (#8502)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    const binPath = createManagedOllamaBinary(stateDir);
+    recordUserLocalOllamaOwnership(binPath, { homeDir: stateDir, stateDir });
+    let ollamaStarted = false;
+    const captureHost = vi.fn((command: string) => {
+      if (command === "pgrep") return { status: 1 };
+      return ollamaStarted ? { status: 0, stdout: JSON.stringify({ models: [] }) } : { status: 7 };
+    });
+    const launchHost = vi.fn(
+      (_command: string, _args: readonly string[], _env: NodeJS.ProcessEnv, descriptor: number) => {
+        fs.renameSync(binPath, `${binPath}.validated`);
+        fs.writeFileSync(binPath, "#!/bin/sh\n# replacement\n", { mode: 0o755 });
+        expect(fs.readFileSync(descriptor, "utf8")).toBe("#!/bin/sh\n");
+        ollamaStarted = true;
+      },
+    );
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: "openclaw", gatewayName: "nemoclaw", provider: "ollama-local" },
+        {
+          platform: "linux",
+          env: { HOME: stateDir },
+          stateDir,
+          podman: runtime.podman,
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
+          captureHost,
+          launchHost,
+        },
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(launchHost).toHaveBeenCalledWith(
+      "/proc/self/fd/3",
+      ["serve"],
+      expect.objectContaining({ OLLAMA_HOST: "127.0.0.1:11434" }),
+      expect.any(Number),
     );
   });
 
@@ -645,10 +694,15 @@ describe("portable demo sandbox lifecycle", () => {
         fs.readFileSync(path.join(stateDir, "ollama", "user-local-ownership.json"), "utf8"),
       ),
     ).toMatchObject({ binPath });
-    expect(launchHost).toHaveBeenCalledWith(binPath, ["serve"], {
-      HOME: stateDir,
-      OLLAMA_HOST: "127.0.0.1:11434",
-    });
+    expect(launchHost).toHaveBeenCalledWith(
+      "/proc/self/fd/3",
+      ["serve"],
+      {
+        HOME: stateDir,
+        OLLAMA_HOST: "127.0.0.1:11434",
+      },
+      expect.any(Number),
+    );
   });
 
   it("rejects Ollama re-enrollment for a non-Ollama sandbox (#8502)", () => {

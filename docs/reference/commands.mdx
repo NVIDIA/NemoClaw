@@ -1394,7 +1394,8 @@ $$nemoclaw my-assistant recover
 
 <AgentOnly variant="openclaw">
 
-For a portable experimental-profile sandbox with the recorded `ollama-local` provider, `recover` also runs the ownership-bound Ollama and `inference.local` route reachability checks described for [`connect --probe-only`](#$$nemoclaw-name-connect).
+For a portable experimental-profile sandbox with the recorded `ollama-local` provider, `recover` also runs the ownership-bound Ollama checks described for [`connect --probe-only`](#$$nemoclaw-name-connect).
+Before it reports success, every completion path verifies the authenticated proxy on port `11435` and requires HTTP 2xx from `inference.local/v1/models`.
 
 </AgentOnly>
 

@@ -59,7 +59,7 @@ function parseReceipt(
   return receipt as unknown as UserLocalOllamaOwnershipReceipt;
 }
 
-/** Record the fixed user-local binary only after NemoClaw starts it successfully. */
+/** Record ownership after installation or explicit operator re-enrollment validates the fixed binary. */
 export function recordUserLocalOllamaOwnership(
   binPath: string,
   deps: UserLocalOllamaOwnershipDeps = {},
