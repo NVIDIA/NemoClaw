@@ -27,12 +27,17 @@ export class PinnedOpenClawGateway {
     queueMicrotask(() => {
       if (request.method === "connect") {
         const client = request.params.client;
+        const scopes = request.params.scopes;
         if (
           client === null ||
           typeof client !== "object" ||
           Array.isArray(client) ||
           (client as Record<string, unknown>).id !== "gateway-client" ||
-          (client as Record<string, unknown>).mode !== "backend"
+          (client as Record<string, unknown>).mode !== "backend" ||
+          !Array.isArray(scopes) ||
+          scopes.length !== 2 ||
+          !scopes.includes("operator.read") ||
+          !scopes.includes("operator.write")
         ) {
           this.reject(request.id);
           return;
