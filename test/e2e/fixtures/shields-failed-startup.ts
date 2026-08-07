@@ -9,6 +9,13 @@ export interface FailedStartupProcessControlCommands {
   terminateStartupChild: string[];
 }
 
+export async function resumeSupervisorIfPaused(
+  paused: boolean,
+  resume: () => Promise<void>,
+): Promise<void> {
+  if (paused) await resume();
+}
+
 export function failedStartupProcessControlCommands(
   containerId: string,
   startupPid: number,

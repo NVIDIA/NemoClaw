@@ -30,7 +30,10 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { failedStartupProcessControlCommands } from "../fixtures/shields-failed-startup.ts";
+import {
+  failedStartupProcessControlCommands,
+  resumeSupervisorIfPaused,
+} from "../fixtures/shields-failed-startup.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
@@ -968,8 +971,6 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
   expect(liveCensus.pid).not.toBeNull();
-  const liveStartupPid = liveCensus.pid ?? 0;
-  const processControl = failedStartupProcessControlCommands(recoveryContainerId, liveStartupPid);
   const liveChildRefusal = await runInstalledFailedStartupUnlock(
     host,
     recoveryContainerId,
@@ -987,28 +988,38 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   // leave the sandbox supervisor runnable for cleanup.
   let supervisorPaused = false;
   cleanup.trackDisposable(`resume stopped supervisor for ${SANDBOX_NAME}`, async () => {
-    if (!supervisorPaused) return;
-    const resume = await docker(host, processControl.resumeSupervisor, {
-      artifactName: "cleanup-phase-12-resume-startup-supervisor",
-      timeoutMs: 30_000,
+    await resumeSupervisorIfPaused(supervisorPaused, async () => {
+      const resume = await docker(host, supervisorControl.resumeSupervisor, {
+        artifactName: "cleanup-phase-12-resume-startup-supervisor",
+        timeoutMs: 30_000,
+      });
+      expect(resume.exitCode, resultText(resume)).toBe(0);
     });
-    expect(resume.exitCode, resultText(resume)).toBe(0);
   });
-  const pauseSupervisor = await docker(host, processControl.pauseSupervisor, {
+  const supervisorControl = failedStartupProcessControlCommands(recoveryContainerId, 2);
+  const pauseSupervisor = await docker(host, supervisorControl.pauseSupervisor, {
     artifactName: "phase-12-pause-startup-supervisor",
     timeoutMs: 30_000,
   });
   expect(pauseSupervisor.exitCode, resultText(pauseSupervisor)).toBe(0);
   supervisorPaused = true;
 
+  const pausedCensus = await installedStartupCensus(
+    host,
+    recoveryContainerId,
+    "phase-12-paused-startup-census",
+  );
+  expect(pausedCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
+  expect(pausedCensus.pid).not.toBeNull();
+  const processControl = failedStartupProcessControlCommands(
+    recoveryContainerId,
+    pausedCensus.pid ?? 0,
+  );
   const terminateChild = await docker(host, processControl.terminateStartupChild, {
     artifactName: "phase-12-terminate-startup-child",
     timeoutMs: 30_000,
   });
-  expect(
-    terminateChild.exitCode === 0 || /no such process/i.test(resultText(terminateChild)),
-    resultText(terminateChild),
-  ).toBe(true);
+  expect(terminateChild.exitCode, resultText(terminateChild)).toBe(0);
 
   await waitForChildlessStartup(host, recoveryContainerId);
   const childlessUnlock = await runInstalledFailedStartupUnlock(
