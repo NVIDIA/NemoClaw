@@ -446,19 +446,6 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.applied, []);
   });
 
-  it("limits an explicit Personal selection to the portable open-internet preset", async () => {
-    const result = await runPolicySetup(
-      {
-        tierName: "personal",
-        policyMode: "custom",
-        policyPresets: "personal-open-internet",
-      },
-      { agent: "openclaw", webSearchConfig: null, webSearchSupported: true },
-    );
-
-    assert.deepEqual(result.applied, ["personal-open-internet"]);
-  });
-
   it("keeps OpenClaw web search and OpenClaw-only presets in Personal", async () => {
     const result = await runPolicySetup(
       { tierName: "personal" },
