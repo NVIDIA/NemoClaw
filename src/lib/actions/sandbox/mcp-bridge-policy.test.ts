@@ -377,11 +377,11 @@ describe("MCP OpenShell policy", () => {
     expect(underscoreNormalized).toMatch(/^alpha-mcp-github-server-[a-f0-9]{16}$/);
     expect(new Set([caseNormalized, underscoreNormalized, "alpha-mcp-github-server"]).size).toBe(3);
     const long = buildMcpBridgeProviderName(
-      "sandbox-name-with-a-long-prefix",
+      "sandbox-name-prefix",
       "ServerNameThatWouldOtherwiseExceedTheProviderNameLimit",
     );
     expect(long.length).toBeLessThanOrEqual(63);
-    expect(long).toMatch(/^sandbox-name-with-a-long-prefix-mcp-servername-[a-f0-9]{16}$/);
+    expect(long).toMatch(/^sandbox-name-prefix-mcp-servernamethatwouldoth-[a-f0-9]{16}$/);
     expect(buildMcpBridgeProviderName("alpha", "github-server", "0123456789abcdef")).toBe(
       "alpha-mcp-github-server-0123456789abcdef",
     );

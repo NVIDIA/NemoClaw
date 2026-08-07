@@ -266,7 +266,7 @@
     {
       "name": "Windows-on-ARM GPU passthrough",
       "status": "unsupported",
-      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations', but GPU passthrough on WOA is denylisted (`src/lib/onboard/wsl-docker-desktop-gpu.ts:188`, `src/lib/inference/gpu-trust.test.ts:70`). See closed issue #4565."
+      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations', but GPU passthrough on WOA is denylisted (`src/lib/onboard/wsl-docker-desktop-gpu.ts:214`, `src/lib/inference/gpu-trust.test.ts:70`). See closed issue #4565."
     },
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",

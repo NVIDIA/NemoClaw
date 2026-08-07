@@ -40,7 +40,7 @@ export async function addGooglechatForChannelsStopStartLiveE2e(
   input: GooglechatLiveE2eComposition,
   dependencies: GooglechatLiveE2eDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<void> {
-  assertChannelsStopStartSandboxName(input.sandboxName);
+  assertChannelsStopStartSandboxName(input.sandboxName, "openclaw");
   const audience = input.audience.trim();
   if (!audience) {
     throw new Error("GOOGLECHAT_AUDIENCE is required for the channels-stop-start live target");

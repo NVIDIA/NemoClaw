@@ -82,12 +82,8 @@ const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
-const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-hermes-base" : "e2e-rebuild-hermes";
-const SANDBOX_NAME =
-  process.env.NEMOCLAW_SANDBOX_NAME ??
-  [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
-    .filter(Boolean)
-    .join("-");
+const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-base" : "e2e-rebuild-hermes";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 validateSandboxName(SANDBOX_NAME);
 SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
   fail(
