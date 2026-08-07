@@ -22,8 +22,9 @@ If "work on this issue" could mean planning or implementation, ask which lifecyc
 wants. Do not infer implementation intent.
 
 This workflow also owns the code repair that `nemoclaw-contributor-create-pr` routes back from a
-classified review finding. Treat the classified finding as the accepted scope, keep the change inside
-its root-cause group, and return the changed behavior and its evidence to that workflow for
+classified review finding. The classified finding defines the repair scope inside the pull request's
+already accepted product scope. It does not establish new product scope. Keep the change inside the
+finding's root-cause group. Return the changed behavior and its evidence to that workflow for
 publication.
 
 Do not use this workflow for these requests:

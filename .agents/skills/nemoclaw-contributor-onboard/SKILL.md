@@ -74,15 +74,14 @@ npm run agent
 Pass user-supplied Pi arguments after `--`.
 Do not install or invoke a global Pi binary.
 
-## Hand Off to the Contribution Lifecycle
+## Hand Off to the Contributor Lifecycle
 
-This workflow ends when the checkout is ready. Name the workflow that owns the next stage instead of
-restating its rules:
+This workflow ends after `./scripts/dev-setup.sh --doctor` reports that every contributor-readiness check passes.
+Name the workflow that owns the next stage instead of restating its rules:
 
 - `nemoclaw-contributor-plan-issue` refines an issue into capability slices.
 - `nemoclaw-contributor-implement-issue` implements a slice and owns its tests.
-- `nemoclaw-contributor-create-pr` publishes the branch and owns branch, commit, DCO, template, and
-  review-follow-up requirements.
+- `nemoclaw-contributor-create-pr` publishes the change and owns the branch-state, commit-verification, DCO, template, and review follow-up requirements.
 
 Do not create a branch, commit, push, or PR unless the user's request includes that action.
 

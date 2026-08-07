@@ -265,9 +265,10 @@ describe("repo skill markdown files", () => {
       "utf8",
     );
 
-    expect(packageGuide).toContain("credential types, custody, lifetime, redaction, and removal");
+    expect(packageGuide).toContain("Credential types, custody, lifetime, redaction, and removal");
     expect(packageGuide).toContain("deny-by-default network policy");
-    expect(packageGuide).toContain("reachability and failure classification");
+    expect(packageGuide).toContain("Reachability and failure classification");
+    expect(packageGuide).toContain("Community Solutions");
     expect(packageGuide).toContain(
       "Do not copy a channel because its credential shape looks similar",
     );
@@ -296,7 +297,7 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("sensitive paths, or CI waivers");
   });
 
-  it("keeps PR creation a publication workflow (#8364)", () => {
+  it("keeps test selection and triage-only flags out of PR creation (#8364)", () => {
     const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-create-pr");
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
     const evals = JSON.parse(
@@ -306,7 +307,8 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Route each valid code-changing finding to");
     expect(skill).toContain("nemoclaw-contributor-implement-issue");
     expect(skill).toContain("selects and runs the tests for the changed behavior");
-    expect(skill).toContain("Do not select a test here");
+    expect(skill).toContain("Do not select a test in this workflow");
+    expect(skill).toContain("Do not open the PR with an unselected tests line");
     expect(skill).not.toContain("--project cli");
     expect(skill).not.toContain("--project plugin");
     expect(skill).not.toContain("--project e2e-support");
@@ -314,7 +316,8 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Assemble the whole command before you run it");
     expect(skill).toContain("gh repo view NVIDIA/NemoClaw --json viewerPermission");
     expect(skill).toContain("`TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`");
-    expect(skill).toContain("Do not retry a rejected command");
+    expect(skill).toContain("If a triage write is rejected, do not repeat that write");
+    expect(skill).toContain("Confirm whether the PR exists before you run `gh pr create` again");
     expect(skill.indexOf("--body-file /tmp/nemoclaw-pr-body.md")).toBeLessThan(
       skill.indexOf("### Assignment and Labels"),
     );
@@ -377,7 +380,7 @@ describe("repo skill markdown files", () => {
 
     const dependencies = readSkill("nemoclaw-contributor-update-dependencies");
     expect(dependencies).toContain(
-      "narrow specialist beneath `nemoclaw-contributor-implement-issue`",
+      "Load this workflow from `nemoclaw-contributor-implement-issue` for a dependency upgrade",
     );
     const dependencyEvals = readEvals("nemoclaw-contributor-update-dependencies");
     expect(
@@ -458,7 +461,7 @@ describe("repo skill markdown files", () => {
       skill.indexOf("after explicit approval, run `./scripts/dev-setup.sh --expose-cli`"),
     ).toBeGreaterThan(skill.indexOf("Readiness only"));
 
-    expect(skill).toContain("Hand Off to the Contribution Lifecycle");
+    expect(skill).toContain("Hand Off to the Contributor Lifecycle");
     expect(skill).toContain("nemoclaw-contributor-plan-issue");
     expect(skill).toContain("nemoclaw-contributor-implement-issue");
     expect(skill).toContain("nemoclaw-contributor-create-pr");

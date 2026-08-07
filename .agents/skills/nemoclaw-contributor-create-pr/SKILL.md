@@ -60,9 +60,9 @@ Select checks that apply to the diff.
 
 When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
 
-Route each valid code-changing finding to `nemoclaw-contributor-implement-issue`. That workflow owns the repair, its validation, and its evidence. This workflow owns the push gate:
+Route each valid code-changing finding to `nemoclaw-contributor-implement-issue`. That workflow owns the repair, its validation, and its evidence.
 
-- Push after the independent documentation writer review covers the final `HEAD`, all blocking findings are resolved, and the receipt identifies that commit.
+This workflow owns the push gate. Follow steps 1 through 8 of [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) for validation, the commit, the independent documentation writer review, and the final collection. Push only after that review covers the final `HEAD`, every blocking finding is resolved, and the receipt identifies that commit.
 
 Immediately before pushing, repeat the complete head-stable collection. Do not push while that collection contains an unclassified or actionable finding. Remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. If the user tells you to stop, stop without pushing. The user may defer only a non-blocking suggestion; record that disposition before pushing.
 
@@ -89,9 +89,11 @@ Examples include hook configuration, formatter configuration, generated-check sc
 
 `nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior.
 Record the command and result that it reported in the PR body.
-Do not select a test here, and do not rerun a reported test because hooks passed.
+Do not select a test in this workflow. Do not rerun a reported test because hooks passed.
 
-Request the missing evidence from that workflow when a change set arrives without it.
+If the change set arrives without that evidence, stop and route the change set to
+`nemoclaw-contributor-implement-issue` for test selection and validation.
+Do not open the PR with an unselected tests line.
 
 For doc-only changes, run the docs build before opening the PR:
 
@@ -231,9 +233,9 @@ Follow these rules when filling in the template:
 
 Run this command only after Step 4 passes.
 Assemble the whole command before you run it. Decide each optional flag in the sections below first.
-Do not add a flag that the account cannot use.
+Do not add a flag that the authenticated `gh` account cannot use.
 
-This base command uses only the writes that every contributor can make:
+Every contributor can run this base command:
 
 ```bash
 gh pr create \
@@ -241,27 +243,29 @@ gh pr create \
   --body-file /tmp/nemoclaw-pr-body.md
 ```
 
-Add `--draft` to that command for work that is not ready for review.
+Add `--draft` to that command when the contributor does not want review of the change set yet.
 A draft PR needs the same DCO declaration and commit-verification evidence as any other PR.
 
 ### Assignment and Labels
 
-Assignment and labels are triage writes. A contributor without triage permission on the base
-repository cannot make them. External contributors and NVIDIA organization members who are not
-repository collaborators are in that group.
+Assignment and labels are triage writes.
+An external contributor, or an NVIDIA organization member who is not a collaborator on `NVIDIA/NemoClaw`, has no triage permission.
 
 Add `--assignee` and `--label` when one of these conditions is true:
 
 - The current user states that they can assign or label pull requests in the base repository.
-- This command reports `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`:
+- This command reports `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`. Run it first:
 
   ```bash
   gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
   ```
 
-Then add the self-assignment and each label that describes the change:
+Then create the PR with the self-assignment and each label that describes the change:
 
 ```bash
+gh pr create \
+  --title "<type>(<scope>): <description>" \
+  --body-file /tmp/nemoclaw-pr-body.md \
   --assignee "@me" \
   --label "area: docs" \
   --label "topic:security"
@@ -269,8 +273,10 @@ Then add the self-assignment and each label that describes the change:
 
 Use `area: docs` for a doc-only or doc-inclusive PR and `topic:security` for a security change.
 
-Otherwise create the PR without those flags. Report that the PR needs a maintainer to assign and
-label it. Do not retry a rejected command, and do not make the same write through another endpoint.
+Otherwise create the PR without `--assignee` and `--label`.
+Report that the PR needs a maintainer to assign and label it.
+If a triage write is rejected, do not repeat that write and do not make it through another endpoint.
+Confirm whether the PR exists before you run `gh pr create` again.
 
 ### Reviewers
 

@@ -3,7 +3,7 @@
     "id": "positive-dependency-migration",
     "question": "Upgrade the pinned Hermes release in NemoClaw and audit what the change breaks downstream.",
     "expected_skill": "nemoclaw-contributor-update-dependencies",
-    "ground_truth": "A dependency upgrade is a semantic migration. The specialist audits adjacent release ranges, maps changed upstream contracts to current consumers, and verifies the artifacts the head selects.",
+    "ground_truth": "A dependency upgrade is a semantic migration. The specialist audits adjacent release ranges, maps changed upstream contracts to current consumers, and verifies the artifacts and selectors that the PR head uses.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-update-dependencies`.",
       "Audits release ranges and maps changed contracts to current consumers.",
