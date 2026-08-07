@@ -85,6 +85,24 @@ describe("sandbox base-image glibc compatibility", () => {
     ]);
   });
 
+  it("removes both retained containers when both probe attempts return no output (#8375)", () => {
+    mocks.dockerCapture.mockReturnValue("");
+
+    expect(getImageGlibcVersion("nemoclaw:cold")).toBeNull();
+
+    const probeCalls = mocks.dockerCapture.mock.calls.filter((call) => call[0]?.[0] === "run");
+    expect(probeCalls.map((call) => call[1]?.timeout)).toEqual([20_000, 120_000]);
+    const containerNames = probeCalls.map((call) => call[0]?.[3]);
+    expect(new Set(containerNames)).toHaveProperty("size", 2);
+    const cleanupCalls = mocks.dockerCapture.mock.calls.filter((call) => call[0]?.[0] === "rm");
+    expect(cleanupCalls).toEqual(
+      containerNames.map((containerName) => [
+        ["rm", "-f", containerName],
+        { ignoreError: true, timeout: 20_000 },
+      ]),
+    );
+  });
+
   it("does not retry non-empty incompatible output", () => {
     mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
       args[0] === "run" ? "musl libc (x86_64)\nVersion 1.2.5" : "",
