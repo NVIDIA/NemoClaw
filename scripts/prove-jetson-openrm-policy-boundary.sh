@@ -10,13 +10,25 @@ if [[ ! "$sandbox_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
   exit 2
 fi
 
-printf 'The proof is armed for sandbox %s. Complete the normal onboarding prompts.\n' \
-  "$sandbox_name"
-printf 'The sandbox will be rebuilt with the current checkout before the proof runs.\n'
-printf 'When the live replacement returns cuInit(0)=801, NemoClaw will run the device/sysfs policy matrix before its normal rollback.\n'
+printf 'Running the standalone Jetson OpenRM policy proof for sandbox %s.\n' "$sandbox_name"
+printf 'This bypasses onboarding and its resume checkpoints.\n'
+printf 'The current container is preserved as a rollback backup before the production recreation and policy matrix run.\n'
 
 npm run build:cli
+exec node - "$sandbox_name" <<'NODE'
+const {
+  createDockerGpuDiagnosticRedactor,
+} = require("./dist/lib/onboard/docker-gpu-diagnostic-redaction");
+const {
+  runStandaloneJetsonOpenRmPolicyProof,
+} = require("./dist/lib/onboard/diagnostics/jetson-openrm-standalone");
 
-export NEMOCLAW_SANDBOX_NAME="$sandbox_name"
-export NEMOCLAW_DIAGNOSE_JETSON_OPENRM_POLICY=1
-exec node bin/nemoclaw.js onboard --resume --recreate-sandbox
+runStandaloneJetsonOpenRmPolicyProof(process.argv[2]).catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  const redacted = createDockerGpuDiagnosticRedactor()
+    .redactText(message)
+    .replace(/[\r\n]+/gu, " ");
+  console.error(`Error: ${redacted}`);
+  process.exitCode = 1;
+});
+NODE
