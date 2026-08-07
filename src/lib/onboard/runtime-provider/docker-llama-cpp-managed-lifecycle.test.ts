@@ -839,7 +839,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
     expect(store.list()).toEqual([]);
   });
-  it("cleans up malformed or non-loopback published bindings after rejecting port drift (#8544)", () => {
+  it("rejects and cleans up malformed or non-loopback published bindings (#8544)", () => {
     for (const args of [
       [HOST_PORT, HOST_PORT, "0.0.0.0", 1],
       ["8081", "8082", "0.0.0.0", 1],
