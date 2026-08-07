@@ -2,10 +2,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
-import { dockerCapture } from "../adapters/docker";
+import { dockerCapture, dockerForceRm } from "../adapters/docker";
 import { OPENSHELL_SANDBOX_MIN_GLIBC } from "./types";
 
 const GLIBC_PROBE_TIMEOUTS_MS = [20_000, 120_000] as const;
+const GLIBC_PROBE_CLEANUP_TIMEOUT_MS = 20_000;
+
+function removeRetainedGlibcProbe(containerName: string): void {
+  const removal = dockerForceRm(containerName, {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: GLIBC_PROBE_CLEANUP_TIMEOUT_MS,
+  });
+  const remainingNames = dockerCapture(
+    ["container", "ls", "--all", "--filter", `name=^/${containerName}$`, "--format", "{{.Names}}"],
+    { timeout: GLIBC_PROBE_CLEANUP_TIMEOUT_MS },
+  )
+    .split(/\r?\n/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  if (remainingNames.includes(containerName)) {
+    const removalStatus = removal.error
+      ? "failed before returning an exit status"
+      : `returned status ${String(removal.status)}`;
+    throw new Error(
+      `Docker glibc probe cleanup ${removalStatus}; container ${containerName} is still present`,
+    );
+  }
+}
 
 export function parseGlibcVersion(output: string | null | undefined): string | null {
   const text = String(output || "");
@@ -52,10 +77,7 @@ export function getImageGlibcVersion(imageRef: string): string | null {
       );
     } finally {
       if (!output) {
-        dockerCapture(["rm", "-f", containerName], {
-          ignoreError: true,
-          timeout: 20_000,
-        });
+        removeRetainedGlibcProbe(containerName);
       }
     }
     if (output) return parseGlibcVersion(output);
