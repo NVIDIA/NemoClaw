@@ -117,6 +117,7 @@ than enabling optional upstream behavior implicitly.
 | `OS99-14` | Routable sandbox names are capped at 19 characters | NemoClaw's canonical validation uses the same 19-character limit, and generated activation names fit it. Exact all-agent activation remains a final acceptance gate. |
 | `OS99-15` | The Docker driver records the immutable image content ID in `Config.Image` | Managed bootstrap accepts either the reviewed `repository@manifestDigest` or its exact runtime content ID, while separately requiring Docker to prove that the manifest resolves to that content ID. |
 | `OS99-16` | The Docker driver appends `--workdir /sandbox` to the supervisor command | Managed bootstrap requires that exact v0.0.99 supervisor argv before replacing the held workload. |
+| `OS99-17` | Overlapping endpoint selectors with conflicting connection or request metadata are rejected before policy activation | The OpenClaw baseline npm route remains GET-only in Restricted and temporarily adopts the reviewed npm preset's L4 metadata while that preset is active. Homebrew's overlapping GitHub routes use automatic TLS, and Outlook matches Teams' request-body credential-rewrite setting on shared Microsoft endpoints. Focused composition coverage protects each compatibility decision. |
 
 An unresolved critical or high concern blocks the upgrade. Test selection cannot waive a concern;
 conditional skips and expected failures do not count as qualification evidence.
@@ -131,12 +132,26 @@ NemoClaw now normalizes them before hashing. It still refuses any non-empty port
 the managed clone cannot reproduce that behavior exactly. Unit coverage proves both equivalence
 and the rejection path; exact `0.0.85 -> 0.0.99` live activation remains required.
 
+OpenShell 0.0.99 also validates the complete effective network policy before activation. Several
+previously accepted overlaps used incompatible metadata: the OpenClaw baseline and npm preset
+selected different TLS/L7 handling for `registry.npmjs.org`; Homebrew conflicted with agent routes
+on `github.com` and `raw.githubusercontent.com`; and Teams and Outlook disagreed on credential-body
+rewriting for shared Microsoft endpoints. NemoClaw preserves the GET-only npm baseline in
+Restricted, temporarily applies the npm preset's reviewed L4 metadata to that baseline route while
+the preset is active, and restores the exact baseline on removal. Homebrew's overlapping GitHub
+routes remain plain L4 endpoints with automatic TLS, while Outlook now matches Teams' rewrite
+setting. The npm baseline keeps its OpenClaw-only binary scope, but its GET-only method/path
+inspection is intentionally unavailable until npm is removed; the other routes retain their
+separate binary allowlists and authorization rules.
+
 ## Final acceptance gates
 
 - All active CLI, blueprint, installer, Brev, workflow, supervisor, and sandbox selectors agree on
   `0.0.99` and exact reviewed identities.
 - The `v0.0.99` credential-boundary manifest is the active manifest and its source commit is exact.
 - Static checks, focused lifecycle tests, CLI/plugin builds, and documentation checks pass.
+- Default OpenClaw policy composition activates without endpoint-metadata ambiguity while retaining
+  the reviewed binary scopes for npm, Homebrew, and pricing traffic.
 - Managed Docker and Podman activation, lifecycle, policy, credential, inference, and MCP E2E run
   against the exact pinned release without conditional skips or expected failures.
 - A supported host with no prior NemoClaw state demonstrates the `0.0.85 -> 0.0.99` activation transition, including the
