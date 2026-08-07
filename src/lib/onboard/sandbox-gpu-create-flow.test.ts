@@ -667,6 +667,35 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
+
+  it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
+    const input = createInput();
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
+
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
+      input.sandboxName,
+      input.sandboxStartupCommand,
+    );
+  });
+
+  it("keeps a created sandbox when portable lifecycle setup fails (#8441)", async () => {
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => {
+      throw new Error("Authorization: Bearer portable-secret");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "native",
+    });
+
+    const warning = vi.mocked(console.warn).mock.calls.flat().join("\n");
+    expect(warning).toContain("Portable demo lifecycle setup did not complete");
+    expect(warning).toContain("Authorization: Bearer <REDACTED>");
+    expect(warning).not.toContain("portable-secret");
+  });
 });
 
 describe("runSandboxGpuCreateFlow fallback ordering", () => {
