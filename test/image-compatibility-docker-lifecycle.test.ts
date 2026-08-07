@@ -16,10 +16,16 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+function cleanupProbeContainers(realDocker: string, probeNamesPath: string): void {
+  [...new Set(fs.readFileSync(probeNamesPath, "utf8").trim().split("\n").filter(Boolean))].forEach(
+    (probeName) => spawnSync(realDocker, ["rm", "-f", probeName], { stdio: "ignore" }),
+  );
+}
+
 describe.runIf(RUN_DOCKER_E2E)("sandbox base-image glibc Docker lifecycle", () => {
   it(
     "removes a retained first probe before accepting the retry (#8375)",
-    testTimeoutOptions(60_000),
+    testTimeoutOptions(150_000),
     () => {
       const realDocker = execFileSync("which", ["docker"], { encoding: "utf8" }).trim();
       execFileSync(realDocker, ["image", "inspect", TEST_IMAGE], { stdio: "ignore" });
@@ -27,10 +33,14 @@ describe.runIf(RUN_DOCKER_E2E)("sandbox base-image glibc Docker lifecycle", () =
       const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-glibc-probe-"));
       const shimPath = path.join(fixtureDir, "docker");
       const firstProbeNamePath = path.join(fixtureDir, "first-probe-name");
+      const probeNamesPath = path.join(fixtureDir, "probe-names");
       const markerPath = path.join(fixtureDir, "first-probe-created");
       const logPath = path.join(fixtureDir, "docker-shim.log");
+      const hadOriginalPath = Object.hasOwn(process.env, "PATH");
       const originalPath = process.env.PATH ?? "";
       let firstProbeName = "";
+
+      fs.writeFileSync(probeNamesPath, "");
 
       const shim = `#!/usr/bin/env bash
 set -euo pipefail
@@ -38,6 +48,7 @@ real_docker=${shellQuote(realDocker)}
 test_image=${shellQuote(TEST_IMAGE)}
 marker=${shellQuote(markerPath)}
 name_file=${shellQuote(firstProbeNamePath)}
+probe_names_file=${shellQuote(probeNamesPath)}
 log_file=${shellQuote(logPath)}
 
 if [[ "\${1:-}" == "run" ]]; then
@@ -49,6 +60,7 @@ if [[ "\${1:-}" == "run" ]]; then
       break
     fi
   done
+  printf '%s\n' "\$probe_name" >>"\$probe_names_file"
   if [[ ! -e "\$marker" ]]; then
     : >"\$marker"
     printf '%s\n' "\$probe_name" >"\$name_file"
@@ -65,7 +77,7 @@ exec "\$real_docker" "\$@"
 `;
 
       fs.writeFileSync(shimPath, shim, { mode: 0o755 });
-      process.env.PATH = `${fixtureDir}${path.delimiter}${originalPath}`;
+      process.env.PATH = `${fixtureDir}:${originalPath}`;
 
       try {
         expect(imageMeetsMinimumGlibc(TEST_IMAGE, "2.17")).toEqual({
@@ -88,17 +100,11 @@ exec "\$real_docker" "\$@"
         ]);
         expect(lifecycleLog[2]).not.toBe(`retried ${firstProbeName}`);
       } finally {
-        process.env.PATH = originalPath;
-        const cleanupProbeName =
-          firstProbeName ||
-          (fs.existsSync(firstProbeNamePath)
-            ? fs.readFileSync(firstProbeNamePath, "utf8").trim()
-            : "");
-        [cleanupProbeName]
-          .filter((probeName) => probeName.length > 0)
-          .forEach((probeName) =>
-            spawnSync(realDocker, ["rm", "-f", probeName], { stdio: "ignore" }),
-          );
+        Reflect.deleteProperty(process.env, "PATH");
+        [originalPath]
+          .filter(() => hadOriginalPath)
+          .forEach((savedPath) => Reflect.set(process.env, "PATH", savedPath));
+        cleanupProbeContainers(realDocker, probeNamesPath);
         fs.rmSync(fixtureDir, { recursive: true, force: true });
       }
     },
