@@ -410,40 +410,55 @@ describe("maintainer skills follow canonical workflow policy", () => {
       ".agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py",
     );
     const standaloneBearer = `opaque-${"h".repeat(40)}`;
+    const jwt = `eyJ${"j".repeat(12)}.${"k".repeat(12)}.${"l".repeat(12)}`;
+    const base64Blob = "Q".repeat(64);
 
+    const awsAccessKey = `AKIA${"1".repeat(16)}`;
+    const redactionCases = [
+      { input: `jwt=${jwt}`, secret: jwt },
+      { input: `github_pat_${"a".repeat(30)}`, secret: "github_pat_" },
+      { input: `nvapi-${"n".repeat(24)}`, secret: "nvapi-" },
+      { input: `OPENAI_API_KEY=sk-proj-${"d".repeat(30)}`, secret: "sk-proj-" },
+      { input: `GEMINI_API_KEY=AIza${"m".repeat(24)}`, secret: "AIza" },
+      { input: `aws_access_key_id=${awsAccessKey}`, secret: awsAccessKey },
+      { input: "aws_secret_access_key=aws-secret-value", secret: "aws-secret-value" },
+      { input: `Authorization: Bearer ${"b".repeat(40)}`, secret: `Bearer ${"b".repeat(40)}` },
+      { input: `Cookie: session=${"c".repeat(40)}`, secret: "session=" },
+      { input: `> Authorization: Basic ${"e".repeat(40)}`, secret: `Basic ${"e".repeat(40)}` },
+      {
+        input: `* Proxy-Authorization: Bearer ${"f".repeat(40)}`,
+        secret: `Bearer ${"f".repeat(40)}`,
+      },
+      { input: `< Set-Cookie: session=${"g".repeat(40)}`, secret: `session=${"g".repeat(40)}` },
+      { input: `request failed with Bearer ${standaloneBearer}`, secret: standaloneBearer },
+      { input: "https://user:password-value@example.invalid/path", secret: "password-value" },
+      { input: "token=inline-token-value", secret: "inline-token-value" },
+      { input: "build.nvidia.internal", secret: "build.nvidia.internal" },
+      { input: "reporter@example.com", secret: "reporter@example.com" },
+      { input: base64Blob, secret: base64Blob },
+      { input: "/Users/reporter/private/output.log", secret: "/Users/reporter/" },
+    ];
     const sensitive = [
       "ordinary diagnostic line",
-      `github_pat_${"a".repeat(30)}`,
-      `Authorization: Bearer ${"b".repeat(40)}`,
-      `Cookie: session=${"c".repeat(40)}`,
-      `> Authorization: Basic ${"e".repeat(40)}`,
-      `* Proxy-Authorization: Bearer ${"f".repeat(40)}`,
-      `< Set-Cookie: session=${"g".repeat(40)}`,
-
-      `request failed with Bearer ${standaloneBearer}`,
-      `OPENAI_API_KEY=sk-proj-${"d".repeat(30)}`,
-      "reporter@example.com",
-      "/Users/reporter/private/output.log",
+      ...redactionCases.map(({ input }) => input),
     ].join("\n");
     const redacted = spawnSync("python3", [redactor], { encoding: "utf8", input: sensitive });
 
     expect(redacted.status, redacted.stderr).toBe(0);
     expect(redacted.stdout).toContain("ordinary diagnostic line");
     expect(redacted.stdout).toContain("[REDACTED]");
-    for (const secret of [
-      "github_pat_",
-      `Bearer ${"b".repeat(40)}`,
-      "session=",
-      `Basic ${"e".repeat(40)}`,
-      `Bearer ${"f".repeat(40)}`,
-
-      standaloneBearer,
-      "sk-proj-",
-      "reporter@example.com",
-      "/Users/reporter/",
-    ]) {
+    for (const { secret } of redactionCases) {
       expect(redacted.stdout).not.toContain(secret);
     }
+
+    const htmlSecret = `github_pat_${"z".repeat(30)}`;
+    const redactedHtml = spawnSync("python3", [redactor, "--html"], {
+      encoding: "utf8",
+      input: `<div data-token="${htmlSecret}">visible diagnostic</div>`,
+    });
+    expect(redactedHtml.status, redactedHtml.stderr).toBe(0);
+    expect(redactedHtml.stdout).toContain("visible diagnostic");
+    expect(redactedHtml.stdout).not.toContain(htmlSecret);
   });
 
   it("makes DCO and GitHub verification explicit approval gates", () => {

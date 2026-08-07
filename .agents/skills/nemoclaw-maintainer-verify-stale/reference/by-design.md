@@ -60,9 +60,13 @@ Capture for evidence: commit SHA, the deletion, the linked PR or decision, and t
 
 **Signal 3 — Symbol absent in both release tags.** The implicated symbol is not present in either tag's source tree. This can mean the issue used an obsolete command, but it can also mean the search term is wrong or the implementation moved.
 
+Save the reviewed symbol in `$EVIDENCE_DIR/symbol.txt` without interpolating it into a shell command. Then pass it to Git as a quoted argument:
+
 ```bash
-git grep -n "<symbol>" "$REPORTED_VERSION" -- src/ bin/ nemoclaw/   # expect: zero matches (or shim-only — see sub-case)
-git grep -n "<symbol>" "$LATEST"            -- src/ bin/ nemoclaw/   # expect: zero matches (or shim-only)
+SYMBOL=$(<"$EVIDENCE_DIR/symbol.txt")
+[ -n "$SYMBOL" ] || { echo "ERROR: reviewed symbol is empty"; exit 1; }
+git grep -n -e "$SYMBOL" "$REPORTED_VERSION" -- src/ bin/ nemoclaw/
+git grep -n -e "$SYMBOL" "$LATEST" -- src/ bin/ nemoclaw/
 ```
 
 Capture for evidence: both grep commands and their outputs. Locate the accepted decision or merged PR that defines the replacement before selecting `by-design`.

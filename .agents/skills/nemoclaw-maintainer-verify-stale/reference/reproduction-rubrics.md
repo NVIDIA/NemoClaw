@@ -62,8 +62,10 @@ fi
 python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
   "$EVIDENCE_DIR/baseline-logs.log" >"$EVIDENCE_DIR/baseline-logs.redacted.log"
 
-# Search the log capture for the issue's symptom phrase too, not just the transcript.
-grep -F "<redacted symptom phrase from issue body>" "$EVIDENCE_DIR/baseline-logs.redacted.log"
+# Save the reviewed redacted phrase as data, not as part of a shell command.
+SYMPTOM_PHRASE=$(<"$EVIDENCE_DIR/symptom-phrase.redacted.txt")
+[ -n "$SYMPTOM_PHRASE" ] || { echo "ERROR: symptom phrase is empty"; exit 1; }
+grep -F -- "$SYMPTOM_PHRASE" "$EVIDENCE_DIR/baseline-logs.redacted.log"
 ```
 
 For functional bugs, the reproducer's standard output is sufficient. For log-only bugs, the transcript might not show the symptom while the log capture does. Use both results in the match rubric below.
@@ -281,7 +283,7 @@ Latency and resource-growth reports (#2598, #2600, and #2733) cannot use the sta
    fi
    ```
 
-   Keep the reproducer's stderr separate from `/usr/bin/time` output. Mixing diagnostics with numeric samples corrupts `sort` and percentile calculations. Confirm that the exit log contains ten expected exit codes. An unexpected failure makes the performance result inconclusive; do not treat a fast failure as an improvement.
+   Keep the reproducer's standard error separate from `/usr/bin/time` output. Mixing diagnostics with numeric samples corrupts percentile calculations. Before calculating a percentile, require exactly 10 successful sample exits. Otherwise select `verify-inconclusive`; do not score recorded durations.
 
 3. **Compute p50 and p90** for both sides, in milliseconds (to match the `_MS`
    units of `SLA_P50_MS` / `SLA_P90_MS`). `/usr/bin/time -f '%e'` emits
@@ -289,6 +291,13 @@ Latency and resource-growth reports (#2598, #2600, and #2733) cannot use the sta
 
    ```bash
    # p50 = mean of the 5th and 6th values (standard median for even N), in ms.
+
+   PERF_EXITS=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf-exits.log")
+   PERF_EXIT_COUNT=$(printf '%s\n' "$PERF_EXITS" | sed '/^$/d' | wc -l | tr -d ' ')
+   if [ "$PERF_EXIT_COUNT" != "10" ] || printf '%s\n' "$PERF_EXITS" | grep -Ev '^0$' >/dev/null; then
+     echo "VERDICT=verify-inconclusive: performance samples did not all exit 0"
+     exit 1
+   fi
    PERF_SAMPLES=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf.log" \
      | grep -E '^[0-9]+([.][0-9]+)?$' || true)
    [ "$(printf '%s\n' "$PERF_SAMPLES" | sed '/^$/d' | wc -l | tr -d ' ')" = "10" ] || {
