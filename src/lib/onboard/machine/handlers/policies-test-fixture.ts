@@ -3,45 +3,12 @@
 
 import { vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import type { PoliciesStateOptions } from "./policies";
 
 export type PolicyTestAgent = { name: string } | null;
 export type PolicyTestWebSearchConfig = { fetchEnabled: true };
-type MessagingPlan = NonNullable<Session["messagingPlan"]>;
-type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
-
-export function makeMessagingPlan(
-  sandboxName: string,
-  channels: readonly MessagingChannelId[],
-  disabledChannels: readonly MessagingChannelId[] = [],
-): MessagingPlan {
-  const disabled = new Set(disabledChannels);
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: channels.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: !disabled.has(channelId),
-      selected: true,
-      configured: true,
-      disabled: disabled.has(channelId),
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels,
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
 
 export function createPolicyHandlerDeps(
   overrides: Partial<PoliciesStateOptions<PolicyTestAgent, PolicyTestWebSearchConfig>["deps"]> = {},
@@ -50,7 +17,7 @@ export function createPolicyHandlerDeps(
   const calls = {
     load: vi.fn(() => session),
     activeSandbox: vi.fn(() => ({
-      messaging: { plan: makeMessagingPlan("my-assistant", ["telegram"]) },
+      messaging: { plan: makeMessagingPlan({ channels: ["telegram"] }) },
     })),
     mergeChannels: vi.fn(
       (selected: string[], recorded: string[], active: string[] | null | undefined) =>

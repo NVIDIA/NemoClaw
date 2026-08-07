@@ -3,14 +3,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  createSession,
-  filterSafeUpdates,
-  MACHINE_SNAPSHOT_VERSION,
-  normalizeSession,
-  type Session,
-  type SessionUpdates,
-} from "../../state/onboard-session";
 import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
 import {
   EmptyOnboardStateHandlerResultError,
@@ -21,56 +13,18 @@ import {
   runOnboardMachine,
 } from "./runner";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
+import {
+  MACHINE_SNAPSHOT_VERSION,
+  type Session,
+  type SessionUpdates,
+  cloneSession,
+  createSession,
+  createTestRuntime as createRuntime,
+} from "../../../../test/helpers/onboard-machine-runtime-fixture";
 
 interface RunnerContext {
   attempts: number;
   visited: string[];
-}
-
-function cloneSession(session: Session): Session {
-  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
-}
-
-function createRuntime(initialSession: Session = createSession()) {
-  let session = cloneSession(initialSession);
-  const updateSession = (mutator: (value: Session) => Session | void): Session => {
-    const next = mutator(cloneSession(session)) ?? session;
-    session = cloneSession(next);
-    return cloneSession(session);
-  };
-  const deps: OnboardRuntimeDeps = {
-    loadSession: () => cloneSession(session),
-    createSession,
-    saveSession: (next) => {
-      session = cloneSession(next);
-      return cloneSession(session);
-    },
-    updateSession,
-    markStepStarted: () => cloneSession(session),
-    markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        Object.assign(current, filterSafeUpdates(updates));
-        return current;
-      }),
-    markStepSkipped: () => cloneSession(session),
-    markStepFailed: (stepName, message) =>
-      updateSession((current) => {
-        current.steps[stepName].status = "failed";
-        current.steps[stepName].error = message ?? null;
-        return current;
-      }),
-    completeSession: (updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        Object.assign(current, filterSafeUpdates(updates));
-        current.status = "complete";
-        current.resumable = false;
-        return current;
-      }),
-    filterSafeUpdates,
-    emitEvent: () => undefined,
-    now: () => "2026-05-28T00:00:00.000Z",
-  };
-  return new OnboardRuntime(deps);
 }
 
 describe("runOnboardMachine result sequences", () => {

@@ -140,7 +140,9 @@ export function resolveRestoredPolicyRegistryState(
 /**
  * Repair agent state, restore MCP/forwarding, reconcile the registry, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts and
- * rebuild-config-hash.test.ts cover the complete/incomplete post-restore paths.
+ * rebuild-config-hash.test.ts cover the complete/incomplete post-restore paths;
+ * rebuild-post-restore-phase.test.ts covers the relock-then-forward order and
+ * the shields and forwarding recovery reports.
  */
 export async function runRebuildPostRestorePhase(
   input: RebuildPostRestorePhaseInput,
