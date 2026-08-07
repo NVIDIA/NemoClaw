@@ -155,6 +155,23 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     expect(argv).toContain("--gpus");
   });
 
+  it("escapes terminal controls in a denylisted GPU name before logging", () => {
+    const logs: string[] = [];
+    const prover = createArm64WslDockerDesktopGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      env: {},
+      release: "6.17.0-1029-nvidia",
+      procVersion: "Linux version 6.17.0-1029-nvidia",
+      runProof: () => passingProof,
+      log: (message) => logs.push(message),
+    });
+
+    expect(prover(["JMJWOA-Generic-\u001b[2J\nforged status"])).toEqual(passingProof);
+    expect(logs[0]).toContain("JMJWOA-Generic-\\u{001b}[2J\\u{000a}forged status");
+    expect(logs.every((message) => !/[\u0000-\u001f\u007f-\u009f]/u.test(message))).toBe(true);
+  });
+
   it("uses the approved immutable multi-architecture CUDA sample image on this ARM64 path", () => {
     // The proof only runs on ARM64, so the image must ship a real aarch64 CUDA
     // binary. `cuda-sample:nbody` packs an x86-64 binary in its arm64 tag and

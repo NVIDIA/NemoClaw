@@ -434,6 +434,13 @@ describe("nim", () => {
   });
 
   describe("detectGpu", () => {
+    const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
+      passed: true,
+      timedOut: false,
+      exitCode: 0,
+      diagnostic: "",
+    }));
+
     function withGenericLinuxFirmware(fn: () => void): void {
       const fs = require("fs");
       const origReadFileSync = fs.readFileSync;
@@ -684,7 +691,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu()).toBeNull();
+          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
         });
       } finally {
         restore();
@@ -707,7 +714,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu()).toBeNull();
+          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu })).toBeNull();
         });
       } finally {
         restore();
@@ -728,13 +735,6 @@ describe("nim", () => {
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
-      const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
-        passed: true,
-        timedOut: false,
-        exitCode: 0,
-        diagnostic: "",
-      }));
-
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
           const result = nimModule.detectGpu({ proveArm64WslDockerDesktopGpu });

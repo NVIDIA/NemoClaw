@@ -835,6 +835,8 @@ On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 
 When the primary memory-query probe reports a placeholder name on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload.
+NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
+Remove the native ARM64 proof exception when every supported host that uses it exposes a stable value through one of these signals and `detectNvidiaPlatform()` recognizes that value.
 Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits.
 The workload uses this command:
 

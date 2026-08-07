@@ -459,6 +459,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
         } else if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+          // The all-GPU CUDA workload proves that at least one usable device
+          // exists. It does not establish which nvidia-smi rows or capacities
+          // are genuine, so a denylisted multi-row response stays untrusted.
+          if (parsed.length !== 1) {
+            return null;
+          }
           // A denylisted `JMJWOA-Generic-*` placeholder. Both real Windows-ARM
           // N1X (WSL2 + Docker Desktop) and the Snapdragon nvidia-smi shim emit
           // this name, so the name and `/proc/driver/nvidia` are insufficient.
@@ -473,13 +479,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           if (!proof || !proof.passed) {
             return null;
           }
-          // The proof confirms a usable GPU, but it does not vouch for every
-          // row. Keep only the placeholder rows it covers plus any plausibly-
-          // named NVIDIA rows; drop unrecognized garbage so a mixed-row spoof
-          // cannot inflate totalMemoryMB with a phantom device.
-          trusted = parsed.filter(
-            (p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name) || isPlausibleNvidiaGpuName(p.name),
-          );
+          trusted = parsed;
           wslDockerDesktopGpuProofPassed = true;
         } else {
           if (!nvidiaHostLooksGenuine()) {

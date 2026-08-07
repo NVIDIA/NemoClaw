@@ -212,7 +212,8 @@ export function createArm64WslDockerDesktopGpuProver(
     // nvidia-smi shim exposes no usable CUDA device, so it still fails closed
     // wherever the proof runs (#3988/#4565).
     if (detectWsl(deps) && detectStatus(deps) !== "docker-desktop") return null;
-    const names = gpuNames.filter(Boolean).join(", ") || "generic ARM64 GPU";
+    const names =
+      gpuNames.filter(Boolean).map(escapeGpuNameForTerminal).join(", ") || "generic ARM64 GPU";
     log(`  Running bounded Docker GPU proof for ${names} (may pull a CUDA sample image)...`);
     log(`    ${WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND}`);
     const result = runProof(
@@ -245,6 +246,19 @@ export function createArm64WslDockerDesktopGpuProver(
   };
 }
 
+function escapeGpuNameForTerminal(value: string): string {
+  return [...value]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      const isC0 = codePoint <= 0x1f;
+      const isDeleteOrC1 = codePoint >= 0x7f && codePoint <= 0x9f;
+      const isLineSeparator = codePoint === 0x2028 || codePoint === 0x2029;
+      const isFormatControl = /^\p{Cf}$/u.test(character);
+      if (!isC0 && !isDeleteOrC1 && !isLineSeparator && !isFormatControl) return character;
+      return "\\u{" + codePoint.toString(16).padStart(4, "0") + "}";
+    })
+    .join("");
+}
 export function wslDockerDesktopGpuCompatibilityAction(): WslDockerDesktopGpuCompatibilityAction {
   return {
     id: "wsl_docker_desktop_gpu_compatibility",
