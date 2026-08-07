@@ -257,6 +257,14 @@ realDockerTest(
         "inspect",
         HOST_LOCAL_VLLM_CONTAINER_NAME,
       ]);
+      const rejectedInspection = spawnSync(
+        path.join(fakeBinDir, "docker"),
+        ["container", "inspect", `${HOST_LOCAL_VLLM_CONTAINER_NAME}-other`],
+        { encoding: "utf8", env: childEnv, killSignal: "SIGKILL", timeout: 5_000 },
+      );
+      expect(rejectedInspection.error).toBeUndefined();
+      expect(rejectedInspection.status).toBe(97);
+      expect(rejectedInspection.stderr).toContain("blocked mutating Docker command");
 
       progress.phase("verify Docker and filesystem capacity evidence");
       const statfsLog = fs.readFileSync(statfsLogPath, "utf8").trim();
