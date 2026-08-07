@@ -3,6 +3,8 @@
 
 /** Exercises the catalog-backed DGX Spark Express vLLM path on physical hardware. */
 
+import assert from "node:assert/strict";
+
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
 import { detectVllmProfile } from "../../../src/lib/inference/vllm.ts";
@@ -13,7 +15,7 @@ import {
   resolveLocalModelProfilePlan,
 } from "../../../src/lib/onboard/local-model-profile/plan.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { type CommandExitResult, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -73,10 +75,19 @@ function vllmProfilePlan() {
     [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
     [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
   });
-  if (plan?.runtime !== "vllm") {
-    throw new Error("the vLLM local-model profile did not resolve from the serving catalog");
-  }
+  assert(
+    plan?.runtime === "vllm",
+    "the vLLM local-model profile did not resolve from the serving catalog",
+  );
   return plan;
+}
+
+function capturedVllmContainerId(result: CommandExitResult): string | null {
+  const [candidate] =
+    result.exitCode === 0
+      ? (JSON.parse(result.stdout) as VllmContainerInspection[])
+      : ([] as VllmContainerInspection[]);
+  return candidate && /^[a-f0-9]{64}$/u.test(candidate.Id) ? candidate.Id : null;
 }
 
 async function assertVllmContainerAbsent(host: HostCliClient): Promise<void> {
@@ -96,9 +107,10 @@ async function removeExactVllmContainer(
   containerId: string,
   artifactName: string,
 ): Promise<void> {
-  if (!/^[a-f0-9]{64}$/u.test(containerId)) {
-    throw new Error("cleanup requires the exact full Docker container ID created by this test");
-  }
+  assert(
+    /^[a-f0-9]{64}$/u.test(containerId),
+    "cleanup requires the exact full Docker container ID created by this test",
+  );
   const result = await host.command(
     "bash",
     [
@@ -136,7 +148,7 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   const plan = vllmProfilePlan();
   const baseProfile = detectVllmProfile({ platform: "spark" });
-  if (!baseProfile) throw new Error("the DGX Spark vLLM base profile is unavailable");
+  assert(baseProfile, "the DGX Spark vLLM base profile is unavailable");
   const materialized = materializeHostLocalVllmSelection(
     {
       outcome: "selected",
@@ -236,10 +248,7 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
     env: e2eEnv(),
     timeoutMs: 30_000,
   });
-  if (inspectionResult.exitCode === 0) {
-    const [candidate] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
-    if (candidate && /^[a-f0-9]{64}$/u.test(candidate.Id)) createdContainerId = candidate.Id;
-  }
+  createdContainerId = capturedVllmContainerId(inspectionResult);
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);
   const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
