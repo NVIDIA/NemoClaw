@@ -462,6 +462,28 @@ resolve_onboarded_agent() {
   fi
 }
 
+# Read the API port the named sandbox was registered with. Each Hermes sandbox
+# allocates its own, so the forward must target this sandbox's port rather than
+# the default a sibling sandbox may already hold.
+resolve_hermes_api_port() {
+  local registry_file
+  registry_file="$(nemoclaw_state_dir)/sandboxes.json"
+  if [[ -f "$registry_file" ]] && command_exists node; then
+    node -e '
+      const fs = require("fs");
+      try {
+        const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        const entry = (data.sandboxes || {})[process.argv[2]] || {};
+        const port = entry.hermesApiPort;
+        const valid = Number.isInteger(port) && port >= 1024 && port <= 65535;
+        process.stdout.write(String(valid ? port : 8642));
+      } catch { process.stdout.write("8642"); }
+    ' "$registry_file" "$1" 2>/dev/null || printf "8642"
+  else
+    printf "8642"
+  fi
+}
+
 restore_onboard_forward_after_post_checks() {
   local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
   sandbox_name="$(resolve_default_sandbox_name)"
@@ -469,7 +491,7 @@ restore_onboard_forward_after_post_checks() {
   agent_display="$(agent_display_name "$agent_name")"
 
   case "$agent_name" in
-    hermes) port=8642 ;;
+    hermes) port="$(resolve_hermes_api_port "$sandbox_name")" ;;
     *) return 0 ;;
   esac
 

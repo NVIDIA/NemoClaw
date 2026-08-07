@@ -128,6 +128,7 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Use the dashboard and API remotely">
     Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
+    Both ports belong to one sandbox. A second Hermes sandbox on the same host receives the next free port in each range, so run `nemohermes <name> status` to read the ports of the sandbox you want.
     For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
 
     ```bash
@@ -242,6 +243,7 @@ Use these details when your first-run path needs more control.
     This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
 
     Hermes exposes its browser dashboard on port `18789` and forwards its OpenAI-compatible API on port `8642` for local clients.
+    A sandbox that finds either port taken receives the next free one, so the examples below use the first sandbox's ports.
     The dashboard assets are built into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
     Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
     To recover the dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned installation paths.

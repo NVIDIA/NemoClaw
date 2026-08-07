@@ -52,6 +52,7 @@ GATEWAY_PID_PATH = f"{HERMES_DIR}/runtime/gateway.pid"
 STRICT_HASH_PATH = "/etc/nemoclaw/hermes.config-hash"
 GUARD_PATH = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
+GATEWAY_PUBLIC_PORT_PATH = "/run/nemoclaw/hermes-api-port"
 SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
@@ -82,7 +83,30 @@ MAX_ERROR_MESSAGE_LENGTH = 512
 MAX_GATEWAY_PID_RECORD_BYTES = 4096
 MCP_RACE_RECOVERY_ATTEMPTS = 3
 GATEWAY_INTERNAL_PORT = 18642
-GATEWAY_PUBLIC_PORT = 8642
+
+
+def _gateway_public_port() -> int:
+    """Resolve the per-sandbox port the socat relay exposes the API on.
+
+    NemoClaw allocates this port per sandbox so two Hermes sandboxes can serve
+    inference on one host. The value reaches the entrypoint through the
+    supervisor environment, which this one-shot exec does not inherit, so the
+    entrypoint publishes it as a root-owned read-only marker. Reading anything
+    the sandbox user can write would let the agent redirect the relay probe.
+    Sandboxes built before the port became per-sandbox have no marker and keep
+    the original port.
+    """
+    try:
+        raw = Path(GATEWAY_PUBLIC_PORT_PATH).read_text(encoding="utf-8").strip()
+    except OSError:
+        return 8642
+    if not raw.isdigit():
+        return 8642
+    port = int(raw)
+    return port if 1024 <= port <= 65535 else 8642
+
+
+GATEWAY_PUBLIC_PORT = _gateway_public_port()
 BLOCKED_IPV4_NETWORKS = tuple(
     ipaddress.ip_network(cidr)
     for cidr in (
@@ -989,12 +1013,12 @@ def _gateway_health_phase(deadline: float | None = None) -> tuple[bool, str]:
     if internal_timeout <= 0 or not _gateway_health_endpoint_ready(
         GATEWAY_INTERNAL_PORT, internal_timeout
     ):
-        return False, "waiting-for-internal-health-on-18642"
+        return False, "waiting-for-internal-health"
     public_timeout = probe_timeout()
     if public_timeout <= 0 or not _gateway_health_endpoint_ready(
         GATEWAY_PUBLIC_PORT, public_timeout
     ):
-        return False, "waiting-for-public-relay-health-on-8642"
+        return False, "waiting-for-public-relay-health"
     return True, "waiting-for-stable-replacement-identity"
 
 
@@ -1020,8 +1044,8 @@ def reload_gateway() -> bool:
     re_kick_sent = False
     phase_order = {
         "waiting-for-replacement-identity": 0,
-        "waiting-for-internal-health-on-18642": 1,
-        "waiting-for-public-relay-health-on-8642": 2,
+        "waiting-for-internal-health": 1,
+        "waiting-for-public-relay-health": 2,
         "waiting-for-stable-replacement-identity": 3,
     }
     last_safe_phase = "waiting-for-replacement-identity"
@@ -1061,7 +1085,7 @@ def reload_gateway() -> bool:
             # The managed supervisor owns the public socat relay. Once the
             # replacement gateway is internally healthy, another gateway
             # signal cannot repair that relay and only creates crash churn.
-            and observed_phase != "waiting-for-public-relay-health-on-8642"
+            and observed_phase != "waiting-for-public-relay-health"
             and current is not None
             and _gateway_has_managed_parent(current[0])
             and _gateway_identity() == current

@@ -62,6 +62,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 
 INSTALLED_HELPER_PATH = "/usr/local/lib/nemoclaw/managed-gateway-control.py"
@@ -1121,6 +1122,24 @@ def _openclaw_port(reader: ProcReader, supervisor: ProcessIdentity) -> int:
     return port
 
 
+def _hermes_api_port() -> int:
+    """Read the per-sandbox port the OpenAI-compatible API is exposed on.
+
+    The entrypoint publishes the allocated port as a root-owned read-only
+    marker so readiness probes target this sandbox's relay rather than a
+    sibling sandbox's. Sandboxes built before the port became per-sandbox have
+    no marker and keep the original port.
+    """
+    try:
+        raw = Path("/run/nemoclaw/hermes-api-port").read_text(encoding="utf-8").strip()
+    except OSError:
+        return 8642
+    if not raw.isdigit():
+        return 8642
+    port = int(raw)
+    return port if 1024 <= port <= 65535 else 8642
+
+
 def _agent_spec(
     name: str, reader: ProcReader, supervisor: ProcessIdentity
 ) -> AgentSpec:
@@ -1128,7 +1147,7 @@ def _agent_spec(
         return AgentSpec(
             name="hermes",
             port=18642,
-            readiness_checks=((8642, "/health"),),
+            readiness_checks=((_hermes_api_port(), "/health"),),
         )
     return AgentSpec(name="openclaw", port=_openclaw_port(reader, supervisor))
 

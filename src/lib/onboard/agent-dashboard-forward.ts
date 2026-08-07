@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { DASHBOARD_PORT } from "../core/ports";
+import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../core/ports";
 import {
   type DashboardRuntimeAgent,
   getAgentDeclaredForwardPorts,
@@ -9,6 +9,7 @@ import {
   isValidForwardPort,
   shouldManageDashboardForAgent,
 } from "./dashboard-runtime";
+import { resolveOnboardHermesApiPort } from "./hermes-api-port";
 
 export type EnsureDashboardForward = (
   sandboxName: string,
@@ -30,6 +31,8 @@ export function ensureAgentDashboardForward(options: {
   ensureDashboardForward: EnsureDashboardForward;
   chatUiUrl?: string;
   controlUiPort?: number;
+  /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
+  hermesApiPort?: number | null;
   preserveForwardPorts?: readonly (number | null | undefined)[];
   warn?: (message: string) => void;
 }): number {
@@ -39,6 +42,7 @@ export function ensureAgentDashboardForward(options: {
     ensureDashboardForward,
     chatUiUrl,
     controlUiPort,
+    hermesApiPort,
     preserveForwardPorts = [],
     warn = (message: string) => console.warn(message),
   } = options;
@@ -54,9 +58,15 @@ export function ensureAgentDashboardForward(options: {
     usesFixedApiPort && agent.dashboardUi && isValidForwardPort(controlUiPort)
       ? controlUiPort
       : null;
-  const declaredPorts = getAgentDeclaredForwardPorts(agent).filter(
-    (port) => port !== declaredPrimaryPort || port === agentDashboardPort,
-  );
+  // The manifest names the agent's default API port. This sandbox owns its own,
+  // so forward the allocated port instead of the sibling sandbox's default.
+  const resolveDeclaredPort = (port: number): number =>
+    port === HERMES_OPENAI_API_PORT
+      ? (hermesApiPort ?? resolveOnboardHermesApiPort(sandboxName, { warn }))
+      : port;
+  const declaredPorts = getAgentDeclaredForwardPorts(agent)
+    .filter((port) => port !== declaredPrimaryPort || port === agentDashboardPort)
+    .map(resolveDeclaredPort);
   const preservePorts = [
     ...new Set([
       agentDashboardPort,

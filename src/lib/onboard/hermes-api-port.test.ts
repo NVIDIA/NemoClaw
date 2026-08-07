@@ -1,0 +1,123 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  findAvailableHermesApiPort,
+  HERMES_API_PORT_ENV,
+  readHermesApiPort,
+  resolveOnboardHermesApiPort,
+  resolveSandboxHermesApiPort,
+  retargetHermesApiPortInUrl,
+} from "./hermes-api-port";
+
+const noneBound = () => false;
+
+function forwardList(rows: string[]): string {
+  return ["SANDBOX BIND PORT PID STATUS", ...rows].join("\n");
+}
+
+describe("readHermesApiPort", () => {
+  it("falls back to the range start when unset", () => {
+    expect(readHermesApiPort({})).toBe(8642);
+  });
+
+  it("rejects a value outside the valid port range", () => {
+    expect(() => readHermesApiPort({ [HERMES_API_PORT_ENV]: "80" })).toThrow(/must be an integer/);
+  });
+});
+
+describe("findAvailableHermesApiPort", () => {
+  it("keeps the preferred port when no sandbox holds it", () => {
+    expect(findAvailableHermesApiPort("beta", 8642, "", noneBound, new Map())).toBe(8642);
+  });
+
+  it("skips a port another sandbox already forwards", () => {
+    const forwards = forwardList(["alpha 127.0.0.1 8642 101 running"]);
+    expect(findAvailableHermesApiPort("beta", 8642, forwards, noneBound, new Map())).toBe(8643);
+  });
+
+  it("keeps a port this sandbox already owns", () => {
+    const forwards = forwardList(["beta 127.0.0.1 8643 101 running"]);
+    expect(findAvailableHermesApiPort("beta", 8643, forwards, noneBound, new Map())).toBe(8643);
+  });
+
+  it("skips a port held by a sandbox on another gateway", () => {
+    const occupied = new Map([["8642", "alpha (gateway 9090)"]]);
+    expect(findAvailableHermesApiPort("beta", 8642, "", noneBound, occupied)).toBe(8643);
+  });
+
+  it("reports the occupants when the range is exhausted", () => {
+    expect(() => findAvailableHermesApiPort("beta", 8642, "", () => true, new Map())).toThrow(
+      /All Hermes API ports in range 8642-8652 are occupied/,
+    );
+  });
+});
+
+describe("resolveOnboardHermesApiPort", () => {
+  it("prefers an explicit environment value and republishes it", () => {
+    const env = { [HERMES_API_PORT_ENV]: "8650" };
+    expect(resolveOnboardHermesApiPort("beta", { env, getSandbox: () => undefined })).toBe(8650);
+    expect(env[HERMES_API_PORT_ENV]).toBe("8650");
+  });
+
+  it("prefers the registered port over a fresh allocation", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const findAvailablePort = vi.fn(() => 8644);
+    expect(
+      resolveOnboardHermesApiPort("beta", {
+        env,
+        getSandbox: () => ({ hermesApiPort: 8643 }),
+        findAvailablePort,
+      }),
+    ).toBe(8643);
+    expect(findAvailablePort).not.toHaveBeenCalled();
+    expect(env[HERMES_API_PORT_ENV]).toBe("8643");
+  });
+
+  it("publishes a fresh allocation so later consumers agree on it", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const warn = vi.fn();
+    expect(
+      resolveOnboardHermesApiPort("beta", {
+        env,
+        getSandbox: () => undefined,
+        findAvailablePort: () => 8644,
+        warn,
+      }),
+    ).toBe(8644);
+    expect(env[HERMES_API_PORT_ENV]).toBe("8644");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Using port 8644 instead"));
+  });
+});
+
+describe("resolveSandboxHermesApiPort", () => {
+  it("keeps the default for a sandbox registered without a port", () => {
+    expect(resolveSandboxHermesApiPort({})).toBe(8642);
+  });
+
+  it("uses the registered port", () => {
+    expect(resolveSandboxHermesApiPort({ hermesApiPort: 8645 })).toBe(8645);
+  });
+});
+
+describe("retargetHermesApiPortInUrl", () => {
+  it("retargets a manifest URL at the sandbox's own port", () => {
+    expect(retargetHermesApiPortInUrl("http://localhost:8642/health", 8643)).toBe(
+      "http://localhost:8643/health",
+    );
+  });
+
+  it("leaves a URL that names another port alone", () => {
+    expect(retargetHermesApiPortInUrl("http://localhost:18789/health", 8643)).toBe(
+      "http://localhost:18789/health",
+    );
+  });
+
+  it("leaves the URL alone for a sandbox on the default port", () => {
+    expect(retargetHermesApiPortInUrl("http://localhost:8642/health", 8642)).toBe(
+      "http://localhost:8642/health",
+    );
+  });
+});

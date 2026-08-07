@@ -3138,7 +3138,8 @@ openshell forward list                       # shows the host bind for each forw
 curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint answers
 ```
 
-If `openshell forward list` does not show port `8642`, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing.
+If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing.
+Recovery targets each sandbox's own ports. A second Hermes sandbox on the same host receives the next free API port, so check `nemohermes <name> status` before assuming a missing `8642` row belongs to the sandbox you are debugging.
 
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 

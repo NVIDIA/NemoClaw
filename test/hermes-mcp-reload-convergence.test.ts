@@ -38,7 +38,7 @@ module._gateway_has_managed_parent = lambda pid: True
 module._gateway_health_phase = lambda deadline=None: (
     (True, "waiting-for-stable-replacement-identity")
     if len(signals) >= 2
-    else (False, "waiting-for-internal-health-on-18642")
+    else (False, "waiting-for-internal-health")
 )
 module.time.monotonic = lambda: clock["now"]
 def sleep(seconds):
@@ -273,8 +273,8 @@ print(json.dumps({"internal": internal, "public": public, "stable": stable}))
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      internal: [false, "waiting-for-internal-health-on-18642"],
-      public: [false, "waiting-for-public-relay-health-on-8642"],
+      internal: [false, "waiting-for-internal-health"],
+      public: [false, "waiting-for-public-relay-health"],
       stable: [true, "waiting-for-stable-replacement-identity"],
     });
   });
@@ -296,7 +296,7 @@ def identity():
     return (4242, 99) if identity_calls["count"] == 1 else (4243, 100)
 def health_phase(deadline=None):
     clock["now"] = deadline
-    return False, "waiting-for-internal-health-on-18642"
+    return False, "waiting-for-internal-health"
 module._gateway_identity = identity
 module._gateway_health_phase = health_phase
 module._gateway_has_managed_parent = lambda pid: True
@@ -318,7 +318,7 @@ else:
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       error:
-        "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-internal-health-on-18642; re-kick attempted: no; re-kick sent: no)",
+        "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-internal-health; re-kick attempted: no; re-kick sent: no)",
       signals: [[4242, "SIGUSR1"]],
     });
   });
@@ -352,8 +352,8 @@ def run_case(name):
         return (4243, 100)
 
     phases = {
-        "internal": (False, "waiting-for-internal-health-on-18642"),
-        "public": (False, "waiting-for-public-relay-health-on-8642"),
+        "internal": (False, "waiting-for-internal-health"),
+        "public": (False, "waiting-for-public-relay-health"),
         "stable": (True, "waiting-for-stable-replacement-identity"),
     }
     module._gateway_identity = identity
@@ -384,7 +384,7 @@ print(json.dumps({name: run_case(name) for name in (
       },
       internal: {
         error:
-          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-internal-health-on-18642; re-kick attempted: yes; re-kick sent: yes)",
+          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-internal-health; re-kick attempted: yes; re-kick sent: yes)",
         signals: [
           [4242, "SIGUSR1"],
           [4243, "SIGUSR1"],
@@ -392,7 +392,7 @@ print(json.dumps({name: run_case(name) for name in (
       },
       public: {
         error:
-          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-public-relay-health-on-8642; re-kick attempted: no; re-kick sent: no)",
+          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-public-relay-health; re-kick attempted: no; re-kick sent: no)",
         signals: [[4242, "SIGUSR1"]],
       },
       stable: {

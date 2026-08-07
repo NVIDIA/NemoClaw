@@ -170,8 +170,30 @@ else
   fi
 fi
 
-if [ "$_dashboard_port" -eq 8642 ]; then
-  echo "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API" >&2
+# The API port is a per-sandbox host resource: the host forwards the same
+# number it is exposed on here, so two sandboxes on one host need two values.
+# NemoClaw allocates the port and passes it in; the default keeps sandboxes
+# built before the port became per-sandbox on their original port.
+_api_port_raw="${NEMOCLAW_HERMES_API_PORT:-}"
+if [ -z "$_api_port_raw" ]; then
+  PUBLIC_PORT=8642
+else
+  PUBLIC_PORT="$(printf '%s' "$_api_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _api_port_valid=1
+  case "$PUBLIC_PORT" in
+    *[!0-9]* | '') _api_port_valid=0 ;;
+  esac
+  if [ "$_api_port_valid" -eq 1 ] && { [ "$PUBLIC_PORT" -lt 1024 ] || [ "$PUBLIC_PORT" -gt 65535 ]; }; then
+    _api_port_valid=0
+  fi
+  if [ "$_api_port_valid" -ne 1 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_HERMES_API_PORT='${NEMOCLAW_HERMES_API_PORT}' - must be an integer between 1024 and 65535" >&2
+    exit 1
+  fi
+fi
+
+if [ "$_dashboard_port" -eq "$PUBLIC_PORT" ]; then
+  echo "[SECURITY] Invalid Hermes dashboard port ${PUBLIC_PORT} - reserved for the Hermes OpenAI-compatible API" >&2
   exit 1
 fi
 
@@ -181,7 +203,6 @@ else
   CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_dashboard_port}}"
 fi
 
-PUBLIC_PORT=8642
 # Hermes binds the API server to 127.0.0.1. Run it on an internal port and
 # use socat to expose the OpenAI-compatible API on PUBLIC_PORT.
 INTERNAL_PORT=18642
@@ -3285,6 +3306,15 @@ install -d -m 0755 -o root -g root /run/nemoclaw
 printf '%s\n' 'root-separated' >/run/nemoclaw/hermes-root-lifecycle
 chown root:root /run/nemoclaw/hermes-root-lifecycle
 chmod 0444 /run/nemoclaw/hermes-root-lifecycle
+
+# SECURITY: publish the resolved API port as a root-owned read-only marker.
+# The port reaches this entrypoint through the supervisor's environment, which
+# a later one-shot `openshell sandbox exec` does not inherit. Helpers that probe
+# the public relay read this marker instead. It must stay unwritable by the
+# sandbox user, or the agent could redirect those probes at another port.
+printf '%s\n' "$PUBLIC_PORT" >/run/nemoclaw/hermes-api-port
+chown root:root /run/nemoclaw/hermes-api-port
+chmod 0444 /run/nemoclaw/hermes-api-port
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

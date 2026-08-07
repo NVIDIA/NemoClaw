@@ -962,8 +962,10 @@ describe("managed startup profile", () => {
 
   it.each([
     ["publicPort", 8642],
+    ["publicPort", 8652],
     ["publicPort", 18_642],
     ["internalPort", 8642],
+    ["internalPort", 8652],
     ["internalPort", 18_642],
   ] as const)("rejects Hermes dashboard %s collisions with reserved API port %i", (field, port) => {
     expect(() =>
@@ -971,7 +973,7 @@ describe("managed startup profile", () => {
         ...HERMES_PROFILE,
         dashboard: { ...HERMES_PROFILE.dashboard, [field]: port },
       }),
-    ).toThrow(/reserved API ports 8642 or 18642/);
+    ).toThrow(/reserved API ports 8642-8652 or 18642/);
   });
 
   it.each([
