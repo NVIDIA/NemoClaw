@@ -71,15 +71,19 @@ NemoClaw accepts canonical HTTPS MCP URLs and writes the credential placeholder 
 
 The MCP integration pins its OpenShell DNS enforcement contract to [`NVIDIA/OpenShell@8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032`](https://github.com/NVIDIA/OpenShell/tree/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032).
 
-OpenShell uses one socket-address list throughout resolution, validation, and connection:
+With `proxy_connect_by_hostname` disabled, OpenShell uses one socket-address list throughout resolution, validation, and connection:
 
 - [`crates/openshell-supervisor-network/src/proxy.rs:3030-3055`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L3030-L3055) produces the list.
 - [`crates/openshell-supervisor-network/src/proxy.rs:3060-3115`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L3060-L3115) validates every address.
 - [`crates/openshell-supervisor-network/src/proxy.rs:3130-3211`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L3130-L3211) connects through the validated list.
 
 The CONNECT path passes that validated connector to the direct or operator-configured upstream dial path.
-The explicit HTTP-forward path carries the same connector from [`crates/openshell-supervisor-network/src/proxy.rs:4650-4656`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L4650-L4656) to [`crates/openshell-supervisor-network/src/proxy.rs:4697-4705`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L4697-L4705).
-There is no second hostname resolution between validation and connection in either path.
+By default, direct connections and corporate-proxy CONNECT requests use the validated address list at [`crates/openshell-supervisor-network/src/proxy.rs:3179-3211`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L3179-L3211).
+The explicit HTTP-forward path carries the same connector from [`crates/openshell-supervisor-network/src/proxy.rs:4650-4656`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L4650-L4656) into the actual connection at [`crates/openshell-supervisor-network/src/proxy.rs:4706-4711`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L4706-L4711).
+
+The exception is OpenShell's operator-controlled `proxy_connect_by_hostname` option.
+When enabled, OpenShell sends the requested hostname to the corporate proxy instead of the validated address, which reopens proxy-side DNS resolution; the upstream source records that residual risk at [`crates/openshell-supervisor-network/src/proxy.rs:3168-3200`](https://github.com/NVIDIA/OpenShell/blob/8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032/crates/openshell-supervisor-network/src/proxy.rs#L3168-L3200).
+NemoClaw does not enable or prohibit that host-level OpenShell option, so operators who require the pinned-address guarantee must leave it disabled and ensure their gateway configuration does not enable it.
 
 ### Stable OpenShell 0.0.99 Limitations
 

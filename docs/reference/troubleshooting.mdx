@@ -806,7 +806,7 @@ $$nemoclaw <name> rebuild --yes
 
 ### Invalid sandbox name
 
-Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Sandbox names must use 1 to 19 characters, be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 The CLI rejects names that do not match these rules.
 It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
@@ -1669,7 +1669,7 @@ The reminder is shown once per top-level interactive session, and only when all 
 Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
 The reminder names the sandbox when NemoClaw receives a valid sandbox name during sandbox creation.
 If no valid name is available, it shows `<name>`; run `$$nemoclaw list` to see your sandbox names.
-If the reported sandbox name contains characters that are not valid in a sandbox name (uppercase letters, underscores, control characters, and similar) or exceeds 63 characters, the reminder shows the `<name>` placeholder for safety rather than echoing the untrusted value.
+If the reported sandbox name contains characters that are not valid in a sandbox name (uppercase letters, underscores, control characters, and similar) or exceeds 19 characters, the reminder shows the `<name>` placeholder for safety rather than echoing the untrusted value.
 The reminder is intentionally proactive: the denial itself is surfaced by the OpenShell proxy, so the `curl`/`git` error text is left unchanged and the reminder points you to the logs instead.
 
 To see which rule denied the request, read the merged logs from the host:

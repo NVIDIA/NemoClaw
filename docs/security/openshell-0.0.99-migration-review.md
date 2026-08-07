@@ -113,6 +113,8 @@ than enabling optional upstream behavior implicitly.
 | `OS99-10` | OCI WorkingDir and image-user metadata | Driver-owned values remain under the runtime-control boundary. |
 | `OS99-11` | System CA root mode | Not enabled implicitly; current CA-policy tests remain required. |
 | `OS99-12` | Podman lifecycle changes | Podman exact-version live coverage remains an acceptance gate. |
+| `OS99-13` | Inference status heading changed from `Gateway inference:` to `Inference:` | The parser accepts both headings, with focused regression coverage for the exact v0.0.99 output. |
+| `OS99-14` | Routable sandbox names are capped at 19 characters | NemoClaw's canonical validation uses the same 19-character limit, and generated activation names fit it. Exact all-agent activation remains a final acceptance gate. |
 
 An unresolved critical or high concern blocks the upgrade. Test selection cannot waive a concern;
 conditional skips and expected failures do not count as qualification evidence.

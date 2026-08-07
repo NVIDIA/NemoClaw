@@ -22,7 +22,10 @@
 // or provider identifier, or both grammars are enforced by shared upstream
 // contracts.
 
-export const NAME_MAX_LENGTH = 63;
+// OpenShell v0.0.99 routes sandbox and workspace identities through labels
+// capped at 19 characters. Keep NemoClaw's canonical sandbox-name boundary at
+// that upstream limit so invalid creates fail before any gateway mutation.
+export const NAME_MAX_LENGTH = 19;
 export const PROVIDER_NAME_MAX_LENGTH = 128;
 
 // RFC 1035 label: starts with a lowercase letter, then lowercase

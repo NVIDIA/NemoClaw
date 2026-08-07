@@ -678,7 +678,7 @@ API-key mode is inference-only and does not enable managed Nous tool gateways.
 </AgentOnly>
 
 The wizard prompts for a sandbox name.
-Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Names must be 1 to 19 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 The CLI rejects names that do not match these rules.
 It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant`.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
@@ -861,7 +861,7 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.
-The same name format and reserved-name rules that the wizard enforces apply here too. Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+The same name format and reserved-name rules that the wizard enforces apply here too. Names must be 1 to 19 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
 ```bash

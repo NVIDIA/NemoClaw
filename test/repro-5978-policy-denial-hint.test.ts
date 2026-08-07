@@ -239,7 +239,7 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
   });
 
   it("falls back to <name> when OPENSHELL_SANDBOX exceeds the 63-char name limit", () => {
-    // NAME_MAX_LENGTH is 63; an over-length value must not be rendered into
+    // NAME_MAX_LENGTH matches OpenShell's routable-name limit; an over-length value must not be rendered into
     // the copyable command (it could never be a real sandbox name).
     const tooLong = "a".repeat(64);
     const { stdout, status } = gate({ OPENSHELL_SANDBOX: tooLong });
