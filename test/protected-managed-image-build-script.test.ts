@@ -344,7 +344,7 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("imports each agent cache and disables RUN network access", () => {
+  it("imports locked seeds, reuses safe agent caches, and disables RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
     const sourceMessagingSeed = path.join(
@@ -361,10 +361,13 @@ describe("protected managed-image build-cache boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      expect(recordedBuildInvocation(agent)).toContain("--network none");
+    }
+    expect(recordedBuildInvocation("openclaw")).not.toContain("--cache-from");
+    for (const agent of ["hermes", "langchain-deepagents-code"]) {
       expect(recordedBuildInvocation(agent)).toContain(
         `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
       );
-      expect(recordedBuildInvocation(agent)).toContain("--network none");
     }
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");

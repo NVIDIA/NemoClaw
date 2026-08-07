@@ -221,12 +221,14 @@ build_agent() {
   fi
   if [[ -n "$cache_from" ]]; then
     local cache_source="$cache_from/$agent"
-    cache_args+=(--cache-from "type=local,src=${cache_source}" --network none)
+    cache_args+=(--network none)
     if [[ "$agent" == "openclaw" ]]; then
       # The exported cache is produced before the locked npm seeds are overlaid.
-      # Rebuild OpenClaw without cached source layers so BuildKit cannot reuse
-      # empty-seed COPY results during the network-disabled GPU qualification.
+      # Do not import its layer graph: some BuildKit versions still reuse
+      # empty-seed COPY results when --no-cache and --cache-from are combined.
       cache_args+=(--no-cache)
+    else
+      cache_args+=(--cache-from "type=local,src=${cache_source}")
     fi
   fi
 
