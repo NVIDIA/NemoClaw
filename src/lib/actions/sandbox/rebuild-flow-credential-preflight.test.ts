@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
@@ -57,26 +58,11 @@ function diagnostics(harness: Harness): string {
   return harness.errorSpy.mock.calls.flat().map(String).join("\n");
 }
 
-function makeMessagingPlan() {
-  return {
-    schemaVersion: 1,
+function makeStagedHermesMessagingPlan() {
+  return makeMessagingPlan({
     sandboxName: "alpha",
     agent: "hermes",
-    workflow: "onboard",
-    channels: [
-      {
-        channelId: "discord",
-        displayName: "discord",
-        authMode: "token-paste",
-        active: true,
-        selected: true,
-        configured: true,
-        disabled: false,
-        inputs: [],
-        hooks: [],
-      },
-    ],
-    disabledChannels: [],
+    channels: ["discord"],
     credentialBindings: [
       {
         channelId: "discord",
@@ -89,12 +75,7 @@ function makeMessagingPlan() {
         credentialHash: "discord-bot-token-hash",
       },
     ],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
+  });
 }
 
 describe("rebuildSandbox flow: credential preflight", () => {
@@ -349,7 +330,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
   });
 
   it("copies the staged Hermes messaging plan into the rebuild resume session", async () => {
-    const plan = makeMessagingPlan();
+    const plan = makeStagedHermesMessagingPlan();
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         agent: "hermes",

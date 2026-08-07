@@ -56,11 +56,13 @@ Before asking for the release confirmation phrase, build and show an evidence le
 - Require every declared `RELEASE_E2E_ACTIVATION_PATH` to exist at the candidate SHA. A missing path is a preflight failure.
 - Require the workflow-produced trusted dispatch receipt to bind the accepted run candidate SHA, run ID, attempt, and selector inputs.
 - Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence for the candidate SHA.
-- Require one completed, successful full workflow run that selects every workflow E2E, including `Exact staging Brev Launchable`.
+- Require one completed, successful full workflow run for all default-selected workflow E2E jobs and the full-mode additions, including `Exact staging Brev Launchable`.
+- Require the trusted dispatch receipt to record `allowJetsonRunnerQueue: false` and `allowDgxSparkRunnerQueue: false`.
+- Exclude `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` from the required denominator.
 - Require the trusted dispatch receipt to bind the workflow run and an attempt no later than the run's latest attempt. The receipt must record empty selectors and `include_staging_brev_launchable=true`.
 - Require the Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
 - Require the cleanup receipt to identify the qualified workspace and report `ABSENT`.
-- Every E2E execution declared by the workflow must have at least one completed, successful execution for the candidate SHA.
+- Every E2E execution selected by the accepted dispatch must have at least one completed, successful execution for the candidate SHA.
 - Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
 - Successful evidence may accumulate across rerun attempts of that workflow run. Evidence from another workflow run does not satisfy the ledger. A later failure does not erase an earlier successful execution for the same test and SHA.
 - Skipped, unexecuted, queued, in-progress, cancelled, and failing results do not count as successful evidence.

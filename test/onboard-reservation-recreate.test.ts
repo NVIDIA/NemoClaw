@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { describe, it } from "vitest";
+import { describe, it, onTestFinished } from "vitest";
+import {
+  createOnboardProcessWorkspace,
+  runOnboardProcess,
+  trailingJsonPayload,
+  workspaceEnv,
+} from "./helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "..");
@@ -35,9 +39,9 @@ describe("onboard sandbox recreate reservation safety", () => {
     reservationSessionId,
     expectedRemoval,
   }) => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reservation-survives-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "reservation-survives.js");
+    const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
+    onTestFinished(() => workspace.remove());
+    const scriptPath = workspace.path("reservation-survives.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
@@ -45,8 +49,7 @@ describe("onboard sandbox recreate reservation safety", () => {
       path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
     );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(workspace.binDir);
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -132,30 +135,21 @@ const { createSandbox } = require(${onboardPath});
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    const result = runOnboardProcess([scriptPath], {
+      env: workspaceEnv(workspace, {
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
-      },
+      }),
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
+    const payload = trailingJsonPayload<{
+      sandboxName: string;
+      events: Array<{ kind: string; cmd?: string; name?: string }>;
+    }>(result.stdout);
     assert.equal(payload.sandboxName, "my-assistant");
 
-    const events = payload.events as Array<{ kind: string; cmd?: string; name?: string }>;
+    const events = payload.events;
     const removedReservation = events.some(
       (e) => e.kind === "removeSandbox" && e.name === "my-assistant",
     );

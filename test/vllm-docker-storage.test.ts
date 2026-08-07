@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 
 import { expect } from "vitest";
 
+import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../src/lib/inference/serving/vllm-host-local-lifecycle";
 import { detectVllmProfile } from "../src/lib/inference/vllm";
 import { imageStorageRequirementBytes } from "../src/lib/inference/vllm-storage";
 import { test } from "./e2e/fixtures/workflow-e2e-test.ts";
@@ -51,8 +52,11 @@ appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify(args) + "\\n");
 const command = ["container", "image"].includes(args[0])
   ? args.slice(0, 2).join(" ")
   : args[0];
-const allowed = new Set(["container ls", "image inspect", "info"]);
-if (!allowed.has(command)) {
+const allowed = new Set(["container inspect", "container ls", "image inspect", "info"]);
+const expectedContainerInspection =
+  command !== "container inspect" ||
+  (args.length === 3 && args[2] === ${JSON.stringify(HOST_LOCAL_VLLM_CONTAINER_NAME)});
+if (!allowed.has(command) || !expectedContainerInspection) {
   process.stderr.write("blocked mutating Docker command: " + args.join(" ") + "\\n");
   process.exit(97);
 }
@@ -246,8 +250,21 @@ realDockerTest(
         .map((line) => JSON.parse(line) as string[]);
       installDockerCommands = dockerCommands.map((args) => args.slice(0, 2).join(" "));
       expect(new Set(installDockerCommands)).toEqual(
-        new Set(["container ls", "image inspect", "info --format"]),
+        new Set(["container inspect", "container ls", "image inspect", "info --format"]),
       );
+      expect(dockerCommands).toContainEqual([
+        "container",
+        "inspect",
+        HOST_LOCAL_VLLM_CONTAINER_NAME,
+      ]);
+      const rejectedInspection = spawnSync(
+        path.join(fakeBinDir, "docker"),
+        ["container", "inspect", `${HOST_LOCAL_VLLM_CONTAINER_NAME}-other`],
+        { encoding: "utf8", env: childEnv, killSignal: "SIGKILL", timeout: 5_000 },
+      );
+      expect(rejectedInspection.error).toBeUndefined();
+      expect(rejectedInspection.status).toBe(97);
+      expect(rejectedInspection.stderr).toContain("blocked mutating Docker command");
 
       progress.phase("verify Docker and filesystem capacity evidence");
       const statfsLog = fs.readFileSync(statfsLogPath, "utf8").trim();
