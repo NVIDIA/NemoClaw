@@ -41,8 +41,8 @@ describe("bestEffortForwardStopForSandbox", () => {
       ["forward", "list"],
       expect.objectContaining({ timeout: 15_000 }),
     );
-    // Caller must NOT pass ignoreError; failures should throw so the catch
-    // branch returns "list-failed" instead of running a stop with no owner data.
+    // The helper must not suppress list failures. A runner may throw or return
+    // null, but it must not convert a failed probe to empty output.
     expect(fetch).not.toHaveBeenCalledWith(
       ["forward", "list"],
       expect.objectContaining({ ignoreError: true }),
