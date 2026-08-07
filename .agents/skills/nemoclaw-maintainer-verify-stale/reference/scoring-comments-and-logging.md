@@ -342,7 +342,9 @@ GitHub does not make these calls transactional. If a Project update succeeds and
 
 Handle each failure category according to the rules below.
 
-**Install failure on the newest release tag**, reuse-check failure, instance-creation failure, or harness error: hard infrastructure failure.
+**Install failure on the newest release tag**, reuse-check failure, instance-creation failure, failure to invoke a harness, or failure to retrieve harness evidence: hard infrastructure failure.
+
+After performance evidence retrieval succeeds, fewer than 10 successful exits or numeric samples selects `verify-inconclusive`, as defined in Step 8e.
 
 - Print the error.
 - Apply no Project field or label change. Infrastructure failures must not change the verification record.
