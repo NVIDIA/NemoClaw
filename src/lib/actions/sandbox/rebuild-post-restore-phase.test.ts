@@ -291,7 +291,7 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("reports every incomplete recovery dimension in a fixed order (#8283)", async () => {
+  it("prints every incomplete OpenClaw recovery report in a fixed order (#8283)", async () => {
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).mockReturnValue(false);
@@ -301,11 +301,14 @@ describe("rebuild post-restore phase", () => {
       skipReason: "unreadable",
     } as never);
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
     const args = {
       ...input(),
       backupManifest: { backupPath: "/tmp/alpha-backup" } as never,
       restoreSucceeded: false,
       failedPresets: ["messaging-telegram"],
+      failedPresetRemovals: ["messaging-discord"],
+      policyPresetReconciliationVerified: false,
       recoveryRecreate: true,
       staleSandboxWasLocked: true,
     };
@@ -313,12 +316,18 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(args);
 
     const output = vi.mocked(console.log).mock.calls.flat().map(String).join("\n");
+    // Every incomplete-recovery report this path can emit for an OpenClaw
+    // rebuild. The Hermes gateway report is unreachable here because
+    // ensureHermesGatewayAfterStateRestore returns "not-applicable" for
+    // OpenClaw; baseline exclusions are covered by the #7194 test above.
     const ordered = [
       "State restore was incomplete",
       "Mutable config permissions were not verified",
       "Mutable OpenClaw config hash was not refreshed",
       "Messaging webhook forward was not verified",
+      "MCP bridge definitions were preserved but not fully refreshed",
       "Policy presets failed to reapply: messaging-telegram",
+      "Exact live policy reconciliation was incomplete; remove failed: messaging-discord",
       "Shields were previously enabled",
     ];
     const offsets = ordered.map((fragment) => output.indexOf(fragment));
