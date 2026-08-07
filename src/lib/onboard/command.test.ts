@@ -11,6 +11,7 @@ import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
+import { PortableInferenceSourceError } from "./experimental/portable-inference-source";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
 
@@ -481,6 +482,94 @@ describe("onboard command options", () => {
       NEMOCLAW_POLICY_MODE: "previous-mode",
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+    });
+  });
+
+  it("uses the portable hosted inference descriptor without starting local inference", async () => {
+    const env: NodeJS.ProcessEnv = {
+      S3_BUCKET: "portable-inference",
+      S3_KEY: "path/credential.b64",
+      COMPATIBLE_API_KEY: "previous-compatible-key",
+      NEMOCLAW_ENDPOINT_URL: "https://previous.example.test/v1",
+      NEMOCLAW_PREFERRED_API: "openai-responses",
+      NEMOCLAW_PROVIDER: "previous-provider",
+      NEMOCLAW_MODEL: "previous-model",
+    };
+    const observed: Record<string, string | undefined> = {};
+    const resolvePortableInferenceSource = vi.fn(() => ({
+      apiKey: "test-credential-value-1234",
+      baseUrl: "https://inference.example.test/v1",
+      model: "example/model-1",
+    }));
+
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      resolvePortableInferenceSource,
+      runOnboard: async () => {
+        for (const key of [
+          "COMPATIBLE_API_KEY",
+          "NEMOCLAW_ENDPOINT_URL",
+          "NEMOCLAW_PREFERRED_API",
+          "NEMOCLAW_PROVIDER",
+          "NEMOCLAW_MODEL",
+          "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+        ]) {
+          observed[key] = env[key];
+        }
+      },
+    });
+
+    expect(resolvePortableInferenceSource).toHaveBeenCalledWith(env);
+    expect(observed).toEqual({
+      COMPATIBLE_API_KEY: "test-credential-value-1234",
+      NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_MODEL: "example/model-1",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+    });
+    expect(env).toMatchObject({
+      S3_BUCKET: "portable-inference",
+      S3_KEY: "path/credential.b64",
+      COMPATIBLE_API_KEY: "previous-compatible-key",
+      NEMOCLAW_ENDPOINT_URL: "https://previous.example.test/v1",
+      NEMOCLAW_PREFERRED_API: "openai-responses",
+      NEMOCLAW_PROVIDER: "previous-provider",
+      NEMOCLAW_MODEL: "previous-model",
+    });
+  });
+
+  it("stops before onboarding when the portable inference descriptor cannot be resolved", async () => {
+    const env: NodeJS.ProcessEnv = {
+      S3_BUCKET: "portable-inference",
+      S3_KEY: "path/credential.b64",
+      NEMOCLAW_PROVIDER: "previous-provider",
+    };
+    const runOnboard = vi.fn();
+    const errors: string[] = [];
+
+    await expect(
+      runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env,
+        resolvePortableInferenceSource: () => {
+          throw new PortableInferenceSourceError(
+            "Portable hosted inference received an invalid descriptor.",
+          );
+        },
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(runOnboard).not.toHaveBeenCalled();
+    expect(errors).toEqual(["  Portable hosted inference received an invalid descriptor."]);
+    expect(env).toEqual({
+      S3_BUCKET: "portable-inference",
+      S3_KEY: "path/credential.b64",
+      NEMOCLAW_PROVIDER: "previous-provider",
     });
   });
 
