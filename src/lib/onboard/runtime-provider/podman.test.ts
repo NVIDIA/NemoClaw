@@ -15,7 +15,10 @@ import {
   PODMAN_SANDBOX_NAME_LABEL,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
 } from "./podman-lifecycle";
-import { createRuntimeProviderBundleRegistry } from "./registry";
+import {
+  createRuntimeProviderBundleRegistry,
+  requireRuntimeProviderHostLocalInferenceOperation,
+} from "./registry";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const CONTAINER_ID = "a".repeat(64);
@@ -195,6 +198,29 @@ describe("dormant Podman runtime provider", () => {
   it("stays outside the production-selectable registry", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  });
+
+  it("fails host-local inference before probing either Podman operation scope", () => {
+    const hostDoctor = hostDoctorEngine();
+    const sandboxLifecycle = lifecycleEngine("unsupported");
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: { hostDoctor, sandboxLifecycle },
+    });
+
+    expect(bundle.capabilities.hostLocalInference).toBe(false);
+    expect(bundle.hostLocalInference).toMatchObject({
+      providerId: "podman",
+      supported: false,
+      reason: "Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
+    });
+    expect(() =>
+      requireRuntimeProviderHostLocalInferenceOperation(bundle, "llama-cpp", { env: {} }),
+    ).toThrow(
+      "Runtime provider 'podman' does not provide the host-local-inference capability required for llama-cpp: Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
+    );
+    expect(hostDoctor.capture).not.toHaveBeenCalled();
+    expect(hostDoctor.captureHost).not.toHaveBeenCalled();
+    expect(sandboxLifecycle.capture).not.toHaveBeenCalled();
   });
 
   it("rejects a mismatched engine scope before bundle registration", () => {

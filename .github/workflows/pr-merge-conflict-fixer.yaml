@@ -14,7 +14,7 @@ permissions:
 jobs:
   scan:
     name: Scan conflicting PRs
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -44,7 +44,7 @@ jobs:
     name: Resolve PR #${{ matrix.item.pr_number }}
     needs: scan
     if: ${{ needs.scan.outputs.count != '0' }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -118,7 +118,7 @@ jobs:
       - scan
       - resolve
     if: ${{ always() && needs.scan.outputs.count != '0' }}
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: read

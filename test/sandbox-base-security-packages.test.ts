@@ -9,9 +9,8 @@ import { SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY } from "../src/lib/sandbox-base
 import {
   BASE_APT_SECURITY_HASHES,
   baseAptSecurityFunctions,
-  dockerRunCommandBetween,
-  runLoggedDockerShell,
 } from "./helpers/base-apt-security-functions";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 import { stageFixedParser, useRealPatchedParser } from "./helpers/python-parser-security-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -143,16 +142,20 @@ describe("sandbox base security packages", () => {
     const prepared = sandboxSecurityCommand(image, tmp);
 
     try {
-      const result = runLoggedDockerShell(prepared.command, tmp, [
-        "perl_base_installed=0",
-        "perl_installed=0",
-        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
-        'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-        'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-        ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
-      ]);
+      const { calls, result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
+        [
+          "perl_base_installed=0",
+          "perl_installed=0",
+          'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
+          'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+          'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+          ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+        ],
+        { timeoutMs: 15_000 },
+      );
       expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
-      const calls = fs.readFileSync(path.join(tmp, "calls.log"), "utf-8");
       expect(calls).toContain("dpkg-install");
       expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(securityInventory(architecture));
       expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(0o444);
@@ -184,17 +187,22 @@ describe("sandbox base security packages", () => {
     const prepared = completedImageSecurityCommand(image, tmp, architecture);
 
     try {
-      const result = runLoggedDockerShell(prepared.command, tmp, [
-        "perl_base_installed=1",
-        "perl_installed=1",
+      const { result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
         [
-          "stat() {",
-          `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
-          '  printf "0:0:444\\n"',
-          "}",
-        ].join("\n"),
-        ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
-      ]);
+          "perl_base_installed=1",
+          "perl_installed=1",
+          [
+            "stat() {",
+            `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+            '  printf "0:0:444\\n"',
+            "}",
+          ].join("\n"),
+          ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+        ],
+        { timeoutMs: 15_000 },
+      );
       expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -212,12 +220,17 @@ describe("sandbox base security packages", () => {
     );
 
     try {
-      const result = runLoggedDockerShell(command, tmp, [
-        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
-        ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
-      ]);
+      const { calls, result } = runLoggedDockerShell(
+        command,
+        tmp,
+        [
+          'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+          ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+        ],
+        { timeoutMs: 15_000 },
+      );
       expect(result.status).not.toBe(0);
-      expect(fs.readFileSync(path.join(tmp, "calls.log"), "utf-8")).not.toContain("dpkg-install");
+      expect(calls).not.toContain("dpkg-install");
       expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(true);
       expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(true);
     } finally {

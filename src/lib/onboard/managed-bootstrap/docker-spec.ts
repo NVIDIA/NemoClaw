@@ -112,9 +112,12 @@ const UNSUPPORTED_CONFIG_KEYS = new Set([
   "Volumes",
 ]);
 
-// Docker exposes each attach stream independently through `--attach`, so the
-// clone renderer can preserve these Config booleans exactly. Keep them in the
-// normalized launch spec and verify the stopped replacement before cutover.
+// AttachStdin/AttachStdout/AttachStderr describe the Docker client's create-time
+// attachment request, not the container's durable launch state. In particular,
+// the Docker CLI defaults stdout/stderr to true and cannot express an empty
+// attachment set, while OpenShell's Engine API create request records all three
+// as false. OpenStdin and Tty remain hash-bound below because they do affect the
+// durable container configuration.
 
 const UNSUPPORTED_HOST_CONFIG_KEYS = new Set([
   "BlkioDeviceReadBps",
@@ -164,6 +167,8 @@ const NULLABLE_HOST_CONFIG_ARRAY_KEYS = [
   "Ulimits",
   "VolumesFrom",
 ] as const;
+
+const DOCKER_DEFAULT_TMPFS_OPTIONS = new Set(["noexec", "nosuid", "nodev"]);
 
 // Docker derives ConsoleSize, MaskedPaths, and ReadonlyPaths when it creates a
 // container. They have no corresponding create flags, but the adapter inspects
@@ -286,6 +291,9 @@ function canonicalStringSet(value: unknown, label: string): string[] {
 
 function normalizedConfig(config: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...config };
+  delete normalized.AttachStdin;
+  delete normalized.AttachStdout;
+  delete normalized.AttachStderr;
   // Docker API clients may omit inactive image-only fields while older Docker
   // CLIs serialize the same defaults as null, false, or an empty collection.
   // Active values are rejected above because the clone cannot reproduce them.
@@ -295,18 +303,64 @@ function normalizedConfig(config: Record<string, unknown>): Record<string, unkno
   return normalized;
 }
 
+function normalizedStructuredMounts(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return entry;
+    const mount = { ...(entry as Record<string, unknown>) };
+    if (mount.Type !== "tmpfs") return mount;
+    if (
+      typeof mount.TmpfsOptions !== "object" ||
+      mount.TmpfsOptions === null ||
+      Array.isArray(mount.TmpfsOptions)
+    ) {
+      return mount;
+    }
+    const tmpfsOptions = { ...(mount.TmpfsOptions as Record<string, unknown>) };
+    const options = tmpfsOptions.Options;
+    if (
+      options === undefined ||
+      options === null ||
+      (Array.isArray(options) && options.length === 0) ||
+      (Array.isArray(options) &&
+        options.every(
+          (parts) =>
+            Array.isArray(parts) &&
+            parts.length === 1 &&
+            typeof parts[0] === "string" &&
+            DOCKER_DEFAULT_TMPFS_OPTIONS.has(parts[0]),
+        ))
+    ) {
+      // Docker enforces these tmpfs security options by default, but Engine
+      // inspect inconsistently reports an explicitly requested default after
+      // recreation. Bind the effective size/mode/read-only state while
+      // treating an explicit Docker default and its omission as equivalent.
+      delete tmpfsOptions.Options;
+    }
+    mount.TmpfsOptions = tmpfsOptions;
+    return mount;
+  });
+}
+
 function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
     if (normalized[key] === null) normalized[key] = [];
   }
   if (normalized.OomKillDisable === null) normalized.OomKillDisable = false;
+  // Docker's Engine API can retain an absent port-binding map as null, while
+  // `docker create` serializes the same no-bindings state as an empty object.
+  // Active bindings remain present and hash-bound.
+  if (normalized.PortBindings === null || normalized.PortBindings === undefined) {
+    normalized.PortBindings = {};
+  }
   for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
     if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
   }
   for (const key of ["CapAdd", "CapDrop"] as const) {
     if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
   }
+  if ("Mounts" in normalized) normalized.Mounts = normalizedStructuredMounts(normalized.Mounts);
   return normalized;
 }
 

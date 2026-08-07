@@ -9,6 +9,13 @@ import { describe, expect, it } from "vitest";
 
 import { isValidProxyHost, isValidProxyPort } from "../src/lib/onboard/dockerfile-patch.ts";
 import { TRUSTED_FETCH_PROXY_ENV_NAME } from "./helpers/langchain-deepagents-code-headless.ts";
+import {
+  DEFAULT_MANAGED_PROXY,
+  dcodeStateDir,
+  type ManagedProxyEndpoint,
+  makeStartScriptFixture,
+  prepareManagedProxyFixture,
+} from "./support/dcode-start-script-fixture.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const headlessCheckPath = path.join(
@@ -22,78 +29,35 @@ const headlessCheckPath = path.join(
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
-const DEFAULT_MANAGED_PROXY = { host: "10.200.0.1", port: "3128" } as const;
 const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const OBSERVABILITY_MARKER_NAME = ".nemoclaw-observability-enabled";
-const TEST_OWNER_UID = process.getuid?.() ?? 0;
 
 function observabilityMarkerPath(tempDir: string): string {
-  return path.join(tempDir, "persistent-dcode-state", OBSERVABILITY_MARKER_NAME);
+  return path.join(dcodeStateDir(tempDir), OBSERVABILITY_MARKER_NAME);
 }
 
 function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
 }
 
-function writeManagedProxyFiles(
+function makeLauncherFixtureSource(
+  source: string,
   tempDir: string,
-  managedProxy: { host: string; port: string },
-): void {
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
-  const caFile = path.join(tempDir, "trusted-ca-bundle.pem");
-  fs.rmSync(hostFile, { force: true });
-  fs.rmSync(portFile, { force: true });
-  fs.rmSync(caFile, { force: true });
-  fs.writeFileSync(hostFile, `${managedProxy.host}\n`);
-  fs.writeFileSync(portFile, `${managedProxy.port}\n`);
-  fs.writeFileSync(caFile, "trusted CA bundle\n");
-  fs.chmodSync(hostFile, 0o444);
-  fs.chmodSync(portFile, 0o444);
-  fs.chmodSync(caFile, 0o444);
-}
-
-function replaceManagedProxyFileConstants(source: string, tempDir: string): string {
-  const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
-  const entrypointEnvWrapper = path.join(
-    process.cwd(),
-    "scripts",
-    "lib",
-    "entrypoint-env-wrapper.sh",
-  );
-  fs.writeFileSync(
-    rlimitLib,
-    "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
-    "utf8",
-  );
-  return source
-    .replace(
+  managedProxy: ManagedProxyEndpoint = DEFAULT_MANAGED_PROXY,
+): string {
+  return prepareManagedProxyFixture(
+    source.replace(
       'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
       'exec "$MANAGED_DCODE_WRAPPER" "$@"',
-    )
-    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
-    .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${path.join(tempDir, "trusted-proxy-host")}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${path.join(tempDir, "trusted-proxy-port")}"`,
-    )
-    .replace(
-      'readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"',
-      `readonly MANAGED_FETCH_CA_BUNDLE_FILE="${path.join(tempDir, "trusted-ca-bundle.pem")}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${TEST_OWNER_UID}`,
-    );
+    ),
+    tempDir,
+    { managedProxy },
+  );
 }
 
 function makeLauncherProxyProbeFixture(
   tempDir: string,
-  managedProxy: { host: string; port: string } = DEFAULT_MANAGED_PROXY,
+  managedProxy: ManagedProxyEndpoint = DEFAULT_MANAGED_PROXY,
 ): string {
   const launcherPath = path.join(tempDir, "dcode-launcher.sh");
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
@@ -105,7 +69,7 @@ function makeLauncherProxyProbeFixture(
     "done",
     "",
   ].join("\n");
-  const fixture = replaceManagedProxyFileConstants(
+  const fixture = makeLauncherFixtureSource(
     readAgentFile("dcode-launcher.sh")
       .replace(
         'readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"',
@@ -116,11 +80,11 @@ function makeLauncherProxyProbeFixture(
         `readonly MANAGED_OBSERVABILITY_MARKER="${markerFile}"`,
       ),
     tempDir,
+    managedProxy,
   );
   fs.mkdirSync(path.dirname(markerFile), { recursive: true });
   fs.writeFileSync(probePath, probe, "utf8");
   fs.writeFileSync(launcherPath, fixture, "utf8");
-  writeManagedProxyFiles(tempDir, managedProxy);
   fs.chmodSync(probePath, 0o755);
   fs.chmodSync(launcherPath, 0o755);
   return launcherPath;
@@ -128,30 +92,15 @@ function makeLauncherProxyProbeFixture(
 
 function makeStartProxyProbeFixture(
   tempDir: string,
-  managedProxy: { host: string; port: string } = DEFAULT_MANAGED_PROXY,
+  managedProxy: ManagedProxyEndpoint = DEFAULT_MANAGED_PROXY,
 ): { envFile: string; ephemeralDir: string; markerFile: string; scriptPath: string } {
   const ephemeralDir = path.join(tempDir, "ephemeral-tmp");
-  const envFile = path.join(ephemeralDir, "proxy-env.sh");
   const markerFile = observabilityMarkerPath(tempDir);
-  const markerDir = path.dirname(markerFile);
-  const scriptPath = path.join(tempDir, "start.sh");
-  fs.mkdirSync(ephemeralDir);
-  const productionFixture = replaceManagedProxyFileConstants(readAgentFile("start.sh"), tempDir)
-    .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
-    .replace(
-      'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
-      `tmp="$(mktemp "${ephemeralDir}/nemoclaw-proxy-env.XXXXXX")"`,
-    )
-    .replace("local marker_dir=/sandbox/.deepagents", `local marker_dir="${markerDir}"`);
-  // macOS mv lacks GNU's --no-target-directory flag. Linux CI exercises the
-  // production command so a missing -T regression cannot be hidden here.
-  const fixture =
-    process.platform === "darwin"
-      ? productionFixture.replace('mv -fT -- "$tmp" "$target"', 'mv -f "$tmp" "$target"')
-      : productionFixture;
-  fs.writeFileSync(scriptPath, fixture, "utf8");
-  writeManagedProxyFiles(tempDir, managedProxy);
-  fs.chmodSync(scriptPath, 0o755);
+  const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
+    envDir: ephemeralDir,
+    managedProxy,
+    markerDir: path.dirname(markerFile),
+  });
   return { envFile, ephemeralDir, markerFile, scriptPath };
 }
 
@@ -200,7 +149,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     try {
       const launcherPath = path.join(tempDir, "dcode-launcher.sh");
       const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
-      const launcher = replaceManagedProxyFileConstants(
+      const launcher = makeLauncherFixtureSource(
         readAgentFile("dcode-launcher.sh").replace(
           'readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"',
           `readonly MANAGED_DCODE_WRAPPER="${wrapperPath}"`,
@@ -209,7 +158,6 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       );
       fs.writeFileSync(launcherPath, launcher, { mode: 0o755 });
       fs.writeFileSync(wrapperPath, readAgentFile("dcode-wrapper.sh"), { mode: 0o755 });
-      writeManagedProxyFiles(tempDir, DEFAULT_MANAGED_PROXY);
 
       const result = runLauncher(launcherPath, ["-n", ""], {});
 
