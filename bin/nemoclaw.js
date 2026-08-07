@@ -9,6 +9,23 @@ if (invokedAs === "nemo-deepagents") {
   process.env.NEMOCLAW_INVOKED_AS = "nemo-deepagents";
 }
 
+let topLevelLog = null;
+try {
+  topLevelLog = require("../dist/lib/cli/logger").log;
+} catch {
+  topLevelLog = null;
+}
+
+function redactFallbackMessage(message) {
+  try {
+    const { redactForLog } = require("../dist/lib/security/redact");
+    const redacted = redactForLog(message);
+    return typeof redacted === "string" ? redacted : "Command failed.";
+  } catch {
+    return message.replace(/\bnvapi-[A-Za-z0-9_-]{20,}\b/g, "<REDACTED>");
+  }
+}
+
 function handleTopLevelError(error) {
   let message = "Command failed.";
   try {
@@ -16,17 +33,20 @@ function handleTopLevelError(error) {
   } catch {
     // Keep the top-level rejection handler reliable even for values with throwing coercion hooks.
   }
+  process.exitCode = 1;
   try {
-    const { log } = require("../dist/lib/cli/logger");
-    log.error(`Error: ${message}`);
+    if (topLevelLog) {
+      topLevelLog.error(`Error: ${message}`);
+      return;
+    }
+    process.stderr.write(`Error: ${redactFallbackMessage(message)}\n`);
   } catch {
     try {
-      process.stderr.write(`Error: ${message}\n`);
+      process.stderr.write("Error: Command failed.\n");
     } catch {
-      // Do not let a broken diagnostic sink throw another top-level error.
+      // The diagnostic sink itself failed; there is nothing left to report safely.
     }
   }
-  process.exitCode = 1;
 }
 
 try {

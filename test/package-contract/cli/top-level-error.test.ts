@@ -10,6 +10,8 @@ const cliPath = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
 const dispatchPath = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "cli", "public-dispatch.js"),
 );
+const loggerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "cli", "logger.js"));
+const mainPath = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 
 function expectTopLevelError(rejection: string, expectedStderr: string): void {
   const result = spawnSync(
@@ -63,6 +65,41 @@ function expectCleanLauncherFailure(env: NodeJS.ProcessEnv, expectedMessage: str
   expect(result.stderr.split(/\r?\n/).filter(Boolean)).toEqual([expectedMessage]);
 }
 
+function expectLoggerFallbackRedaction(secret: string): void {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `const Module = require("node:module");
+const cliPath = ${cliPath};
+const loggerPath = ${loggerPath};
+const mainPath = ${mainPath};
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {
+  const resolved = Module._resolveFilename(request, parent, isMain);
+  if (resolved === loggerPath) throw new Error("logger unavailable");
+  if (resolved === mainPath) throw new Error(${JSON.stringify(`startup failed ${secret}`)});
+  return originalLoad.apply(this, arguments);
+};
+require(cliPath);`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_LOG_LEVEL: "info",
+        NEMOCLAW_DEBUG: "0",
+      },
+    },
+  );
+
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("Error: startup failed <REDACTED>\n");
+  expect(result.stderr).not.toContain(secret);
+}
+
 describe("compiled CLI top-level errors", () => {
   it("prints an Error rejection as one line without a Node.js stack (#8202)", () => {
     expectTopLevelError('new Error("Command failed.")', "Error: Command failed.\n");
@@ -90,5 +127,9 @@ describe("compiled CLI top-level errors", () => {
       { NEMOCLAW_GATEWAY_PORT: "8081" },
       'Error: Invalid port: NEMOCLAW_GATEWAY_PORT="8081" — must not overlap the llama.cpp inference default port (8081)',
     );
+  });
+
+  it("redacts credential-shaped text when the logger fallback handles a module-load error (#8202)", () => {
+    expectLoggerFallbackRedaction(`nvapi-${"a".repeat(20)}`);
   });
 });
