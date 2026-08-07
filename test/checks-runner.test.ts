@@ -25,6 +25,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the test registration boundary check", () => {
+    expect(CHECKS).toContainEqual({
+      name: "test-registration-boundary",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/test-registration-boundary.mts"],
+    });
+  });
+
   it("runs Windows command shims through cmd.exe", () => {
     expect(
       buildCheckSpawnInvocation(sampleCheck, "win32", {
