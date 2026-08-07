@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { exportHermesSession, hermesLastActive } from "../fixtures/hermes-session.ts";
 
 interface HermesCliAdapterLiveOptions {
   env: NodeJS.ProcessEnv;
+  host: HostCliClient;
   redactionValues: string[];
   sandbox: SandboxClient;
   sandboxName: string;
@@ -29,6 +31,7 @@ export function onlyNewHermesSessionId(before: Set<string>, after: Set<string>):
 
 export async function assertHermesCliAdapterLiveContract({
   env,
+  host,
   redactionValues,
   sandbox,
   sandboxName,
@@ -118,6 +121,29 @@ export async function assertHermesCliAdapterLiveContract({
       timeoutMs: 60_000,
     },
   );
+
+  const deleteSession = await host.command(
+    "nemohermes",
+    [sandboxName, "sessions", "delete", seedSessionId],
+    {
+      artifactName: "phase-4-issue-8301-delete-session",
+      env,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  expect(deleteSession.exitCode, resultText(deleteSession)).toBe(0);
+  const sessionsAfterDelete = await host.command("nemohermes", [sandboxName, "sessions", "list"], {
+    artifactName: "phase-4-issue-8301-sessions-after-delete",
+    env,
+    redactionValues,
+    timeoutMs: 60_000,
+  });
+  expect(sessionsAfterDelete.exitCode, resultText(sessionsAfterDelete)).toBe(0);
+  expect(
+    hermesSessionIds(resultText(sessionsAfterDelete)).has(seedSessionId),
+    stripAnsi(resultText(sessionsAfterDelete)),
+  ).toBe(false);
 
   const usageFilePath = `/tmp/nemoclaw-cli-adapter-usage-${Date.now()}.json`;
   const sessionsBeforeGuardedUsage = await listDefaultSessions(
