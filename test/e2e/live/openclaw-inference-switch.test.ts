@@ -56,8 +56,7 @@ import {
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
 
-const SANDBOX_NAME =
-  process.env.NEMOCLAW_SANDBOX_NAME ?? uniqueSandboxName("e2e-openclaw-inference-switch");
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-inf-switch";
 const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
 const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
@@ -204,10 +203,6 @@ function stripAnsi(value: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function uniqueSandboxName(prefix: string): string {
-  return `${prefix}-${process.pid}-${Date.now()}`;
 }
 
 function parsePortEnv(name: string, fallback: number): number {

@@ -1570,7 +1570,16 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
         if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) {
           return false;
         }
-        return /openshell-cluster|openshell|openclaw|nemoclaw/i.test(line);
+        // `openclaw` is deliberately absent: NemoClaw's containers are
+        // `openshell-*` (cluster and sandbox) and `nemoclaw-*` (gateway compat
+        // and managed inference), so that term only ever selected the separate
+        // OpenClaw project's containers for `docker rm -f` (#8496).
+        // The whole `{{.ID}} {{.Image}} {{.Names}}` line is matched rather than
+        // the name alone. Probe containers that run with `--rm` and no
+        // `--name`, such as `hermesBaseImageSupportsMcp`, take a random Docker
+        // name. Their NemoClaw image reference is the only way to reclaim one
+        // that an interrupted run orphaned.
+        return /openshell-cluster|openshell|nemoclaw/i.test(line);
       }
       return (
         name === `openshell-cluster-${gatewayName}` ||
@@ -1597,7 +1606,11 @@ function removeDockerImages(runtime: UninstallRuntime): void {
     env: runtime.env,
   });
   const ids = splitNonEmptyLines(result.stdout)
-    .filter((line) => /openshell|openclaw|nemoclaw/i.test(line))
+    // `openclaw` is deliberately absent: NemoClaw builds no image under that
+    // name, so the term only ever selected the separate OpenClaw project's
+    // images — including any `ghcr.io/openclaw/*` pulled by an unrelated
+    // workload — for `docker rmi -f` (#8496).
+    .filter((line) => /openshell|nemoclaw/i.test(line))
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker images found`);

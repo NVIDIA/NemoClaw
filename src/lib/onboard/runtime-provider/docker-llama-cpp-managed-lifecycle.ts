@@ -271,10 +271,20 @@ function parseLabels(value: unknown): Readonly<Record<string, string>> {
   return Object.freeze(labels);
 }
 
+function parsePublishedPortBinding(value: unknown): Record<string, unknown> | null {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length !== 1) {
+    throw new Error("Docker llama.cpp container has unexpected published ports.");
+  }
+  return record(value[0], "Docker llama.cpp published port");
+}
+
 function parseInspection(
   output: string,
   contract: LlamaCppHostLocalLaunchContract,
   networkName: string,
+  hostPort: number | undefined,
+  portValidation: "exact" | "cleanup",
 ): DockerContainerInspection {
   let parsed: unknown;
   try {
@@ -308,16 +318,26 @@ function parseInspection(
     throw new Error("Docker llama.cpp container has unexpected configured ports.");
   }
   const configuredPort = record(configuredBindings[0], "Docker llama.cpp configured port");
-  if (configuredPort.HostIp !== "127.0.0.1" || configuredPort.HostPort !== "") {
+  if (configuredPort.HostIp !== "127.0.0.1") {
     throw new Error("Docker llama.cpp configured host port is not loopback-only.");
   }
-  const bindings = ports[portKey];
-  const published =
-    Array.isArray(bindings) && bindings.length === 1
-      ? record(bindings[0], "Docker llama.cpp published port")
-      : null;
+  const configuredHostPort =
+    configuredPort.HostPort === "" ? null : exactPort(configuredPort.HostPort);
+  if (portValidation === "exact" && configuredHostPort !== (hostPort ?? null)) {
+    throw new Error("Docker llama.cpp configured host port does not match its loopback binding.");
+  }
+  const published = parsePublishedPortBinding(ports[portKey]);
   if (published !== null && published.HostIp !== "127.0.0.1") {
     throw new Error("Docker llama.cpp host port is not loopback-only.");
+  }
+  const publishedHostPort = published === null ? null : exactPort(published.HostPort);
+  if (
+    portValidation === "exact" &&
+    hostPort !== undefined &&
+    publishedHostPort !== null &&
+    publishedHostPort !== hostPort
+  ) {
+    throw new Error("Docker llama.cpp published host port differs from its declared binding.");
   }
   if (!Array.isArray(source.Mounts)) {
     throw new Error("Docker llama.cpp inspection returned malformed mounts.");
@@ -386,7 +406,7 @@ function parseInspection(
     status: stateStatus,
     networkId: exactId(attached.NetworkID, "Docker attached network identity"),
     networkName,
-    hostPort: published === null ? null : exactPort(published.HostPort),
+    hostPort: publishedHostPort,
     mounts: Object.freeze(mounts),
     hardening: Object.freeze({
       user: String(config.User ?? ""),
@@ -424,6 +444,8 @@ function inspectContainer(
   target: string,
   contract: LlamaCppHostLocalLaunchContract,
   networkName: string,
+  hostPort: number | undefined,
+  portValidation: "exact" | "cleanup" = "exact",
 ): DockerContainerInspection | null {
   const result = engine.capture(["container", "inspect", target], INSPECT_TIMEOUT_MS);
   const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -434,7 +456,13 @@ function inspectContainer(
   if (!result.error && result.status === 1 && exactAbsent.test(result.stderr.trim())) {
     return null;
   }
-  return parseInspection(requireSuccess("container inspection", result), contract, networkName);
+  return parseInspection(
+    requireSuccess("container inspection", result),
+    contract,
+    networkName,
+    hostPort,
+    portValidation,
+  );
 }
 
 function currentUid(): bigint {
@@ -920,6 +948,8 @@ function rollbackExact(
     target,
     options.contract,
     options.bindings.network.name,
+    options.bindings.hostPort,
+    "cleanup",
   );
   if (container === null && record.phase === "creating" && uncertainRecoveryUnixMs !== undefined) {
     if (
@@ -935,6 +965,8 @@ function rollbackExact(
       target,
       options.contract,
       options.bindings.network.name,
+      options.bindings.hostPort,
+      "cleanup",
     );
   }
   if (container !== null) {
@@ -949,6 +981,8 @@ function rollbackExact(
         owned.id,
         options.contract,
         options.bindings.network.name,
+        options.bindings.hostPort,
+        "cleanup",
       ) !== null
     ) {
       throw new Error("Docker llama.cpp exact rollback left the owned runtime present.");
@@ -1206,6 +1240,7 @@ export function createDockerLlamaCppManagedLifecycle(
       authorized.receipt.runtime.runtimeId,
       options.contract,
       options.bindings.network.name,
+      options.bindings.hostPort,
     );
     if (inspected === null) throw new Error("Docker llama.cpp owned runtime is absent.");
     const container = requireOwnedContainer(inspected, options, authorized.journal);
@@ -1323,6 +1358,7 @@ export function createDockerLlamaCppManagedLifecycle(
         normalized.runtime.runtimeId,
         options.contract,
         options.bindings.network.name,
+        options.bindings.hostPort,
       );
       const journal = options.journalStore.load(normalized.runtime.model.generation);
       if (existing !== null || journal !== null) authorizeReceipt(normalized, true);
@@ -1338,6 +1374,7 @@ export function createDockerLlamaCppManagedLifecycle(
         normalized.runtime.runtimeId,
         options.contract,
         options.bindings.network.name,
+        options.bindings.hostPort,
       );
       if (existing === null) {
         const journal = options.journalStore.load(normalized.runtime.model.generation);
@@ -1377,6 +1414,7 @@ export function createDockerLlamaCppManagedLifecycle(
             inspected.container.id,
             options.contract,
             options.bindings.network.name,
+            options.bindings.hostPort,
           ) !== null
         ) {
           throw new Error("Docker llama.cpp removal left the exact runtime present.");
@@ -1473,6 +1511,7 @@ export function createDockerLlamaCppManagedLifecycle(
             options.bindings.containerName,
             options.contract,
             options.bindings.network.name,
+            options.bindings.hostPort,
           ) !== null
         ) {
           throw new Error("Docker llama.cpp container name is already in use.");
@@ -1554,6 +1593,7 @@ export function createDockerLlamaCppManagedLifecycle(
           options.bindings.containerName,
           options.contract,
           options.bindings.network.name,
+          options.bindings.hostPort,
         );
         if (create.error || create.status !== 0 || created === null) {
           throw new Error(
@@ -1580,6 +1620,7 @@ export function createDockerLlamaCppManagedLifecycle(
           created.id,
           options.contract,
           options.bindings.network.name,
+          options.bindings.hostPort,
         );
         if (started === null || !started.running) {
           throw new Error("Docker llama.cpp start did not leave the exact runtime running.");

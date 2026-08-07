@@ -209,6 +209,9 @@ describe("restoreSandboxBaseline (#7178)", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("Non-interactive restore requires explicit acknowledgement"),
     );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Usage: nemoclaw <sandbox> policy restore <key>"),
+    );
     expect(promptMock).not.toHaveBeenCalled();
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
@@ -275,6 +278,14 @@ describe("restoreSandboxBaseline (#7178)", () => {
     getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     promptMock.mockResolvedValue("n");
     await restoreSandboxBaseline("alpha", { key: "nous_research" });
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("reports the cancellation when the interactive confirmation is declined", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    promptMock.mockResolvedValue("n");
+    await restoreSandboxBaseline("alpha", { key: "nous_research" });
+    expect(console.log).toHaveBeenCalledWith("  Cancelled.");
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
 

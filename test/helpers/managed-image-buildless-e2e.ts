@@ -562,7 +562,7 @@ function runManagedOnboard(
   const home = path.join(fixture, "home");
   const script = path.join(fixture, "managed-onboard.cjs");
   const dockerLog = path.join(fixture, "docker.log");
-  const sandboxName = `managed-${agent.replaceAll(/[^a-z0-9]/gu, "-")}`;
+  const sandboxName = agent === "langchain-deepagents-code" ? "managed-dcode" : `managed-${agent}`;
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(home, { recursive: true });
   writeRuntimeStubs(fakeBin, dockerLog);
