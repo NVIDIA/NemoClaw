@@ -177,6 +177,10 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+    ensureManagedLlamaCppResumeReady(
+      provider: string | null | undefined,
+      sandboxName: string | null | undefined,
+    ): Promise<boolean>;
     isResumeProviderSurfaceReady(
       gatewayName: string,
       provider: string | null | undefined,
@@ -512,6 +516,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         credentialEnv,
         preferredInferenceApi,
       });
+      // A completed provider-selection checkpoint is not proof that a managed
+      // host runtime survived a process or gateway restart. Recover the exact
+      // gateway-owned llama.cpp lifecycle before the selection shortcut can
+      // skip setup. The dependency is a no-op for operator-attached llama.cpp
+      // routes because those routes have no matching managed owner state.
+      await deps.ensureManagedLlamaCppResumeReady(provider, sandboxName);
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;

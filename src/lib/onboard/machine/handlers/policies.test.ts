@@ -3,128 +3,20 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import { createSession } from "../../../state/onboard-session";
 import { mergePolicyMessagingChannels } from "../../messaging-policy-presets";
-import { handlePoliciesState, type PoliciesStateOptions } from "./policies";
+import { handlePoliciesState } from "./policies";
+import {
+  basePolicyHandlerOptions as baseOptions,
+  createPolicyHandlerDeps,
+  makeMessagingPlan,
+} from "./policies-test-fixtures";
 
-type Agent = { name: string } | null;
-type WebSearchConfig = { fetchEnabled: true };
-type MessagingPlan = NonNullable<Session["messagingPlan"]>;
-type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
-
-function makeMessagingPlan(
-  sandboxName: string,
-  channels: readonly MessagingChannelId[],
-  disabledChannels: readonly MessagingChannelId[] = [],
-): MessagingPlan {
-  const disabled = new Set(disabledChannels);
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: channels.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: !disabled.has(channelId),
-      selected: true,
-      configured: true,
-      disabled: disabled.has(channelId),
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels,
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
-function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConfig>["deps"]> = {}) {
-  let session = createSession();
-  const calls = {
-    load: vi.fn(() => session),
-    activeSandbox: vi.fn(() => ({
-      messaging: { plan: makeMessagingPlan("my-assistant", ["telegram"]) },
-    })),
-    mergeChannels: vi.fn(mergePolicyMessagingChannels),
-    smoke: vi.fn(),
-    prepareResume: vi.fn(
-      (
-        _sandboxName: string,
-        options: Parameters<
-          PoliciesStateOptions<Agent, WebSearchConfig>["deps"]["preparePolicyPresetResumeSelection"]
-        >[1],
-      ) => ({
-        policyPresets: (options.recordedPolicyPresets ?? []).filter(
-          (name) => name !== "unsupported",
-        ),
-        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes(
-          "unsupported",
-        ),
-        disabledMessagingPolicyPresetApplied: false,
-        suppressedAgentRequiredPresetsLive: false,
-      }),
-    ),
-    appliedCheck: vi.fn(() => false),
-    skipped: vi.fn(),
-    recordSkip: vi.fn(async () => session),
-    startStep: vi.fn(async () => undefined),
-    setupPolicies: vi.fn(async () => ["npm"]),
-    updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
-      session = mutator(session) ?? session;
-      return session;
-    }),
-    complete: vi.fn(async () => session),
-    persistPolicies: vi.fn((_sandboxName: string, _appliedPolicyPresets: string[]) => undefined),
-  };
-  return {
-    calls,
-    deps: {
-      loadSession: calls.load,
-      getActiveSandbox: calls.activeSandbox,
-      mergePolicyMessagingChannels: calls.mergeChannels,
-      verifyCompatibleEndpointSandboxSmoke: calls.smoke,
-      preparePolicyPresetResumeSelection: calls.prepareResume,
-      arePolicyPresetsApplied: calls.appliedCheck,
-      skippedStepMessage: calls.skipped,
-      recordStateSkipped: calls.recordSkip,
-      startRecordedStep: calls.startStep,
-      setupPoliciesWithSelection: calls.setupPolicies,
-      updateSession: calls.updateSession,
-      recordStepComplete: calls.complete,
-      toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: calls.persistPolicies,
-      ...overrides,
-    },
-    setSession(next: Session) {
-      session = next;
-    },
-    getSession: () => session,
-  };
-}
-
-function baseOptions(
-  deps: PoliciesStateOptions<Agent, WebSearchConfig>["deps"],
-): PoliciesStateOptions<Agent, WebSearchConfig> {
-  return {
-    resume: false,
-    sandboxName: "my-assistant",
-    provider: "provider",
-    model: "model",
-    endpointUrl: "https://example.com/v1",
-    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    selectedMessagingChannels: [],
-    webSearchConfig: null,
-    webSearchSupported: true,
-    hermesToolGateways: [],
-    agent: null,
-    deps,
-  };
+function createDeps(overrides: Parameters<typeof createPolicyHandlerDeps>[0] = {}) {
+  return createPolicyHandlerDeps({
+    mergePolicyMessagingChannels: vi.fn(mergePolicyMessagingChannels),
+    ...overrides,
+  });
 }
 
 describe("handlePoliciesState", () => {
