@@ -15,11 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { main } from "../scripts/generate-openclaw-config.mts";
 import { resolveMaxTokensField } from "../src/lib/inference/max-tokens-field";
-import {
-  baseOpenClawGenerationEnv,
-  buildOpenClawTestEnv,
-  ensureFakeOpenClaw,
-} from "./helpers/openclaw-env-fixture";
+import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "./helpers/openclaw-env-fixture";
 
 /** Minimal env vars required for a valid config generation run. */
 const BASE_ENV = baseOpenClawGenerationEnv();

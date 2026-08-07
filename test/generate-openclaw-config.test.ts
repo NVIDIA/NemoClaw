@@ -17,12 +17,8 @@ import {
   applyMessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "./helpers/openclaw-env-fixture";
 import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
-import {
-  baseOpenClawGenerationEnv,
-  buildOpenClawTestEnv,
-  ensureFakeOpenClaw,
-} from "./helpers/openclaw-env-fixture";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.mts");
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];

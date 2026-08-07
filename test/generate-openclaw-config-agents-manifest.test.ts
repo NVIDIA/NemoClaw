@@ -21,12 +21,8 @@ import {
   applyMessagingAgentRenderToObject,
   readMessagingBuildPlanFromEnv,
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "./helpers/openclaw-env-fixture";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
-import {
-  baseOpenClawGenerationEnv,
-  buildOpenClawTestEnv,
-  ensureFakeOpenClaw,
-} from "./helpers/openclaw-env-fixture";
 
 const APPLIER_PATH = path.join(
   import.meta.dirname,
