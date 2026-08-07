@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CuaRuntimeReadiness } from "../../cua/contract";
@@ -80,15 +82,21 @@ function observationDeps(
     observeLiveAppliedPolicy: () => readiness.appliedPolicy,
     validation: {
       validateRuntimeReadiness: (_value, context) => {
-        if (
-          context.liveInference?.provider !== readiness.inference.provider ||
-          context.liveInference.model !== readiness.inference.model ||
-          context.liveProviderAuthorityDigest !== readiness.providerAuthorityDigest ||
-          context.liveAppliedPolicy?.revision !== readiness.appliedPolicy.revision ||
-          context.liveAppliedPolicy.digest !== readiness.appliedPolicy.digest
-        ) {
-          throw new Error("candidate authority changed");
-        }
+        assert.deepEqual(
+          {
+            provider: context.liveInference?.provider,
+            model: context.liveInference?.model,
+            providerAuthorityDigest: context.liveProviderAuthorityDigest,
+            appliedPolicy: context.liveAppliedPolicy,
+          },
+          {
+            provider: readiness.inference.provider,
+            model: readiness.inference.model,
+            providerAuthorityDigest: readiness.providerAuthorityDigest,
+            appliedPolicy: readiness.appliedPolicy,
+          },
+          "candidate authority changed",
+        );
         return readiness;
       },
     },
