@@ -76,6 +76,7 @@ export interface PortableDemoLifecycleDeps {
     executableFd: number,
   ) => void;
   loadManagedOllama?: () => string | null;
+  ensureGateway?: () => void;
   sleep?: (milliseconds: number) => void;
   now?: () => number;
   log?: (message: string) => void;
@@ -247,14 +248,6 @@ function loadReceipt(sandboxName: string, stateDir: string): PortableDemoLifecyc
     throw error;
   } finally {
     file.close();
-  }
-}
-
-function removeReceipt(sandboxName: string, stateDir: string): void {
-  try {
-    fs.unlinkSync(receiptPath(sandboxName, stateDir));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
 
@@ -604,13 +597,13 @@ export function installPortableDemoSandboxLifecycle(
   createdStartupArgv: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   deps: PortableDemoLifecycleDeps = {},
-): void {
-  if (!isPortableExperimentalProfile(env)) return;
+): number | null {
+  if (!isPortableExperimentalProfile(env)) return null;
   if (
     createdStartupArgv[createdStartupArgv.length - 1] !== "/usr/local/bin/nemoclaw-start" ||
     startupEnvValue(createdStartupArgv, "OPENCLAW_HOME") === null
   ) {
-    return;
+    return null;
   }
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle requires Linux");
@@ -630,6 +623,7 @@ export function installPortableDemoSandboxLifecycle(
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
   writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
+  return receipt.dashboardPort;
 }
 
 /**
@@ -649,12 +643,14 @@ export function recoverPortableDemoSandboxLifecycle(
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
 
+  deps.ensureGateway?.();
   const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
   const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
   const initialInspection = podman(["inspect", receipt.containerId]);
   if (isMissingPodmanContainer(initialInspection)) {
-    removeReceipt(sandboxName, stateDir);
-    return { kind: "not-installed" };
+    throw new Error(
+      `Portable sandbox '${sandboxName}' container '${receipt.containerId}' is temporarily unavailable; its lifecycle receipt was preserved`,
+    );
   }
   let inspection = inspectPodmanContainer(
     receipt.containerId,

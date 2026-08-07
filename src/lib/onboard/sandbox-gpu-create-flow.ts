@@ -119,6 +119,7 @@ export interface SandboxGpuCreateFlowResult {
   firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
+  portableDashboardPort: number | null;
 }
 
 /**
@@ -250,11 +251,13 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
+  let portableDashboardPort: number | null = null;
   try {
-    (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-      input.sandboxName,
-      input.sandboxStartupCommand,
-    );
+    portableDashboardPort =
+      (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+        input.sandboxName,
+        input.sandboxStartupCommand,
+      ) ?? null;
   } catch (error) {
     const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
     console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
@@ -265,5 +268,6 @@ export async function runSandboxGpuCreateFlow(
     route: gpuCreateOutcome.route,
     firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
+    portableDashboardPort,
   };
 }

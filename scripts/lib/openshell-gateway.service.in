@@ -5,12 +5,12 @@
 [Unit]
 Description=OpenShell Gateway
 Documentation=https://github.com/NVIDIA/OpenShell
-After=default.target
 
 [Service]
 Type=simple
-StateDirectory=openshell/gateway
-Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls
+StateDirectory=nemoclaw/openshell-docker-gateway
+Environment=OPENSHELL_DB_URL=sqlite:%h/.local/state/nemoclaw/openshell-docker-gateway/openshell.db
+Environment=OPENSHELL_LOCAL_TLS_DIR=%h/.local/state/nemoclaw/openshell-docker-gateway/tls
 EnvironmentFile=-%E/openshell/gateway.env
 ExecStartPre=@OPENSHELL_GATEWAY_BIN@ generate-certs --output-dir ${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal
 ExecStart=@OPENSHELL_GATEWAY_BIN@

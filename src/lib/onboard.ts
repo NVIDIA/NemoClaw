@@ -2629,6 +2629,7 @@ async function createSandboxWithBaseImageResolution(
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
+    portableDashboardPort,
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
@@ -2697,7 +2698,7 @@ async function createSandboxWithBaseImageResolution(
       runtimePatch,
     );
   }
-  let actualDashboardPort = 0;
+  let actualDashboardPort = portableDashboardPort ?? 0;
   let finalHermesDashboardState = hermesDashboardState;
   if (manageDashboardForward) {
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
