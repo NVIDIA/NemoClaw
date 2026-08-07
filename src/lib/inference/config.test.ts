@@ -571,6 +571,25 @@ describe("parseGatewayInference", () => {
     });
   });
 
+  it("parses the OpenShell v0.0.99 inference heading", () => {
+    const output = [
+      "Inference:",
+      "",
+      "  Workspace: default",
+      "  Provider: compatible-endpoint",
+      "  Model: custom-model",
+      "  Version: 1",
+      "",
+      "System inference:",
+      "",
+      "  Not configured",
+    ].join("\n");
+    expect(parseGatewayInference(output)).toEqual({
+      provider: "compatible-endpoint",
+      model: "custom-model",
+    });
+  });
+
   it("returns null for empty output", () => {
     expect(parseGatewayInference("")).toBeNull();
     expect(parseGatewayInference(null)).toBeNull();

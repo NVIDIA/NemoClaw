@@ -866,7 +866,8 @@ describe("socket-free MXC action contract", () => {
       recordEvent,
     });
     const providers = createRuntimeProviderBundleRegistry([["mxc", bundle]]);
-    const sandboxName = `${agent}-sandbox`;
+    const sandboxName =
+      agent === "langchain-deepagents-code" ? "dcode-sandbox" : `${agent}-sandbox`;
     const imageTag = `mxc-memory:${agent}`;
     const registerSandbox = vi.fn();
     const entry = registerCreatedSandbox({
