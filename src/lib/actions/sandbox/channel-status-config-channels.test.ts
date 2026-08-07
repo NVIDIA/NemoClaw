@@ -56,7 +56,12 @@ describe("showSandboxChannelStatus channel config parsers", () => {
       channel: "discord",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals =
+      result && "report" in result
+        ? result.report.signals
+        : result && "signals" in result
+          ? result.signals
+          : [];
     expect(
       signals.find(
         (signal) =>
@@ -138,9 +143,15 @@ describe("showSandboxChannelStatus channel config parsers", () => {
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "slack",
+      asJson: true,
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals =
+      result && "report" in result
+        ? result.report.signals
+        : result && "signals" in result
+          ? result.signals
+          : [];
     expect(
       signals.find(
         (signal) =>
@@ -203,9 +214,15 @@ describe("showSandboxChannelStatus channel config parsers", () => {
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "slack",
+      asJson: true,
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals =
+      result && "report" in result
+        ? result.report.signals
+        : result && "signals" in result
+          ? result.signals
+          : [];
     expect(
       signals.find(
         (signal) =>
@@ -312,7 +329,12 @@ describe("showSandboxChannelStatus channel config parsers", () => {
       channel: "wechat",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals =
+      result && "report" in result
+        ? result.report.signals
+        : result && "signals" in result
+          ? result.signals
+          : [];
     expect(signals.find((signal) => signal.label === "WECHAT_ACCOUNT_ID")).toMatchObject({
       severity: "ok",
       detail: "wechat-account",
@@ -447,7 +469,12 @@ describe("showSandboxChannelStatus channel config parsers", () => {
       channel: "wechat",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals =
+      result && "report" in result
+        ? result.report.signals
+        : result && "signals" in result
+          ? result.signals
+          : [];
     expect(signals.find((signal) => signal.label === "WECHAT_ACCOUNT_ID")).toMatchObject({
       severity: "ok",
       detail: "wxid_abc",

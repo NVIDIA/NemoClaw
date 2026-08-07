@@ -331,3 +331,153 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(runtime?.hint).toBeUndefined();
   });
 });
+
+function slackStatusJson(account: Record<string, unknown>): string {
+  return JSON.stringify({
+    channels: { slack: { configured: true } },
+    channelAccounts: { slack: [{ accountId: "default", ...account }] },
+  });
+}
+
+describe("showSandboxChannelStatus Slack readiness wait", () => {
+  it("waits through deferred initialization and returns structured success (#7383)", async () => {
+    let clock = 0;
+    let readinessProbe = 0;
+    const states = [
+      slackStatusJson({
+        enabled: true,
+        configured: true,
+        running: true,
+        connected: false,
+        probe: { ok: true },
+      }),
+      slackStatusJson({
+        enabled: true,
+        configured: true,
+        running: true,
+        connected: true,
+        lastProbeAt: Date.parse("2026-08-07T12:00:00.000Z"),
+        probe: { ok: true },
+      }),
+    ];
+    const { deps } = makeDeps({
+      sandbox: entry(["slack"]),
+      appliedPresets: ["slack"],
+      gatewayPresets: ["slack"],
+      exec: (_sandbox, command) => {
+        if (command.startsWith("openclaw channels status")) {
+          const stdout = states[Math.min(readinessProbe, states.length - 1)];
+          readinessProbe += 1;
+          return { status: 0, stdout, stderr: "" };
+        }
+        return { status: 0, stdout: "{}", stderr: "" };
+      },
+      nowMs: () => clock,
+      sleep: async (milliseconds) => {
+        clock += milliseconds;
+      },
+    });
+
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "slack",
+      wait: true,
+      timeoutSeconds: 10,
+      pollIntervalMs: 5_000,
+      asJson: true,
+      quietJson: true,
+    });
+
+    expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
+      state: "ready",
+      category: null,
+      reason: "operational",
+      attempts: 2,
+      elapsedMs: 5_000,
+      lastTransitionAt: "2026-08-07T12:00:00.000Z",
+    });
+  });
+
+  it("returns a terminal credential failure without another poll (#7383)", async () => {
+    const sleep = vi.fn(async () => undefined);
+    const { deps } = makeDeps({
+      sandbox: entry(["slack"]),
+      appliedPresets: ["slack"],
+      gatewayPresets: ["slack"],
+      exec: (_sandbox, command) =>
+        command.startsWith("openclaw channels status")
+          ? {
+              status: 0,
+              stdout: slackStatusJson({
+                enabled: true,
+                configured: true,
+                running: false,
+                connected: false,
+                botTokenStatus: "configured_unavailable",
+                appTokenStatus: "available",
+                probe: { ok: false, error: "missing token" },
+              }),
+              stderr: "",
+            }
+          : { status: 0, stdout: "{}", stderr: "" },
+      nowMs: () => 0,
+      sleep,
+    });
+
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "slack",
+      wait: true,
+      timeoutSeconds: 10,
+      asJson: true,
+      quietJson: true,
+    });
+
+    expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
+      state: "terminal",
+      category: "credential",
+      reason: "credentials_unavailable",
+      attempts: 1,
+      elapsedMs: 0,
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("returns timeout with the last retryable network reason (#7383)", async () => {
+    let clock = 0;
+    const { deps } = makeDeps({
+      sandbox: entry(["slack"]),
+      appliedPresets: ["slack"],
+      gatewayPresets: ["slack"],
+      exec: () => null,
+      nowMs: () => clock,
+      sleep: async (milliseconds) => {
+        clock += milliseconds;
+      },
+    });
+
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "slack",
+      wait: true,
+      timeoutSeconds: 5,
+      pollIntervalMs: 5_000,
+      asJson: true,
+      quietJson: true,
+    });
+
+    expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
+      state: "timeout",
+      category: "timeout",
+      reason: "timeout",
+      retryable: true,
+      attempts: 2,
+      elapsedMs: 5_000,
+      lastObserved: {
+        state: "waiting",
+        category: "network",
+        reason: "status_probe_unreachable",
+      },
+    });
+  });
+});

@@ -13,10 +13,11 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
   static enableJsonFlag = true;
   static summary = "Inspect messaging channel status";
   static description =
-    "Report configured messaging channels, policy coverage, and non-secret rendered config comparisons in the compact summary and non-WhatsApp detail views. Pass --channel whatsapp for the deeper WhatsApp QR/session and inbound-delivery probe.";
-  static usage = ["<name> [--channel <channel>] [--json]"];
+    "Report configured messaging channels, policy coverage, non-secret rendered config comparisons, and manifest-defined runtime health. Use --wait with a supported --channel readiness check.";
+  static usage = ["<name> [--channel <channel>] [--wait] [--timeout <seconds>] [--json]"];
   static examples = [
     "<%= config.bin %> sandbox channels status alpha --channel whatsapp",
+    "<%= config.bin %> sandbox channels status alpha --channel slack --wait --timeout 180 --json",
     "<%= config.bin %> sandbox channels status alpha --json",
   ];
   static args = {
@@ -27,6 +28,16 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
       description: "Messaging channel to inspect in detail",
       required: false,
     }),
+    wait: Flags.boolean({
+      dependsOn: ["channel"],
+      description: "Wait for manifest-defined operational readiness",
+    }),
+    timeout: Flags.integer({
+      dependsOn: ["wait"],
+      description: "Readiness timeout in seconds",
+      default: 180,
+      min: 1,
+    }),
   };
 
   public async run(): Promise<unknown> {
@@ -35,8 +46,14 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
       channel: flags.channel,
       asJson: this.jsonEnabled(),
       quietJson: this.jsonEnabled(),
+      wait: flags.wait,
+      timeoutSeconds: flags.timeout,
     });
     if (this.jsonEnabled()) {
+      if (report && "readiness" in report) {
+        if (report.readiness.state !== "ready") process.exitCode = 1;
+        return report;
+      }
       if (report && "report" in report) {
         const verdict = report.report.verdict;
         if (verdict !== "healthy" && verdict !== "unknown") {

@@ -42,6 +42,7 @@ describe("MessagingHookRegistry", () => {
       "googlechat.tokenPaste",
       "slack.socketModeGatewayConflict",
       "slack.socketModeGatewayStatus",
+      "slack.statusHealth",
       "slack.openclawBridgeHealth",
       "slack.validateCredentials",
       "teams.hostForwardPortConflict",
