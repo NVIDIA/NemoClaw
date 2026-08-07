@@ -142,9 +142,7 @@ describe("Podman socket authority", () => {
         ).toThrow();
         expect(fs.statSync(missingSocketDirectory).mode & 0o777).toBe(0o755);
       } finally {
-        if (server.listening) {
-          await new Promise<void>((resolve) => server.close(() => resolve()));
-        }
+        await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
         fs.rmSync(root, { force: true, recursive: true });
       }
     },
