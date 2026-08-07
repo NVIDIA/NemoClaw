@@ -196,10 +196,12 @@ try:
         module.observe_replacement(41, 902, token)
         module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "complete-same-identity":
+        drain.marker = {"principal": "operator"}
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         module.complete_replacement(41, 902, 41, 902, token)
     elif scenario == "complete-validation-failure":
+        drain.marker = {"principal": "operator"}
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         status.payload["pid"] = 77
@@ -210,6 +212,7 @@ try:
         module.validate_cron_tree = fail_validation
         module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "complete-substitution":
+        drain.marker = {"principal": "operator"}
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         status.payload["pid"] = 77
@@ -219,6 +222,7 @@ try:
         status.payload["start_time"] = 904
         module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "complete-release-substitution":
+        drain.marker = {"principal": "operator"}
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         status.payload["pid"] = 77
@@ -233,6 +237,7 @@ try:
         module.validate_cron_tree = substitute_after_validation
         module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "complete-release-failure":
+        drain.marker = {"principal": "operator"}
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         status.payload["pid"] = 77
@@ -611,6 +616,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("gateway identity did not change during cron restore");
+    expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
+    expect(result.stdout).toContain("FINAL_MARKER:operator");
     expect(result.stdout).toContain("OWN_MARKER:present");
   });
 
@@ -619,6 +626,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("replacement cron tree is invalid");
+    expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
+    expect(result.stdout).toContain("FINAL_MARKER:operator");
     expect(result.stdout).toContain("OWN_MARKER:present");
   });
 
@@ -627,6 +636,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("gateway identity changed during cron restore");
+    expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
+    expect(result.stdout).toContain("FINAL_MARKER:operator");
     expect(result.stdout).toContain("OWN_MARKER:present");
   });
 
@@ -635,6 +646,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("gateway identity changed during cron restore");
+    expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
+    expect(result.stdout).toContain("FINAL_MARKER:operator");
     expect(result.stdout).toContain("OWN_MARKER:present");
   });
 
@@ -643,6 +656,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("simulated replacement release failure");
+    expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
+    expect(result.stdout).toContain("FINAL_MARKER:operator");
     expect(result.stdout).toContain("OWN_MARKER:present");
   });
 
