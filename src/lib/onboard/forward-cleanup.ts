@@ -64,11 +64,9 @@ export function bestEffortForwardStopForSandbox(
   port: string | number,
   sandboxName: string,
 ): "stopped" | "owned-other" | "no-entry" | "list-failed" {
-  // Let runCaptureOpenshell throw on failure/timeout, or return null, so the
-  // failure branch returns "list-failed". Treating either failure signal as
-  // an empty string would make getOccupiedPorts return an empty map and let
-  // the "no-entry" branch run a stop without ownership data — exactly the
-  // collateral-damage case this helper exists to avoid.
+  // A thrown error or `null` means that OpenShell did not return ownership data.
+  // Preserve either result as `list-failed`. Converting it to an empty string
+  // would enter the `no-entry` cleanup path.
   let listOutput: string | null;
   try {
     listOutput = runCaptureOpenshell(["forward", "list"], {
