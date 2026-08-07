@@ -387,7 +387,8 @@ interface DockerFixture {
   readonly seed: (journal: HostLocalCreateJournalRecord, running: boolean) => void;
 }
 
-function dockerFixture(configuredHostPort = ""): DockerFixture {
+function dockerFixture(configuredHostPort = "", publishedHostPort?: string): DockerFixture {
+  const effectivePublishedHostPort = publishedHostPort ?? (configuredHostPort || "49152");
   let networkId = NETWORK_ID;
   let networkPresent = false;
   let networkTransactionId = TRANSACTION_ID;
@@ -466,7 +467,7 @@ function dockerFixture(configuredHostPort = ""): DockerFixture {
         Networks: { "nemoclaw-llama-cpp-internal": { NetworkID: networkId } },
         Ports: {
           "8081/tcp": startedOnce
-            ? [{ HostIp: "127.0.0.1", HostPort: configuredHostPort || "49152" }]
+            ? [{ HostIp: "127.0.0.1", HostPort: effectivePublishedHostPort }]
             : null,
         },
       },
@@ -784,7 +785,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const writer = receiptWriter();
     const receipt = lifecycle.start(writer);
     const serialized = serializeHostLocalInferenceReceipt(receipt);
-
     expect(receipt.endpoint.port).toBe(8081);
     expect(receipt.runtime).toMatchObject({
       kind: "container",
@@ -801,22 +801,23 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(serialized).not.toContain(apiKeyPath);
     expect(serialized).not.toContain("filesystemIdentity");
     expect(serialized).not.toContain("test-only-secret");
-
-    expect(serializeHostLocalInferenceReceipt(parseHostLocalInferenceReceipt(serialized))).toBe(
-      serialized,
+    const roundTrip = serializeHostLocalInferenceReceipt(
+      parseHostLocalInferenceReceipt(serialized),
     );
+    expect(roundTrip).toBe(serialized);
     expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
     expect(lifecycle.runtime.stopManaged(receipt).running).toBe(false);
     expect(lifecycle.runtime.prepareDestroy(receipt)).toEqual(receipt);
     expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
   });
-
-  it("rejects a Docker binding that differs from the declared product port (#8544)", () => {
-    const lifecycle = createDockerLlamaCppManagedLifecycle(
-      options(dockerFixture("8082"), journalStore(), { ...bindings(), hostPort: 8081 }),
-    );
-    expect(() => lifecycle.start(receiptWriter())).toThrow("does not match its loopback binding");
+  it("rejects configured or published Docker port drift from the recipe (#8544)", () => {
+    for (const args of [["8082"], ["8081", "8082"]] as const) {
+      const lifecycle = createDockerLlamaCppManagedLifecycle(
+        options(dockerFixture(...args), journalStore(), { ...bindings(), hostPort: 8081 }),
+      );
+      expect(() => lifecycle.start(receiptWriter())).toThrow(/binding/u);
+    }
   });
 
   it("uses the declarative readiness timeout as both curl retry budget and capture budget", () => {
@@ -825,7 +826,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       ...options(fixture),
       readinessTimeoutSeconds: 37,
     });
-
     lifecycle.start(receiptWriter());
 
     const probe = fixture.capture.mock.calls.find(([args]) => args[0] === "run");

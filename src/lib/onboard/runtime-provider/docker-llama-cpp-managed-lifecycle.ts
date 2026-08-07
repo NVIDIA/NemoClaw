@@ -321,6 +321,10 @@ function parseInspection(
   if (published !== null && published.HostIp !== "127.0.0.1") {
     throw new Error("Docker llama.cpp host port is not loopback-only.");
   }
+  const publishedHostPort = published === null ? null : exactPort(published.HostPort);
+  if (hostPort !== undefined && publishedHostPort !== null && publishedHostPort !== hostPort) {
+    throw new Error("Docker llama.cpp published host port differs from its declared binding.");
+  }
   if (!Array.isArray(source.Mounts)) {
     throw new Error("Docker llama.cpp inspection returned malformed mounts.");
   }
@@ -388,7 +392,7 @@ function parseInspection(
     status: stateStatus,
     networkId: exactId(attached.NetworkID, "Docker attached network identity"),
     networkName,
-    hostPort: published === null ? null : exactPort(published.HostPort),
+    hostPort: publishedHostPort,
     mounts: Object.freeze(mounts),
     hardening: Object.freeze({
       user: String(config.User ?? ""),
