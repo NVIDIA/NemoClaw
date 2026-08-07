@@ -20,6 +20,38 @@ import {
   versionGte,
 } from "./image-compatibility";
 
+function mockProbeOutputs(outputs: readonly string[]): void {
+  let probeIndex = 0;
+  mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
+    args[0] === "run" ? (outputs[probeIndex++] ?? "") : "",
+  );
+}
+
+function mockRetainedProbeContainer(): void {
+  let retainedContainerName = "";
+  mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
+    switch (args[0]) {
+      case "run":
+        retainedContainerName = String(args[3]);
+        return "";
+      case "container":
+        return retainedContainerName;
+      default:
+        return "";
+    }
+  });
+}
+
+function throwCleanupVerificationError(): never {
+  throw new Error("Docker daemon unavailable during cleanup verification");
+}
+
+function mockCleanupVerificationFailure(): void {
+  mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
+    args[0] === "run" ? "" : throwCleanupVerificationError(),
+  );
+}
+
 describe("sandbox base-image glibc compatibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -71,12 +103,7 @@ describe("sandbox base-image glibc compatibility", () => {
   });
 
   it("retries a probe with missing output and removes its retained container (#8375)", () => {
-    let probeCount = 0;
-    mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
-      if (args[0] !== "run") return "";
-      probeCount += 1;
-      return probeCount === 1 ? "" : "ldd (Debian GLIBC 2.41-12+deb13u3) 2.41";
-    });
+    mockProbeOutputs(["", "ldd (Debian GLIBC 2.41-12+deb13u3) 2.41"]);
 
     expect(getImageGlibcVersion("nemoclaw:cold")).toBe("2.41");
 
@@ -125,16 +152,11 @@ describe("sandbox base-image glibc compatibility", () => {
   });
 
   it("accepts a failed removal only when the retained container is already absent (#8375)", () => {
-    let probeCount = 0;
     mocks.dockerForceRm.mockReturnValue({ error: undefined, status: 1 });
-    mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
-      if (args[0] !== "run") return "";
-      probeCount += 1;
-      return probeCount === 1 ? "" : "ldd (GNU libc) 2.41";
-    });
+    mockProbeOutputs(["", "ldd (GNU libc) 2.41"]);
 
     expect(getImageGlibcVersion("nemoclaw:cold")).toBe("2.41");
-    expect(probeCount).toBe(2);
+    expect(mocks.dockerCapture.mock.calls.filter((call) => call[0]?.[0] === "run")).toHaveLength(2);
   });
 
   it.each([
@@ -144,15 +166,8 @@ describe("sandbox base-image glibc compatibility", () => {
       "failed before returning an exit status",
     ],
   ])("stops before retry when cleanup %s leaves the retained container present (#8375)", (removal, expectedStatus) => {
-    let retainedContainerName = "";
     mocks.dockerForceRm.mockReturnValue(removal);
-    mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
-      if (args[0] === "run") {
-        retainedContainerName = String(args[3]);
-        return "";
-      }
-      return args[0] === "container" ? retainedContainerName : "";
-    });
+    mockRetainedProbeContainer();
 
     expect(() => getImageGlibcVersion("nemoclaw:cold")).toThrow(
       new RegExp(`cleanup ${expectedStatus}; container nemoclaw-glibc-probe-.+ is still present`),
@@ -161,10 +176,7 @@ describe("sandbox base-image glibc compatibility", () => {
   });
 
   it("stops before retry when retained-container absence cannot be verified (#8375)", () => {
-    mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
-      if (args[0] === "run") return "";
-      throw new Error("Docker daemon unavailable during cleanup verification");
-    });
+    mockCleanupVerificationFailure();
 
     expect(() => getImageGlibcVersion("nemoclaw:cold")).toThrow(
       "Docker daemon unavailable during cleanup verification",
