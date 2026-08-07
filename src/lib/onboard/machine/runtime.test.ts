@@ -120,6 +120,19 @@ function sessionInState(state: Session["machine"]["state"]): Session {
   return session;
 }
 
+describe("onboard machine runtime fixture", () => {
+  it("keeps fallback clones isolated when normalization rejects a session (#8289)", () => {
+    const original = createSession();
+    original.version = 0;
+
+    const cloned = cloneSession(original);
+    cloned.steps.preflight.status = "complete";
+
+    expect(cloned).not.toBe(original);
+    expect(original.steps.preflight.status).toBe("pending");
+  });
+});
+
 describe("OnboardRuntime", () => {
   it("starts a session and emits started/resumed lifecycle events", async () => {
     const { runtime, events, getSession } = createHarness(null);
