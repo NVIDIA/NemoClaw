@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
+import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import {
   type EffectiveReasoningEffort,
   getEffectiveReasoningEffort,
@@ -16,6 +17,41 @@ export type DoctorInferenceRoute = {
   provider: string;
   effectiveReasoningEffort?: EffectiveReasoningEffort | null;
 };
+
+export function collectManagedLlamaCppDoctorChecks(
+  sandboxName: string,
+  gatewayPort?: number | null,
+): DoctorCheck[] {
+  const managed = inspectManagedLlamaCppStatus(sandboxName, {
+    ...(typeof gatewayPort === "number" ? { gatewayPort } : {}),
+  });
+  if (!managed) return [];
+  const runtimeStatus =
+    managed.state === "running"
+      ? "ok"
+      : managed.state === "stopped" || managed.state === "preparing"
+        ? "warn"
+        : "fail";
+  return [
+    {
+      group: "Local services",
+      label: "Managed llama.cpp identity",
+      status: "info",
+      detail: `recipe ${managed.recipeId}; model ${managed.modelDigest ?? "not published"}; image ${managed.imageReference ?? "not published"}`,
+    },
+    {
+      group: "Local services",
+      label: "Managed llama.cpp runtime",
+      status: runtimeStatus,
+      detail: `${managed.state}: ${managed.detail}; endpoint ${managed.endpoint}`,
+      ...(runtimeStatus === "ok"
+        ? {}
+        : {
+            hint: `re-run \`${CLI_NAME} onboard\` for '${sandboxName}' to recover the exact runtime`,
+          }),
+    },
+  ];
+}
 
 type DoctorInferenceDeps = {
   probeProviderHealthImpl?: typeof probeProviderHealth;

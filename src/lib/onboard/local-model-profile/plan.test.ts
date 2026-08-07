@@ -23,19 +23,25 @@ describe("local model profile selection", () => {
     ).toThrow(`${LOCAL_MODEL_PROFILE_ENABLED_ENV}=1`);
   });
 
-  it.each([
-    ["vllm", "vllm", "vllm.host-local/v1"],
-    ["llama-cpp", "install-llama-cpp", "llama-cpp.host-local/v1"],
-  ] as const)("selects the disabled %s serving combination", (runtime, backend, materializer) => {
+  it("selects the disabled vLLM serving combination", () => {
     const plan = resolveLocalModelProfilePlan(loadServingCatalog(), {
       [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
-      [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: runtime,
+      [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
     });
 
     expect(plan).toMatchObject({
-      runtime,
-      preset: { spec: { selection: "disabled", plan: { backend } } },
-      recipe: { spec: { backend, execution: { materializerRef: materializer } } },
+      runtime: "vllm",
+      preset: { spec: { selection: "disabled", plan: { backend: "vllm" } } },
+      recipe: { spec: { backend: "vllm", execution: { materializerRef: "vllm.host-local/v1" } } },
     });
+  });
+
+  it("rejects the retired hidden llama.cpp runtime selection", () => {
+    expect(() =>
+      resolveLocalModelProfilePlan(loadServingCatalog(), {
+        [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+        [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "llama-cpp",
+      }),
+    ).toThrow("must be 'vllm'");
   });
 });
