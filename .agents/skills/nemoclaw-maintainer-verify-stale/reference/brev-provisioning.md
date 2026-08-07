@@ -324,7 +324,7 @@ Idempotent — fails silently when there's nothing to clean. Run via `run_bounde
 
 ### Step 8a: Install reported version
 
-The installer accepts the target ref via the `NEMOCLAW_INSTALL_TAG` env var (verified against `install.sh` source — defaults to `latest` if unset). It is **not** a `--version` flag.
+The installer accepts the target release tag through `NEMOCLAW_INSTALL_TAG`. If both `NEMOCLAW_INSTALL_REF` and `NEMOCLAW_INSTALL_TAG` are unset, the installer uses the maintainer-promoted `lkg` tag. This workflow always sets a `vX.Y.Z` release tag and verifies the installed tag before assigning a verdict. `NEMOCLAW_INSTALL_TAG` is not a `--version` flag.
 
 ```bash
 if ! run_bounded brev exec "$INSTANCE_NAME" "$RESET"; then
