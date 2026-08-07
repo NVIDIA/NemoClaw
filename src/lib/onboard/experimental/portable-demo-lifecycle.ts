@@ -13,6 +13,7 @@ import {
   assertPodmanSocketAuthority,
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
+  hardenPodmanSocketDirectory,
   type PodmanSocketAuthorityDeps,
 } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
@@ -81,6 +82,7 @@ export interface PortableDemoLifecycleDeps {
   openshellBinary?: string;
   podman?: (args: readonly string[], env?: NodeJS.ProcessEnv) => CommandResult;
   podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
+  hardenSocketDirectory?: (socketPath: string) => void;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
   launchOpenshell?: (args: readonly string[]) => void;
   captureHost?: (command: string, args: readonly string[], timeoutMs: number) => CommandResult;
@@ -427,10 +429,9 @@ export function resolvePortableDemoPrivilegedExecTarget(
 
   const podman = deps.podman ?? ((args, env = commandEnv) => defaultPodman(args, env));
   const podmanEnv = localPodmanEnvironment(commandEnv);
-  const socketAuthority = capturePodmanSocketAuthority(
-    podmanSocketPath(podman, podmanEnv),
-    deps.podmanSocketAuthorityDeps,
-  );
+  const socketPath = podmanSocketPath(podman, podmanEnv);
+  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath);
+  const socketAuthority = capturePodmanSocketAuthority(socketPath, deps.podmanSocketAuthorityDeps);
   const provider = createPodmanContainerEngine({
     operation: "sandbox-lifecycle",
     socketAuthority,

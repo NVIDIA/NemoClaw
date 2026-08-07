@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { hardenPodmanSocketDirectory } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
 
@@ -37,6 +38,7 @@ export interface PortableHostPreparationDeps {
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   podman?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  hardenSocketDirectory?: (socketPath: string, uid: number) => void;
 }
 
 function commandDetail(result: SpawnResult): string {
@@ -224,9 +226,12 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
-  env.DOCKER_HOST = resolvePodmanDockerHost(
+  const dockerHost = resolvePodmanDockerHost(
     podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env),
   );
+  const socketPath = dockerHost.slice("unix://".length);
+  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));
+  env.DOCKER_HOST = dockerHost;
 
   const docker =
     deps.docker ??

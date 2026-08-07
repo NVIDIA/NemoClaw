@@ -154,7 +154,7 @@ function socketAuthorityDeps(
         dev: 8n,
         ino: socket ? (options.socketInode?.() ?? 9001n) : directoryInode,
         mode: socket
-          ? (options.socketMode ?? 0o600n)
+          ? (options.socketMode ?? 0o660n)
           : filePath === path.dirname(SOCKET_PATH)
             ? (options.directoryMode ?? 0o700n)
             : 0o755n,
@@ -180,6 +180,7 @@ function resolveTarget(
     stateDir,
     podman: runtime.podman,
     podmanSocketAuthorityDeps: socketAuthorityDeps(),
+    hardenSocketDirectory: vi.fn(),
     ...overrides,
   });
 }
@@ -336,11 +337,13 @@ describe("portable demo sandbox lifecycle", () => {
     const runtime = createPodman();
     installReceipt(stateDir, runtime.podman);
     runtime.podman.mockClear();
+    const hardenSocketDirectory = vi.fn();
 
-    expect(resolveTarget(stateDir, runtime)).toMatchObject({
+    expect(resolveTarget(stateDir, runtime, { hardenSocketDirectory })).toMatchObject({
       containerId: CONTAINER_ID,
       dockerHost: "unix:///run/user/1001/podman/podman.sock",
     });
+    expect(hardenSocketDirectory).toHaveBeenCalledWith(SOCKET_PATH);
     expect(runtime.podman.mock.calls.map(([args]) => args)).toEqual([
       ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
       [
@@ -416,7 +419,12 @@ describe("portable demo sandbox lifecycle", () => {
 
   it.each([
     ["foreign owner", socketAuthorityDeps({ socketUid: 2000n }), "owned by uid 2000"],
-    ["writable socket", socketAuthorityDeps({ socketMode: 0o660n }), "writable by another"],
+    ["world-writable socket", socketAuthorityDeps({ socketMode: 0o666n }), "writable by another"],
+    [
+      "group-writable socket outside a private parent",
+      socketAuthorityDeps({ directoryMode: 0o750n }),
+      "writable by another",
+    ],
     ["writable parent", socketAuthorityDeps({ directoryMode: 0o770n }), "writable by another"],
     ["symlinked parent", socketAuthorityDeps({ directory: false }), "not a real directory"],
   ])("refuses a %s for portable privileged exec (#8584)", (_case, authority, message) => {

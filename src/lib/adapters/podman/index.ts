@@ -66,4 +66,8 @@ export function createPodmanContainerEngine(
 }
 
 export type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "./socket-authority";
-export { assertPodmanSocketAuthority, capturePodmanSocketAuthority } from "./socket-authority";
+export {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  hardenPodmanSocketDirectory,
+} from "./socket-authority";
