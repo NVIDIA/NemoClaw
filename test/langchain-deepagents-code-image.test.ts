@@ -18,7 +18,6 @@ import {
   ANALYTICS_DISABLE_ENV_NAMES,
   DCODE_CANONICAL_PATH,
   headlessCheckPath,
-  makeStartScriptFixture as makeHeadlessStartScriptFixture,
   NO_PROXY_ENV_NAMES,
   PROXY_URL_ENV_NAMES,
   runHeadlessCheckHelper,
@@ -30,7 +29,7 @@ import {
   readAgentFile,
   runWrapper,
 } from "./helpers/langchain-deepagents-code-image.ts";
-import { makeStartScriptFixture as makeIdentityStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+import { dcodeStateDir, makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
 import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 function containsTokenShapedSecret(value: string): boolean {
@@ -257,7 +256,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     try {
-      const { envFile, scriptPath } = makeIdentityStartScriptFixture(tempDir);
+      const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
 
       execFileSync("bash", [scriptPath, "sh", "-c", ":"], {
         env: {
@@ -275,10 +274,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("replaces inherited host proxy values with the managed runtime proxy (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
-    const { envFile, scriptPath } = makeHeadlessStartScriptFixture(
-      tempDir,
-      readAgentFile("start.sh"),
-    );
+    const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
+      markerDir: dcodeStateDir(tempDir),
+    });
     const inheritedSecrets = {
       NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
       OPENAI_API_KEY: `sk-${"B".repeat(20)}`,

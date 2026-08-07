@@ -19,7 +19,7 @@ import {
 export { originalSandboxName, snapshotEnv } from "./rebuild-flow-test-support";
 
 const requireDist = createRequire(
-  new URL("../../src/lib/actions/sandbox/rebuild-flow.test.ts", import.meta.url),
+  new URL("../../src/lib/actions/sandbox/rebuild.ts", import.meta.url),
 );
 const rebuildModulePath = "./rebuild.js";
 requireDist(rebuildModulePath);

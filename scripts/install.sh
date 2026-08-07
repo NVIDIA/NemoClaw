@@ -822,7 +822,7 @@ usage() {
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
-  printf "                                  | hermes-provider | llama-cpp\n"
+  printf "                                  | hermes-provider | llama-cpp | install-llama-cpp\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -5021,8 +5021,8 @@ main() {
       --local-model-runtime=*)
         LOCAL_MODEL_RUNTIME="${arg#--local-model-runtime=}"
         case "$LOCAL_MODEL_RUNTIME" in
-          vllm | llama-cpp) ;;
-          *) error "--local-model-runtime must be vllm or llama-cpp" ;;
+          vllm) ;;
+          *) error "--local-model-runtime must be vllm; select install-llama-cpp with NEMOCLAW_PROVIDER" ;;
         esac
         NON_INTERACTIVE=1
         NON_INTERACTIVE_SOURCE="the --local-model-runtime flag"
@@ -5065,8 +5065,8 @@ main() {
     export NEMOCLAW_NO_EXPRESS=1
   elif [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ]; then
     case "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" in
-      vllm | llama-cpp) ;;
-      *) error "NEMOCLAW_LOCAL_MODEL_RUNTIME must be vllm or llama-cpp" ;;
+      vllm) ;;
+      *) error "NEMOCLAW_LOCAL_MODEL_RUNTIME must be vllm; select install-llama-cpp with NEMOCLAW_PROVIDER" ;;
     esac
     NON_INTERACTIVE=1
     NON_INTERACTIVE_SOURCE="NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1"

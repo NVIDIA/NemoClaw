@@ -6,7 +6,10 @@ import path from "node:path";
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 export function printRemediationActions(
-  actions: Array<{ title: string; reason: string; commands?: string[] }> | null | undefined,
+  actions:
+    | Array<{ id: string; title: string; reason: string; commands?: string[] }>
+    | null
+    | undefined,
 ): void {
   if (!Array.isArray(actions) || actions.length === 0) {
     return;
@@ -16,7 +19,7 @@ export function printRemediationActions(
   console.error("  Suggested fix:");
   console.error("");
   for (const action of actions) {
-    console.error(`  - ${action.title}: ${action.reason}`);
+    console.error(`  - ${action.title} (${action.id}): ${action.reason}`);
     for (const command of action.commands || []) {
       console.error(`    ${command}`);
     }
