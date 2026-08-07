@@ -10,6 +10,7 @@ import path from "node:path";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
+import { loadUserLocalOllamaOwnership, OLLAMA_PORT } from "./ollama-user-local-runtime";
 
 const RECEIPT_DIRECTORY = "portable-demo-lifecycle";
 const MAX_RECEIPT_BYTES = 4096;
@@ -18,6 +19,7 @@ const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
+const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 1_000;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
@@ -60,6 +62,9 @@ export interface PortableDemoLifecycleDeps {
   podman?: (args: readonly string[]) => CommandResult;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
   launchOpenshell?: (args: readonly string[]) => void;
+  captureHost?: (command: string, args: readonly string[], timeoutMs: number) => CommandResult;
+  launchHost?: (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => void;
+  loadManagedOllama?: () => string | null;
   sleep?: (milliseconds: number) => void;
   now?: () => number;
   log?: (message: string) => void;
@@ -73,6 +78,7 @@ export type PortableDemoLifecycleRecoveryResult =
 export interface PortableDemoLifecycleContext {
   agent?: string | null;
   gatewayName: string;
+  provider?: string | null;
 }
 
 function defaultPodman(args: readonly string[], env: NodeJS.ProcessEnv): CommandResult {
@@ -104,6 +110,32 @@ function defaultLaunchOpenshell(
   env: NodeJS.ProcessEnv,
 ): void {
   const child = spawn(binary, [...args], {
+    detached: true,
+    env,
+    shell: false,
+    stdio: "ignore",
+  });
+  child.once("error", () => undefined);
+  child.unref();
+}
+
+function defaultCaptureHost(
+  command: string,
+  args: readonly string[],
+  timeoutMs: number,
+  env: NodeJS.ProcessEnv,
+): CommandResult {
+  return spawnSync(command, [...args], {
+    encoding: "utf-8",
+    env,
+    killSignal: "SIGKILL",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: timeoutMs,
+  });
+}
+
+function defaultLaunchHost(command: string, args: readonly string[], env: NodeJS.ProcessEnv): void {
+  const child = spawn(command, [...args], {
     detached: true,
     env,
     shell: false,
@@ -391,6 +423,93 @@ function gatewayIsRunning(
   return result.status === 0 && /(?:^|\D)(?:200|401)\s*$/u.test(String(result.stdout ?? ""));
 }
 
+function ollamaIsHealthy(
+  captureHost: NonNullable<PortableDemoLifecycleDeps["captureHost"]>,
+  timeoutMs: number,
+): boolean {
+  const result = captureHost(
+    "curl",
+    [
+      "-fsS",
+      "--max-time",
+      String(Math.max(1, Math.ceil(Math.min(PROBE_TIMEOUT_MS, timeoutMs) / 1_000))),
+      `http://127.0.0.1:${String(OLLAMA_PORT)}/api/tags`,
+    ],
+    Math.min(PROBE_TIMEOUT_MS, timeoutMs),
+  );
+  if (result.status !== 0 || result.error) return false;
+  try {
+    const response = JSON.parse(String(result.stdout ?? ""));
+    return isRecord(response) && Array.isArray(response.models);
+  } catch {
+    return false;
+  }
+}
+
+function assertManagedOllamaBinary(binPath: string): void {
+  let stats: fs.Stats;
+  try {
+    stats = fs.lstatSync(binPath);
+  } catch {
+    throw new Error(
+      `NemoClaw-managed Ollama binary '${binPath}' is missing; reinstall Ollama through nemoclaw onboard`,
+    );
+  }
+  if (stats.isSymbolicLink() || !stats.isFile() || (stats.mode & 0o111) === 0) {
+    throw new Error(
+      `NemoClaw-managed Ollama binary '${binPath}' is not a regular executable; reinstall Ollama through nemoclaw onboard`,
+    );
+  }
+}
+
+function recoverManagedOllama(
+  context: PortableDemoLifecycleContext,
+  commandEnv: NodeJS.ProcessEnv,
+  stateDir: string,
+  timing: Required<Pick<PortableDemoLifecycleDeps, "now" | "sleep">>,
+  deps: PortableDemoLifecycleDeps,
+): void {
+  if (context.provider !== "ollama-local") return;
+  const captureHost =
+    deps.captureHost ??
+    ((command, args, timeoutMs) => defaultCaptureHost(command, args, timeoutMs, commandEnv));
+  if (ollamaIsHealthy(captureHost, PROBE_TIMEOUT_MS)) return;
+
+  const homeDir = commandEnv.HOME ?? os.homedir();
+  const binPath = deps.loadManagedOllama
+    ? deps.loadManagedOllama()
+    : loadUserLocalOllamaOwnership({ homeDir, stateDir });
+  if (!binPath) return;
+  assertManagedOllamaBinary(binPath);
+
+  const processProbe = captureHost("pgrep", ["-x", "ollama"], PROBE_TIMEOUT_MS);
+  if (processProbe.status === 0 && !processProbe.error) {
+    throw new Error(
+      `An Ollama process already exists, but http://127.0.0.1:${String(OLLAMA_PORT)}/api/tags is unavailable; NemoClaw refused to launch a duplicate`,
+    );
+  }
+  if (processProbe.status !== 1 || processProbe.error) {
+    throw new Error(`Ollama process state could not be determined: ${commandDetail(processProbe)}`);
+  }
+
+  const launchHost =
+    deps.launchHost ?? ((command, args, env) => defaultLaunchHost(command, args, env));
+  launchHost(binPath, ["serve"], {
+    ...commandEnv,
+    HOME: homeDir,
+    OLLAMA_HOST: `127.0.0.1:${String(OLLAMA_PORT)}`,
+  });
+  const recovered = waitFor(OLLAMA_STARTUP_TIMEOUT_MS, timing, (remainingMs) =>
+    ollamaIsHealthy(captureHost, remainingMs),
+  );
+  if (!recovered) {
+    throw new Error(
+      `NemoClaw-managed Ollama did not become healthy at http://127.0.0.1:${String(OLLAMA_PORT)}/api/tags within 30 seconds; start the receipt-bound executable at ${JSON.stringify(binPath)} with the 'serve' argument, then retry`,
+    );
+  }
+  (deps.log ?? console.log)("  Portable demo lifecycle restarted NemoClaw-managed Ollama.");
+}
+
 /** Configure the hidden portable profile for one exact container. */
 export function installPortableDemoSandboxLifecycle(
   sandboxName: string,
@@ -487,6 +606,7 @@ export function recoverPortableDemoSandboxLifecycle(
   if (!execReady) {
     throw new Error(`Portable sandbox '${sandboxName}' did not reconnect to the OpenShell gateway`);
   }
+  recoverManagedOllama(context, commandEnv, stateDir, timing, deps);
   const gatewayRunning = gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS);
   const refreshStartup = receipt.schemaVersion < CURRENT_RECEIPT_SCHEMA_VERSION;
   if (!refreshStartup && gatewayRunning) {

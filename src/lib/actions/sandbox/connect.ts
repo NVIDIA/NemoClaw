@@ -284,7 +284,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     );
   }
   if (processCheck.wasRunning) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
@@ -299,7 +299,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     return;
   }
   if (processCheck.recovered) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
     const managedControlCompletion =
@@ -313,7 +313,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     }
     return;
   }
-  await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+  await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
@@ -1087,9 +1087,10 @@ async function runConnectEntryPreflight(
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
-  // probe-only / recover never install or serve a model, so skip the
-  // express-vLLM model preflight for them (it only steers the install path
-  // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).
+  // probe-only / recover can restart receipt-owned local inference, but they
+  // never select, install, or pull a model. Skip the express-vLLM model
+  // preflight because it only steers installation and can reject recovery on
+  // a stale NEMOCLAW_VLLM_MODEL.
   if (!probeOnly) preflightVllmModelEnvOrExit();
   const live = await ensureLiveSandboxOrExit(sandboxName, {
     allowNonReadyPhase: true,

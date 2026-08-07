@@ -940,7 +940,7 @@ async function runQualification(
         method: "POST",
       },
       plan.recipe.serve.limits.requestTimeoutSeconds * 1000,
-      plan.recipe.serve.limits.maxRequestBodyBytes,
+      16 * 1024 * 1024,
     );
     validateChatCompletionResponse(completion, plan.recipe.model.servedName);
     const offload = validateStartupLog(

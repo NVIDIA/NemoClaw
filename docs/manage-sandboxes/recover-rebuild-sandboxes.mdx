@@ -126,6 +126,23 @@ Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicit
 `$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+### Recover Portable Local Ollama
+
+For a portable experimental-profile sandbox with the recorded `ollama-local` provider, `connect --probe-only` and `recover` also verify the host-side inference chain.
+Before it decides whether to start Ollama, the command probes `http://127.0.0.1:11434/api/tags` and leaves a healthy daemon unchanged.
+When that API is unhealthy, it starts the fixed user-local executable only if NemoClaw has a valid ownership receipt.
+It refuses to launch a duplicate when another `ollama` process exists but the API remains unhealthy.
+After a launch, recovery waits up to 30 seconds for `/api/tags` to return valid JSON with a `models` array.
+It does not take over a system service or an unrelated user-managed daemon.
+It refuses a symbolic link, non-regular file, or non-executable file at the receipt path.
+
+The command also requires a trusted reachable route probe at `https://inference.local/v1/models` before it reports success.
+When route repair needs the local Ollama dependency check, it verifies or recovers the authenticated proxy on port `11435` before it retries the route.
+If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+An Ollama startup or route failure exits non-zero and prints the available recovery guidance.
+</AgentOnly>
+
 ## Rebuild While Preserving State
 
 <AgentOnly variant="openclaw">

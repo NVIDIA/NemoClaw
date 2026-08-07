@@ -56,6 +56,11 @@ const SHARED_STATE_PERMISSIONS_PATCH = path.join(
   "patch-openclaw-shared-state-permissions.mts",
 );
 const MCP_RELIABILITY_PATCH = path.join(REPO_ROOT, "scripts", "patch-openclaw-mcp-reliability.mts");
+const MCP_TOOLS_LIST_TIMEOUT_PATCH = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-mcp-tools-list-timeout.mts",
+);
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
   "src",
@@ -195,7 +200,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("## Managed Outbound Transport Diagnostics");
     expect(review).toContain("scripts/patch-openclaw-managed-transport-diagnostics.mts");
     expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
-    expect(review).toContain("Failure-only.");
+    expect(review).toContain("Failure-only by default.");
+    expect(review).toContain("`NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`");
+    expect(review).toContain("successful-request `managed_transport_shadow` timing events");
     expect(review).toContain("never retries, never alters the request");
     expect(review).toContain("`route=proxy_configured` means that `HTTPS_PROXY`");
     expect(review).toContain("report configuration evidence");
@@ -213,7 +220,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("A returned non-2xx response sets `transport_phase=response_headers`");
     expect(review).toContain("transport-phase signal");
     expect(review).toContain("does not inspect a 2xx response body");
-    expect(review).toContain("without an `operation` field");
+    expect(review).toContain("report a validated JSON-RPC method");
+    expect(review).toContain("reports the configured server name as `mcp_server`");
+    expect(review).toContain("Shadow recommendations apply only to `tools/list`");
+    expect(review).toContain("An explicit HTTP 503 produces no timeout recommendation.");
     expect(review).toContain("structured credentials such as `access_token`");
     expect(review).toContain("The peer address is not recorded.");
     expect(review).toContain("The `mcp-session-id` value is never emitted.");
@@ -233,6 +243,27 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).not.toContain("src/lib/observability/managed-transport.test.ts");
     expect(review).toContain("NVIDIA/OpenShell#2508");
+  });
+
+  it("records the bounded MCP tool discovery timeout patch (#7957)", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+    const troubleshooting = readFileSync(MCP_TROUBLESHOOTING, "utf-8");
+
+    expect(review).toContain("## Bounded MCP Tool Discovery Timeout");
+    expect(review).toContain("scripts/patch-openclaw-mcp-tools-list-timeout.mts");
+    expect(review).toContain("OpenClaw `2026.7.1` gives `tools/list` 1,500 ms");
+    expect(review).toContain("from 1,500 through 10,000 ms");
+    expect(review).toContain("only for catalog `tools/list` requests");
+    expect(review).toContain("does not change the 30,000 ms connection timeout");
+    expect(review).toContain("60,000 ms default used by tool calls");
+    expect(review).toContain("test/openclaw-mcp-tools-list-timeout-patch.test.ts");
+    expect(review).toContain("composition with managed transport diagnostics");
+    expect(troubleshooting).toContain("### Adjust the Tool Discovery Timeout");
+    expect(troubleshooting).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000");
+    expect(troubleshooting).toContain("mcp_tools_list_timeout_override_ms=3000");
+    expect(troubleshooting).toContain("Advance from `3000` to `5000`, and then to `10000`");
+    expect(troubleshooting).toContain("McpError: MCP error -32001: Request timed out");
+    expect(troubleshooting).toContain("connection timed out after 30000ms");
   });
 
   it("records the active mcporter advisory remediations", () => {
@@ -706,6 +737,13 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts' Dockerfile
 	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-reliability.js' Dockerfile
+	mcp_tools_list_timeout_patch=${JSON.stringify(MCP_TOOLS_LIST_TIMEOUT_PATCH)}
+	grep -Fq 'NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS' "$mcp_tools_list_timeout_patch"
+	grep -Fq 'TOOLS_LIST_TIMEOUT_MIN_MS = 1500' "$mcp_tools_list_timeout_patch"
+	grep -Fq 'TOOLS_LIST_TIMEOUT_MAX_MS = 10_000' "$mcp_tools_list_timeout_patch"
+	grep -Fq 'COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts' Dockerfile
+	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
+	! grep -Fq 'patch-openclaw-mcp-tools-list-timeout.js' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3

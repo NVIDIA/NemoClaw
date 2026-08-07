@@ -170,6 +170,10 @@ function verifyCopiedManagedStartupReceipt(
       "no-new-privileges",
       "--cap-drop",
       "ALL",
+      // docker cp can leave the protected 0700/0400 receipt owned by the
+      // invoking host UID. Restore only DAC_OVERRIDE so the root verifier can
+      // read that copy and its write probe reaches the read-only bind mount;
+      // every other capability remains dropped.
       "--cap-add",
       "DAC_OVERRIDE",
       ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,

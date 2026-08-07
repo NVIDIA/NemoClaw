@@ -225,7 +225,7 @@ function verifyManagedBootstrapPidOneBoundary(
     if (!CONTAINER_ID_RE.test(containerId)) {
       throw new Error("docker create did not return one exact PID 1 bootstrap container");
     }
-    docker(["cp", "-", `${containerId}:/`], {
+    docker(["container", "cp", "-", `${containerId}:/`], {
       input: serializeManagedBootstrapEnvelopeTar({
         bootstrapIdentity,
         rootApplyRequest: request,
