@@ -32,6 +32,10 @@ describe("ensureAgentFixedForward", () => {
     const started = ensureAgentFixedForward(deps, "my-sandbox", 18789, "messaging webhook");
 
     expect(started).toBe(true);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
+      ["forward", "list"],
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -41,6 +45,10 @@ describe("ensureAgentFixedForward", () => {
     const started = ensureAgentFixedForward(deps, "my-sandbox", 18789, "messaging webhook");
 
     expect(started).toBe(true);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
+      ["forward", "list"],
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
     expect(deps.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "my-sandbox"], {
       ignoreError: true,
       suppressOutput: true,

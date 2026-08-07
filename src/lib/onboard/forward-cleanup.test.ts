@@ -88,6 +88,7 @@ describe("bestEffortForwardStopForSandbox", () => {
 
     const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
 
+    expect(fetch).toHaveBeenCalledWith(["forward", "list"], expect.anything());
     expect(outcome).toBe("list-failed");
     // Without ownership data, a port-only stop could kill another
     // sandbox's forward — better to leave the port alone and let the
@@ -101,6 +102,7 @@ describe("bestEffortForwardStopForSandbox", () => {
 
     const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
 
+    expect(fetch).toHaveBeenCalledWith(["forward", "list"], expect.anything());
     expect(outcome).toBe("list-failed");
     expect(run).not.toHaveBeenCalled();
   });
