@@ -112,6 +112,7 @@ export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 export const OLLAMA_LOCALHOST = "127.0.0.1";
 export const OLLAMA_HOST_DOCKER_INTERNAL = "host.docker.internal";
 
+/** Build the credential-free Docker Desktop probe for Windows-host Ollama. */
 export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
   return [
     "run",
