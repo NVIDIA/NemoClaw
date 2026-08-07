@@ -34,13 +34,13 @@ const oldContent = generated.buildMcpBridgePolicyYaml(
   entry.server,
   entry.url,
   entry.adapter,
-  ["1.1.1.1"],
+  { addresses: ["1.1.1.1"] },
 );
 const desiredContent = generated.buildMcpBridgePolicyYaml(
   entry.server,
   entry.url,
   entry.adapter,
-  ["8.8.8.8"],
+  { addresses: ["8.8.8.8"] },
 );
 let liveContent = oldContent;
 let applyCalls = 0;
@@ -189,7 +189,7 @@ const content = generated.buildMcpBridgePolicyYaml(
   entry.server,
   entry.url,
   entry.adapter,
-  ["8.8.8.8"],
+  { addresses: ["8.8.8.8"] },
 );
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 registry.addCustomPolicy("alpha", {
