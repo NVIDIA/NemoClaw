@@ -44,7 +44,6 @@ describe("Windows Ollama helper", () => {
     const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
     const launchScripts: string[] = [];
     const stopCommands: string[] = [];
-    const dockerProbes: string[][] = [];
 
     const run = vi.fn((command: string[]) => {
       const script = command[2] || "";
@@ -63,13 +62,13 @@ describe("Windows Ollama helper", () => {
         stopCommands.push(cmd);
         return "";
       }
-      if (Array.isArray(command) && command[0] === "docker") {
-        dockerProbes.push(command);
-        return launchScripts.some((script) => script.includes(installedPath))
+      if (cmd.includes("host.docker.internal:11434/api/tags")) {
+        return Array.isArray(command) &&
+          command[0] === "docker" &&
+          launchScripts.some((script) => script.includes(installedPath))
           ? JSON.stringify({ models: [] })
           : "";
       }
-      if (cmd.includes("host.docker.internal:11434/api/tags")) return "";
       return "";
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -93,17 +92,20 @@ describe("Windows Ollama helper", () => {
     ).toBe(false);
     expect(stopCommands[0]).toContain("Get-Process 'ollama app'");
     expect(stopCommands[1]).toContain("Get-Process ollama");
-    expect(dockerProbes.at(-1)).toEqual([
-      "docker",
-      "run",
-      "--rm",
-      "curlimages/curl:8.10.1",
-      "-sf",
-      "--connect-timeout",
-      "2",
-      "--max-time",
-      "5",
-      "http://host.docker.internal:11434/api/tags",
-    ]);
+    expect(runCapture).toHaveBeenCalledWith(
+      [
+        "docker",
+        "run",
+        "--rm",
+        "curlimages/curl:8.10.1",
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        "http://host.docker.internal:11434/api/tags",
+      ],
+      { ignoreError: true },
+    );
   });
 });
