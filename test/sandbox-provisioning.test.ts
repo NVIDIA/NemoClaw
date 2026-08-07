@@ -1057,6 +1057,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
       path.join(localLib, "patch-hermes-session-list-preview.py"),
+      path.join(localLib, "patch-hermes-sqlite-temp-store.py"),
       path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
       path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
       managedPolicyReaderPath,
