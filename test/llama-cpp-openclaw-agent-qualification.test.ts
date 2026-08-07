@@ -35,8 +35,11 @@ function context(
     },
     runSandbox(argv) {
       invocations.push([...argv]);
-      const output = outputs[index++];
-      if (!output) throw new Error("unexpected qualification invocation");
+      const output = outputs[index++] ?? {
+        status: 1,
+        stderr: "unexpected qualification invocation",
+        stdout: "",
+      };
       return {
         status: output.status,
         stdout: output.stdout,
