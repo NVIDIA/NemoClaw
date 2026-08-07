@@ -32,10 +32,10 @@ if [ -d "$seed_dir" ]; then
         seed_part_index=0
         for seed_part in "${seed_prefix}".part-*; do
           expected_seed_part=$(printf '%s.part-%03d' "$seed_prefix" "$seed_part_index")
-          [ "$seed_part" = "$expected_seed_part" ] && [ -f "$seed_part" ] && [ ! -L "$seed_part" ] || {
+          if [ "$seed_part" != "$expected_seed_part" ] || [ ! -f "$seed_part" ] || [ -L "$seed_part" ]; then
             echo "[nemoclaw] refusing a non-contiguous or non-regular npm cache seed chunk: $seed_part" >&2
             exit 1
-          }
+          fi
           cat -- "$seed_part" >>"$seed_archive"
           seed_part_index=$((seed_part_index + 1))
         done
