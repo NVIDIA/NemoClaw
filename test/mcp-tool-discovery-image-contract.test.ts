@@ -42,6 +42,12 @@ function createCacheSeedFixture(): {
       path.join(seedDirectory, seedName),
     );
   }
+  const splitSeed = path.join(seedDirectory, "yaml-2.8.3.tgz");
+  const splitSeedBytes = fs.readFileSync(splitSeed);
+  const splitOffset = Math.ceil(splitSeedBytes.length / 2);
+  fs.unlinkSync(splitSeed);
+  fs.writeFileSync(`${splitSeed}.part-000`, splitSeedBytes.subarray(0, splitOffset));
+  fs.writeFileSync(`${splitSeed}.part-001`, splitSeedBytes.subarray(splitOffset));
   fs.writeFileSync(
     path.join(fixture, "package.json"),
     `${JSON.stringify(
@@ -224,21 +230,47 @@ describe("MCP tool discovery image contract", () => {
     },
   );
 
-  it("pins every terminal lockfile archive consumed by npm's exit-handler failure", () => {
+  it("pins every reachable lockfile archive for protected Linux x64 builds", () => {
     const seedDirectory = path.join(
       repoRoot,
       "tools",
       "mcp-tool-discovery-runtime",
       "npm-cache-seed",
     );
-    const seedNames = fs.readdirSync(seedDirectory).sort();
+    const manifest = JSON.parse(fs.readFileSync(path.join(seedDirectory, "manifest.json"), "utf8"));
+    const seedNames = fs
+      .readdirSync(seedDirectory)
+      .filter((seedName) => seedName !== "manifest.json")
+      .sort();
     const lock = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "nemoclaw", "package-lock.json"), "utf8"),
     );
 
-    expect(seedNames).toEqual(["yallist-5.0.0.tgz", "yaml-2.8.3.tgz", "yoctocolors-2.1.2.tgz"]);
-    for (const seedName of seedNames) {
-      const seed = fs.readFileSync(path.join(seedDirectory, seedName));
+    expect(manifest).toMatchObject({
+      archiveCount: 81,
+      kind: "nemoclaw-locked-npm-cache-seed-v1",
+      target: { cpu: "x64", libc: "glibc", os: "linux" },
+    });
+    expect(manifest.archives).toHaveLength(manifest.archiveCount);
+    expect(
+      seedNames
+        .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
+        .every((size) => size <= 2_000_000),
+    ).toBe(true);
+    for (const archive of manifest.archives) {
+      const archiveParts = seedNames.filter(
+        (seedName) =>
+          seedName === archive.archive || seedName.startsWith(`${archive.archive}.part-`),
+      );
+      const expectedParts =
+        archiveParts.length === 1 && archiveParts[0] === archive.archive
+          ? [archive.archive]
+          : archiveParts.map(
+              (_seedName, index) => `${archive.archive}.part-${String(index).padStart(3, "0")}`,
+            );
+      const seed = Buffer.concat(
+        archiveParts.map((seedName) => fs.readFileSync(path.join(seedDirectory, seedName))),
+      );
       const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
       const matches = (
         Object.values(lock.packages) as Array<{ integrity?: string; resolved?: string }>
@@ -246,9 +278,12 @@ describe("MCP tool discovery image contract", () => {
         (entry) =>
           entry.integrity === integrity &&
           path.basename(new URL(entry.resolved ?? "https://invalid.invalid/").pathname) ===
-            seedName,
+            archive.archive,
       );
 
+      expect(archiveParts).toEqual(expectedParts);
+      expect(seed).toHaveLength(archive.size);
+      expect(integrity).toBe(archive.integrity);
       expect(matches).toHaveLength(1);
     }
   });
@@ -257,6 +292,7 @@ describe("MCP tool discovery image contract", () => {
     "rejects a cache seed that does not match the lockfile integrity",
     () => {
       const { cache, fixture, retryHelper, seed } = createCacheSeedFixture();
+      fs.chmodSync(seed, 0o644);
       fs.appendFileSync(seed, "tampered");
 
       try {

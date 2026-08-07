@@ -5,12 +5,42 @@
 set -eu
 
 install_log=$(mktemp)
-trap 'rm -f "$install_log"' EXIT
+seed_work_dir=$(mktemp -d)
+cleanup() {
+  rm -f -- "$install_log"
+  rm -rf -- "$seed_work_dir"
+}
+trap cleanup EXIT
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 seed_dir="$script_dir/npm-cache-seed"
 if [ -d "$seed_dir" ]; then
-  for seed_archive in "$seed_dir"/*.tgz; do
+  for seed_source in "$seed_dir"/*.tgz "$seed_dir"/*.tgz.part-000; do
+    [ -e "$seed_source" ] || continue
+    case "$seed_source" in
+      *.tgz)
+        [ ! -e "${seed_source}.part-000" ] || {
+          echo "[nemoclaw] refusing duplicate complete and chunked npm cache seeds: $seed_source" >&2
+          exit 1
+        }
+        seed_archive="$seed_source"
+        ;;
+      *.tgz.part-000)
+        seed_prefix=${seed_source%.part-000}
+        seed_archive="$seed_work_dir/$(basename -- "$seed_prefix")"
+        : >"$seed_archive"
+        seed_part_index=0
+        for seed_part in "${seed_prefix}".part-*; do
+          expected_seed_part=$(printf '%s.part-%03d' "$seed_prefix" "$seed_part_index")
+          [ "$seed_part" = "$expected_seed_part" ] && [ -f "$seed_part" ] && [ ! -L "$seed_part" ] || {
+            echo "[nemoclaw] refusing a non-contiguous or non-regular npm cache seed chunk: $seed_part" >&2
+            exit 1
+          }
+          cat -- "$seed_part" >>"$seed_archive"
+          seed_part_index=$((seed_part_index + 1))
+        done
+        ;;
+    esac
     if ! node - "$seed_archive" <<'NODE'; then
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -59,7 +89,7 @@ else
   # without committing to its content cache.
   if npm ls --all --json "$@" >"$install_log" 2>&1; then
     echo "[nemoclaw] npm hit its internal exit-handler failure after completing the locked dependency tree" >&2
-    rm -f "$install_log"
+    cleanup
     trap - EXIT
     exit 0
   fi
@@ -138,5 +168,5 @@ NODE
   done
 fi
 
-rm -f "$install_log"
+cleanup
 trap - EXIT
