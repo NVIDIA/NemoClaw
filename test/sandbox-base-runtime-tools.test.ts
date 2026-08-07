@@ -5,11 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  BASE_APT_SECURITY_FUNCTIONS,
-  dockerRunCommandBetween,
-  runLoggedDockerShell,
-} from "./helpers/base-apt-security-functions";
+import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 import { stageFixedParser, useRealPatchedParser } from "./helpers/python-parser-security-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -53,13 +50,17 @@ function runBaseAptLayer(prefix: string) {
     .replaceAll("/usr/local/bin/python", fakePythonLink)
     .replaceAll("/usr/bin/python3", pythonShim)
     .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
-  const result = runLoggedDockerShell(command, tmp, [
-    'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
-    'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-    'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-    ...useRealPatchedParser(BASE_APT_SECURITY_FUNCTIONS, pythonShim),
-  ]);
-  const calls = fs.readFileSync(path.join(tmp, "calls.log"), "utf-8");
+  const { calls, result } = runLoggedDockerShell(
+    command,
+    tmp,
+    [
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+      'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+      'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+      ...useRealPatchedParser(BASE_APT_SECURITY_FUNCTIONS, pythonShim),
+    ],
+    { timeoutMs: 15_000 },
+  );
   return { calls, fakePythonLink, pythonShim, result };
 }
 

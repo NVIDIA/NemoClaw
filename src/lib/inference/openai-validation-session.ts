@@ -9,8 +9,14 @@ import {
 } from "../adapters/http/validation-session";
 import { addTraceEvent, withTraceSpan } from "../trace";
 import type { TrustedPrivateEndpointCapability } from "./endpoint-ssrf-preflight";
-import { resolveMaxTokensField } from "./max-tokens-field";
-import { isDeepSeekV4ProModel } from "./openai-probe-models";
+import {
+  getChatCompletionsToolProbePayload,
+  isDeepSeekV4ProModel,
+  isReasoningOnlyLengthResponse,
+  STRICT_TOOL_PROBE_INITIAL_TOKENS,
+  STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE,
+  STRICT_TOOL_PROBE_RETRY_TOKENS,
+} from "./openai-probe-models";
 import { STREAMING_EVENT_PROBE_MAX_SECONDS } from "./probe-http-helpers";
 
 const RETRIABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
@@ -82,70 +88,51 @@ function responsesPayload(model: string, requireToolCall: boolean, stream = fals
   });
 }
 
-function chatToolPayload(model: string): string {
-  const maxTokensField = resolveMaxTokensField(model);
-  return JSON.stringify({
-    model,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
-      },
-      {
-        role: "user",
-        content:
-          "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
-      },
-    ],
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "sessions_send",
-          description: "Send a message to the active chat session.",
-          parameters: {
-            type: "object",
-            properties: { message: { type: "string" } },
-            required: ["message"],
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: "function",
-        function: {
-          name: "memory_search",
-          description: "Search memory for relevant prior context.",
-          parameters: {
-            type: "object",
-            properties: { query: { type: "string" } },
-            required: ["query"],
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: "function",
-        function: {
-          name: "web_fetch",
-          description: "Fetch a URL and summarize the result.",
-          parameters: {
-            type: "object",
-            properties: { url: { type: "string" } },
-            required: ["url"],
-            additionalProperties: false,
-          },
-        },
-      },
-    ],
-    tool_choice: "required",
-    // GPT-5/o-series models reject custom sampling temperatures. Keep the
-    // deterministic setting for models that still use the legacy field.
-    ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
-    [maxTokensField]: 256,
-    stream: false,
-  });
+function chatToolPayload(model: string, maxTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS): string {
+  return JSON.stringify(getChatCompletionsToolProbePayload(model, maxTokens));
+}
+
+function failedChatValidation(
+  result: CurlProbeResult,
+  failureMessage: string,
+): OpenAiValidationResult {
+  const failure = {
+    name: "Chat Completions API with tool calling",
+    httpStatus: result.httpStatus,
+    curlStatus: result.curlStatus,
+    message: failureMessage,
+    body: result.body,
+  };
+  return {
+    ok: false,
+    message: `${failure.name}: ${failure.message}`,
+    failures: [failure],
+  };
+}
+
+function failedChatToolCall(result: CurlProbeResult, leaked: boolean): OpenAiValidationResult {
+  const failureMessage = leaked
+    ? `HTTP ${result.httpStatus}: Chat Completions leaked tool calls into plain text content. ` +
+      "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
+      "prefer vLLM with --tool-call-parser hermes)."
+    : `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`;
+  return failedChatValidation(result, failureMessage);
+}
+
+function failedChatValidationAfterReasoningRetry(): OpenAiValidationResult {
+  const failureMessage = "Chat Completions validation failed after the reasoning retry";
+  const failure = {
+    name: "Chat Completions API with tool calling",
+    httpStatus: 0,
+    curlStatus: 0,
+    message: failureMessage,
+    body: "",
+  };
+  return {
+    ok: false,
+    message: `${failure.name}: ${failure.message}`,
+    failures: [failure],
+  };
 }
 
 function requestAuth(
@@ -191,6 +178,7 @@ function safeErrorDetails(error: unknown): { error_code: string; error_message: 
 async function requestWithHttpRetry(
   name: string,
   request: () => Promise<CurlProbeResult>,
+  retryTransientHttp = true,
 ): Promise<CurlProbeResult> {
   let result = await request();
   let attempt = 1;
@@ -201,7 +189,13 @@ async function requestWithHttpRetry(
     curl_status: result.curlStatus,
   });
   for (const delayMs of RETRY_DELAYS_MS) {
-    if (result.curlStatus !== 0 || !RETRIABLE_HTTP_STATUSES.has(result.httpStatus)) break;
+    if (
+      !retryTransientHttp ||
+      result.curlStatus !== 0 ||
+      !RETRIABLE_HTTP_STATUSES.has(result.httpStatus)
+    ) {
+      break;
+    }
     console.log(
       `  ${name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
     );
@@ -266,6 +260,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
     session.close();
     return deps.legacyProbe(endpointUrl, model, apiKey, options);
   };
+  let retriedReasoningTruncation = false;
 
   try {
     if (!options.skipResponsesProbe) {
@@ -318,30 +313,58 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
     }
 
     const auth = requestAuth(`${baseUrl}/chat/completions`, apiKey, options);
-    const chatBody =
-      options.requireChatCompletionsToolCalling === true
-        ? chatToolPayload(model)
-        : JSON.stringify(deps.getChatPayload(model));
+    const requireToolCall = options.requireChatCompletionsToolCalling === true;
     const chat = await withTraceSpan(
       "nemoclaw.inference.validation_probe",
       { probe_name: "Chat Completions API", api: "openai-completions" },
-      () =>
-        requestWithHttpRetry("Chat Completions API", () =>
-          session.request({
-            ...auth,
-            body: chatBody,
-            timeoutMs: deps.getChatTimeoutMs(model, options),
-          }),
-        ),
+      async () => {
+        const requestChat = (
+          maxTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS,
+          retryTransientHttp = true,
+        ) =>
+          requestWithHttpRetry(
+            "Chat Completions API",
+            () =>
+              session.request({
+                ...auth,
+                body: requireToolCall
+                  ? chatToolPayload(model, maxTokens)
+                  : JSON.stringify(deps.getChatPayload(model)),
+                timeoutMs: deps.getChatTimeoutMs(model, options),
+              }),
+            retryTransientHttp,
+          );
+        const initial = await requestChat();
+        if (!requireToolCall || !initial.ok || !isReasoningOnlyLengthResponse(initial.body)) {
+          return initial;
+        }
+        retriedReasoningTruncation = true;
+        console.log(STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE);
+        addTraceEvent("tool_call_reasoning_retry", {
+          initial_max_tokens: STRICT_TOOL_PROBE_INITIAL_TOKENS,
+          retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
+        });
+        return requestChat(STRICT_TOOL_PROBE_RETRY_TOKENS, false);
+      },
     );
-    if (chat.curlStatus !== 0) return nativeFailureFallback("native_chat_failure");
-    if (!chat.ok) return nativeFailureFallback("native_terminal_http_failure");
-    if (options.requireChatCompletionsToolCalling === true) {
+    if (chat.curlStatus !== 0) {
+      return retriedReasoningTruncation
+        ? failedChatValidation(chat, chat.message)
+        : nativeFailureFallback("native_chat_failure");
+    }
+    if (!chat.ok) {
+      return retriedReasoningTruncation
+        ? failedChatValidation(chat, chat.message)
+        : nativeFailureFallback("native_terminal_http_failure");
+    }
+    if (requireToolCall) {
       if (!deps.hasChatCompletionsToolCall(chat.body)) {
+        const leaked = deps.hasChatCompletionsToolCallLeak(chat.body);
+        if (retriedReasoningTruncation) {
+          return failedChatToolCall(chat, leaked);
+        }
         return nativeFailureFallback(
-          deps.hasChatCompletionsToolCallLeak(chat.body)
-            ? "native_chat_tool_call_leak"
-            : "native_chat_tool_call_missing",
+          leaked ? "native_chat_tool_call_leak" : "native_chat_tool_call_missing",
         );
       }
     }
@@ -351,7 +374,9 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
       reason: "native_unexpected_failure",
       ...safeErrorDetails(error),
     });
-    return nativeFailureFallback("native_unexpected_failure");
+    return retriedReasoningTruncation
+      ? failedChatValidationAfterReasoningRetry()
+      : nativeFailureFallback("native_unexpected_failure");
   } finally {
     session.close();
   }

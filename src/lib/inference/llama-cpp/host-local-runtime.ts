@@ -34,6 +34,7 @@ export interface LlamaCppHostLocalLaunchContract {
     readonly modelSource: "verified-local";
   };
   readonly runtime: {
+    readonly restartPolicy: "unless-stopped";
     readonly gpu: {
       readonly count: 1;
       readonly cpuFallback: "reject";
@@ -49,6 +50,7 @@ export interface LlamaCppHostLocalLaunchContract {
   readonly serve: {
     readonly authentication: "bearer";
     readonly batchSize: number;
+    readonly chatTemplate: "nemotron-v3-embedded";
     readonly contextSize: number;
     readonly flashAttention: "enabled";
     readonly idleSleepSeconds: -1;
@@ -140,6 +142,7 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
     throw new Error("llama.cpp host-local model or offline policy is invalid");
   }
   if (
+    contract.runtime.restartPolicy !== "unless-stopped" ||
     contract.runtime.gpu.vendor !== "nvidia" ||
     contract.runtime.gpu.count !== 1 ||
     contract.runtime.gpu.offload !== "full" ||
@@ -163,6 +166,7 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   }
   if (
     contract.serve.authentication !== "bearer" ||
+    contract.serve.chatTemplate !== "nemotron-v3-embedded" ||
     contract.serve.protocol !== "openai-completions" ||
     contract.serve.slots !== 1 ||
     contract.serve.idleSleepSeconds !== -1 ||
@@ -278,6 +282,8 @@ export function buildLlamaCppHostLocalDockerArgv(
     ]),
     "--network",
     bindings.network.name,
+    "--restart",
+    contract.runtime.restartPolicy,
     "--user",
     runtimeIdentity,
     "--publish",

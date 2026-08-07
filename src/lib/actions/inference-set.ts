@@ -5,7 +5,7 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
@@ -56,7 +56,7 @@ import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
-import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
+import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
   InferenceSetError,
   OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
@@ -556,25 +556,36 @@ export function patchHermesInferenceConfig(
   provider: string,
   model: string,
   preferredInferenceApi: string | null = null,
+  contextWindow?: number,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const upstream = ensureObject(config, "_nemoclaw_upstream");
-  upstream.provider = provider;
-  upstream.model = model;
-  const modelConfig = ensureObject(config, "model");
-  modelConfig.default = model;
-  modelConfig.base_url = route.inferenceBaseUrl;
-  modelConfig.provider = "custom";
-  modelConfig.api_key = HERMES_PROXY_API_KEY_PLACEHOLDER;
-  const apiMode = hermesApiMode(route.inferenceApi);
-  if (apiMode) {
-    modelConfig.api_mode = apiMode;
-  } else {
-    delete modelConfig.api_mode;
-  }
+  applyHermesManagedRoute(config, {
+    model,
+    baseUrl: route.inferenceBaseUrl,
+    upstreamProvider: provider,
+    inferenceApi: route.inferenceApi,
+    contextWindow,
+  });
 
   return { changed: before !== JSON.stringify(config), route };
+}
+
+function resolveHermesContextWindowForSwitch(
+  provider: string,
+  model: string,
+  deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
+): number | undefined {
+  const contextWindow = deps.resolveContextWindowForModel(provider, model);
+  if (contextWindow != null) {
+    deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
+    return contextWindow;
+  }
+  deps.log(
+    `  Warning: could not determine the context window for '${model}'; omitting ` +
+      `context_length so Hermes can discover it from the selected model.`,
+  );
+  return undefined;
 }
 
 function updateMatchingOnboardSession(
@@ -1185,7 +1196,14 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      patched = patchHermesInferenceConfig(config, provider, model, preferredInferenceApi);
+      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, deps);
+      patched = patchHermesInferenceConfig(
+        config,
+        provider,
+        model,
+        preferredInferenceApi,
+        contextWindow,
+      );
     } else {
       // Recompute the context window for the model being switched to, so it does
       // not inherit the prior model's window (#context-window-on-switch).

@@ -9,6 +9,10 @@ import {
   type RuntimeProviderLifecycleStopHooks,
   type RuntimeProviderWorkloadProfile,
 } from "../../src/lib/onboard/runtime-provider/contract";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceService,
+} from "../../src/lib/onboard/runtime-provider/host-local-inference";
 
 export interface InMemoryRuntimeProviderState {
   readonly events: string[];
@@ -30,6 +34,10 @@ type InMemoryRuntimeProviderOptions = {
   readonly workloadProfile: RuntimeProviderWorkloadProfile;
   readonly state?: InMemoryRuntimeProviderState;
   readonly gatewayLauncher?: "nemoclaw" | "openshell";
+  readonly hostLocalInference?: {
+    readonly services: readonly HostLocalInferenceService[];
+    readonly createOperation: () => HostLocalInferenceOperation;
+  };
   readonly recordEvent?: (event: string) => void;
 };
 
@@ -47,6 +55,7 @@ export function createInMemoryRuntimeProviderBundle({
   workloadProfile,
   state = { events: [], running: new Set(), workloads: new Set() },
   gatewayLauncher = "nemoclaw",
+  hostLocalInference,
   recordEvent = (value) => state.events.push(value),
 }: InMemoryRuntimeProviderOptions): InMemoryRuntimeProviderBundle {
   const futureReason = "Unsupported by this in-memory contract fixture.";
@@ -81,7 +90,7 @@ export function createInMemoryRuntimeProviderBundle({
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: false,
+      hostLocalInference: hostLocalInference !== undefined,
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
@@ -126,6 +135,14 @@ export function createInMemoryRuntimeProviderBundle({
                 workloadProfile.support?.platforms.includes(receipt.platform) === true;
       },
     },
+    hostLocalInference: hostLocalInference
+      ? {
+          providerId,
+          supported: true,
+          services: hostLocalInference.services,
+          createOperation: hostLocalInference.createOperation,
+        }
+      : unsupported(providerId, futureReason),
     lifecycle: {
       providerId,
       supported: true,
@@ -196,6 +213,15 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "memory", displayName: "In-memory" },
+        ...(hostLocalInference
+          ? [
+              {
+                operation: "host-local-inference" as const,
+                engineId: "memory",
+                displayName: "In-memory",
+              },
+            ]
+          : []),
         { operation: "sandbox-lifecycle", engineId: "memory", displayName: "In-memory" },
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],
