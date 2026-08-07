@@ -168,6 +168,18 @@ describe("maintainer merge-gate contributor compliance", () => {
   it.each([
     { evidence: "the REST job has another name", run: { jobName: "unrelated job" } },
     {
+      evidence: "the job URL has an attacker origin",
+      check: {
+        detailsUrl: "https://attacker.example/NVIDIA/NemoClaw/actions/runs/9010/job/9110",
+      },
+    },
+    {
+      evidence: "the job URL names another repository",
+      check: {
+        detailsUrl: "https://github.com/NVIDIA/OtherRepo/actions/runs/9010/job/9110",
+      },
+    },
+    {
       evidence: "the REST job status differs",
       check: { status: "IN_PROGRESS", conclusion: undefined },
       run: {
