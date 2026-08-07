@@ -255,13 +255,15 @@ export async function evaluateMainRunRetry(options: {
   const latestPath = `repos/${options.repository}/actions/workflows/${source.workflowId}/runs?branch=main&event=push&per_page=20`;
   const isLatest = validateLatestRun(await request(latestPath), source);
   const attempts: AttemptEvidence[] = [];
-  for (let attempt = 1; attempt <= source.attempt; attempt += 1) {
-    attempts.push(
-      validateAttemptEvidence(
-        await request(`${runPath}/attempts/${attempt}/jobs?per_page=100`),
-        attempt,
-      ),
-    );
+  if (source.conclusion === "success" || source.conclusion === "failure") {
+    for (let attempt = 1; attempt <= source.attempt; attempt += 1) {
+      attempts.push(
+        validateAttemptEvidence(
+          await request(`${runPath}/attempts/${attempt}/jobs?per_page=100`),
+          attempt,
+        ),
+      );
+    }
   }
   const decision = isLatest
     ? decideMainRunRetry(source)

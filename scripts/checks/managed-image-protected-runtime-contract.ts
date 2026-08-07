@@ -12,20 +12,29 @@ export {
   parseProtectedManagedImageContracts,
 } from "./protected-managed-image-contract.ts";
 
-export const MANAGED_IMAGE_LOCAL_INFERENCE_KINDS = ["ollama", "nim", "vllm"] as const;
+export const MANAGED_IMAGE_LOCAL_INFERENCE_KINDS = ["llama-cpp", "ollama", "nim", "vllm"] as const;
 
 export type ManagedImageLocalInferenceKind = (typeof MANAGED_IMAGE_LOCAL_INFERENCE_KINDS)[number];
 
 export type ManagedImageLocalInferenceRoute = {
   readonly kind: ManagedImageLocalInferenceKind;
-  readonly providerName: "ollama-local" | "vllm-local";
-  readonly credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN" | "NEMOCLAW_VLLM_LOCAL_TOKEN";
+  readonly providerName: "llama-cpp-local" | "ollama-local" | "vllm-local";
+  readonly credentialEnv:
+    | "NEMOCLAW_LLAMACPP_LOCAL_TOKEN"
+    | "NEMOCLAW_OLLAMA_PROXY_TOKEN"
+    | "NEMOCLAW_VLLM_LOCAL_TOKEN";
   readonly defaultBaseUrl: string;
 };
 
 const LOCAL_INFERENCE_ROUTES: Readonly<
   Record<ManagedImageLocalInferenceKind, ManagedImageLocalInferenceRoute>
 > = Object.freeze({
+  "llama-cpp": Object.freeze({
+    kind: "llama-cpp",
+    providerName: "llama-cpp-local",
+    credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+    defaultBaseUrl: "http://host.openshell.internal:8081/v1",
+  }),
   ollama: Object.freeze({
     kind: "ollama",
     providerName: "ollama-local",
