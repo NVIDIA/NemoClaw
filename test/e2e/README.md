@@ -8,8 +8,10 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-- `.github/workflows/e2e.yaml` selects every workflow E2E on each push to `main`
-  and supports trusted manual dispatches for specific PR head commits.
+- `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push
+  to `main` and supports trusted manual dispatches for specific PR head commits.
+  Push runs skip the Jetson nvmap and DGX Spark llama.cpp jobs because their
+  required workflow dispatch flags cannot be set by a push event.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
@@ -160,7 +162,7 @@ and exact-staging Launchable job own its product coverage:
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
-The retired nightly caller no longer runs. Each push to `main` starts a workflow that selects every workflow E2E.
+The retired nightly caller no longer runs. Each push to `main` starts a workflow that selects the default workflow E2E jobs.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
 
@@ -435,7 +437,7 @@ A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev
 Launchable`. Each push run also selects this job as part of the complete main run.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors runs every workflow E2E, including the Launchable E2E job.
+`targets` selectors runs the default workflow E2E selection plus the Launchable E2E job.
 This is the full run required for pre-tag evidence. Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
 cannot supersede it while it waits. The trusted `main` workflow dispatch
@@ -445,6 +447,21 @@ role check authorizes `staging-brev-launchable`; the job does not use GitHub
 environment approval. The job uses the non-cancelling
 `staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
 runs remain queued instead of replacing one another.
+
+The Jetson nvmap and DGX Spark llama.cpp jobs remain excluded from ordinary and
+full runs unless their independent runner-queue flags are `true`.
+A user permitted to dispatch this workflow may set either flag, but only after
+a repository administrator confirms the corresponding runner is online in the
+authoritative repository runner inventory.
+Set `allow_jetson_runner_queue=true` to select `jetson-nvmap-gpu`.
+Set `allow_dgx_spark_runner_queue=true` to select both
+`llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
+GitHub can pause the qualification job for the
+`approve-dgx-spark-image-qualification` environment before it reaches the DGX
+Spark runner.
+Pre-tag evidence requires both runner-queue flags to remain `false`.
+Results from opt-in hardware runs do not enter the required pre-tag E2E
+denominator.
 
 ### Hosted-Runner Recovery
 
@@ -699,7 +716,8 @@ a custom, copied, or no-op adapter.
 
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
-Each push to `main` selects every workflow E2E. A selected job can remain queued until its configured runner is available.
+Each push to `main` selects the default workflow E2E jobs.
+The central workflow skips the Jetson nvmap and DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
 
 The main-push selection includes:
@@ -708,14 +726,12 @@ The main-push selection includes:
 - the OpenShell gateway authentication contract;
 - the development MCP bridge;
 - managed-image startup on AMD64 and ARM64;
-- llama.cpp qualification on NVIDIA DGX Spark;
 - managed-image GPU, Ollama, NVIDIA NIM, and vLLM behavior;
-- Hermes GPU startup; and
-- Jetson nvmap behavior.
+- Hermes GPU startup.
 
-These jobs retain their runner, credential, evidence, and cleanup boundaries. A
-main push can queue repository-owned GPU and Jetson runners and can create Brev
-resources. The retry workflow reruns failed jobs at most twice.
+These jobs retain their runner, credential, evidence, and cleanup boundaries.
+A main push can queue repository-owned GPU runners and can create Brev resources.
+The retry workflow reruns failed jobs at most twice.
 
 Each trusted push to `main` selects `Exact staging Brev Launchable`. The job reads
 these credentials from repository Actions secrets:
@@ -743,9 +759,13 @@ The controller does not retry manual PR runs or a run superseded by a newer `mai
 
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 
-- every free-standing workflow E2E except `Exact staging Brev Launchable`;
+- every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
+
+The run skips `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and
+`llama-cpp-dgx-spark-qualification` unless their separate runner-queue flags
+are `true`.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 
@@ -774,7 +794,9 @@ For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVI
 
 For a manual PR run, provide the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
 Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
-The empty-selector run selects `llama-cpp-dgx-spark-qualification`. If GitHub pauses the job for the `approve-dgx-spark-image-qualification` environment, an authorized environment reviewer must approve it before qualification starts.
+Keep `allow_jetson_runner_queue=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
+If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
+An authorized environment reviewer must approve it before qualification starts.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
