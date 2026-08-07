@@ -15,6 +15,7 @@ export type ShieldsFlowHarness = {
   applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;
   cleanupTempDirSpy: MockInstance;
+  dockerSpawnCalls: Array<{ args: string[]; timeout: number | undefined }>;
   errorSpy: MockInstance;
   getShieldsPosture: typeof import("../../src/lib/shields/index.js").getShieldsPosture;
   getOpenClawPosture: () => "locked" | "mutable";
@@ -34,7 +35,7 @@ export type ShieldsFlowHarnessOptions = {
   confirmOpenClawInodeFlags?: boolean;
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
-  failOpenClawGuardActions?: Array<"lock" | "unlock">;
+  failOpenClawGuardActions?: Array<"preflight" | "lock" | "unlock">;
   failPolicyRejectionStateClear?: boolean;
   failPolicyRejectionTransitionWrite?: boolean;
   failStateSave?: boolean;
@@ -221,66 +222,76 @@ export function createShieldsFlowHarness(
             ...(Array.isArray(cmd) ? cmd.map(String) : []),
           ],
   );
-  vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((argv: unknown) => {
-    const args = Array.isArray(argv) ? argv.map(String) : [];
-    const readsStateLockPlan =
-      args.includes("cat") && args.includes("/usr/local/share/nemoclaw/state-lock-plan.json");
-    const action = ["preflight", "lock", "unlock"].find((candidate) => args.includes(candidate));
-    const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
-    const shouldFailOpenClawGuard = Boolean(
-      openClawGuard &&
-        (action === "lock" || action === "unlock") &&
-        options.failOpenClawGuardActions?.includes(action),
-    );
-    const failures = options.openClawGuardFailures ?? [
-      options.openClawGuardFailure ?? {
-        code: "startup-not-ready",
-        path: "/run/nemoclaw/openclaw-config-ready.json",
-        detail: "OpenClaw startup is not ready for host config mutations",
-      },
-    ];
-    const failureResult = {
-      status: 1,
-      signal: null,
-      stdout: `${failures
-        .map((failure) => JSON.stringify({ type: "issue", ...failure }))
-        .join("\n")}\n${JSON.stringify({ type: "result", action, status: "failed" })}\n`,
-      stderr: "",
-      pid: 0,
-      output: [],
-    };
-    openClawPosture = shouldFailOpenClawGuard
-      ? openClawPosture
-      : openClawGuard && action === "lock"
-        ? "locked"
-        : openClawGuard && action === "unlock"
-          ? "mutable"
-          : openClawPosture;
-    const successResult = {
-      status: 0,
-      signal: null,
-      stdout: readsStateLockPlan
-        ? `${JSON.stringify(stateLockPlan)}\n`
-        : action
-          ? `${JSON.stringify({
-              type: "result",
-              action,
-              status: "ok",
-              ...(openClawGuard
-                ? {
-                    configDir: "/sandbox/.openclaw",
-                    files: ["openclaw.json", ".config-hash"],
-                    chattrApplied: action === "lock",
-                  }
-                : { issueCount: 0 }),
-            })}\n`
-          : "",
-      stderr: "",
-      pid: 0,
-      output: [],
-    };
-    return (shouldFailOpenClawGuard ? failureResult : successResult) as never;
-  });
+  const dockerSpawnCalls: Array<{ args: string[]; timeout: number | undefined }> = [];
+  vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation(
+    (argv: unknown, rawOptions: unknown) => {
+      const args = Array.isArray(argv) ? argv.map(String) : [];
+      const timeout =
+        rawOptions && typeof rawOptions === "object" && "timeout" in rawOptions
+          ? Number((rawOptions as { timeout?: unknown }).timeout)
+          : undefined;
+      dockerSpawnCalls.push({ args, timeout });
+      const readsStateLockPlan =
+        args.includes("cat") && args.includes("/usr/local/share/nemoclaw/state-lock-plan.json");
+      const action = ["preflight", "lock", "unlock", "unlock-failed-startup"].find((candidate) =>
+        args.includes(candidate),
+      );
+      const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
+      const shouldFailOpenClawGuard = Boolean(
+        openClawGuard &&
+          (action === "preflight" || action === "lock" || action === "unlock") &&
+          options.failOpenClawGuardActions?.includes(action),
+      );
+      const failures = options.openClawGuardFailures ?? [
+        options.openClawGuardFailure ?? {
+          code: "startup-not-ready",
+          path: "/run/nemoclaw/openclaw-config-ready.json",
+          detail: "OpenClaw startup is not ready for host config mutations",
+        },
+      ];
+      const failureResult = {
+        status: 1,
+        signal: null,
+        stdout: `${failures
+          .map((failure) => JSON.stringify({ type: "issue", ...failure }))
+          .join("\n")}\n${JSON.stringify({ type: "result", action, status: "failed" })}\n`,
+        stderr: "",
+        pid: 0,
+        output: [],
+      };
+      openClawPosture = shouldFailOpenClawGuard
+        ? openClawPosture
+        : openClawGuard && action === "lock"
+          ? "locked"
+          : openClawGuard && (action === "unlock" || action === "unlock-failed-startup")
+            ? "mutable"
+            : openClawPosture;
+      const successResult = {
+        status: 0,
+        signal: null,
+        stdout: readsStateLockPlan
+          ? `${JSON.stringify(stateLockPlan)}\n`
+          : action
+            ? `${JSON.stringify({
+                type: "result",
+                action,
+                status: "ok",
+                ...(openClawGuard
+                  ? {
+                      configDir: "/sandbox/.openclaw",
+                      files: ["openclaw.json", ".config-hash"],
+                      chattrApplied: action === "lock",
+                    }
+                  : { issueCount: 0 }),
+              })}\n`
+            : "",
+        stderr: "",
+        pid: 0,
+        output: [],
+      };
+      return (shouldFailOpenClawGuard ? failureResult : successResult) as never;
+    },
+  );
   vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
     return options.dockerExecFileSync
@@ -376,6 +387,7 @@ export function createShieldsFlowHarness(
     applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
     auditSpy,
     cleanupTempDirSpy,
+    dockerSpawnCalls,
     errorSpy,
     getShieldsPosture: shields.getShieldsPosture,
     getOpenClawPosture: () => openClawPosture,

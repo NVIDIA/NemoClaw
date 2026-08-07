@@ -2575,24 +2575,20 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
-      jobName === "jetson-nvmap-gpu"
-        ? checkoutIndex + 2
-        : jobName === "hermes-gpu-startup"
-          ? checkoutIndex + 3
-          : jobName === "managed-image-protected-runtime"
-            ? protectedCacheDownloadIndex + 1
-            : checkoutIndex + 1;
+      jobName === "hermes-gpu-startup"
+        ? checkoutIndex + 3
+        : jobName === "managed-image-protected-runtime"
+          ? protectedCacheDownloadIndex + 1
+          : checkoutIndex + 1;
     if (
       checkoutIndex < 0 ||
       (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
       authIndex !== expectedAuthIndex
     ) {
       errors.push(
-        jobName === "jetson-nvmap-gpu"
-          ? `${jobName} Docker Hub auth must run immediately after the Jetson dispatch guard`
-          : jobName === "managed-image-protected-runtime"
-            ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
-            : `${jobName} Docker Hub auth must run immediately after checkout`,
+        jobName === "managed-image-protected-runtime"
+          ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
+          : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {
@@ -3938,72 +3934,40 @@ function validateAllowJetsonRunnerQueueInput(
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Repository administrators") ||
+    !description.includes("repository administrator confirmation") ||
     !description.includes("Jetson runner") ||
     !description.includes("authoritative") ||
     !description.includes("NVIDIA/NemoClaw Settings -> Actions -> Runners") ||
     !description.includes("timeout-minutes")
   ) {
     errors.push(
-      "workflow_dispatch allow_jetson_runner_queue input must identify repository administrators and NVIDIA/NemoClaw Settings -> Actions -> Runners as the authoritative runner inventory, and document queued timeout behavior",
+      "workflow_dispatch allow_jetson_runner_queue input must require repository administrator confirmation from the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory and document queued timeout behavior",
     );
   }
 }
 
-function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecord): void {
+function validateJetsonJobOptInBoundary(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["jetson-nvmap-gpu"]);
   if (job.needs !== "generate-matrix") {
     errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
   }
   const trustedSelector =
-    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
+    "${{ inputs.allow_jetson_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
   if (job.if !== trustedSelector) {
-    errors.push("jetson-nvmap-gpu job must use the trusted-main selector condition");
-  }
-  const guardedRunsOn =
-    "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
-  if (job["runs-on"] !== guardedRunsOn) {
     errors.push(
-      "jetson-nvmap-gpu job must queue the configured runner for main and default manual runs",
+      "jetson-nvmap-gpu job must require allow_jetson_runner_queue before runner assignment and retain trusted-main selectors",
     );
+  }
+  const configuredRunsOn =
+    "${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}";
+  if (job["runs-on"] !== configuredRunsOn) {
+    errors.push("jetson-nvmap-gpu job must use the configured runner only after job-level opt-in");
   }
 
   const steps = asSteps(job.steps);
-  const guard = namedStep(steps, "Guard Jetson runner dispatch");
-  const checkoutIndex = steps.findIndex((step) =>
-    stringValue(step.uses).startsWith("actions/checkout@"),
-  );
-  const guardIndex = steps.findIndex((step) => step.name === "Guard Jetson runner dispatch");
-  const dockerAuthIndex = steps.findIndex((step) => step.name === DOCKER_HUB_AUTH_STEP);
-  if (!guard) {
-    errors.push("jetson-nvmap-gpu job missing step: Guard Jetson runner dispatch");
-    return;
+  if (steps.some((step) => step.name === "Guard Jetson runner dispatch")) {
+    errors.push("jetson-nvmap-gpu must enforce opt-in before runner assignment, not in a step");
   }
-  if (checkoutIndex < 0 || guardIndex <= checkoutIndex) {
-    errors.push("jetson-nvmap-gpu dispatch guard must run after checkout");
-  }
-  if (dockerAuthIndex >= 0 && guardIndex >= dockerAuthIndex) {
-    errors.push("jetson-nvmap-gpu dispatch guard must run before Docker Hub auth");
-  }
-  if (
-    guard.if !==
-    "${{ github.event_name == 'workflow_dispatch' && (inputs.jobs != '' || inputs.targets != '') && !inputs.allow_jetson_runner_queue }}"
-  ) {
-    errors.push("jetson-nvmap-gpu dispatch guard must reject unconfirmed selective queueing");
-  }
-  if (
-    asRecord(guard.env).JETSON_E2E_RUNNER_LABEL !==
-    "${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}"
-  ) {
-    errors.push("jetson-nvmap-gpu dispatch guard must receive the configured Jetson runner label");
-  }
-  requireRunContains(errors, guard, "allow_jetson_runner_queue=true");
-  requireRunContains(errors, guard, "timeout-minutes");
-  requireRunContains(errors, guard, "repository administrator");
-  requireRunContains(errors, guard, "authoritative");
-  requireRunContains(errors, guard, "NVIDIA/NemoClaw Settings -> Actions -> Runners");
-  requireRunContains(errors, guard, "${JETSON_E2E_RUNNER_LABEL}");
-  requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
 }
 
 export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[] {
@@ -4013,7 +3977,7 @@ export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[
   const errors: string[] = [];
 
   validateAllowJetsonRunnerQueueInput(errors, asRecord(workflowDispatch.inputs));
-  validateJetsonRunnerDispatchGuard(errors, asRecord(workflowRecord.jobs));
+  validateJetsonJobOptInBoundary(errors, asRecord(workflowRecord.jobs));
   return errors;
 }
 
@@ -4289,6 +4253,7 @@ function validateTrustedE2eDispatchReceipt(
   }
   const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
   const expectedDispatchReceiptEnv = {
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
     CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DISPATCH_JOBS: "${{ inputs.jobs }}",
@@ -4313,6 +4278,7 @@ function validateTrustedE2eDispatchReceipt(
     "workflowRunAttempt: $workflowRunAttempt",
     "jobs: $jobs",
     "targets: $targets",
+    "allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
     'emptySelectors: ($jobs == "" and $targets == "")',
