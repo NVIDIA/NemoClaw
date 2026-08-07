@@ -11,6 +11,10 @@
 # to all FROM directives. Can be overridden via --build-arg.
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 ARG NEMOCLAW_CORPORATE_CA_B64=
+ARG TARGETARCH
+ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==
+ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY=sha512-30vSoZuW1DP6Nuz24Gg3jgVC37IYe0bZ/Fgc5+372gc0h72NN4zHYAbu5bRd/gUJ9GdwABKrrEPCoFPlOTVTnQ==
+ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mqRXPpSkfgIifxBw34QmWJmi37etZ7lKTYp6R+J/Z4PUN0rsmnsmKpBZTw==
 
 # Stage 1: Build TypeScript plugin from source
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS builder
@@ -126,6 +130,80 @@ RUN set -eu; \
     strings "$binary" | grep -Fq '/usr/local/bin/nemoclaw-managed-bootstrap'; \
     strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
 
+# Fetch immutable reviewed archives outside RUN instructions. The protected
+# GPU rebuild imports these checksum-addressed source records from the exact
+# amd64 build cache, while every package-materialization RUN remains offline.
+FROM scratch AS wechat-npm-archives
+
+ADD --checksum=sha256:422ee96c2fca294d6d80c193c2797d2a046cb8b512b84b0705c85865f0251bb7 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz /openclaw-weixin-2.4.3.tgz
+ADD --checksum=sha256:3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz /qrcode-terminal-0.12.0.tgz
+ADD --checksum=sha256:ee38f17f533fd500610685a483ae2f413c26f4eb33a51684314563c8d60f279c https://registry.npmjs.org/zod/-/zod-4.4.3.tgz /zod-4.4.3.tgz
+
+FROM scratch AS codex-acp-common-archive
+
+ADD --checksum=sha256:b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8 https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz /codex-acp.tgz
+
+FROM scratch AS codex-acp-amd64-archive
+
+ADD --checksum=sha256:051cc1c1b632797b65b574e31b3eebaa0b8795639a3080c93710b96755e62be3 https://registry.npmjs.org/@zed-industries/codex-acp-linux-x64/-/codex-acp-linux-x64-0.11.1.tgz /codex-acp-platform.tgz
+
+FROM scratch AS codex-acp-arm64-archive
+
+ADD --checksum=sha256:0ec75f1cd0bd6011b687d0aac25478f3123ffa81ec299281bcb1747dd3162e2a https://registry.npmjs.org/@zed-industries/codex-acp-linux-arm64/-/codex-acp-linux-arm64-0.11.1.tgz /codex-acp-platform.tgz
+
+# hadolint ignore=DL3006
+FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
+
+# Reviewed-archive invariants (#5896): checksum-addressed source archives,
+# committed SRI verification, offline installation, and exact architecture.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS codex-acp-runtime
+ARG TARGETARCH
+ARG CODEX_ACP_0_11_1_INTEGRITY
+ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY
+ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY
+COPY --from=codex-acp-common-archive /codex-acp.tgz /tmp/codex-acp/codex-acp.tgz
+COPY --from=codex-acp-platform-archive /codex-acp-platform.tgz /tmp/codex-acp/codex-acp-platform.tgz
+# hadolint ignore=DL4006,DL3016,SC2016
+RUN --network=none set -eu; \
+    case "$TARGETARCH" in \
+      amd64) platform_integrity="$CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY" ;; \
+      arm64) platform_integrity="$CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY" ;; \
+      *) echo "ERROR: unsupported codex-acp target architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); const actual="sha512-"+crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"); if(actual!==process.argv[2]) { console.error(`integrity mismatch for ${process.argv[1]}`); process.exit(1); }' \
+      /tmp/codex-acp/codex-acp.tgz "$CODEX_ACP_0_11_1_INTEGRITY"; \
+    node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); const actual="sha512-"+crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"); if(actual!==process.argv[2]) { console.error(`integrity mismatch for ${process.argv[1]}`); process.exit(1); }' \
+      /tmp/codex-acp/codex-acp-platform.tgz "$platform_integrity"; \
+    npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts \
+      /tmp/codex-acp/codex-acp-platform.tgz /tmp/codex-acp/codex-acp.tgz; \
+    rm -rf /tmp/codex-acp; \
+    command -v codex-acp >/dev/null
+
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS wechat-npm-cache
+COPY agents/openclaw/wechat-runtime/package.json agents/openclaw/wechat-runtime/package-lock.json /opt/wechat-runtime/
+COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/
+COPY --from=wechat-npm-archives / /opt/wechat-npm-archives/
+RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
+    && node --experimental-strip-types /opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts \
+        --lockfile /opt/wechat-runtime/package-lock.json \
+        --cache /out/wechat-npm-cache \
+        --registry-origin https://registry.npmjs.org/ \
+        --archive @tencent-weixin/openclaw-weixin@2.4.3=/opt/wechat-npm-archives/openclaw-weixin-2.4.3.tgz \
+        --archive qrcode-terminal@0.12.0=/opt/wechat-npm-archives/qrcode-terminal-0.12.0.tgz \
+        --archive zod@4.4.3=/opt/wechat-npm-archives/zod-4.4.3.tgz \
+    && NPM_CONFIG_OFFLINE=true npm ci --prefix /opt/wechat-runtime \
+        --ignore-scripts --omit=dev --legacy-peer-deps \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /out/wechat-npm-cache \
+    && NPM_CONFIG_OFFLINE=true \
+        node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts \
+        --lockfile /opt/wechat-runtime/package-lock.json \
+        --cache /out/wechat-npm-cache \
+        --registry-origin https://registry.npmjs.org/ \
+    && rm -rf /opt/wechat-runtime/node_modules \
+    && chown -R root:root /out/wechat-npm-cache \
+    && chmod -R a+rX,go-w /out/wechat-npm-cache
+
 # Group repository-owned files outside the final image so both Docker builders
 # can collapse related payloads without invalidating earlier final-image work.
 FROM scratch AS openclaw-dependency-payload
@@ -225,7 +303,6 @@ ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nh
 ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
 ARG OPENCLAW_2026_4_24_INTEGRITY=sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==
 ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz
-ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==
 # Keep the mcporter version, integrity, runtime lock, license, and advisory baseline
 # synchronized with agents/openclaw/dependency-review.md.
 ARG MCPORTER_VERSION=0.7.3
@@ -375,33 +452,10 @@ RUN test -f /usr/local/bin/node \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$json5_unsafe"
-# Reviewed-archive invariants (#5896): after npm materializes the exact lock and
-# seeds resolver metadata, the shared helper re-packs every locked archive
-# offline from the final cache and verifies its registry origin, committed SRI,
-# and contained filename before the cache becomes immutable.
-RUN --network=default npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime \
-        --ignore-scripts --omit=dev --legacy-peer-deps \
-        --userconfig /dev/null --registry https://registry.npmjs.org/ \
-        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
-    && npm cache add @tencent-weixin/openclaw-weixin@2.4.3 \
-        --userconfig /dev/null --registry https://registry.npmjs.org/ \
-        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
-    && npm cache add qrcode-terminal@0.12.0 \
-        --userconfig /dev/null --registry https://registry.npmjs.org/ \
-        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
-    && npm cache add zod@4.4.3 \
-        --userconfig /dev/null --registry https://registry.npmjs.org/ \
-        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
-    && NPM_CONFIG_OFFLINE=true \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
-        --lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json \
-        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
-        --registry-origin https://registry.npmjs.org/ \
-    && rm -rf /usr/local/lib/nemoclaw/wechat-runtime/node_modules \
-    && chown -R root:root /usr/local/lib/nemoclaw/wechat-runtime \
-        /usr/local/share/nemoclaw/wechat-npm-cache \
-    && chmod -R a+rX,go-w /usr/local/lib/nemoclaw/wechat-runtime \
-        /usr/local/share/nemoclaw/wechat-npm-cache
+# Reviewed-archive invariants (#5896): the dedicated build stage materializes
+# the exact lock, seeds resolver metadata, and re-packs every archive offline
+# before this root-owned immutable cache enters the final image.
+COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/
 COPY --from=openclaw-patch-payload / /
 
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
@@ -424,24 +478,14 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 # versioned npx package specs even when the package is globally installed.
 # Installing the binary at build time and configuring ACPx to use it
 # directly keeps TC-SBX-02 off the runtime npm path.
-# Pack the already-reviewed tarball URL after verifying current registry
-# metadata. Re-resolving package@version here would introduce another mutable
-# registry selection between the reviewed identity check and installation.
-# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
-# basename in a fresh directory, local-archive-only install, and cleanup.
+# The architecture-selected installer stage consumes checksum-addressed local
+# archives with the network disabled, verifies their committed SRI values, and
+# installs both the launcher and its native package together.
 #
 # hadolint ignore=DL3059,DL4006,DL3016
-RUN --network=default set -eu; \
-    CODEX_ACP_SPEC='@zed-industries/codex-acp@0.11.1'; \
-    CODEX_ACP_TARBALL='https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz'; \
-    CODEX_ACP_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
-        --package-spec "$CODEX_ACP_SPEC" --integrity "$CODEX_ACP_0_11_1_INTEGRITY" \
-        --tarball-url "$CODEX_ACP_TARBALL" --label "$CODEX_ACP_SPEC")"; \
-    CODEX_ACP_PACK_DIR="$(dirname "$CODEX_ACP_PACK_PATH")"; \
-    npm install -g --no-audit --no-fund --no-progress --ignore-scripts \
-        "$CODEX_ACP_PACK_PATH"; \
-    rm -rf "$CODEX_ACP_PACK_DIR"; \
-    command -v codex-acp >/dev/null
+COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/local/lib/node_modules/@zed-industries/
+COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
+RUN command -v codex-acp >/dev/null
 
 # Upgrade OpenClaw if the base image is stale.
 # Reuse exact OpenClaw and locked-mcporter base installs only when the protected

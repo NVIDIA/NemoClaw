@@ -324,7 +324,7 @@ describe("MCP tool discovery image contract", () => {
     },
   );
 
-  // source-shape-contract: compatibility -- Protected offline rebuilds must reuse the hosted dependency layers instead of changing their implicit network cache key
+  // source-shape-contract: compatibility -- Protected rebuilds must materialize mutable dependency graphs in explicit offline stages
   it("pins dependency-materialization RUN cache identity", () => {
     const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     const hermesDockerfile = fs.readFileSync(
@@ -336,7 +336,10 @@ describe("MCP tool discovery image contract", () => {
       "utf8",
     );
 
-    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(6);
+    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(4);
+    expect(openClawDockerfile.match(/^RUN --network=none\b/gmu)).toHaveLength(2);
+    expect(openClawDockerfile).toContain("AS wechat-npm-cache");
+    expect(openClawDockerfile).toContain("AS codex-acp-runtime");
     expect(hermesDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
     expect(dcodeDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
   });

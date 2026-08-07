@@ -382,6 +382,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "seed-reviewed-npm-cache.mts"),
+    path.join(stagedScriptsDir, "lib", "seed-reviewed-npm-cache.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-audit.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-audit.mts"),
   );

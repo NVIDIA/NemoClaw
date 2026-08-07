@@ -146,7 +146,10 @@ describe("OpenClaw final image layout", () => {
       "COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh",
       "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/",
       pluginCopy,
+      "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
       patchCopy,
+      "COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/local/lib/node_modules/@zed-industries/",
+      "COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp",
       runtimeCopy,
       scanCopy,
     ]);
@@ -206,7 +209,7 @@ describe("OpenClaw final image layout", () => {
     );
     const wechatInstall = indexOfRequired(
       finalStage,
-      "RUN --network=default npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime",
+      "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
     );
     const patchChmod = indexOfRequired(
       finalStage,

@@ -922,24 +922,12 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).not.toContain("openclaw plugins install");
       });
 
-      it("installs the reviewed pin when registry integrity matches the committed pin", () => {
+      it("installs the reviewed OpenClaw pin when registry integrity matches", () => {
         const production = runInstallBlock(
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
             "# Patch OpenClaw media fetch",
-          ),
-          {
-            openclawVersion: PINNED_OPENCLAW_VERSION,
-            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
-          },
-        );
-        const codexAcp = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE,
-            "# Pre-install the codex-acp package",
-            "# Upgrade OpenClaw if the base image is stale.",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -961,7 +949,6 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
 
         expect(production.result.status).toBe(0);
-        expect(codexAcp.result.status).toBe(0);
         expect(base.result.status, `${base.result.stdout}${base.result.stderr}`).toBe(0);
         expect(production.calls).toContain(
           `npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`,
@@ -972,20 +959,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(production.calls).not.toContain(
           `npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`,
         );
-        expect(codexAcp.calls).toContain(
-          `npm view @zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} dist.integrity`,
-        );
-        expect(codexAcp.calls).toContain(
-          `npm view @zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} dist.tarball`,
-        );
-        expect(codexAcp.calls).toContain(`npm pack ${PINNED_CODEX_ACP_TARBALL} --pack-destination`);
         expect(production.calls).toMatch(/npm --prefix \S+\/openclaw-runtime ci /u);
         expect(production.calls).toContain("--verify-installed-lock");
         expect(production.calls).toContain("postinstall-bundled-plugins.mjs");
-        expect(codexAcp.calls).toContain(
-          "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
-        );
-        expect(codexAcp.calls).toContain(`codex-acp-${PINNED_CODEX_ACP_VERSION}.tgz`);
         expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} version`);
         expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
@@ -1339,19 +1315,6 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
       });
 
       it("rejects npm pack filenames outside the fresh pack directories", () => {
-        const codexAcp = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE,
-            "# Pre-install the codex-acp package",
-            "# Upgrade OpenClaw if the base image is stale.",
-          ),
-          {
-            openclawVersion: PINNED_OPENCLAW_VERSION,
-            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            packFilename: "../codex-acp-0.11.1.tgz",
-          },
-        );
         const base = runInstallBlock(
           extractRunBlock(
             DOCKERFILE_BASE,
@@ -1373,12 +1336,6 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         });
 
         for (const item of [
-          {
-            label: "codex-acp Dockerfile",
-            outcome: codexAcp,
-            unsafeFilename: "../codex-acp-0.11.1.tgz",
-            blockedCommand: "npm install -g",
-          },
           {
             label: "base Dockerfile",
             outcome: base,
@@ -1746,103 +1703,33 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).not.toContain("npm install -g");
       });
 
-      it("fails closed before installing codex-acp when its registry integrity drifts", () => {
-        const { result, calls } = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE,
-            "# Pre-install the codex-acp package",
-            "# Upgrade OpenClaw if the base image is stale.",
-          ),
-          {
-            openclawVersion: PINNED_OPENCLAW_VERSION,
-            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            codexAcpCommittedIntegrity: PINNED_CODEX_ACP_INTEGRITY,
-            codexAcpRegistryIntegrity: "sha512-codex-acp-drift",
-          },
+      it("keeps codex-acp checksum-sourced, SRI-verified, multiarch, and offline", () => {
+        const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+        const block = dockerfile.slice(
+          dockerfile.indexOf("FROM scratch AS codex-acp-common-archive"),
+          dockerfile.indexOf("FROM node:22-trixie-slim", dockerfile.indexOf("AS wechat-npm-cache")),
         );
 
-        expect(result.status).not.toBe(0);
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          `@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} npm integrity mismatch`,
+        expect(block).toContain(
+          `ADD --checksum=sha256:b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8 ${PINNED_CODEX_ACP_TARBALL} /codex-acp.tgz`,
         );
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          `Expected: ${PINNED_CODEX_ACP_INTEGRITY}`,
+        expect(block).toContain("AS codex-acp-amd64-archive");
+        expect(block).toContain("AS codex-acp-arm64-archive");
+        expect(block).toContain(
+          "FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive",
         );
-        expect(`${result.stdout}${result.stderr}`).toContain("Actual:   sha512-codex-acp-drift");
-        expect(calls).toContain(
-          `npm view @zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} dist.integrity`,
+        expect(dockerfile).toContain(
+          `ARG CODEX_ACP_0_11_1_INTEGRITY=${PINNED_CODEX_ACP_INTEGRITY}`,
         );
-        expect(calls).not.toContain(
-          `npm install -g --no-audit --no-fund --no-progress ${PINNED_CODEX_ACP_TARBALL}`,
+        expect(dockerfile).toContain("ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY=sha512-");
+        expect(dockerfile).toContain("ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-");
+        expect(block).toContain("actual!==process.argv[2]");
+        expect(block).toContain("RUN --network=none");
+        expect(block).toContain(
+          "npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts",
         );
-      });
-
-      it("fails closed before installing codex-acp when its registry tarball URL drifts", () => {
-        const { result, calls } = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE,
-            "# Pre-install the codex-acp package",
-            "# Upgrade OpenClaw if the base image is stale.",
-          ),
-          {
-            openclawVersion: PINNED_OPENCLAW_VERSION,
-            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            codexAcpCommittedIntegrity: PINNED_CODEX_ACP_INTEGRITY,
-            codexAcpRegistryIntegrity: PINNED_CODEX_ACP_INTEGRITY,
-            codexAcpRegistryTarball:
-              "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.2.tgz",
-          },
-        );
-
-        expect(result.status).not.toBe(0);
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          `@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} npm tarball URL mismatch`,
-        );
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          `Expected: ${PINNED_CODEX_ACP_TARBALL}`,
-        );
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          "Actual:   https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.2.tgz",
-        );
-        expect(calls).toContain(
-          `npm view @zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} dist.tarball`,
-        );
-        expect(calls).not.toContain(
-          `npm install -g --no-audit --no-fund --no-progress ${PINNED_CODEX_ACP_TARBALL}`,
-        );
-      });
-
-      it("fails closed before installing codex-acp when its downloaded tarball integrity drifts", () => {
-        const { result, calls } = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE,
-            "# Pre-install the codex-acp package",
-            "# Upgrade OpenClaw if the base image is stale.",
-          ),
-          {
-            openclawVersion: PINNED_OPENCLAW_VERSION,
-            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
-            codexAcpCommittedIntegrity: PINNED_CODEX_ACP_INTEGRITY,
-            codexAcpRegistryIntegrity: PINNED_CODEX_ACP_INTEGRITY,
-            codexAcpPackIntegrity: "sha512-codex-downloaded-drift",
-          },
-        );
-
-        expect(result.status).not.toBe(0);
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          `@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} downloaded tarball integrity mismatch`,
-        );
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          `Expected: ${PINNED_CODEX_ACP_INTEGRITY}`,
-        );
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          "Actual:   sha512-codex-downloaded-drift",
-        );
-        expect(calls).toContain(`npm pack ${PINNED_CODEX_ACP_TARBALL} --pack-destination`);
-        expect(calls).not.toContain("npm install -g");
+        expect(block).not.toContain("npm view");
+        expect(block).not.toContain("npm pack");
       });
 
       it("fails closed before npm install for unpinned base Dockerfile overrides", () => {

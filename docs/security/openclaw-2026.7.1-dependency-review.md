@@ -294,6 +294,22 @@ local `.tgz` path. Its locked-runtime
 checks bind the OpenClaw and mcporter installs to exact committed lock digests,
 the official registry origin, and post-install graph verification.
 
+The final OpenClaw image also materializes the WeChat runtime and
+`@zed-industries/codex-acp@0.11.1` without network access in any package-install
+instruction. BuildKit fetches only checksum-addressed archives: WeChat
+`openclaw-weixin@2.4.3`, `qrcode-terminal@0.12.0`, and `zod@4.4.3` use committed
+SHA-256 source checksums and their lockfile SHA-512 identities, while Codex ACP
+uses committed SHA-256 source checksums and SHA-512 identities for the common
+package and the selected `linux-x64` or `linux-arm64` native package.
+`scripts/lib/seed-reviewed-npm-cache.mts` rejects missing, extra, symlinked,
+off-registry, or integrity-mismatched archives before it creates the minimal npm
+resolver metadata. The WeChat stage then runs `npm ci` and re-packs every locked
+archive with `NPM_CONFIG_OFFLINE=true`; the Codex ACP stage verifies both local
+archives and installs them with `npm install --offline`. Only the resulting
+root-owned cache and installed Codex ACP payload enter the final image. This
+keeps the protected GPU rebuild compatible with an imported exact-build cache
+while ensuring package materialization cannot fall back to the public registry.
+
 ## OpenClaw Compiled-Dist Patch Runtime Boundary
 
 `test/openclaw-real-patched-dist-harness.test.ts` materializes the exact public
