@@ -94,9 +94,11 @@ exec "\$real_docker" "\$@"
           (fs.existsSync(firstProbeNamePath)
             ? fs.readFileSync(firstProbeNamePath, "utf8").trim()
             : "");
-        if (cleanupProbeName) {
-          spawnSync(realDocker, ["rm", "-f", cleanupProbeName], { stdio: "ignore" });
-        }
+        [cleanupProbeName]
+          .filter((probeName) => probeName.length > 0)
+          .forEach((probeName) =>
+            spawnSync(realDocker, ["rm", "-f", probeName], { stdio: "ignore" }),
+          );
         fs.rmSync(fixtureDir, { recursive: true, force: true });
       }
     },
