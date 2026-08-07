@@ -82,10 +82,12 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const managedInputPaths = [
   ".dockerignore",
+  ".github/actions/ci-reviewed-npm-audit/**",
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
   "agents/**",
   "ci/npm-audit-exceptions.json",
+  "ci/reviewed-npm-audit.json",
   "nemoclaw/**",
   "nemoclaw-blueprint/**",
   "scripts/**",
@@ -334,7 +336,12 @@ describe("complete managed-image publication workflow", () => {
       'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
     );
     expect(publisher).toMatchObject({
-      needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
+      needs: [
+        "build-and-push-hermes",
+        "build-and-push-dcode",
+        "build-and-push-openclaw",
+        "reviewed-npm-audit",
+      ],
       permissions: {
         contents: "read",
         packages: "write",
@@ -344,6 +351,25 @@ describe("complete managed-image publication workflow", () => {
     expect(publisher.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
     expect(publisher.if).toContain("github.ref == 'refs/heads/main'");
     expect(publisher.if).toContain("startsWith(github.ref, 'refs/tags/v')");
+
+    const reviewedAudit = required(
+      baseWorkflow.jobs?.["reviewed-npm-audit"],
+      "base-image workflow is missing the reviewed npm audit",
+    );
+    expect(reviewedAudit).toMatchObject({
+      if: "github.repository == 'NVIDIA/NemoClaw'",
+      permissions: { contents: "read" },
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 15,
+    });
+    expect(step(reviewedAudit, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(step(reviewedAudit, "Audit reviewed production npm graphs")).toMatchObject({
+      uses: "./.github/actions/ci-reviewed-npm-audit",
+      with: {
+        "report-dir": "artifacts/reviewed-npm-audit",
+        "target-root": "${{ github.workspace }}",
+      },
+    });
 
     const basePublishers = [
       {
@@ -372,6 +398,7 @@ describe("complete managed-image publication workflow", () => {
         baseWorkflow.jobs?.[expectedPublisher.job],
         `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
       );
+      expect(basePublisher.needs).toEqual([expectedPublisher.platformsJob, "reviewed-npm-audit"]);
       const manifest = step(basePublisher, "Create and verify multi-platform manifest");
       const manifestRun = manifest.run ?? "";
       expect(manifest.id).toBe("manifest");
@@ -405,6 +432,7 @@ describe("complete managed-image publication workflow", () => {
         baseWorkflow.jobs?.[expectedPublisher.platformsJob],
         `base-image workflow is missing native ${expectedPublisher.agent} platforms`,
       );
+      expect(nativePlatforms.needs).toEqual(["reviewed-npm-audit"]);
       expect(nativePlatforms.strategy?.matrix?.include).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

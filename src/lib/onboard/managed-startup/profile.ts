@@ -612,6 +612,16 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
       "operator scheduler tuning is applied by the application environment transaction",
     ),
     deferredRuntimeInput(
+      "NEMOCLAW_MCP_SHADOW_DIAGNOSTICS",
+      "application-environment",
+      "operator shadow-diagnostics tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS",
+      "application-environment",
+      "operator MCP discovery timeout tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
       "OPENCLAW_HOME",
       "fixed-image-contract",
       "the managed image and agent definition own this fixed runtime layout path",

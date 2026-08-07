@@ -10,12 +10,17 @@ import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
 
-const { detectGpu, detectNvidiaPlatform } = vi.hoisted(() => ({
+const { detectGpu, detectNvidiaDriverVersion, detectNvidiaPlatform } = vi.hoisted(() => ({
   detectGpu: vi.fn<() => GpuDetection | null>(() => null),
+  detectNvidiaDriverVersion: vi.fn<() => string | undefined>(() => undefined),
   detectNvidiaPlatform: vi.fn<() => NvidiaPlatform>(() => "linux"),
 }));
 
-vi.mock("../inference/nim", () => ({ detectGpu, detectNvidiaPlatform }));
+vi.mock("../inference/nim", () => ({
+  detectGpu,
+  detectNvidiaDriverVersion,
+  detectNvidiaPlatform,
+}));
 
 const NOW = new Date("2026-06-01T12:00:00Z");
 const SOURCE_REVISION = "21e60ae287e8c2a184f71406ac8b418f046330d1";
@@ -97,6 +102,8 @@ describe("host readiness projection (#7408)", () => {
   beforeEach(() => {
     detectGpu.mockReset();
     detectGpu.mockReturnValue(null);
+    detectNvidiaDriverVersion.mockReset();
+    detectNvidiaDriverVersion.mockReturnValue(undefined);
     detectNvidiaPlatform.mockReset();
     detectNvidiaPlatform.mockReturnValue("linux");
   });
@@ -203,6 +210,30 @@ describe("host readiness projection (#7408)", () => {
     expect(result.status).toBe("supported");
   });
 
+  it("projects bounded GPU count and driver observations for managed serving", () => {
+    const result = createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
+      {
+        assess: () => host(),
+        architecture: "arm64",
+        collectPlatformIdentity: () => ({
+          nvidiaPlatform: "spark",
+          productName: "NVIDIA DGX Spark",
+        }),
+        detectGpu: () => ({ count: 1 }),
+        detectHostGpuPlatform: () => "spark",
+        detectNvidiaDriverVersion: () => "580.65.06",
+      },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.gpu.count", state: "present", value: 1 },
+        { id: "host.gpu.driver_version", state: "present", value: "580.65.06" },
+      ]),
+    );
+  });
+
   it("uses the canonical WSL Docker Desktop GPU proof in the default report creator", () => {
     detectGpu.mockReturnValue({
       type: "nvidia",
@@ -228,6 +259,7 @@ describe("host readiness projection (#7408)", () => {
 
   it("skips the WSL Docker Desktop GPU proof when Docker is unreachable", () => {
     const detectGpuProbe = vi.fn(() => ({
+      count: 1,
       wslDockerDesktopGpuProofPassed: true,
     }));
 

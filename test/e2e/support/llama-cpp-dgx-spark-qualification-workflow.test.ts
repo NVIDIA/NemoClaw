@@ -37,6 +37,16 @@ describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
     expect(validateLlamaCppDgxSparkQualificationWorkflow(workflow())).toEqual([]);
   });
 
+  it("does not record manual PR risk signals on main pushes", () => {
+    const value = workflow();
+    const jobEnv = job(value, "llama-cpp-dgx-spark-qualification").env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
   it("rejects bypassing the declarative protected-runner plan", () => {
     const value = workflow();
     job(value, "llama-cpp-dgx-spark-qualification")["runs-on"] = "self-hosted";
