@@ -48,6 +48,51 @@ describe("maintainer merge-gate final PR snapshot", () => {
     expect(output.allPass).toBe(false);
   });
 
+  it("verifies every final status context when the rollup spans multiple pages", () => {
+    const statusChecks = [
+      ...successfulRequiredChecks(),
+      ...Array.from({ length: 95 }, (_, index) => ({
+        __typename: "StatusContext",
+        context: `optional-context-${index + 1}`,
+        state: "SUCCESS",
+        startedAt: "2026-01-01T00:00:00Z",
+      })),
+    ];
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks,
+        finalStatusCheckPageSize: 100,
+      }).stdout,
+    );
+
+    expect(output).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
+  });
+
+  it("fails closed when the complete final status snapshot changes between reads", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        finalStatusChecksAfterFirstRead: successfulRequiredChecks().map((check) =>
+          check.name === "checks"
+            ? { ...check, status: "IN_PROGRESS", conclusion: undefined }
+            : check,
+        ),
+      }).stdout,
+    );
+
+    expect(output.gates.ci).toMatchObject({
+      pass: false,
+      details: "Unable to verify the final PR checks",
+    });
+    expect(output.allPass).toBe(false);
+  });
+
   it("accepts a multi-commit PR when the final snapshot returns the PR commit SHA", () => {
     const output = JSON.parse(
       runGate({

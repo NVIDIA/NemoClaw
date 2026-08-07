@@ -138,6 +138,8 @@ It rejects remote endpoints and relative socket paths before service startup.
 
 The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
 NemoClaw does not use the standalone gateway fallback when this validation fails.
+Onboarding prints the advisory identifier in parentheses after each action title in the `Suggested fix` list.
+The terminal output names `invalid_docker_host` when this validation fails, so you can match the message to this section.
 Remove the override to use Docker's default local socket:
 
 ```bash
@@ -575,10 +577,18 @@ $$nemoclaw onboard --resume
 
 <AgentOnly variant="openclaw,hermes">
 
-### Web search verification reports a warning
+### Web search verification reports a warning or security error
 
 When web search is enabled, onboarding checks the selected agent configuration and sends a real search request through the sandbox egress path.
-The verification is best effort, so a failed check prints a warning and lets onboarding finish.
+Configuration and egress verification are best effort, so those failed checks print a warning and let onboarding finish.
+The selected credential's live sandbox isolation check is required.
+If NemoClaw confirms that the raw Brave or Tavily key is visible, or the sandbox does not return a valid isolation result, it reports a security error.
+The CLI pauses onboarding and exits with a nonzero status.
+Recreate that sandbox through the supported onboarding flow before using it:
+
+```bash
+$$nemoclaw onboard --recreate-sandbox
+```
 
 First confirm that the provider credential and matching policy preset exist.
 
@@ -720,23 +730,42 @@ Docker then marks the container `(unhealthy)` even though `pgrep` still finds th
 NemoClaw prevents restart-class configuration changes from causing this condition and recovers a gateway that stops serving:
 
 - The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
-- A serving watchdog inside the sandbox stops a gateway process that no longer serves after returning at least one serving response, and the supervisor relaunches it.
+- A serving watchdog inside the sandbox stops a gateway process that does not serve, and the supervisor relaunches it.
 
 The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same response requirement the sandbox applies when it waits for the gateway at startup.
-After the gateway returns a serving response, these probe outcomes count as not serving:
+These probe outcomes count as not serving:
 
 - The connection is refused.
 - The probe times out.
 - The connection is accepted and then closed without a response.
 - The health endpoint returns an HTTP status other than `200` or `401`.
 
-The watchdog logs the cause of each not-serving probe only after a serving response.
-It stops the gateway after four not-serving probes without an intervening serving response.
-At the default 30-second interval, this takes roughly two minutes when there are no inconclusive probes.
+The watchdog logs the cause of every not-serving probe.
+Its recovery bound depends on whether the gateway has ever served:
+
+- After the gateway returns a serving response, the watchdog stops it on the fourth not-serving probe with no intervening serving response.
+  At the default 30-second interval, this takes roughly two minutes.
+- Before the gateway has ever served, the watchdog uses a longer boot grace window because it cannot distinguish a slow boot from a gateway that cannot serve.
+  It stops the gateway on the 20th not-serving probe, roughly 10 minutes after launch at the default interval.
+  Set `NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES` to change this bound.
+
+Each of these watchdog settings accepts a positive integer of up to nine digits:
+
+- `NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES`.
+- `NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS`.
+- `NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD`.
+
+The watchdog rejects any other value, logs which setting it rejected, and falls back to that setting's default.
+
 Look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`.
+Before recovery reaches its bound, each not-serving probe line shows the count and bound.
+Examples include `(2/4 since the last serving response)` and `(7/20 since launch, having never served)`.
+
+If the watchdog reports that this supervisor is no longer the gateway's parent, the process survived without the supervisor that relaunches it.
+Recover the sandbox with `$$nemoclaw <name> recover`.
 
 If the watchdog reports `health probe inconclusive`, the probe itself could not run inside the sandbox.
-An inconclusive probe leaves the gateway untouched and preserves the number of not-serving probes since the last serving response.
+An inconclusive probe leaves the gateway untouched and preserves the current not-serving count, whether the watchdog is counting since launch or since the last serving response.
 If `curl` is missing, the watchdog reports this exact diagnostic:
 
 ```text
@@ -1367,6 +1396,16 @@ Use the lightest recovery path first instead of rebuilding immediately.
 After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists.
 `$$nemoclaw <name> status` and `$$nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically.
 Run `$$nemoclaw <name> rebuild --yes` when you want NemoClaw to recreate the sandbox from the recorded metadata, or run `$$nemoclaw <name> destroy` when you intentionally want to remove the stale entry.
+
+### A command reports that the registry file is not valid JSON
+
+Registry operations that require complete sandbox records, such as `$$nemoclaw list` and `$$nemoclaw onboard`, stop with `Configuration file is present but is not valid JSON`, followed by the path to `sandboxes.json` and the recovery commands.
+
+These operations stop instead of reading the file as an empty registry, so they cannot replace your sandbox records with empty state.
+Optional messaging health checks omit registry-derived information when they cannot read the registry.
+It does not rename, move, or rewrite the file.
+
+Follow [Malformed Registry File](host-files-and-state#malformed-registry-file) to keep a copy and remove it.
 
 ### Status shows "not running" inside the sandbox
 
@@ -2938,6 +2977,24 @@ For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/qu
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+
+The portable experimental profile uses the `docker` command to drive rootless Podman.
+Before you run this profile, make sure a Docker-compatible CLI is available on `PATH`.
+On a Podman-only host, install the `podman-docker` shim for your distribution:
+
+```bash
+# Debian or Ubuntu
+sudo apt install podman-docker
+
+# Fedora
+sudo dnf install podman-docker
+```
+
+Then rerun portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
 
 <AgentOnly variant="hermes">
 
