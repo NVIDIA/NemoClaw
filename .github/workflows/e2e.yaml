@@ -994,7 +994,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.99"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1079,7 +1079,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -1332,12 +1332,12 @@ jobs:
             jq -n '{
               schemaVersion: 1,
               sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.85",
-              sourceSha: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+              releaseTag: "v0.0.99",
+              sourceSha: "8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032",
               artifacts: {
-                cli: {binarySha256: "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8"},
-                gateway: {binarySha256: "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f"},
-                standaloneSandbox: {binarySha256: "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2"}
+                cli: {binarySha256: "5c0dabb90152a3cfae9005731771da99f00a22403080c81952c7be8ba4b5728f"},
+                gateway: {binarySha256: "05bd6c982dd72b73364b91ab694487c026bc56d0cd869f4289b44cc392a5c2ba"},
+                standaloneSandbox: {binarySha256: "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214"}
               }
             }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
@@ -1401,7 +1401,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1453,12 +1453,12 @@ jobs:
           jq -n '{
             schemaVersion: 1,
             sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.85",
-            sourceSha: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+            releaseTag: "v0.0.99",
+            sourceSha: "8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032",
             artifacts: {
-              cli: {binarySha256: "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8"},
-              gateway: {binarySha256: "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f"},
-              standaloneSandbox: {binarySha256: "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2"}
+              cli: {binarySha256: "5c0dabb90152a3cfae9005731771da99f00a22403080c81952c7be8ba4b5728f"},
+              gateway: {binarySha256: "05bd6c982dd72b73364b91ab694487c026bc56d0cd869f4289b44cc392a5c2ba"},
+              standaloneSandbox: {binarySha256: "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214"}
             }
           }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
