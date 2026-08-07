@@ -24,7 +24,10 @@ const llamaCppDgxSparkQualificationContract = (
 
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
-const { LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH } = llamaCppDgxSparkQualificationContract;
+const {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
+} = llamaCppDgxSparkQualificationContract;
 
 export const RISK_PLAN_VERSION = 17 as const;
 
@@ -104,7 +107,6 @@ const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
   "src/lib/onboard/workload/",
   "test/e2e/live/managed-image-protected-runtime.",
 ] as const;
-const LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
 const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualification" as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
@@ -562,7 +564,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     // activation candidate selects this protected lane after the Spark runner,
     // approval environment, and verified local model path are provisioned.
     matches: (file) =>
-      file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION ||
+      file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH ||
       file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   },
   {
