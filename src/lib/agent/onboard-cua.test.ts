@@ -25,7 +25,9 @@ describe("NemoCUA agent onboarding", () => {
     const agent = loadAgent("nemocua", runtime.env);
     vi.stubEnv("NEMOCLAW_CUA_ENABLED", "");
 
-    expect(() => getAgentPolicyPath(agent)).toThrow("use the supported Brev Launchable activation");
+    expect(() => getAgentPolicyPath(agent)).toThrow(
+      "use the controlled Brev Launchable activation",
+    );
   });
 
   it("refuses candidate onboarding before loading the agent without qualification authority (#7755)", () => {

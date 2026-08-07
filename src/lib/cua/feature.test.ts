@@ -18,7 +18,7 @@ describe("CUA framework activation (#7750)", () => {
     }
     expect(isCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: "1" })).toBe(true);
     expect(() => requireCuaFrameworkEnabled({})).toThrow(
-      "use the supported Brev Launchable activation",
+      "use the controlled Brev Launchable activation",
     );
     expect(() => requireCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: "1" })).not.toThrow();
   });

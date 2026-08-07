@@ -54,7 +54,7 @@ describe("agent definitions", () => {
 
     expect(listAgents(disabledEnv)).not.toContain("nemocua");
     expect(() => loadAgent("nemocua", disabledEnv)).toThrow(
-      "use the supported Brev Launchable activation",
+      "use the controlled Brev Launchable activation",
     );
   });
 

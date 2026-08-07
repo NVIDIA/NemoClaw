@@ -66,6 +66,10 @@ export interface OnboardContext {
     readiness: CuaRuntimeReadiness,
     expectedEntry: SandboxEntry,
   ) => boolean;
+  cuaRegistry?: {
+    getSandbox: (sandboxName: string) => SandboxEntry | null;
+    recordCuaRuntimeReadiness: NonNullable<OnboardContext["recordCuaRuntimeReadiness"]>;
+  };
   cuaRuntimeEnvironment?: NodeJS.ProcessEnv;
   cuaBuildIdentity?: CuaBuildIdentity;
   cuaRootDir?: string;
@@ -286,6 +290,7 @@ async function recordCuaRuntimeReadiness(
     | "recordStepFailed"
     | "updateSandbox"
     | "recordCuaRuntimeReadiness"
+    | "cuaRegistry"
     | "cuaRuntimeEnvironment"
     | "cuaBuildIdentity"
     | "cuaRootDir"
@@ -297,7 +302,9 @@ async function recordCuaRuntimeReadiness(
 ): Promise<void> {
   if (agent.name !== "nemocua") return;
   try {
-    const storedSandbox = context.getSandboxInferenceSelection?.(sandboxName);
+    const storedSandbox = (
+      context.getSandboxInferenceSelection ?? context.cuaRegistry?.getSandbox
+    )?.(sandboxName);
     const recordedSandbox = storedSandbox ?? {
       provider,
       model,
@@ -350,13 +357,11 @@ async function recordCuaRuntimeReadiness(
           ...(context.cuaBuildIdentity ? { buildIdentity: context.cuaBuildIdentity } : {}),
           ...(context.cuaRootDir ? { rootDir: context.cuaRootDir } : {}),
         });
+        const canonicalRecord =
+          context.recordCuaRuntimeReadiness ?? context.cuaRegistry?.recordCuaRuntimeReadiness;
         const recorded =
-          context.recordCuaRuntimeReadiness && storedSandbox && "name" in storedSandbox
-            ? context.recordCuaRuntimeReadiness(
-                sandboxName,
-                cuaRuntimeReadiness,
-                storedSandbox as SandboxEntry,
-              )
+          canonicalRecord && storedSandbox && "name" in storedSandbox
+            ? canonicalRecord(sandboxName, cuaRuntimeReadiness, storedSandbox as SandboxEntry)
             : context.updateSandbox?.(sandboxName, { cuaRuntimeReadiness });
         if (!recorded) {
           throw new Error(`NemoCUA runtime readiness could not be recorded for '${sandboxName}'`);
@@ -414,6 +419,7 @@ export async function handleAgentSetup(
     getSandboxInferenceSelection,
     updateSandbox,
     recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
+    cuaRegistry,
     cuaRuntimeEnvironment,
     cuaBuildIdentity,
     cuaRootDir,
@@ -457,6 +463,7 @@ export async function handleAgentSetup(
             recordStepFailed,
             updateSandbox,
             recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
+            cuaRegistry,
             cuaRuntimeEnvironment,
             cuaBuildIdentity,
             cuaRootDir,
@@ -533,6 +540,7 @@ export async function handleAgentSetup(
       recordStepFailed,
       updateSandbox,
       recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
+      cuaRegistry,
       cuaRuntimeEnvironment,
       cuaBuildIdentity,
       cuaRootDir,

@@ -4424,9 +4424,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepComplete,
           recordStepFailed,
           skippedStepMessage,
-          getSandboxInferenceSelection: registry.getSandbox,
-          updateSandbox: registry.updateSandbox,
-          recordCuaRuntimeReadiness: registry.recordCuaRuntimeReadiness,
+          cuaRegistry: registry,
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
           selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
@@ -4518,7 +4516,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
-
     const finalFlowResult = await runFinalOnboardFlowSlice({
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),

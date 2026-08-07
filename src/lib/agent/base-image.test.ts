@@ -93,7 +93,7 @@ describe("agent base image provisioning", () => {
 
       withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
         expect(() => ensureAgentBaseImage(agent)).toThrow(
-          "use the supported Brev Launchable activation",
+          "use the controlled Brev Launchable activation",
         );
         expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
         expect(dockerBuildMock).not.toHaveBeenCalled();

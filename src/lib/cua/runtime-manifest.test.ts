@@ -89,7 +89,7 @@ describe("external NemoCUA runtime manifest", () => {
         { ...runtime.env, NEMOCLAW_CUA_ENABLED: undefined },
         { assertFileOwnership },
       ),
-    ).toThrow("use the supported Brev Launchable activation");
+    ).toThrow("use the controlled Brev Launchable activation");
     expect(assertFileOwnership).not.toHaveBeenCalled();
   });
 

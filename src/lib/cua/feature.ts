@@ -16,7 +16,7 @@ export function isCuaFrameworkEnabled(env: NodeJS.ProcessEnv = process.env): boo
 /** Refuse every CUA artifact or product-surface read before the default-off gate. */
 export function requireCuaFrameworkEnabled(env: NodeJS.ProcessEnv = process.env): void {
   if (!isCuaFrameworkEnabled(env)) {
-    throw new Error("CUA is disabled; use the supported Brev Launchable activation");
+    throw new Error("CUA is disabled; use the controlled Brev Launchable activation");
   }
 }
 
