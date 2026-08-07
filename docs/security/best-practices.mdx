@@ -89,7 +89,8 @@ flowchart TB
 ## Network Controls
 
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets you approve or deny requests in real time.
-Network policy allowlists do not disable OpenShell's SSRF guard, so internal-address blocking remains active even when an endpoint matches an egress rule.
+OpenShell hard-blocks unspecified, loopback, and link-local destinations, including the common cloud metadata range.
+An endpoint with `allowed_ips` can explicitly permit other private ranges, so treat that field as a server-side request forgery (SSRF) boundary change.
 
 OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
 Refer to the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices.
@@ -222,6 +223,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `local-inference` | Local Ollama and vLLM through the host gateway. | Allows sandbox access to host-side local inference ports covered by the preset. |
 | `npm` | npm and Yarn registries via L4 pass-through. | Allows installing arbitrary npm packages, which may contain malicious code. OpenShell still gates by host, port, and binary, but does not inspect HTTP method, path, or body for this preset. |
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
+| `personal-open-internet` | TCP connections to public and private address ranges on destination ports `80` and `443` from every sandbox binary. | Removes hostname, binary, application protocol, HTTP method, path, and request-body restrictions for matching connections. An agent can send sandbox-visible data to an arbitrary reachable service on either port without another approval prompt. |
 | `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
 | `tavily` | Tavily Search API. | Agent can submit search queries and extraction targets to Tavily. The preset allows only `POST /search` and `POST /extract` from the maintained agent runtimes and enables request-body credential rewriting when the agent sends the placeholder in JSON. |
@@ -229,6 +231,16 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 
 Apply presets only when the agent's task requires the integration.
 Review the preset's YAML file before applying to understand the endpoints, methods, and binary restrictions it adds.
+
+<Warning title="Personal Tier">
+The Personal tier selects `personal-open-internet` and every maintained preset supported by the active agent.
+The open-internet preset allows every sandbox binary to reach public and private address ranges on destination ports `80` and `443` through L4 passthrough.
+Traffic on those ports is not limited to HTTP or HTTPS.
+OpenShell does not inspect the hostname, application protocol, HTTP method, path, or body for those connections.
+The preset excludes unspecified, loopback, and link-local ranges, and other ports remain denied unless another entry permits them.
+Use it only for trusted personal workloads with trusted prompts and data.
+The sandbox's filesystem, process, gateway authentication, and managed credential controls remain active.
+</Warning>
 
 ### Web Search Credential Rewriting
 
@@ -290,21 +302,25 @@ Writable agent state such as plugins, skills, hooks, and workspace metadata live
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
 For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config or high-risk state entry points.
-The immutability workflow locks high-risk state directories (`skills`, `agent`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` and removes group and world write access.
+The immutability workflow derives its path plan from the selected agent manifest.
+For OpenClaw, it locks `agents`, `canvas`, `cron`, `devices`, `extensions`, `hooks`, `memory`, `plugins`, `profiles`, `skills`, `telegram`, `wechat`, `whatsapp`, `workspace`, and `workspace-*` directories to `root:sandbox` and removes group and world write access.
 The root-only helper traverses from opened directory descriptors with no-follow semantics instead of using recursive pathname `chown` or `chmod`.
 Read-only preflight and unlock operations reject unsafe external symlinks, hardlinks, special files, cross-device entries, and entries that race the traversal without modifying them.
 After the top-level config binding is frozen, lockdown makes containment monotonic.
 It removes unsafe symlinks, special entries, and protected-root names that are not directories through descriptor-relative operations without following their targets.
 For protected regular files, lockdown publishes a fresh inode, severing hardlinks while preserving file content, read/execute mode, timestamps, and supported extended attributes; this also revokes write authority held through a descriptor opened before `shields up`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
-The same workflow also locks the secret-bearing directories (`credentials`, `identity`, `pairing`) to `root:root 700` with `chmod -R go-rwX`.
-Neither the sandbox user nor the gateway can read those secrets while the lock is active.
+The same workflow locks the secret-bearing `credentials` and `identity` directories.
+The guard sets each confidentiality root to `root:sandbox 0710`, including a non-empty `credentials` directory.
+It sets every nested directory and file to `root:root` and removes all group and world permission bits.
+The sandbox group cannot list, create, or remove entries in a confidentiality root, and neither the sandbox user nor gateway can read stored secrets.
+They can inspect metadata for a direct child only when they already know its name.
+Probing a missing direct child, such as the legacy `credentials/oauth.json`, returns `ENOENT` instead of `EACCES`.
 Restoring the mutable-default posture returns those directories to `sandbox:sandbox 2770`.
-The list is the union of state directories declared by every shipped agent manifest.
-The lock helper silently skips dirs that are not present in a given agent's config tree.
-Two exemption kinds keep runtime data writable.
-The lock inventory omits top-level Hermes runtime dirs (`sessions/`, `memories/`, `logs/`, `cache/`, `plans/`) and the image-build-regenerated `openclaw-weixin/`.
-The lock helper never touches those paths.
+For plan-aware current images and host-injected transitions, each agent manifest declares only its own protected paths, confidential paths, dynamic prefixes, and writable subpaths.
+The lock helper applies only that selected manifest plan and skips declared paths that are not present.
+Historical OpenClaw and Hermes images that have a bundled helper but no generated plan use the helper's reviewed legacy inventory until the sandbox is rebuilt.
+State directories without a Shields declaration remain mutable.
 Inside a locked tree, the helper keeps each `agents/<agent-id>/sessions/` root at `sandbox:sandbox 2770` so the OpenClaw TUI can create and write session metadata under an otherwise root-owned parent.
 After containment, when an agent directory has no `sessions` entry, lockdown creates that carve-out root.
 An agent booting for the first time under an active lock can then write sessions.
@@ -344,6 +360,17 @@ Direct edits to these files can be overwritten when NemoClaw regenerates the ima
 
 Hermes also stores runtime state such as `state.db`, logs, and platform sessions under the `.hermes` tree.
 Messaging sessions such as WhatsApp pairing can remain mutable by design so they survive rebuilds.
+For plan-aware current images, the Shields workflow derives the Hermes lock plan from its agent manifest.
+Historical Hermes images that have a bundled helper but no generated plan use the helper's reviewed legacy inventory until the sandbox is rebuilt.
+It locks `cron`, `hooks`, `platforms`, `plugins`, `profiles`, `skills`, `skins`, `weixin`, and `workspace` to `root:sandbox`.
+The `profiles/dashboard-home` carve-out remains `sandbox:sandbox 0700`, and the guard does not traverse or rewrite its descendants.
+It locks the `pairing` confidentiality root to `root:sandbox 0710`.
+Hermes runtime directories without a Shields declaration remain mutable.
+
+The shared state-directory guard applies the manifest declaration to `pairing` on current Hermes images.
+On historical images, the reviewed legacy inventory also treats present `credentials` and `identity` directories as confidentiality roots.
+The guard sets the root to `root:sandbox 710`, keeps it traversable but unlistable to the sandbox group, and sets every descendant to `root:root` with no group or world permission bits.
+As a result, a known-name probe for a missing direct child returns `ENOENT`, while directory listing, nested traversal, and protected-file reads return `EACCES`.
 
 | Aspect | Detail |
 |---|---|
@@ -362,6 +389,9 @@ Direct edits to this file can be overwritten when NemoClaw regenerates the manag
 The managed Deep Agents image deliberately omits raw provider and service credentials from generated configuration.
 Credential-bearing files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are treated as user-managed files and are not included in NemoClaw snapshots.
 The managed `.deepagents/.nemoclaw-mcp.json` projection contains OpenShell placeholders and is reconstructed from host-side registry state.
+The Shields workflow derives the Deep Agents lock plan from its agent manifest.
+The `agent/skills` declaration locks the top-level `agent` directory, and the `skills` declaration locks the top-level `skills` directory.
+The `.state` directory remains mutable.
 
 | Aspect | Detail |
 |---|---|
@@ -429,14 +459,16 @@ Refer to the [Process Controls](https://docs.nvidia.com/openshell/latest/securit
 
 The entrypoint drops dangerous Linux capabilities from the bounding set at startup using `capsh`.
 This limits what capabilities any child process (gateway, sandbox, agent) can ever acquire.
-When the entrypoint switches from root to the `sandbox` and `gateway` users, it uses `setpriv` when available to remove the remaining privilege-separation capabilities from the child process at the same time as the user change.
+The managed images install `setpriv` from `util-linux` and require it when the entrypoint switches from root to the `sandbox` and `gateway` users.
+When `CAP_SETPCAP` is available, the same `setpriv` operation removes the remaining privilege-separation capabilities from the child process at the same time as the user change.
 
 The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
-During `setpriv` step-down, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
+When the additional `setpriv` bounding-set drop runs, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
 
-This behavior is best effort.
-If `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
-If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warning that the remaining bounding-set capabilities were retained for the child process.
+The extra bounding-set capability drop is best effort.
+If `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and retains the runtime-provided bounding set.
+The entrypoint still uses `setpriv` to change the user, group, and supplementary groups without the extra bounding-set drop.
+When a root entrypoint must change identity, it fails closed if `setpriv` is unavailable instead of starting an agent service as root.
 
 To make the drop fail-closed instead of best-effort, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment.
 The agent then refuses to start unless it verifies that the agent process tree's bounding set is free of dangerous capabilities.
@@ -453,10 +485,10 @@ Refer to [Review Sandbox Hardening](../manage-sandboxes/configure-sandboxes/revi
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint drops dangerous capabilities at startup using `capsh`, then uses `setpriv` during user step-down when possible. Best-effort. |
+| Default | The entrypoint drops dangerous capabilities at startup using `capsh`, then requires `setpriv` for user step-down. When `CAP_SETPCAP` is unavailable, the user step-down continues without the extra privilege-separation bounding-set drop and logs a warning. |
 | What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. In the standard NemoClaw onboarding flow, the entrypoint handles capability dropping automatically. |
-| Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. If `capsh` or `setpriv` cannot run, the container retains more of the runtime-provided capability set. |
-| Recommendation | Run on an image that includes `capsh` and `setpriv` (the NemoClaw image includes them). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
+| Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. If `capsh` cannot run or `CAP_SETPCAP` is unavailable, the container retains more of the runtime-provided capability set. |
+| Recommendation | Run on an image that includes `capsh` and `setpriv` (NemoClaw-managed images include them). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
 
 ### Gateway Process Isolation
 
@@ -466,7 +498,7 @@ An OpenShell-managed container has OpenShell as PID 1 and launches nonroot `nemo
 
 | Aspect | Detail |
 |---|---|
-| Default | Direct root entrypoints use `gosu gateway` for UID isolation. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the nonroot entrypoint from changing users. |
+| Default | Direct root entrypoints use `setpriv` for gateway UID isolation. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the nonroot entrypoint from changing users. |
 | What you can change | This is not a user-facing knob. The selected container topology determines whether the entrypoint can step down from root to the gateway UID. |
 | Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. The root managed controller prevents PID-reuse mistakes, but it cannot prove provenance against a malicious same-UID process or provide the direct root-entrypoint restart seal for mutable config. |
 | Recommendation | Use a direct root-entrypoint deployment when separate gateway and agent UIDs are required. Treat the managed controller as authenticated lifecycle and exact-target safety, not as a same-UID provenance boundary. |
@@ -877,6 +909,15 @@ Use when the agent needs package registries, Docker Hub, or broader GitHub acces
 - Keep binary restrictions on all presets.
 - Review the agent's network activity periodically with `openshell term`.
 - Use operator approval for any endpoint not covered by a preset.
+
+### Personal
+
+Use only for a trusted single-user sandbox that needs arbitrary TCP egress on destination ports `80` and `443`.
+
+- Select the Personal tier during onboarding.
+- Treat every prompt, downloaded package, webpage, and workspace file as able to trigger external TCP traffic on destination ports `80` and `443`.
+- Do not place raw credentials or sensitive data in the sandbox unless the agent must use them.
+- Return to Balanced or Restricted and recreate the sandbox when this broad egress is no longer required.
 
 ### Integration Testing
 

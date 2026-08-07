@@ -3,7 +3,7 @@
 #
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-trixie-slim, apt packages, gosu, user/group setup,
+# Contains: node:22-trixie-slim, apt packages, setpriv, user/group setup,
 # .openclaw directory structure, OpenClaw CLI, and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
@@ -18,7 +18,7 @@
 #   node:22-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to exact Debian trixie versions
-#   gosu 1.19           — pinned release + per-arch sha256 checksum
+#   util-linux          — pinned Debian package providing setpriv
 #   npm 11.18.0         — reviewed archive + sha512 integrity
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
@@ -39,7 +39,7 @@
 #
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
-#   3. gosu upgrade                 — update URL, checksum, and version
+#   3. util-linux upgrade           — update the pinned apt package version
 #   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
 #                                      Dockerfile and Dockerfile.base
 #   5. npm upgrade                  — update upgrade-bundled-npm.mts
@@ -78,117 +78,27 @@ COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /script
 
 RUN bash /scripts/security/build-native-security-packages.sh /out
 
-# Debian trixie has not published a Perl package containing the upstream
-# fixes for CVE-2026-12087, CVE-2026-13221, and CVE-2026-57433. Build the
-# fixed upstream release as native Debian packages so dpkg dependencies and
-# vulnerability inventory both describe the runtime that is actually used.
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS perl-builder
+# Debian trixie has not published a Perl package containing the reviewed
+# upstream fixes. Build the fixed release as native Debian packages so dpkg
+# dependencies and vulnerability inventory describe the executed runtime.
+FROM native-security-builder AS perl-builder
 
 ARG PERL_VERSION
 ARG PERL_SHA256
 ARG PERL_PACKAGE_REVISION
 
-COPY --from=native-security-builder /out /tmp/security-packages
+COPY scripts/security/build-perl-security-packages.sh /scripts/security/build-perl-security-packages.sh
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential=12.12 \
-        ca-certificates=20250419 \
-        curl=8.14.1-2+deb13u4 \
         netbase=6.5 \
-        xz-utils=5.8.1-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /tmp/perl-source
-
-# Pin the reviewed d_syscallproto result for trixie's libc so both native
-# architectures use the same known declaration instead of relying on a
-# Configure probe that previously returned a false negative under QEMU.
-# Remove this override only after the pinned base image and Perl release report
-# d_syscallproto=define from native Configure probes on amd64 and arm64.
-# Perl's test_harness runs the same upstream suite while TEST_JOBS lets its TAP
-# scheduler use each native runner efficiently instead of serializing every
-# script in QEMU.
-# ExtUtils::Constant's test recursively invokes make and produced an incomplete
-# TAP plan when it overlapped another test locally, so run it alone first and
-# exclude exactly that already-passed file from the parallel pass.
-# Remove this split only after the unsplit parallel harness passes in two
-# consecutive amd64 and arm64 base-image builds; keep the selection-equivalence
-# check below until that removal condition is met.
-RUN curl --proto '=https' --tlsv1.2 -fsSL \
-        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
-        -o /tmp/perl.tar.xz "https://www.cpan.org/src/5.0/perl-${PERL_VERSION}.tar.xz" \
-    && printf '%s  %s\n' "${PERL_SHA256}" /tmp/perl.tar.xz > /tmp/perl.sha256 \
-    && sha256sum -c /tmp/perl.sha256 \
-    && tar -xJf /tmp/perl.tar.xz -C /tmp/perl-source --strip-components=1 \
-    && ./Configure -des \
-        -Dprefix=/usr \
-        -Dvendorprefix=/usr \
-        -Dsiteprefix=/usr/local \
-        -Dusethreads \
-        -Duse64bitall \
-        -Dd_syscallproto=define \
-        -Dman1dir=none \
-        -Dman3dir=none \
-    && make -j"$(nproc)" \
-    && make test_prep \
-    && env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
-        > /tmp/perl-tests-full \
-    && env -C t ./perl harness -dumptests \
-        ../cpan/ExtUtils-Constant/t/Constant.t \
-        > /tmp/perl-tests-serial \
-    && env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
-        '--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
-        > /tmp/perl-tests-parallel \
-    && sort /tmp/perl-tests-full > /tmp/perl-tests-full.sorted \
-    && sort /tmp/perl-tests-serial /tmp/perl-tests-parallel \
-        > /tmp/perl-tests-combined.sorted \
-    && cmp /tmp/perl-tests-full.sorted /tmp/perl-tests-combined.sorted \
-    && test "$(grep -Fxc \
-        'cpan/ExtUtils-Constant/t/Constant.t' \
-        /tmp/perl-tests-combined.sorted)" -eq 1 \
-    && TEST_JOBS=1 TEST_ARGS='../cpan/ExtUtils-Constant/t/Constant.t' make test_harness \
-    && TEST_JOBS="$(nproc)" PERL_TEST_HARNESS_ASAP=1 \
-        TEST_ARGS='--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
-        make -j"$(nproc)" test_harness \
-    && make install DESTDIR=/tmp/perl-root
-
-RUN package_version="${PERL_VERSION}-${PERL_PACKAGE_REVISION}" \
-    && architecture="$(dpkg --print-architecture)" \
-    && mkdir -p /tmp/perl-root/DEBIAN /tmp/perl-meta/DEBIAN \
-    && printf '%s\n' \
-        'Package: perl-base' \
-        "Version: ${package_version}" \
-        "Architecture: ${architecture}" \
-        'Essential: yes' \
-        'Priority: required' \
-        'Section: perl' \
-        'Multi-Arch: allowed' \
-        'Maintainer: NVIDIA NemoClaw Maintainers' \
-        "Provides: libperl5.40 (= ${package_version}), perl-modules-5.40 (= ${package_version})" \
-        'Conflicts: libperl5.40, perl-modules-5.40' \
-        "Breaks: perl (<< ${package_version})" \
-        "Replaces: libperl5.40, perl-modules-5.40, perl (<< ${package_version})" \
-        'Description: Perl 5 language interpreter built for the NemoClaw sandbox' \
-        > /tmp/perl-root/DEBIAN/control \
-    && printf '%s\n' \
-        'Package: perl' \
-        "Version: ${package_version}" \
-        "Architecture: ${architecture}" \
-        'Priority: standard' \
-        'Section: perl' \
-        'Multi-Arch: allowed' \
-        "Depends: perl-base (= ${package_version})" \
-        'Maintainer: NVIDIA NemoClaw Maintainers' \
-        'Description: Perl 5 language interpreter metapackage for the NemoClaw sandbox' \
-        > /tmp/perl-meta/DEBIAN/control \
-    && dpkg-deb --build --root-owner-group \
-        /tmp/perl-root /tmp/security-packages/perl-base.deb \
-    && dpkg-deb --build --root-owner-group \
-        /tmp/perl-meta /tmp/security-packages/perl.deb
+RUN bash /scripts/security/build-perl-security-packages.sh \
+    /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
-COPY --from=perl-builder /tmp/security-packages /tmp/nemoclaw-native-security
+COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
 # credential chains from attempting an impossible metadata discovery path.
@@ -214,6 +124,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b1 \
+        util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
         "dos2unix=7.5.2-1*" \
@@ -317,7 +228,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
-    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0644 /usr/local/share/nemoclaw/security-packages.txt \
     && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
@@ -328,6 +239,8 @@ RUN apt-get update \
         /tmp/nemoclaw-native-security/perl.deb \
     && rm -rf /tmp/nemoclaw-native-security \
     && rm -rf /var/lib/apt/lists/* \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
@@ -339,27 +252,17 @@ RUN apt-get update \
         'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
     && perl -e \
         'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && printf '%s\n' \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
+        >> /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
     && git --version \
     && test -z "$(dpkg --audit)"
 
-# gosu for privilege separation (gateway vs sandbox user).
-# Install from GitHub release with checksum verification instead of
-# Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
-# Binary release asset downloads can be slower than hash fetches; keep
-# longer bounded transfer timeouts while preserving checksum verification.
-# hadolint ignore=DL4006
-RUN arch="$(dpkg --print-architecture)" \
-    && case "$arch" in \
-        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
-        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
-        *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
-    esac \
-    && curl --proto '=https' --tlsv1.2 -fsSL \
-        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
-        -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
-    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
-    && chmod +x /usr/local/bin/gosu \
-    && gosu --version
+# setpriv runtime contract for gateway and sandbox privilege separation.
+RUN test -x /usr/bin/setpriv \
+    && /usr/bin/setpriv --version
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
@@ -501,6 +404,7 @@ COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
@@ -517,9 +421,15 @@ RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # npm 11.18.0 contains brace-expansion 5.0.7. Replace only that private
-# package from the reviewed 5.0.8 archive after the complete npm upgrade.
+# package from the reviewed 5.0.9 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# npm 11.18.0 contains ip-address 10.2.0. Replace only that private package
+# with the reviewed 10.3.1 archive after the complete npm upgrade.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
@@ -564,7 +474,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        OPENCLAW_LOCK_SHA256=82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88; \
+        OPENCLAW_LOCK_SHA256=759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \
@@ -717,7 +627,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 ARG HOMEBREW_VERSION=5.1.12
 RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
     && chown -R sandbox:sandbox /home/linuxbrew \
-    && gosu sandbox git clone --depth=1 --branch="${HOMEBREW_VERSION}" \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox git clone --depth=1 --branch="${HOMEBREW_VERSION}" \
         https://github.com/Homebrew/brew.git \
         /home/linuxbrew/.linuxbrew/Homebrew \
     && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
@@ -731,10 +642,13 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
     && chmod 755 /usr/local/bin/brew \
     && grep -qx 'export HOMEBREW_TEMP=/tmp' /usr/local/bin/brew \
     && grep -qx 'export TMPDIR=/tmp' /usr/local/bin/brew \
-    && gosu sandbox env HOMEBREW_TEMP=/var/tmp TMPDIR=/var/tmp /usr/local/bin/brew --prefix \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox HOMEBREW_TEMP=/var/tmp TMPDIR=/var/tmp /usr/local/bin/brew --prefix \
         | grep -qx /home/linuxbrew/.linuxbrew \
-    && gosu sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
-    && gosu sandbox /usr/local/bin/brew --version
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox /usr/local/bin/brew --version
 RUN { \
         printf '%s\n' "if [ \"\$(/usr/bin/id -un 2>/dev/null || true)\" = sandbox ]; then"; \
         printf '%s\n' "  export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\""; \
@@ -747,10 +661,10 @@ RUN { \
     && chmod 755 /tmp/nemoclaw-hostile-bin/id \
     && PATH="/tmp/nemoclaw-hostile-bin:${PATH}" bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
     && rm -rf /tmp/nemoclaw-hostile-bin \
-    && gosu sandbox bash -lc 'command -v brew >/dev/null' \
-    && gosu sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
-    && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
-    && gosu sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'command -v brew >/dev/null' \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
 
 # Gate the exact completed base filesystem before it can be published.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts

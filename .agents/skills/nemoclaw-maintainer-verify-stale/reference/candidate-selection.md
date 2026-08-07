@@ -113,7 +113,7 @@ Apply these rules in order. Drop any issue that fails a rule.
 
 **Security skip:** drop items carrying the canonical `security` label. Potential vulnerability reports require the dedicated security workflow and neutral handling, not public stale-verification commentary.
 
-**Platform skip (Brev-reproducible only in v1):** drop `platform: windows`, `platform: wsl`, `platform: macos`, and `platform: jetson`. Brev has no equivalent hardware for those targets, so verification would produce a misleading cross-platform verdict. Keep `platform: ubuntu`, `platform: dgx-spark`, `platform: gb10`, or no platform label. DGX Spark and GB10 remain in scope only with the Step 10 hardware-substitution caveat.
+**Platform skip (Brev-reproducible only in v1):** drop `platform: windows`, `platform: wsl`, `platform: macos`, `platform: jetson`, and `platform: n1x`. Brev has no equivalent hardware for those targets, so verification would produce a misleading cross-platform verdict. Keep `platform: ubuntu`, `platform: dgx-spark`, `platform: gb10`, or no platform label. DGX Spark and GB10 remain in scope only with the Step 10 hardware-substitution caveat.
 
 **TUI / interactive-UI skip:** drop if the issue title contains `TUI`, `dashboard UI`, `chat UI`, `keystroke`, or `key press`, OR if the body describes interactive UI behavior (key sequences, mouse interactions, browser-side UI state) without a non-interactive reproducer (no `NEMOCLAW_NON_INTERACTIVE=1` or equivalent env var pattern). `brev exec` does not allocate a real TTY by default, so TUI reproducers hang or silently fail at the first prompt; v1 documents this as out-of-scope rather than emitting a wrong verdict. v1.1 may add a `script(1)` / `expect` / `tmux send-keys` harness to lift this skip.
 

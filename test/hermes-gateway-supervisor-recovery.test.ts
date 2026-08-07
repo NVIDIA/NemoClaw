@@ -682,6 +682,53 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.stderr).toContain("relaunch is quarantined until sandbox recreation");
   });
 
+  it("starts a recovered gateway with a fresh consecutive health-failure budget", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      "hermes_tracked_role_is_current() { return 0; }",
+      'hermes_gateway_healthy() { health_calls=$((health_calls + 1)); trace "health:$GATEWAY_PID:$health_calls"; [ "$health_calls" -eq 6 ]; }',
+      'ensure_hermes_supervised_auxiliaries() { trace "stable:$GATEWAY_PID"; exit 0; }',
+      "refresh_hermes_supervised_child_pids() { :; }",
+      'hermes_stop_tracked_role() { trace "stop:$2"; [ "$2" = "4242" ]; }',
+      'wait() { trace "wait:$1"; return 143; }',
+      "mark_hermes_gateway_stopped() { GATEWAY_PID=0; }",
+      "hermes_managed_gateway_exit_was_host_authorized() { return 1; }",
+      "record_hermes_managed_gateway_exit() { HERMES_MANAGED_GATEWAY_EXIT_COUNT=1; }",
+      "sleep() { :; }",
+      'recover_hermes_gateway_current_user() { GATEWAY_PID=5252; trace "recover:$GATEWAY_PID"; }',
+      extractShellFunction(source, "supervise_hermes_gateway_current_user"),
+      "INTERNAL_PORT=18642",
+      "HERMES_MANAGED_GATEWAY_EXIT_COUNT=0",
+      "GATEWAY_PID=4242",
+      "health_calls=0",
+      "supervise_hermes_gateway_current_user",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "health:4242:1",
+      "health:4242:2",
+      "health:4242:3",
+      "health:4242:4",
+      "stop:4242",
+      "wait:4242",
+      "recover:5252",
+      "health:5252:5",
+      "health:5252:6",
+      "stable:5252",
+    ]);
+    expect(result.stderr.match(/Hermes gateway failed health validation \(\d\/4\)/g)).toEqual([
+      "Hermes gateway failed health validation (1/4)",
+      "Hermes gateway failed health validation (2/4)",
+      "Hermes gateway failed health validation (3/4)",
+      "Hermes gateway failed health validation (4/4)",
+      "Hermes gateway failed health validation (1/4)",
+    ]);
+    expect(result.stderr).not.toContain("Hermes gateway failed health validation (5/4)");
+    expect(result.stdout).not.toContain("stop:5252");
+  });
+
   it("counts repeated gateway health failures and never launches a sixth candidate", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([

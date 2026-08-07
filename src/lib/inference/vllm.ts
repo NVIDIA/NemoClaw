@@ -8,7 +8,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { StringDecoder } from "node:string_decoder";
 import { isDeepStrictEqual } from "node:util";
 import {
   dockerCapture,
@@ -29,16 +28,29 @@ import { VLLM_PORT } from "../core/ports";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { runCapture } from "../runner";
-import { redactFull } from "../security/redact";
 import { isSafeModelId } from "../validation";
+import {
+  acquireHuggingFaceModel,
+  hfDownloadAuthentication,
+} from "./model-acquisition/hugging-face";
 import { getGpuIndicesByName } from "./nim";
-import { ensureDualStationVllmApiKey, loadDualStationVllmApiKey } from "./vllm-api-key";
 import {
   buildLocalDualStationDockerEnv,
   buildRemoteVllmDockerEnv,
   buildVllmDockerEnv,
-} from "./vllm-docker-env";
+  ensureDualStationVllmApiKey,
+  loadDualStationVllmApiKey,
+  type MaterializedHostLocalVllmSelection,
+  persistHostLocalVllmRuntimeReceipt,
+  recoverHostLocalManagedVllmEndpoint,
+  recoverInstalledManagedClusterVllmEndpoint,
+  resolveHostLocalVllmSelection,
+  resolveVllmInstallModel,
+  runtimeAuthFingerprint,
+  tryInstallManagedClusterManagedVllm,
+} from "./serving/vllm-managed-support";
 import {
+  assertGatedModelAccess,
   buildVllmServeCommand,
   NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
   NEMOTRON_ULTRA_STATION_IMAGE,
@@ -48,7 +60,6 @@ import {
   type VllmModelDef,
   type VllmPlatform,
 } from "./vllm-models";
-import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
   type DualStationVllmPlan,
   NEMOCLAW_DGX_STATION_PEER_ENV,
@@ -69,7 +80,10 @@ import {
   withDualStationManagedVllmLifecycle,
 } from "./vllm-station-cluster-lifecycle";
 import { stageDualStationModelSnapshot } from "./vllm-station-model-staging";
-import { persistDualStationVllmRuntimeReceipt } from "./vllm-station-runtime-receipt";
+import {
+  persistDualStationVllmRuntimeReceipt,
+  recoverInstalledDualStationVllmRuntime,
+} from "./vllm-station-runtime-receipt";
 import {
   findUnwritableModelCachePath,
   formatStorageBytes,
@@ -120,6 +134,13 @@ export interface VllmProfile {
   // Optional pinned model snapshot size. Model-specific runtime overrides use
   // this to guard the host Hugging Face cache before a cold download.
   modelDownloadSizeBytes?: number;
+  servingCatalog?: {
+    catalogDigest: string;
+    presetId: string;
+    presetDigest: string;
+    recipeId: string;
+    recipeDigest: string;
+  };
 }
 
 interface VllmImageCatalogEntry {
@@ -176,16 +197,14 @@ function qwen35bNvfp4Model(): VllmModelDef {
   return match;
 }
 
-const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens";
-const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
-const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
+const VLLM_MAX_STARTUP_RESTARTS = 3;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
-const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_CACHE_COMPONENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const NEMOCLAW_VLLM_CONTAINER_NAME = "nemoclaw-vllm";
 export const NEMOCLAW_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
+export const NEMOCLAW_VLLM_HOST_LOCAL_AUTH_LABEL = "com.nvidia.nemoclaw.managed-vllm-auth";
 const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{12,64}$/;
 
 function hostHfCacheDir(): string {
@@ -196,17 +215,13 @@ function hfCacheMount(): string {
   return `${hostHfCacheDir()}:${HF_CACHE_CONTAINER_DIR}`;
 }
 
-function hfDownloadCacheMount(): string {
-  return `${hostHfCacheDir()}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
-}
-
 function hfModelCacheKey(model: VllmModelDef): string | null {
   const modelParts = model.id.split("/");
   if (modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))) return null;
   return `models--${modelParts.join("--")}`;
 }
 
-function hfModelSnapshotDir(model: VllmModelDef): string | null {
+export function hfModelSnapshotDir(model: VllmModelDef): string | null {
   const revision = model.revision;
   const modelCacheKey = hfModelCacheKey(model);
   if (!revision || !modelCacheKey || !HF_CACHE_COMPONENT_PATTERN.test(revision)) {
@@ -228,11 +243,6 @@ function hostUserIdentity(): string | null {
   return `${String(process.getuid())}:${String(process.getgid())}`;
 }
 
-function hostUserDockerArgs(): string[] {
-  const identity = hostUserIdentity();
-  return identity ? ["--user", identity] : [];
-}
-
 function vllmDockerRunFlags(gpuFlag = "all"): string[] {
   return [
     "--gpus",
@@ -243,28 +253,6 @@ function vllmDockerRunFlags(gpuFlag = "all"): string[] {
     "-e",
     `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
   ];
-}
-
-function pickHfTokenEntry(
-  env: NodeJS.ProcessEnv = process.env,
-): { key: (typeof HF_TOKEN_ENV_KEYS)[number]; value: string } | null {
-  for (const key of HF_TOKEN_ENV_KEYS) {
-    const value = String(env[key] ?? "").trim();
-    if (value) return { key, value };
-  }
-  return null;
-}
-
-export type HfDownloadAuthentication =
-  | { authenticated: false }
-  | { authenticated: true; source: (typeof HF_TOKEN_ENV_KEYS)[number] };
-
-/** Return only the presence and source of Hugging Face authentication, never its value. */
-export function hfDownloadAuthentication(
-  env: NodeJS.ProcessEnv = process.env,
-): HfDownloadAuthentication {
-  const entry = pickHfTokenEntry(env);
-  return entry ? { authenticated: true, source: entry.key } : { authenticated: false };
 }
 
 function printHfDownloadAuthentication(nonInteractive: boolean): void {
@@ -294,44 +282,6 @@ function printHfDownloadAuthentication(nonInteractive: boolean): void {
   console.log("    The token is passed only to the temporary model downloader.");
 }
 
-function redactHfDownloadOutput(text: string, tokenValue: string | null): string {
-  const withoutKnownToken = tokenValue ? text.split(tokenValue).join("<REDACTED>") : text;
-  return redactFull(withoutKnownToken);
-}
-
-function redactHfDownloadOutputChunks(
-  chunks: readonly { text: string; stream: NodeJS.WriteStream }[],
-  tokenValue: string | null,
-): string[] {
-  const joined = chunks.map((chunk) => chunk.text).join("");
-  const tokenSpans: { start: number; end: number }[] = [];
-  if (tokenValue) {
-    let searchFrom = 0;
-    while (searchFrom < joined.length) {
-      const start = joined.indexOf(tokenValue, searchFrom);
-      if (start < 0) break;
-      tokenSpans.push({ start, end: start + tokenValue.length });
-      searchFrom = start + tokenValue.length;
-    }
-  }
-
-  let chunkStart = 0;
-  return chunks.map((chunk) => {
-    const chunkEnd = chunkStart + chunk.text.length;
-    let cursor = chunkStart;
-    let safeText = "";
-    for (const span of tokenSpans) {
-      if (span.end <= chunkStart || span.start >= chunkEnd) continue;
-      safeText += joined.slice(cursor, Math.max(cursor, span.start));
-      if (span.start >= chunkStart) safeText += "<REDACTED>";
-      cursor = Math.max(cursor, Math.min(chunkEnd, span.end));
-    }
-    safeText += joined.slice(cursor, chunkEnd);
-    chunkStart = chunkEnd;
-    return redactHfDownloadOutput(safeText, null);
-  });
-}
-
 function printHfRateLimitRecovery(): void {
   process.stderr.write("  Hugging Face rate limiting was detected.\n");
   process.stderr.write(`  Create a read token at ${HF_TOKEN_SETTINGS_URL}.\n`);
@@ -340,36 +290,6 @@ function printHfRateLimitRecovery(): void {
   process.stderr.write(
     "  Existing files in ~/.cache/huggingface are reused when the download resumes.\n",
   );
-}
-
-/**
- * Forward a Hugging Face token from the host into the one-shot `hf download`
- * container so gated model weights can be fetched.
- *
- * Returns the bare `-e KEY` form (no `=value`) so the token never lands in
- * the host process list. Docker reads the actual value from its own
- * environment, which the caller is responsible for populating via
- * `buildHfTokenForwardEnv` when spawning through the runner allowlist.
- * The download container can live for several minutes during a cold pull;
- * argv-embedded secrets would be visible via `ps` for that whole window.
- */
-export function buildHfTokenDockerArgs(env: NodeJS.ProcessEnv = process.env): string[] {
-  const entry = pickHfTokenEntry(env);
-  return entry ? ["-e", entry.key] : [];
-}
-
-/**
- * Companion to `buildHfTokenDockerArgs`: returns the `{ KEY: value }` map
- * that has to be merged into the subprocess env so docker can see the
- * token when `-e KEY` (key-only) tells it to forward by name. The CLI runner
- * strips non-allowlisted env names by default (see subprocess-env.ts), so
- * Docker callers must pass this map via the runner's `env` option.
- */
-export function buildHfTokenForwardEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
-  const entry = pickHfTokenEntry(env);
-  return entry ? { [entry.key]: entry.value } : {};
 }
 
 const SPARK_PROFILE: VllmProfile = {
@@ -477,6 +397,45 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
+export function readGpuComputeCapabilities(): number[] {
+  const out = runCapture(
+    ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader,nounits"],
+    { ignoreError: true },
+  );
+  if (!out) return [];
+  const capabilities: number[] = [];
+  for (const line of out.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const match = /^(\d+)\.(\d+)$/.exec(trimmed);
+    if (!match) continue;
+    capabilities.push(Number(match[1]) * 10 + Number(match[2]));
+  }
+  return capabilities;
+}
+
+export function formatComputeCapability(capability: number): string {
+  return `${String(Math.floor(capability / 10))}.${String(capability % 10)}`;
+}
+
+export function computeCapabilityPreflight(
+  model: VllmModelDef,
+  capabilities: number[] = readGpuComputeCapabilities(),
+): { ok: true } | { ok: false; reason: string } {
+  const required = model.minComputeCapability;
+  if (required === undefined) return { ok: true };
+  if (capabilities.length === 0) return { ok: true };
+  const lowest = Math.min(...capabilities);
+  if (lowest >= required) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      `${model.label} requires GPU compute capability ${formatComputeCapability(required)} or newer, ` +
+      `but this host reports ${formatComputeCapability(lowest)}. ` +
+      "Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.",
+  };
+}
+
 export async function pullImage(
   profile: VllmProfile,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
@@ -510,155 +469,25 @@ export async function pullImage(
   return { ok: true };
 }
 
-// Run `hf download <model>` inside a one-shot container of the same image.
-function downloadModel(
+// Preserve the vLLM downloadModel API while acquireHuggingFaceModel runs `hf download`.
+export function downloadModel(
   profile: VllmProfile,
   model: VllmModelDef,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
+  target: { hostCacheDir?: string; userIdentity?: string } = {},
 ): Promise<{ ok: boolean; reason?: string }> {
-  emit(`Pre-downloading model with hf: ${model.id}`);
-  return new Promise((resolve) => {
-    const tokenValue = pickHfTokenEntry()?.value ?? null;
-    const proc = dockerSpawn(
-      [
-        "run",
-        "-t",
-        "--rm",
-        "--pull=never",
-        ...hostUserDockerArgs(),
-        "--entrypoint",
-        "hf",
-        "-v",
-        hfDownloadCacheMount(),
-        "-e",
-        `HF_HOME=${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`,
-        ...buildHfTokenDockerArgs(),
-        profile.image,
-        "download",
-        model.id,
-        ...(model.revision ? ["--revision", model.revision] : []),
-      ],
-      {
-        env: { ...dockerEnv, ...buildHfTokenForwardEnv() },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-
-    const tail: string[] = [];
-    const outputDecoders = [
-      { decoder: new StringDecoder("utf8"), stream: process.stdout },
-      { decoder: new StringDecoder("utf8"), stream: process.stderr },
-    ];
-    let pendingOutput: { text: string; stream: NodeJS.WriteStream }[] = [];
-    const TAIL_MAX = 50;
-    let resolved = false;
-    let decodersFinalized = false;
-    const start = Date.now();
-    let lastOutputAt = start;
-    let lastOutputEndedCleanly = true;
-    const heartbeat = setInterval(() => {
-      const now = Date.now();
-      if (now - lastOutputAt >= MODEL_DOWNLOAD_HEARTBEAT_MS) {
-        if (!lastOutputEndedCleanly) process.stdout.write("\n");
-        emit(`Model download still running (${formatElapsed(now - start)} elapsed; no new output)`);
-        lastOutputAt = now;
-        lastOutputEndedCleanly = true;
-      }
-    }, MODEL_DOWNLOAD_HEARTBEAT_MS);
-    heartbeat.unref?.();
-
-    function done(result: { ok: boolean; reason?: string }): void {
-      if (resolved) return;
-      resolved = true;
-      clearInterval(heartbeat);
-      resolve(result);
-    }
-
-    function rememberTail(text: string): void {
-      for (const segment of text.split(/[\r\n]+/)) {
-        if (!segment) continue;
-        tail.push(segment);
-        if (tail.length > TAIL_MAX) tail.shift();
-      }
-    }
-
-    function takePendingOutput(end: number): { text: string; stream: NodeJS.WriteStream }[] {
-      const selected: { text: string; stream: NodeJS.WriteStream }[] = [];
-      let remaining = end;
-      while (remaining > 0 && pendingOutput.length > 0) {
-        const chunk = pendingOutput[0];
-        if (chunk.text.length <= remaining) {
-          selected.push(chunk);
-          pendingOutput.shift();
-          remaining -= chunk.text.length;
-          continue;
-        }
-        selected.push({ text: chunk.text.slice(0, remaining), stream: chunk.stream });
-        pendingOutput[0] = { text: chunk.text.slice(remaining), stream: chunk.stream };
-        remaining = 0;
-      }
-      return selected;
-    }
-
-    function flushOutput(flushAll = false): void {
-      const pendingText = pendingOutput.map((chunk) => chunk.text).join("");
-      const end = flushAll
-        ? pendingText.length
-        : Math.max(pendingText.lastIndexOf("\n"), pendingText.lastIndexOf("\r")) + 1;
-      if (end <= 0) return;
-      const selected = takePendingOutput(end);
-      const safeChunks = redactHfDownloadOutputChunks(selected, tokenValue);
-      for (const [index, safeText] of safeChunks.entries()) {
-        if (!safeText) continue;
-        selected[index].stream.write(safeText);
-        lastOutputEndedCleanly = /[\r\n]$/.test(safeText);
-        rememberTail(safeText);
-      }
-    }
-
-    function finalizeOutputDecoders(): void {
-      if (decodersFinalized) return;
-      decodersFinalized = true;
-      for (const state of outputDecoders) {
-        const text = state.decoder.end();
-        if (text) pendingOutput.push({ text, stream: state.stream });
-      }
-      flushOutput(true);
-    }
-
-    function onChunk(buf: Buffer, state: (typeof outputDecoders)[number]): void {
-      lastOutputAt = Date.now();
-      const text = state.decoder.write(buf);
-      if (text) pendingOutput.push({ text, stream: state.stream });
-      flushOutput();
-    }
-
-    proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[0]));
-    proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[1]));
-
-    proc.on("error", (err: Error) => {
-      finalizeOutputDecoders();
-      done({ ok: false, reason: `spawn error: ${err.message}` });
-    });
-
-    proc.on("exit", (code: number | null) => {
-      finalizeOutputDecoders();
-      if (code === 0) {
-        if (!lastOutputEndedCleanly) process.stdout.write("\n");
-        emit("Model download complete");
-        done({ ok: true });
-        return;
-      }
-      // Surface the last few sanitized lines so a failure has actionable context.
-      if (tail.length > 0) {
-        process.stderr.write(`  --- Last ${String(tail.length)} hf output lines: ---\n`);
-        for (const line of tail) process.stderr.write(`    ${line}\n`);
-        process.stderr.write("  ---\n");
-      }
-      if (HF_RATE_LIMIT_PATTERN.test(tail.join("\n"))) printHfRateLimitRecovery();
-      done({ ok: false, reason: `hf download failed (exit ${String(code)})` });
-    });
-  });
+  return acquireHuggingFaceModel(
+    {
+      dockerEnv,
+      downloaderImage: profile.image,
+      hostCacheDir: target.hostCacheDir ?? hostHfCacheDir(),
+      repository: model.id,
+      revision: model.revision,
+      spawnDocker: dockerSpawn,
+      userIdentity: target.userIdentity ?? hostUserIdentity(),
+    },
+    { logLine: emit, onRateLimit: printHfRateLimitRecovery },
+  );
 }
 
 function validateDockerArg(value: string, label: string): string {
@@ -691,6 +520,10 @@ export function buildVllmRunArgs(
   const image = validateDockerArg(profile.image, "vLLM image");
   const containerName = validateDockerArg(profile.containerName, "vLLM container name");
   const safeRunFlags = validateDockerArgs(runFlags, "vLLM docker run flags");
+  const managedApiKey = model.managedBearerAuth ? String(env.VLLM_API_KEY ?? "") : "";
+  if (model.managedBearerAuth && !/^[a-f0-9]{64}$/.test(managedApiKey)) {
+    throw new Error("Managed host-local vLLM requires a valid host-global API key");
+  }
   return [
     "--pull=never",
     "--init",
@@ -699,8 +532,30 @@ export function buildVllmRunArgs(
     ...safeRunFlags,
     "--label",
     `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
+    ...(profile.servingCatalog
+      ? [
+          "--label",
+          `com.nvidia.nemoclaw.serving-catalog-digest=${profile.servingCatalog.catalogDigest}`,
+          "--label",
+          `com.nvidia.nemoclaw.serving-preset=${profile.servingCatalog.presetId}`,
+          "--label",
+          `com.nvidia.nemoclaw.serving-preset-digest=${profile.servingCatalog.presetDigest}`,
+          "--label",
+          `com.nvidia.nemoclaw.serving-recipe=${profile.servingCatalog.recipeId}`,
+          "--label",
+          `com.nvidia.nemoclaw.serving-recipe-digest=${profile.servingCatalog.recipeDigest}`,
+        ]
+      : []),
+    ...(model.managedBearerAuth
+      ? [
+          "--label",
+          `${NEMOCLAW_VLLM_HOST_LOCAL_AUTH_LABEL}=${runtimeAuthFingerprint(managedApiKey)}`,
+          "--env",
+          "VLLM_API_KEY",
+        ]
+      : []),
     "-p",
-    `${String(VLLM_PORT)}:8000`,
+    `${model.managedBearerAuth ? "127.0.0.1:" : ""}${String(VLLM_PORT)}:8000`,
     "--name",
     containerName,
     "--entrypoint",
@@ -723,10 +578,17 @@ export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModel
       imageUnpackedSizeBytes: undefined,
       modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
       loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
-      dockerRunFlags: [...profile.dockerRunFlags, ...extraRunArgs],
-      buildDockerRunFlags: profile.buildDockerRunFlags
-        ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
-        : undefined,
+      dockerRunFlags:
+        runtime.dockerRunArgsMode === "replace"
+          ? extraRunArgs
+          : [...profile.dockerRunFlags, ...extraRunArgs],
+      buildDockerRunFlags:
+        runtime.dockerRunArgsMode === "replace"
+          ? undefined
+          : profile.buildDockerRunFlags
+            ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
+            : undefined,
+      pullTimeoutSec: runtime.pullTimeoutSec ?? profile.pullTimeoutSec,
     };
   }
   assertVllmRegistryDigestRef(resolved.image);
@@ -880,48 +742,87 @@ function vllmContainerReplacementTarget(
 }
 
 export function isNemoClawManagedVllmRunning(): boolean {
+  try {
+    if (recoverInstalledManagedClusterVllmEndpoint()) return true;
+  } catch {
+    return false;
+  }
   const ownership = inspectVllmContainerOwnership(NEMOCLAW_VLLM_CONTAINER_NAME);
   return (ownership.kind === "managed" || ownership.kind === "dual-managed") && ownership.running;
 }
 
-export type PersistConfiguredDualStationVllmRuntimeResult =
+export type PersistConfiguredManagedVllmRuntimeResult =
   | { ok: true; persisted: boolean }
   | { ok: false; reason: string };
 
 /**
- * Adopt an already-running installer-qualified pair into durable uninstall
- * ownership after onboarding has authenticated and validated its endpoint.
+ * Confirm an installer-owned receipt or adopt an already-running Station pair
+ * after onboarding has authenticated and validated its endpoint.
  */
-export async function persistConfiguredDualStationVllmRuntimeReceipt(): Promise<PersistConfiguredDualStationVllmRuntimeResult> {
-  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
-  if (!configuredPeer) {
+export async function persistConfiguredManagedVllmRuntimeReceipt(): Promise<PersistConfiguredManagedVllmRuntimeResult> {
+  try {
+    if (recoverInstalledManagedClusterVllmEndpoint()) return { ok: true, persisted: true };
+  } catch (error) {
+    return { ok: false, reason: `managed vLLM recovery failed: ${(error as Error).message}` };
+  }
+
+  try {
+    if (recoverHostLocalManagedVllmEndpoint()) return { ok: true, persisted: true };
+  } catch (error) {
     return {
       ok: false,
-      reason: "the managed dual-Station peer configuration is missing",
+      reason: `managed host-local vLLM recovery failed: ${(error as Error).message}`,
     };
   }
 
-  const capability = probeDualStationVllmCapability();
-  if (capability.kind !== "ready") {
-    const reason =
-      capability.kind === "unavailable"
-        ? capability.reason
-        : "the configured dual-Station peer disappeared";
-    return { ok: false, reason };
+  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
+  let configuredPlan: DualStationVllmPlan | null = null;
+  if (configuredPeer) {
+    const capability = probeDualStationVllmCapability();
+    if (capability.kind !== "ready") {
+      const reason =
+        capability.kind === "unavailable"
+          ? capability.reason
+          : "the configured dual-Station peer disappeared";
+      return { ok: false, reason };
+    }
+    configuredPlan = capability.plan;
   }
 
   try {
     return await withDualStationManagedVllmLifecycle(async () => {
-      const preflight = preflightDualStationManagedVllm(capability.plan);
+      let plan: DualStationVllmPlan;
+      let receiptAlreadyPersisted = false;
+      if (configuredPlan) {
+        plan = configuredPlan;
+      } else {
+        const recovered = recoverInstalledDualStationVllmRuntime();
+        if (recovered.kind === "not-installed") {
+          return {
+            ok: false,
+            reason: "the managed dual-Station peer configuration is missing",
+          };
+        }
+        if (recovered.kind === "unsafe") {
+          return {
+            ok: false,
+            reason: `the managed dual-Station cleanup receipt is unsafe: ${recovered.reason}`,
+          };
+        }
+        plan = recovered.plan;
+        receiptAlreadyPersisted = true;
+      }
+      const preflight = preflightDualStationManagedVllm(plan);
       if (!preflight.ok) return { ok: false, reason: preflight.reason };
-      if (!areDualStationManagedVllmContainersRunning(capability.plan)) {
+      if (!areDualStationManagedVllmContainersRunning(plan)) {
         return {
           ok: false,
-          reason: "the managed dual-Station containers changed before receipt persistence",
+          reason: "the managed dual-Station containers changed before cleanup ownership validation",
         };
       }
+      if (receiptAlreadyPersisted) return { ok: true, persisted: true };
       try {
-        persistDualStationVllmRuntimeReceipt(capability.plan);
+        persistDualStationVllmRuntimeReceipt(plan);
       } catch (error) {
         return { ok: false, reason: (error as Error).message };
       }
@@ -938,7 +839,8 @@ export async function persistConfiguredDualStationVllmRuntimeReceipt(): Promise<
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
-): { ok: boolean; reason?: string } {
+  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
+): { ok: true; containerId: string } | { ok: false; reason: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
   // The explicit download completed before this long-lived container starts,
   // so do not retain the host Hugging Face token in the serving process.
@@ -947,7 +849,7 @@ function startContainer(
     const resolvedFlags = profile.buildDockerRunFlags
       ? profile.buildDockerRunFlags()
       : profile.dockerRunFlags;
-    runArgs = buildVllmRunArgs(profile, model, resolvedFlags);
+    runArgs = buildVllmRunArgs(profile, model, resolvedFlags, dockerEnv);
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
@@ -957,20 +859,24 @@ function startContainer(
   if (!replacement.ok) return replacement;
   if (replacement.containerId) {
     dockerForceRm(replacement.containerId, {
-      env: buildVllmDockerEnv(),
+      env: dockerEnv,
       ignoreError: true,
       suppressOutput: true,
     });
   }
   const result = dockerRunDetached(runArgs, {
-    env: buildVllmDockerEnv(),
+    env: dockerEnv,
     ignoreError: true,
     suppressOutput: true,
   });
   if (result.status !== 0) {
     return { ok: false, reason: `docker run failed (exit ${String(result.status)})` };
   }
-  return { ok: true };
+  const launched = inspectVllmContainerOwnershipInDockerEnv(profile.containerName, dockerEnv);
+  if (launched.kind !== "managed") {
+    return { ok: false, reason: "the launched vLLM container identity could not be verified" };
+  }
+  return { ok: true, containerId: launched.containerId };
 }
 
 function vllmEndpointReady(baseUrl?: string): boolean {
@@ -1139,6 +1045,14 @@ function waitForVllmReady(
         done({ ok: false, reason: "vLLM container exited before readiness" });
         return;
       }
+      const restarts = containerRestartCount(profile, dockerEnv);
+      if (restarts >= VLLM_MAX_STARTUP_RESTARTS) {
+        done({
+          ok: false,
+          reason: `vLLM container restarted ${String(restarts)} times before readiness`,
+        });
+        return;
+      }
       if (now - lastHeartbeatAt >= VLLM_LAUNCH_HEARTBEAT_MS) {
         lastHeartbeatAt = now;
         emit(`Still waiting for vLLM (${formatElapsed(now - start)} elapsed; API not ready)`);
@@ -1148,6 +1062,18 @@ function waitForVllmReady(
     tick = setInterval(poll, 5000);
     poll();
   });
+}
+
+function containerRestartCount(
+  profile: VllmProfile,
+  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
+): number {
+  const out = dockerCapture(["inspect", "--format", "{{.RestartCount}}", profile.containerName], {
+    env: dockerEnv,
+    ignoreError: true,
+  }).trim();
+  const restarts = Number(out);
+  return Number.isInteger(restarts) && restarts > 0 ? restarts : 0;
 }
 
 function containerStillRunning(
@@ -1497,7 +1423,7 @@ interface InstallVllmOptions {
   beforeInstall?: (modelId: string) => void;
 }
 
-function imageIsCached(
+export function imageIsCached(
   profile: VllmProfile,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
 ): boolean {
@@ -1551,7 +1477,57 @@ export async function installVllm(
 async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
+  hostLocalSelection?: MaterializedHostLocalVllmSelection,
 ): Promise<{ ok: boolean }> {
+  if (profile.defaultModel.fixedServeCommand) {
+    if (String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim()) {
+      console.error(
+        "  vLLM install failed: this local model profile does not accept NEMOCLAW_VLLM_MODEL.",
+      );
+      return { ok: false };
+    }
+    if (String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+      console.error(
+        `  vLLM install failed: this local model profile does not accept ${VLLM_EXTRA_ARGS_ENV}.`,
+      );
+      return { ok: false };
+    }
+    if (String(process.env.NEMOCLAW_VLLM_PORT ?? "").trim()) {
+      console.error(
+        "  vLLM install failed: this local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT.",
+      );
+      return { ok: false };
+    }
+  }
+  const managedCluster = hostLocalSelection
+    ? { kind: "not-selected" as const }
+    : await tryInstallManagedClusterManagedVllm(
+        {
+          platform: profile.platform,
+          nonInteractive: opts.nonInteractive,
+          promptFn: opts.promptFn,
+          beforeInstall: opts.beforeInstall,
+        },
+        {
+          prerequisites: dockerPrereqsOk,
+          pullImage,
+          downloadModel,
+          printDownloadAuthentication: printHfDownloadAuthentication,
+        },
+      );
+  if (managedCluster.kind === "handled") return managedCluster.result;
+
+  if (!hostLocalSelection) {
+    const selected = resolveHostLocalVllmSelection(profile);
+    if (selected.kind === "rejected") {
+      console.error(`  vLLM install failed: ${selected.reason}`);
+      return { ok: false };
+    }
+    if (selected.kind === "selected") {
+      return await runVllmInstall(selected.profile, opts, selected);
+    }
+  }
+
   let dualStationPlan: DualStationVllmPlan | null = null;
   let peerModelSnapshot: "ready" | "staging-required" | null = null;
   const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
@@ -1606,6 +1582,14 @@ async function runVllmInstall(
     if (!resolved) return { ok: false };
     dualStationPlan = capability.plan;
     peerModelSnapshot = capability.peerModelSnapshot;
+  } else if (hostLocalSelection) {
+    try {
+      assertGatedModelAccess(hostLocalSelection.model);
+    } catch (error) {
+      console.error(`  vLLM install failed: ${(error as Error).message}`);
+      return { ok: false };
+    }
+    resolved = { model: hostLocalSelection.model, source: "default" };
   } else {
     resolved = await resolveVllmInstallModel(profile, {
       nonInteractive: opts.nonInteractive,
@@ -1677,7 +1661,18 @@ async function runVllmInstall(
       }
     }
   }
-  const localDockerEnv = dualStationPlan ? buildLocalDualStationDockerEnv() : buildVllmDockerEnv();
+  let hostLocalApiKey: string | null = null;
+  if (!dualStationPlan && model.managedBearerAuth) {
+    try {
+      hostLocalApiKey = ensureDualStationVllmApiKey();
+    } catch (error) {
+      console.error(`  vLLM install failed: ${(error as Error).message}`);
+      return { ok: false };
+    }
+  }
+  const localDockerEnv = dualStationPlan
+    ? buildLocalDualStationDockerEnv()
+    : buildVllmDockerEnv(hostLocalApiKey ? { VLLM_API_KEY: hostLocalApiKey } : {});
   opts.beforeInstall?.(servedModelId);
 
   console.log("");
@@ -1715,6 +1710,12 @@ async function runVllmInstall(
   const prereqs = dockerPrereqsOk();
   if (!prereqs.ok) {
     console.error(`  vLLM install failed: ${String(prereqs.reason)}`);
+    return { ok: false };
+  }
+
+  const capability = computeCapabilityPreflight(model);
+  if (!capability.ok) {
+    console.error(`  vLLM install failed: ${capability.reason}`);
     return { ok: false };
   }
 
@@ -1964,10 +1965,38 @@ async function runVllmInstall(
     }
   }
 
-  const start = startContainer(runtimeProfile, model);
+  const start = startContainer(runtimeProfile, model, localDockerEnv);
   if (!start.ok) {
     console.error(`  vLLM install failed: ${String(start.reason)}`);
     return { ok: false };
+  }
+  if (runtimeProfile.servingCatalog) {
+    if (!hostLocalApiKey) {
+      dockerForceRm(start.containerId, {
+        env: localDockerEnv,
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      console.error("  vLLM install failed: managed host-local API key was not provisioned");
+      return { ok: false };
+    }
+    try {
+      persistHostLocalVllmRuntimeReceipt({
+        containerId: start.containerId,
+        authFingerprint: runtimeAuthFingerprint(hostLocalApiKey),
+        serving: runtimeProfile.servingCatalog,
+      });
+    } catch (error) {
+      dockerForceRm(start.containerId, {
+        env: localDockerEnv,
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      console.error(
+        `  vLLM install failed: could not persist the host-local ownership receipt: ${(error as Error).message}`,
+      );
+      return { ok: false };
+    }
   }
 
   emit("Launching vLLM");
@@ -1975,7 +2004,10 @@ async function runVllmInstall(
     `Launch can take 5 minutes to ${String(Math.ceil(runtimeProfile.loadTimeoutSec / 60))} minutes`,
   );
 
-  const ready = await waitForVllmReady(runtimeProfile, undefined, localDockerEnv);
+  const hostLocalBaseUrl = model.managedBearerAuth
+    ? `http://127.0.0.1:${String(VLLM_PORT)}`
+    : undefined;
+  const ready = await waitForVllmReady(runtimeProfile, hostLocalBaseUrl, localDockerEnv);
   if (!ready.ok) {
     printContainerLogTail(runtimeProfile, localDockerEnv);
     dockerStop(runtimeProfile.containerName, {
@@ -1990,6 +2022,27 @@ async function runVllmInstall(
   if (!containerStillRunning(runtimeProfile, localDockerEnv)) {
     console.error("  vLLM container exited unexpectedly after readiness");
     return { ok: false };
+  }
+
+  if (model.managedBearerAuth) {
+    if (!hostLocalApiKey) {
+      console.error("  vLLM install failed: managed host-local API key was not provisioned");
+      return { ok: false };
+    }
+    const authBoundary = verifyDualStationVllmAuthBoundary(
+      hostLocalBaseUrl!,
+      hostLocalApiKey,
+      servedModelId,
+    );
+    if (!authBoundary.ok) {
+      dockerStop(runtimeProfile.containerName, {
+        env: localDockerEnv,
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      console.error(`  vLLM install failed: ${authBoundary.reason}`);
+      return { ok: false };
+    }
   }
 
   console.log(`  ✓ vLLM ready on localhost:${String(VLLM_PORT)}`);

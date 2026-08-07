@@ -66,6 +66,7 @@ export type StatusFlowHarnessOptions = {
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   preflight?: SandboxStatusPreflightResult;
+  postRecoveryPreflight?: SandboxStatusPreflightResult;
   sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
     agent?: string | null;
     agentVersion?: string | null;
@@ -102,7 +103,9 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const statusPreflight = requireDist("../../src/lib/actions/sandbox/status-preflight.js");
   const statusSnapshot = requireDist("../../src/lib/actions/sandbox/status-snapshot.js");
   const dockerHealth = requireDist("../../src/lib/actions/sandbox/docker-health.js");
-  const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
+  const statusProcessRecovery = requireDist(
+    "../../src/lib/actions/sandbox/status/process-recovery.js",
+  );
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const nim = requireDist("../../src/lib/inference/nim.js");
@@ -187,6 +190,9 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
             ? null
             : { checked: false }
           : options.servingProcessHealth,
+      ...(options.postRecoveryPreflight
+        ? { postRecoveryPreflight: options.postRecoveryPreflight }
+        : {}),
     });
   const getSandboxDockerRuntimeSpy = vi
     .spyOn(dockerHealth, "getSandboxDockerRuntime")
@@ -195,7 +201,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       health: "unhealthy",
       paused: false,
     });
-  vi.spyOn(processRecovery, "isSandboxGatewayRunningForStatus").mockResolvedValue(false);
+  vi.spyOn(statusProcessRecovery, "isSandboxGatewayRunningForStatus").mockResolvedValue(false);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");

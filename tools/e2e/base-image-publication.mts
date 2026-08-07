@@ -22,6 +22,23 @@ const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRY_DELAY_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
+const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
+  ["agents/**", /^agents\/.+$/u],
+  ["nemoclaw/**", /^nemoclaw\/.+$/u],
+  ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
+  ["scripts/**", /^scripts\/.+$/u],
+  [
+    "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
+    /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
+  ],
+  ["src/lib/messaging/**", /^src\/lib\/messaging\/.+$/u],
+  [
+    "src/lib/onboard/managed-bootstrap/envelope.ts",
+    /^src\/lib\/onboard\/managed-bootstrap\/envelope[.]ts$/u,
+  ],
+  ["src/lib/onboard/managed-startup/**", /^src\/lib\/onboard\/managed-startup\/.+$/u],
+  ["tools/mcp-tool-discovery-runtime/**", /^tools\/mcp-tool-discovery-runtime\/.+$/u],
+]);
 const PENDING_RUN_STATUSES = new Set(["requested", "waiting", "pending", "queued", "in_progress"]);
 const COMPLETED_CONCLUSIONS = new Set([
   "action_required",
@@ -127,6 +144,7 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
   if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
     throw new Error(`base-image push path on line ${lineNumber} must be a non-empty exact path`);
   }
+  if (REVIEWED_PATH_GLOBS.has(value)) return value;
   if (
     !SAFE_PATH_PATTERN.test(value) ||
     value.startsWith("/") ||
@@ -141,9 +159,9 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
 }
 
 /**
- * Read the literal path list that controls the publisher without requiring a
- * dependency install in the preflight job. Deliberately reject YAML features
- * such as flow lists, aliases, globs, and folded scalars instead of guessing.
+ * Read the controlled path list without requiring a dependency install in the
+ * preflight job. Deliberately reject YAML features such as flow lists, aliases,
+ * unreviewed globs, and folded scalars instead of guessing.
  */
 export function parseBaseImagePushPaths(source: string): string[] {
   const lines = source.split(/\r?\n/u);
@@ -226,6 +244,15 @@ function defaultGit(args: string[]): string {
   }).trim();
 }
 
+export function expandBaseImagePushPaths(
+  expectedSha: string,
+  paths: readonly string[],
+): string[] {
+  sha(expectedSha, "expected SHA");
+  return [...new Set(paths.map((path) => (REVIEWED_PATH_GLOBS.has(path) ? `:(glob)${path}` : path)))]
+    .sort();
+}
+
 export function resolveFirstParentHistory(
   expectedSha: string,
   paths: readonly string[],
@@ -243,6 +270,10 @@ export function resolveFirstParentHistory(
   if (runGit(["rev-parse", "--is-shallow-repository"]) !== "false") {
     throw new Error("base-image publication gate requires a complete Git history");
   }
+  const expandedPaths = expandBaseImagePushPaths(expectedSha, paths);
+  if (expandedPaths.length === 0) {
+    throw new Error("base-image push paths did not resolve to any Git paths");
+  }
 
   const relevantSha = runGit([
     "log",
@@ -252,7 +283,7 @@ export function resolveFirstParentHistory(
     "--format=%H",
     expectedSha,
     "--",
-    ...paths,
+    ...expandedPaths,
   ]);
   sha(relevantSha, "latest applicable base-image commit");
 
@@ -332,7 +363,15 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
       throw new Error(`workflow run ${index} pending state is invalid`);
     }
   }
-  return { id, attempt, workflowId: expectedWorkflowId, headSha, status, conclusion, url };
+  return {
+    id,
+    attempt,
+    workflowId: expectedWorkflowId,
+    headSha,
+    status,
+    conclusion,
+    url,
+  };
 }
 
 export function selectPublicationRun(
@@ -417,7 +456,11 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): vo
     if (occurrences.some((occurrence) => occurrence.attempt === attempt)) {
       throw new Error(`publisher job ${job.name} is duplicated in attempt ${attempt}; ${run.url}`);
     }
-    occurrences.push({ attempt, status: job.status, conclusion: job.conclusion });
+    occurrences.push({
+      attempt,
+      status: job.status,
+      conclusion: job.conclusion,
+    });
     jobsByName.set(job.name, occurrences);
   }
 
@@ -666,6 +709,10 @@ function parseDurationArgument(argv: string[], name: string, defaultSeconds: num
   return seconds;
 }
 
+export function isBaseImagePublicationEvent(eventName: string | undefined): boolean {
+  return eventName === "push" || eventName === "workflow_dispatch";
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   const known = new Set(["--wait-seconds", "--poll-seconds"]);
   for (let index = 0; index < argv.length; index += 2) {
@@ -693,8 +740,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (env.GITHUB_REF !== "refs/heads/main") {
     throw new Error("GITHUB_REF must be refs/heads/main");
   }
-  if (env.GITHUB_EVENT_NAME !== "schedule" && env.GITHUB_EVENT_NAME !== "workflow_dispatch") {
-    throw new Error("GITHUB_EVENT_NAME must be schedule or workflow_dispatch");
+  if (!isBaseImagePublicationEvent(env.GITHUB_EVENT_NAME)) {
+    throw new Error("GITHUB_EVENT_NAME must be push or workflow_dispatch");
   }
   if (env.GITHUB_SHA !== expectedSha) {
     throw new Error("EXPECTED_SHA must match GITHUB_SHA");

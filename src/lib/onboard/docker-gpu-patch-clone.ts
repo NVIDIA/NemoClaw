@@ -242,6 +242,12 @@ function pushNumberFlag(args: string[], flag: string, value: unknown): void {
   }
 }
 
+function pushNonZeroIntegerFlag(args: string[], flag: string, value: unknown): void {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value !== 0) {
+    args.push(flag, String(value));
+  }
+}
+
 function dockerCpusFromNanoCpus(nanoCpus: number): string {
   return (nanoCpus / 1_000_000_000).toFixed(3).replace(/\.?0+$/, "");
 }
@@ -299,6 +305,14 @@ export function sameContainerId(
   return left.startsWith(right) || right.startsWith(left);
 }
 
+/** Return only a complete Docker container ID that is safe for exact-ID cleanup. */
+export function fullDockerContainerId(value: string | null | undefined): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
 function dockerNetworkAliases(
   inspect: DockerContainerInspect,
   networkMode: string | null | undefined,
@@ -329,7 +343,15 @@ export function buildDockerGpuCloneRunArgs(
   const image = String(options.image || config.Image || "").trim();
   if (!image) throw new Error("Docker inspect output did not include Config.Image.");
 
-  const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];
+  const containerName = String(options.containerName ?? dockerContainerName(inspect)).trim();
+  if (
+    containerName.length === 0 ||
+    containerName.length > 253 ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(containerName)
+  ) {
+    throw new Error("Docker clone container name is invalid.");
+  }
+  const args: string[] = ["--name", containerName, ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
 
   // Startup-command recreation must retain OpenShell's native CDI attachment.
@@ -348,6 +370,13 @@ export function buildDockerGpuCloneRunArgs(
   pushStringFlag(args, "--workdir", config.WorkingDir);
   if (config.Tty) args.push("--tty");
   if (config.OpenStdin) args.push("--interactive");
+  for (const stream of [
+    ...(config.AttachStdin ? ["stdin"] : []),
+    ...(config.AttachStdout ? ["stdout"] : []),
+    ...(config.AttachStderr ? ["stderr"] : []),
+  ]) {
+    args.push("--attach", stream);
+  }
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
   let sawSandboxCommand = false;
@@ -424,6 +453,7 @@ export function buildDockerGpuCloneRunArgs(
   pushNumberFlag(args, "--cpu-quota", host.CpuQuota);
   pushNumberFlag(args, "--cpu-period", host.CpuPeriod);
   pushNumberFlag(args, "--shm-size", host.ShmSize);
+  pushNonZeroIntegerFlag(args, "--pids-limit", host.PidsLimit);
   if (typeof host.NanoCpus === "number" && host.NanoCpus > 0) {
     args.push("--cpus", dockerCpusFromNanoCpus(host.NanoCpus));
   }
@@ -435,8 +465,17 @@ export function buildDockerGpuCloneRunArgs(
   if (host.Init) args.push("--init");
 
   const entrypoint = stringArray(config.Entrypoint);
-  if (entrypoint.length > 0) args.push("--entrypoint", entrypoint[0]);
-  const commandArgs = sandboxCommand ? [] : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
+  if (replacementEntrypoint) {
+    args.push("--entrypoint", replacementEntrypoint);
+  } else if (entrypoint.length > 0) {
+    args.push("--entrypoint", entrypoint[0]);
+  }
+  const commandArgs = options.containerCommand
+    ? [...options.containerCommand]
+    : sandboxCommand
+      ? []
+      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
   args.push(image, ...commandArgs);
   return args;
 }

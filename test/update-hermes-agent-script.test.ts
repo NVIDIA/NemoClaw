@@ -16,7 +16,7 @@ const HERMES_BASE_DOCKERFILE = path.join(
   "Dockerfile.base",
 );
 const HERMES_MANIFEST = path.join(import.meta.dirname, "..", "agents", "hermes", "manifest.yaml");
-const TARGET_TAG = "v2026.7.1";
+const TARGET_TAG = "v2026.7.20";
 
 const CURRENT_INSTALLED_BASE = [
   "# Calver tag v2026.6.5 = Hermes Agent v0.16.0.",
@@ -36,7 +36,7 @@ const CURRENT_INSTALLED_DOCKERFILE = [
   "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
   "RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \\",
   "    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts",
-  "RUN mkdir -p /sandbox/.hermes/dashboard-home",
+  "RUN mkdir -p /sandbox/.hermes/profiles/dashboard-home",
   "",
 ].join("\n");
 
@@ -88,7 +88,7 @@ printf 'fake archive' > "$output"
     );
     writeExecutable(
       path.join(fakeBin, "tar"),
-      "#!/usr/bin/env bash\nprintf 'version = \"0.18.0\"\\n'\n",
+      "#!/usr/bin/env bash\nprintf 'version = \"0.19.0\"\\n'\n",
     );
     writeExecutable(path.join(fakeBin, "npm"), "#!/usr/bin/env bash\nprintf 'sha512-test\\n'\n");
     writeExecutable(
@@ -107,7 +107,7 @@ esac
 set -euo pipefail
 printf '%s|%s\\n' "\${NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF:-}" "$*" >> "$FAKE_NEMOHERMES_LOG"
 if [[ "$*" == "hermes exec -- hermes --version" ]]; then
-  printf '0.18.0\\n'
+  printf '0.19.0\\n'
 fi
 `,
     );
@@ -130,7 +130,7 @@ fi
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
       expect(fs.readFileSync(dockerLog, "utf8")).toContain(`tag ${baseRef} ${pinnedRef}`);
       expect(fs.readFileSync(nemohermesLog, "utf8")).toContain(`${pinnedRef}|hermes rebuild`);
-      expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.18.0");
+      expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.19.0");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

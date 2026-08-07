@@ -16,12 +16,20 @@ import type {
   SandboxMessagingState,
 } from "../state/registry";
 import * as registry from "../state/registry";
+import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
 } from "./hermes-dashboard";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  requireRuntimeProviderBundleForSandbox,
+  requireRuntimeProviderMutationAuthority,
+} from "./runtime-provider/access";
 import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 
 export type CreatedSandboxRuntimeFields = Pick<
@@ -43,6 +51,7 @@ export interface CreatedSandboxRegistryEntryInput {
   agent: AgentDefinition | null | undefined;
   agentVersionKnown: boolean;
   imageTag: string | null;
+  workload?: SandboxEntry["workload"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
@@ -72,6 +81,7 @@ export interface CreatedSandboxRegistryEntryInput {
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   registerSandbox?(entry: SandboxEntry): void;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
 }
 
 export function creationFidelity(
@@ -162,17 +172,30 @@ export function selection(
 export function buildCreatedSandboxRegistryEntry(
   input: CreatedSandboxRegistryEntryInput,
 ): SandboxEntry {
+  const session = onboardSession.loadSession();
+  const servingProfileProvenance =
+    session?.sandboxName === input.sandboxName
+      ? (session.servingProfileProvenance ?? undefined)
+      : undefined;
   const messagingState =
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
       : undefined;
+  const workload = cloneSandboxWorkloadReceipt(input.workload);
+  if (input.workload !== undefined && workload === undefined) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox workload ownership receipt failed closed validation.",
+    );
+  }
 
   return {
     name: input.sandboxName,
+    servingProfileProvenance,
     ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
+    workload,
     ...(input.openclawImagePluginInstalls !== undefined
       ? {
           openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
@@ -208,8 +231,26 @@ export function buildCreatedSandboxRegistryEntry(
   };
 }
 
+/** Load only the immutable profile identity needed by command-level resume validation. */
+export function loadServingProfileResumeSession(): {
+  servingProfileProvenance: onboardSession.Session["servingProfileProvenance"];
+} | null {
+  const session = onboardSession.loadSession();
+  return session ? { servingProfileProvenance: session.servingProfileProvenance } : null;
+}
+
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   const entry = buildCreatedSandboxRegistryEntry(input);
+  const provider = requireRuntimeProviderBundleForSandbox(
+    entry,
+    input.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  requireRuntimeProviderMutationAuthority(provider, "registration");
+  if (!provider.workload.acceptsReceipt(entry.workload)) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${provider.identity.id}' does not accept the registered workload receipt.`,
+    );
+  }
   (input.registerSandbox ?? registry.registerSandbox)(entry);
   return entry;
 }

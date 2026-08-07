@@ -176,10 +176,12 @@ describe("sandbox base-image source identity", () => {
       "scripts/lib/sandbox-rlimits.sh",
       "agents/openclaw/mcporter-runtime/package.json",
       "agents/openclaw/mcporter-runtime/package-lock.json",
+      "scripts/security/build-perl-security-packages.sh",
       "scripts/lib/openclaw-npm-remediation.mts",
       "scripts/lib/reviewed-npm-archive.mts",
       "scripts/checks/node-tar-image-scan.mts",
       "scripts/patch-bundled-npm-brace-expansion.mts",
+      "scripts/lib/patch-bundled-npm-ip-address.mts",
       "scripts/patch-bundled-npm-tar.mts",
       "scripts/upgrade-bundled-npm.mts",
       agentDockerfile,
@@ -360,6 +362,17 @@ describe("sandbox base-image source identity", () => {
     writeFixture(root, "scripts/lib/openclaw-npm-remediation.mts", "export const version = 2;\n");
     git(root, ["add", "scripts/lib/openclaw-npm-remediation.mts"]);
     git(root, ["commit", "-m", "change remediation helper"]);
+
+    expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("detects committed Perl package builder changes relative to origin/main", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "scripts/security/build-perl-security-packages.sh", "#!/bin/sh\nexit 0\n");
+    git(root, ["add", "scripts/security/build-perl-security-packages.sh"]);
+    git(root, ["commit", "-m", "change Perl package builder"]);
 
     expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);

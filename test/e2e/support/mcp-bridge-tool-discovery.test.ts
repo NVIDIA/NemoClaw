@@ -1,0 +1,402 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
+import {
+  type FakeMcpHttpsServer,
+  type FakeMcpRequest,
+  HERMES_DEFERRED_TOOL_SEARCH_MISS,
+  type StartedHttpServer,
+  startCompatibleMock,
+} from "../live/mcp-bridge-servers.ts";
+import {
+  assertAuthenticatedMcpDiscoveryWithOneRestart,
+  hasSuccessfulAuthenticatedMcpDiscovery,
+  shouldRetryMcpDiscoveryAfterRestart,
+  shouldRetryMcpToolDiscoveryTransportFailure,
+} from "../live/mcp-bridge-tool-discovery.ts";
+
+const EXPECTED_SECRET = "expected-secret";
+const EXPECTED_RESULT_TOKEN = "expected-result";
+const SESSION_ID = "fake-session-1";
+const PROTOCOL_VERSION = "2025-03-26";
+
+function request(rpcMethod: string, overrides: Partial<FakeMcpRequest> = {}): FakeMcpRequest {
+  return {
+    method: "POST",
+    path: "/mcp",
+    auth: `Bearer ${EXPECTED_SECRET}`,
+    body: "",
+    sessionId: SESSION_ID,
+    protocolVersion: PROTOCOL_VERSION,
+    rpcMethod,
+    responseStatus: rpcMethod === "notifications/initialized" ? 202 : 200,
+    responseHasResult: rpcMethod !== "notifications/initialized",
+    ...overrides,
+  };
+}
+
+function successfulInitialize(): FakeMcpRequest {
+  return request("initialize", {
+    sessionId: "",
+    protocolVersion: "",
+    negotiatedSessionId: SESSION_ID,
+    negotiatedProtocolVersion: PROTOCOL_VERSION,
+  });
+}
+
+interface CompatibleToolCall {
+  id: string;
+  function: { name: string; arguments: string };
+}
+
+interface CompatibleMessage {
+  role: string;
+  content: unknown;
+  tool_call_id?: string;
+  tool_calls?: CompatibleToolCall[];
+}
+
+const COMPATIBLE_API_KEY = "compatible-api-key";
+const COMPATIBLE_MODEL = "mock/mcp-bridge";
+const DEFERRED_TOOL_NAME = "mcp__fake__fake_echo";
+const TOOL_CHALLENGE = "deferred-tool-challenge";
+const BRIDGE_TOOLS = ["tool_search", "tool_describe", "tool_call"].map((name) => ({
+  type: "function",
+  function: { name },
+}));
+
+let compatibleMock: StartedHttpServer | undefined;
+
+afterEach(async () => {
+  await compatibleMock?.close();
+  compatibleMock = undefined;
+});
+
+async function startDeferredCompatibleMock(): Promise<StartedHttpServer> {
+  return startCompatibleMock({
+    apiKey: COMPATIBLE_API_KEY,
+    model: COMPATIBLE_MODEL,
+    toolChallenge: TOOL_CHALLENGE,
+    toolResultToken: EXPECTED_RESULT_TOKEN,
+    deferredToolName: DEFERRED_TOOL_NAME,
+  });
+}
+
+async function requestCompatibleMessage(
+  server: StartedHttpServer,
+  messages: CompatibleMessage[],
+): Promise<CompatibleMessage> {
+  const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${COMPATIBLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: COMPATIBLE_MODEL, messages, tools: BRIDGE_TOOLS }),
+  });
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as {
+    choices?: Array<{ message?: CompatibleMessage }>;
+  };
+  const message = payload.choices?.[0]?.message;
+  expect(message).toBeDefined();
+  messages.push(message as CompatibleMessage);
+  return message as CompatibleMessage;
+}
+
+function expectToolCall(
+  message: CompatibleMessage,
+  name: string,
+  expectedArguments: Record<string, unknown>,
+): CompatibleToolCall {
+  expect(message.tool_calls).toHaveLength(1);
+  const toolCall = message.tool_calls?.[0];
+  expect(toolCall).toMatchObject({ function: { name } });
+  expect(JSON.parse(toolCall?.function.arguments ?? "{}")).toEqual(expectedArguments);
+  return toolCall as CompatibleToolCall;
+}
+
+function recordToolResult(
+  messages: CompatibleMessage[],
+  toolCall: CompatibleToolCall,
+  content: unknown,
+): void {
+  messages.push({
+    role: "tool",
+    content: JSON.stringify(content),
+    tool_call_id: toolCall.id,
+  });
+}
+
+describe("authenticated MCP rediscovery evidence", () => {
+  it("accepts successful tool discovery in one negotiated session", () => {
+    expect(
+      hasSuccessfulAuthenticatedMcpDiscovery(
+        [successfulInitialize(), request("notifications/initialized"), request("tools/list")],
+        EXPECTED_SECRET,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects tool discovery before session initialization completes", () => {
+    expect(
+      hasSuccessfulAuthenticatedMcpDiscovery(
+        [request("tools/list"), successfulInitialize(), request("notifications/initialized")],
+        EXPECTED_SECRET,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects tool discovery from a different negotiated session", () => {
+    expect(
+      hasSuccessfulAuthenticatedMcpDiscovery(
+        [
+          successfulInitialize(),
+          request("notifications/initialized"),
+          request("tools/list", { sessionId: "fake-session-2" }),
+        ],
+        EXPECTED_SECRET,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["an unsuccessful initialize HTTP response", 0, { responseStatus: 401 }],
+    ["an initialize response without a negotiated session ID", 0, { negotiatedSessionId: "" }],
+    [
+      "an initialize response without a negotiated protocol version",
+      0,
+      { negotiatedProtocolVersion: "" },
+    ],
+    ["an initialized notification response with HTTP 200", 1, { responseStatus: 200 }],
+    ["a tools/list response without a JSON-RPC result", 2, { responseHasResult: false }],
+  ])("rejects %s", (_failure, failedRequestIndex, response) => {
+    const requests = [
+      successfulInitialize(),
+      request("notifications/initialized"),
+      request("tools/list"),
+    ];
+    Object.assign(requests[failedRequestIndex], response);
+
+    expect(hasSuccessfulAuthenticatedMcpDiscovery(requests, EXPECTED_SECRET)).toBe(false);
+  });
+});
+
+describe("authenticated MCP tool discovery transport retry", () => {
+  it("retries one generic transport failure before any request reaches the fixture", () => {
+    expect(
+      shouldRetryMcpToolDiscoveryTransportFailure(
+        { ok: false, detail: "MCP tool discovery request failed" },
+        [],
+        1,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["the fixture received a request", [request("initialize")], 1],
+    ["the retry budget is exhausted", [], 2],
+  ])("does not retry when %s", (_case, requests, attempt) => {
+    expect(
+      shouldRetryMcpToolDiscoveryTransportFailure(
+        { ok: false, detail: "MCP tool discovery request failed" },
+        requests as FakeMcpRequest[],
+        attempt as number,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not retry a classified product or endpoint failure", () => {
+    expect(
+      shouldRetryMcpToolDiscoveryTransportFailure(
+        { ok: false, detail: "MCP endpoint returned an invalid tool-list response" },
+        [],
+        1,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("authenticated MCP discovery restart retry", () => {
+  it("retries when no request reached the fixture", () => {
+    expect(shouldRetryMcpDiscoveryAfterRestart([])).toBe(true);
+  });
+
+  it("does not retry after the fixture received a request", () => {
+    expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);
+  });
+
+  it("restarts once and retries discovery when no request reached the fixture", async () => {
+    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const assertDiscovery = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("first discovery failed"))
+      .mockResolvedValueOnce(undefined);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+
+    await assertAuthenticatedMcpDiscoveryWithOneRestart(
+      fakeMcp,
+      {
+        requestOffset: 0,
+        expectedSecret: EXPECTED_SECRET,
+        label: "initial discovery",
+        restart,
+      },
+      { assertDiscovery },
+    );
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(assertDiscovery).toHaveBeenCalledTimes(2);
+    expect(assertDiscovery.mock.calls[1]?.[1]).toMatchObject({
+      label: "initial discovery after one bridge restart",
+    });
+  });
+
+  it("does not restart when the failed attempt reached the fixture", async () => {
+    const fakeMcp = { requests: [request("initialize")] } as unknown as FakeMcpHttpsServer;
+    const failure = new Error("fixture-visible discovery failed");
+    const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+
+    await expect(
+      assertAuthenticatedMcpDiscoveryWithOneRestart(
+        fakeMcp,
+        {
+          requestOffset: 0,
+          expectedSecret: EXPECTED_SECRET,
+          label: "initial discovery",
+          restart,
+        },
+        { assertDiscovery },
+      ),
+    ).rejects.toBe(failure);
+
+    expect(restart).not.toHaveBeenCalled();
+    expect(assertDiscovery).toHaveBeenCalledOnce();
+  });
+
+  it("propagates the retry failure without a second restart", async () => {
+    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const retryFailure = new Error("retry discovery failed");
+    const assertDiscovery = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("first discovery failed"))
+      .mockRejectedValueOnce(retryFailure);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+
+    await expect(
+      assertAuthenticatedMcpDiscoveryWithOneRestart(
+        fakeMcp,
+        {
+          requestOffset: 0,
+          expectedSecret: EXPECTED_SECRET,
+          label: "initial discovery",
+          restart,
+        },
+        { assertDiscovery },
+      ),
+    ).rejects.toBe(retryFailure);
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(assertDiscovery).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Hermes deferred MCP tool discovery", () => {
+  it("uses one tool_search, tool_describe, and tool_call when the deferred target is present", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { query: DEFERRED_TOOL_NAME },
+    );
+    expect(firstSearch.id).toBe("call_hermes_tool_search");
+    recordToolResult(messages, firstSearch, { matches: [{ name: DEFERRED_TOOL_NAME }] });
+
+    const description = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_describe",
+      { name: DEFERRED_TOOL_NAME },
+    );
+    recordToolResult(messages, description, {
+      name: DEFERRED_TOOL_NAME,
+      parameters: { properties: { challenge: { type: "string" } } },
+    });
+
+    const deferredCall = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_call",
+      {
+        name: DEFERRED_TOOL_NAME,
+        arguments: { challenge: TOOL_CHALLENGE },
+      },
+    );
+    recordToolResult(messages, deferredCall, EXPECTED_RESULT_TOKEN);
+
+    const finalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(finalMessage).toMatchObject({ role: "assistant", content: EXPECTED_RESULT_TOKEN });
+    expect(finalMessage.tool_calls).toBeUndefined();
+  });
+
+  it("stops after one well-formed tool_search miss", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { query: DEFERRED_TOOL_NAME },
+    );
+    expect(firstSearch.id).toBe("call_hermes_tool_search");
+    recordToolResult(messages, firstSearch, { matches: [] });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: `mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it("rejects a malformed tool_search result without retrying", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { query: DEFERRED_TOOL_NAME },
+    );
+    expect(firstSearch.id).toBe("call_hermes_tool_search");
+    recordToolResult(messages, firstSearch, { matches: [{ unexpected: true }] });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+});
+
+describe("MCP mutation concurrency retry", () => {
+  it("retries the explicit OpenShell optimistic-concurrency response", () => {
+    expect(
+      shouldRetryMcpMutationAfterConcurrencyConflict(
+        "Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.",
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    "Failed to detach provider: permission denied",
+    "sandbox was modified by another operation.",
+    "Please retry the command.",
+  ])("does not retry another failure: %s", (output) => {
+    expect(shouldRetryMcpMutationAfterConcurrencyConflict(output)).toBe(false);
+  });
+});

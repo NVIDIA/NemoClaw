@@ -61,6 +61,13 @@ import {
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
 import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
+import {
+  type ExternalPolicyPreset,
+  isTrustedPrivatePolicyPinCapability,
+  prepareTrustedPrivatePolicyPresets,
+  replayTrustedPrivatePolicyPinCapability,
+  type TrustedPrivatePolicyPinCapability,
+} from "./trusted-private-endpoints";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -1332,7 +1339,7 @@ function excludeBaselineEntryOnGateway(
   }
   if (live.state === "present" && live.digest !== digest) {
     console.error(
-      `  Baseline entry '${key}' changed after preview. Re-run the command to review its current scope; no policy changes were made.`,
+      `  Baseline entry '${key}' changed after preview. Rerun the command to review its current scope; no policy changes were made.`,
     );
     return false;
   }
@@ -1387,10 +1394,15 @@ function excludeBaselineEntryOnGateway(
  * baseline and drop its recorded exclusion. When the release removed the entry
  * entirely, only the registry record is cleared.
  */
+type RestoreBaselineEntryOptions = {
+  nonFatal?: boolean;
+  expectedTargetDigest?: string | null;
+};
+
 function restoreBaselineEntry(
   sandboxName: string,
   key: string,
-  options: { nonFatal?: boolean } = {},
+  options: RestoreBaselineEntryOptions = {},
 ): boolean {
   return withRecordedSandboxGateway(sandboxName, (gatewayName) =>
     restoreBaselineEntryOnGateway(sandboxName, key, options, gatewayName),
@@ -1400,9 +1412,36 @@ function restoreBaselineEntry(
 function restoreBaselineEntryOnGateway(
   sandboxName: string,
   key: string,
-  options: { nonFatal?: boolean },
+  options: RestoreBaselineEntryOptions,
   gatewayName: string,
 ): boolean {
+  // Resolve the current agent baseline before changing either durable or live
+  // state. A missing non-OpenClaw baseline must not be mistaken for a release
+  // that intentionally removed this key.
+  // Bind the mutation to the target disclosed before acknowledgement. This
+  // check precedes transaction recovery because reconciliation can change the
+  // durable journal.
+  let entry: PolicyObject | null;
+  try {
+    entry = getSandboxBaselineEntry(sandboxName, key);
+  } catch {
+    console.error(
+      `  The current release baseline for '${key}' is unreadable. No policy changes were made.`,
+    );
+    return false;
+  }
+  const target = entry ? { entry, digest: digestBaselineEntry(entry) } : null;
+  const targetDigest = target?.digest ?? null;
+  if (
+    Object.prototype.hasOwnProperty.call(options, "expectedTargetDigest") &&
+    targetDigest !== options.expectedTargetDigest
+  ) {
+    console.error(
+      `  Baseline entry '${key}' changed after preview. Rerun the command to review its current scope; no policy changes were made.`,
+    );
+    return false;
+  }
+
   const reconciled = reconcileBaselineExclusionTransition(sandboxName, key, gatewayName);
   if (!reconciled) return false;
   if (reconciled.state === "restored") return true;
@@ -1419,22 +1458,17 @@ function restoreBaselineEntryOnGateway(
     );
     return false;
   }
-  // Resolve the current agent baseline before changing either durable or live
-  // state. A missing non-OpenClaw baseline must not be mistaken for a release
-  // that intentionally removed this key.
-  const entry = getSandboxBaselineEntry(sandboxName, key);
   const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
   if (!currentPolicy) {
     console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
     return false;
   }
-  if (!entry) {
+  if (!target) {
     return registryTransitionStep(
       () => registry.removeBaselineExclusion(sandboxName, key),
       `The obsolete exclusion for '${key}' could not be cleared; no live policy changes were made.`,
     );
   }
-  const targetDigest = digestBaselineEntry(entry);
   const live = inspectLiveBaselineEntry(currentPolicy, key);
   if (live.state === "invalid") {
     console.error(
@@ -1462,7 +1496,7 @@ function restoreBaselineEntryOnGateway(
       ? reconciled.transition
       : beginBaselineExclusionTransition(sandboxName, "restore", recordedExclusion, targetDigest);
   if (!transition) return false;
-  const updated = mergeBaselineEntryIntoPolicy(currentPolicy, key, entry);
+  const updated = mergeBaselineEntryIntoPolicy(currentPolicy, key, target.entry);
   const pushSucceeded = attemptBaselineTransitionPolicyPush(
     sandboxName,
     updated,
@@ -1580,7 +1614,10 @@ function applyPresetContent(
   presetName: string,
   presetContent: string,
   options: {
-    custom?: { sourcePath?: string };
+    custom?: {
+      sourcePath?: string;
+      trustedPrivatePinCapability?: TrustedPrivatePolicyPinCapability;
+    };
     expectedExistingNetworkPolicyContent?: string | null;
     nonFatal?: boolean;
     skipRegistryUpdate?: boolean;
@@ -1600,7 +1637,18 @@ function applyPresetContent(
 
   if (options.custom) {
     const np = parseNetworkPolicies(presetContent);
-    if (np && networkPoliciesHasAllowedIps(np)) {
+    const hasGeneratedPins = np !== null && networkPoliciesHasAllowedIps(np);
+    const trustedPrivatePinsValid = isTrustedPrivatePolicyPinCapability(
+      presetContent,
+      options.custom.trustedPrivatePinCapability,
+    );
+    if (options.custom.trustedPrivatePinCapability && !trustedPrivatePinsValid) {
+      console.error(
+        `  Preset '${presetName}' has an invalid trusted-private pin receipt for its content.`,
+      );
+      return false;
+    }
+    if (hasGeneratedPins && !trustedPrivatePinsValid) {
       console.error(
         `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets.`,
       );
@@ -1739,6 +1787,9 @@ function applyPresetContent(
         name: presetName,
         content: presetContent,
         sourcePath: options.custom.sourcePath,
+        ...(options.custom.trustedPrivatePinCapability
+          ? { trustedPrivatePins: options.custom.trustedPrivatePinCapability.receipt }
+          : {}),
       });
     } else {
       const pols = sandbox.policies || [];
@@ -2272,6 +2323,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   console.log("  Applied permissive policy.");
 }
 
+export type { ExternalPolicyPreset };
 export {
   applyPermissivePolicy,
   applyPreset,
@@ -2312,11 +2364,13 @@ export {
   PRESETS_DIR,
   parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
+  prepareTrustedPrivatePolicyPresets,
   presetContentMatchesGateway,
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
   renderPresetScope,
+  replayTrustedPrivatePolicyPinCapability,
   resolveAgentBaselinePolicy,
   resolvePermissivePolicyPath,
   resolveSandboxBaselinePolicy,

@@ -12,6 +12,21 @@ type MessagingPlan = {
   channels?: MessagingPlanChannel[];
 };
 
+export const inlineMessagingPlanHelper = String.raw`
+function makeMessagingPlan(channelIds, disabledChannels = []) {
+  const disabled = new Set(disabledChannels);
+  const credentialBindings = {
+    discord: [{ channelId: "discord", credentialId: "discordBotToken", sourceInput: "botToken", providerName: "my-assistant-discord-bridge", providerEnvKey: "DISCORD_BOT_TOKEN", placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN", credentialAvailable: true, credentialHash: "discord-bot-token-hash" }],
+    slack: [
+      { channelId: "slack", credentialId: "slackBotToken", sourceInput: "botToken", providerName: "my-assistant-slack-bridge", providerEnvKey: "SLACK_BOT_TOKEN", placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN", credentialAvailable: true, credentialHash: "slack-bot-token-hash" },
+      { channelId: "slack", credentialId: "slackAppToken", sourceInput: "appToken", providerName: "my-assistant-slack-app", providerEnvKey: "SLACK_APP_TOKEN", placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN", credentialAvailable: true, credentialHash: "slack-app-token-hash" },
+    ],
+    telegram: [{ channelId: "telegram", credentialId: "telegramBotToken", sourceInput: "botToken", providerName: "my-assistant-telegram-bridge", providerEnvKey: "TELEGRAM_BOT_TOKEN", placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN", credentialAvailable: true, credentialHash: "telegram-bot-token-hash" }],
+  };
+  return { schemaVersion: 1, sandboxName: "my-assistant", agent: "openclaw", workflow: "onboard", channels: channelIds.map((channelId) => ({ channelId, displayName: channelId, authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste", active: !disabled.has(channelId), selected: true, configured: true, disabled: disabled.has(channelId), inputs: [], hooks: [] })), disabledChannels, credentialBindings: channelIds.flatMap((channelId) => credentialBindings[channelId] || []), networkPolicy: { presets: [], entries: [] }, agentRender: [], buildSteps: [], stateUpdates: [], healthChecks: [] };
+}
+`.trim();
+
 function readMessagingPlanFromDockerfile(dockerfileContent: string | undefined): MessagingPlan {
   assert.ok(dockerfileContent, "expected Dockerfile content");
   const prefix = "ARG NEMOCLAW_MESSAGING_PLAN_B64=";

@@ -6,12 +6,50 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween, runDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_BUILD_MCP_DIGEST = path.join(ROOT, "agents", "hermes", "build-mcp-digest.py");
 const HERMES_RUNTIME_CONFIG_GUARD = path.join(ROOT, "agents", "hermes", "runtime-config-guard.py");
+
+function writeYamlStubPython(root: string): string {
+  const bootstrap = path.join(root, "python-yaml-bootstrap.py");
+  const wrapper = path.join(root, "python-with-yaml-stub");
+  fs.writeFileSync(
+    bootstrap,
+    String.raw`import json
+import runpy
+import sys
+import types
+
+yaml = types.ModuleType("yaml")
+class YAMLError(Exception):
+    pass
+yaml.YAMLError = YAMLError
+def safe_load(text):
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise YAMLError("fixture must contain valid JSON-compatible YAML") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("mcp_servers"), dict):
+        raise YAMLError("fixture must contain an mcp_servers mapping")
+    return parsed
+yaml.safe_load = safe_load
+sys.modules["yaml"] = yaml
+
+script, *args = sys.argv[1:]
+sys.argv = [script, *args]
+runpy.run_path(script, run_name="__main__")
+`,
+  );
+  fs.writeFileSync(
+    wrapper,
+    `#!/usr/bin/env bash\nset -euo pipefail\n[[ "\${1:-}" != "-I" ]] || shift\nexec python3 -I ${JSON.stringify(bootstrap)} "$@"\n`,
+    { mode: 0o700 },
+  );
+  return wrapper;
+}
 
 describe("Hermes doctor and config hash boundary", () => {
   it("detects a remaining session preview patcher during Hermes upgrades (#5254)", () => {
@@ -30,7 +68,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const command = dockerRunCommandBetween(
       dockerfile,
       'RUN hermes_version_output="$(/usr/local/bin/hermes --version)"',
-      "# This runs before `/usr/local/bin/hermes`",
+      "# Validate the versioned adapter",
     )
       .replaceAll("/usr/local/bin/hermes", hermesBin)
       .replaceAll("/usr/local/lib/nemoclaw/hermes-wrapper.py", wrapper)
@@ -38,7 +76,7 @@ describe("Hermes doctor and config hash boundary", () => {
     try {
       fs.mkdirSync(path.dirname(hermesBin), { recursive: true });
       fs.mkdirSync(path.dirname(wrapper), { recursive: true });
-      fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.19.0\\n'\n", {
+      fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.20.0\\n'\n", {
         mode: 0o755,
       });
       fs.writeFileSync(wrapper, "# wrapper fixture without resumed oneshot marker\n");
@@ -52,7 +90,7 @@ describe("Hermes doctor and config hash boundary", () => {
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        "Hermes v0.18.0 compatibility workarounds are still installed",
+        "installed Hermes 0.20.0 but Hermes v0.19.0 compatibility workarounds are still installed",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -71,10 +109,18 @@ describe("Hermes doctor and config hash boundary", () => {
       libDir,
       "patch-hermes-langfuse-credentials.mts",
     );
+    const discordRecoveryPatcherPath = path.join(
+      libDir,
+      "patch-hermes-discord-recovery-permissions.py",
+    );
+    const profilePolicyPatcherPath = path.join(libDir, "patch-hermes-profile-policy-defaults.py");
+    const managedPolicyReaderPath = path.join(libDir, "managed_policy.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
       "openshell-child-visible-credentials.v0.0.85.json",
     );
+    const stateLockPlanPath = path.join(tmp, "state-lock-plan.json");
+    const hermesCronRestoreControlPath = path.join(libDir, "hermes-cron-restore-control.py");
     const nestedDir = path.join(preloadsDir, "nested");
     const profileDir = path.join(tmp, "etc-profile.d");
     const bashrcPath = path.join(tmp, "bash.bashrc");
@@ -87,11 +133,17 @@ describe("Hermes doctor and config hash boundary", () => {
       fs.mkdirSync(profileDir, { recursive: true });
       for (const relativePath of [
         path.join(binDir, "nemoclaw-start"),
+        path.join(binDir, "nemoclaw-managed-startup-hold"),
+        path.join(binDir, "nemoclaw-managed-bootstrap"),
         path.join(binDir, "nemoclaw-gateway-control"),
+        path.join(libDir, "entrypoint-env-wrapper.sh"),
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
+        discordRecoveryPatcherPath,
+        profilePolicyPatcherPath,
+        managedPolicyReaderPath,
         langfuseCredentialPatcherPath,
         path.join(libDir, "seed-hermes-dashboard-config.py"),
         path.join(libDir, "hermes-runtime-config-guard.py"),
@@ -100,7 +152,9 @@ describe("Hermes doctor and config hash boundary", () => {
         mcpConfigTransactionPath,
         mcpCredentialBoundaryPath,
         path.join(libDir, "state-dir-guard.py"),
+        stateLockPlanPath,
         path.join(libDir, "managed-gateway-control.py"),
+        hermesCronRestoreControlPath,
         path.join(libDir, "sandbox-rlimits.sh"),
         path.join(preloadsDir, "gateway-safety-net.js"),
         path.join(nestedDir, "ciao-preload.js"),
@@ -117,6 +171,7 @@ describe("Hermes doctor and config hash boundary", () => {
       )
         .replaceAll("/usr/local/bin", binDir)
         .replaceAll("/usr/local/lib/nemoclaw", libDir)
+        .replaceAll("/usr/local/share/nemoclaw/state-lock-plan.json", stateLockPlanPath)
         .replaceAll("/etc/profile.d", profileDir)
         .replaceAll("/etc/bash.bashrc", bashrcPath);
       const script = [
@@ -126,25 +181,33 @@ describe("Hermes doctor and config hash boundary", () => {
         'chown() { printf "%s\\n" "$*" >> "$chown_log"; }',
         lockCommand,
       ].join("\n");
-      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
 
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       expect(result.stderr).toBe("");
       expect(fs.readFileSync(chownLogPath, "utf-8")).toBe(
         [
-          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${mcpCredentialBoundaryPath}`,
+          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${stateLockPlanPath} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpCredentialBoundaryPath}`,
           `-R 0:0 ${preloadsDir}`,
           "",
         ].join("\n"),
       );
       expect(mode(path.join(binDir, "nemoclaw-gateway-control"))).toBe("700");
+      expect(mode(hermesCronRestoreControlPath)).toBe("700");
       expect(mode(path.join(libDir, "finalize-tirith-marker.py"))).toBe("755");
       expect(mode(mcpConfigTransactionPath)).toBe("755");
+      expect(mode(discordRecoveryPatcherPath)).toBe("755");
+      expect(mode(profilePolicyPatcherPath)).toBe("755");
+      expect(mode(managedPolicyReaderPath)).toBe("444");
       expect(mode(langfuseCredentialPatcherPath)).toBe("444");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");
       expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");
       expect(mode(path.join(libDir, "state-dir-guard.py"))).toBe("500");
+      expect(mode(stateLockPlanPath)).toBe("444");
       expect(mode(path.join(libDir, "managed-gateway-control.py"))).toBe("500");
       expect(mode(preloadsDir)).toBe("755");
       expect(mode(nestedDir)).toBe("755");
@@ -165,10 +228,18 @@ describe("Hermes doctor and config hash boundary", () => {
     const fakeHermes = path.join(tmp, "hermes");
     const orderLogPath = path.join(tmp, "doctor-generate-order.log");
     const etcDir = path.join(tmp, "etc", "nemoclaw");
+    const hermesPython = writeYamlStubPython(tmp);
     const mode = (entry: string) => (fs.statSync(entry).mode & 0o777).toString(8);
+    const generatedConfig = JSON.stringify({
+      model: "trusted",
+      custom_providers: [],
+      mcp_servers: {
+        fixture: { command: "/bin/true", args: [] },
+      },
+    });
     const fakeGenerateCommand = [
       `printf 'generate\\n' >>${JSON.stringify(orderLogPath)}`,
-      `printf 'model: trusted\\ncustom_providers: []\\n' >${JSON.stringify(configPath)}`,
+      `printf '%s\\n' ${JSON.stringify(generatedConfig)} >${JSON.stringify(configPath)}`,
       `printf 'API_SERVER_HOST=127.0.0.1\\nAPI_SERVER_PORT=18642\\n' >${JSON.stringify(envPath)}`,
       `chmod 600 ${JSON.stringify(configPath)} ${JSON.stringify(envPath)}`,
     ].join("; ");
@@ -210,7 +281,7 @@ describe("Hermes doctor and config hash boundary", () => {
       "# Backward-compatible marker",
     )
       .replaceAll("/etc/nemoclaw", etcDir)
-      .replaceAll("/opt/hermes/.venv/bin/python", "python3")
+      .replaceAll("/opt/hermes/.venv/bin/python", JSON.stringify(hermesPython))
       .replaceAll(
         "/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
         JSON.stringify(HERMES_BUILD_MCP_DIGEST),
@@ -243,7 +314,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect([mode(configPath), mode(envPath)]).toEqual(["640", "640"]);
 
       const hash = runDockerShell(hashCommand, sandboxRoot);
-      expect(hash.result.status).toBe(0);
+      expect(hash.result.status, hash.result.stderr).toBe(0);
       expect(hash.result.stderr).toBe("");
       expect(mode(path.join(etcDir, "hermes.config-hash"))).toBe("444");
       const verifyHash = spawnSync("sha256sum", ["-c", path.join(etcDir, "hermes.config-hash")], {

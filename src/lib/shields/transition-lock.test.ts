@@ -8,8 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  isShieldsTransitionLockUnavailable,
   ShieldsTransitionLockManager,
   type ShieldsTransitionLockOwner,
+  type ShieldsTransitionLockUnavailableError,
   shieldsTransitionLockPath,
 } from "./transition-lock";
 
@@ -105,6 +107,20 @@ describe("host shields transition lock", () => {
   function writeRecoveryGuardOwner(guardPath: string, value: ShieldsTransitionLockOwner): void {
     fs.writeFileSync(guardPath, JSON.stringify(value), { mode: 0o600 });
   }
+
+  it("escapes control characters in a rejected sandbox name (#7796)", () => {
+    const hostileName = `bad${String.fromCharCode(27)}[31mX`;
+
+    let message = "";
+    try {
+      shieldsTransitionLockPath(hostileName, stateDir);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain(String.raw`Invalid sandbox name: "bad\u001b[31mX".`);
+    expect(message).not.toContain(String.fromCharCode(27));
+  });
 
   it("atomically creates a regular owner file and removes it after the callback", () => {
     const locker = manager();
@@ -289,28 +305,38 @@ describe("host shields transition lock", () => {
       processStartIdentity: "proc:holder",
       command: "shields down",
     });
+    expect(locker.inspectAnyShieldsTransitionLockOwner("alpha")).toEqual({
+      pid: 202,
+      processStartIdentity: "proc:holder",
+      command: "shields down",
+    });
   });
 
-  it("returns no inspected owner when the canonical path changes identity before open", () => {
+  it("returns no inspected owner when the canonical path changes identity after open", () => {
     const locker = manager();
     const original = owner("alpha", 202, "proc:original", "original", TAKEOVER_TOKEN);
     const replacement = owner("alpha", 303, "proc:replacement", "replacement", TAKEOVER_TOKEN);
     const lockPath = writeOwner("alpha", original);
     const displacedPath = `${lockPath}.displaced`;
-    const originalOpenSync = fs.openSync;
+    const originalFstatSync = fs.fstatSync;
     let swapped = false;
-    vi.spyOn(fs, "openSync").mockImplementation(((file, flags, mode) => {
-      runWhen(String(file) === lockPath && !swapped, () => {
+    const fstatSpy = vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+      const stat = originalFstatSync(fd, options as { bigint: true });
+      runWhen(!swapped, () => {
         swapped = true;
         fs.renameSync(lockPath, displacedPath);
         fs.writeFileSync(lockPath, JSON.stringify(replacement), { mode: 0o600 });
       });
-      return originalOpenSync(file, flags, mode);
-    }) as typeof fs.openSync);
+      return stat;
+    }) as typeof fs.fstatSync);
 
-    expect(locker.inspectShieldsTransitionLockOwner("alpha", TAKEOVER_TOKEN)).toBeNull();
-    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(replacement);
-    expect(JSON.parse(fs.readFileSync(displacedPath, "utf8"))).toEqual(original);
+    try {
+      expect(locker.inspectShieldsTransitionLockOwner("alpha", TAKEOVER_TOKEN)).toBeNull();
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(replacement);
+      expect(JSON.parse(fs.readFileSync(displacedPath, "utf8"))).toEqual(original);
+    } finally {
+      fstatSpy.mockRestore();
+    }
   });
 
   it("rejects takeover with the wrong token without moving the owner", () => {
@@ -491,6 +517,39 @@ describe("host shields transition lock", () => {
     expect(fs.readdirSync(stateDir)).toEqual([]);
   });
 
+  it("preserves a stale owner when the containment protocol owns recovery", () => {
+    const recorded = owner("alpha", 202, "proc:dead-holder", "shields down", TAKEOVER_TOKEN);
+    const lockPath = writeOwner("alpha", recorded);
+
+    expect(() =>
+      manager().withShieldsTransitionLock("alpha", "timer restore", () => undefined, {
+        takeoverToken: TAKEOVER_TOKEN,
+        recoverStaleOwner: false,
+        waitTimeoutMs: 0,
+      }),
+    ).toThrow(/recorded owner PID 202 is not running/);
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(recorded);
+  });
+
+  it("preserves a reused-PID owner when the containment protocol owns recovery", () => {
+    const holderPid = 202;
+    const recorded = owner("alpha", holderPid, "proc:original");
+    const lockPath = writeOwner("alpha", recorded);
+    const locker = manager({
+      isProcessAlive: (pid) => pid === holderPid || pid === SELF_PID,
+      readProcessStartIdentity: (pid) =>
+        pid === SELF_PID ? SELF_IDENTITY : pid === holderPid ? "proc:reused" : null,
+    });
+
+    expect(() =>
+      locker.withShieldsTransitionLock("alpha", "gateway restart", () => undefined, {
+        recoverStaleOwner: false,
+        waitTimeoutMs: 0,
+      }),
+    ).toThrow(/PID 202 now has process-start identity/);
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(recorded);
+  });
+
   it("recovers a stale lock when a live PID has been reused", () => {
     const holderPid = 202;
     const recorded = owner("alpha", holderPid, "proc:original");
@@ -502,16 +561,21 @@ describe("host shields transition lock", () => {
     });
 
     expect(
-      locker.withShieldsTransitionLock("alpha", "timer restore", () => {
-        const replacement = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-        expect(replacement).toMatchObject({
-          sandboxName: "alpha",
-          pid: SELF_PID,
-          processStartIdentity: SELF_IDENTITY,
-          command: "timer restore",
-        });
-        return "acquired";
-      }),
+      locker.withShieldsTransitionLock(
+        "alpha",
+        "timer restore",
+        () => {
+          const replacement = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+          expect(replacement).toMatchObject({
+            sandboxName: "alpha",
+            pid: SELF_PID,
+            processStartIdentity: SELF_IDENTITY,
+            command: "timer restore",
+          });
+          return "acquired";
+        },
+        { recoverStaleOwner: true },
+      ),
     ).toBe("acquired");
     expect(fs.existsSync(lockPath)).toBe(false);
   });
@@ -535,6 +599,7 @@ describe("host shields transition lock", () => {
 
     expect(() =>
       locker.withShieldsTransitionLock("alpha", "nemoclaw alpha shields up", () => undefined, {
+        recoverStaleOwner: true,
         waitTimeoutMs: 2,
         pollIntervalMs: 1,
       }),
@@ -566,6 +631,7 @@ describe("host shields transition lock", () => {
           throw new Error("should not acquire after timeout");
         },
         {
+          recoverStaleOwner: true,
           waitTimeoutMs: 2,
           pollIntervalMs: 1,
         },
@@ -608,16 +674,21 @@ describe("host shields transition lock", () => {
     });
 
     await expect(
-      locker.withShieldsTransitionLockAsync("alpha", "timer restore", async () => {
-        const replacement = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-        expect(replacement).toMatchObject({
-          sandboxName: "alpha",
-          pid: SELF_PID,
-          processStartIdentity: SELF_IDENTITY,
-          command: "timer restore",
-        });
-        return "acquired";
-      }),
+      locker.withShieldsTransitionLockAsync(
+        "alpha",
+        "timer restore",
+        async () => {
+          const replacement = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+          expect(replacement).toMatchObject({
+            sandboxName: "alpha",
+            pid: SELF_PID,
+            processStartIdentity: SELF_IDENTITY,
+            command: "timer restore",
+          });
+          return "acquired";
+        },
+        { recoverStaleOwner: true },
+      ),
     ).resolves.toBe("acquired");
     expect(fs.existsSync(lockPath)).toBe(false);
   });
@@ -677,6 +748,7 @@ describe("host shields transition lock", () => {
 
     expect(() =>
       locker.withShieldsTransitionLock("alpha", "nemoclaw alpha shields up", () => undefined, {
+        recoverStaleOwner: true,
         waitTimeoutMs: 2,
         pollIntervalMs: 1,
       }),
@@ -728,7 +800,9 @@ describe("host shields transition lock", () => {
     const locker = manager();
 
     expect(
-      locker.withShieldsTransitionLock("alpha", "nemoclaw alpha shields up", () => "acquired"),
+      locker.withShieldsTransitionLock("alpha", "nemoclaw alpha shields up", () => "acquired", {
+        recoverStaleOwner: true,
+      }),
     ).toBe("acquired");
 
     expect(thirdAcquired).toBe(false);
@@ -776,6 +850,7 @@ describe("host shields transition lock", () => {
         "alpha",
         "nemoclaw alpha shields up",
         async () => "acquired",
+        { recoverStaleOwner: true },
       ),
     ).resolves.toBe("acquired");
 
@@ -793,11 +868,16 @@ describe("host shields transition lock", () => {
     const locker = manager();
 
     expect(
-      locker.withShieldsTransitionLock("alpha", "nemoclaw alpha shields up", () => {
-        expect(fs.existsSync(lockPath)).toBe(true);
-        expect(fs.existsSync(guardPath)).toBe(false);
-        return "acquired";
-      }),
+      locker.withShieldsTransitionLock(
+        "alpha",
+        "nemoclaw alpha shields up",
+        () => {
+          expect(fs.existsSync(lockPath)).toBe(true);
+          expect(fs.existsSync(guardPath)).toBe(false);
+          return "acquired";
+        },
+        { recoverStaleOwner: true },
+      ),
     ).toBe("acquired");
 
     expect(fs.existsSync(lockPath)).toBe(false);
@@ -813,11 +893,16 @@ describe("host shields transition lock", () => {
     const locker = manager();
 
     await expect(
-      locker.withShieldsTransitionLockAsync("alpha", "nemoclaw alpha shields up", async () => {
-        expect(fs.existsSync(lockPath)).toBe(true);
-        expect(fs.existsSync(guardPath)).toBe(false);
-        return "acquired";
-      }),
+      locker.withShieldsTransitionLockAsync(
+        "alpha",
+        "nemoclaw alpha shields up",
+        async () => {
+          expect(fs.existsSync(lockPath)).toBe(true);
+          expect(fs.existsSync(guardPath)).toBe(false);
+          return "acquired";
+        },
+        { recoverStaleOwner: true },
+      ),
     ).resolves.toBe("acquired");
 
     expect(fs.existsSync(lockPath)).toBe(false);
@@ -1028,6 +1113,65 @@ describe("host shields transition lock", () => {
         malformedStaleMs: 30_000,
       }),
     ).toThrow(/owner record is incomplete.*will not remove.*remove '.*' manually/s);
+    expect(fs.readFileSync(lockPath, "utf8")).toBe("{incomplete");
+  });
+
+  it("refuses an old malformed owner record without waiting out the timeout (#8108)", () => {
+    const lockPath = writeOwner("alpha", "{incomplete");
+    fs.utimesSync(lockPath, new Date(1_000), new Date(1_000));
+    let nowMs = 60_000;
+    let sleepCalls = 0;
+    const locker = manager({
+      now: () => nowMs,
+      sleep: (milliseconds) => {
+        sleepCalls += 1;
+        nowMs += milliseconds;
+      },
+    });
+
+    let caught: unknown;
+    try {
+      locker.withShieldsTransitionLock("alpha", "nemoclaw alpha shields status", () => undefined, {
+        waitTimeoutMs: 30_000,
+        pollIntervalMs: 50,
+        malformedStaleMs: 30_000,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(sleepCalls).toBe(0);
+    expect(nowMs).toBe(60_000);
+    expect(isShieldsTransitionLockUnavailable(caught)).toBe(true);
+    const failure = caught as ShieldsTransitionLockUnavailableError;
+    expect(failure.summary).toContain("Cannot acquire shields transition lock");
+    expect(failure.summary).toContain("the owner record is incomplete");
+    expect(failure.summary).not.toContain("will not remove");
+    expect(failure.recovery).toContain(`remove '${lockPath}' manually`);
+    expect(failure.lockPath).toBe(lockPath);
+    expect(fs.readFileSync(lockPath, "utf8")).toBe("{incomplete");
+  });
+
+  it("refuses an old malformed owner record on the async path (#8108)", async () => {
+    const lockPath = writeOwner("alpha", "{incomplete");
+    fs.utimesSync(lockPath, new Date(1_000), new Date(1_000));
+    let sleepCalls = 0;
+    const locker = manager({
+      now: () => 60_000,
+      sleepAsync: async () => {
+        sleepCalls += 1;
+      },
+    });
+
+    await expect(
+      locker.withShieldsTransitionLockAsync(
+        "alpha",
+        "nemoclaw alpha shields status",
+        async () => undefined,
+        { waitTimeoutMs: 30_000, pollIntervalMs: 50, malformedStaleMs: 30_000 },
+      ),
+    ).rejects.toThrow(/Cannot acquire shields transition lock/);
+    expect(sleepCalls).toBe(0);
     expect(fs.readFileSync(lockPath, "utf8")).toBe("{incomplete");
   });
 

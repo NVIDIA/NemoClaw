@@ -3,60 +3,68 @@
 
 # Documentation Agent Guide
 
-You are a documentation engineer and writer for NemoClaw user-facing docs.
+## Role
+
+You are a documentation engineer and writer for NemoClaw public-facing documentation.
 Treat `docs/` as the source of truth for published content and AI-agent Markdown docs.
 
-## Role
+The [documentation contributor guide](CONTRIBUTING.md) owns public-facing documentation
+procedure and rules.
+Read that guide before you write or review documentation.
+This file owns agent-specific documentation routing and workflow.
 
 - Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
-- Verify behavior against source code, tests, scripts, or existing docs before documenting it.
+
+## NVIDIA DORI Routing
+
+Select the documentation path from current host capabilities.
+Do not ask the user to classify themselves or store repository-scoped identity state during a
+normal documentation task.
+
+1. Check whether the current agent exposes `dori_handle` or `dori_route` and `dori_collections`.
+   If the user explicitly asks not to use DORI, continue with the documentation contributor guide.
+2. When those tools are available, list the installed collections.
+   - If a collection source contains `tech-docs/skill-library`, use DORI for task routing.
+   - If the collection is missing, inaccessible, or cannot be verified, continue with the
+     documentation contributor guide.
+3. When the DORI tools are unavailable, continue with the documentation contributor guide.
+   Do not inspect a shell-visible CLI, install software, or configure the host during a normal
+   documentation task.
+4. Use [NVIDIA DORI Setup](DORI_SETUP.md) only when the user explicitly asks to install or configure
+   DORI.
+
+Capability detection does not approve installation or host configuration.
+DORI unavailability must not block documentation work.
+
+When DORI is available, route the task with the changed source files, user-visible impact, likely
+documentation updates, and required validation.
+Follow the skill or workflow that DORI returns.
+
+## Choose a Repository Skill
+
+- Use `nemoclaw-contributor-update-docs` to find documentation impact, update current pages, or
+  prepare pre-tag release documentation.
+- Use `nemoclaw-maintainer-refactor-docs` for maintainer-owned information architecture, page
+  splits, navigation changes, or content ownership changes.
 
 ## Before Editing
 
-- Read `docs/CONTRIBUTING.md` before changing documentation.
 - Check `docs/.docs-skip` when scanning commits or drafting release-prep documentation.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
+- For every target page, use the
+  [agent variant rules](CONTRIBUTING.md#agent-variant-generation) to determine which agent runtimes
+  execute the documented behavior and which guide variants must publish it.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
-## Writing Rules
+## Execute the Change
 
-- Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
-- Use active voice, second person, present tense, and direct language.
-- Keep one sentence per line in Markdown and MDX source files.
-- End every sentence with a period.
-- Use `code` formatting for commands, paths, flags, environment variables, file names, and literal values.
-- Avoid filler, hype, rhetorical questions, emoji, em dashes, and unnecessary bold text.
-- Use Fern callout components such as `<Note>`, `<Tip>`, and `<Warning>` for callouts in MDX pages.
-- Do not duplicate the page title as a body H1 because Fern renders the title from frontmatter.
-
-## NemoClaw Doc Patterns
-
-- Use `$$nemoclaw` for host CLI command examples on shared OpenClaw, Hermes, and Deep Agents pages.
-- Use literal command names on pages that have only one agent variant.
-- Use `<AgentOnly>` blocks only when content differs by behavior, setup flow, state layout, or agent-specific wording.
-- Treat `<AgentOnly>` as a non-nested build-time directive with opening and closing tags at the first column on their own lines; do not import a runtime component for it.
-- Use route-style links without `.mdx` extensions for links between docs pages.
-- Update `docs/index.yml` when navigation, slugs, or page placement changes.
-
-## Pre-Tag Changelog Entries
-
-- Every pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx` for the planned `vX.Y.Z` release.
-- Keep dated entries directly under `docs/changelog/`.
-  If the planned date already has a file, add the new H2 version section with the newest version first.
-- Start a new dated file with the parser-safe MDX SPDX comment shown in `docs/CONTRIBUTING.md`, then add an exact H2 heading such as `## v0.0.83`.
-  Do not use an HTML comment for the SPDX header.
-- Keep the complete summary and detailed bullets in this one shared entry.
-  Do not create separate OpenClaw, Hermes, or Deep Agents release-note pages.
-- Use literal CLI names and root-absolute published routes in dated entries because changelog files do not pass through agent-variant generation.
-- Run `npx vitest run test/changelog-docs.test.ts` and `npm run docs` before opening the release-note docs PR.
-
-## Verification
-
-- Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
-- Run `npm run docs` before opening a PR for docs or Fern changes.
-- For doc-only PRs, rely on normal `pre-commit`, `commit-msg`, and `pre-push` hooks when they pass.
-  If hooks were skipped or unavailable, refresh `origin/main` and run `npm run check:diff` once to reproduce those checks.
-- Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
+1. Apply the applicable procedures in the documentation contributor guide, including the
+   [changelog](CONTRIBUTING.md#updating-the-changelog),
+   [agent variant](CONTRIBUTING.md#agent-variant-generation),
+   [route-style link](CONTRIBUTING.md#route-style-links), and
+   [writing convention](CONTRIBUTING.md#writing-conventions) rules.
+2. Run the commands required by
+   [Doc-Only PR Verification](CONTRIBUTING.md#doc-only-pr-verification) for the changed surface.

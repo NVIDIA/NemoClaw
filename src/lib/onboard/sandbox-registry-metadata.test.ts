@@ -8,34 +8,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../agent/defs";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
-const ORIGINAL_PLATFORM = Object.getOwnPropertyDescriptor(process, "platform");
-
 /**
- * Overrides process.platform for runtime-driver metadata tests.
+ * Loads the compiled metadata helpers with an explicit resolved compute driver.
  */
-function setPlatform(platform: NodeJS.Platform): void {
-  Object.defineProperty(process, "platform", { value: platform, configurable: true });
-}
-
-/**
- * Restores the original process.platform descriptor after each platform-specific assertion.
- */
-function restorePlatform(): void {
-  if (ORIGINAL_PLATFORM) {
-    Object.defineProperty(process, "platform", ORIGINAL_PLATFORM);
-  }
-}
-
-/**
- * Loads the compiled metadata helpers after each test has configured process state.
- */
-async function makeHelpers(opts: { dockerDriverEnabled: boolean }) {
+async function makeHelpers(driverName: string) {
   // Import the compiled module: sandbox-registry-metadata.ts pulls in state/registry,
   // which transitively requires the JS-only `./platform` helper that vitest cannot
   // resolve from TS source. Same pattern as `vm-dns-monkeypatch.test.ts`.
   const metadata = await import("./sandbox-registry-metadata");
   return metadata.createSandboxRegistryMetadataHelpers({
-    isLinuxDockerDriverGatewayEnabled: () => opts.dockerDriverEnabled,
+    getOpenShellComputeDriverName: () => driverName,
     getInstalledOpenshellVersion: () => "0.0.42",
     runCaptureOpenshell: () => null,
   });
@@ -106,7 +88,7 @@ describe("sandbox registry metadata", () => {
     });
 
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      isLinuxDockerDriverGatewayEnabled: () => true,
+      getOpenShellComputeDriverName: () => "docker",
       getInstalledOpenshellVersion: () => "0.0.44",
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
@@ -155,7 +137,7 @@ describe("sandbox registry metadata", () => {
     const dashboardPorts = await import("./dashboard-port");
     const gatewayRegistry = await import("../state/gateway-registry");
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      isLinuxDockerDriverGatewayEnabled: () => true,
+      getOpenShellComputeDriverName: () => "docker",
       getInstalledOpenshellVersion: () => "0.0.44",
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
@@ -190,32 +172,44 @@ describe("sandbox registry metadata", () => {
 });
 
 describe("getSandboxRuntimeRegistryFields openshellDriver", () => {
-  afterEach(restorePlatform);
-
-  it("records Docker for macOS sandboxes on the Docker-driver gateway path", async () => {
-    setPlatform("darwin");
-    const helpers = await makeHelpers({ dockerDriverEnabled: true });
+  it("records the resolved Docker compute driver (#7744)", async () => {
+    const helpers = await makeHelpers("docker");
 
     const fields = helpers.getSandboxRuntimeRegistryFields(GPU_OFF);
 
     expect(fields.openshellDriver).toBe("docker");
   });
 
-  it("records Docker for Linux sandboxes on the Docker-driver gateway path", async () => {
-    setPlatform("linux");
-    const helpers = await makeHelpers({ dockerDriverEnabled: true });
-
-    const fields = helpers.getSandboxRuntimeRegistryFields(GPU_OFF);
-
-    expect(fields.openshellDriver).toBe("docker");
-  });
-
-  it("records Kubernetes for legacy Linux sandboxes when the Docker-driver gateway is disabled", async () => {
-    setPlatform("linux");
-    const helpers = await makeHelpers({ dockerDriverEnabled: false });
+  it("records the resolved Kubernetes compute driver (#7744)", async () => {
+    const helpers = await makeHelpers("kubernetes");
 
     const fields = helpers.getSandboxRuntimeRegistryFields(GPU_OFF);
 
     expect(fields.openshellDriver).toBe("kubernetes");
+  });
+
+  it.each([
+    "podman",
+    "mxc",
+  ])("passes the resolved %s driver through to registry metadata (#7744)", async (driverName) => {
+    const helpers = await makeHelpers(driverName);
+
+    const fields = helpers.getSandboxRuntimeRegistryFields(GPU_OFF);
+
+    expect(fields.openshellDriver).toBe(driverName);
+  });
+
+  it("resolves driver identity when metadata is recorded rather than at module load (#7744)", async () => {
+    const metadata = await import("./sandbox-registry-metadata");
+    let driverName = "docker";
+    const helpers = metadata.createSandboxRegistryMetadataHelpers({
+      getOpenShellComputeDriverName: () => driverName,
+      getInstalledOpenshellVersion: () => "0.0.42",
+      runCaptureOpenshell: () => null,
+    });
+
+    driverName = "kubernetes";
+
+    expect(helpers.getSandboxRuntimeRegistryFields(GPU_OFF).openshellDriver).toBe("kubernetes");
   });
 });

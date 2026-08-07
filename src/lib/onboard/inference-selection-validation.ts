@@ -36,7 +36,7 @@ type OpenAiLikeProbe = (
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
-  parseTrustedPrivateInferenceHosts,
+  parseTrustedPrivateInferenceHostsFromEnv,
 } from "../inference/endpoint-ssrf-preflight";
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
@@ -94,6 +94,7 @@ export interface InferenceSelectionValidationHelpers {
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      probeFromDocker?: { expectedPort: number } | null;
       capabilityCache?: OnboardInferenceCapabilityCache;
     },
   ): Promise<EndpointValidationResult>;
@@ -111,6 +112,7 @@ export interface InferenceSelectionValidationHelpers {
     model: string,
     credentialEnv: string,
     helpUrl?: string | null,
+    capabilityCache?: OnboardInferenceCapabilityCache,
   ): Promise<EndpointValidationResult>;
   validateCustomAnthropicSelection(
     label: string,
@@ -140,8 +142,7 @@ export function createInferenceSelectionValidationHelpers(
   const runAnthropicProbe = deps.probeAnthropicEndpoint ?? probeAnthropicEndpoint;
   const runOpenAiLikeProbe = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpointOptimized;
   const trustedPrivateEndpointHosts =
-    deps.trustedPrivateEndpointHosts ??
-    parseTrustedPrivateInferenceHosts(process.env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS);
+    deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
 
   function exitNonInteractiveValidationFailure(): never {
     process.exitCode = 1;
@@ -191,7 +192,7 @@ export function createInferenceSelectionValidationHelpers(
       if (preflight.trustedPrivateEndpoint) {
         console.warn(
           "  ⚠ Using an operator-trusted private inference endpoint; keep " +
-            "NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS restricted to infrastructure you control.",
+            "trusted-private host configuration restricted to infrastructure you control.",
         );
       }
       return {
@@ -260,6 +261,7 @@ export function createInferenceSelectionValidationHelpers(
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      probeFromDocker?: { expectedPort: number } | null;
       capabilityCache?: OnboardInferenceCapabilityCache;
     } = {},
   ): Promise<EndpointValidationResult> {
@@ -305,6 +307,8 @@ export function createInferenceSelectionValidationHelpers(
         authMode: probeOptions.authMode,
         requireChatCompletionsToolCalling: probeOptions.requireChatCompletionsToolCalling,
         extraHeaders: probeOptions.extraHeaders,
+        pinnedAddresses: probeOptions.pinnedAddresses,
+        trustedPrivateCapability: probeOptions.trustedPrivateCapability,
       });
     }
     return { ok: true, api };
@@ -347,6 +351,7 @@ export function createInferenceSelectionValidationHelpers(
     model: string,
     credentialEnv: string,
     helpUrl: string | null = null,
+    capabilityCache?: OnboardInferenceCapabilityCache,
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
       label,
@@ -376,9 +381,18 @@ export function createInferenceSelectionValidationHelpers(
           `  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`,
         );
       }
+      const api = probe.api ?? "openai-completions";
+      if (api === "openai-completions" && probe.validated !== false) {
+        capabilityCache?.rememberCompletedOpenAiChat({
+          endpointUrl,
+          model,
+          pinnedAddresses,
+          trustedPrivateCapability,
+        });
+      }
       return {
         ok: true,
-        api: probe.api ?? "openai-completions",
+        api,
         pinnedAddresses,
         ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
       };

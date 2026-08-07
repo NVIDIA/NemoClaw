@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
-import { DASHBOARD_PORT } from "../core/ports";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
-import { bestEffortForwardStop } from "./forward-cleanup";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -18,15 +16,17 @@ import {
 
 export interface SandboxReuseDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
-  runOpenshell(args: string[], opts?: Record<string, unknown>): unknown;
   getSandboxStateFromOutputs(sandboxName: string, getOutput: string, listOutput: string): string;
-  note(message: string): void;
+  // Read at call time: onboarding rebinds the gateway after preflight resolves it.
+  getGatewayName?(): string;
 }
 
 export interface SandboxReuseHelpers {
   getSandboxReuseState(sandboxName: string | null): string;
-  getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
-  repairRecordedSandbox(sandboxName: string | null): void;
+  getSandboxRecreateObservation(
+    sandboxName: string | null,
+    gatewayName?: string,
+  ): SandboxRecreateObservation;
 }
 
 export interface ReusedSandboxDashboardForwarding {
@@ -112,18 +112,34 @@ export function applyReusedSandboxDashboardState(
 }
 
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {
-  function readSandboxState(sandboxName: string | null): { state: string; getOutput: string } {
+  // A recorded gateway wins over the ambient one: a resumed replacement must
+  // prove presence or absence on the gateway its journal names.
+  function gatewayArgs(recordedGatewayName?: string): string[] {
+    const gatewayName = recordedGatewayName ?? deps.getGatewayName?.();
+    return gatewayName ? ["-g", gatewayName] : [];
+  }
+
+  function readSandboxState(
+    sandboxName: string | null,
+    recordedGatewayName?: string,
+  ): { state: string; getOutput: string } {
     if (!sandboxName) return { state: "missing", getOutput: "" };
-    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], {
+    const args = gatewayArgs(recordedGatewayName);
+    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", ...args, sandboxName], {
       ignoreError: true,
     });
-    const listOutput = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+    const listOutput = deps.runCaptureOpenshell(["sandbox", "list", ...args], {
+      ignoreError: true,
+    });
     const state = deps.getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
     return { state, getOutput };
   }
 
-  function getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation {
-    const { state, getOutput } = readSandboxState(sandboxName);
+  function getSandboxRecreateObservation(
+    sandboxName: string | null,
+    recordedGatewayName?: string,
+  ): SandboxRecreateObservation {
+    const { state, getOutput } = readSandboxState(sandboxName, recordedGatewayName);
     if (state !== "missing" && state !== "not_ready" && state !== "ready") {
       throw new Error(
         `Cannot observe sandbox '${sandboxName}' for recreate recovery: OpenShell returned state '${state}'.`,
@@ -140,13 +156,5 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
     return readSandboxState(sandboxName).state;
   }
 
-  function repairRecordedSandbox(sandboxName: string | null): void {
-    if (!sandboxName) return;
-    deps.note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
-    bestEffortForwardStop(deps.runOpenshell, DASHBOARD_PORT);
-    deps.runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-    registry.removeSandbox(sandboxName);
-  }
-
-  return { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox };
+  return { getSandboxReuseState, getSandboxRecreateObservation };
 }

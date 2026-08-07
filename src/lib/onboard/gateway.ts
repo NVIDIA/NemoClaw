@@ -3,8 +3,14 @@
 
 import { spawn } from "node:child_process";
 
+import { BoundedLineDecoder, BoundedTextTranscript } from "../core/bounded-line-transcript";
+
 const { envInt }: typeof import("./env") = require("./env");
 const { ROOT } = require("../runner") as typeof import("../runner");
+
+const GATEWAY_TRANSCRIPT_MAX_CHARS = 256 * 1024;
+const GATEWAY_TRANSCRIPT_HEAD_CHARS = 64 * 1024;
+const GATEWAY_MAX_PENDING_LINE_CHARS = 64 * 1024;
 
 /** Spawn `openshell gateway start` and stream its output with progress heartbeats. */
 export function streamGatewayStart(
@@ -17,8 +23,10 @@ export function streamGatewayStart(
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  const lines: string[] = [];
-  let pending = "";
+  const transcript = new BoundedTextTranscript({
+    maxChars: GATEWAY_TRANSCRIPT_MAX_CHARS,
+    headChars: GATEWAY_TRANSCRIPT_HEAD_CHARS,
+  });
   let settled = false;
   let resolvePromise: (value: { status: number; output: string }) => void;
   let lastPrintedLine = "";
@@ -78,29 +86,36 @@ export function streamGatewayStart(
   function flushLine(rawLine: string): void {
     const line = rawLine.replace(/\r/g, "").trimEnd();
     if (!line) return;
-    lines.push(line);
+    transcript.appendLine(line);
     lastOutputAt = Date.now();
     const nextPhase = classifyLine(line);
     if (nextPhase) setPhase(nextPhase);
   }
 
-  function onChunk(chunk: Buffer | string): void {
-    pending += chunk.toString();
-    const parts = pending.split("\n");
-    pending = parts.pop() ?? "";
-    parts.forEach(flushLine);
-  }
+  const stdoutDecoder = new BoundedLineDecoder({
+    maxPendingChars: GATEWAY_MAX_PENDING_LINE_CHARS,
+    onLine: flushLine,
+  });
+  const stderrDecoder = new BoundedLineDecoder({
+    maxPendingChars: GATEWAY_MAX_PENDING_LINE_CHARS,
+    onLine: flushLine,
+  });
 
-  function finish(result: { status: number; output: string }): void {
+  function finish(status: number): void {
     if (settled) return;
     settled = true;
-    if (pending) flushLine(pending);
+    stdoutDecoder.end();
+    stderrDecoder.end();
     clearInterval(heartbeatTimer);
-    resolvePromise(result);
+    resolvePromise({ status, output: transcript.toString() });
   }
 
-  child.stdout.on("data", onChunk);
-  child.stderr.on("data", onChunk);
+  child.stdout.on("data", (chunk) => {
+    if (!settled) stdoutDecoder.write(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    if (!settled) stderrDecoder.write(chunk);
+  });
 
   printProgressLine("  Starting gateway cluster...");
   const heartbeatTimer = setInterval(() => {
@@ -130,7 +145,7 @@ export function streamGatewayStart(
   let killedByTimeout = false;
   const killTimer = setTimeout(() => {
     killedByTimeout = true;
-    lines.push("[NemoClaw] Gateway start timed out - killing process.");
+    transcript.appendLine("[NemoClaw] Gateway start timed out - killing process.");
     child.kill("SIGTERM");
     setTimeout(() => {
       if (!settled) child.kill("SIGKILL");
@@ -143,13 +158,13 @@ export function streamGatewayStart(
     child.on("error", (error: Error) => {
       clearTimeout(killTimer);
       const detail = error?.message || String(error);
-      lines.push(detail);
-      finish({ status: 1, output: lines.join("\n") });
+      transcript.appendLine(detail);
+      finish(1);
     });
     child.on("close", (code: number | null) => {
       clearTimeout(killTimer);
       const exitCode = killedByTimeout ? 1 : (code ?? 1);
-      finish({ status: exitCode, output: lines.join("\n") });
+      finish(exitCode);
     });
   });
 }

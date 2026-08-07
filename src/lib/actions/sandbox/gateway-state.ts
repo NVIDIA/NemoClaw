@@ -33,6 +33,7 @@ import {
 import {
   captureOpenshell,
   captureOpenshellForStatus,
+  getOpenshellBinary,
   getStatusProbeTimeoutMs,
   isCommandTimeout,
   runOpenshell,
@@ -46,6 +47,11 @@ import {
   type DockerDriverRecoveryResult,
   recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
+import {
+  type PortableDemoLifecycleRecoveryResult,
+  recoverPortableDemoSandboxLifecycle,
+} from "../../onboard/experimental/portable-demo-lifecycle";
+import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 
@@ -82,6 +88,35 @@ function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
   return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
 }
 
+/** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
+export function recoverPortableDemoSandboxLifecycleForConnect(
+  sandboxName: string,
+  sandbox: Pick<SandboxEntry, "agent" | "provider"> | null,
+  gatewayName: string,
+): PortableDemoLifecycleRecoveryResult {
+  if (!sandbox) return { kind: "not-installed" };
+  return recoverPortableDemoSandboxLifecycle(
+    sandboxName,
+    { agent: sandbox.agent, gatewayName, provider: sandbox.provider },
+    {
+      openshellBinary: getOpenshellBinary(),
+      captureOpenshell: (args, timeoutMs) => {
+        const result = captureOpenshell([...args], {
+          ignoreError: true,
+          includeStreams: true,
+          timeout: timeoutMs,
+        });
+        return {
+          status: result.status,
+          stdout: result.stdout ?? result.output,
+          stderr: result.stderr,
+          error: result.error,
+        };
+      },
+    },
+  );
+}
+
 function gatewayEndpointOverrideState(): SandboxGatewayState | null {
   try {
     assertNoOpenShellGatewayEndpointOverride();
@@ -98,37 +133,6 @@ function gatewayEndpointOverrideState(): SandboxGatewayState | null {
 export function isMissingSandboxGatewayOutput(output = ""): boolean {
   return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox has no spec/i.test(
     stripAnsi(String(output)),
-  );
-}
-
-/**
- * Strict absence classifier for destructive owner-gateway reconciliation.
- * Bare NotFound is not sufficient because OpenShell uses it for missing
- * gateways and providers as well as sandboxes.
- */
-export function isExplicitMissingSandboxGatewayOutput(
-  output: string,
-  sandboxName: string,
-): boolean {
-  const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
-  const exactNoSpec =
-    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i;
-  if (exactNoSpec.test(clean)) return true;
-  // OpenShell can omit the requested name from an owner-scoped lookup.
-  // Require both exact structured fields so gateway/provider absence and
-  // transport diagnostics remain ambiguous.
-  const exactStructuredNotFound =
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/i;
-  if (exactStructuredNotFound.test(clean)) return true;
-
-  const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedSandbox = `(?:['\"]${escapedName}['\"]|${escapedName})`;
-  return (
-    new RegExp(
-      `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
-      "i",
-    ).test(clean) ||
-    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "i").test(clean)
   );
 }
 

@@ -38,6 +38,40 @@ info() {
   printf '%s: %s\n' "$PREFIX" "$1"
 }
 
+rebuild_named_sandbox() {
+  local mode="$1"
+  local attempt output status prior_timeout_output retry_delay_seconds
+  prior_timeout_output=""
+  retry_delay_seconds="${NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS:-3}"
+  [[ "$retry_delay_seconds" =~ ^[0-9]+$ ]] \
+    || fail "rebuild retry delay must be a non-negative integer"
+
+  for attempt in 1 2; do
+    if output="$("$CLI" "$SANDBOX_NAME" rebuild --yes --dcode-auto-approval "$mode" 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    else
+      status=$?
+    fi
+
+    if [ "$attempt" -eq 1 ] \
+      && printf '%s\n' "$output" | grep -Fq "existing sandbox inference probe exited with status 28" \
+      && printf '%s\n' "$output" | grep -Fq "Sandbox is untouched"; then
+      prior_timeout_output="$output"
+      info "Retrying named sandbox rebuild once after a fail-closed inference timeout" >&2
+      sleep "$retry_delay_seconds"
+      continue
+    fi
+
+    if [ -n "$prior_timeout_output" ]; then
+      printf '%s\n%s\n' "$prior_timeout_output" "$output"
+    else
+      printf '%s\n' "$output"
+    fi
+    return "$status"
+  done
+}
+
 is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
@@ -74,9 +108,30 @@ assert_capability_projection() {
 
 assert_status_mode() {
   local expected_mode="$1"
-  local status_json
-  status_json="$("$CLI" "$SANDBOX_NAME" status --json)" \
-    || fail "nemoclaw status failed while checking '$expected_mode'"
+  local attempt attempts retry_delay_seconds status status_json
+  attempts="${NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS:-3}"
+  retry_delay_seconds="${NEMOCLAW_E2E_DCODE_STATUS_RETRY_DELAY_SECONDS:-3}"
+  is_positive_integer "$attempts" \
+    || fail "status attempt count must be a positive integer"
+  [[ "$retry_delay_seconds" =~ ^[0-9]+$ ]] \
+    || fail "status retry delay must be a non-negative integer"
+
+  status=1
+  status_json=""
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if status_json="$("$CLI" "$SANDBOX_NAME" status --json)"; then
+      status=0
+      break
+    else
+      status=$?
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      info "Retrying NemoClaw status after a non-success health probe (attempt $attempt/$attempts)" >&2
+      sleep "$retry_delay_seconds"
+    fi
+  done
+  [ "$status" -eq 0 ] \
+    || fail "nemoclaw status failed while checking '$expected_mode' after $attempts attempts: ${status_json:-<no stdout>}"
   STATUS_JSON="$status_json" EXPECTED_MODE="$expected_mode" SANDBOX_NAME="$SANDBOX_NAME" node -e '
 const status = JSON.parse(process.env.STATUS_JSON);
 if (status.name !== process.env.SANDBOX_NAME ||
@@ -281,10 +336,8 @@ main() {
 
   local rebuild_output
   info "Enabling thread-opt-in through the named sandbox rebuild interface"
-  rebuild_output="$(
-    "$CLI" "$SANDBOX_NAME" rebuild --yes \
-      --dcode-auto-approval thread-opt-in 2>&1
-  )" || fail "named sandbox rebuild could not enable thread-opt-in: $rebuild_output"
+  rebuild_output="$(rebuild_named_sandbox thread-opt-in)" \
+    || fail "named sandbox rebuild could not enable thread-opt-in: $rebuild_output"
 
   assert_capability_projection thread-opt-in
   assert_status_mode thread-opt-in
@@ -307,10 +360,8 @@ main() {
   run_boundary_check "managed credential boundary" "$CREDENTIAL_BOUNDARY_CHECK"
 
   info "Disabling thread-opt-in through the named sandbox rebuild interface"
-  rebuild_output="$(
-    "$CLI" "$SANDBOX_NAME" rebuild --yes \
-      --dcode-auto-approval disabled 2>&1
-  )" || fail "named sandbox rebuild could not disable thread-opt-in: $rebuild_output"
+  rebuild_output="$(rebuild_named_sandbox disabled)" \
+    || fail "named sandbox rebuild could not disable thread-opt-in: $rebuild_output"
 
   assert_capability_projection disabled
   assert_status_mode disabled

@@ -3,6 +3,7 @@
 
 import {
   detectGpu,
+  detectNvidiaDriverVersion,
   detectNvidiaPlatform,
   type GpuDetection,
   type NvidiaPlatform,
@@ -51,6 +52,8 @@ export interface HostObservations {
   nodeInstalled: boolean;
   openshellInstalled: boolean;
   hasNvidiaGpu: boolean;
+  nvidiaGpuCount?: number;
+  nvidiaDriverVersion?: string;
   hostGpuPlatform?: NvidiaPlatform;
   nvidiaContainerToolkitInstalled: boolean;
   dockerCdiSpecDirs: readonly string[];
@@ -70,7 +73,8 @@ export interface HostObservationSnapshot {
 export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
-  detectGpu?: () => Pick<GpuDetection, "wslDockerDesktopGpuProofPassed"> | null;
+  detectGpu?: () => Pick<GpuDetection, "count" | "wslDockerDesktopGpuProofPassed"> | null;
+  detectNvidiaDriverVersion?: () => string | undefined;
   detectHostGpuPlatform?: () => NvidiaPlatform;
   wslDockerDesktopGpuProofPassed?: boolean;
   collectPlatformIdentity?: () => PlatformIdentity;
@@ -80,7 +84,7 @@ export interface CollectHostObservationsOptions {
 
 export interface CreateHostReadinessReportOptions {
   nemoclawVersion: string;
-  sourceRevision?: string;
+  sourceRevision: string;
   now?: () => Date;
   maxObservationAgeMs?: number;
 }
@@ -93,6 +97,8 @@ function adaptHostAssessment(
   host: Readonly<HostAssessment>,
   architecture: string,
   hostGpuPlatform?: NvidiaPlatform,
+  nvidiaGpuCount?: number,
+  nvidiaDriverVersion?: string,
   platformIdentity?: PlatformIdentity,
   wslDockerDesktopGpuProofPassed?: boolean,
 ): HostObservations {
@@ -116,6 +122,8 @@ function adaptHostAssessment(
     nodeInstalled: host.nodeInstalled,
     openshellInstalled: host.openshellInstalled,
     hasNvidiaGpu: host.hasNvidiaGpu,
+    nvidiaGpuCount,
+    nvidiaDriverVersion,
     hostGpuPlatform,
     nvidiaContainerToolkitInstalled: host.nvidiaContainerToolkitInstalled,
     dockerCdiSpecDirs: [...host.dockerCdiSpecDirs],
@@ -134,13 +142,17 @@ export function collectHostObservations(
   const observedAt = (options.now ?? (() => new Date()))().toISOString();
   try {
     const assessment = (options.assess ?? assessHost)();
+    const gpuProbeAllowed =
+      assessment.hasNvidiaGpu &&
+      (!assessment.isWsl || assessment.runtime !== "docker-desktop" || assessment.dockerReachable);
+    const gpu = gpuProbeAllowed ? (options.detectGpu ?? detectGpu)() : null;
     const wslDockerDesktopGpuProofPassed =
       options.wslDockerDesktopGpuProofPassed ??
       (assessment.isWsl &&
       assessment.runtime === "docker-desktop" &&
       assessment.dockerReachable &&
       assessment.hasNvidiaGpu
-        ? (options.detectGpu ?? detectGpu)()?.wslDockerDesktopGpuProofPassed
+        ? gpu?.wslDockerDesktopGpuProofPassed
         : undefined);
     return {
       observedAt,
@@ -149,6 +161,10 @@ export function collectHostObservations(
         options.architecture ?? process.arch,
         assessment.hasNvidiaGpu
           ? (options.detectHostGpuPlatform ?? detectNvidiaPlatform)()
+          : undefined,
+        gpu?.count,
+        gpuProbeAllowed
+          ? (options.detectNvidiaDriverVersion ?? detectNvidiaDriverVersion)()
           : undefined,
         (
           options.collectPlatformIdentity ??
@@ -213,6 +229,8 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.toolchain.node",
     "host.toolchain.openshell",
     "host.gpu.nvidia",
+    "host.gpu.count",
+    "host.gpu.driver_version",
     "host.gpu.container_toolkit",
     "host.gpu.cdi",
     "host.gpu.cdi_stale",
@@ -223,6 +241,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.docker.runtime_supported",
     "host.docker.resources_sufficient",
     "host.docker.storage_compatible",
+    "host.docker.storage_remediation_available",
     "host.toolchain.node_available",
     "host.toolchain.openshell_available",
     "host.gpu.nvidia_available",
@@ -292,6 +311,13 @@ export function projectHostReadiness(
       (!host.cdiNvidiaGpuSpecMissing &&
         !host.cdiNvidiaGpuSpecStale &&
         !host.cdiNvidiaGpuSpecNeedsRepair);
+    const storageRemediationAvailable =
+      host.platform === "linux" &&
+      !host.isWsl &&
+      host.runtime === "docker" &&
+      host.hasNestedOverlayConflict &&
+      host.dockerStorageDriver === "overlayfs" &&
+      host.dockerUsesContainerdSnapshotter === true;
     observations = [
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
@@ -324,6 +350,11 @@ export function projectHostReadiness(
       observation("host.toolchain.node", host.nodeInstalled),
       observation("host.toolchain.openshell", host.openshellInstalled),
       observation("host.gpu.nvidia", host.hasNvidiaGpu),
+      observation("host.gpu.count", host.hasNvidiaGpu ? host.nvidiaGpuCount : undefined),
+      observation(
+        "host.gpu.driver_version",
+        host.hasNvidiaGpu ? host.nvidiaDriverVersion : undefined,
+      ),
       observation(
         "host.gpu.container_toolkit",
         host.hasNvidiaGpu ? host.nvidiaContainerToolkitInstalled : false,
@@ -361,6 +392,10 @@ export function projectHostReadiness(
       capability(
         "host.docker.storage_compatible",
         host.dockerReachable ? stateOf(!host.hasNestedOverlayConflict) : "unknown",
+      ),
+      capability(
+        "host.docker.storage_remediation_available",
+        host.dockerReachable ? stateOf(storageRemediationAvailable) : "unknown",
       ),
       capability("host.toolchain.node_available", stateOf(host.nodeInstalled)),
       capability("host.toolchain.openshell_available", stateOf(host.openshellInstalled)),
@@ -449,7 +484,7 @@ export function projectHostReadiness(
     mutated: false,
     provenance: {
       nemoclawVersion: options.nemoclawVersion,
-      ...(options.sourceRevision ? { sourceRevision: options.sourceRevision } : {}),
+      sourceRevision: options.sourceRevision,
       observedAt: snapshot.observedAt,
     },
     observations,

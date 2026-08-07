@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { testTimeout } from "../../helpers/timeouts";
 import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
@@ -63,6 +64,7 @@ function executeTrustedControllerMatrix(targets: string) {
       env: {
         ...process.env,
         GITHUB_OUTPUT: outputPath,
+        JOBS: "",
         TARGETS: targets,
       },
       timeout: 30_000,
@@ -575,7 +577,7 @@ it("reports cancelled tests alongside passing tests as a partial pass", () => {
   expect(report.body).toContain("⚠️ Some tests cancelled — partial pass");
 });
 
-it("lists explicit-only jobs skipped by default dispatch with their selection hints", () => {
+it("reports empty selectors without claiming an E2E was omitted", () => {
   const report = renderE2eReport({
     needs: {
       "generate-matrix": { result: "success" },
@@ -592,9 +594,9 @@ it("lists explicit-only jobs skipped by default dispatch with their selection hi
     context: REPORT_CONTEXT,
   });
 
-  expect(report.body).toContain(
-    "> **Explicit-only jobs skipped:** `mcp-bridge-dev` (default dispatch excludes moving OpenShell dev artifacts unless explicitly selected; validate with `jobs=mcp-bridge-dev` or `targets=mcp-bridge-dev`).",
-  );
+  expect(report.body).not.toContain("jobs skipped");
+  expect(report.body).toContain("✅ All tests selected by empty selectors passed");
+  expect(report.body).toContain("**Requested targets:** _(no target selector)_");
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
@@ -856,62 +858,73 @@ it("does not claim child success when complete API results contradict the aggreg
   expect(body).not.toContain("| alpha | ✅ success |");
 });
 
-it("carries the generated planner matrix through the workflow output and PR report", async () => {
-  const [selected] = discoverCredentialFreeTests();
-  expect(selected).toBeDefined();
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-e2e-integration-"));
-  const outputPath = path.join(directory, "github-output");
-  const summaryPath = path.join(directory, "summary.md");
-  try {
-    const generated = spawnSync("bash", ["-c", generateMatrixScript()], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        CHECKOUT_SHA: "",
-        GITHUB_OUTPUT: outputPath,
-        GITHUB_STEP_SUMMARY: summaryPath,
-        INFERENCE_MODE: "mock",
-        JOBS: selected.id,
-        TARGETS: "",
-      },
-      timeout: 30_000,
-    });
-    expect(generated.status, generated.stderr || generated.stdout).toBe(0);
-    const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
-    const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
-    expect(testMatrix).toEqual([selected]);
-
-    const { body, setFailed } = await executeReport({
-      apiJobs: [
-        {
-          conclusion: "success",
-          name: `Shared E2E (${selected.id})`,
-          status: "completed",
+it(
+  "carries the generated planner matrix through the workflow output and PR report",
+  async () => {
+    const [selected] = discoverCredentialFreeTests();
+    expect(selected).toBeDefined();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-e2e-integration-"));
+    const outputPath = path.join(directory, "github-output");
+    const summaryPath = path.join(directory, "summary.md");
+    try {
+      const generated = spawnSync("bash", ["-c", generateMatrixScript()], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CHECKOUT_SHA: "",
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_STEP_SUMMARY: summaryPath,
+          INFERENCE_MODE: "mock",
+          JOBS: selected.id,
+          TARGETS: "",
         },
-      ],
-      testMatrix,
-      jobs: selected.id,
-      needs: {
-        "generate-matrix": { result: "success" },
-        "shared-e2e": { result: "success" },
-      },
-    });
+        timeout: 30_000,
+      });
+      expect(generated.status, generated.stderr || generated.stdout).toBe(0);
+      const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
+      const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
+      expect(testMatrix).toEqual([selected]);
 
-    expect(setFailed).not.toHaveBeenCalled();
-    expect(body).toContain("All requested tests passed");
-    expect(body).toContain(`| ${selected.id} | ✅ success |`);
-  } finally {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
-}, 40_000);
+      const { body, setFailed } = await executeReport({
+        apiJobs: [
+          {
+            conclusion: "success",
+            name: `Shared E2E (${selected.id})`,
+            status: "completed",
+          },
+        ],
+        testMatrix,
+        jobs: selected.id,
+        needs: {
+          "generate-matrix": { result: "success" },
+          "shared-e2e": { result: "success" },
+        },
+      });
+
+      expect(setFailed).not.toHaveBeenCalled();
+      expect(body).toContain("All requested tests passed");
+      expect(body).toContain(`| ${selected.id} | ✅ success |`);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  },
+  testTimeout(40_000),
+);
 
 it("builds controller target matrices only from trusted runner mappings (#7031)", () => {
   const target = "ubuntu-repo-cloud-langchain-deepagents-code";
 
   const empty = executeTrustedControllerMatrix("");
   expect(empty.result.status, empty.result.stderr || empty.result.stdout).toBe(0);
-  expect(empty.workflowOutput).toBe("matrix=[]\n");
+  expect(parseSimpleOutput(empty.workflowOutput).matrix).toBe(
+    JSON.stringify([
+      { id: "ubuntu-policy-custom-missing-presets-negative", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-cloud-langchain-deepagents-code", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-cloud-openclaw", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-docker-post-reboot-recovery", runner: "ubuntu-latest" },
+    ]),
+  );
 
   const approved = executeTrustedControllerMatrix(target);
   expect(approved.result.status, approved.result.stderr || approved.result.stdout).toBe(0);
@@ -925,7 +938,7 @@ it("builds controller target matrices only from trusted runner mappings (#7031)"
     "::error::PR E2E target is not approved by the trusted controller",
   );
   expect(rejected.workflowOutput).toBe("");
-});
+}, 30_000);
 
 it("binds controller matrix IDs and runners to the trusted target selector (#7031)", () => {
   const target = "ubuntu-repo-cloud-langchain-deepagents-code";
@@ -973,7 +986,7 @@ it("binds controller matrix IDs and runners to the trusted target selector (#703
     "::error::E2E planner matrix does not match controller-selected targets",
   );
   expect(runnerInjected.workflowOutput).toBe("");
-});
+}, 30_000);
 
 it("requires the report-to-pr job to check out the trusted workflow revision", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));

@@ -5,6 +5,11 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { diagnosticPreview } from "../../name-validation";
+import {
+  normalizeTrustedPrivateHost,
+  parseTrustedPrivateHosts,
+} from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
@@ -23,7 +28,7 @@ export {
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
   parseMcpUrl,
-  validateMcpServerUrlResolvedTarget,
+  preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-url-validation";
 
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
@@ -162,7 +167,7 @@ const MCP_PROVIDER_HASH_BYTES = 8;
 export function validateSandboxName(name: string): void {
   if (!name || name.length > 63 || !VALID_SANDBOX_RE.test(name)) {
     throw new McpBridgeError(
-      `Invalid sandbox name '${name}'. Names must be 1-63 lowercase alphanumeric characters with optional internal hyphens.`,
+      `Invalid sandbox name ${diagnosticPreview(name)}. Names must be 1-63 lowercase alphanumeric characters with optional internal hyphens.`,
       2,
     );
   }
@@ -171,7 +176,7 @@ export function validateSandboxName(name: string): void {
 export function validateMcpServerName(name: string): void {
   if (!VALID_SERVER_RE.test(name)) {
     throw new McpBridgeError(
-      `Invalid MCP server name '${name}'. Names must start with a letter and contain only letters, digits, hyphens, and underscores.`,
+      `Invalid MCP server name ${diagnosticPreview(name)}. Names must start with a letter and contain only letters, digits, hyphens, and underscores.`,
       2,
     );
   }
@@ -218,7 +223,7 @@ export function validateMcpCredentialEnvName(name: string): void {
 export function validatePersistedMcpCredentialEnvName(name: string): void {
   if (!VALID_ENV_RE.test(name)) {
     throw new McpBridgeError(
-      `Invalid environment variable name '${name}'. Names must match [A-Za-z_][A-Za-z0-9_]*.`,
+      `Invalid environment variable name ${diagnosticPreview(name)}. Names must match [A-Za-z_][A-Za-z0-9_]*.`,
       2,
     );
   }
@@ -226,8 +231,9 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
 
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   const env: ParsedEnvReference[] = [];
+  const trustedPrivateHosts: string[] = [];
   let server = "";
-  let url = "";
+  let rawUrl = "";
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -266,11 +272,29 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     if (token === "--url") {
-      url = normalizeMcpServerUrl(argv[++i] ?? "");
+      rawUrl = argv[++i] ?? "";
       continue;
     }
     if (token?.startsWith("--url=")) {
-      url = normalizeMcpServerUrl(token.slice("--url=".length));
+      rawUrl = token.slice("--url=".length);
+      continue;
+    }
+    if (token === "--trusted-private-host") {
+      try {
+        trustedPrivateHosts.push(normalizeTrustedPrivateHost(argv[++i] ?? ""));
+      } catch (error) {
+        throw new McpBridgeError(error instanceof Error ? error.message : String(error), 2);
+      }
+      continue;
+    }
+    if (token?.startsWith("--trusted-private-host=")) {
+      try {
+        trustedPrivateHosts.push(
+          normalizeTrustedPrivateHost(token.slice("--trusted-private-host=".length)),
+        );
+      } catch (error) {
+        throw new McpBridgeError(error instanceof Error ? error.message : String(error), 2);
+      }
       continue;
     }
     if (token?.startsWith("-")) {
@@ -282,19 +306,44 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
       2,
     );
   }
-  if (!url) {
+  if (!rawUrl) {
     throw new McpBridgeError("MCP server URL is required. Pass --url <https-mcp-url>.", 2);
+  }
+  if (new Set(trustedPrivateHosts).size !== trustedPrivateHosts.length) {
+    throw new McpBridgeError(
+      "Duplicate --trusted-private-host declarations are not accepted after normalization.",
+      2,
+    );
+  }
+  let configuredTrustedPrivateHosts: string[];
+  try {
+    configuredTrustedPrivateHosts = parseTrustedPrivateHosts(
+      process.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS,
+    );
+  } catch (error) {
+    throw new McpBridgeError(error instanceof Error ? error.message : String(error), 2);
+  }
+  const url = normalizeMcpServerUrl(rawUrl, {
+    trustedPrivateHosts: [...new Set([...trustedPrivateHosts, ...configuredTrustedPrivateHosts])],
+  });
+  const urlHost = new URL(url).hostname.toLowerCase();
+  const unrelatedTrustedHost = trustedPrivateHosts.find((host) => host !== urlHost);
+  if (unrelatedTrustedHost) {
+    throw new McpBridgeError(
+      `--trusted-private-host ${unrelatedTrustedHost} does not match MCP server URL host '${urlHost}'.`,
+      2,
+    );
   }
   if (env.length !== 1) {
     throw new McpBridgeError(
@@ -303,7 +352,12 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
     );
   }
 
-  return { server, url, env };
+  return {
+    server,
+    url,
+    env,
+    ...(trustedPrivateHosts.length > 0 ? { trustedPrivateHosts } : {}),
+  };
 }
 
 export function uniqueEnvNames(env: readonly ParsedEnvReference[] | readonly string[]): string[] {

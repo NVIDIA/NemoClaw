@@ -10,14 +10,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const GUARD_PATH = path.resolve("scripts/openclaw-config-guard.py");
 const fixtures: string[] = [];
-
 const RUN_AS_CURRENT_USER = String.raw`
 import importlib.util
 import hashlib
 import os
 import sys
 import time
-
 guard_path, action, config_dir, failure, expected_sha256 = sys.argv[1:6]
 spec = importlib.util.spec_from_file_location("nemoclaw_openclaw_config_guard", guard_path)
 module = importlib.util.module_from_spec(spec)
@@ -72,7 +70,7 @@ if failure in {"installed-nonroot-no-cap", "installed-nonroot-not-ready"}:
     module._pid1_effective_uid = lambda: identity.root_uid + 1
 if failure == "startup-owner":
     module.os.getppid = lambda: 1
-if failure == "pair-race":
+if failure in {"pair-race", "mutable-dir-drift"}:
     original_snapshot = module._snapshot_file
     raced = False
     def race_pair(opened, name):
@@ -80,6 +78,9 @@ if failure == "pair-race":
         snapshot = original_snapshot(opened, name)
         if name == "openclaw.json" and not raced:
             raced = True
+            if failure == "mutable-dir-drift":
+                os.chmod(config_dir, 0o700)
+                return snapshot
             updated = b'{"gateway":{"port":19001}}\n'
             with open(os.path.join(config_dir, "openclaw.json"), "wb") as stream:
                 stream.write(updated)
@@ -257,11 +258,9 @@ type GuardLine = {
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
-
 function trustedNodePath(configDir: string): string {
   return path.join(path.dirname(configDir), ".nemoclaw-test-node");
 }
-
 function fixture() {
   const created = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-config-guard-"));
   const root = fs.realpathSync(created);
@@ -287,7 +286,6 @@ function fixture() {
   fs.chmodSync(root, 0o755);
   return { root, configDir, configPath, hashPath };
 }
-
 type GuardAction =
   | "preflight"
   | "preflight-restart"
@@ -299,7 +297,6 @@ type GuardAction =
   | "publish-startup-ready"
   | "write-config"
   | "recover";
-
 function runGuard(
   action: GuardAction,
   configDir: string,
@@ -331,9 +328,17 @@ function runGuard(
     .map((line) => JSON.parse(line) as GuardLine);
   return { ...result, lines };
 }
-
 function mode(filePath: string): number {
   return fs.lstatSync(filePath).mode & 0o7777;
+}
+
+function fileIdentity(filePath: string): [number, Buffer] {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    return [fs.fstatSync(fd).ino, fs.readFileSync(fd)];
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function setUserXattr(filePath: string, value: string): boolean {
@@ -396,24 +401,40 @@ describe("openclaw-config-guard", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const first = runGuard("lock", configDir);
     expect(first.status, JSON.stringify(first.lines)).toBe(0);
-    const configInode = fs.statSync(configPath).ino;
-    const hashInode = fs.statSync(hashPath).ino;
-    const configBytes = fs.readFileSync(configPath);
-    const hashBytes = fs.readFileSync(hashPath);
+    const fileIdentities = [configPath, hashPath].map(fileIdentity);
     expect(mode(root)).toBe(0o1775);
-
     const second = runGuard("lock", configDir);
     expect(second.status, JSON.stringify(second.lines)).toBe(0);
     expect(mode(root)).toBe(0o1775);
     expect(mode(configDir)).toBe(0o755);
     expect(mode(configPath)).toBe(0o444);
     expect(mode(hashPath)).toBe(0o444);
-    expect(fs.statSync(configPath).ino).toBe(configInode);
-    expect(fs.statSync(hashPath).ino).toBe(hashInode);
-    expect(fs.readFileSync(configPath)).toEqual(configBytes);
-    expect(fs.readFileSync(hashPath)).toEqual(hashBytes);
+    expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
   });
-
+  it("unlocks idempotently when the config already holds the mutable posture (#7430)", () => {
+    const { configDir, configPath, hashPath } = fixture();
+    const fileIdentities = [configPath, hashPath].map(fileIdentity);
+    const r = runGuard("unlock", configDir);
+    expect(r.status, JSON.stringify(r.lines)).toBe(0);
+    expect([mode(configDir), mode(configPath), mode(hashPath)]).toEqual([0o2770, 0o660, 0o660]);
+    expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
+    for (const invalidPath of [configPath, hashPath]) {
+      fs.chmodSync(invalidPath, 0o600);
+      try {
+        const invalid = runGuard("unlock", configDir);
+        expect(invalid.status).not.toBe(0);
+        expect(invalid.lines).toContainEqual(
+          expect.objectContaining({ code: "config-not-mutable" }),
+        );
+        expect(mode(invalidPath)).toBe(0o600);
+        expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
+      } finally {
+        fs.chmodSync(invalidPath, 0o660);
+      }
+    }
+    const drift = runGuard("unlock", configDir, "mutable-dir-drift");
+    expect(drift.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
+  });
   it("fresh-replaces both files on lock and unlock while preserving bytes, times, and xattrs", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const preservedTime = new Date("2025-01-02T03:04:05.000Z");
@@ -475,7 +496,6 @@ describe("openclaw-config-guard", () => {
       fs.closeSync(staleHashFd);
     }
   });
-
   it("rejects external symlink, hardlink, and special-file substitutions", () => {
     for (const attack of ["symlink", "hardlink", "fifo"] as const) {
       const { root, configDir, configPath, hashPath } = fixture();
@@ -506,7 +526,6 @@ describe("openclaw-config-guard", () => {
       expect(fs.readFileSync(hashPath)).toEqual(beforeHash);
     }
   });
-
   it("fail-closes a rename-swapped config namespace and leaves the external tree untouched", () => {
     const { root, configDir } = fixture();
     const realConfig = path.join(root, "real-openclaw");
@@ -523,7 +542,6 @@ describe("openclaw-config-guard", () => {
     expect(mode(configDir)).toBe(0o755);
     expect(mode(path.join(configDir, "openclaw.json"))).toBe(0o444);
   });
-
   it("canonicalizes a stale mutable hash while strict preflight rejects a bad record path", () => {
     const mismatch = fixture();
     const mismatchBytes = fs.readFileSync(mismatch.configPath);
@@ -558,12 +576,9 @@ describe("openclaw-config-guard", () => {
     });
     expect(runGuard("preflight", absolute.configDir).status).toBe(0);
   });
-
   it("retries config and hash as one pair when a writer interleaves their capture", () => {
     const { configDir, configPath, hashPath } = fixture();
-
     const result = runGuard("lock", configDir, "pair-race");
-
     expect(result.status).toBe(0);
     const updated = Buffer.from('{"gateway":{"port":19001}}\n');
     expect(fs.readFileSync(configPath)).toEqual(updated);
@@ -573,7 +588,6 @@ describe("openclaw-config-guard", () => {
     expect(mode(configPath)).toBe(0o444);
     expect(mode(hashPath)).toBe(0o444);
   });
-
   it("restart preflight accepts a stable parseable config with a stale mutable hash", () => {
     const { configDir, hashPath } = fixture();
     fs.writeFileSync(hashPath, `${"0".repeat(64)}  openclaw.json\n`);
@@ -588,7 +602,6 @@ describe("openclaw-config-guard", () => {
       ]),
     );
   });
-
   it("rolls a failed unlock back to the complete locked parent, config, and file posture", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const configBytes = fs.readFileSync(configPath);
@@ -610,7 +623,6 @@ describe("openclaw-config-guard", () => {
     expect(fs.readFileSync(configPath)).toEqual(configBytes);
     expect(fs.readFileSync(hashPath)).toEqual(hashBytes);
   });
-
   it("clears descriptor-bound immutable flags for replacement and restores them on rollback", () => {
     const { root, configDir } = fixture();
     const flagLog = path.join(root, "inode-flags.log");
@@ -632,7 +644,6 @@ describe("openclaw-config-guard", () => {
     expect(appliedFlags).toContain(0x10);
     expect(mode(configDir)).toBe(0o755);
   });
-
   it("enforces the exact production path and bounded config artifact sizes", () => {
     const { configDir, hashPath } = fixture();
     const noPathOverride = RUN_AS_CURRENT_USER.replace(
@@ -660,7 +671,6 @@ describe("openclaw-config-guard", () => {
       ]),
     );
   });
-
   it("CAS-writes a fresh mutable config/hash pair and revokes stale descriptors", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const oldConfig = fs.readFileSync(configPath);
@@ -705,7 +715,6 @@ describe("openclaw-config-guard", () => {
       fs.closeSync(staleHashFd);
     }
   });
-
   it("safely replaces a sandbox-precreated persistent journal symlink", () => {
     const { root, configDir, configPath } = fixture();
     const original = fs.readFileSync(configPath);

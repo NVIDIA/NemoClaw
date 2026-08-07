@@ -12,8 +12,10 @@ import {
 } from "../../../inference/gateway-route-compatibility";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
 import type { InferenceEndpointSource } from "../../../inference/selection";
+import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
 import {
@@ -175,6 +177,10 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+    ensureManagedLlamaCppResumeReady(
+      provider: string | null | undefined,
+      sandboxName: string | null | undefined,
+    ): Promise<boolean>;
     isResumeProviderSurfaceReady(
       gatewayName: string,
       provider: string | null | undefined,
@@ -244,6 +250,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       hermesToolGateways: string[];
       enabledChannels: string[] | null;
       sandboxName: string;
+      servingProfileProvenance?: ServingProfileProvenance | null;
       notes: string[];
     }): string;
     promptYesNoOrDefault(
@@ -358,6 +365,54 @@ function assertOnboardReasoningEffortRoute(
   }
 }
 
+interface CompatibleEndpointReasoningReplayDeps {
+  cliName(): string;
+  log(message?: string): void;
+  configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
+  configureCompatibleEndpointReasoningEffort(
+    storedValue?: unknown,
+    env?: NodeJS.ProcessEnv,
+    allowRequestFallback?: boolean,
+  ): Promise<ReasoningEffort | null>;
+}
+
+// A recovered selection that reuses the registered gateway credential skips the
+// custom-endpoint validation, and that validation is where a compatible endpoint
+// configures its reasoning mode and effort. Replay the recorded configuration for
+// the same route — including the process env the sandbox image patch reads — so a
+// rebuild recreate cannot silently replace it with no reasoning configuration
+// (#7940). Report before configuring, like the resumed-selection path: the
+// recorded value wins over an ambient one, and #7462 requires that replay to name
+// the recorded value instead of silently discarding the exported variable. A
+// rebuild recreate seeds the env from the same recorded configuration, so it stays
+// silent.
+async function replayRecoveredCompatibleEndpointReasoning(
+  deps: CompatibleEndpointReasoningReplayDeps,
+  recorded: { reasoning: string | null; effort: string | null },
+  env: NodeJS.ProcessEnv,
+): Promise<{ reasoning: "true" | "false"; effort: ReasoningEffort | null }> {
+  const ignoredReasoning = describeIgnoredReasoningEnv(recorded.reasoning, deps.cliName(), env);
+  if (ignoredReasoning) deps.log(ignoredReasoning);
+  const ignoredEffort = describeIgnoredReasoningEffortEnv(recorded.effort, deps.cliName(), env);
+  if (ignoredEffort) deps.log(ignoredEffort);
+  return {
+    reasoning: await deps.configureCompatibleEndpointReasoning(recorded.reasoning),
+    effort: await deps.configureCompatibleEndpointReasoningEffort(recorded.effort, env, false),
+  };
+}
+
+function provenResumeSandboxName(
+  session: Session | null,
+  sandboxName: string | null,
+  effectiveResume: boolean,
+  authoritativeResumeConfig: boolean,
+): string | null {
+  if (!effectiveResume || !sandboxName) return null;
+  return authoritativeResumeConfig || checkpointSandboxIdentityMatches(session, sandboxName)
+    ? sandboxName
+    : null;
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -421,6 +476,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
+  const reusableResumeSandboxName = provenResumeSandboxName(
+    session,
+    sandboxName,
+    effectiveResume,
+    authoritativeResumeConfig,
+  );
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
@@ -455,6 +516,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         credentialEnv,
         preferredInferenceApi,
       });
+      // A completed provider-selection checkpoint is not proof that a managed
+      // host runtime survived a process or gateway restart. Recover the exact
+      // gateway-owned llama.cpp lifecycle before the selection shortcut can
+      // skip setup. The dependency is a no-op for operator-attached llama.cpp
+      // routes because those routes have no matching managed owner state.
+      await deps.ensureManagedLlamaCppResumeReady(provider, sandboxName);
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
@@ -516,13 +583,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
       const selectedAgentName = (agent as { name?: string } | null)?.name;
-      if (
-        (!selectedAgentName || selectedAgentName === "openclaw") &&
-        sandboxName &&
-        session?.sandboxPromptProgress?.sandboxName === true &&
-        session.sandboxName === sandboxName
-      ) {
-        deps.log(`  [resume] Reusing sandbox name: ${sandboxName}.`);
+      if ((!selectedAgentName || selectedAgentName === "openclaw") && reusableResumeSandboxName) {
+        deps.log(`  [resume] Reusing sandbox name: ${reusableResumeSandboxName}.`);
       }
       await deps.recordStateSkipped("provider_selection", {
         reason: "resume",
@@ -643,6 +705,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
       shouldRecordProviderSelection = true;
+      if (
+        reuseGatewayCredentialWithoutLocalKey &&
+        provider === "compatible-endpoint" &&
+        initial.provider === "compatible-endpoint"
+      ) {
+        const replayed = await replayRecoveredCompatibleEndpointReasoning(
+          deps,
+          {
+            reasoning: compatibleEndpointReasoning ?? initial.compatibleEndpointReasoning,
+            effort: compatibleEndpointReasoningEffort ?? initial.compatibleEndpointReasoningEffort,
+          },
+          env,
+        );
+        compatibleEndpointReasoning = replayed.reasoning;
+        compatibleEndpointReasoningEffort = replayed.effort;
+      }
     }
 
     // Persist a repaired API family only together with a successful inference
@@ -779,7 +857,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const sandboxStepComplete = session?.steps?.sandbox?.status === "complete";
       const resumeReservationName =
         authoritativeResumeConfig || !sandboxStepComplete
-          ? (sandboxName ?? (await deps.promptValidatedSandboxName(agent)))
+          ? (reusableResumeSandboxName ?? (await deps.promptValidatedSandboxName(agent)))
           : null;
       if (resumeReservationName) sandboxName = resumeReservationName;
       const routedInferenceProvider = deps.isRoutedInferenceProvider(provider);
@@ -909,6 +987,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName: confirmedSandboxName,
+          servingProfileProvenance: session?.servingProfileProvenance ?? null,
           notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );

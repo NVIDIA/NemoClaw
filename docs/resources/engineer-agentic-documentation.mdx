@@ -4,8 +4,8 @@
 title: "Engineer Documentation for AI Agents"
 sidebar-title: "Engineer Agentic Docs"
 description: "A practical architecture and operating model for making technical documentation reliable for both people and AI agents."
-description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, review receipts, adoption metrics, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, or docs-as-code automation."
-keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
+description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, review receipts, accuracy assurance, adoption metrics, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, documentation accuracy tests, or docs-as-code automation."
+keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation accuracy tests", "documentation source of truth", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
 content:
   type: "how_to"
 ---
@@ -59,9 +59,9 @@ Repository instructions tell that agent when documentation is required, where th
 
 The repository provides a control stack for this workflow:
 
-- The root `AGENTS.md` defines repository-wide success criteria, product scope, and documentation expectations.
-- `docs/AGENTS.md` defines the documentation role, source-of-truth rules, variant patterns, and verification requirements.
-- `docs/CONTRIBUTING.md` defines the public writing, navigation, release, and review contracts.
+- The root `AGENTS.md` defines repository-wide success criteria, product scope, documentation impact, and independent review.
+- `docs/AGENTS.md` defines the documentation-agent role, DORI routing, skill selection, and task workflow.
+- `docs/CONTRIBUTING.md` defines public documentation rules, navigation, release procedures, and validation.
 - The `nemoclaw-contributor-update-docs` skill maps product changes to canonical pages and produces an evidence-backed documentation update.
 - Build scripts, tests, hooks, previews, and publication workflows enforce the contracts after the agent edits the files.
 
@@ -184,6 +184,10 @@ Product behavior may be authoritative in code, schemas, command metadata, or sup
 Generate structured reference content from product sources when practical and use parity tests when prose must remain hand-written.
 
 NemoClaw uses MDX under `docs/` as its user-facing source of truth and generates agent-specific pages during the docs build.
+Inside that corpus, use parity-checked reference pages as the canonical documentation owners for facts that many task pages reuse.
+Code and product metadata remain the behavior authority.
+After generation or parity tests align a reference page with those inputs, treat that page as the documentation source of truth for downstream pages and agent-authored guidance.
+Authoring agents and task pages should consult and link to that reference instead of copying inventories of commands, flags, configuration keys, or support data.
 
 Apply these source rules:
 
@@ -191,7 +195,8 @@ Apply these source rules:
 - Organize procedures around the reader journey from choosing through setup, operation, validation, and troubleshooting.
 - Keep reusable troubleshooting and reference facts with one canonical owner, then link to that owner.
 - Generate tables and reference values from authoritative product data when that removes manual synchronization.
-- Store navigation, slugs, and variant membership in a machine-readable index.
+- Store navigation and route slugs in a machine-readable index.
+- Declare intentional partial variant scope in source metadata and validate it against published navigation membership.
 - Treat generated pages as disposable build output and never edit them by hand.
 - Preserve published routes with direct redirects when content moves.
 
@@ -311,14 +316,15 @@ Use these rules:
 - Replace a build-time placeholder when only a literal name or command differs.
 - Use a conditional block when the workflow, behavior, state layout, or security boundary differs.
 - Use a separate source page when most of the procedure is variant-specific.
-- Keep variant membership and route slugs in the navigation model.
-- Regenerate every variant before route and link validation.
-- Inspect rendered variants for broken lists, joined paragraphs, and missing context.
+- Keep published guide variant membership and route slugs in the navigation model.
+- Declare the intended guide variant subset in source metadata when a page does not apply to every guide variant.
+- Regenerate every guide variant before route and link validation.
+- Inspect rendered guide variants for broken lists, joined paragraphs, and missing context.
 
-NemoClaw generates shared OpenClaw, Hermes, and Deep Agents pages from one MDX source.
-Its build rewrites the host CLI placeholder, removes inapplicable conditional blocks, and publishes a distinct route for each supported agent.
+NemoClaw generates shared OpenClaw, Hermes, and Deep Agents guide variants from one MDX source.
+Its build rewrites the host CLI placeholder, removes inapplicable conditional blocks, and publishes a distinct route for each guide variant.
 
-### Separate the Source from Its Variant Targets
+### Separate the Source from Its Guide Variant Targets
 
 Authors edit the normal source page under `docs/`.
 For this guide, the only source is `docs/resources/engineer-agentic-documentation.mdx`.
@@ -379,19 +385,28 @@ Use <code>&#36;&#36;nemoclaw</code> for all shared host CLI references and wrap 
 The resolver rejects a generated page if it still contains an unresolved line-oriented `<AgentOnly>` directive or a runtime agent component.
 These checks make static resolution a publishing invariant instead of relying on client-side hydration to correct variant content.
 
-Variant membership is explicit in `docs/index.yml`.
-Each agent variant contains its own navigation tree, and a shared page appears in a tree through a generated target path with this contract:
+Published guide variant membership is explicit in `docs/index.yml`.
+Each guide variant contains its own navigation tree, and a shared page appears in a tree through a generated target path with this contract:
 
 ```text
 _build/agent-variants/<source-directory>/<source-name>.<variant>.generated.mdx
 ```
 
 The `<variant>` value is `openclaw`, `hermes`, or `deepagents`.
-The directory and base name before the variant suffix must match the canonical source path under `docs/`.
+The directory and base name before the guide variant suffix must match the canonical source path under `docs/`.
 
-If this source-only guide is added to Fern navigation, it would use the following mapping:
+When a source intentionally applies to fewer than all three guide variants, its frontmatter declares the exact subset:
 
-| Variant | Generated target in `docs/index.yml` | Published route suffix |
+```yaml
+agent-variants: ["openclaw", "hermes"]
+```
+
+The generator compares this declaration with the source's actual navigation membership and fails when the declaration is missing or differs.
+An all-variant source omits the declaration, so removing one of its navigation targets also fails until the author restores the route or explicitly declares the narrower scope.
+
+This guide uses the following Fern navigation mapping:
+
+| Guide variant | Generated target in `docs/index.yml` | Published route suffix |
 |---|---|---|
 | OpenClaw | `_build/agent-variants/resources/engineer-agentic-documentation.openclaw.generated.mdx` | `/user-guide/openclaw/resources/engineer-agentic-documentation`. |
 | Hermes | `_build/agent-variants/resources/engineer-agentic-documentation.hermes.generated.mdx` | `/user-guide/hermes/resources/engineer-agentic-documentation`. |
@@ -405,10 +420,10 @@ The route suffix above comes from the variant, section, and page slug hierarchy 
 The version entry in `fern/docs.yml` points Fern to `docs/index.yml`.
 That index defines the navigation and published route tree for every supported agent variant.
 
-An OpenClaw navigation entry for this guide would use the following shape:
+The OpenClaw navigation entry for this guide uses the following shape:
 
 ```yaml
-- page: "Engineer Agentic Docs"
+- page: "Engineer Documentation for AI Agents"
   path: _build/agent-variants/resources/engineer-agentic-documentation.openclaw.generated.mdx
   slug: engineer-agentic-documentation
 ```
@@ -421,7 +436,7 @@ This separation has several consequences:
 
 - A source file's filesystem location does not independently define its public URL.
 - The same source can be published in several variant trees with the same page slug.
-- A source can remain single-variant by pointing navigation directly to its source MDX file instead of a generated target.
+- A source page can apply to one guide variant by declaring that guide variant in frontmatter and pointing navigation directly to its source MDX file instead of a generated target.
 - Moving or renaming a published page requires a navigation update and a redirect review, even when the source file stays in the same directory.
 - Generated filenames are an interface with the generator and should not use an arbitrary naming pattern.
 
@@ -431,16 +446,17 @@ The resolver is `scripts/sync-agent-variant-docs.mts`.
 Run it directly through `npm run docs:sync-agent-variants`, or let `npm run docs` invoke it through the shared `docs:prepare` step.
 
 The script reads `docs/index.yml` before it reads shared source pages.
-For each recognized generated path, it performs the following work:
+It derives each source page's published guide variant membership and validates every intentional subset declaration before rendering.
+For each recognized generated path, it then performs the following work:
 
-1. It reads the active navigation variant from the `openclaw`, `hermes`, or `deepagents` tree.
+1. It reads the active guide variant from the `openclaw`, `hermes`, or `deepagents` navigation tree.
 2. It removes the `_build/agent-variants/` prefix and the `.<variant>.generated.mdx` suffix.
 3. It resolves the remaining path to one canonical `.mdx` source under `docs/`.
-4. It renders that source for the active variant.
+4. It renders that source for the active guide variant.
 5. It writes the result under `docs/_build/agent-variants/` using the path declared in the index.
 6. It removes stale generated files that no longer have a navigation target.
 
-Rendering replaces the host CLI placeholder with the correct binary name, removes conditional blocks that do not apply to the active variant, and adjusts relative image and component-import paths for the deeper generated directory.
+Rendering replaces the host CLI placeholder with the correct binary name, removes conditional blocks that do not apply to the active guide variant, and adjusts relative image and component-import paths for the deeper generated directory.
 Route-style links between documentation pages stay tied to the published navigation model instead of the generated filesystem location.
 
 The generated directory is ignored by Git.
@@ -449,10 +465,10 @@ Contributors commit the canonical source and `docs/index.yml` mapping, while the
 ### Validate the Complete Route Graph
 
 The `npm run docs` command prepares generated content before Fern validation.
-The validation sequence checks the starter prompt, regenerates the agent variants, verifies generated-page freshness, derives published routes from `docs/index.yml`, and runs the pinned Fern checker.
+The validation sequence checks the starter prompt, validates declared guide variant scope, regenerates the guide variants, verifies generated-page freshness, derives published routes from `docs/index.yml`, and runs the pinned Fern checker.
 
-This order matters because Fern cannot validate a variant route until the generated target named by `docs/index.yml` exists.
-It also ensures that source edits, variant transforms, navigation mappings, and published routes are tested as one contract.
+This order matters because Fern cannot validate a guide variant route until the generated target named by `docs/index.yml` exists.
+It also ensures that source edits, guide variant transforms, navigation mappings, and published routes are tested as one contract.
 
 ## Treat Documentation as an Executable Product Surface
 
@@ -462,7 +478,8 @@ Syntax validation alone does not catch behavioral drift.
 | Gate | Defect it prevents | NemoClaw example |
 |---|---|---|
 | Source formatting | Unreadable diffs and inconsistent authoring. | Markdown linting, one sentence per source line, and copyable command rules. |
-| Generated freshness | Stale prompts or agent variants. | Build-time generation followed by read-only freshness checks. |
+| Guide variant scope | A page is omitted from an applicable guide or silently published for the wrong agent. | Source `agent-variants` declarations checked against navigation membership. |
+| Generated freshness | Stale prompts or guide variants. | Build-time generation followed by read-only freshness checks. |
 | Route graph | Links or redirects that target unpublished pages. | Published-route validation derived from `docs/index.yml`. |
 | Product parity | Reference documentation that disagrees with the product. | CLI command, flag, installer, and environment-variable parity checks. |
 | Pull-request preview | Layout or navigation failures hidden by source checks. | An isolated Fern preview for each docs pull request. |
@@ -471,6 +488,45 @@ Syntax validation alone does not catch behavioral drift.
 
 Run the narrowest checks on every relevant change and keep broader checks at integration or release boundaries.
 Tests should derive routes and behavior from the same source models used by the product instead of maintaining a second hard-coded catalog.
+
+### Test Documentation Accuracy in Layers
+
+A passing docs build does not establish that every statement is true.
+It establishes that the source parses, generated pages match their inputs, published routes and checked route-style links resolve, and the site can render.
+
+Treat generated-output fidelity and factual accuracy as separate problems.
+A generated page must match its authoritative inputs and transformation rules.
+Agent-authored prose must match current product behavior and product scope established by an accepted issue or accepted design decision.
+
+Use the following assurance layers:
+
+| Layer | Coverage | Evidence |
+|---|---|---|
+| Source-derived parity tests | Structured facts such as commands, flags, configuration keys, provider choices, support tables, and guide variant membership. | Generate the facts from product-owned data, or compare the documentation with the compiled help, schema, manifest, or other product source. |
+| Executable journey tests | Priority and high-risk procedures, including their prerequisites, state changes, safety boundaries, and acceptance criteria. | Run the documented flow or exercise the same behavior through an integration or end-to-end test. Add a documentation regression test that keeps the validated command sequence and expected observation in the owning page. |
+| Evidence-based review and sampling | Explanations, tradeoffs, support claims, and other prose that does not have a stable machine-readable contract. | Compare each changed claim with checked-in source and tests, verify support against an accepted issue or accepted design decision, run an independent documentation writer review, and sample published outcomes. |
+
+The first layer proves fidelity to the selected inputs, not the accuracy of those inputs.
+Prefer product-owned source models so the product and its documentation do not maintain separate hard-coded facts.
+
+NemoClaw compares documented CLI commands and flags with compiled help, checks installer provider choices, and audits `NEMOCLAW_*` reads in CLI source against the command reference.
+The [NemoClaw CLI Commands Reference](../reference/commands) is the canonical documentation owner for public CLI commands, flags, arguments, and exit codes.
+The compiled CLI contract checks public command headings and long-form flags in both directions against the shipped CLI.
+Its routing metadata directs agents there for subcommand, flag, argument, and exit-code lookups.
+Task pages can rely on and link to that reference for syntax while keeping procedure-specific context and verification in the owning task page.
+NemoClaw generates platform support tables from `ci/platform-matrix.json` and tests guide variant selection against shared source pages.
+Targeted documentation regression tests preserve credential-rotation commands, authenticated endpoint verification, and variant-specific procedures.
+Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
+
+NemoClaw also performs the judgment-based layer before final handoff, not as a separate post-publication audit.
+On hosts that support subagents, the repository-wide `AGENTS.md` tells the implementation agent to run an independent documentation writer subagent after completing development changes.
+The subagent reviews the completed change for documentation impact and checks changed explanatory text for accuracy, grounding, completeness, usability, and style.
+The pull request then records the review against the current commit and instruction version.
+
+<Note>
+No single automated gate establishes corpus-wide semantic accuracy.
+Name the contract that each test covers, and treat remaining claims as review and sampling coverage instead of tested behavior.
+</Note>
 
 ## Govern What Agents May Publish
 
@@ -550,16 +606,20 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Concern | NemoClaw implementation |
 |---|---|
 | Canonical content | `docs/**/*.mdx`. |
-| Repository-wide documentation contract | `AGENTS.md`. |
-| Authoring and review policy | `docs/CONTRIBUTING.md` and `docs/AGENTS.md`. |
-| Navigation and variants | `docs/index.yml`. |
+| Repository-wide documentation contract and development-time review | `AGENTS.md`. |
+| Agent documentation workflow | `AGENTS.md` and `docs/AGENTS.md`. |
+| Public documentation authoring, review policy, and validation | `docs/CONTRIBUTING.md`. |
+| Navigation and published guide variants | `docs/index.yml`. |
+| Intentional partial guide variant scope | Source `agent-variants` frontmatter validated by `scripts/sync-agent-variant-docs.mts`. |
 | Site and redirect configuration | `fern/docs.yml` and `fern/fern.config.json`. |
 | Machine delivery | Published Markdown routes, `llms.txt`, and the read-only docs MCP server. |
 | Routing skill | `.agents/skills/nemoclaw-user-guide/SKILL.md`. |
 | Starter prompt | `docs/resources/starter-prompt.md` and `scripts/generate-starter-prompt.mts`. |
 | Product-owned generated facts | `ci/platform-matrix.json` and `scripts/generate-platform-docs.py`. |
-| Variant generation | `scripts/sync-agent-variant-docs.mts`. |
+| Canonical CLI documentation | `docs/reference/commands.mdx`, checked against compiled public command and flag help and linked from task pages. |
+| Guide variant generation | `scripts/sync-agent-variant-docs.mts`. |
 | Route validation | `scripts/check-docs-published-routes.mts`. |
+| Documentation accuracy tests | Compiled CLI and installer parity, environment-variable coverage, generated platform documentation, and targeted procedure and guide variant regression tests under `test/`. |
 | Update workflow | `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
 | Documentation review receipt | `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/docs-review-receipt.yaml`, and `scripts/docs-review-receipt.mts`. |
 | Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
@@ -578,13 +638,16 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Every priority task has routing metadata, a stable machine-readable route, and a verification step.
 - Search, the docs index, and rendered navigation resolve to the same release and canonical owner.
 - Routing prompts and skills point to the source instead of copying it.
-- Variant generation is deterministic and variant behavior is tested.
+- Reusable structured facts have a parity-checked reference owner that task pages and agent workflows consult instead of copying.
+- Guide variant generation is deterministic, partial scope declarations match published routes, and guide variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
+- Every completed development change receives an independent documentation writer review before handoff.
 - Code-changing and documentation-only pull requests record a documentation-review result tied to the current head and instruction version.
 - New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
+- Documentation accuracy claims identify their source-derived parity test, executable journey test, or evidence-based review coverage.
 - Release publication uses an approved immutable revision.
-- Retrieval, citation, task, variant, safety, and freshness regressions have repeatable evaluations.
+- Retrieval, citation, task, guide variant, safety, and freshness regressions have repeatable evaluations.
 
 The first practical milestone is one product journey that passes every condition above.
 Expand the system only after that loop is reliable.

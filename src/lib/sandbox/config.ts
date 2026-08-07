@@ -12,6 +12,14 @@
 // config set:          Host-initiated config mutation with validation.
 // config rotate-token: Credential rotation via stdin or env var.
 
+import type { AgentConfigTarget } from "./agent-config";
+
+export type { AgentConfigTarget } from "./agent-config";
+
+const {
+  DEFAULT_AGENT_CONFIG,
+  resolveAgentConfig: resolveAgentConfigTarget,
+}: typeof import("./agent-config") = require("./agent-config");
 const { createHash } = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -75,21 +83,6 @@ function parseJson<T>(text: string): T {
 // loads the agent definition, and returns the paths and format needed
 // to read/write that agent's config from the host.
 // ---------------------------------------------------------------------------
-
-export interface AgentConfigTarget {
-  /** Agent name (e.g. "openclaw", "hermes") */
-  agentName: string;
-  /** Absolute path inside sandbox to the config file */
-  configPath: string;
-  /** Directory containing the config (for chown after cp) */
-  configDir: string;
-  /** Config file format: "json", "yaml", or "toml" */
-  format: string;
-  /** Config file basename */
-  configFile: string;
-  /** Additional files to lock/unlock alongside the main config (e.g. .env, .config-hash) */
-  sensitiveFiles?: string[];
-}
 
 type LookupFn = (
   hostname: string,
@@ -173,15 +166,6 @@ export class ConfigUrlValidationError extends Error {
   }
 }
 
-const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
-  agentName: "openclaw",
-  configPath: "/sandbox/.openclaw/openclaw.json",
-  configDir: "/sandbox/.openclaw",
-  format: "json",
-  configFile: "openclaw.json",
-  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
-};
-
 const HERMES_STRICT_HASH_FILE = "/etc/nemoclaw/hermes.config-hash";
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
@@ -244,32 +228,7 @@ function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: stri
 }
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
-  try {
-    const registry = require("../state/registry");
-    const entry = registry.getSandbox(sandboxName);
-    if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
-
-    const agentDefs = require("../agent/defs");
-    const agent = agentDefs.loadAgent(entry.agent);
-    const cfg = agent.configPaths;
-
-    const dir = cfg.dir;
-    const sensitiveFiles = [`${dir}/.config-hash`];
-    // Hermes stores credentials in .env alongside the config
-    if (entry.agent === "hermes") sensitiveFiles.push(`${dir}/.env`);
-
-    return {
-      agentName: entry.agent,
-      configPath: `${dir}/${cfg.configFile}`,
-      configDir: dir,
-      format: cfg.format || "json",
-      configFile: cfg.configFile,
-      sensitiveFiles,
-    };
-  } catch {
-    // Registry or agent-defs unavailable (e.g., during tests) — fall back
-    return DEFAULT_AGENT_CONFIG;
-  }
+  return resolveAgentConfigTarget(sandboxName);
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +549,7 @@ function writeSandboxConfig(
     if (result.issues.length > 0) {
       configFail(result.issues.map((issue) => `  ${issue}`));
     }
+    // Integrity-only digest for guard output; this is not a password verifier.
     const expectedNewDigest = createHash("sha256").update(content).digest("hex");
     if (result.configSha256 !== expectedNewDigest) {
       throw new Error(
@@ -648,6 +608,7 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
 // (installed by the agents/hermes image build). The python resolution order
 // mirrors start.sh's trusted `_HERMES_PYTHON` list.
 const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+const HERMES_MANAGED_POLICY_PATH = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
 const HERMES_TRUSTED_PYTHON3 = [
   "/opt/hermes/.venv/bin/python3",
   "/usr/local/bin/python3",
@@ -706,23 +667,26 @@ function hermesDashboardReseedFailureDetail(
 
 /**
  * Re-run the Hermes dashboard config seeder inside the sandbox so the isolated
- * dashboard-home config (`<configDir>/dashboard-home/config.yaml`) re-mirrors the
- * gateway config's model routing after an in-place `inference set`. Sandbox
- * startup runs the same seeder; without re-running it, Dashboard Chat and its
- * `/api/model/info` endpoint stay on the previous model even though the gateway
- * config, registry, and CLI status all report the new one (#6893).
+ * dashboard profile config (`<configDir>/profiles/dashboard-home/config.yaml`)
+ * re-mirrors the gateway config's model routing after an in-place
+ * `inference set`. Sandbox startup runs the same seeder; without re-running it,
+ * Dashboard Chat and its `/api/model/info` endpoint stay on the previous model
+ * even though the gateway config, registry, and CLI status all report the new
+ * one (#6893).
  *
  * Runs as the sandbox user (non-privileged `sandbox exec`, matching start.sh's
  * step-down before touching sandbox-owned dashboard-home state); the seeder does
  * no-follow atomic writes and refuses symlinked paths. Best-effort: returns
  * `failed` on failure so the caller can warn without aborting the route switch.
  */
-function seedHermesDashboardConfig(
+function runHermesDashboardConfigSeed(
   sandboxName: string,
   target: AgentConfigTarget,
-  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+  mergeLegacy: boolean,
+  deps: HermesDashboardReseedDeps,
 ): HermesDashboardReseedResult {
-  const dashboardHome = `${target.configDir}/dashboard-home`;
+  const dashboardHome = `${target.configDir}/profiles/dashboard-home`;
+  const legacyDashboardHome = `${target.configDir}/dashboard-home`;
   const binary = deps.getOpenshellBinary();
   const capture = (command: string[]) =>
     deps.captureOpenshellCommand(
@@ -767,13 +731,20 @@ function seedHermesDashboardConfig(
   // lstat distinguishes a genuinely absent profile from a file, a symlink
   // (including a broken one), or an inspection error. Only the first case is a
   // clean no-op; everything else fails closed so callers cannot report sync.
-  const inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, dashboardHome]);
+  let inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, dashboardHome]);
   if (
     !inspection.error &&
     !inspection.signal &&
     inspection.status === HERMES_DASHBOARD_PATH_ABSENT_STATUS
   ) {
-    return "absent";
+    inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, legacyDashboardHome]);
+    if (
+      !inspection.error &&
+      !inspection.signal &&
+      inspection.status === HERMES_DASHBOARD_PATH_ABSENT_STATUS
+    ) {
+      return "absent";
+    }
   }
   if (failed(inspection)) {
     reportFailure("inspection", inspection);
@@ -784,6 +755,8 @@ function seedHermesDashboardConfig(
   const seed = capture([
     python,
     HERMES_DASHBOARD_SEEDER_PATH,
+    ...(mergeLegacy ? ["--merge-legacy"] : []),
+    HERMES_MANAGED_POLICY_PATH,
     target.configPath,
     dashboardConfigPath,
     `${target.configDir}/.env`,
@@ -793,7 +766,7 @@ function seedHermesDashboardConfig(
     reportFailure("seed", seed);
     return "failed";
   }
-  const seededMarker = `[dashboard] seeded model routing into ${dashboardConfigPath}`;
+  const seededMarker = `[dashboard] seeded model routing and reviewed policy into ${dashboardConfigPath}`;
   if (
     !String(seed.stderr ?? "")
       .split(/\r?\n/u)
@@ -803,6 +776,22 @@ function seedHermesDashboardConfig(
     return "failed";
   }
   return "converged";
+}
+
+function seedHermesDashboardConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+): HermesDashboardReseedResult {
+  return runHermesDashboardConfigSeed(sandboxName, target, false, deps);
+}
+
+function restoreHermesDashboardConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+): HermesDashboardReseedResult {
+  return runHermesDashboardConfigSeed(sandboxName, target, true, deps);
 }
 
 // ---------------------------------------------------------------------------
@@ -1514,11 +1503,11 @@ export {
   buildConfigSetRestartGuidance,
   buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
-  configSetAllowsOpenShellBridge,
   composeSandboxConfigBody,
   configGet,
   configRotateToken,
   configSet,
+  configSetAllowsOpenShellBridge,
   DEFAULT_AGENT_CONFIG,
   extractDotpath,
   findClobberingAncestor,
@@ -1532,6 +1521,7 @@ export {
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
   rewriteConfigUrlsWithDnsPinning,
+  restoreHermesDashboardConfig,
   seedHermesDashboardConfig,
   setDotpath,
   validateConfigDotpath,

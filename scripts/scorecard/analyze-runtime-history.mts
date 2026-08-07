@@ -8,6 +8,12 @@ import type {
   RuntimeHistorySample,
   RuntimeOutcome,
 } from "../audit-test-runtime.mts";
+import {
+  evaluateFirstTurnLatencyRecurrence,
+  type FirstTurnLatencySample,
+  formatFirstTurnLatencyRecurrence,
+  normalizeFirstTurnLatencySample,
+} from "./analyze-first-turn-latency.mts";
 import { readValidatedArtifactZipEntry } from "./read-artifact-zip.mts";
 
 export const RUNTIME_SUMMARY_ARTIFACT = "e2e-runtime-summary";
@@ -15,10 +21,12 @@ export const RUNTIME_SUMMARY_FILE = "e2e-runtime-summary.json";
 export const RUNTIME_REGRESSION_MIN_DELTA_MS = 30_000;
 export const RUNTIME_REGRESSION_MIN_PERCENT = 20;
 
-const RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v1";
+const LEGACY_RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v1";
+const RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v2";
 const WORKFLOW_FILE = "e2e.yaml";
-const HISTORY_RUN_LIMIT = 10;
-const HISTORY_QUERY_LIMIT = 20;
+const HISTORY_RUN_LIMIT = 30;
+const HISTORY_QUERY_LIMIT = 30;
+const RUNTIME_TREND_LIMIT = 10;
 const FLAKE_WATCH_LIMIT = 5;
 const MAX_SUMMARY_BYTES = 512 * 1024;
 const MAX_SUMMARY_ROWS = 200;
@@ -28,18 +36,23 @@ const MAX_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 type GitHubDeps = {
   github: any;
   context: { repo: { owner: string; repo: string }; runId: number };
-  core?: { warning?: (message: string) => void };
+  core?: {
+    setFailed?: (message: string) => void;
+    warning?: (message: string) => void;
+  };
 };
 
 export interface RuntimeSummaryArtifact {
-  schemaVersion: typeof RUNTIME_SUMMARY_SCHEMA;
+  schemaVersion: typeof LEGACY_RUNTIME_SUMMARY_SCHEMA | typeof RUNTIME_SUMMARY_SCHEMA;
   runId: number;
   createdAt: string;
+  firstTurnLatency: FirstTurnLatencySample | null;
   rows: RuntimeHistorySample[];
 }
 
 type RuntimeHistoryServices = {
-  loadPriorNightlySummaries: (deps: GitHubDeps) => Promise<RuntimeSummaryArtifact[]>;
+  currentFirstTurnLatency?: FirstTurnLatencySample | null;
+  loadPriorPushSummaries: (deps: GitHubDeps) => Promise<RuntimeSummaryArtifact[]>;
 };
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
@@ -124,9 +137,15 @@ function isCanonicalTimestamp(value: unknown): value is string {
 export function normalizeRuntimeSummary(value: unknown): RuntimeSummaryArtifact | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const summary = value as Record<string, unknown>;
+  const legacy = summary.schemaVersion === LEGACY_RUNTIME_SUMMARY_SCHEMA;
   if (
-    !hasExactKeys(summary, ["schemaVersion", "runId", "createdAt", "rows"]) ||
-    summary.schemaVersion !== RUNTIME_SUMMARY_SCHEMA ||
+    !hasExactKeys(
+      summary,
+      legacy
+        ? ["schemaVersion", "runId", "createdAt", "rows"]
+        : ["schemaVersion", "runId", "createdAt", "firstTurnLatency", "rows"],
+    ) ||
+    (!legacy && summary.schemaVersion !== RUNTIME_SUMMARY_SCHEMA) ||
     !Number.isSafeInteger(summary.runId) ||
     (summary.runId as number) < 1 ||
     !isCanonicalTimestamp(summary.createdAt) ||
@@ -140,10 +159,16 @@ export function normalizeRuntimeSummary(value: unknown): RuntimeSummaryArtifact 
   const normalizedRows = rows as RuntimeHistorySample[];
   const identities = normalizedRows.map((row) => JSON.stringify([row.target, row.scenario]));
   if (new Set(identities).size !== identities.length) return null;
+  const firstTurnLatency =
+    legacy || summary.firstTurnLatency === null
+      ? null
+      : normalizeFirstTurnLatencySample(summary.firstTurnLatency);
+  if (!legacy && summary.firstTurnLatency !== null && firstTurnLatency === null) return null;
   return {
-    schemaVersion: RUNTIME_SUMMARY_SCHEMA,
+    schemaVersion: legacy ? LEGACY_RUNTIME_SUMMARY_SCHEMA : RUNTIME_SUMMARY_SCHEMA,
     runId: summary.runId as number,
     createdAt: summary.createdAt,
+    firstTurnLatency,
     rows: normalizedRows,
   };
 }
@@ -152,11 +177,13 @@ export function createRuntimeSummary(
   runId: number,
   createdAt: string,
   rows: readonly RuntimeHistorySample[],
+  firstTurnLatency: FirstTurnLatencySample | null = null,
 ): RuntimeSummaryArtifact {
   const summary = normalizeRuntimeSummary({
     schemaVersion: RUNTIME_SUMMARY_SCHEMA,
     runId,
     createdAt,
+    firstTurnLatency,
     rows,
   });
   if (summary === null) throw new Error("invalid current E2E runtime summary");
@@ -198,7 +225,7 @@ async function readRuntimeSummaryFromRun(
   return summary?.runId === runId ? summary : null;
 }
 
-export async function loadPriorNightlySummaries(
+export async function loadPriorPushSummaries(
   deps: GitHubDeps,
 ): Promise<RuntimeSummaryArtifact[]> {
   const { github, context, core } = deps;
@@ -206,7 +233,7 @@ export async function loadPriorNightlySummaries(
     owner: context.repo.owner,
     repo: context.repo.repo,
     workflow_id: WORKFLOW_FILE,
-    event: "schedule",
+    event: "push",
     status: "completed",
     per_page: HISTORY_QUERY_LIMIT,
   });
@@ -219,7 +246,7 @@ export async function loadPriorNightlySummaries(
       if (summary !== null) summaries.push(summary);
     } catch {
       core?.warning?.(
-        "One prior nightly runtime summary was unavailable; continuing with less history.",
+        "One prior push runtime summary was unavailable; continuing with less history.",
       );
     }
     if (summaries.length === HISTORY_RUN_LIMIT) break;
@@ -358,13 +385,13 @@ function formatFlakeWatch(
 
   const lines = [
     "",
-    "### Nightly flake watch",
+    "### Push flake watch",
     "",
-    "Tests that both passed and failed across the current run and available nightly history. Ranked by pass/fail flips, then failures; skips do not affect the failure rate or flip count.",
+    "Tests that both passed and failed across the current run and available push history. Ranked by pass/fail flips, then failures; skips do not affect the failure rate or flip count.",
     "",
   ];
   if (rows.length === 0) {
-    lines.push("No tests both passed and failed in the available nightly window.");
+    lines.push("No tests both passed and failed in the available push window.");
     return lines;
   }
   lines.push(
@@ -418,13 +445,13 @@ export function formatRuntimeHistory(
   currentRows: readonly RuntimeHistorySample[],
   priorSummaries: readonly RuntimeSummaryArtifact[],
 ): string {
-  const sortedPrior = [...priorSummaries].sort(
-    (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
-  );
+  const sortedPrior = [...priorSummaries]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, RUNTIME_TREND_LIMIT);
   const lines = [
-    "## E2E Nightly Runtime Trend",
+    "## E2E Push Runtime Trend",
     "",
-    "Current timing compared with up to 10 prior completed scheduled runs; manual runs are excluded from history.",
+    `Current timing compared with up to ${RUNTIME_TREND_LIMIT} prior completed push runs; manual runs are excluded from history.`,
     `Regression warnings require both +${seconds(RUNTIME_REGRESSION_MIN_DELTA_MS)} and +${RUNTIME_REGRESSION_MIN_PERCENT}%.`,
     "",
   ];
@@ -434,13 +461,13 @@ export function formatRuntimeHistory(
   }
   if (sortedPrior.length === 0) {
     lines.push(
-      "No prior nightly runtime summaries are available yet; this run starts the history.",
+      "No prior push runtime summaries are available yet; this run starts the history.",
     );
     return `${lines.join("\n")}\n`;
   }
 
   lines.push(
-    "| Target | Scenario | Prior nights | Current | Prior median | Prior p95 | Delta | Current outcome | Prior P/F/S | Failure streak | Common failed phase | Significant regressions |",
+    "| Target | Scenario | Prior pushes | Current | Prior median | Prior p95 | Delta | Current outcome | Prior P/F/S | Failure streak | Common failed phase | Significant regressions |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- |",
   );
   for (const current of [...currentRows]
@@ -470,12 +497,19 @@ export async function buildRuntimeHistory(
   deps: GitHubDeps,
   currentRows: readonly RuntimeHistorySample[],
   outputPath: string,
-  services: RuntimeHistoryServices = { loadPriorNightlySummaries },
+  services: RuntimeHistoryServices = { loadPriorPushSummaries },
   now = new Date(),
 ): Promise<string> {
+  const hasFirstTurnLatency = Object.hasOwn(services, "currentFirstTurnLatency");
+  const currentFirstTurnLatency = services.currentFirstTurnLatency ?? null;
   let current: RuntimeSummaryArtifact;
   try {
-    current = createRuntimeSummary(deps.context.runId, now.toISOString(), currentRows);
+    current = createRuntimeSummary(
+      deps.context.runId,
+      now.toISOString(),
+      currentRows,
+      currentFirstTurnLatency,
+    );
     const serialized = `${JSON.stringify(current, null, 2)}\n`;
     if (Buffer.byteLength(serialized) > MAX_SUMMARY_BYTES) {
       throw new Error("current E2E runtime summary exceeds its size bound");
@@ -483,17 +517,25 @@ export async function buildRuntimeHistory(
     fs.writeFileSync(outputPath, serialized, { encoding: "utf8", flag: "wx", mode: 0o600 });
   } catch {
     deps.core?.warning?.(
-      "Current E2E runtime summary was invalid or could not be saved; nightly history is unavailable.",
+      "Current E2E runtime summary was invalid or could not be saved; push history is unavailable.",
     );
     return formatRuntimeHistory([], []);
   }
   try {
-    const prior = await services.loadPriorNightlySummaries(deps);
-    return formatRuntimeHistory(current.rows, prior);
+    const prior = await services.loadPriorPushSummaries(deps);
+    const runtimeHistory = formatRuntimeHistory(current.rows, prior);
+    if (!hasFirstTurnLatency) return runtimeHistory;
+    const recurrence = evaluateFirstTurnLatencyRecurrence(current.firstTurnLatency, prior);
+    if (!recurrence.passed && recurrence.message) deps.core?.setFailed?.(recurrence.message);
+    return `${runtimeHistory}\n${formatFirstTurnLatencyRecurrence(recurrence)}`;
   } catch {
     deps.core?.warning?.(
-      "Nightly E2E runtime history unavailable; current summary was still saved.",
+      "Push E2E runtime history unavailable; current summary was still saved.",
     );
-    return formatRuntimeHistory(current.rows, []);
+    const runtimeHistory = formatRuntimeHistory(current.rows, []);
+    if (!hasFirstTurnLatency) return runtimeHistory;
+    return `${runtimeHistory}\n${formatFirstTurnLatencyRecurrence(
+      evaluateFirstTurnLatencyRecurrence(current.firstTurnLatency, []),
+    )}`;
   }
 }

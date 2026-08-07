@@ -4,6 +4,8 @@
 # PR Review Priorities
 
 Use this order when you review a PR. Hard gates block approval. Queue signals set review order.
+Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md) to the
+current diff and repository evidence while evaluating these gates and expectations.
 
 ## Hard gates (all must pass to approve)
 
@@ -27,8 +29,10 @@ Read its comment and verify each claim against code, tests, and workflow evidenc
 Apply a confirmed problem to the related gate. Ask the user about ambiguous or design-changing advice.
 Advisor labels, absence, and comment source do not affect `check-gates.ts` or `allPass`.
 
-Follow the [NemoClaw Writing Guide](../../../WRITING.md) for changed comments, test titles, PR discussion, changelog entries, and Announcements.
-The guide defines which language findings can block and how to write a suggestion.
+Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
+contract for changed comments, test titles, PR discussion, changelog entries, and Announcements.
+The writing guide routed by that contract defines which language findings can block and how to
+write a suggestion.
 
 ## Quality expectations (block if violated, but fixable via salvage)
 

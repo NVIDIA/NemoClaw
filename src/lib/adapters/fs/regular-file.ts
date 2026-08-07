@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 export interface OpenRegularFile {
   close(): void;
-  readUtf8(): string;
+  readUtf8(maxBytes?: number): string;
   replaceUtf8(contents: string, mode: number): void;
 }
 
@@ -63,8 +63,11 @@ export function openRegularFileNoFollow(
   }
   return {
     close,
-    readUtf8: () => {
+    readUtf8: (maxBytes) => {
       const size = fs.fstatSync(descriptor).size;
+      if (maxBytes !== undefined && size > maxBytes) {
+        throw new RangeError(`regular file exceeds the ${maxBytes}-byte read limit: ${target}`);
+      }
       const bytes = Buffer.alloc(size);
       let offset = 0;
       while (offset < size) {

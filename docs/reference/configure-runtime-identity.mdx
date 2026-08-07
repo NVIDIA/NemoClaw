@@ -1,0 +1,286 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure Experimental Runtime Identity"
+sidebar-title: "Configure Runtime Identity"
+description: "Configure the experimental provider-neutral runtime identity component for a direct OpenClaw blueprint."
+description-agent: "Configures the direct OpenClaw blueprint runner's experimental runtime identity component, including its Okta and Microsoft Entra profiles, trust boundary, lifecycle, inspection, and rollback. Use when operating components.identity outside normal onboarding."
+keywords: ["nemoclaw runtime identity", "openclaw runtime identity", "okta runtime identity", "microsoft entra runtime identity"]
+agent-variants: ["openclaw"]
+content:
+  type: "how_to"
+---
+
+The direct OpenClaw blueprint runner can attach a provider-neutral runtime identity to a sandbox.
+The shipped blueprint and normal `nemoclaw onboard` do not enable or configure this experimental capability.
+
+The bundled Okta and Microsoft Entra profiles are data-only implementations of the component.
+The blueprint schema describes the OpenShell provider binding and OAuth refresh inputs without using the identity provider as a schema discriminator.
+
+## Review the Trust Boundary
+
+Runtime identity is opt-in only when a direct-runner blueprint includes `components.identity`.
+There is no implicit activation path.
+
+The host process that supplies the named OAuth bootstrap variables and the authenticated OpenShell gateway are trusted.
+The blueprint, copied profile, same-name gateway resources, sandbox workload, subprocess output, persisted state, and CI artifacts are untrusted or observable surfaces.
+
+The runner validates the complete data-only profile before import.
+It fails closed on ambiguous resource inspection, scopes secret material to one refresh-configuration subprocess, and persists only non-secret ownership receipts.
+OpenShell owns credential custody, refresh, admitted-request enforcement, and bearer substitution.
+NemoClaw never exposes the minted bearer to the sandbox.
+
+<Warning>
+Runtime identity profiles may use DNS-backed HTTPS only within a provider type's repository-reviewed hostname suffixes.
+NemoClaw resolves every destination before import and rejects private or internal addresses.
+OpenShell performs connect-time server-side request forgery (SSRF) and L7 enforcement before it injects the provider credential.
+
+OpenShell 0.0.85 verifies the original hostname's certificate but does not pin the address that NemoClaw resolved.
+Only identity-platform-controlled DNS namespaces such as `okta.com`, `login.microsoftonline.com`, and `graph.microsoft.com` belong in this trust table.
+An attacker-controlled or customer-controlled suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
+</Warning>
+
+### Review the Conformance Evidence
+
+The deterministic `TC-INF-12` and `TC-INF-13` protected end-to-end (E2E) scenarios are the conformance gates for this boundary.
+Both run the real blueprint runner against a real OpenShell gateway and sandbox.
+
+The scenarios enable provider-derived policy and restore its prior setting.
+They exchange a refresh token through a public HTTPS OAuth endpoint and prove that the sandbox sees only opaque placeholders.
+They prove that a child launched after rotation receives a different revision-scoped placeholder and that the protected resource receives both bearers.
+They also check secret-free plan, status, state, logs, request ledgers, and ownership-aware rollback.
+`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the exact Microsoft Graph `GET /v1.0/me` credential-delivery rule.
+It proves that a `GET /v1.0/users` request is rejected before its bearer reaches the fixture.
+The deterministic fixture proves the complete Entra-shaped runtime path without storing a third-party tenant credential in pull-request CI; tenant acceptance remains a maintainer-run check against Microsoft Entra and Graph.
+
+Focused tests cover malformed profiles, endpoint and DNS rejection, subprocess scoping, same-name resources, partial-apply compensation, and retryable rollback receipts.
+The gateway refresh client's DNS-pinning limitation is the accepted residual boundary.
+Expanding the trusted hostname policy requires upstream pinning and new conformance evidence.
+
+## Enable Provider-Derived Policy
+
+Enable provider-derived policy on the target gateway before you apply the blueprint.
+
+```bash
+openshell settings set --global --key providers_v2_enabled --value true --yes
+```
+
+Apply reads the gateway-global setting before identity mutation and again before attachment.
+It stops unless the JSON value is exactly `true`.
+This check prevents an attachment whose provider-derived network policy and credential injection are inactive.
+
+## Configure the Okta Reference Profile
+
+Copy `nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-okta-runtime.yaml`.
+You may choose another tenant-specific filename.
+Set `profile_path` to that exact relative path.
+
+Set `token_url` to the tenant's authorization-server token endpoint.
+Replace `api.example.okta.com` with the approved upstream API host.
+Keep both hosts in the profile so blueprint input cannot redirect refresh material or bearer-token presentation.
+
+Configure the reference under `components`.
+
+```yaml
+identity:
+  profile_path: provider-profiles/acme-okta-runtime.yaml
+  provider_type: okta-runtime-v1
+  provider_name: acme-okta-runtime
+  credential_key: OKTA_ACCESS_TOKEN
+  client_id_env: OKTA_CLIENT_ID # must be exactly this value
+  refresh_token_env: OKTA_REFRESH_TOKEN
+  client_secret_env: OKTA_CLIENT_SECRET
+```
+
+`client_secret_env` is optional.
+Its environment variable must be present when you configure it.
+
+Secret-material environment names must equal `API_KEY`, `TOKEN`, `SECRET`, `PASSWORD`, or `CREDENTIAL`.
+They may instead end in one of those terms after an underscore.
+The runner rejects subprocess-control names such as `NODE_OPTIONS`.
+It also rejects names forwarded by the general subprocess allowlist, including the `OPENSHELL_`, `GRPC_`, and `XDG_` prefixes.
+
+The profile path must name an existing regular file inside the blueprint directory.
+The runner rejects absolute paths, outward traversal, and outward symlinks.
+The profile `id` must match `provider_type`.
+The profile must declare exactly one credential whose name matches `credential_key`.
+The runner validates the complete credential-delivery policy and rejects unknown fields.
+
+The Okta reference requires these properties:
+
+- Bearer presentation through the `authorization` header.
+- The reviewed OAuth refresh-material shape.
+- Enforced REST `GET /**` endpoint rules.
+- The bundled Node.js and curl executable allowlist.
+
+The runner imports a private temporary snapshot of the validated profile bytes.
+Replacing the original file or symlink cannot change the policy that OpenShell receives.
+
+The runner requires HTTPS refresh and endpoint destinations.
+It restricts them to the provider type's trusted host policy and applies NemoClaw's DNS-aware SSRF validation.
+Private, loopback, link-local, and unresolved destinations are rejected.
+
+DNS-backed destinations require a reviewed policy that marks their namespace as identity-platform-controlled.
+Other profile policies reject them before import.
+The current `okta-runtime-v1` policy accepts `okta.com` and its subdomains.
+Custom Okta domains are not supported.
+
+The reviewed policy fixes the non-secret client ID source to `OKTA_CLIENT_ID`.
+A blueprint cannot select another host variable.
+Command failures redact the client ID with the secret refresh material.
+
+Export the named environment variables in the host process that runs the direct blueprint runner.
+Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server.
+`openshell gateway login` authenticates a CLI user to the gateway and is not part of this runtime-credential flow.
+
+<Warning>
+The host process can read `OKTA_REFRESH_TOKEN` and `OKTA_CLIENT_SECRET`, and the runner forwards them only to the scoped refresh-configuration subprocess.
+These environment variables remain available until you unset them or the host process exits.
+After apply succeeds, run `unset OKTA_REFRESH_TOKEN OKTA_CLIENT_SECRET` in the host shell.
+OpenShell retains the refresh material in the gateway credential store until rollback or provider deletion removes the owned provider.
+</Warning>
+
+## Configure the Microsoft Entra Reference Profile
+
+Copy `nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-entra-runtime.yaml`.
+Replace `organizations` in `token_url` with the Directory (tenant) ID for the application registration.
+The built-in policy accepts only the exact `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host.
+It does not admit national-cloud endpoints or tenant-controlled custom domains.
+Bearer delivery is restricted to exactly `GET /v1.0/me`.
+
+Configure the same provider-neutral component with the Entra implementation.
+
+```yaml
+identity:
+  profile_path: provider-profiles/acme-entra-runtime.yaml
+  provider_type: entra-runtime-v1
+  provider_name: acme-entra-runtime
+  credential_key: ENTRA_ACCESS_TOKEN
+  client_id_env: ENTRA_CLIENT_ID
+  refresh_token_env: ENTRA_REFRESH_TOKEN
+  client_secret_env: ENTRA_CLIENT_SECRET
+```
+
+Register a separate Entra application for the delegated runtime flow.
+Grant only the Microsoft Graph delegated `User.Read` permission needed by [`GET /me`](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0).
+During the external authorization-code bootstrap, request [`offline_access`](https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope) so the v2 endpoint returns a refresh token.
+Microsoft documents `offline_access` as an explicit requirement for v2 refresh-token issuance.
+It also [documents replacement of the stored refresh token](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#refresh-the-access-token) when a refresh response carries a new refresh token.
+Use a confidential web application and `ENTRA_CLIENT_SECRET` when the bootstrap client can keep a secret.
+Omit `client_secret_env` for a public client rather than placing a public-client secret on the host.
+NemoClaw does not package the authorization redirect, consent UI, PKCE exchange, or MSAL cache.
+
+<Warning>
+The host process can read `ENTRA_REFRESH_TOKEN` and `ENTRA_CLIENT_SECRET`, and the runner forwards them only to the scoped refresh-configuration subprocess.
+These environment variables remain available until you unset them or the host process exits.
+After apply succeeds, run `unset ENTRA_REFRESH_TOKEN ENTRA_CLIENT_SECRET` in the host shell.
+OpenShell retains the refresh material in the gateway credential store until rollback or provider deletion removes the owned provider.
+</Warning>
+
+Acquire the initial refresh token outside NemoClaw using Microsoft-supported identity tooling, then export the application client ID, refresh token, and optional client secret into the host process that runs the direct blueprint runner.
+
+The repository does not publish a user-facing command for this experimental direct runner.
+A maintainer-run tenant acceptance must establish all of the following criteria:
+
+- Apply imports the copied Entra profile, creates the owned provider, attaches it to the intended sandbox, and reports successful refresh status.
+- A newly launched sandbox child sees an `openshell:resolve:env:...` placeholder instead of the access token.
+- The protected-resource request below returns the signed-in delegated user.
+- OpenShell rejects a request to another Graph path before bearer delivery.
+- Credential rotation gives a new child a new revision-scoped placeholder, and `GET /v1.0/me` succeeds with the rotated credential.
+- Rollback removes the owned attachment and provider while preserving any reused sandbox.
+
+Do not save the Graph response, refresh token, access token, or client secret in a terminal transcript or CI artifact.
+Run the protected-resource acceptance request from a newly launched sandbox child, where `ENTRA_ACCESS_TOKEN` is the child-scoped OpenShell placeholder.
+Do not run this request from the host shell; the child request must traverse the OpenShell proxy so its bearer delivery and Graph path restrictions are exercised:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer ${ENTRA_ACCESS_TOKEN}" \
+  https://graph.microsoft.com/v1.0/me
+```
+
+## Apply the Runtime Identity
+
+During plan, the runner reports only the provider type, provider name, and credential key.
+It does not report secret material.
+
+During apply, the runner inspects the target sandbox before identity mutation.
+It requires either the exact sandbox name in the `Ready` phase or an explicit sandbox-not-found result.
+If sandbox creation races with another creator, the runner repeats the same inspection.
+It inspects the sandbox again after inference routing and immediately before identity attachment.
+If the sandbox changed, the runner compensates without attachment.
+
+The runner always inspects the configured inference provider before identity mutation.
+It reuses a provider only when its name, type, and required non-secret key shape match the blueprint.
+It permits creation only after an explicit provider-not-found result.
+If another actor creates the provider concurrently, the runner repeats the binding inspection before it treats the provider as unowned reusable state.
+Any other inspection failure stops apply.
+
+The runner also inspects the requested runtime identity provider name.
+Any same-name provider stops apply.
+The runner validates an existing provider's non-secret binding to report a precise error.
+It never reuses that provider because OpenShell does not expose a secret-safe snapshot that rollback could restore.
+
+Only an absent provider proceeds to profile import.
+When the profile is already registered, the runner first requires an exact export match.
+It then creates the provider, configures gateway-managed OAuth refresh, and performs the initial token rotation.
+
+Before attachment, the runner creates or reuses the configured inference provider.
+For a reused sandbox and provider, it preserves the live route only when the provider, model, and requested timeout match the blueprint.
+An absent or different route must pass `openshell inference set`.
+The runner attaches the runtime identity and applies policy additions only after OpenShell confirms the route.
+
+Each successful apply creates and owns the runtime identity provider whose refresh state it mutates.
+The persisted plan records ownership of the runtime identity provider, sandbox attachment, inference provider, and sandbox.
+The runner writes the receipt as it acquires each resource.
+The receipt preserves a recovery path when automatic compensation fails.
+
+If a later step fails, the runner reverses only resources that apply created.
+It detaches the runtime identity provider, deletes created providers, and removes a created sandbox.
+
+The runner never places the refresh token or optional client secret in command arguments or persisted plans.
+It passes them to `openshell provider refresh configure` through a scoped subprocess environment.
+OpenShell stores the credential material in the gateway credential store.
+Other runner subprocesses receive the allowlisted environment without identity material.
+
+Each sandbox child launch receives an opaque provider-specific placeholder such as `OKTA_ACCESS_TOKEN` or `ENTRA_ACCESS_TOKEN`.
+The OpenShell L7 proxy substitutes the corresponding access token only for admitted HTTPS requests.
+After rotation, launch a new child process to receive the new revision-scoped placeholder.
+An earlier child process does not adopt the rotation.
+
+## Inspect Runtime Identity State
+
+Check gateway-side state without printing credential values.
+
+```bash
+openshell provider refresh status acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN
+openshell sandbox provider list <sandbox-name>
+```
+
+The direct runner `status` action reports the non-secret identity ownership receipt.
+
+## Roll Back Runtime Identity
+
+The `rollback` action verifies the current provider binding before it changes resources.
+It detaches the provider only when the apply created the sandbox attachment.
+It deletes the provider only when the apply created it.
+
+Rollback removes a sandbox only when the persisted plan proves that apply created it.
+It preserves reused sandboxes and legacy plans with unknown sandbox ownership.
+After an owned sandbox is removed, rollback deletes an inference provider only when the receipt proves that apply created it.
+The same provider rule applies immediately when the sandbox was reused.
+
+If removal of an apply-owned sandbox fails, rollback returns the bounded error without writing its completion marker.
+The ownership receipt remains available for retry.
+Rollback does not mutate a same-name provider when its binding no longer matches the receipt.
+
+## Review the Scope Limits
+
+Runtime identity does not add a generic blueprint middleware surface.
+Configure deployment-specific pre-credential policy through separately supported OpenShell tooling.
+This reference does not package an OAuth bootstrap application, an on-behalf-of exchange, or a production identity middleware service.
+
+## Related Topics
+
+- [Architecture Details](architecture) for the blueprint lifecycle and system topology.
+- [Credential Storage](../security/credential-storage) for the OpenShell credential boundary.

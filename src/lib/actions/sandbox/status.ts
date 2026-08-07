@@ -3,6 +3,7 @@
 
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../../cli/branding";
+import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -63,6 +64,7 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   }
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: status composes independent diagnostic surfaces.
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
@@ -71,7 +73,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // handles `gateway_error` by printing an actionable block + exit(1), so a
   // synthesized fallback keeps the user-visible contract intact.
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
-    suppressInferenceProbe: preflight.suppressInferenceProbe,
+    preflight,
   });
   const {
     sb,
@@ -88,7 +90,10 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
-  const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
+  const effectivePreflight = withoutTerminalPhasePreflight(
+    snapshot.postRecoveryPreflight ?? preflight,
+    phase,
+  );
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   printSandboxStatusPreflightHeader(effectivePreflight);
   if (effectivePreflight.exitCode !== 0) {
@@ -131,6 +136,23 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 
   printDockerHealth(dockerRuntime);
   printNimStatus(sandboxName, sb);
+  const managedLlamaCpp = inspectManagedLlamaCppStatus(sandboxName, {
+    ...(typeof sb?.gatewayPort === "number" ? { gatewayPort: sb.gatewayPort } : {}),
+  });
+  if (managedLlamaCpp) {
+    console.log(`    Managed llama.cpp: ${managedLlamaCpp.state}`);
+    console.log(`      Recipe: ${managedLlamaCpp.recipeId}`);
+    console.log(`      Model digest: ${managedLlamaCpp.modelDigest ?? "not published"}`);
+    console.log(`      Image: ${managedLlamaCpp.imageReference ?? "not published"}`);
+    console.log(`      Endpoint: ${managedLlamaCpp.endpoint}`);
+    console.log(`      ${managedLlamaCpp.detail}`);
+    if (
+      ["absent", "conflict", "unknown"].includes(managedLlamaCpp.state) &&
+      (!process.exitCode || process.exitCode === 0)
+    ) {
+      process.exitCode = 1;
+    }
+  }
   console.log("");
 }
 

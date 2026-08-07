@@ -14,7 +14,7 @@ vi.mock("../../state/registry", () => ({
   getSandbox: mocks.getSandbox,
 }));
 
-vi.mock("../../actions/global", () => ({
+vi.mock("../../adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
@@ -127,6 +127,36 @@ describe("Hermes MCP host reconciliation", () => {
     expect(() => assertHermesMcpRuntimeIntent("alpha")).toThrow(
       /does not match the persisted managed intent/,
     );
+  });
+
+  it("retries a raced integrity snapshot with a fresh inspection", () => {
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "refusing raced Hermes MCP integrity snapshot",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: '{"ok":true,"state":"matched"}\n',
+        stderr: "",
+      });
+
+    expect(() => assertHermesMcpRuntimeIntent("alpha")).not.toThrow();
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds raced integrity snapshot retries and still fails closed", () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "refusing raced Hermes MCP integrity snapshot",
+    });
+
+    expect(() => assertHermesMcpRuntimeIntent("alpha")).toThrow(
+      /refusing raced Hermes MCP integrity snapshot/,
+    );
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(3);
   });
 
   it("sanitizes thrown helper failures before returning or throwing them", () => {

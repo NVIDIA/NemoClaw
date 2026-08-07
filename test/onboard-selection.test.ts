@@ -71,7 +71,6 @@ const CREDENTIAL_RETRY_PROMPT_RE =
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
-
 const TEST_REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints", providerName: "nvidia-prod" },
   openai: { label: "OpenAI", providerName: "openai-api" },
@@ -124,11 +123,9 @@ type WindowsRequirement = ReturnType<typeof getWindowsHostOllamaDockerRequiremen
 type ProviderMenuOverrides = Partial<Parameters<typeof buildInferenceProviderMenu>[0]>;
 type SetupNimOllamaDeps = Parameters<typeof createSetupNimOllamaHandlers>[0];
 type RemoteModelValidatorDeps = Parameters<typeof createRemoteModelValidator>[0];
-
 function unexpected(name: string): never {
   throw new Error(`Unexpected ${name} call`);
 }
-
 function makeSetupNimHostState(
   overrides: Partial<InferenceProviderHostState> = {},
 ): InferenceProviderHostState {
@@ -152,13 +149,14 @@ function makeSetupNimHostState(
     ...overrides,
   };
 }
-
 function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
   return {
     remoteProviderConfig: TEST_SETUP_NIM_REMOTE_PROVIDER_CONFIG,
     experimental: false,
     ollamaPort: 11434,
     vllmPort: 8000,
+    getGatewayPort: () => 8080,
+    getRuntimeProvider: () => unexpected("runtime provider selection"),
     step: () => {},
     isNonInteractive: () => false,
     getNonInteractiveProvider: () => null,
@@ -183,6 +181,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     error: () => {},
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
+    handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
     handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),
@@ -3015,7 +3014,6 @@ const { setupNim } = require(${onboardPath});
         validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
       }),
     );
-
     try {
       const { result, lines } = await captureConsoleOutput(() =>
         validateSelectedRemoteModel({
@@ -4309,6 +4307,7 @@ const { setupNim } = require(${onboardPath});
           exitCode: 0,
           timedOut: false,
         }),
+        recordUserLocalOllamaOwnershipImpl: () => {},
         runShellImpl,
         waitForHttpImpl: () => true,
       }),
@@ -4725,7 +4724,6 @@ process.exit(0);
     const script = String.raw`
 const runner = require(${runnerPath});
 // Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
-// Handles verifyInferenceRoute's "openshell inference get" call.
 runner.runCapture = (cmd) => {
   const args = Array.isArray(cmd) ? cmd : [];
   if (args[1] === "inference" && args[2] === "get") {

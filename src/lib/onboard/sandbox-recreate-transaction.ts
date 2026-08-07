@@ -12,6 +12,13 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  type RuntimeProviderWorkloadCleanupResult,
+  requireRuntimeProviderDestructiveCleanupAuthority,
+} from "./runtime-provider/access";
 import type { SandboxCreateIntent } from "./types";
 
 const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
@@ -24,6 +31,90 @@ const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
   "completed",
 ];
 
+export type ReplacedSandboxWorkloadCleanupResult =
+  | RuntimeProviderWorkloadCleanupResult
+  | { readonly status: "skipped"; readonly reason: "replacement-unproven" | "image-reused" };
+
+export type ReplacedSandboxSourceEntry = Omit<SandboxEntry, "workload"> & {
+  readonly workload?:
+    | Exclude<NonNullable<SandboxEntry["workload"]>, { readonly kind: "legacy-dockerfile" }>
+    | {
+        readonly schemaVersion: 1;
+        readonly kind: "legacy-dockerfile";
+        readonly reference: string | null;
+        readonly shared: boolean;
+      };
+};
+
+interface ReplacedSandboxWorkloadCleanupDeps {
+  readonly runtimeProviders?: RuntimeProviderBundleRegistry;
+}
+
+function providerCleanupSource(source: ReplacedSandboxSourceEntry): SandboxEntry {
+  const { workload, ...entry } = source;
+  if (!workload) return entry;
+  if (workload.kind !== "legacy-dockerfile") return { ...entry, workload };
+  return { ...entry, workload: { ...workload, shared: false } };
+}
+
+function workloadReference(workload: SandboxEntry["workload"]): string | null {
+  return !workload || workload.kind === "native-artifact" ? null : workload.reference;
+}
+
+/** Remove an owned source image only after the journaled replacement is registered. */
+export function retireReplacedSandboxWorkload(
+  sandboxName: string,
+  targetGeneration: string,
+  targetLiveIdentityFingerprint: string | null,
+  source: ReplacedSandboxSourceEntry,
+  replacement: SandboxEntry | null,
+  deps: ReplacedSandboxWorkloadCleanupDeps = {},
+): ReplacedSandboxWorkloadCleanupResult {
+  if (
+    source.name !== sandboxName ||
+    replacement?.name !== sandboxName ||
+    replacement.lifecycleGeneration !== targetGeneration ||
+    !targetLiveIdentityFingerprint ||
+    replacement.lifecycleLiveIdentityFingerprint !== targetLiveIdentityFingerprint
+  ) {
+    return { status: "skipped", reason: "replacement-unproven" };
+  }
+  if (source.workload?.shared === true) {
+    return { status: "skipped", reason: "shared-image" };
+  }
+
+  const cleanupSource = providerCleanupSource(source);
+  const providers = deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES;
+  let authority;
+  try {
+    authority = requireRuntimeProviderDestructiveCleanupAuthority(
+      sandboxName,
+      cleanupSource,
+      providers,
+    );
+  } catch (error) {
+    if (!(error instanceof RuntimeProviderSelectionError)) throw error;
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  const plan = authority.provider.cleanup.planOwnedWorkloadCleanup({
+    sandbox: cleanupSource,
+    sandboxName,
+  });
+  if (plan.action === "retain") {
+    return { status: "skipped", reason: plan.reason };
+  }
+  if (plan.action !== "remove") {
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  if (
+    (replacement.workload?.kind !== "native-artifact" && replacement.imageTag === plan.reference) ||
+    workloadReference(replacement.workload) === plan.reference
+  ) {
+    return { status: "skipped", reason: "image-reused" };
+  }
+  return authority.provider.cleanup.removeOwnedWorkload({ sandbox: cleanupSource, sandboxName });
+}
+
 function canonicalJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJsonValue);
   if (!value || typeof value !== "object") return value;
@@ -35,13 +126,68 @@ function canonicalJsonValue(value: unknown): unknown {
   );
 }
 
+function checkpointSourceWorkload(
+  source: SandboxEntry,
+): CheckpointSandboxRecreateTransaction["sourceWorkload"] {
+  if (!source.imageTag) return null;
+  return {
+    openshellDriver: source.openshellDriver ?? null,
+    imageTag: source.imageTag,
+    workload:
+      source.workload?.kind === "legacy-dockerfile"
+        ? {
+            kind: "legacy-dockerfile",
+            reference: source.workload.reference,
+            shared: source.workload.shared,
+          }
+        : null,
+  };
+}
+
+export function sandboxRecreateSourceWorkloadEntry(
+  transaction: CheckpointSandboxRecreateTransaction,
+): ReplacedSandboxSourceEntry | null {
+  const source = transaction.sourceWorkload;
+  if (!source) return null;
+  return {
+    name: transaction.sandboxName,
+    openshellDriver: source.openshellDriver,
+    imageTag: source.imageTag,
+    ...(source.workload
+      ? {
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile" as const,
+            reference: source.workload.reference,
+            shared: source.workload.shared,
+          },
+        }
+      : {}),
+  };
+}
+
 export function fingerprintSandboxRecreateValue(value: unknown): string {
   const serialized = typeof value === "string" ? value : JSON.stringify(canonicalJsonValue(value));
   return createHash("sha256").update(serialized).digest("hex");
 }
 
+const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
+  "pendingRouteReservation",
+  "reservationSessionId",
+  "provider",
+  "model",
+  "endpointUrl",
+  "endpointSource",
+  "credentialEnv",
+  "preferredInferenceApi",
+  "gatewayName",
+  "gatewayPort",
+];
+
 export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
-  return fingerprintSandboxRecreateValue(entry);
+  const durable: Record<string, unknown> = { ...entry };
+  for (const field of ROUTE_RESERVATION_FIELDS) delete durable[field];
+  return fingerprintSandboxRecreateValue(durable);
 }
 
 export function fingerprintSandboxLiveIdentity(getOutput: string): string | null {
@@ -54,6 +200,87 @@ export function fingerprintSandboxLiveIdentity(getOutput: string): string | null
 export interface SandboxRecreateObservation {
   readonly state: "missing" | "not_ready" | "ready";
   readonly liveIdentityFingerprint: string | null;
+}
+
+export interface SandboxRecreateSourceProof {
+  readonly transactionId: string;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly sourceRegistryFingerprint: string;
+  readonly sourceLiveIdentityFingerprint: string | null;
+  readonly sourceConfirmedAbsent: boolean;
+  readonly targetGeneration: string;
+}
+
+export class SandboxRecreateSourceMismatchError extends Error {
+  readonly sandboxName: string;
+  readonly reason: string;
+
+  constructor(sandboxName: string, reason: string) {
+    super(`Cannot prove the source of sandbox '${sandboxName}' before recreation: ${reason}.`);
+    this.name = "SandboxRecreateSourceMismatchError";
+    this.sandboxName = sandboxName;
+    this.reason = reason;
+  }
+}
+
+export function sandboxRecreateSourceProof(
+  transaction: CheckpointSandboxRecreateTransaction,
+): SandboxRecreateSourceProof {
+  return {
+    transactionId: transaction.id,
+    sandboxName: transaction.sandboxName,
+    gatewayName: transaction.gatewayName,
+    gatewayPort: transaction.gatewayPort,
+    sourceRegistryFingerprint: transaction.sourceRegistryFingerprint,
+    sourceLiveIdentityFingerprint: transaction.sourceLiveIdentityFingerprint,
+    sourceConfirmedAbsent: sandboxRecreatePhaseReached(transaction.phase, "deleted"),
+    targetGeneration: transaction.targetGeneration,
+  };
+}
+
+export interface SandboxRecreateSourceCheck {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly registryEntry: SandboxEntry | null;
+  readonly observation: SandboxRecreateObservation;
+}
+
+export function assertSandboxRecreateSourceProof(
+  proof: SandboxRecreateSourceProof | null,
+  check: SandboxRecreateSourceCheck,
+): SandboxRecreateSourceProof {
+  const fail = (reason: string): never => {
+    throw new SandboxRecreateSourceMismatchError(check.sandboxName, reason);
+  };
+  if (!proof) return fail("no active recreate transaction records the source sandbox");
+  if (proof.sandboxName !== check.sandboxName) {
+    return fail(`the active transaction records sandbox '${proof.sandboxName}'`);
+  }
+  if (proof.gatewayName !== check.gatewayName || proof.gatewayPort !== check.gatewayPort) {
+    return fail(
+      `the active transaction records gateway '${proof.gatewayName}:${String(proof.gatewayPort)}'`,
+    );
+  }
+  if (!check.registryEntry) return fail("the source registry row is absent");
+  if (fingerprintSandboxRegistryEntry(check.registryEntry) !== proof.sourceRegistryFingerprint) {
+    return fail("the source registry row changed after the transaction recorded it");
+  }
+  if (check.observation.state === "missing") {
+    if (!proof.sourceConfirmedAbsent) {
+      return fail("the recreate journal has not confirmed source deletion");
+    }
+    return proof;
+  }
+  if (!check.observation.liveIdentityFingerprint) {
+    return fail("the live same-name sandbox reports no OpenShell Id");
+  }
+  if (check.observation.liveIdentityFingerprint !== proof.sourceLiveIdentityFingerprint) {
+    return fail("the live same-name sandbox is not the recorded source");
+  }
+  return proof;
 }
 
 function baseCheckpoint(session: Session): OnboardCheckpoint {
@@ -122,6 +349,7 @@ export function beginSandboxRecreateTransaction(
     gatewayPort: input.gatewayPort,
     sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(input.sourceEntry),
     sourceLiveIdentityFingerprint: input.observation.liveIdentityFingerprint,
+    sourceWorkload: checkpointSourceWorkload(input.sourceEntry),
     targetIntentFingerprint: input.targetIntentFingerprint,
     targetGeneration: input.targetGeneration ?? randomUUID(),
     targetLiveIdentityFingerprint: null,
@@ -140,6 +368,13 @@ export function beginSandboxRecreateTransaction(
 
 function phaseIndex(phase: CheckpointSandboxRecreatePhase): number {
   return ORDERED_PHASES.indexOf(phase);
+}
+
+export function sandboxRecreatePhaseReached(
+  phase: CheckpointSandboxRecreatePhase,
+  target: CheckpointSandboxRecreatePhase,
+): boolean {
+  return phaseIndex(phase) >= phaseIndex(target);
 }
 
 export function advanceSandboxRecreateTransaction(
@@ -223,6 +458,26 @@ export function recordSandboxRecreateTargetCreated(
     sandboxRecreate: next,
   };
   return next;
+}
+
+export function abandonSandboxRecreateTransaction(session: Session, id: string): void {
+  const checkpoint = baseCheckpoint(session);
+  const current = checkpoint.sandboxRecreate;
+  if (!current || current.id !== id) {
+    throw new Error("Sandbox recreate transaction ownership changed and cannot be abandoned.");
+  }
+  if (current.revision !== 0 || current.targetLiveIdentityFingerprint) {
+    throw new Error(
+      `Sandbox '${current.sandboxName}' recreate transaction already recorded a lifecycle effect and cannot be abandoned.`,
+    );
+  }
+  const now = new Date().toISOString();
+  session.checkpoint = {
+    ...checkpoint,
+    machineState: session.machine.state,
+    updatedAt: now,
+    sandboxRecreate: null,
+  };
 }
 
 export function clearCompletedSandboxRecreateTransaction(session: Session, id: string): void {
@@ -341,14 +596,19 @@ interface SandboxRecreateSessionStore {
   updateSession(mutator: (session: Session) => Session | void): Session;
 }
 
+export type SandboxRecreateSourcePresence = "missing" | "source";
+
 export interface SandboxRecreateRuntime {
   readonly acceptedTarget: boolean;
   readonly targetGeneration: string | undefined;
+  readonly journaledGatewayName: string | null;
+  readonly sourceProof: SandboxRecreateSourceProof | null;
   readonly registrationFields: Pick<
     SandboxEntry,
     "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint"
   >;
   advance(phase: CheckpointSandboxRecreatePhase): void;
+  beginDelete(): SandboxRecreateSourcePresence;
   confirmDeleted(): void;
   recordCreated(): void;
 }
@@ -356,8 +616,17 @@ export interface SandboxRecreateRuntime {
 const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
   acceptedTarget: false,
   targetGeneration: undefined,
+  journaledGatewayName: null,
+  sourceProof: null,
   registrationFields: {},
   advance: () => undefined,
+  // Every same-name replacement deletes through this boundary. Refusing here is
+  // what stops a new caller from removing a live sandbox it never journaled.
+  beginDelete: (): SandboxRecreateSourcePresence => {
+    throw new Error(
+      "Cannot delete a same-name sandbox: no recreate transaction proves ownership of the source sandbox. Open the recreate journal before deleting.",
+    );
+  },
   confirmDeleted: () => undefined,
   recordCreated: () => undefined,
 };
@@ -368,7 +637,7 @@ export function createSandboxRecreateRuntime(
   sandboxName: string,
   gatewayName: string,
   registryEntry: SandboxEntry | null,
-  observe: (sandboxName: string) => SandboxRecreateObservation,
+  observe: (sandboxName: string, gatewayName: string) => SandboxRecreateObservation,
   note: (message: string) => void,
 ): SandboxRecreateRuntime {
   if (!request) return NO_SANDBOX_RECREATE;
@@ -379,14 +648,19 @@ export function createSandboxRecreateRuntime(
     transactionId: request.id,
     targetGeneration: request.targetGeneration,
   });
-  const advance = (phase: CheckpointSandboxRecreatePhase): void => {
+  let phase: CheckpointSandboxRecreatePhase = transaction.phase;
+  const advance = (next: CheckpointSandboxRecreatePhase): void => {
     sessionStore.updateSession((current) => {
-      advanceSandboxRecreateTransaction(current, transaction.id, phase);
+      phase = advanceSandboxRecreateTransaction(current, transaction.id, next).phase;
       return current;
     });
   };
   let targetLiveIdentityFingerprint = transaction.targetLiveIdentityFingerprint;
-  const recovery = planSandboxRecreateRecovery(transaction, observe(sandboxName), registryEntry);
+  const recovery = planSandboxRecreateRecovery(
+    transaction,
+    observe(sandboxName, transaction.gatewayName),
+    registryEntry,
+  );
   if (recovery.action === "reject") {
     throw new Error(`Cannot resume sandbox '${sandboxName}' recreation: ${recovery.reason}.`);
   }
@@ -401,6 +675,8 @@ export function createSandboxRecreateRuntime(
   return {
     acceptedTarget: recovery.action === "accept_target",
     targetGeneration: transaction.targetGeneration,
+    journaledGatewayName: transaction.gatewayName,
+    sourceProof: sandboxRecreateSourceProof(transaction),
     get registrationFields() {
       return {
         lifecycleGeneration: transaction.targetGeneration,
@@ -410,8 +686,23 @@ export function createSandboxRecreateRuntime(
       };
     },
     advance,
+    beginDelete: () => {
+      const live = observe(sandboxName, transaction.gatewayName);
+      if (live.state !== "missing") {
+        if (
+          !transaction.sourceLiveIdentityFingerprint ||
+          live.liveIdentityFingerprint !== transaction.sourceLiveIdentityFingerprint
+        ) {
+          throw new Error(
+            `Cannot delete sandbox '${sandboxName}': the live same-name sandbox is not the journaled source.`,
+          );
+        }
+      }
+      if (!sandboxRecreatePhaseReached(phase, "deleted")) advance("deleting");
+      return live.state === "missing" ? "missing" : "source";
+    },
     confirmDeleted: () => {
-      if (observe(sandboxName).state !== "missing") {
+      if (observe(sandboxName, transaction.gatewayName).state !== "missing") {
         throw new Error(
           `Cannot continue sandbox '${sandboxName}' recreation: OpenShell still reports the journaled source after delete.`,
         );
@@ -419,7 +710,7 @@ export function createSandboxRecreateRuntime(
       advance("deleted");
     },
     recordCreated: () => {
-      const observation = observe(sandboxName);
+      const observation = observe(sandboxName, transaction.gatewayName);
       sessionStore.updateSession((current) => {
         targetLiveIdentityFingerprint = recordSandboxRecreateTargetCreated(
           current,

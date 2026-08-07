@@ -304,7 +304,7 @@ describe("trusted Hermes swap workflow boundary", () => {
   });
 
   it.each([
-    "schedule",
+    "push",
     "workflow_dispatch",
   ])("accepts the trusted direct main source for %s runs (#7145)", (eventName) => {
     const result = runTrustedSwapHarness({
@@ -323,8 +323,8 @@ describe("trusted Hermes swap workflow boundary", () => {
   it.each([
     {
       expected: "direct main runs must not request an alternate checkout or workflow revision",
-      name: "a scheduled run supplies an alternate checkout",
-      options: { checkoutSha: "a".repeat(40), eventName: "schedule" },
+      name: "a push run supplies an alternate checkout",
+      options: { checkoutSha: "a".repeat(40), eventName: "push" },
     },
     {
       expected: "direct main runs must not request an alternate checkout or workflow revision",
@@ -371,23 +371,23 @@ describe("trusted Hermes swap workflow boundary", () => {
       options: { ref: "refs/heads/candidate" },
     },
     {
-      expected: "workflow event must be schedule or workflow_dispatch",
+      expected: "workflow event must be push or workflow_dispatch",
       name: "the event is not trusted",
       options: { eventName: "pull_request" },
     },
     {
       expected: "checkout SHA must be lowercase 40-hex",
-      name: "the exact-head checkout SHA is malformed",
+      name: "the PR E2E checkout SHA is malformed",
       options: { checkoutSha: "A".repeat(40) },
     },
     {
       expected: "workflow source must match the trusted dispatch revision",
-      name: "the exact-head workflow SHA is missing",
+      name: "the PR E2E workflow SHA is missing",
       options: { expectedWorkflowSha: "" },
     },
     {
       expected: "workflow source must match the trusted dispatch revision",
-      name: "the exact-head workflow SHA differs",
+      name: "the PR E2E workflow SHA differs",
       options: { expectedWorkflowSha: "c".repeat(40) },
     },
     {
@@ -525,9 +525,6 @@ describe("trusted Hermes swap workflow boundary", () => {
     securityProvision.if = securityProvision.if!.replace(" && matrix.agent == 'hermes'", "");
     securityProvision.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
 
-    const bedrockProvision = trustedSwapStep(workflow, "bedrock-runtime-compatible-anthropic");
-    bedrockProvision.run = "sudo bash tools/e2e/live-vitest-invocation.mts";
-
     const channelsProvision = trustedSwapStep(workflow, "channels-stop-start");
     channelsProvision.if = channelsProvision.if!.replace(" && matrix.agent == 'hermes'", "");
 
@@ -539,7 +536,7 @@ describe("trusted Hermes swap workflow boundary", () => {
 
     const hermesE2eProvision = trustedSwapStep(workflow, "hermes-e2e");
     hermesE2eProvision.if = hermesE2eProvision.if!.replace(
-      " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))",
+      " && (github.event_name == 'push' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))",
       "",
     );
 
@@ -557,7 +554,6 @@ describe("trusted Hermes swap workflow boundary", () => {
         "common-egress-agent trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must bind only trusted workflow, checkout, and runner identity",
-        "bedrock-runtime-compatible-anthropic trusted Hermes swap step must preserve the fixed privileged program",
         "mcp-bridge-dev job must not provision trusted Hermes swap",
       ]),
     );

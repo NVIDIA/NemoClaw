@@ -26,6 +26,9 @@ import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
+import { validateLlamaCppDgxSparkQualificationWorkflow } from "./llama-cpp-dgx-spark-qualification-workflow-boundary.mts";
+import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
+import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
   type OpenClawPluginRuntimeExdevWorkflow,
   validateOpenClawPluginRuntimeExdevWorkflow,
@@ -39,17 +42,23 @@ import {
   type OperationsWorkflow,
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
-import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
-import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
+import { normalizeE2eSelectorIds, selectorsForCanonicalE2eId } from "./selector-aliases.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
 } from "./trusted-hermes-swap-workflow-boundary.mts";
-import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  UPLOAD_E2E_ARTIFACTS_ACTION,
+  validateUploadE2eArtifactsWorkflowBoundary,
+} from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  CLI_ARTIFACT_RESTORE_STEP,
+  validateE2eWorkspaceBootstrapBoundary,
+} from "./workspace-bootstrap-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -71,6 +80,19 @@ const DEFAULT_DOCKER_HUB_AUTH_SCRIPT_PATH = join(
   ".github",
   "scripts",
   "docker-auth-setup.sh",
+);
+const DEFAULT_DOCKER_HUB_CLEANUP_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "docker-auth-cleanup",
+  "action.yaml",
+);
+const DEFAULT_DOCKER_HUB_CLEANUP_SCRIPT_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "scripts",
+  "docker-auth-cleanup.sh",
 );
 const DEFAULT_HOST_DEPENDENCY_ACTION_PATH = join(
   REPO_ROOT,
@@ -129,13 +151,18 @@ export const RETIRED_CONTROLLER_SELECTOR_IDS = [
   "gateway-health-honest",
   "onboard-negative-paths",
   "openshell-version-pin",
+  "sandbox-rebuild",
   "ubuntu-repo-cli-smoke",
+  "upgrade-stale-sandbox",
+] as const;
+export const RETIRED_CONTROLLER_TARGET_SELECTOR_IDS = [
+  "sandbox-rebuild",
+  "upgrade-stale-sandbox",
 ] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
-const EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER = new Set(["hermes-gpu-startup"]);
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
@@ -146,6 +173,11 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "jetson-nvmap-gpu",
+  "llama-cpp-dgx-spark-qualification",
+  "managed-image-multiarch-startup",
+  "managed-image-protected-runtime",
+  "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
@@ -163,6 +195,12 @@ const DOCKER_HUB_AUTH_PROVENANCE = {
   actionSha256: "cf93dcbd19589a56d1d58225fd6b3f8ad2180705662ff79a3407f340b5dba4c0",
   scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
 } as const;
+const DOCKER_HUB_CLEANUP_PROVENANCE = {
+  reference:
+    "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3",
+  actionSha256: "8b7bf4bdb793ddd27aa9bab2e38157e91f0401148f6ba684acb516fc75e8d367",
+  scriptSha256: "4e5ce850c28f309b97695d61e11bcf1f154eae2b1d58c9697a3f49631c76abb4",
+} as const;
 const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
 const HOST_DEPENDENCY_ACTION_PROVENANCE = {
   reference:
@@ -172,10 +210,10 @@ const HOST_DEPENDENCY_ACTION_PROVENANCE = {
 } as const;
 const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
-// The general E2E workflow runs on schedule/manual dispatch. Its event set is
+// The general E2E workflow runs on push/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
 const TRUSTED_DOCKER_HUB_PREDICATE =
-  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
@@ -323,6 +361,48 @@ export function validateDockerHubAuthAction(
   return errors;
 }
 
+export function validateDockerHubCleanupAction(
+  actionPath = DEFAULT_DOCKER_HUB_CLEANUP_ACTION_PATH,
+  scriptPath = DEFAULT_DOCKER_HUB_CLEANUP_SCRIPT_PATH,
+): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const scriptSource = readFileSync(scriptPath, "utf8");
+  const errors: string[] = [];
+
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    DOCKER_HUB_CLEANUP_PROVENANCE.actionSha256
+  ) {
+    errors.push("docker-auth-cleanup action content must match the pinned commit");
+  }
+  if (
+    createHash("sha256").update(scriptSource).digest("hex") !==
+    DOCKER_HUB_CLEANUP_PROVENANCE.scriptSha256
+  ) {
+    errors.push("docker-auth-cleanup script content must match the pinned commit");
+  }
+
+  const expectedAction = {
+    name: "docker-auth-cleanup",
+    description: "Remove isolated Docker Hub credentials with validated path checks.",
+    runs: {
+      using: "composite",
+      steps: [
+        {
+          name: "Clean up Docker auth",
+          shell: "bash",
+          run: 'bash "${{ github.action_path }}/../../scripts/docker-auth-cleanup.sh"',
+        },
+      ],
+    },
+  };
+  if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
+    errors.push("docker-auth-cleanup action must invoke the helper through github.action_path");
+  }
+
+  return errors;
+}
+
 export function validateHostDependencyAction(
   actionPath = DEFAULT_HOST_DEPENDENCY_ACTION_PATH,
   scriptPath = DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH,
@@ -451,8 +531,6 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       } else {
         explicitOnlyJobs.push(jobId);
       }
-    } else if (EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER.has(jobId)) {
-      explicitOnlyJobs.push(jobId);
     }
     if (!hasTargetMarker) continue;
 
@@ -567,6 +645,12 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
+const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
+  ["test/e2e/live/rebuild-hermes-cron-restore.ts", ["rebuild-hermes", "rebuild-hermes-stale-base"]],
+  ["test/e2e/live/openshell-gateway-upgrade-helpers.ts", ["openshell-gateway-upgrade"]],
+  ["test/e2e/live/openshell-gateway-upgrade-old-installer.ts", ["openshell-gateway-upgrade"]],
+]);
 
 export function focusedE2eJobsForChangedFiles(
   changedFiles: readonly string[],
@@ -576,6 +660,9 @@ export function focusedE2eJobsForChangedFiles(
   for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
     for (const job of inventory.liveTestToJobs.get(file) ?? []) {
       addMapValue(matchedFilesByJob, job, file);
+    }
+    for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
+      if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
     }
     if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
       addMapValue(matchedFilesByJob, "snapshot-commands", file);
@@ -692,7 +779,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
 }
 
 export function evaluateStagingBrevLaunchableDispatch(input: {
-  eventName: "schedule" | "workflow_dispatch";
+  eventName: "push" | "workflow_dispatch";
   includeStagingBrevLaunchable?: boolean;
   jobs?: string;
   targets?: string;
@@ -707,7 +794,7 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
     targets === "";
   const explicitlySelected =
     input.eventName === "workflow_dispatch" && jobs === "staging-brev-launchable" && targets === "";
-  const requested = fullDispatch || explicitlySelected;
+  const requested = input.eventName === "push" || fullDispatch || explicitlySelected;
   const trustedMain = input.trustedMain !== false;
 
   return {
@@ -972,22 +1059,16 @@ function requireWorkflowDispatch(errors: string[], triggers: WorkflowRecord): Wo
   return workflowDispatch;
 }
 
-function requireScheduledRun(errors: string[], triggers: WorkflowRecord): void {
-  const schedule = triggers.schedule;
-  if (!Array.isArray(schedule)) {
-    errors.push("workflow must support the scheduled E2E run");
-    return;
-  }
-  const cronEntries = schedule
-    .map((entry) => asRecord(entry).cron)
-    .filter((cron): cron is string => typeof cron === "string");
-  if (!cronEntries.includes("0 0 * * *")) {
-    errors.push("workflow schedule must run daily at 00:00 UTC");
+function requirePushRun(errors: string[], triggers: WorkflowRecord): void {
+  const push = asRecord(triggers.push);
+  const branches = Array.isArray(push.branches) ? push.branches : [];
+  if (!branches.includes("main")) {
+    errors.push("workflow push trigger must include main");
   }
 }
 
 function rejectUnexpectedTriggers(errors: string[], triggers: WorkflowRecord): void {
-  for (const unsafe of ["push", "pull_request", "pull_request_target"]) {
+  for (const unsafe of ["schedule", "pull_request", "pull_request_target"]) {
     if (Object.hasOwn(triggers, unsafe)) errors.push(`workflow must not run on ${unsafe}`);
   }
 }
@@ -1018,10 +1099,16 @@ function requireNoDispatchInputInterpolation(
 }
 
 function freeStandingJobIf(jobName: string, targetName?: string): string {
-  const targetSelector = targetName
-    ? ` || contains(format(',{0},', inputs.targets), ',${targetName},')`
-    : "";
-  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',${jobName},')${targetSelector} }}`;
+  const jobSelectors = selectorsForCanonicalE2eId(jobName).map(
+    (selector) => `contains(format(',{0},', inputs.jobs), ',${selector},')`,
+  );
+  const targetSelectors = targetName
+    ? selectorsForCanonicalE2eId(targetName).map(
+        (selector) => `contains(format(',{0},', inputs.targets), ',${selector},')`,
+      )
+    : [];
+  const selectors = [...jobSelectors, ...targetSelectors].join(" || ");
+  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || ${selectors} }}`;
 }
 
 function explicitOnlyFreeStandingJobIf(jobName: string, targetName?: string): string {
@@ -1812,9 +1899,10 @@ export function validateRebuildHermesBootstrapBoundary(
 
   const steps = asSteps(job.steps);
   const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  if (Object.keys(asRecord(prepareWorkspace?.with)).length !== 0) {
-    errors.push(`${jobName} workspace preparation must use the default checked-out CLI build`);
+  if (!isDeepStrictEqual(asRecord(prepareWorkspace?.with), { "build-cli": "false" })) {
+    errors.push(`${jobName} workspace preparation must defer to the exact-commit CLI artifact`);
   }
+  const restoreCli = requireJobStep(errors, jobName, steps, CLI_ARTIFACT_RESTORE_STEP);
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -1866,14 +1954,18 @@ export function validateRebuildHermesBootstrapBoundary(
 
   if (
     prepareWorkspace &&
+    restoreCli &&
     installOpenShell &&
     runVitest &&
     !(
-      steps.indexOf(prepareWorkspace) < steps.indexOf(installOpenShell) &&
+      steps.indexOf(prepareWorkspace) < steps.indexOf(restoreCli) &&
+      steps.indexOf(restoreCli) < steps.indexOf(installOpenShell) &&
       steps.indexOf(installOpenShell) < steps.indexOf(runVitest)
     )
   ) {
-    errors.push(`${jobName} must build the CLI before installing OpenShell and running Vitest`);
+    errors.push(
+      `${jobName} must restore the exact-commit CLI before installing OpenShell and running Vitest`,
+    );
   }
   return errors;
 }
@@ -1973,87 +2065,6 @@ function validateRebuildHermesJob(
   }
 }
 
-function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "sandbox-rebuild";
-  const targetName = "sandbox-rebuild";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing sandbox-rebuild job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("sandbox-rebuild job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 90) {
-    errors.push("sandbox-rebuild job must keep the legacy 90 minute timeout");
-  }
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("sandbox-rebuild job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rebuild") {
-    errors.push(
-      "sandbox-rebuild job must write artifacts under e2e-artifacts/live/sandbox-rebuild",
-    );
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("sandbox-rebuild job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("sandbox-rebuild job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  for (const secret of [
-    "NVIDIA_INFERENCE_API_KEY",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "GITHUB_TOKEN",
-  ]) {
-    requireEnvDoesNotExposeSecret(errors, "sandbox-rebuild job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `sandbox-rebuild step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run sandbox rebuild live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("sandbox-rebuild job missing checkout step");
-  requireFullShaAction(errors, checkout, "sandbox-rebuild checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("sandbox-rebuild checkout step must set persist-credentials=false");
-  }
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run sandbox rebuild live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("sandbox-rebuild step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/sandbox-rebuild.test.ts");
-}
-
 function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "state-backup-restore";
   const targetName = "state-backup-restore";
@@ -2144,97 +2155,6 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/state-backup-restore.test.ts");
-}
-
-function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "upgrade-stale-sandbox";
-  const targetName = "upgrade-stale-sandbox";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing upgrade-stale-sandbox job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("upgrade-stale-sandbox job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 55) {
-    errors.push("upgrade-stale-sandbox job must keep the legacy 55 minute timeout");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("upgrade-stale-sandbox job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/upgrade-stale-sandbox"
-  ) {
-    errors.push(
-      "upgrade-stale-sandbox job must write artifacts under e2e-artifacts/live/upgrade-stale-sandbox",
-    );
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("upgrade-stale-sandbox job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("upgrade-stale-sandbox job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-upgrade-stale") {
-    errors.push("upgrade-stale-sandbox job must set NEMOCLAW_SANDBOX_NAME=e2e-upgrade-stale");
-  }
-  if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("upgrade-stale-sandbox job must not set DOCKER_CONFIG at job level");
-  }
-  for (const secret of [...COMMON_SECRET_ENV_NAMES]) {
-    requireEnvDoesNotExposeSecret(errors, "upgrade-stale-sandbox job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `upgrade-stale-sandbox step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run upgrade stale sandbox live Vitest test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("upgrade-stale-sandbox job missing checkout step");
-  requireFullShaAction(errors, checkout, "upgrade-stale-sandbox checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("upgrade-stale-sandbox checkout step must set persist-credentials=false");
-  }
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run upgrade stale sandbox live Vitest test",
-  );
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("upgrade-stale-sandbox step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/upgrade-stale-sandbox.test.ts");
 }
 
 function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2541,17 +2461,17 @@ function requireCanonicalDockerHubAuthRun(
   const authWith = asRecord(authStep.with);
   if (authWith["auth-required"] !== GUARDED_DOCKER_HUB_AUTH_REQUIRED) {
     errors.push(
-      "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and push/manual events",
     );
   }
   if (authWith.username !== GUARDED_DOCKER_HUB_USERNAME) {
     errors.push(
-      "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate username on the trusted repository, main ref, and push/manual events",
     );
   }
   if (authWith.token !== GUARDED_DOCKER_HUB_TOKEN) {
     errors.push(
-      "canonical Docker Hub auth must gate token on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate token on the trusted repository, main ref, and push/manual events",
     );
   }
   const unexpectedWith = Object.keys(authWith).filter(
@@ -2639,9 +2559,19 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndex = steps.findIndex((step) =>
-      stringValue(step.uses).startsWith("actions/checkout@"),
-    );
+    const checkoutIndex = steps.findIndex((step) => {
+      if (jobName === "managed-image-protected-runtime") {
+        return step.name === "Checkout exact protected runtime candidate source";
+      }
+      if (jobName === "llama-cpp-dgx-spark-qualification") {
+        return step.name === "Checkout exact llama.cpp qualification candidate";
+      }
+      return stringValue(step.uses).startsWith("actions/checkout@");
+    });
+    const protectedCacheDownloadIndex =
+      jobName === "managed-image-protected-runtime"
+        ? steps.findIndex((step) => step.name === "Download exact protected runtime build cache")
+        : -1;
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
@@ -2649,12 +2579,20 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         ? checkoutIndex + 2
         : jobName === "hermes-gpu-startup"
           ? checkoutIndex + 3
-          : checkoutIndex + 1;
-    if (checkoutIndex < 0 || authIndex !== expectedAuthIndex) {
+          : jobName === "managed-image-protected-runtime"
+            ? protectedCacheDownloadIndex + 1
+            : checkoutIndex + 1;
+    if (
+      checkoutIndex < 0 ||
+      (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
+      authIndex !== expectedAuthIndex
+    ) {
       errors.push(
         jobName === "jetson-nvmap-gpu"
           ? `${jobName} Docker Hub auth must run immediately after the Jetson dispatch guard`
-          : `${jobName} Docker Hub auth must run immediately after checkout`,
+          : jobName === "managed-image-protected-runtime"
+            ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
+            : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {
@@ -3797,6 +3735,64 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
 }
 
+function validateDashboardRemoteBindJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "dashboard-remote-bind";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing dashboard-remote-bind job");
+    return;
+  }
+
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("dashboard-remote-bind job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 65) {
+    errors.push("dashboard-remote-bind job must keep the 65 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  const expectedEnv = {
+    E2E_TARGET_ID: "dashboard-remote-bind",
+    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/dashboard-remote-bind",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
+    NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind",
+  };
+  for (const [key, value] of Object.entries(expectedEnv)) {
+    if (jobEnv[key] !== value) {
+      errors.push(`dashboard-remote-bind job must set ${key}=${value}`);
+    }
+  }
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, "dashboard-remote-bind job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  const runVitest = requireJobStep(errors, jobName, steps, "Run dashboard remote-bind live test");
+  const runEnv = asRecord(runVitest?.env);
+  if (runEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push("dashboard-remote-bind step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+  requireRunContains(errors, runVitest, "test/e2e/live/dashboard-remote-bind.test.ts");
+
+  for (const step of steps) {
+    const stepName = `dashboard-remote-bind step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step !== runVitest) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+}
+
 function validateBedrockRuntimeCompatibleAnthropicJob(
   errors: string[],
   jobs: WorkflowRecord,
@@ -3955,14 +3951,20 @@ function validateAllowJetsonRunnerQueueInput(
 }
 
 function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecord): void {
-  validateFreeStandingJobSelector(errors, jobs, "jetson-nvmap-gpu", "jetson-nvmap-gpu", true);
-
   const job = asRecord(jobs["jetson-nvmap-gpu"]);
+  if (job.needs !== "generate-matrix") {
+    errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
+  }
+  const trustedSelector =
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
+  if (job.if !== trustedSelector) {
+    errors.push("jetson-nvmap-gpu job must use the trusted-main selector condition");
+  }
   const guardedRunsOn =
-    "${{ inputs.allow_jetson_runner_queue && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
+    "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
   if (job["runs-on"] !== guardedRunsOn) {
     errors.push(
-      "jetson-nvmap-gpu job must use ubuntu-latest unless allow_jetson_runner_queue is true",
+      "jetson-nvmap-gpu job must queue the configured runner for main and default manual runs",
     );
   }
 
@@ -3983,10 +3985,11 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
   if (dockerAuthIndex >= 0 && guardIndex >= dockerAuthIndex) {
     errors.push("jetson-nvmap-gpu dispatch guard must run before Docker Hub auth");
   }
-  if (guard.if !== "${{ !inputs.allow_jetson_runner_queue }}") {
-    errors.push(
-      "jetson-nvmap-gpu dispatch guard must run unless allow_jetson_runner_queue is true",
-    );
+  if (
+    guard.if !==
+    "${{ github.event_name == 'workflow_dispatch' && (inputs.jobs != '' || inputs.targets != '') && !inputs.allow_jetson_runner_queue }}"
+  ) {
+    errors.push("jetson-nvmap-gpu dispatch guard must reject unconfirmed selective queueing");
   }
   if (
     asRecord(guard.env).JETSON_E2E_RUNNER_LABEL !==
@@ -4012,54 +4015,6 @@ export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[
   validateAllowJetsonRunnerQueueInput(errors, asRecord(workflowDispatch.inputs));
   validateJetsonRunnerDispatchGuard(errors, asRecord(workflowRecord.jobs));
   return errors;
-}
-
-function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "sandbox-rlimits-connect";
-  const job = asRecord(jobs[jobName]);
-  if (job.needs !== "generate-matrix") {
-    errors.push(`${jobName} job must depend on generate-matrix`);
-  }
-  if (job.if !== explicitOnlyFreeStandingJobIf(jobName, jobName)) {
-    errors.push(`${jobName} job must run only when explicitly selected`);
-  }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push(`${jobName} job must run on ubuntu-latest`);
-  }
-  if (job["timeout-minutes"] !== 60) {
-    errors.push(`${jobName} job must retain its 60 minute connect budget`);
-  }
-
-  const env = asRecord(job.env);
-  if (env.E2E_DEFAULT_ENABLED !== "0") {
-    errors.push(`${jobName} job must remain explicit-only`);
-  }
-  if (env.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push(`${jobName} job must set NEMOCLAW_RUN_LIVE_E2E=1`);
-  }
-  if (env.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
-    errors.push(`${jobName} job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1`);
-  }
-  if (env.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push(`${jobName} job must use the repo CLI launcher`);
-  }
-  if (
-    env.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect"
-  ) {
-    errors.push(`${jobName} job must write artifacts under e2e-artifacts/live/${jobName}`);
-  }
-
-  const run = namedStep(asSteps(job.steps), "Run sandbox rlimit connect live test");
-  if (!run) {
-    errors.push(`${jobName} job missing step: Run sandbox rlimit connect live test`);
-    return;
-  }
-  if (!stringValue(run.run).includes("test/e2e/live/sandbox-rlimits-connect.test.ts")) {
-    errors.push(`${jobName} job must run sandbox-rlimits-connect.test.ts`);
-  }
-  if (asRecord(run.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
-    errors.push(`${jobName} step must receive NVIDIA_API_KEY from secrets`);
-  }
 }
 
 function validateInferenceModeInput(
@@ -4094,7 +4049,7 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
   }
@@ -4105,23 +4060,69 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  const environment = asRecord(job.environment);
-  if (environment.name !== "approve-brev-launchable-e2e" || environment.deployment !== false) {
-    errors.push("staging-brev-launchable must use its protected non-deployment environment");
+  if (Object.hasOwn(job, "environment")) {
+    errors.push("staging-brev-launchable must not use a GitHub environment");
   }
   const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
   if (
     !stringValue(job.if).includes(trustedRun) ||
     stringValue(job.if).includes("checkout_sha == ''")
   ) {
-    errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
+    errors.push("staging-brev-launchable must allow only trusted-main dispatches");
   }
   const expectedSelector =
-    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}";
   if (job.if !== expectedSelector) {
     errors.push(
-      "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
+      "staging-brev-launchable must run on main pushes and retain trusted manual selection",
     );
+  }
+  const generateMatrix = asRecord(jobs["generate-matrix"]);
+  const generateSteps = asSteps(generateMatrix.steps);
+  const authorization = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Authorize Launchable E2E maintainer dispatch",
+  );
+  const expectedAuthorizationSelector =
+    "${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+  if (authorization?.if !== expectedAuthorizationSelector) {
+    errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
+  }
+  if (authorization?.shell !== "bash") {
+    errors.push("Launchable E2E maintainer authorization must use bash");
+  }
+  const authorizationEnv = asRecord(authorization?.env);
+  for (const [key, expected] of [
+    ["ACTOR", "${{ github.actor }}"],
+    ["GITHUB_TOKEN", "${{ github.token }}"],
+    ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
+  ] as const) {
+    if (authorizationEnv[key] !== expected) {
+      errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
+    }
+  }
+  for (const required of [
+    "/collaborators/${maintainer}/permission",
+    "'.user.login // \"\"'",
+    "'.role_name // \"\"'",
+    "maintain | admin",
+    'require_maintainer "$ACTOR"',
+    'require_maintainer "$TRIGGERING_ACTOR"',
+    "requires a repository maintainer or administrator",
+  ]) {
+    requireRunContains(errors, authorization, required);
+  }
+  const generateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  if (
+    authorization &&
+    generateCheckout &&
+    generateSteps.indexOf(authorization) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("Launchable E2E maintainer authorization must run before generate-matrix checkout");
   }
   const concurrency = asRecord(job.concurrency);
   if (
@@ -4164,7 +4165,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     "jobs: $jobs",
     "targets: $targets",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
-    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$WORK_DIR/dispatch.json"',
   ]) {
     requireRunContains(errors, dispatchIdentity, required);
@@ -4190,7 +4191,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
     [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
   ] as const) {
-    const expected = `\${{ ${trustedRun} && github.event_name == 'workflow_dispatch' && secrets.${secret} || '' }}`;
+    const expected = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
     if (env[key] !== expected) {
       errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
@@ -4225,14 +4226,56 @@ function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: Workflo
     errors.push("workflow missing retired-selector-compatibility job");
     return;
   }
-  const selectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
+  const jobSelectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
     (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
   ).join(" || ");
-  const expectedIf = `\${{ inputs.checkout_sha != '' && (${selectorGate}) }}`;
+  const targetSelectorGate = RETIRED_CONTROLLER_TARGET_SELECTOR_IDS.map(
+    (id) => `contains(format(',{0},', inputs.targets), ',${id},')`,
+  ).join(" || ");
+  const expectedIf = `\${{ inputs.checkout_sha != '' && (${jobSelectorGate} || ${targetSelectorGate}) }}`;
   if (job.if !== expectedIf) {
     errors.push(
       "retired-selector-compatibility job selector gate must match retired selector contract",
     );
+  }
+
+  const steps = asSteps(job.steps);
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("retired-selector-compatibility job must check out the candidate revision");
+  } else {
+    requireFullShaAction(errors, checkout, "retired-selector-compatibility checkout");
+    const checkoutWith = asRecord(checkout.with);
+    if (
+      checkoutWith.repository !== "${{ inputs.checkout_repository || github.repository }}" ||
+      checkoutWith.ref !== "${{ inputs.checkout_sha || github.sha }}" ||
+      checkoutWith["persist-credentials"] !== false
+    ) {
+      errors.push("retired-selector-compatibility job must check out the candidate revision");
+    }
+  }
+
+  const verify = namedStep(steps, "Verify retired selector replacements");
+  if (
+    stringValue(verify?.run) !== "npx tsx tools/e2e/retired-selector-compatibility.mts" ||
+    asRecord(verify?.env).JOBS !== "${{ inputs.jobs }}"
+  ) {
+    errors.push("retired-selector-compatibility job must invoke the replacement helper");
+  }
+  if (asRecord(verify?.env).TARGETS !== "${{ inputs.targets }}") {
+    errors.push("retired-selector-compatibility job must forward target selectors");
+  }
+
+  const upload = namedStep(steps, "Upload retired selector compatibility evidence");
+  if (
+    upload?.if !== "always()" ||
+    upload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION ||
+    !isDeepStrictEqual(asRecord(upload?.with), {
+      name: "e2e-retired-selector-compatibility",
+      path: "e2e-artifacts/live/retired-selector-compatibility/",
+    })
+  ) {
+    errors.push("retired-selector-compatibility job must upload compatibility evidence");
   }
 }
 
@@ -4272,7 +4315,7 @@ function validateTrustedE2eDispatchReceipt(
     "targets: $targets",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
-    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
   ]) {
     requireRunContains(errors, dispatchReceipt, fragment);
@@ -4282,11 +4325,14 @@ function validateTrustedE2eDispatchReceipt(
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
-  errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
+  errors.push(...validateE2eWorkspaceBootstrapBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
   errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(...validateLlamaCppDgxSparkQualificationWorkflow(workflow));
+  errors.push(...validateManagedImageMultiarchWorkflow(workflow));
+  errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
   errors.push(
     ...validateOpenClawPluginRuntimeExdevWorkflow(
       workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
@@ -4306,7 +4352,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
-  requireScheduledRun(errors, triggers);
+  requirePushRun(errors, triggers);
   rejectUnexpectedTriggers(errors, triggers);
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
@@ -4316,14 +4362,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
-  if (!jobsDescription.includes("default-enabled tests")) {
+  if (!jobsDescription.includes("include_staging_brev_launchable")) {
     errors.push(
-      "workflow_dispatch jobs input description must say empty dispatch runs default-enabled tests",
-    );
-  }
-  if (!jobsDescription.includes("explicit-only tests")) {
-    errors.push(
-      "workflow_dispatch jobs input description must say explicit-only tests are skipped unless selected",
+      "workflow_dispatch jobs input description must identify how to include Exact staging Brev Launchable",
     );
   }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
@@ -4358,10 +4399,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("generate-matrix job must keep the 10 minute timeout");
   }
   const generateOutputs = asRecord(generateMatrix.outputs);
-  if (
-    generateOutputs.matrix !==
-    "${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}"
-  ) {
+  if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
     errors.push("generate-matrix job must expose trusted controller matrix output");
   }
   if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
@@ -4391,13 +4429,54 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("trusted controller matrix step must use bash");
   }
   const controllerMatrixEnv = asRecord(controllerMatrix?.env);
+  if (controllerMatrixEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("trusted controller matrix step must bind jobs through JOBS env");
+  }
   if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("trusted controller matrix step must bind targets through TARGETS env");
   }
-  requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
-  requireRunContains(errors, controllerMatrix, "matrix='[]'");
-  requireRunContains(errors, controllerMatrix, "ubuntu-repo-cloud-langchain-deepagents-code");
-  if (!stringValue(controllerMatrix?.run).includes('"runner":"ubuntu-latest"')) {
+  requireRunContains(errors, controllerMatrix, 'case "${JOBS}:${TARGETS}" in');
+  const controllerMatrixScript = stringValue(controllerMatrix?.run);
+  const policyTarget = "ubuntu-policy-custom-missing-presets-negative";
+  const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const openClawTarget = "ubuntu-repo-cloud-openclaw";
+  const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
+  const defaultMappings = [policyTarget, deepAgentsTarget, openClawTarget, postRebootTarget]
+    .map((target) => `{"id":"${target}","runner":"ubuntu-latest"}`)
+    .join(",");
+  const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
+  const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
+  const trustedControllerMatrixScript = [
+    "set -euo pipefail",
+    'case "${JOBS}:${TARGETS}" in',
+    ":)",
+    `matrix='[${defaultMappings}]'`,
+    ";;",
+    "managed-image-protected-runtime:)",
+    "matrix='[]'",
+    ";;",
+    `:${deepAgentsTarget})`,
+    `matrix='[${deepAgentsMapping}]'`,
+    ";;",
+    `:${postRebootTarget})`,
+    `matrix='[${postRebootMapping}]'`,
+    ";;",
+    `:${deepAgentsTarget},${postRebootTarget})`,
+    `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
+    ";;",
+    "*)",
+    'echo "::error::PR E2E target is not approved by the trusted controller" >&2',
+    "exit 1",
+    ";;",
+    "esac",
+    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+  ];
+  const controllerMatrixLines = controllerMatrixScript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!isDeepStrictEqual(controllerMatrixLines, trustedControllerMatrixScript)) {
     errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
   }
   requireRunContains(
@@ -4808,9 +4887,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateRebuildOpenClawJob(errors, jobs);
   validateRebuildHermesJob(errors, jobs, { staleBase: false });
   validateRebuildHermesJob(errors, jobs, { staleBase: true });
-  validateSandboxRebuildJob(errors, jobs);
   validateStateBackupRestoreJob(errors, jobs);
-  validateUpgradeStaleSandboxJob(errors, jobs);
   validateTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
@@ -4840,8 +4917,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   validateTunnelLifecycleJob(errors, jobs);
 
-  validateSandboxRlimitConnectJob(errors, jobs);
-
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -4854,6 +4929,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateOpenClawSlackPairingJob(errors, jobs);
   validateChannelsStopStartJob(errors, jobs);
   validateTelegramInjectionJob(errors, jobs);
+  validateDashboardRemoteBindJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {
@@ -4890,7 +4966,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     if (
       reportEnv.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
     ) {
-      errors.push("report-to-pr must derive explicit-only jobs from workflow inventory");
+      errors.push(
+        "report-to-pr must derive jobs omitted from the manual run from workflow inventory",
+      );
     }
     const reportScript = stringValue(asRecord(report?.with).script ?? report?.run);
     if (
@@ -4997,6 +5075,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   return [
     ...validateDockerHubAuthAction(),
+    ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
     ...validateE2eWorkflow(readWorkflowRecord(workflowPath)),
     ...validateTrustedHermesSwapHelperSource(

@@ -14,6 +14,10 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { GATEWAY_PORT } from "../core/ports";
+import {
+  parseServingProfileProvenance,
+  type ServingProfileProvenance,
+} from "../inference/serving/profile-provenance";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
@@ -49,11 +53,6 @@ import {
   preserveInvalidSessionToolDisclosure,
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
-import {
-  RECORD_ONLY_STEP_MUTATION_OPTIONS,
-  type StepMutationOptions,
-  shouldUpdateMachine,
-} from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import { nemoclawStateRoot } from "./state-root";
 
@@ -93,6 +92,7 @@ export interface SessionFailure {
   step: string | null;
   message: string | null;
   recordedAt: string;
+  interrupted?: boolean;
 }
 
 export interface SessionMetadata {
@@ -165,6 +165,8 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Exact secret-free serving recipe identity selected before runtime side effects. */
+  servingProfileProvenance: ServingProfileProvenance | null;
   /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
   stationExpressIntent: StationExpressResumeIntent | null;
   /** Receipt generation durably awaiting exact-match retirement after Station completion. */
@@ -253,6 +255,7 @@ export interface SessionUpdates {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | null;
@@ -288,6 +291,7 @@ export interface DebugSessionSummary {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  servingProfileProvenance: ServingProfileProvenance | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
@@ -558,7 +562,12 @@ export { redactSensitiveText, redactUrl };
 
 export function sanitizeFailure(
   input:
-    | { step?: SessionJsonValue; message?: SessionJsonValue; recordedAt?: SessionJsonValue }
+    | {
+        step?: SessionJsonValue;
+        message?: SessionJsonValue;
+        recordedAt?: SessionJsonValue;
+        interrupted?: SessionJsonValue;
+      }
     | null
     | undefined,
 ): SessionFailure | null {
@@ -566,7 +575,8 @@ export function sanitizeFailure(
   const step = readString(input.step);
   const message = redactSensitiveText(input.message);
   const recordedAt = readString(input.recordedAt) ?? new Date().toISOString();
-  return step || message ? { step, message, recordedAt } : null;
+  const interrupted = input.interrupted === true;
+  return step || message ? { step, message, recordedAt, interrupted } : null;
 }
 
 // ── Session CRUD ─────────────────────────────────────────────────
@@ -659,6 +669,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
     stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
     stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
       overrides.stationExpressReceiptRetirement,
@@ -711,6 +722,14 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  const servingProfileProvenance = parseServingProfileProvenance(data.servingProfileProvenance);
+  if (
+    hasOwn(data, "servingProfileProvenance") &&
+    data.servingProfileProvenance !== null &&
+    !servingProfileProvenance
+  ) {
+    return null;
+  }
   const compatibleEndpointReasoningEffort = normalizeReasoningEffort(
     data.compatibleEndpointReasoningEffort,
   );
@@ -750,6 +769,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    servingProfileProvenance,
     stationExpressIntent,
     stationExpressReceiptRetirement,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
@@ -1274,6 +1294,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "sandboxName", updates.sandboxName);
   assignNullableString(safe, "provider", updates.provider);
   assignNullableString(safe, "model", updates.model);
+  if (updates.servingProfileProvenance === null) {
+    safe.servingProfileProvenance = null;
+  } else {
+    const servingProfileProvenance = parseServingProfileProvenance(
+      updates.servingProfileProvenance,
+    );
+    if (servingProfileProvenance) safe.servingProfileProvenance = servingProfileProvenance;
+  }
   assignNullableString(safe, "endpointUrl", updates.endpointUrl, redactUrl);
   assignNullableString(safe, "credentialEnv", updates.credentialEnv);
   if (updates.hermesAuthMethod === "oauth" || updates.hermesAuthMethod === "api_key") {
@@ -1375,11 +1403,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-function markStepStartedWithOptions(
-  stepName: string,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  let shouldEmit = false;
+export function markStepStarted(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -1391,28 +1415,14 @@ function markStepStartedWithOptions(
     session.lastStepStarted = stepName;
     session.failure = null;
     session.status = "in_progress";
-    const state = machineStateFromOnboardSessionStep(stepName);
-    shouldEmit = Boolean(state && shouldUpdateMachine(options));
-    if (state && shouldEmit) transitionMachineSnapshot(session, state, now);
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.entered", session: updatedSession, step: stepName }),
-    );
-  }
   return updatedSession;
 }
 
-function markStepCompleteWithOptions(
-  stepName: string,
-  updates: SessionUpdates = {},
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
+export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
-  const hasUpdates = Object.keys(safeUpdates).length > 0;
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     // Spark managed-vLLM Express intents (#7231) carry no receipt/served state
@@ -1438,62 +1448,12 @@ function markStepCompleteWithOptions(
     Object.assign(session, safeUpdates);
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     else if (sparkExpressComplete) session.stationExpressIntent = null;
-    const nextState = nextMachineStateAfterCompletedStep(stepName, session);
-    shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
-    if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
     return session;
   });
-  if (hasUpdates) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "context.updated",
-        session: updatedSession,
-        step: stepName,
-        metadata: { fields: Object.keys(safeUpdates) },
-      }),
-    );
-  }
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "state.completed",
-        session: updatedSession,
-        step: stepName,
-      }),
-    );
-  }
-  return updatedSession;
-}
-
-export function markStepStarted(
-  stepName: string,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepStartedWithOptions(stepName, options);
-}
-
-export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStartedWithOptions(stepName, RECORD_ONLY_STEP_MUTATION_OPTIONS);
-}
-
-export function markStepComplete(
-  stepName: string,
-  updates: SessionUpdates = {},
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepCompleteWithOptions(stepName, updates, options);
-}
-
-export function markStepCompleteRecordOnly(
-  stepName: string,
-  updates: SessionUpdates = {},
-): Session {
-  return markStepCompleteWithOptions(stepName, updates, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepSkipped(stepName: string): Session {
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
@@ -1502,70 +1462,19 @@ export function markStepSkipped(stepName: string): Session {
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
-    shouldEmit = true;
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.skipped", session: updatedSession, step: stepName }),
-    );
-  }
-  return updatedSession;
 }
 
-function markStepFailedWithOptions(
-  stepName: string,
-  message: string | null = null,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+export function markStepFailed(stepName: string, message: string | null = null): Session {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    const now = new Date().toISOString();
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
-    shouldEmit = shouldUpdateMachine(options);
-    if (shouldEmit) {
-      session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
-      session.status = "failed";
-      transitionMachineSnapshot(session, "failed", now);
-    }
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "state.failed",
-        session: updatedSession,
-        step: stepName,
-        error: message,
-      }),
-    );
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "onboard.failed",
-        session: updatedSession,
-        state: "failed",
-        step: stepName,
-        error: message,
-      }),
-    );
-  }
-  return updatedSession;
-}
-
-export function markStepFailed(
-  stepName: string,
-  message: string | null = null,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepFailedWithOptions(stepName, message, options);
-}
-
-export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 /**
@@ -1582,6 +1491,7 @@ export function markStepFailedRecordOnly(stepName: string, message: string | nul
 export function finalizeIncompleteOnboardStep(
   stepName: string,
   message: string | null = null,
+  interrupted = false,
 ): Session | null {
   const existing = loadSession();
   if (!existing) return null;
@@ -1599,7 +1509,12 @@ export function finalizeIncompleteOnboardStep(
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
-    session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
+    session.failure = sanitizeFailure({
+      step: stepName,
+      message,
+      recordedAt: now,
+      interrupted,
+    });
     session.status = "failed";
     transitionMachineSnapshot(session, "failed", now);
     emitted = true;
@@ -1744,6 +1659,7 @@ export function summarizeForDebug(
     sandboxName: session.sandboxName,
     provider: session.provider,
     model: session.model,
+    servingProfileProvenance: session.servingProfileProvenance,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,
     hermesAuthMethod: session.hermesAuthMethod,

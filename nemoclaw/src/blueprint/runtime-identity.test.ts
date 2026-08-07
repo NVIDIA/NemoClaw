@@ -101,6 +101,10 @@ const profileDocument = [
   "inference_capable: false",
   "",
 ].join("\n");
+const entraProfileDocument = readFileSync(
+  new URL("../../../nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", import.meta.url),
+  "utf8",
+);
 
 const config: RuntimeIdentityConfig = {
   profile_path: "provider-profiles/okta-runtime-v1.yaml",
@@ -110,6 +114,15 @@ const config: RuntimeIdentityConfig = {
   client_id_env: "OKTA_CLIENT_ID",
   refresh_token_env: "OKTA_REFRESH_TOKEN",
   client_secret_env: "OKTA_CLIENT_SECRET",
+};
+const entraConfig: RuntimeIdentityConfig = {
+  profile_path: "provider-profiles/entra-runtime-v1.yaml",
+  provider_type: "entra-runtime-v1",
+  provider_name: "acme-entra-runtime",
+  credential_key: "ENTRA_ACCESS_TOKEN",
+  client_id_env: "ENTRA_CLIENT_ID",
+  refresh_token_env: "ENTRA_REFRESH_TOKEN",
+  client_secret_env: "ENTRA_CLIENT_SECRET",
 };
 
 const createdReceipt: RuntimeIdentityReceipt = {
@@ -473,6 +486,68 @@ describe("runtime identity contract", () => {
     expect(calls.map(({ args }) => commandKey(args))).toContain("provider profile import --file");
   });
 
+  it("accepts the bundled Entra profile and scopes bearer delivery to Graph me", async () => {
+    writeFileSync(join(root, entraConfig.profile_path), entraProfileDocument);
+    environment.ENTRA_CLIENT_ID = "entra-client-id";
+    environment.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
+    environment.ENTRA_CLIENT_SECRET = "entra-client-secret";
+    responses.set("provider get acme-entra-runtime", [missingProvider]);
+
+    await expect(prepareRuntimeIdentity(entraConfig, deps)).resolves.toMatchObject({
+      provider_type: "entra-runtime-v1",
+      provider_name: "acme-entra-runtime",
+      credential_key: "ENTRA_ACCESS_TOKEN",
+      provider_created: true,
+    });
+
+    expect(validatedDestinations).toEqual([
+      "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+      "https://graph.microsoft.com/",
+    ]);
+    expect(calls.map(({ args }) => commandKey(args))).toContain(
+      "provider refresh configure acme-entra-runtime --credential-key ENTRA_ACCESS_TOKEN " +
+        "--strategy oauth2-refresh-token --material client_id=entra-client-id " +
+        "--secret-material-env refresh_token=ENTRA_REFRESH_TOKEN " +
+        "--secret-material-env client_secret=ENTRA_CLIENT_SECRET",
+    );
+    expect(importedProfilePaths).toHaveLength(1);
+    expect(existsSync(importedProfilePaths[0])).toBe(false);
+  });
+
+  it.each([
+    [
+      "credential-delivery path",
+      entraProfileDocument.replace(
+        '      - allow: { method: GET, path: "/v1.0/me" }',
+        '      - allow: { method: GET, path: "/**" }',
+      ),
+      /REST GET \/v1\.0\/me credential-delivery policy/,
+    ],
+    [
+      "credential-delivery host",
+      entraProfileDocument.replace("host: graph.microsoft.com", "host: login.microsoftonline.com"),
+      /credential delivery host 'login\.microsoftonline\.com' is outside/,
+    ],
+    [
+      "credential-delivery hostname suffix",
+      entraProfileDocument.replace("graph.microsoft.com", "graph.microsoft.com.attacker.example"),
+      /outside the trusted destination policy/,
+    ],
+    [
+      "token-issuer host",
+      entraProfileDocument.replace("login.microsoftonline.com", "graph.microsoft.com"),
+      /refresh token_url host 'graph\.microsoft\.com' is outside/,
+    ],
+  ])("rejects an Entra profile that changes the reviewed %s", async (_boundary, profile, message) => {
+    writeFileSync(join(root, entraConfig.profile_path), profile);
+    environment.ENTRA_CLIENT_ID = "entra-client-id";
+    environment.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
+    environment.ENTRA_CLIENT_SECRET = "entra-client-secret";
+
+    await expect(prepareRuntimeIdentity(entraConfig, deps)).rejects.toThrow(message);
+    expect(calls).toEqual([]);
+  });
+
   it("rejects DNS-backed destinations unless the reviewed profile policy owns DNS", async () => {
     deps.validateEndpointUrl = async () => ({ dnsResolved: true });
 
@@ -483,8 +558,16 @@ describe("runtime identity contract", () => {
           providerType: "okta-runtime-v1",
           clientIdEnvironmentName: "OKTA_CLIENT_ID",
           dnsResolution: "reject",
-          trustedHostnames: [],
-          trustedHostSuffixes: ["okta.com"],
+          tokenIssuer: {
+            trustedHostnames: [],
+            trustedHostSuffixes: ["okta.com"],
+          },
+          credentialDelivery: {
+            method: "GET",
+            path: "/**",
+            trustedHostnames: [],
+            trustedHostSuffixes: ["okta.com"],
+          },
           trustedBinaries: [
             "/usr/local/bin/node",
             "/usr/bin/node",
@@ -534,8 +617,16 @@ describe("runtime identity contract", () => {
           providerType: "oauth2-runtime-conformance-v1",
           clientIdEnvironmentName: "E2E_CLIENT_ID",
           dnsResolution: "identity-platform-controlled",
-          trustedHostnames: ["identity-fixture.trycloudflare.com"],
-          trustedHostSuffixes: [],
+          tokenIssuer: {
+            trustedHostnames: ["identity-fixture.trycloudflare.com"],
+            trustedHostSuffixes: [],
+          },
+          credentialDelivery: {
+            method: "GET",
+            path: "/**",
+            trustedHostnames: ["identity-fixture.trycloudflare.com"],
+            trustedHostSuffixes: [],
+          },
           trustedBinaries: [
             "/usr/local/bin/node",
             "/usr/bin/node",

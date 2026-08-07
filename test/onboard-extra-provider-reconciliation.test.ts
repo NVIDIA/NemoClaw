@@ -77,7 +77,7 @@ runner.run = (command, opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  if (normalized.includes("sandbox get my-assistant")) return "";
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
   if (normalized.includes("sandbox list")) return "my-assistant Ready";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
@@ -144,6 +144,7 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
           OPENSHELL_GATEWAY_ENDPOINT: undefined,
         },
       });

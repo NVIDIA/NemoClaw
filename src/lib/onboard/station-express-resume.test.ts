@@ -645,6 +645,25 @@ describe("DGX Station Express resume (#7048)", () => {
     }
   });
 
+  it("rejects a mode-bound receipt with an unknown mode value (#8205)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-mode-bad-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateDir, "station-express-resume"),
+      `${portReceiptText().trimEnd()}\nmode=bogus\n`,
+      { mode: 0o600 },
+    );
+
+    try {
+      expect(() =>
+        assertStationExpressInstallerResumeMatches(receiptGeneration, { HOME: home }),
+      ).toThrow("malformed");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("retires only the exact matching installer receipt generation", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-match-"));
     const stateDir = path.join(home, ".nemoclaw");
@@ -744,6 +763,22 @@ describe("DGX Station Express resume (#7048)", () => {
         assertStationExpressInstallerResumeMatches(receiptGeneration, { HOME: home }),
       ).toThrow("installer resume state is malformed");
       expect(fs.readFileSync(receipt, "utf8")).toBe(currentReceiptText(overrides));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts Personal as the policy tier in an installer resume receipt", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-personal-tier-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, currentReceiptText({ policyTier: "personal" }), { mode: 0o600 });
+
+    try {
+      expect(() =>
+        assertStationExpressInstallerResumeMatches(receiptGeneration, { HOME: home }),
+      ).not.toThrow();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

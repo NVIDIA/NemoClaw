@@ -35,18 +35,23 @@ describe("e2e workflow boundary", () => {
     ).not.toThrow();
   });
 
-  it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
+  it("keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("rejects staging Launchable protected-environment and secret-guard drift", () => {
+  it("rejects a Launchable environment gate, authorization drift, and secret-guard drift", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
         {
           if?: string;
           environment?: Record<string, unknown>;
-          steps?: Array<{ env?: Record<string, string>; name?: string }>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            run?: string;
+            uses?: string;
+          }>;
         }
       >;
     };
@@ -54,16 +59,26 @@ describe("e2e workflow boundary", () => {
     job.environment = { name: "unprotected" };
     const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
     prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
+    const generateSteps = workflow.jobs["generate-matrix"]!.steps!;
+    const authorization = generateSteps.find(
+      (step) => step.name === "Authorize Launchable E2E maintainer dispatch",
+    )!;
+    delete authorization.env!.TRIGGERING_ACTOR;
+    authorization.run = authorization.run!.replace("maintain | admin", "write");
+    generateSteps.push(...generateSteps.splice(generateSteps.indexOf(authorization), 1));
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "staging-brev-launchable must use its protected non-deployment environment",
+        "staging-brev-launchable must not use a GitHub environment",
+        "Launchable E2E maintainer authorization must bind TRIGGERING_ACTOR",
+        "step 'Authorize Launchable E2E maintainer dispatch' run script must include maintain | admin",
+        "Launchable E2E maintainer authorization must run before generate-matrix checkout",
         "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
       ]),
     );
   });
 
-  it("selects Launchable E2E only for trusted manual full or Launchable dispatches (#7487)", () => {
+  it("selects Launchable E2E for main pushes and trusted manual dispatches (#7487)", () => {
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -110,9 +125,9 @@ describe("e2e workflow boundary", () => {
     ).toEqual({ runLaunchableE2e: false });
     expect(
       evaluateStagingBrevLaunchableDispatch({
-        eventName: "schedule",
+        eventName: "push",
       }),
-    ).toEqual({ runLaunchableE2e: false });
+    ).toEqual({ runLaunchableE2e: true });
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -140,7 +155,7 @@ describe("e2e workflow boundary", () => {
     };
     workflow["run-name"] = "E2E";
     workflow.on.workflow_dispatch.inputs.include_staging_brev_launchable.default = true;
-    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'schedule' }}";
+    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'push' }}";
     workflow.jobs["staging-brev-launchable-readiness"] = {};
     const dispatchIdentity = workflow.jobs["staging-brev-launchable"]!.steps!.find(
       (step) => step.name === "Record E2E dispatch identity",
@@ -156,7 +171,7 @@ describe("e2e workflow boundary", () => {
         "workflow run-name must expose the unique manual-dispatch correlation ID",
         "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
         "workflow must not define superseded staging-brev-launchable-readiness job",
-        "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
+        "staging-brev-launchable must run on main pushes and retain trusted manual selection",
         "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
         `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
       ]),
@@ -176,6 +191,29 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "workflow concurrency must isolate each full dispatch with github.run_id",
         "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
+      ]),
+    );
+  });
+
+  it("keeps dashboard remote-bind in unified E2E with scoped credentials (#7490)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, string>;
+          steps: Array<{ env?: Record<string, string>; name?: string; run?: string }>;
+        }
+      >;
+    };
+    const job = workflow.jobs["dashboard-remote-bind"]!;
+    job.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND = "0";
+    const run = job.steps.find((step) => step.name === "Run dashboard remote-bind live test")!;
+    delete run.env!.NVIDIA_INFERENCE_API_KEY;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "dashboard-remote-bind job must set NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1",
+        "dashboard-remote-bind step must receive NVIDIA_INFERENCE_API_KEY from secrets",
       ]),
     );
   });
@@ -391,7 +429,7 @@ describe("e2e workflow boundary", () => {
       >;
     };
     const generateMatrix = workflow.jobs["generate-matrix"]!;
-    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    generateMatrix.outputs.matrix = "${{ steps.controller_matrix.outputs.matrix }}";
     const [trusted] = generateMatrix.steps.splice(
       generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
       1,
@@ -652,13 +690,18 @@ describe("e2e workflow boundary", () => {
         selectedFreeStandingJobs: ["network-policy"],
         registryTargets: ["ubuntu-repo-cloud-openclaw"],
       });
-      for (const selectors of [{ jobs: "hermes-dashboard" }, { targets: "hermes-dashboard" }]) {
-        expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
-          valid: true,
-          liveTargetsRun: false,
-          selectedFreeStandingJobs: ["hermes-e2e"],
-          registryTargets: [],
-        });
+      for (const [legacy, canonical] of [
+        ["hermes-dashboard", "hermes-e2e"],
+        ["sandbox-rlimits-connect", "sandbox-operations"],
+      ] as const) {
+        for (const selectors of [{ jobs: legacy }, { targets: legacy }]) {
+          expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
+            valid: true,
+            liveTargetsRun: false,
+            selectedFreeStandingJobs: [canonical],
+            registryTargets: [],
+          });
+        }
       }
     },
   );
@@ -672,8 +715,24 @@ describe("e2e workflow boundary", () => {
       jobs: Record<string, { env?: Record<string, string>; if?: string }>;
     };
     const workflowJobs = new Set(Object.keys(workflow.jobs));
+    const portableWorkflow = YAML.parse(
+      fs.readFileSync(
+        path.join(process.cwd(), ".github", "workflows", "portable-profile-e2e.yaml"),
+        "utf8",
+      ),
+    ) as {
+      on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } };
+    };
+    const portableProofInputs = [
+      "scripts/install-openshell.sh",
+      "test/e2e/live/portable-profile-gateway-proof.ts",
+      "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "tools/e2e/check-semantic-phases.mts",
+    ];
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
+    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
+    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
     expect(inventory.allowedJobs).not.toHaveLength(0);
     expect(inventory.targetToJob.size).toBeGreaterThan(0);
     expect(inventory.workflowJobs.every((job) => workflowJobs.has(job))).toBe(true);
@@ -708,6 +767,40 @@ describe("e2e workflow boundary", () => {
       {
         id: "token-rotation",
         matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
+      },
+    ]);
+    expect(
+      focusedE2eJobsForChangedFiles(
+        ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts"],
+        inventory,
+      ),
+    ).toEqual([
+      {
+        id: "openclaw-plugin-runtime-exdev",
+        matchedFiles: ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts"],
+      },
+    ]);
+    expect(
+      focusedE2eJobsForChangedFiles(["test/e2e/live/rebuild-hermes-cron-restore.ts"], inventory),
+    ).toEqual([
+      {
+        id: "rebuild-hermes",
+        matchedFiles: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+      },
+      {
+        id: "rebuild-hermes-stale-base",
+        matchedFiles: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+      },
+    ]);
+    expect(
+      focusedE2eJobsForChangedFiles(
+        ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
+        inventory,
+      ),
+    ).toEqual([
+      {
+        id: "openshell-gateway-upgrade",
+        matchedFiles: ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
       },
     ]);
   });
@@ -1094,12 +1187,15 @@ jobs:
     );
     fs.writeFileSync(
       workflowPath,
-      workflow.replace(" || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,')", ""),
+      workflow.replace(
+        " || contains(format(',{0},', inputs.targets), ',state-backup-restore,')",
+        "",
+      ),
     );
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild must match the workflow job selector",
+        "free-standing inventory mapping state-backup-restore:state-backup-restore must match the workflow job selector",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1207,49 +1303,6 @@ jobs:
           "ad-hoc-derived step 'actions/checkout@v4' action must be pinned to a full commit SHA",
           "step 'Run ad hoc' run script must not interpolate dispatch inputs directly",
           "ad-hoc-derived step 'Run ad hoc' run script must not interpolate secrets directly",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects explicit rlimit workflow trust-boundary drift", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rlimit-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        Record<string, unknown> & {
-          env: Record<string, unknown>;
-          steps: Array<Record<string, unknown>>;
-        }
-      >;
-    };
-    const job = workflow.jobs["sandbox-rlimits-connect"];
-    job["runs-on"] = "self-hosted";
-    job["timeout-minutes"] = 30;
-    job.env.E2E_DEFAULT_ENABLED = "1";
-    job.env.E2E_ARTIFACT_DIR = "/tmp/rlimits";
-    job.env.NEMOCLAW_CLI_BIN = "/usr/bin/nemoclaw";
-    job.env.NEMOCLAW_E2E_CONNECT_RLIMITS = "0";
-    const run = job.steps.find((step) => step.name === "Run sandbox rlimit connect live test")!;
-    run.env = {};
-    run.run = "npx vitest run --project e2e-live test/e2e/live/other.test.ts";
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          'sandbox-rlimits-connect job E2E_DEFAULT_ENABLED must be "0" when set',
-          "sandbox-rlimits-connect job must run on ubuntu-latest",
-          "sandbox-rlimits-connect job must retain its 60 minute connect budget",
-          "sandbox-rlimits-connect job must remain explicit-only",
-          "sandbox-rlimits-connect job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1",
-          "sandbox-rlimits-connect job must use the repo CLI launcher",
-          "sandbox-rlimits-connect job must write artifacts under e2e-artifacts/live/sandbox-rlimits-connect",
-          "sandbox-rlimits-connect job must run sandbox-rlimits-connect.test.ts",
-          "sandbox-rlimits-connect step must receive NVIDIA_API_KEY from secrets",
         ]),
       );
     } finally {

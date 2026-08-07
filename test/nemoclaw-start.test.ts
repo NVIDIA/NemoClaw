@@ -8,6 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { openClawBootstrapSnippet } from "./support/entrypoint-script-fixture";
+
+import { extractShellFunctionFromSource } from "./helpers/shell-source";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -188,37 +191,6 @@ def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw
     );
 }
 
-function extractShellFunctionFromSource(src: string, name: string): string {
-  const header = `${name}() {`;
-  const start = src.indexOf(header);
-  if (start === -1) {
-    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  }
-  const bodyStart = start + header.length;
-  const lines = src.slice(bodyStart).split(/(?<=\n)/);
-  let offset = 0;
-  let heredocEnd: string | undefined;
-  for (const line of lines) {
-    const bareLine = line.replace(/\r?\n$/, "");
-    if (heredocEnd) {
-      offset += line.length;
-      if (bareLine === heredocEnd) {
-        heredocEnd = undefined;
-      }
-      continue;
-    }
-    const heredoc = line.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
-    if (heredoc) {
-      heredocEnd = heredoc[1];
-    }
-    if (bareLine === "}") {
-      return `${name}() {${src.slice(bodyStart, bodyStart + offset)}\n}`;
-    }
-    offset += line.length;
-  }
-  throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
-}
-
 function runEmbeddedPreload(
   script: string,
   argv1: string,
@@ -352,13 +324,10 @@ describe("nemoclaw-start non-root fallback", () => {
   });
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = src.indexOf("# Normalize the sandbox-create bootstrap wrapper");
-    const end = src.indexOf("# ── Config integrity check", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected sandbox-create wrapper normalization and port block");
-    }
-    const snippet = src.slice(start, end);
+    const snippet = openClawBootstrapSnippet(
+      START_SCRIPT,
+      path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh"),
+    );
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-wrapper-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -2265,7 +2234,6 @@ describe("NC-2227-01: legacy migration behavior", () => {
     return [
       "path_has_immutable_bit",
       "ensure_mutable_for_migration",
-      "restore_immutable_if_possible",
       "chown_tree_no_symlink_follow",
       "legacy_symlinks_exist",
       "assert_no_legacy_layout",
@@ -2278,7 +2246,11 @@ describe("NC-2227-01: legacy migration behavior", () => {
   function runMigration(
     configDir: string,
     dataDir: string,
-    opts: { fakeRoot?: boolean; fakeSandboxOwner?: boolean; fakeRootConfigOwner?: boolean } = {},
+    opts: {
+      fakeRoot?: boolean;
+      fakeSandboxOwner?: boolean;
+      fakeRootConfigOwner?: boolean;
+    } = {},
   ) {
     const script = path.join(path.dirname(configDir), `migration-${Date.now()}.sh`);
     const prelude = [
@@ -3538,13 +3510,13 @@ describe("Telegram diagnostics (#2766)", () => {
         "chown() { :; }",
         "chown_tree_no_symlink_follow() { :; }",
         "start_persistent_gateway_log_mirror() { :; }",
-        'gosu() { shift; "$@"; }',
+        'setpriv() { while [ "$1" != "--" ]; do shift; done; shift; "$@"; }',
         // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
         // in sandbox-init.sh; the test scaffolding doesn't source that, so
-        // initialize them here in their fallback form so the gosu() stub still
-        // gets invoked (issue #3280 follow-up).
-        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
-        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        // initialize them here because this scaffolding does not source the
+        // shared privilege-transition helper.
+        "STEP_DOWN_PREFIX_SANDBOX=(setpriv --reuid=sandbox --regid=sandbox --init-groups --)",
+        "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
         "_SANDBOX_HOME=/sandbox",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
@@ -4484,7 +4456,6 @@ describe("setup_auth_profile_as_sandbox", () => {
     extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
   ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
-
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
     // setpriv preserves the parent shell's environment, so the root
     // entrypoint's HOME=/root would otherwise leak into the step-down
@@ -4502,6 +4473,7 @@ describe("setup_auth_profile_as_sandbox", () => {
         "set -euo pipefail",
         "export HOME=/root",
         "STEP_DOWN_PREFIX_SANDBOX=(env)",
+        "openclaw_config_dir_owner() { echo sandbox; }",
         `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
         "harden_auth_profiles() { :; }",
         helper,

@@ -4,6 +4,7 @@
 // OpenShell-managed container labels — duplicated locally to keep
 // the module unit-testable. `docker-gpu-patch.ts` re-exports them as
 // the source of truth; a parity test pins drift.
+
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
@@ -68,7 +69,17 @@ function loadDockerUnpause(): DockerStartFn {
 
 const DOCKER_PROBE_TIMEOUT_MS = 5_000;
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
+const DOCKER_RECOVERY_READY_TIMEOUT_MS = 90_000;
+const DOCKER_RECOVERY_READY_POLL_INTERVAL_MS = 1_000;
+const DOCKER_RECOVERY_READY_MAX_ATTEMPTS =
+  Math.floor(DOCKER_RECOVERY_READY_TIMEOUT_MS / DOCKER_RECOVERY_READY_POLL_INTERVAL_MS) + 1;
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
+const DOCKER_RECOVERY_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepForDockerRecovery(ms: number): void {
+  if (ms <= 0 || !Number.isFinite(ms)) return;
+  Atomics.wait(DOCKER_RECOVERY_SLEEP_BUFFER, 0, 0, ms);
+}
 
 /**
  * Names recovery dispatched on. Stable identifiers callers can log,
@@ -104,8 +115,17 @@ export interface DockerDriverRecoveryDeps {
     newName: string,
     opts?: Record<string, unknown>,
   ) => { status?: number | null };
-  /** Injectable clock for deterministic backup-name normalization in tests. */
+  /** Injectable sleep used by the post-start readiness wait. */
+  sleep?: (ms: number) => void;
+  /** Injectable clock for deterministic readiness deadlines in tests. */
   now?: () => number;
+  /**
+   * Readiness boundary for the caller. Recovery keeps Docker health as its
+   * default authority. The explicit sandbox lifecycle start path stops at a
+   * running container because its provider-owned verification then proves
+   * OpenShell registration, the managed agent gateway, and host forwards.
+   */
+  readiness?: "docker-health" | "runtime-running";
 }
 
 interface LabeledContainer {
@@ -122,6 +142,7 @@ function depsWithDefaults(deps: DockerDriverRecoveryDeps) {
     dockerUnpause: deps.dockerUnpause ?? ((name, opts) => loadDockerUnpause()(name, opts)),
     dockerRename:
       deps.dockerRename ?? ((oldName, newName, opts) => loadDockerRename()(oldName, newName, opts)),
+    sleep: deps.sleep ?? sleepForDockerRecovery,
     now: deps.now ?? (() => Date.now()),
   };
 }
@@ -214,6 +235,86 @@ function buildBackupRestoreName(originalName: string): string {
   return originalName.slice(0, MAX_DOCKER_CONTAINER_NAME_LENGTH);
 }
 
+interface ContainerReadinessResult {
+  ready: boolean;
+  detail: string;
+}
+
+/**
+ * A successful `docker start` only proves that Docker accepted the lifecycle
+ * request. The image can remain in `health: starting` while its agent gateway
+ * is still unavailable, so post-reboot recovery must not report success until
+ * Docker's own readiness contract settles.
+ */
+function waitForRecoveredContainerReady(
+  containerName: string,
+  deps: ReturnType<typeof depsWithDefaults>,
+  readiness: NonNullable<DockerDriverRecoveryDeps["readiness"]>,
+): ContainerReadinessResult {
+  let lastState = "unknown";
+  const deadlineMs = deps.now() + DOCKER_RECOVERY_READY_TIMEOUT_MS;
+  for (let attempt = 0; attempt < DOCKER_RECOVERY_READY_MAX_ATTEMPTS; attempt += 1) {
+    const remainingMs = deadlineMs - deps.now();
+    if (remainingMs <= 0) break;
+    const raw = deps.dockerCapture(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        "{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+        containerName,
+      ],
+      { ignoreError: true, timeout: Math.min(DOCKER_PROBE_TIMEOUT_MS, remainingMs) },
+    );
+    const [runtimeState = "", healthState = ""] = raw.trim().toLowerCase().split(/\s+/);
+    lastState = healthState
+      ? `runtime=${runtimeState || "unknown"}, health=${healthState}`
+      : `runtime=${runtimeState || "unknown"}`;
+
+    if (
+      runtimeState === "running" &&
+      (readiness === "runtime-running" || healthState === "healthy" || healthState === "none")
+    ) {
+      return { ready: true, detail: lastState };
+    }
+    // These states cannot become ready without another lifecycle action.
+    if (["dead", "exited", "removing"].includes(runtimeState)) {
+      return { ready: false, detail: lastState };
+    }
+    if (attempt + 1 >= DOCKER_RECOVERY_READY_MAX_ATTEMPTS) break;
+
+    const postInspectRemainingMs = deadlineMs - deps.now();
+    if (postInspectRemainingMs <= 0) break;
+    deps.sleep(Math.min(DOCKER_RECOVERY_READY_POLL_INTERVAL_MS, postInspectRemainingMs));
+  }
+  return { ready: false, detail: lastState };
+}
+
+function recoveredAfterReadiness(
+  containerName: string,
+  via: DockerDriverRecoveryVia,
+  deps: ReturnType<typeof depsWithDefaults>,
+  readiness: NonNullable<DockerDriverRecoveryDeps["readiness"]>,
+): DockerDriverRecoveryResult {
+  const result = waitForRecoveredContainerReady(containerName, deps, readiness);
+  if (!result.ready) {
+    return {
+      recovered: false,
+      via: null,
+      containerName,
+      detail:
+        `docker container ${containerName} did not become ready after recovery ` +
+        `(${result.detail})`,
+    };
+  }
+  return {
+    recovered: true,
+    via,
+    containerName,
+  };
+}
+
 /**
  * Attempt to recover the labeled sandbox container so OpenShell sees
  * the sandbox again. Caller must retry `openshell sandbox get <name>`
@@ -233,6 +334,7 @@ export function recoverDockerDriverSandbox(
   deps: DockerDriverRecoveryDeps = {},
 ): DockerDriverRecoveryResult {
   const d = depsWithDefaults(deps);
+  const readiness = deps.readiness ?? "docker-health";
   const containers = findLabeledSandboxContainers(sandboxName, deps);
   if (containers.length === 0) {
     return {
@@ -258,17 +360,9 @@ export function recoverDockerDriverSandbox(
           detail: `docker unpause ${runningOriginal.name} failed (exit ${unpause.status ?? "unknown"}).`,
         };
       }
-      return {
-        recovered: true,
-        via: "unpaused-original",
-        containerName: runningOriginal.name,
-      };
+      return recoveredAfterReadiness(runningOriginal.name, "unpaused-original", d, readiness);
     }
-    return {
-      recovered: true,
-      via: "started-running-original",
-      containerName: runningOriginal.name,
-    };
+    return recoveredAfterReadiness(runningOriginal.name, "started-running-original", d, readiness);
   }
 
   if (stoppedOriginal) {
@@ -277,11 +371,12 @@ export function recoverDockerDriverSandbox(
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
     if (result.status === 0) {
-      return {
-        recovered: true,
-        via: "started-stopped-original",
-        containerName: stoppedOriginal.name,
-      };
+      return recoveredAfterReadiness(
+        stoppedOriginal.name,
+        "started-stopped-original",
+        d,
+        readiness,
+      );
     }
     return {
       recovered: false,
@@ -308,11 +403,7 @@ export function recoverDockerDriverSandbox(
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
     if (startResult.status === 0) {
-      return {
-        recovered: true,
-        via: "renamed-and-started-backup",
-        containerName: restoreName,
-      };
+      return recoveredAfterReadiness(restoreName, "renamed-and-started-backup", d, readiness);
     }
     return {
       recovered: false,

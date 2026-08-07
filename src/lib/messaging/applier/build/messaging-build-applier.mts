@@ -22,17 +22,24 @@ import { pathToFileURL } from "node:url";
 import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { discordManifest } from "../../channels/discord/manifest.ts";
+import { googlechatManifest } from "../../channels/googlechat/manifest.ts";
 import { slackManifest } from "../../channels/slack/manifest.ts";
 import { teamsManifest } from "../../channels/teams/manifest.ts";
 import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
+import {
+  selectActiveMessagingChannelIds,
+  selectEnabledMessagingAgentRender,
+  selectEnabledPostAgentInstallBuildFiles,
+} from "../../post-agent-install-selection.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
 type MessagingAgentId = "openclaw" | "hermes";
 type MessagingHookPhase = "agent-install" | "post-agent-install";
+type MessagingBuildCliPhase = MessagingBuildPhase | "managed-image-capability-union";
 type MessagingRuntimeSetupKey = "nodePreloads" | "envAliases" | "secretScans";
 type MessagingSerializableValue =
   | string
@@ -156,6 +163,7 @@ const TRUSTED_CHANNEL_MANIFESTS: readonly ChannelManifest[] = [
   slackManifest,
   whatsappManifest,
   teamsManifest,
+  googlechatManifest,
 ] as const;
 
 function isPinnedHermesUvPackageSpec(spec: string): boolean {
@@ -341,19 +349,7 @@ export function applyMessagingAgentRenderToLocalFiles(
 
 export function activeChannels(plan: MessagingBuildPlan | null): string[] {
   if (!plan) return [];
-  const seen = new Set<string>();
-  const channels: string[] = [];
-  for (const item of plan.channels) {
-    const channel = String(item.channelId || "")
-      .trim()
-      .toLowerCase();
-    if (!channel || seen.has(channel)) continue;
-    if (item.active === true && item.disabled !== true) {
-      seen.add(channel);
-      channels.push(channel);
-    }
-  }
-  return channels;
+  return selectActiveMessagingChannelIds(plan);
 }
 
 export function messagingRuntimePlanPath(env: Env = process.env): string {
@@ -525,6 +521,24 @@ export function collectHermesMessagingUvPackages(plan: MessagingBuildPlan | null
   return collectHermesMessagingUvPackageInstalls(plan).map((install) => install.spec);
 }
 
+/**
+ * Return the complete reviewed OpenClaw package set baked into a managed image.
+ *
+ * This deliberately reads committed built-in manifests directly. A serialized
+ * messaging plan is deployment input, not authority to choose packages that
+ * execute during the trusted image build.
+ */
+export function collectManagedImageOpenClawPluginInstallSpecs(env: Env): string[] {
+  return collectManagedImageOpenClawPluginInstalls(env).map((install) => install.spec);
+}
+
+/** Return every pinned Hermes package required by a supported managed-image channel. */
+export function collectManagedImageHermesUvPackages(): string[] {
+  return collectTrustedHermesUvPackageInstalls(TRUSTED_CHANNEL_MANIFESTS).map(
+    (install) => install.spec,
+  );
+}
+
 function collectOpenClawMessagingPluginInstalls(
   plan: MessagingBuildPlan | null,
   env: Env,
@@ -570,6 +584,51 @@ function collectOpenClawMessagingPluginInstalls(
     if (seen.has(key)) continue;
     seen.add(key);
     installs.push(resolvedInstall);
+  }
+  return installs;
+}
+
+function collectManagedImageOpenClawPluginInstalls(env: Env): OpenClawPluginInstall[] {
+  const reviewedIntegrity = reviewedOpenClawPluginIntegrityByPackageSpec(
+    env,
+    TRUSTED_CHANNEL_MANIFESTS,
+  );
+  const reviewedTarballUrls = reviewedOpenClawPluginTarballUrlByPackageSpec(
+    env,
+    TRUSTED_CHANNEL_MANIFESTS,
+  );
+  const runtimeLocks = reviewedOpenClawPluginRuntimeLocksByPackageSpec(
+    env,
+    TRUSTED_CHANNEL_MANIFESTS,
+  );
+  const installs: OpenClawPluginInstall[] = [];
+  const seen = new Set<string>();
+
+  for (const manifest of TRUSTED_CHANNEL_MANIFESTS) {
+    for (const packageSpec of manifest.agentPackages ?? []) {
+      if (packageSpec.agent !== "openclaw" || packageSpec.manager !== "openclaw-plugin") continue;
+      const spec = resolveOpenClawPackageSpec(packageSpec.spec, env);
+      const npmPackage = requireExactNpmPackageSpec(spec, manifest.id);
+      const integrity = reviewedIntegrity[npmPackage.packageSpec];
+      const tarballUrl = reviewedTarballUrls[npmPackage.packageSpec];
+      if (packageSpec.pin !== true || !integrity || !tarballUrl) {
+        throw new MessagingBuildApplierError(
+          `Managed-image OpenClaw package ${npmPackage.packageSpec} must have a committed integrity pin and tarball URL`,
+        );
+      }
+      if (seen.has(npmPackage.packageSpec)) continue;
+      seen.add(npmPackage.packageSpec);
+      installs.push({
+        spec,
+        npmPackageSpec: npmPackage.packageSpec,
+        integrity,
+        tarballUrl,
+        ...(runtimeLocks[npmPackage.packageSpec]
+          ? { runtimeLock: runtimeLocks[npmPackage.packageSpec] }
+          : {}),
+        pin: true,
+      });
+    }
   }
   return installs;
 }
@@ -643,9 +702,18 @@ function collectHermesMessagingUvPackageInstalls(
  */
 function trustedHermesUvPackageSpecsForPlan(plan: MessagingBuildPlan | null): Set<string> {
   const active = new Set(activeChannels(plan));
+  return new Set(
+    collectTrustedHermesUvPackageInstalls(
+      TRUSTED_CHANNEL_MANIFESTS.filter((manifest) => active.has(manifest.id)),
+    ).map((install) => install.spec),
+  );
+}
+
+function collectTrustedHermesUvPackageInstalls(
+  manifests: readonly ChannelManifest[],
+): HermesUvPackageInstall[] {
   const specs = new Set<string>();
-  for (const manifest of TRUSTED_CHANNEL_MANIFESTS) {
-    if (!active.has(manifest.id)) continue;
+  for (const manifest of manifests) {
     for (const packageSpec of manifest.agentPackages ?? []) {
       if (packageSpec.agent !== "hermes" || packageSpec.manager !== "hermes-uv-pip") continue;
       if (!isPinnedHermesUvPackageSpec(packageSpec.spec)) {
@@ -656,7 +724,7 @@ function trustedHermesUvPackageSpecsForPlan(plan: MessagingBuildPlan | null): Se
       specs.add(packageSpec.spec);
     }
   }
-  return specs;
+  return [...specs].map((spec) => ({ spec }));
 }
 
 export function openClawDoctorEnvOverrides(
@@ -689,7 +757,11 @@ export function openClawDoctorEnvOverrides(
 }
 
 export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null, env: Env): void {
-  for (const install of collectOpenClawMessagingPluginInstalls(plan, env)) {
+  installOpenClawPluginPackages(collectOpenClawMessagingPluginInstalls(plan, env), env);
+}
+
+function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[], env: Env): void {
+  for (const install of installs) {
     const installCache = install.runtimeLock
       ? requireWritableRuntimeInstallCache(install.runtimeLock, env)
       : undefined;
@@ -974,10 +1046,7 @@ function resolveAgentRenderTarget(
 }
 
 function enabledAgentRender(plan: MessagingBuildPlan): MessagingRenderEntry[] {
-  const active = new Set(activeChannels(plan));
-  return plan.agentRender.filter(
-    (render) => render.agent === plan.agent && active.has(render.channelId),
-  );
+  return selectEnabledMessagingAgentRender(plan);
 }
 
 function enabledBuildStepsForPhase(
@@ -985,6 +1054,9 @@ function enabledBuildStepsForPhase(
   phase: MessagingHookPhase,
 ): MessagingBuildStep[] {
   if (!plan) return [];
+  if (phase === "post-agent-install") {
+    return selectEnabledPostAgentInstallBuildFiles(plan);
+  }
   return enabledBuildSteps(plan).filter((step) => buildStepMatchesPhase(plan, step, phase));
 }
 
@@ -1713,12 +1785,42 @@ function formatError(error: unknown): string {
 }
 
 export type MessagingBuildPhase = "runtime-setup" | "agent-install" | "post-agent-install";
+export type MessagingBuildApplyMode = "apply" | "clear";
+
+export interface MessagingBuildPhaseOptions {
+  /**
+   * A managed image already contains the reviewed capability union. Apply only
+   * the explicit render and build-file plan to its durable home directory.
+   */
+  readonly managedStartupRuntime?: boolean;
+  /** Explicit provider-owned intent for managed startup profile application. */
+  readonly mode?: MessagingBuildApplyMode;
+}
 
 export function applyMessagingBuildPhase(
   plan: MessagingBuildPlan | null,
   phase: MessagingBuildPhase,
   env: Env = process.env,
+  options: MessagingBuildPhaseOptions = {},
 ): readonly string[] {
+  const mode = options.mode ?? "apply";
+  if (mode !== "apply" && mode !== "clear") {
+    throw new MessagingBuildApplierError("Messaging apply mode must be 'apply' or 'clear'");
+  }
+  if (options.managedStartupRuntime && phase !== "post-agent-install") {
+    throw new MessagingBuildApplierError(
+      "Managed startup runtime mode is only valid for post-agent-install",
+    );
+  }
+  if (mode === "clear") {
+    if (plan !== null) {
+      throw new MessagingBuildApplierError("Messaging clear mode requires an absent plan");
+    }
+    return [];
+  }
+  if (options.managedStartupRuntime && plan === null) {
+    throw new MessagingBuildApplierError("Managed startup apply mode requires a messaging plan");
+  }
   if (phase === "runtime-setup") {
     const target = writeMessagingRuntimePlanArtifact(plan, messagingRuntimePlanPath(env));
     return target ? [target] : [];
@@ -1732,7 +1834,7 @@ export function applyMessagingBuildPhase(
     ...applyPostAgentInstallBuildFilesToLocalFiles(plan),
   ];
   const appliedTargets = applyPostAgentInstallOutputs();
-  if (plan?.agent === "openclaw") {
+  if (plan?.agent === "openclaw" && !options.managedStartupRuntime) {
     runOpenClawMessagingDoctor(plan, env);
     return uniqueStrings([...appliedTargets, ...applyPostAgentInstallOutputs()]);
   }
@@ -1764,6 +1866,10 @@ function installHermesMessagingUvPackages(plan: MessagingBuildPlan | null, env: 
   const selectedPackages = collectHermesMessagingUvPackageInstalls(plan).map(
     (install) => install.spec,
   );
+  installHermesUvPackages(selectedPackages, env);
+}
+
+function installHermesUvPackages(selectedPackages: readonly string[], env: Env): void {
   if (selectedPackages.length === 0) return;
   runCommand(
     [
@@ -1778,6 +1884,22 @@ function installHermesMessagingUvPackages(plan: MessagingBuildPlan | null, env: 
     ],
     env,
   );
+}
+
+export function installManagedImageCapabilityUnion(
+  agent: MessagingAgentId,
+  env: Env = process.env,
+): void {
+  if (env.NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION !== "1") {
+    throw new MessagingBuildApplierError(
+      "Managed-image capability union installation requires NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+    );
+  }
+  if (agent === "openclaw") {
+    installOpenClawPluginPackages(collectManagedImageOpenClawPluginInstalls(env), env);
+    return;
+  }
+  installHermesUvPackages(collectManagedImageHermesUvPackages(), env);
 }
 
 export function describeMessagingBuildPhase(
@@ -1802,28 +1924,76 @@ export function describeMessagingBuildPhase(
 }
 
 export function main(argv: readonly string[] = process.argv.slice(2)): void {
-  const { agent, phase, dryRun } = parseMessagingBuildArgs(argv);
+  const { agent, phase, dryRun, managedStartupRuntime, mode } = parseMessagingBuildArgs(argv);
   const plan = readMessagingBuildPlanFromEnv(process.env, agent);
+  if (phase === "managed-image-capability-union") {
+    if (plan) {
+      throw new MessagingBuildApplierError(
+        "Managed-image capability union must be built without a serialized messaging plan",
+      );
+    }
+    if (dryRun) {
+      console.log(
+        JSON.stringify(
+          {
+            agent,
+            phase,
+            channels: [],
+            runtimePlanPath: "",
+            doctorEnv: {},
+            installSpecs:
+              agent === "openclaw"
+                ? collectManagedImageOpenClawPluginInstallSpecs(process.env)
+                : [],
+            hermesUvPackages: agent === "hermes" ? collectManagedImageHermesUvPackages() : [],
+            openclawVersion: process.env.OPENCLAW_VERSION || "",
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    installManagedImageCapabilityUnion(agent, process.env);
+    return;
+  }
   if (dryRun) {
     console.log(JSON.stringify(describeMessagingBuildPhase(plan, phase, process.env), null, 2));
     return;
   }
-  applyMessagingBuildPhase(plan, phase, process.env);
+  applyMessagingBuildPhase(plan, phase, process.env, { managedStartupRuntime, mode });
 }
 
 function parseMessagingBuildArgs(argv: readonly string[]): {
   readonly agent: MessagingAgentId;
-  readonly phase: MessagingBuildPhase;
+  readonly phase: MessagingBuildCliPhase;
   readonly dryRun: boolean;
+  readonly managedStartupRuntime: boolean;
+  readonly mode: MessagingBuildApplyMode;
 } {
   let agent: MessagingAgentId | undefined;
-  let phase: MessagingBuildPhase | undefined;
+  let phase: MessagingBuildCliPhase | undefined;
   let dryRun = false;
+  let managedStartupRuntime = false;
+  let mode: MessagingBuildApplyMode = "apply";
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--dry-run") {
       dryRun = true;
+      continue;
+    }
+    if (arg === "--managed-startup-runtime") {
+      managedStartupRuntime = true;
+      continue;
+    }
+    if (arg === "--mode") {
+      mode = readApplyModeArg(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--mode=")) {
+      mode = readApplyModeArg(arg.slice("--mode=".length));
       continue;
     }
     if (arg === "--agent") {
@@ -1851,11 +2021,26 @@ function parseMessagingBuildArgs(argv: readonly string[]): {
     throw new MessagingBuildApplierError(`Unknown messaging build applier argument: ${arg}`);
   }
 
+  const resolvedPhase = phase ?? "post-agent-install";
+  if (managedStartupRuntime && resolvedPhase !== "post-agent-install") {
+    throw new MessagingBuildApplierError(
+      "--managed-startup-runtime requires --phase post-agent-install",
+    );
+  }
   return {
     agent: agent ?? "openclaw",
-    phase: phase ?? "post-agent-install",
+    phase: resolvedPhase,
     dryRun,
+    managedStartupRuntime,
+    mode,
   };
+}
+
+function readApplyModeArg(value: string | undefined): MessagingBuildApplyMode {
+  if (value === "apply" || value === "clear") {
+    return value;
+  }
+  throw new MessagingBuildApplierError("--mode must be 'apply' or 'clear'");
 }
 
 function readAgentArg(value: string | undefined): MessagingAgentId {
@@ -1865,12 +2050,17 @@ function readAgentArg(value: string | undefined): MessagingAgentId {
   throw new MessagingBuildApplierError("--agent must be 'openclaw' or 'hermes'");
 }
 
-function readPhaseArg(value: string | undefined): MessagingBuildPhase {
-  if (value === "runtime-setup" || value === "agent-install" || value === "post-agent-install") {
+function readPhaseArg(value: string | undefined): MessagingBuildCliPhase {
+  if (
+    value === "runtime-setup" ||
+    value === "agent-install" ||
+    value === "post-agent-install" ||
+    value === "managed-image-capability-union"
+  ) {
     return value;
   }
   throw new MessagingBuildApplierError(
-    "--phase must be 'runtime-setup', 'agent-install', or 'post-agent-install'",
+    "--phase must be 'runtime-setup', 'agent-install', 'post-agent-install', or 'managed-image-capability-union'",
   );
 }
 

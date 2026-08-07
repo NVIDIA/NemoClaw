@@ -77,6 +77,64 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(report.hints.join(" ")).toMatch(/hermes whatsapp/);
   });
 
+  it("reports the Hermes dashboard-only session path split with the supported repair", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: false,
+        sessionLocations: {
+          gatewaySessionCreds: false,
+          dashboardSessionCreds: true,
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    expect(report.verdict).toBe("unpaired");
+    expect(session?.severity).toBe("warn");
+    expect(session?.detail).toMatch(/dashboard-home has WhatsApp credentials/);
+    expect(session?.hint).toContain("platforms.whatsapp.extra.session_path");
+    expect(session?.hint).toContain("--config-accept-new-path");
+    expect(report.hints.join(" ")).toContain(
+      "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
+    );
+    expect(report.hints.join(" ")).toContain("--config-accept-new-path");
+  });
+
+  it("keeps Hermes gateway session file evidence out of the live-health verdict", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: null,
+        sessionLocations: {
+          gatewaySessionCreds: true,
+          dashboardSessionCreds: false,
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    expect(report.verdict).toBe("unknown");
+    expect(session?.severity).toBe("ok");
+    expect(session?.detail).toMatch(/gateway session path contains WhatsApp credentials/);
+  });
+
+  it("reports duplicate Hermes session paths without claiming live health (#8184)", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: null,
+        sessionLocations: {
+          gatewaySessionCreds: true,
+          dashboardSessionCreds: true,
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    expect(report.verdict).toBe("unknown");
+    expect(session?.severity).toBe("info");
+    expect(session?.detail).toBe("both Hermes session paths contain WhatsApp credentials");
+    expect(session?.hint).toBe("use one active WhatsApp bridge for the paired account");
+  });
+
   it("returns idle when paired with a live WebSocket but no inbound event observed", () => {
     // This is the exact #4386 shape: pairing is fine, WebSocket is up, but
     // lastInboundAt is still null. We MUST NOT report this as healthy.

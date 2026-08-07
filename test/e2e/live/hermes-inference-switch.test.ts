@@ -13,7 +13,6 @@ import {
   chatContent,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
-  ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
   expectAuthenticatedBaselineInventoryRequest,
@@ -36,6 +35,7 @@ import {
   PROXY_RESOLUTION_PROVIDER,
   parseHermesModelBlock,
   parseInferenceRoute,
+  prepareCompatibleAnthropicSwitchBinding,
   prepareProxyResolutionRoute,
   RUNTIME_SWITCH_API,
   registryState,
@@ -73,7 +73,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
       "switch Hermes inference provider",
       "validate switched route and locked config",
       "exercise inference.local and Hermes API",
-      "run Hermes CLI against switched provider",
+      "run Hermes CLI adapter forms against switched provider",
       "prove split provider/model credential resolution",
     ],
   },
@@ -81,7 +81,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   await artifacts.target.declare({
     id: "hermes-inference-switch",
     boundary:
-      "install.sh + Hermes sandbox + inference set + in-sandbox health/chat + hermes -z probes",
+      "install.sh + Hermes sandbox + inference set + in-sandbox health/chat + managed Hermes CLI probes",
     sandboxName: SANDBOX_NAME,
     switchProvider: SWITCH_PROVIDER,
     switchModel: SWITCH_MODEL,
@@ -180,13 +180,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     ? await registerPublicNvidiaSwitchProvider(host, publicApiKey, env())
     : null;
   publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
-  const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
-  switchEndpointUrl &&
-    (await expectOpenAiProvider(
-      host,
-      "compatible-anthropic-endpoint",
-      "COMPATIBLE_ANTHROPIC_API_KEY",
-    ));
+  const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
+  const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
+  switchBinding && redactionValues.push(switchBinding.credentialValue);
 
   const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
   const envHashBefore = await envHash(sandbox, "env-hash-before");
@@ -197,10 +193,17 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     host,
     redactionValues,
     compatibleMetadataArgs,
+    { compatibleBinding: switchBinding },
   );
   expect(switched.exitCode, resultText(switched)).toBe(0);
   expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
   expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
+  switchBinding &&
+    (await expectOpenAiProvider(
+      host,
+      "compatible-anthropic-endpoint",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ));
 
   progress.phase("validate switched route and locked config");
   const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
@@ -242,7 +245,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
 
   const dashboardConfig = await sandbox.exec(
     SANDBOX_NAME,
-    ["cat", "/sandbox/.hermes/dashboard-home/config.yaml"],
+    ["cat", "/sandbox/.hermes/profiles/dashboard-home/config.yaml"],
     {
       artifactName: "hermes-dashboard-config-yaml-after-switch",
       env: env(),
@@ -256,6 +259,15 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(dashboardModel.provider).toBe(SWITCH_PROVIDER);
   expect(dashboardModel.base_url).toBe(expectedBaseUrl());
   expect(dashboardModel.api_mode).toBe(expectedApiMode());
+  for (const reviewedPolicySection of [
+    "approvals",
+    "browser",
+    "session_reset",
+    "display",
+    "updates",
+  ]) {
+    expect(dashboardConfig.stdout).toMatch(new RegExp(`^${reviewedPolicySection}:`, "mu"));
+  }
 
   const dashboardModelInfo = await sandbox.exec(
     SANDBOX_NAME,
@@ -370,7 +382,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(chatContent(chat.stdout)).toMatch(/PONG/i);
   expect(inferenceResponseModel(chat.stdout)).toBe(SWITCH_MODEL);
 
-  progress.phase("run Hermes CLI against switched provider");
+  progress.phase("run Hermes CLI adapter forms against switched provider");
   const hermesCli = await runHermesCliPongWithRetry({
     run: (attempt) =>
       sandbox.exec(
@@ -421,15 +433,17 @@ test("Hermes inference set updates route/config and preserves live runtime", {
         SANDBOX_NAME,
         [
           "hermes",
-          "-z",
+          "chat",
+          "--query",
           "Reply with exactly one word: PONG",
+          "--quiet",
           "--provider",
           PROXY_RESOLUTION_PROVIDER,
           "--model",
           proxyResolutionModel,
         ],
         {
-          artifactName: `hermes-cli-split-provider-namespaced-model-proxy-resolution-${attempt}`,
+          artifactName: `hermes-cli-chat-split-provider-namespaced-model-proxy-resolution-${attempt}`,
           env: env(),
           redactionValues,
           timeoutMs: 150_000,

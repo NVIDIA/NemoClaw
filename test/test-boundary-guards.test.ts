@@ -451,6 +451,7 @@ describe("compiled-test import boundary", () => {
     expect(isScannedTestPath("test/package-contract/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/e2e/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/dist-sourcemaps.test.ts")).toBe(false);
+    expect(isScannedTestPath("test/install-managed-cli-reuse.test.ts")).toBe(false);
   });
 });
 
@@ -750,6 +751,7 @@ describe("Vitest project membership boundary", () => {
       ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
       ["test/install-clone-ref.test.ts", "installer-integration"],
       ["test/install-express-prompt.test.ts", "installer-integration"],
+      ["test/install-managed-cli-reuse.test.ts", "installer-integration"],
       ["test/install-openshell-version-pin.test.ts", "installer-integration"],
       ["test/install-openshell-version-check.test.ts", "installer-integration"],
       ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
@@ -765,7 +767,6 @@ describe("Vitest project membership boundary", () => {
       ["test/package-contract/example.test.js", "package-contract"],
       ["test/e2e/support/example.test.js", "e2e-support"],
       ["test/e2e/live/example.spec.ts", "e2e-live"],
-      ["test/e2e/brev-e2e.test.ts", "e2e-branch-validation"],
       ["test/e2e/other.test.ts", undefined],
     ]);
 
@@ -849,18 +850,19 @@ describe("Vitest project membership boundary", () => {
     const renamed = parseProjectRoster(
       JSON.stringify({
         projects: [
-          ...EXPECTED_VITEST_PROJECTS.filter((name) => name !== "e2e-branch-validation").map(
-            (name) => ({ name, tags: [] }),
-          ),
-          { name: "e2e-branch", tags: [] },
+          ...EXPECTED_VITEST_PROJECTS.filter((name) => name !== "e2e-live").map((name) => ({
+            name,
+            tags: [],
+          })),
+          { name: "e2e-stateful", tags: [] },
           { name: "empty-project", tags: [] },
         ],
         tags: [],
       }),
     );
     expect(findProjectRosterMismatches(renamed)).toEqual({
-      missing: ["e2e-branch-validation"],
-      unexpected: ["e2e-branch", "empty-project"],
+      missing: ["e2e-live"],
+      unexpected: ["e2e-stateful", "empty-project"],
     });
   });
 

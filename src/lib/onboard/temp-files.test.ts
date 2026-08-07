@@ -27,6 +27,29 @@ describe("onboard temp file helpers", () => {
     expect(path.basename(filePath)).toBe("nemoclaw-test.txt");
   });
 
+  it.skipIf(process.platform === "win32")(
+    "creates an owner-only real parent and rejects a planted target with exclusive creation",
+    () => {
+      const filePath = secureTempFile("nemoclaw-exclusive", ".txt");
+      const parent = path.dirname(filePath);
+      createdParents.push(parent);
+      const parentStat = fs.lstatSync(parent);
+      const plantedTarget = path.join(parent, "planted-target.txt");
+      fs.writeFileSync(plantedTarget, "untouched\n", { mode: 0o600 });
+
+      expect(parentStat.isDirectory()).toBe(true);
+      expect(parentStat.isSymbolicLink()).toBe(false);
+      expect(parentStat.mode & 0o777).toBe(0o700);
+      expect(fs.existsSync(filePath)).toBe(false);
+
+      fs.symlinkSync(plantedTarget, filePath);
+      expect(() =>
+        fs.writeFileSync(filePath, "replacement\n", { flag: "wx", mode: 0o400 }),
+      ).toThrowError(expect.objectContaining({ code: "EEXIST" }));
+      expect(fs.readFileSync(plantedTarget, "utf8")).toBe("untouched\n");
+    },
+  );
+
   it("rejects temp prefixes with path separators", () => {
     expect(() => secureTempFile("../nemoclaw-test", ".txt")).toThrow("Invalid temp file prefix");
     expect(() => secureTempFile("nested/nemoclaw-test", ".txt")).toThrow(

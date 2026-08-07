@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InferenceSelection } from "../../inference/selection";
+import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
+import type { TrustedPrivatePolicyPinReceipt } from "../../policy/trusted-private-endpoints";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
@@ -16,6 +19,8 @@ export interface CustomPolicyEntry {
   pendingContent?: string;
   sourcePath?: string;
   appliedAt?: string;
+  /** Content-bound authority for generated exact destination pins. */
+  trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
 }
 
 export interface BaselineExclusionEntry {
@@ -75,6 +80,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
   reservationSessionId?: string;
   createdAt?: string;
+  /** Immutable catalog provenance for an explicitly selected serving profile. */
+  servingProfileProvenance?: ServingProfileProvenance;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
   sandboxGpuEnabled?: boolean;
@@ -119,9 +126,17 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   imageTag?: string | null;
+  /**
+   * Durable source and ownership receipt for the workload behind imageTag.
+   * Managed images are immutable shared release artifacts and must never flow
+   * through per-sandbox image deletion.
+   */
+  workload?: SandboxWorkloadReceipt;
   messaging?: SandboxMessagingState;
   mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
+  /** Destination-scoped provider holding the host-minted Hermes inference key. */
+  hermesInferenceProvider?: string;
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
@@ -140,6 +155,41 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   gatewayName?: string | null;
   gatewayPort?: number | null;
 }
+
+export type SandboxWorkloadReceipt =
+  | {
+      readonly schemaVersion: 1;
+      readonly kind: "managed-image";
+      readonly reference: string;
+      /**
+       * Exact OCI platform selected from the publication index. Receipts
+       * created before multi-architecture managed images may omit this field,
+       * but runtime providers must reject the ambiguous receipt rather than
+       * infer a platform.
+       */
+      readonly platform?: "linux/amd64" | "linux/arm64";
+      readonly release: string;
+      readonly sourceRevision: string;
+      /** Exact all-agent publication cohort that produced the immutable image. */
+      readonly sourceCohort: string;
+      readonly capabilityContractVersion: 1;
+      readonly startupProfileContractVersion: 1;
+      /** Canonical, secret-free base64url profile transport used to start this image. */
+      readonly encodedProfile: string;
+      readonly startupProfileSha256: string;
+      /** Re-acquire launch-only proxy credentials from the operator environment when cloning. */
+      readonly credentialProxyReplayRequired: boolean;
+      /** Optional canonical standard-base64 public CA bundle bound by the profile digest. */
+      readonly corporateCaB64?: string;
+      readonly shared: true;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly kind: "legacy-dockerfile";
+      readonly reference: string | null;
+      readonly shared: false;
+    }
+  | NativeArtifactWorkloadReceiptV1;
 
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;

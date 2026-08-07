@@ -67,12 +67,15 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   maybeApplyDuringCreate: () => {},
   createFailureMessage: () => null,
-  exitOnPatchError: () => {},
-  ensureApplied: () => {},
+  exitOnPatchError: async () => {},
+  attachManagedBootstrapCutover: () => {},
+  rollbackManagedStartupAfterCreateFailure: async () => {},
+  ensureApplied: async () => {},
   waitForSupervisorReconnectIfNeeded: () => {},
+  commitAfterReady: async () => {},
   selectedMode: () => null,
   printReadinessFailureIfEnabled: () => {},
-  verifyGpuOrExit: (verify) => verify(sandboxName),
+  verifyGpuOrExit: async (verify) => verify(sandboxName),
 });
 
 agentOnboard.createAgentSandbox = () => {
@@ -104,8 +107,10 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get " + sandboxName)) {
-    return scenario === "reuse" ? sandboxName : "";
+  if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
+    return scenario === "reuse"
+      ? [sandboxName, "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10))
+      : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   if (normalized.includes("forward list")) return sandboxName + " 127.0.0.1 18789 12345 running";
@@ -175,6 +180,7 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
     timeout: 15000,

@@ -1,43 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { dockerRunCommandBetween } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
-
-interface LoggedDockerShellResult {
-  calls: string;
-  result: SpawnSyncReturns<string>;
-}
-
-function runLoggedDockerShell(
-  command: string,
-  tmp: string,
-  functionDefs: string[] = [],
-): LoggedDockerShellResult {
-  const logPath = path.join(tmp, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const script = [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    `call_log=${JSON.stringify(logPath)}`,
-    ...functionDefs,
-    command,
-  ].join("\n");
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-  const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
-}
 
 function dashboardBuildCommand(hermesRoot: string, rootCache: string): string {
   const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
@@ -49,7 +21,8 @@ function dashboardBuildCommand(hermesRoot: string, rootCache: string): string {
     .replaceAll("/opt/hermes", hermesRoot)
     .replaceAll("/root/.npm", path.join(rootCache, "npm"))
     .replaceAll("/root/.cache/electron", path.join(rootCache, "electron"))
-    .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"));
+    .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"))
+    .replaceAll("/root/.cache/uv", path.join(rootCache, "uv"));
 }
 
 describe("Hermes dashboard provisioning", () => {
@@ -62,7 +35,7 @@ describe("Hermes dashboard provisioning", () => {
     fs.mkdirSync(hermesWebDir, { recursive: true });
     fs.writeFileSync(path.join(hermesRoot, "package-lock.json"), '{"packages":{"web":{}}}\n');
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
-    for (const cache of ["npm", "electron", "node-gyp"]) {
+    for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
       const cachePath = path.join(rootCache, cache);
       fs.mkdirSync(cachePath, { recursive: true });
       fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
@@ -82,7 +55,7 @@ describe("Hermes dashboard provisioning", () => {
       expect(calls).toContain(`npm run build --prefix ${hermesRoot} --workspace web`);
       expect(calls).toContain(`npm ci --omit=dev --workspaces=false --prefix ${hermesRoot}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
-      for (const cache of ["npm", "electron", "node-gyp"]) {
+      for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
         expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();
       }
     } finally {

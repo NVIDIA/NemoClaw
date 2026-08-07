@@ -65,8 +65,10 @@ async function finalizeMigration(
     stagedLegacyKeys,
     migratedLegacyKeys,
     webSearchEnabled: false,
+    webSearchProvider: null,
     deps: {
       ensureAgentDashboardForward: () => 0,
+      persistDashboardPort: () => undefined,
       setDefaultSandbox: () => undefined,
       toSessionUpdates: (updates) => updates,
       removeLegacyCredentialsFile,
@@ -80,7 +82,7 @@ async function finalizeMigration(
       formatVerificationDiagnostics: () => [],
       isDeploymentHealthy: () => true,
       reportDeploymentReadiness: () => undefined,
-      verifyWebSearchInsideSandbox: () => undefined,
+      verifyWebSearchInsideSandbox: () => true,
       printDashboard: () => undefined,
       error: () => undefined,
       log: () => undefined,
@@ -155,6 +157,13 @@ describe("legacy credential reconciliation", () => {
                 enabledChannels: [],
                 webSearchConfig: null,
                 agent: {},
+                requiredBindings: [
+                  {
+                    name: "legacy-openai",
+                    type: "generic",
+                    credentialEnv: "OPENAI_API_KEY",
+                  },
+                ],
               },
               async () => ({ messagingTokenDefs: tokenDefs }),
             ),

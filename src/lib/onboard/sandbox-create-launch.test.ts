@@ -8,8 +8,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./managed-bootstrap/adapter";
+import { encodeManagedStartupProfile } from "./managed-startup/profile";
+import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
@@ -61,9 +65,229 @@ describe("buildSandboxRuntimeEnvArgs", () => {
     expect(omitted).toContain("NEMOCLAW_DASHBOARD_PORT=19000");
     expect(omitted).toContain("NEMOCLAW_PROXY_HOST=host.docker.internal");
   });
+
+  // OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to sandbox processes,
+  // so this injection is the sandbox's only source for its own name. Without it
+  // the in-sandbox hints print a `<name>` placeholder instead of a copyable
+  // host-side command. It used to be injected only for LangChain Deep Agents
+  // Code.
+  it("injects NEMOCLAW_SANDBOX_NAME for every agent (#7795)", () => {
+    const base = {
+      chatUiUrl: "http://127.0.0.1:19000/",
+      manageDashboard: true,
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+      sandboxName: "my-assistant",
+    };
+
+    for (const agentName of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      const envArgs = buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      }).envArgs;
+      expect(envArgs, `${agentName} should receive the sandbox name`).toContain(
+        "NEMOCLAW_SANDBOX_NAME=my-assistant",
+      );
+    }
+  });
+
+  it("omits NEMOCLAW_SANDBOX_NAME when no sandbox name is known", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "http://127.0.0.1:19000/",
+      manageDashboard: true,
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+    }).envArgs;
+    expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
+  });
+
+  it("forwards only the literal OpenClaw MCP shadow diagnostic opt-in", () => {
+    const base = {
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+    };
+    const openclaw = { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any;
+
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: openclaw,
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: " 1 " },
+      }).envArgs,
+    ).toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1");
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: openclaw,
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "true" },
+      }).envArgs.some((entry) => entry.startsWith("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=")),
+    ).toBe(false);
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: loadAgent("hermes"),
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1" },
+      }).envArgs,
+    ).not.toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1");
+  });
+
+  it.each([
+    ["1500", "1500"],
+    [" 3000 ", "3000"],
+    ["10000", "10000"],
+  ])("forwards the bounded OpenClaw tools/list timeout %s as %s", (input, expected) => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: input },
+    }).envArgs;
+
+    expect(envArgs).toContain(`NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=${expected}`);
+  });
+
+  it("forwards the tools/list timeout to the legacy null-agent OpenClaw path", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: null,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "3000" },
+    }).envArgs;
+
+    expect(envArgs).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000");
+  });
+
+  it.each([
+    "1499",
+    "10001",
+    "3000.5",
+    "3s",
+    "+3000",
+    "03000",
+    "1e4",
+  ])("rejects the invalid OpenClaw tools/list timeout %s before sandbox creation", (value) => {
+    expect(() =>
+      buildSandboxRuntimeEnvArgs({
+        agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+        chatUiUrl: "",
+        manageDashboard: false,
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: disabledHermesDashboardState,
+        extraPlaceholderKeys: [],
+        env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: value },
+      }),
+    ).toThrow(
+      "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS must be an integer from 1500 to 10000 milliseconds.",
+    );
+  });
+
+  it.each([
+    "hermes",
+    "langchain-deepagents-code",
+  ])("does not forward the OpenClaw tools/list timeout to %s", (agentName) => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "3000" },
+    }).envArgs;
+
+    expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS="))).toBe(
+      false,
+    );
+  });
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("renders one identity-bound held launch for %s without exposing the startup profile", (agentName) => {
+    const request = createManagedStartupRootApplyRequest({
+      agent: agentName,
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agentName)),
+    });
+    const result = prepareSandboxCreateLaunch({
+      agent: loadAgent(agentName),
+      chatUiUrl: "",
+      createArgs: ["--name", `${agentName}-sandbox`],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      openshellArgv: (args) => ["openshell", ...args],
+      buildEnv: () => ({}),
+      managedStartupRootApplyRequest: request,
+    });
+
+    expect(result.intendedSandboxStartupCommand).toEqual([
+      "env",
+      ...result.envArgs,
+      "/usr/local/bin/nemoclaw-start",
+    ]);
+    expect(result.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.sandboxStartupCommand).toEqual([
+      ...result.intendedSandboxStartupCommand.slice(0, -1),
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      agentName,
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      result.managedBootstrapIdentity,
+      "--",
+    ]);
+    expect(result.createArgv).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${result.managedBootstrapIdentity}`,
+      ]),
+    );
+    expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
+  });
+
+  it("rejects a caller-supplied managed bootstrap identity environment", () => {
+    const request = createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+    });
+
+    expect(() =>
+      prepareSandboxCreateLaunch({
+        agent: loadAgent("openclaw"),
+        chatUiUrl: "",
+        createArgs: ["--env", `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${"a".repeat(64)}`],
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: disabledHermesDashboardState,
+        manageDashboard: false,
+        openshellShellCommand: (args) => args.join(" "),
+        managedStartupRootApplyRequest: request,
+      }),
+    ).toThrow(`must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}`);
+  });
+
   it("builds the sandbox create command and runtime env envelope", () => {
     const openshellShellCommand = vi.fn((args: string[]) => `openshell ${args.join(" ")}`);
     const result = prepareSandboxCreateLaunch({
@@ -104,7 +328,11 @@ describe("prepareSandboxCreateLaunch", () => {
       "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=TELEGRAM_BOT_TOKEN_AGENT_A",
     ]);
     expect(result.sandboxEnv).toEqual({ HOME: "/home/user" });
-    expect(result.sandboxStartupCommand).toEqual(["env", ...result.envArgs, "nemoclaw-start"]);
+    expect(result.sandboxStartupCommand).toEqual([
+      "env",
+      ...result.envArgs,
+      "/usr/local/bin/nemoclaw-start",
+    ]);
     expect(openshellShellCommand).toHaveBeenCalledWith([
       "sandbox",
       "create",
@@ -129,9 +357,10 @@ describe("prepareSandboxCreateLaunch", () => {
       env: {
         NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
         NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: " 0.25 ",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: " 99 ",
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
-        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "99",
         NEMOCLAW_PROVIDER_KEY: "must-not-enter-the-sandbox",
       },
       extraPlaceholderKeys: [],
@@ -150,12 +379,11 @@ describe("prepareSandboxCreateLaunch", () => {
       "OPENCLAW_WORKSPACE_DIR=/sandbox/.openclaw/workspace",
       "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=30",
       "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.25",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=99",
       "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=10",
       "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=600",
     ]);
-    expect(result.sandboxStartupCommand.join(" ")).not.toContain(
-      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
-    );
     expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
   });
 
@@ -164,7 +392,11 @@ describe("prepareSandboxCreateLaunch", () => {
       agent: loadAgent("hermes"),
       chatUiUrl: "http://127.0.0.1:18789/",
       createArgs: [],
-      env: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30" },
+      env: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "18789",
       hermesDashboardState: {
@@ -206,7 +438,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.sandboxStartupCommand).toEqual([
       "env",
       "NEMOCLAW_OBSERVABILITY=0",
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-start",
     ]);
   });
 
@@ -308,7 +540,7 @@ describe("prepareSandboxCreateLaunch", () => {
         "--",
         "env",
         ...result.envArgs,
-        "nemoclaw-start",
+        "/usr/local/bin/nemoclaw-start",
       ]);
       expect(fs.existsSync(injectedFromPath)).toBe(false);
       expect(fs.existsSync(injectedUrlPath)).toBe(false);

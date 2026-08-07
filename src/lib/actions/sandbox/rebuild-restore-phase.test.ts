@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as policies from "../../policy";
+import * as sandboxConfig from "../../sandbox/config";
 import * as sandboxState from "../../state/sandbox";
 import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 import {
@@ -11,6 +14,7 @@ import {
   resolveRestoredPolicyRegistryState,
 } from "./rebuild-post-restore-phase";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
+import * as snapshotRestore from "./snapshot/restore-authority";
 
 const BUILTIN_OBSERVABILITY_CONTENT =
   "network_policies:\n  observability-otlp-local:\n    name: observability-otlp-local\n";
@@ -40,11 +44,125 @@ describe("rebuild policy restore fidelity", () => {
     vi.restoreAllMocks();
   });
 
+  it("migrates restored legacy Hermes dashboard state into its profile", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
+      success: true,
+      restoredDirs: ["profiles", "dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const target = {
+      agentName: "hermes",
+      configDir: "/sandbox/.hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configFile: "config.yaml",
+      format: "yaml",
+      stateLockPlanInImage: true,
+    } as const;
+    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue(target);
+    const seedDashboard = vi
+      .spyOn(sandboxConfig, "restoreHermesDashboardConfig")
+      .mockReturnValue("converged");
+    const log = vi.fn();
+
+    const result = runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      policyPresets: [],
+      customPolicies: [],
+      reconcileManagedDcodeObservability: false,
+      log,
+    });
+
+    expect(seedDashboard).toHaveBeenCalledWith("hermes", target);
+    expect(log).toHaveBeenCalledWith("Hermes dashboard state after restore: converged");
+    expect(result.restoreSucceeded).toBe(true);
+  });
+
+  it("reports a failed Hermes dashboard migration as an incomplete restore", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
+      success: true,
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
+      agentName: "hermes",
+      configDir: "/sandbox/.hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configFile: "config.yaml",
+      format: "yaml",
+      stateLockPlanInImage: true,
+    });
+    vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig").mockReturnValue("failed");
+
+    const result = runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      policyPresets: [],
+      customPolicies: [],
+      reconcileManagedDcodeObservability: false,
+      log: vi.fn(),
+    });
+
+    expect(result.restoreSucceeded).toBe(false);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("Could not migrate restored Hermes dashboard state into its profile"),
+    );
+  });
+
+  it("reports an unresolved Hermes target as an incomplete restore", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
+      success: true,
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
+      agentName: "openclaw",
+      configDir: "/sandbox/.openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configFile: "openclaw.json",
+      format: "json",
+      stateLockPlanInImage: true,
+    });
+    const seedDashboard = vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig");
+
+    const result = runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      policyPresets: [],
+      customPolicies: [],
+      reconcileManagedDcodeObservability: false,
+      log: vi.fn(),
+    });
+
+    expect(seedDashboard).not.toHaveBeenCalled();
+    expect(result.restoreSucceeded).toBe(false);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("Could not migrate restored Hermes dashboard state into its profile"),
+    );
+  });
+
   it("surfaces a fresh OpenClaw plugin registry precondition failure", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const log = vi.fn();
-    vi.spyOn(sandboxState, "restoreRecreatedSandboxState").mockReturnValue({
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
       success: false,
       restoredDirs: [],
       restoredFiles: [],
@@ -76,7 +194,7 @@ describe("rebuild policy restore fidelity", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const parsePresetPolicyKeys = vi.spyOn(policies, "parsePresetPolicyKeys");
     const restoreRecreatedSandboxState = vi
-      .spyOn(sandboxState, "restoreRecreatedSandboxState")
+      .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
       .mockReturnValue({
         success: true,
         restoredDirs: [],
@@ -104,9 +222,14 @@ describe("rebuild policy restore fidelity", () => {
       log: vi.fn(),
     });
 
-    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backup", {
-      targetAgentType: "openclaw",
-    });
+    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ backupPath: "/tmp/rebuild-backup" }),
+      {
+        targetAgentType: "openclaw",
+      },
+      { getSandbox: expect.any(Function) },
+    );
     expect(applyPreset).toHaveBeenCalledOnce();
     expect(applyPreset).toHaveBeenCalledWith("alpha", "npm");
     for (const entry of customPolicies) {
@@ -132,11 +255,17 @@ describe("rebuild policy restore fidelity", () => {
       failedFiles: [],
     });
     const applyPresetContent = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+    const privateContent =
+      "network_policies:\n  custom-egress:\n    endpoints:\n      - host: api.corp.example\n        allowed_ips: [10.20.30.40]\n";
     const customPolicies = [
       {
         name: "custom-egress",
-        content: "network_policies:\n  custom-egress: {}\n",
+        content: privateContent,
         sourcePath: "/tmp/custom-egress.yaml",
+        trustedPrivatePins: {
+          version: 1 as const,
+          contentDigest: createHash("sha256").update(privateContent).digest("hex"),
+        },
       },
     ];
     const result = runStandardRebuildRestorePhase({
@@ -152,7 +281,14 @@ describe("rebuild policy restore fidelity", () => {
       "alpha",
       "custom-egress",
       customPolicies[0]!.content,
-      { custom: { sourcePath: "/tmp/custom-egress.yaml" } },
+      {
+        custom: {
+          sourcePath: "/tmp/custom-egress.yaml",
+          trustedPrivatePinCapability: expect.objectContaining({
+            receipt: customPolicies[0]!.trustedPrivatePins,
+          }),
+        },
+      },
     );
     expect(result.restoredPresets).toEqual(["custom-egress"]);
     expect(result.finalPresets).toEqual(["custom-egress"]);

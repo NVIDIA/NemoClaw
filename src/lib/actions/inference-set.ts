@@ -5,7 +5,7 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
@@ -56,7 +56,7 @@ import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
-import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
+import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
   InferenceSetError,
   OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
@@ -70,7 +70,12 @@ import {
   type InferenceMutation,
   readPreviousOpenClawInferenceApi,
 } from "./inference-set-gateway-restart";
-import { prepareInferenceSetProviderBinding } from "./inference-set-provider";
+import {
+  prepareInferenceSetProviderBinding,
+  type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  requireInferenceSetRuntimeAuthority,
+} from "./inference-set-provider";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
   applyOpenClawAnthropicReplyBudget,
@@ -134,6 +139,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     target: AgentConfigTarget,
     config: ConfigObject,
   ) => void;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   seedHermesDashboardConfig: (
     sandboxName: string,
@@ -281,6 +287,18 @@ function assertSupportedProvider(provider: string, model: string): void {
     `Unsupported provider '${provider}'. Supported providers: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`,
     2,
   );
+}
+
+function assertInferenceSetRuntimeAuthority(
+  entry: SandboxEntry,
+  providers: RuntimeProviderBundleRegistry | undefined,
+): void {
+  try {
+    requireInferenceSetRuntimeAuthority(entry, providers);
+  } catch (error) {
+    if (!(error instanceof RuntimeProviderSelectionError)) throw error;
+    throw new InferenceSetError(error.message, 2);
+  }
 }
 
 function normalizeSandboxAgent(agentName: string | null | undefined): string {
@@ -538,25 +556,36 @@ export function patchHermesInferenceConfig(
   provider: string,
   model: string,
   preferredInferenceApi: string | null = null,
+  contextWindow?: number,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const upstream = ensureObject(config, "_nemoclaw_upstream");
-  upstream.provider = provider;
-  upstream.model = model;
-  const modelConfig = ensureObject(config, "model");
-  modelConfig.default = model;
-  modelConfig.base_url = route.inferenceBaseUrl;
-  modelConfig.provider = "custom";
-  modelConfig.api_key = HERMES_PROXY_API_KEY_PLACEHOLDER;
-  const apiMode = hermesApiMode(route.inferenceApi);
-  if (apiMode) {
-    modelConfig.api_mode = apiMode;
-  } else {
-    delete modelConfig.api_mode;
-  }
+  applyHermesManagedRoute(config, {
+    model,
+    baseUrl: route.inferenceBaseUrl,
+    upstreamProvider: provider,
+    inferenceApi: route.inferenceApi,
+    contextWindow,
+  });
 
   return { changed: before !== JSON.stringify(config), route };
+}
+
+function resolveHermesContextWindowForSwitch(
+  provider: string,
+  model: string,
+  deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
+): number | undefined {
+  const contextWindow = deps.resolveContextWindowForModel(provider, model);
+  if (contextWindow != null) {
+    deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
+    return contextWindow;
+  }
+  deps.log(
+    `  Warning: could not determine the context window for '${model}'; omitting ` +
+      `context_length so Hermes can discover it from the selected model.`,
+  );
+  return undefined;
 }
 
 function updateMatchingOnboardSession(
@@ -1167,7 +1196,14 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      patched = patchHermesInferenceConfig(config, provider, model, preferredInferenceApi);
+      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, deps);
+      patched = patchHermesInferenceConfig(
+        config,
+        provider,
+        model,
+        preferredInferenceApi,
+        contextWindow,
+      );
     } else {
       // Recompute the context window for the model being switched to, so it does
       // not inherit the prior model's window (#context-window-on-switch).
@@ -1227,7 +1263,7 @@ async function runInferenceSetWithoutHostLock(
         `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
       );
     }
-    // Hermes keeps an isolated dashboard-home config that only mirrors the gateway
+    // Hermes keeps an isolated dashboard profile config that only mirrors the gateway
     // config's model routing at sandbox startup. Re-seed it after an in-place
     // switch so Dashboard Chat (and /api/model/info) converge on the new model
     // instead of silently staying on the previous one (#6893).
@@ -1336,9 +1372,11 @@ export async function runInferenceSet(
   // missing-binary path exits the process, which cannot be deferred safely by
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
+  assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
+    assertInferenceSetRuntimeAuthority(lockedSelection.entry, deps.runtimeProviders);
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
       withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>

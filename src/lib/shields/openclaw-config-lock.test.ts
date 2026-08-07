@@ -56,7 +56,7 @@ function createExec(
           case "test":
             return { status: installed ? 0 : 1, signal: null, stdout: "", stderr: "" };
         }
-        return cmd.includes("gosu") ? validationResult : guardResult(cmd);
+        return cmd.includes("/usr/bin/setpriv") ? validationResult : guardResult(cmd);
       },
     },
   };
@@ -120,8 +120,11 @@ describe("OpenClaw top-config guard host wiring", () => {
       "--signal=TERM",
       "--kill-after=5s",
       "30s",
-      "gosu",
-      "gateway",
+      "/usr/bin/setpriv",
+      "--reuid=gateway",
+      "--regid=gateway",
+      "--init-groups",
+      "--",
       "sh",
       "-c",
       expect.stringContaining("openclaw config validate --json"),
@@ -366,5 +369,34 @@ describe("OpenClaw top-config guard host wiring", () => {
     expect(parsed.issues).toEqual([]);
     expect(parsed.hashSynthesized).toBe(true);
     expect(parseOpenClawConfigGuardOutput("lock", plain).hashSynthesized).toBeUndefined();
+  });
+
+  it("propagates the guard's re-sealed-drift marker on a successful lock", () => {
+    const resealed: PrivilegedExecResult = {
+      status: 0,
+      signal: null,
+      stdout: `${JSON.stringify({
+        type: "result",
+        action: "lock",
+        status: "ok",
+        configDir: OPENCLAW_CONFIG_DIR,
+        files: ["openclaw.json", ".config-hash"],
+        chattrApplied: false,
+        resealedDrift: true,
+      })}\n`,
+      stderr: "",
+    };
+    const plain: PrivilegedExecResult = {
+      status: 0,
+      signal: null,
+      stdout: `${success("lock")}\n`,
+      stderr: "",
+    };
+
+    const parsed = parseOpenClawConfigGuardOutput("lock", resealed);
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.resealedDrift).toBe(true);
+    expect(parseOpenClawConfigGuardOutput("lock", plain).resealedDrift).toBeUndefined();
   });
 });

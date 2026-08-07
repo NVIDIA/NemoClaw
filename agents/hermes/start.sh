@@ -20,6 +20,30 @@ set -euo pipefail
 # SECURITY: Lock down PATH before resolving or sourcing root startup helpers.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# managed-entrypoint-env-wrapper begin
+_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
+if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
+  _HERMES_ENTRYPOINT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="${_HERMES_ENTRYPOINT_SOURCE_DIR}/../../scripts/lib/entrypoint-env-wrapper.sh"
+  unset _HERMES_ENTRYPOINT_SOURCE_DIR
+fi
+if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
+  printf '%s\n' '[SECURITY] Required entrypoint env-wrapper normalizer is missing.' >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/entrypoint-env-wrapper.sh
+source "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER"
+nemoclaw_normalize_entrypoint_env_wrapper "$@"
+if [ "$NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC" -eq 0 ]; then
+  set --
+else
+  set -- "${NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV[@]}"
+fi
+unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
+  _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER
+unset -f nemoclaw_normalize_entrypoint_env_wrapper
+# managed-entrypoint-env-wrapper end
+
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # scripts/nemoclaw-start.sh (OpenClaw). Ref: #2277
@@ -102,33 +126,6 @@ exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 # ── Drop unnecessary Linux capabilities (shared) ────────────────
 drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 
-# Normalize the self-wrapper bootstrap (same as OpenClaw entrypoint).
-if [ "${1:-}" = "env" ]; then
-  _raw_args=("$@")
-  _self_wrapper_index=""
-  for ((i = 1; i < ${#_raw_args[@]}; i += 1)); do
-    case "${_raw_args[$i]}" in
-      *=*) ;;
-      nemoclaw-start | /usr/local/bin/nemoclaw-start)
-        _self_wrapper_index="$i"
-        break
-        ;;
-      *)
-        break
-        ;;
-    esac
-  done
-  if [ -n "$_self_wrapper_index" ]; then
-    for ((i = 1; i < _self_wrapper_index; i += 1)); do
-      export "${_raw_args[$i]}"
-    done
-    set -- "${_raw_args[@]:$((_self_wrapper_index + 1))}"
-  fi
-fi
-
-case "${1:-}" in
-  nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
-esac
 NEMOCLAW_CMD=("$@")
 
 _chat_ui_url_port() {
@@ -194,7 +191,7 @@ if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
   DASHBOARD_INTERNAL_PORT=19120
 fi
 HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-${HERMES_DASHBOARD_TUI:-0}}"
-HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/sandbox/.hermes/dashboard-home}"
+HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/sandbox/.hermes/profiles/dashboard-home}"
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
@@ -226,6 +223,7 @@ _HERMES_DASHBOARD_CONFIG_SEEDER="/usr/local/lib/nemoclaw/seed-hermes-dashboard-c
 if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
   _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
 fi
+_HERMES_MANAGED_POLICY="/usr/local/share/nemoclaw/hermes-managed-policy.json"
 
 # Descriptor-safe updater for runtime-mutable Hermes config/env/hash files.
 _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
@@ -590,7 +588,14 @@ hermes_config_root_is_locked() {
   owner="$(stat -c '%U:%G' "$HERMES_DIR" 2>/dev/null || stat -f '%Su:%Sg' "$HERMES_DIR" 2>/dev/null || true)"
   mode="$(stat -c '%a' "$HERMES_DIR" 2>/dev/null || stat -f '%Lp' "$HERMES_DIR" 2>/dev/null || true)"
 
+  # The locked root is root-owned in the sandbox group and keeps the set-id and
+  # sticky bits so the gateway can still write its top-level runtime state while
+  # the sticky bit protects the sealed entries (#7865) — the same shape
+  # hermes_locked_parent_is_protected expects one level up. `root:root 755` is
+  # the pre-#7865 posture; keep detecting it so an existing shields-up sandbox
+  # still takes the locked branches until `shields up` repairs the root.
   case "${owner} ${mode}" in
+    "root:sandbox 3770" | "root:sandbox 03770") ;;
     "root:root 755" | "root:root 0755") ;;
     *) return 1 ;;
   esac
@@ -673,6 +678,155 @@ ensure_hermes_state_dir() {
     chown sandbox:sandbox "$dir" || return 1
   fi
   chmod "$mode" "$dir"
+}
+
+ensure_hermes_cross_uid_state_dir() {
+  local state_name="${1:?Hermes state directory name required}"
+  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
+    NEMOCLAW_HERMES_STATE_DIR_NAME="$state_name" \
+    python3 -I - <<'PYCROSSUIDDIR'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
+
+root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
+name = os.environ["NEMOCLAW_HERMES_STATE_DIR_NAME"]
+desired_mode = 0o2770
+
+
+def fail(message: str) -> None:
+    print(
+        f"[SECURITY] Refusing Hermes cross-UID state repair because {message}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    fail("descriptor-safe directory flags are unavailable")
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+open_flags |= getattr(os, "O_CLOEXEC", 0)
+root_fd = -1
+gateway_fd = -1
+try:
+    try:
+        root_fd = os.open(root, open_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (
+        root_before.st_dev,
+        root_before.st_ino,
+    ):
+        fail(f"{root} changed while it was opened")
+
+    try:
+        gateway_fd = os.open(name, open_flags, dir_fd=root_fd)
+    except FileNotFoundError:
+        try:
+            os.mkdir(name, desired_mode, dir_fd=root_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            fail(f"{root}/{name} could not be created: {exc.strerror}")
+        try:
+            gateway_fd = os.open(name, open_flags, dir_fd=root_fd)
+        except OSError as exc:
+            fail(f"{root}/{name} could not be opened after creation: {exc.strerror}")
+    except OSError as exc:
+        try:
+            unsafe = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except OSError:
+            unsafe = None
+        if unsafe is not None and stat.S_ISLNK(unsafe.st_mode):
+            fail(f"{root}/{name} is a symlink")
+        if unsafe is not None and not stat.S_ISDIR(unsafe.st_mode):
+            fail(f"{root}/{name} is not a directory")
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{root}/{name} could not be opened safely: {detail}")
+
+    if os.geteuid() == 0:
+        try:
+            gateway_uid = pwd.getpwnam("gateway").pw_uid
+            sandbox_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            fail(f"gateway/sandbox account lookup failed: {exc}")
+        os.fchown(gateway_fd, gateway_uid, sandbox_gid)
+        os.fchmod(gateway_fd, desired_mode)
+    else:
+        # OpenShell's non-root topology runs the gateway as the current user.
+        # Repair the mode when this user owns the directory. If an ordinary
+        # Linux image still has the root-prepared gateway owner, fchmod is
+        # expected to fail and the exact existing mode is verified below.
+        try:
+            os.fchmod(gateway_fd, desired_mode)
+        except PermissionError:
+            pass
+
+    current = os.fstat(gateway_fd)
+    if not stat.S_ISDIR(current.st_mode):
+        fail(f"{root}/{name} is not a directory")
+    if stat.S_IMODE(current.st_mode) != desired_mode:
+        fail(
+            f"{root}/{name} mode is {stat.S_IMODE(current.st_mode):04o}, "
+            f"expected {desired_mode:04o}"
+        )
+
+    if os.geteuid() == 0:
+        allowed_uids = {gateway_uid}
+        expected_gid = sandbox_gid
+    else:
+        allowed_uids = {os.geteuid()}
+        try:
+            allowed_uids.add(pwd.getpwnam("gateway").pw_uid)
+            expected_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError:
+            # Host-side unit fixtures need not have the image's account pair.
+            # A deployed image always has both accounts; when the gateway
+            # account is absent, current-user ownership and exact mode remain
+            # the complete non-root topology contract.
+            expected_gid = None
+    if current.st_uid not in allowed_uids:
+        fail(f"{root}/{name} has an unexpected owner uid {current.st_uid}")
+    if expected_gid is not None and current.st_gid != expected_gid:
+        fail(
+            f"{root}/{name} has group gid {current.st_gid}, "
+            f"expected sandbox gid {expected_gid}"
+        )
+
+    try:
+        named = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+    except OSError as exc:
+        fail(f"{root}/{name} no longer names the opened directory: {exc.strerror}")
+    if (named.st_dev, named.st_ino) != (current.st_dev, current.st_ino):
+        fail(f"{root}/{name} changed during repair")
+
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        fail(f"{root} disappeared during repair: {exc.strerror}")
+    if (root_after.st_dev, root_after.st_ino) != (
+        root_open.st_dev,
+        root_open.st_ino,
+    ):
+        fail(f"{root} changed during repair")
+finally:
+    if gateway_fd >= 0:
+        os.close(gateway_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
+PYCROSSUIDDIR
 }
 
 repair_hermes_log_permissions() {
@@ -878,17 +1032,35 @@ PYHISTORY
 }
 
 repair_hermes_startup_layout() {
+  # The cron execution and Discord recovery ledgers are created by gateway and
+  # backed up/restored by sandbox. Maintain their descriptor-verified,
+  # group-writable runtime and gateway parents even when the rest of the config
+  # root is locked while Shields up is active or was wiped. The cron directory
+  # contains cron job definitions and must remain sealed.
+  if ! ensure_hermes_cross_uid_state_dir gateway; then
+    echo "[gateway] Hermes pre-launch layout repair failed at gateway state directory" >&2
+    return 1
+  fi
+  if ! ensure_hermes_cross_uid_state_dir runtime; then
+    echo "[gateway] Hermes pre-launch layout repair failed at runtime state directory" >&2
+    return 1
+  fi
+
   if hermes_config_root_is_locked; then
-    # The locked-root posture seals config.yaml/.env, not the dir, so we can
-    # still bring a missing prompt_toolkit history file into existence as a
-    # sandbox-owned regular file. Sandboxes built before the precreate landed
-    # would otherwise stay broken until the next `shields down` cycle.
+    # The locked-root posture seals config.yaml/.env, not the dir. The gateway
+    # and runtime state parents were maintained above; also bring a missing
+    # prompt_toolkit history file into existence as a sandbox-owned regular
+    # file. Sandboxes built before the precreate landed would otherwise stay
+    # broken until the next `shields down` cycle.
     # Refusal (symlink, non-regular, create failure) is a hard stop: starting
     # the gateway with an unsafe .hermes_history under a locked root would
     # either let the TUI clobber an attacker-pointed path or repeat the
     # original keypress traceback.
     echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
-    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660 || return 1
+    if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
+      echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
+      return 1
+    fi
     return 0
   fi
 
@@ -1298,6 +1470,7 @@ prepare_hermes_dashboard_home() {
       HERMES_DASHBOARD_HOME="$HERMES_DASHBOARD_HOME" \
       _HERMES_PYTHON="$_HERMES_PYTHON" \
       _HERMES_DASHBOARD_CONFIG_SEEDER="$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+      _HERMES_MANAGED_POLICY="$_HERMES_MANAGED_POLICY" \
       "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
         if [ -L "$HERMES_DASHBOARD_HOME" ]; then
           echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
@@ -1315,6 +1488,7 @@ prepare_hermes_dashboard_home() {
         # state that poisons /api/status even while the real gateway is healthy.
         rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
         exec "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+          "$_HERMES_MANAGED_POLICY" \
           "${HERMES_DIR}/config.yaml" "${HERMES_DASHBOARD_HOME}/config.yaml" \
           "${HERMES_DIR}/.env" "${HERMES_DASHBOARD_HOME}/.env"
       ' || rc=$?
@@ -1338,10 +1512,10 @@ prepare_hermes_dashboard_home() {
   seed_hermes_dashboard_config
 }
 
-# Mirror the gateway's model routing and dotenv context into the dashboard's
-# isolated HERMES_HOME so its Models page (/api/model/options), Chat/TUI setup
-# checks, and kanban specifier/dispatcher resolve the routed model. The
-# dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
+# Mirror the gateway's model routing and non-secret dotenv context into the
+# dashboard's isolated HERMES_HOME so its Models page (/api/model/options),
+# Chat/TUI setup checks, and kanban specifier/dispatcher resolve the routed
+# model. The dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
 # otherwise only sees a Hermes-default config with an empty model. Idempotent:
 # refreshes the keys on every launch. Missing gateway config is a benign no-op
 # in the seeder; security refusals and write failures abort startup.
@@ -1355,6 +1529,7 @@ seed_hermes_dashboard_config() {
   # prepare_hermes_dashboard_home after stepping down to the sandbox identity.
   rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
   env "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+    "$_HERMES_MANAGED_POLICY" \
     "${HERMES_DIR}/config.yaml" "$dst" \
     "${HERMES_DIR}/.env" "$env_dst" || rc=$?
 
@@ -1370,6 +1545,7 @@ start_hermes_dashboard_current_user() {
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
     nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
@@ -1388,6 +1564,7 @@ start_hermes_dashboard_sandbox_user() {
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
     nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
@@ -1554,7 +1731,9 @@ merge_corporate_proxy_ca() {
   export _NEMOCLAW_CORPORATE_CA_MERGED=1
   echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
 }
-merge_corporate_proxy_ca
+if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then
+  merge_corporate_proxy_ca
+fi
 
 # OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA. Persist
 # them into connect-session shells so Python Slack probes and Hermes tools trust
@@ -1803,6 +1982,17 @@ refresh_hermes_provider_placeholders() {
 
 refresh_hermes_runtime_config_hashes() {
   local mode="${1:-strict}"
+  # A locked root seals config.yaml, .env, and .config-hash as root-owned, and
+  # the lock transaction already wrote a coherent hash for them. The compat
+  # refresh runs as the sandbox identity, which by design cannot replace a
+  # sealed hash: the sticky config root refuses the rename, so every launch
+  # under shields failed here and the supervisor stopped respawning (#7865).
+  # There is also nothing to refresh, because the sealed inputs cannot drift.
+  # The MCP integrity inspection that follows still validates the sealed hash,
+  # so a genuinely incoherent locked tree keeps failing closed.
+  if [ "$mode" = "compat" ] && hermes_config_root_is_locked; then
+    return 0
+  fi
   local cmd=(
     "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" refresh-hashes
     --hermes-dir "$HERMES_DIR"
@@ -1820,6 +2010,7 @@ refresh_hermes_runtime_config_hashes() {
 inspect_hermes_mcp_integrity() {
   local hash_file="${1:-}"
   local guard_status
+  local -a guard_command
   [ -n "$hash_file" ] || {
     if [ "$(id -u)" -eq 0 ]; then
       hash_file="$HERMES_HASH_FILE"
@@ -1832,11 +2023,20 @@ inspect_hermes_mcp_integrity() {
   # exact-parent proof used by --startup-owner. State is returned only through
   # the kernel-owned exit status: 0=current, 10=pending, anything else=failure.
   # This avoids a same-UID writable result file or ambiguous shell byte parsing.
-  if "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity \
-    --hermes-dir "$HERMES_DIR" \
-    --hash-file "$hash_file" \
-    --startup-owner \
-    --mcp-state-exit-code >/dev/null; then
+  guard_command=(
+    "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity
+    --hermes-dir "$HERMES_DIR"
+    --hash-file "$hash_file"
+    --startup-owner
+    --mcp-state-exit-code
+  )
+  if [ "$(id -u)" -eq 0 ]; then
+    # Hardened managed runtimes can remove root's DAC override before startup.
+    # Read the sandbox-owned mutable config through its owning identity; the
+    # step-down exec still leaves the guard as the startup owner's direct child.
+    guard_command=("${STEP_DOWN_PREFIX_SANDBOX[@]}" "${guard_command[@]}")
+  fi
+  if "${guard_command[@]}" >/dev/null; then
     guard_status=0
   else
     guard_status=$?
@@ -2957,6 +3157,7 @@ supervise_hermes_gateway_current_user() {
     sleep 2 || true
 
     recover_hermes_gateway_current_user || return 1
+    unhealthy_streak=0
     echo "[gateway] Hermes gateway respawned (pid $GATEWAY_PID)" >&2
   done
 }

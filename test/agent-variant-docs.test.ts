@@ -292,6 +292,65 @@ import { AgentOnly } from "../_components/AgentGuide";
     expect(deepAgents).not.toContain(namedSandboxSyntax);
   });
 
+  it("excludes OpenClaw gateway behavior from Hermes provider switching (#7902)", () => {
+    const source = readFileSync(
+      new URL("../docs/inference/switch-providers.mdx", import.meta.url),
+      "utf8",
+    );
+    const render = (variant: "openclaw" | "hermes") =>
+      renderAgentVariantPage(source, variant, {
+        sourcePath: "/repo/docs/inference/switch-providers.mdx",
+      });
+    const openclaw = render("openclaw");
+    const hermes = render("hermes");
+    const openClawGatewayBehavior = "restarts only the OpenClaw gateway and verifies its health";
+
+    expect(openclaw).toContain(openClawGatewayBehavior);
+    expect(hermes).not.toContain(
+      "updates the provider namespace and selected model in the running configuration",
+    );
+    expect(hermes).not.toContain(
+      "Changes within the current API family hot-reload without replacing the gateway process",
+    );
+    expect(hermes).not.toContain(openClawGatewayBehavior);
+    expect(hermes).toContain("a normal runtime route change does not rebuild or restart Hermes");
+  });
+
+  it("renders the Hermes baseline-policy explanation once (#7903)", () => {
+    const source = readFileSync(
+      new URL("../docs/reference/network-policies.mdx", import.meta.url),
+      "utf8",
+    );
+    const hermes = renderAgentVariantPage(source, "hermes", {
+      sourcePath: "/repo/docs/reference/network-policies.mdx",
+    });
+    const baselineExplanation =
+      "Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml`";
+
+    expect(hermes.split(baselineExplanation)).toHaveLength(2);
+  });
+
+  it("keeps the Hermes WhatsApp repair inside a shields maintenance window (#8184)", () => {
+    const whatsapp = readFileSync(
+      new URL("../docs/manage-sandboxes/set-up-whatsapp.mdx", import.meta.url),
+      "utf8",
+    );
+    const hermes = renderAgentVariantPage(whatsapp, "hermes", {
+      sourcePath: "/repo/docs/manage-sandboxes/set-up-whatsapp.mdx",
+    });
+    const shieldsDown = hermes.indexOf(
+      'nemohermes <sandbox> shields down --reason "repair Hermes WhatsApp session path"',
+    );
+    const configSet = hermes.indexOf(
+      "nemohermes <sandbox> config set --key platforms.whatsapp.extra.session_path",
+    );
+    const shieldsUp = hermes.indexOf("nemohermes <sandbox> shields up", configSet);
+
+    expect(shieldsDown).toBeGreaterThanOrEqual(0);
+    expect(configSet).toBeGreaterThan(shieldsDown);
+    expect(shieldsUp).toBeGreaterThan(configSet);
+  });
+
   it("keeps the troubleshooting security review link within each agent guide (#6558)", () => {
     const troubleshooting = readFileSync(
       new URL("../docs/reference/troubleshooting.mdx", import.meta.url),

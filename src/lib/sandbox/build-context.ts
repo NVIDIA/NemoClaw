@@ -41,9 +41,16 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
 }
 
 function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
+  const sourceAgentDir = path.join(rootDir, "agents", "openclaw");
+  const stagedAgentDir = path.join(buildCtx, "agents", "openclaw");
+  fs.mkdirSync(stagedAgentDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceAgentDir, "state-lock-plan.json"),
+    path.join(stagedAgentDir, "state-lock-plan.json"),
+  );
   for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
-    const sourceDir = path.join(rootDir, "agents", "openclaw", runtimeName);
-    const stagedDir = path.join(buildCtx, "agents", "openclaw", runtimeName);
+    const sourceDir = path.join(sourceAgentDir, runtimeName);
+    const stagedDir = path.join(stagedAgentDir, runtimeName);
     fs.mkdirSync(stagedDir, { recursive: true });
     for (const fileName of ["package.json", "package-lock.json"]) {
       fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
@@ -61,6 +68,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     "package-lock.json",
     "tsconfig.json",
     "install-reviewed-runtime.sh",
+    "npm-ci-locked.sh",
     "build-runtime.ts",
     "mcp-tool-discovery.ts",
     "streamable-http-client.test.ts",
@@ -69,6 +77,31 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
   }
   normalizeReadModesForDockerCopy(path.join(buildCtx, "tools"));
+}
+
+function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): void {
+  for (const relativePath of [
+    path.join("core", "json-types.ts"),
+    path.join("core", "ports.ts"),
+    path.join("security", "credential-hash.ts"),
+    path.join("state", "paths.ts"),
+    path.join("state", "state-root.ts"),
+  ]) {
+    const source = path.join(rootDir, "src", "lib", relativePath);
+    const target = path.join(buildCtx, "src", "lib", relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  }
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "onboard", "managed-bootstrap"),
+    path.join(buildCtx, "src", "lib", "onboard", "managed-bootstrap"),
+    { recursive: true },
+  );
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
+    path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
+    { recursive: true },
+  );
 }
 
 function stageLegacySandboxBuildContext(
@@ -103,6 +136,7 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
+  stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
     recursive: true,
@@ -200,6 +234,18 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-startup-hold.sh"),
+    path.join(stagedScriptsDir, "managed-startup-hold.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-bootstrap-entrypoint.c"),
+    path.join(stagedScriptsDir, "managed-bootstrap-entrypoint.c"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
+    path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "gateway-control.sh"),
     path.join(stagedScriptsDir, "gateway-control.sh"),
   );
@@ -234,6 +280,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "entrypoint-env-wrapper.sh"),
+    path.join(stagedScriptsDir, "lib", "entrypoint-env-wrapper.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "gateway-supervisor.sh"),
     path.join(stagedScriptsDir, "lib", "gateway-supervisor.sh"),
   );
@@ -263,6 +313,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
+  stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.mts"),
@@ -278,8 +329,20 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-mcp-npx.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-mcp-reliability.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-mcp-reliability.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-mcp-tools-list-timeout.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-mcp-tools-list-timeout.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-managed-transport-diagnostics.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-managed-transport-diagnostics.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
@@ -310,6 +373,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "verify-wechat-runtime-lock.mts"),
   );
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-bundled-npm-ip-address.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-bundled-npm-ip-address.mts"),
+  );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),

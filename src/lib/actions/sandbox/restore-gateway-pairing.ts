@@ -36,19 +36,75 @@ type RestoredSandboxGatewayRestartDeps = {
     sandboxName: string,
     options?: { quiet?: boolean },
   ) => GatewayRestartResult;
+  checkAndRecoverSandboxProcesses: (
+    sandboxName: string,
+    options?: {
+      quiet?: boolean;
+      isSandboxGatewayRunningImpl?: (sandboxName: string) => boolean | null;
+    },
+  ) => {
+    checked: boolean;
+    recovered: boolean;
+    forwardRecovered: boolean;
+    forwardRecoveryFailed?: boolean;
+  };
+  waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
 };
 
 function defaultRestoredSandboxGatewayRestartDeps(): RestoredSandboxGatewayRestartDeps {
-  const { restartSandboxGateway }: typeof import("./process-recovery") =
-    require("./process-recovery");
-  return { restartSandboxGateway };
+  const recovery: typeof import("./process-recovery") = require("./process-recovery");
+  return {
+    restartSandboxGateway: recovery.restartSandboxGateway,
+    checkAndRecoverSandboxProcesses: recovery.checkAndRecoverSandboxProcesses,
+    waitForManagedGatewaySupervisor: recovery.waitForManagedGatewaySupervisor,
+  };
+}
+
+export function waitForRestoredSandboxGatewaySupervisor(
+  sandboxName: string,
+  deps: RestoredSandboxGatewayRestartDeps = defaultRestoredSandboxGatewayRestartDeps(),
+): boolean {
+  return deps.waitForManagedGatewaySupervisor?.(sandboxName) === true;
 }
 
 export function restartRestoredSandboxGateway(
   sandboxName: string,
   deps: RestoredSandboxGatewayRestartDeps = defaultRestoredSandboxGatewayRestartDeps(),
 ): void {
-  const result = deps.restartSandboxGateway(sandboxName, { quiet: true });
+  let result = deps.restartSandboxGateway(sandboxName, { quiet: true });
+  if (!result.ok && result.failureLayer === "supervisor not running") {
+    // OpenShell can publish a newly created clone as Ready before its persisted
+    // startup command has brought up the managed supervisor. Give only that
+    // exact state a bounded settling window before entering legacy-container
+    // relaunch recovery.
+    if (deps.waitForManagedGatewaySupervisor?.(sandboxName)) {
+      result = deps.restartSandboxGateway(sandboxName, { quiet: true });
+      if (result.ok) return;
+    }
+  }
+  if (!result.ok && result.failureLayer === "supervisor not running") {
+    // A restored OpenShell container can become ready before its managed
+    // supervisor session exists. Reuse the existing transactional relaunch
+    // path only for that exact classified failure. Recovery must prove both
+    // the gateway and its primary forward before pairing work can continue.
+    const recovery = deps.checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      // The failed supervisor restart already proves the gateway cannot be
+      // managed through the current container. Skip the redundant sandbox-exec
+      // probe, which is itself unavailable when that supervisor is missing.
+      // The transactional relaunch still re-confirms the exact missing
+      // supervisor against the pinned container before replacing it.
+      isSandboxGatewayRunningImpl: () => false,
+    });
+    if (
+      recovery.checked &&
+      recovery.recovered &&
+      !recovery.forwardRecoveryFailed &&
+      recovery.forwardRecovered
+    ) {
+      return;
+    }
+  }
   if (!result.ok) {
     throw new RestoreGatewayPairingClassifiedError(result.failureLayer);
   }
@@ -67,7 +123,7 @@ function defaultRestoreGatewayPairingDeps(): RestoreGatewayPairingDeps {
   const warmup: typeof import("./auto-pair-warmup") = require("./auto-pair-warmup");
   return {
     restartRestoredSandboxGateway,
-    warmupScopeUpgrade: warmup.runSandboxScopeWarmupRun,
+    warmupScopeUpgrade: warmup.runRestoredSandboxScopeWarmupRun,
     approveRestoredClonePairing,
     verifyGatewayPairing: (sandboxName) =>
       verifyRestoredSandboxGatewayPairing(sandboxName, WARMUP_SESSION_ID_PREFIX),
@@ -78,16 +134,27 @@ export async function establishRestoredSandboxGatewayPairing(
   targetSandbox: string,
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
-  // Deliberately do not retry this authorization sequence internally. A fixed
-  // failure lets the caller retry the restore command as a new bounded attempt.
   try {
     deps.restartRestoredSandboxGateway(targetSandbox);
     deps.warmupScopeUpgrade(targetSandbox);
-    const approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
-    // Publish the clone's approved pairing transition before the one ordinary
+    let approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
+    // Publish the clone's approved pairing transition before an ordinary
     // authenticated verifier. The verifier alone decides success.
     deps.restartRestoredSandboxGateway(targetSandbox);
-    const verification = deps.verifyGatewayPairing(targetSandbox);
+    let verification = deps.verifyGatewayPairing(targetSandbox);
+    if (
+      !verification.ok &&
+      approvalReceipt === "list-pending-unavailable" &&
+      verification.failureLayer === "scope-upgrade-pending"
+    ) {
+      // The first approval pass could not call the canonical approve command
+      // because no clone-local pending file existed. The ordinary verifier then
+      // published the exact scope-upgrade request. Approve that request once,
+      // restart once, and keep the next ordinary verifier as the success gate.
+      approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
+      deps.restartRestoredSandboxGateway(targetSandbox);
+      verification = deps.verifyGatewayPairing(targetSandbox);
+    }
     if (!verification.ok) {
       throw new RestoreGatewayPairingClassifiedError(
         `the authenticated gateway verification run failed (${verification.failureLayer}; approval=${approvalReceipt})`,

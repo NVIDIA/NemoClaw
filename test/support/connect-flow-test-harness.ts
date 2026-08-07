@@ -5,7 +5,7 @@ import childProcess from "node:child_process";
 import { createRequire } from "node:module";
 
 import { type MockInstance, vi } from "vitest";
-
+import type { ManagedGatewayControlCompletion } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SecretBoundaryRefusalReason } from "../../src/lib/actions/sandbox/hermes-secret-boundary-recovery";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
@@ -32,7 +32,10 @@ export type ConnectHarness = {
   errorSpy: MockInstance;
   logSpy: MockInstance;
   preflightVllmSpy: MockInstance;
+  probeLocalProviderHealthSpy: MockInstance;
+  probeOllamaAuthProxyHealthSpy: MockInstance;
   readSandboxConfigSpy: MockInstance;
+  recoverPortableDemoLifecycleSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
   runAutoPairSpy: MockInstance;
@@ -59,6 +62,7 @@ export type ConnectHarnessOptions = {
     checked: boolean;
     wasRunning?: boolean;
     recovered?: boolean;
+    managedControlCompletion?: ManagedGatewayControlCompletion;
     forwardRecovered?: boolean;
     forwardRecoveryFailed?: boolean;
     forwardRecoveryFailureDetail?: string;
@@ -67,6 +71,7 @@ export type ConnectHarnessOptions = {
     mcpReconciliationRefused?: boolean;
     mcpReconciliationReason?: string;
   };
+  portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
@@ -111,6 +116,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const gatewayFailureClassifier = requireDist(
     "../../src/lib/actions/sandbox/gateway-failure-classifier.js",
   );
+  const localInference = requireDist("../../src/lib/inference/local.js");
   const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
   const gatewayRouteMutationLock = requireDist(
     "../../src/lib/inference/gateway-route-mutation-lock.js",
@@ -183,9 +189,19 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
+  const recoverPortableDemoLifecycleSpy = vi
+    .spyOn(gatewayState, "recoverPortableDemoSandboxLifecycleForConnect")
+    .mockReturnValue(options.portableRecoveryResult ?? { kind: "not-installed" });
   const ensureOllamaAuthProxySpy = vi
     .spyOn(ollamaProxy, "ensureOllamaAuthProxy")
     .mockImplementation(() => undefined);
+  vi.spyOn(localInference, "findReachableOllamaHost").mockReturnValue("127.0.0.1");
+  const probeLocalProviderHealthSpy = vi
+    .spyOn(localInference, "probeLocalProviderHealth")
+    .mockReturnValue({ ok: true });
+  const probeOllamaAuthProxyHealthSpy = vi
+    .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
+    .mockReturnValue({ ok: true });
   const primaryRegistryEntry: SandboxEntry = {
     name: "alpha",
     agent: options.agentName ?? "openclaw",
@@ -223,6 +239,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     format: "yaml",
     configFile: "config.yaml",
     sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
+    stateLockPlanInImage: true,
   };
   const resolveAgentConfigSpy = vi
     .spyOn(sandboxConfig, "resolveAgentConfig")
@@ -241,8 +258,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
   const runAutoPairSpy = vi
-    .spyOn(autoPairApproval, "runSandboxAutoPairApprovalPass")
-    .mockReturnValue({ reported: 0, approved: 0 });
+    .spyOn(autoPairApproval, "runConnectAutoPairApprovalPass")
+    .mockImplementation(() => undefined);
 
   logSpy.mockClear();
   errorSpy.mockClear();
@@ -258,7 +275,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     errorSpy,
     logSpy,
     preflightVllmSpy,
+    probeLocalProviderHealthSpy,
+    probeOllamaAuthProxyHealthSpy,
     readSandboxConfigSpy,
+    recoverPortableDemoLifecycleSpy,
     registryEntries,
     resolveAgentConfigSpy,
     runAutoPairSpy,
