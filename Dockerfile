@@ -1203,8 +1203,8 @@ ARG NEMOCLAW_MESSAGING_PLAN_B64=
 # union. It is inert by default and must never be enabled for a deployment-
 # specific Dockerfile build carrying an active messaging plan.
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
-# OpenShell requires a nonroot image default. Managed publication explicitly
-# selects root so the entrypoint can preserve gateway and agent UID isolation.
+# OpenShell requires USER sandbox as the image default. The managed-image
+# publication workflow selects root to preserve gateway and agent UID isolation.
 ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
 # Base64-encoded JSON array of secondary OpenClaw agent config entries
 # (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",

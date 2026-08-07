@@ -502,7 +502,7 @@ Refer to [Review Sandbox Hardening](../manage-sandboxes/configure-sandboxes/revi
 
 Gateway and agent UID isolation depends on the container process topology.
 The stock OpenClaw image defaults to the `sandbox` user for OpenShell compatibility.
-An OpenShell-managed container has OpenShell as PID 1 and launches nonroot `nemoclaw-start`, so the supervisor, gateway, and agent all use the `sandbox` UID.
+An OpenShell-managed container has OpenShell as PID 1 and launches `nemoclaw-start` as a non-root process, so the supervisor, gateway, and agent all use the `sandbox` UID.
 The managed-image publication workflow explicitly sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` for its reviewed release images.
 That build-time setting lets the entrypoint run the gateway as the separate `gateway` user and agent commands as the `sandbox` user.
 A direct container runtime can override the image user to `root`.
@@ -510,10 +510,10 @@ That root-entrypoint topology runs the gateway as the separate `gateway` user an
 
 | Aspect | Detail |
 |---|---|
-| Default | A stock Dockerfile build declares `USER sandbox`. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the nonroot entrypoint from changing users. |
-| What you can change | Managed publication can set `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` at build time. A direct container runtime can also override the image user to `root`. OpenClaw custom images must keep a nonroot default. |
+| Default | A stock Dockerfile build declares `USER sandbox`. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the non-root entrypoint from changing users. |
+| What you can change | The managed-image publication workflow can set `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` at build time. A direct container runtime can also override the image user to `root`. OpenClaw custom images must keep `USER sandbox` as the default. |
 | Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. The root managed controller prevents PID-reuse mistakes, but it cannot prove provenance against a malicious same-UID process or provide the direct root-entrypoint restart seal for mutable config. |
-| Recommendation | Keep the stock OpenClaw image default nonroot. Use the reviewed managed-publication setting or a direct root-entrypoint deployment when separate gateway and agent UIDs are required. Treat the same-UID managed controller as authenticated lifecycle and exact-target safety, not as a provenance boundary. |
+| Recommendation | Keep the stock OpenClaw image default user as `sandbox`. Use the managed-image publication setting or a direct root-entrypoint deployment when separate gateway and agent UIDs are required. Treat an OpenShell-managed controller that shares the `sandbox` UID as an authenticated lifecycle control, not as proof that the target process is trustworthy. |
 
 ### No New Privileges
 
@@ -618,15 +618,15 @@ The managed headless path automatically approves non-shell tool requests such as
 
 The sandbox runs agent processes as a dedicated `sandbox` user and group.
 The stock OpenClaw image starts the entrypoint as `sandbox` for OpenShell compatibility.
-A managed publication build can select `root` so the entrypoint starts the gateway and agent commands under separate UIDs.
+A build from the managed-image publication workflow can select `root` so the entrypoint starts the gateway and agent commands under separate UIDs.
 A direct runtime can override the image user to `root`, which lets the entrypoint separate the `gateway` and `sandbox` UIDs before it runs agent commands.
 
 | Aspect | Detail |
 |---|---|
 | Default | `run_as_user: sandbox`, `run_as_group: sandbox`. The stock OpenClaw image runs the entrypoint, gateway, and agent under the sandbox UID. |
-| What you can change | Change the `process` section in the policy file to run as a different user. Managed publication can select the root entrypoint at build time, and direct container runtimes can override the image user to `root`. |
+| What you can change | Change the `process` section in the policy file to run as a different user. The managed-image publication workflow can select the root entrypoint at build time, and direct container runtimes can override the image user to `root`. |
 | Risk if relaxed | Running agent commands as `root` gives the agent access to modify any file in the container filesystem and increases the impact of container escape vulnerabilities. |
-| Recommendation | Keep agent commands under the `sandbox` user. Use `root` only as the reviewed managed-publication or direct-runtime entrypoint supervisor; do not run agent commands as `root` or make `root` the OpenClaw image default. |
+| Recommendation | Keep agent commands under the `sandbox` user. Use `root` only for the entrypoint supervisor when the managed-image publication workflow or a direct container runtime selects it. Do not run agent commands as `root` or make `root` the OpenClaw image default. |
 
 ### PATH Hardening
 
