@@ -374,6 +374,9 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
     expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(`Content digest (SHA-256): ${"a".repeat(64)}`),
+    );
+    expect(log).toHaveBeenCalledWith(
       expect.stringContaining("Start a new Deep Agents session to load the skill."),
     );
     expectTempSshConfigCleanedUp(tempConfig);
