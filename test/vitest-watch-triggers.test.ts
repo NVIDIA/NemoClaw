@@ -139,6 +139,12 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/validate-managed-base-index.test.ts",
     ]);
+    expect(triggeredBy("scripts/checks/retry-docker-imagetools-inspect.sh")).toEqual([
+      "test/retry-docker-imagetools-inspect.test.ts",
+      "test/validate-managed-base-index.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",
       "test/e2e/support/sanitize-trace-timing.test.ts",

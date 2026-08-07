@@ -31,6 +31,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { MessagingAgentId } from "../src/lib/messaging";
+import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
+
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath); // need node on PATH for shebangs
 const tmpFixtures: string[] = [];
@@ -44,33 +47,6 @@ afterEach(() => {
     }
   }
 });
-
-function makeMessagingPlan(sandboxName: string, agent: string | null, channelIds: string[]) {
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: agent ?? "openclaw",
-    workflow: "onboard",
-    channels: channelIds.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: true,
-      selected: true,
-      configured: true,
-      disabled: false,
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
 
 /**
  * Set up a temp HOME that mirrors the reporter's scenario:
@@ -90,12 +66,12 @@ function createFixture({
 }: {
   rebuildTarget: {
     name: string;
-    agent: string | null;
+    agent: MessagingAgentId | null;
     messagingPlanChannels?: string[] | null;
   };
   lastOnboarded: {
     name: string;
-    agent: string | null;
+    agent: MessagingAgentId | null;
     messagingPlanChannels?: string[] | null;
   };
   fromDockerfile?: string | null;
@@ -112,18 +88,18 @@ function createFixture({
     fs.writeFileSync(dockerfilePath, "FROM scratch\n");
   }
   const rebuildTargetMessagingPlan = rebuildTarget.messagingPlanChannels
-    ? makeMessagingPlan(
-        rebuildTarget.name,
-        rebuildTarget.agent,
-        rebuildTarget.messagingPlanChannels,
-      )
+    ? makeMessagingPlan({
+        sandboxName: rebuildTarget.name,
+        agent: rebuildTarget.agent ?? "openclaw",
+        channels: rebuildTarget.messagingPlanChannels,
+      })
     : null;
   const lastOnboardedMessagingPlan = lastOnboarded.messagingPlanChannels
-    ? makeMessagingPlan(
-        lastOnboarded.name,
-        lastOnboarded.agent,
-        lastOnboarded.messagingPlanChannels,
-      )
+    ? makeMessagingPlan({
+        sandboxName: lastOnboarded.name,
+        agent: lastOnboarded.agent ?? "openclaw",
+        channels: lastOnboarded.messagingPlanChannels,
+      })
     : null;
 
   // ── Registry — both sandboxes exist ───────────────────────────

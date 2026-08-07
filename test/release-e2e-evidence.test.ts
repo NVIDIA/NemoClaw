@@ -41,6 +41,7 @@ function runEvidence(
   const selectors: string[] = [];
   return {
     dispatch: {
+      allowDgxSparkRunnerQueue: false,
       allowJetsonRunnerQueue: false,
       candidateSha,
       emptySelectors: true,
@@ -88,6 +89,13 @@ describe("release E2E evidence", () => {
     });
     expect(plan.launchableE2eJobId).toBe("staging-brev-launchable");
     expect(plan.exceptionsRequired).toEqual([]);
+    expect(plan.executions.map((execution) => execution.jobId)).not.toEqual(
+      expect.arrayContaining([
+        "jetson-nvmap-gpu",
+        "llama-cpp-dgx-spark-plan",
+        "llama-cpp-dgx-spark-qualification",
+      ]),
+    );
   });
 
   it("rejects a missing activation path for a default E2E", () => {
@@ -181,6 +189,17 @@ describe("release E2E evidence", () => {
     expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
       "runs[0].dispatch.includeStagingBrevLaunchable must equal true",
     );
+  });
+
+  it.each([
+    ["allowJetsonRunnerQueue", "runs[0].dispatch.allowJetsonRunnerQueue must equal false"],
+    ["allowDgxSparkRunnerQueue", "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false"],
+  ])("rejects release evidence that opts into %s", (field, message) => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    (evidence.dispatch as Record<string, unknown>)[field] = true;
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
   });
 
   it("reports a failed matrix row without collapsing its successful siblings", () => {

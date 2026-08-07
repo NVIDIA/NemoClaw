@@ -18,8 +18,9 @@ type WorkflowStep = RecordValue & {
 };
 
 const PLAN_JOB_ID = "llama-cpp-dgx-spark-plan";
-const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) }}`;
-const QUALIFICATION_SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) && needs.${PLAN_JOB_ID}.outputs.execution == 'enabled' }}`;
+const RUNNER_QUEUE_INPUT = "allow_dgx_spark_runner_queue";
+const SELECTOR = `\${{ inputs.${RUNNER_QUEUE_INPUT} && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) }}`;
+const QUALIFICATION_SELECTOR = `\${{ inputs.${RUNNER_QUEUE_INPUT} && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) && needs.${PLAN_JOB_ID}.outputs.execution == 'enabled' }}`;
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const BUILDX = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const PREPARE =
@@ -35,6 +36,35 @@ function steps(value: unknown): WorkflowStep[] {
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function validateRunnerQueueInput(errors: string[], workflow: RecordValue): void {
+  const triggers = record(workflow.on ?? workflow[true as unknown as string]);
+  const dispatch = record(triggers.workflow_dispatch);
+  const inputs = record(dispatch.inputs);
+  const input = record(inputs[RUNNER_QUEUE_INPUT]);
+  if (Object.keys(input).length === 0) {
+    errors.push(`workflow_dispatch must define ${RUNNER_QUEUE_INPUT}`);
+    return;
+  }
+  if (input.type !== "boolean") {
+    errors.push(`workflow_dispatch ${RUNNER_QUEUE_INPUT} input must be boolean`);
+  }
+  if (input.default !== false) {
+    errors.push(`workflow_dispatch ${RUNNER_QUEUE_INPUT} input must default to false`);
+  }
+  const description = text(input.description);
+  if (
+    !description.includes("repository administrator confirmation") ||
+    !description.includes("DGX Spark runner") ||
+    !description.includes("authoritative") ||
+    !description.includes("NVIDIA/NemoClaw Settings -> Actions -> Runners") ||
+    !description.includes("timeout-minutes")
+  ) {
+    errors.push(
+      `workflow_dispatch ${RUNNER_QUEUE_INPUT} input must require repository administrator confirmation from the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory and document queued timeout behavior`,
+    );
+  }
 }
 
 function requireStep(
@@ -88,6 +118,7 @@ function requireOrderedSteps(
 
 export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordValue): string[] {
   const errors: string[] = [];
+  validateRunnerQueueInput(errors, workflow);
   const jobs = record(workflow.jobs);
   const planJob = record(jobs[PLAN_JOB_ID]);
   const qualificationJob = record(jobs[LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID]);
@@ -101,7 +132,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     errors.push(`${PLAN_JOB_ID} must depend on generate-matrix`);
   }
   if (planJob.if !== SELECTOR)
-    errors.push(`${PLAN_JOB_ID} must run on main pushes and retain manual selectors`);
+    errors.push(`${PLAN_JOB_ID} must require ${RUNNER_QUEUE_INPUT} and retain manual selectors`);
   if (planJob["runs-on"] !== "ubuntu-24.04") {
     errors.push(`${PLAN_JOB_ID} must run on a standard trusted planner`);
   }
@@ -195,7 +226,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   }
   if (qualificationJob.if !== QUALIFICATION_SELECTOR) {
     errors.push(
-      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must run on main pushes after the trusted plan is enabled`,
+      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must require ${RUNNER_QUEUE_INPUT} after the trusted plan is enabled`,
     );
   }
   if (qualificationJob["runs-on"] !== `\${{ needs.${PLAN_JOB_ID}.outputs.runner }}`) {
