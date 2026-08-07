@@ -6,29 +6,32 @@ import type fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-type FsEntry = { type: "file" | "dir"; content?: string };
+import {
+  createRunnerFsStore,
+  FAKE_HOME,
+  FIXED_RUN_UUID,
+  inMemoryFsMethods,
+  resolvedEndpointFor,
+} from "./runner-mock-fixtures.js";
 
-const store = new Map<string, FsEntry>();
+const { store } = createRunnerFsStore();
 const mockExeca = vi.fn();
 
 vi.mock("node:crypto", () => ({
-  randomUUID: () => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  randomUUID: () => FIXED_RUN_UUID,
 }));
 
 vi.mock("node:os", () => ({
-  homedir: () => "/fakehome",
+  homedir: () => FAKE_HOME,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
+  const memory = inMemoryFsMethods(store, { spy: vi.fn });
   return {
     ...original,
-    mkdirSync: vi.fn((path: string) => {
-      store.set(path, { type: "dir" });
-    }),
-    writeFileSync: vi.fn((path: string, data: string) => {
-      store.set(path, { type: "file", content: String(data) });
-    }),
+    mkdirSync: memory.mkdirSync,
+    writeFileSync: memory.writeFileSync,
   };
 });
 
@@ -40,13 +43,7 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./ssrf.js")>();
   return {
     ...actual,
-    validateEndpointUrl: vi.fn(async (url: string) => ({
-      url,
-      pinnedUrl: url,
-      protocol: url.startsWith("http:") ? "http:" : "https:",
-      hostname: new URL(url).hostname,
-      dnsResolved: false,
-    })),
+    validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
 
@@ -262,7 +259,9 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     }));
 
     await actionApply("default", blueprint());
-    const merged = mergedPolicy() as { network_policies: Record<string, unknown> };
+    const merged = mergedPolicy() as {
+      network_policies: Record<string, unknown>;
+    };
     expect(merged.network_policies).not.toHaveProperty("_provider_unexpected");
     expect(merged.network_policies).toHaveProperty("existing_mcp");
     expect(merged.network_policies).toHaveProperty("existing_json_rpc");
@@ -277,7 +276,9 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     await actionApply("default", blueprintWithReservedAddition);
 
-    const merged = mergedPolicy() as { network_policies: Record<string, unknown> };
+    const merged = mergedPolicy() as {
+      network_policies: Record<string, unknown>;
+    };
     expect(merged.network_policies).not.toHaveProperty("_provider_injected");
     expect(merged.network_policies).toHaveProperty("nim_service");
   });

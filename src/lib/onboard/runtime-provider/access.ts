@@ -22,6 +22,7 @@ export {
   requireRuntimeProviderBundle,
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  requireRuntimeProviderHostLocalInferenceOperation,
   requireRuntimeProviderMutationAuthority,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
