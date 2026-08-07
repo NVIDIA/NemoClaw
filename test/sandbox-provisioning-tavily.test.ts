@@ -1,43 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  dockerRunCommandBetween,
+  type LoggedDockerShellResult,
+  runLoggedDockerShell,
+} from "./helpers/dockerfile-run-shell";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  assert(
-    start !== -1 && end !== -1 && end > start,
-    `Expected Dockerfile block between ${startMarker} and ${endMarker}`,
-  );
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  assert(runIndex !== -1 && runIndex <= end, `Expected RUN instruction after ${startMarker}`);
-  const runLines = dockerfile.slice(runIndex, end).split("\n");
-  const finalLine = runLines.findIndex((line) => !line.trimEnd().endsWith("\\"));
-  assert(finalLine !== -1, `Expected terminated RUN instruction after ${startMarker}`);
-  return runLines
-    .slice(0, finalLine + 1)
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
-}
 
 function runPluginInstallBlock(
   functionDefinition: string,
   env: Record<string, string>,
-): { calls: string; result: ReturnType<typeof spawnSync> } {
+): LoggedDockerShellResult {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const command = dockerRunCommandBetween(
     dockerfile,
@@ -45,28 +24,9 @@ function runPluginInstallBlock(
     "# The reviewed cache stays root-owned and immutable to the sandbox user.",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-plugin-"));
-  const logPath = path.join(tmp, "calls.log");
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `call_log=${JSON.stringify(logPath)}`,
-      functionDefinition,
-      command,
-    ].join("\n"),
-    { mode: 0o700 },
-  );
 
   try {
-    const result = spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      env: { ...process.env, ...env },
-      timeout: 5000,
-    });
-    const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-    return { calls, result };
+    return runLoggedDockerShell(command, tmp, [functionDefinition], { env });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
