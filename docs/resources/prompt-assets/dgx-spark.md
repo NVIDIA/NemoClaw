@@ -8,12 +8,16 @@
 Use these instructions only after hardware detection confirms DGX Spark.
 
 Explain that Express keeps the selected agent, leaves optional setup at its defaults, and offers two DGX Spark inference setups.
-Ask the user to choose:
+Inference choices:
 
 1. Managed vLLM with automatic serving-profile selection. This is the default and preserves the current Express behavior.
 2. `nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile.
 
-After the user chooses, include the third-party-software notice and ask: "Run Express install with these settings?"
+Include the third-party-software notice after the user chooses, then ask: "Run Express install with these settings?"
+Choices:
+
+1. Yes, use the selected DGX Spark inference setup.
+2. No, continue with the normal provider selection.
 
 For option 1:
 
