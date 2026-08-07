@@ -1,0 +1,52 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Cutoff Handoff
+
+Capture one final read-only snapshot at the cutoff. Report:
+
+```markdown
+## Cutoff
+- Time: <absolute timestamp and timezone>
+- Current main: <full SHA>
+- Newest relevant E2E: <run URL, attempt, status, conclusion>
+- Overall state: passing | failing | pending | inconclusive
+
+## Verified fixes
+| Root cause | PR | Merge commit | Post-merge automatic main evidence |
+
+## Merged, awaiting verification
+| Root cause | PR | Merge commit | Expected next evidence |
+
+## Open fixes
+| Root cause | PR/remote head | Owner | Branch/worktree | Local HEAD | Last pushed SHA | Local state/changed paths | State | CI | Approval/reviewer | Next actor/action |
+
+## Remaining failures
+| Root cause | Run/jobs | Ownership | Blocker or next action |
+
+## Obsolete or superseded work
+| PR | Superseding PR/commit | Verification |
+
+## Operational blockers
+- <workflow approval, branch conflict, permissions, runner availability, or none>
+
+## Guardrails
+- Manual duplicate E2E runs: none
+- Coverage weakened or skipped: none
+- Unrelated merges blocked: none
+- v0.0.104 touched: no
+```
+
+Count a root cause as **verified fixed** only when a later automatic `main` run uses a descendant of the merge commit, reaches the original failure phase for every affected target, and those jobs pass without the original causal signature. If a target is absent, replaced, skipped, or still running, keep the PR under **Merged, awaiting verification**.
+
+Do not count these as fixes:
+
+- a manual rerun that happens to pass;
+- a cancelled, skipped, neutral, queued, or in-progress job;
+- a PR that only adds qualification or diagnostics without correcting the cause;
+- a CI-only cleanup unrelated to the product E2E cause;
+- an obsolete PR closed after another merge.
+
+Before handoff, record each active worktree's absolute path, branch, local HEAD, last pushed SHA, and `git status --short` changed paths. Do not reset, stash, delete, or otherwise discard source edits. Name the owner and next actor for every local or remote item. Put a failed evidence-cleanup path only in this private maintainer handoff, never on GitHub.
+
+Link every PR, run, and job. State `inconclusive` instead of passing when the newest current-`main` evidence has not completed.

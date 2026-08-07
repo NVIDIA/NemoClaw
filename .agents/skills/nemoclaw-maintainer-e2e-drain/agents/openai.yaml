@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw E2E Drain"
+  short_description: "Coordinate and drain failures from main E2E"
+  default_prompt: "Use $nemoclaw-maintainer-e2e-drain to continuously drain main E2E failures until 8 AM PT, coordinating ownership, peer review, merge gates, and handoff."

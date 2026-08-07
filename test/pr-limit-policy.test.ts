@@ -31,13 +31,17 @@ it("keeps contributor guidance aligned with the enforced maintainer exemption", 
       .split(/\s+/u) ?? [];
   const agents = read("AGENTS.md");
   const contributing = read("CONTRIBUTING.md");
+  const e2eDrain = read(".agents/skills/nemoclaw-maintainer-e2e-drain/SKILL.md");
 
   expect(enforcedLimit).toBe(10);
   expect(exemptAccounts.length).toBeGreaterThan(0);
   expect(documentedLimit(agents)).toBe(enforcedLimit);
   expect(documentedLimit(contributing)).toBe(enforcedLimit);
+  expect(documentedLimit(e2eDrain)).toBe(enforcedLimit);
   expect(agents).toContain("only to accounts that the workflow does not exempt");
   expect(contributing).toContain(
     "Core maintainers listed in `.github/workflows/pr-limit.yaml` are exempt from this limit.",
   );
+  expect(e2eDrain).toContain("git show origin/main:.github/workflows/pr-limit.yaml");
+  expect(e2eDrain).toContain("For a non-exempt author");
 });

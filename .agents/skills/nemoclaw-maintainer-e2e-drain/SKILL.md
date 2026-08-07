@@ -1,0 +1,99 @@
+---
+name: nemoclaw-maintainer-e2e-drain
+description: Continuously drains failures from automatic NemoClaw E2E runs on main. Groups failures by root cause, coordinates one claimed fix per PR across maintainers, reviews and approves peer fixes, satisfies current GitHub merge gates, merges eligible fixes, and hands off at a cutoff. Use for an overnight E2E drain, continuous main E2E failure fixing, or coordinated multi-agent E2E maintenance. Do not use to dispatch manual E2E; use nemoclaw-maintainer-e2e instead.
+---
+
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Drain Main E2E Failures
+
+Run a continuous, multi-maintainer repair loop against automatic `main` E2E results. Use GitHub as the shared ownership and merge authority.
+
+## Set the Session Contract
+
+1. Resolve the cutoff from the request. For an overnight drain without another cutoff, use 8:00 AM in `America/Los_Angeles`. Record the absolute timestamp.
+2. Record repository exclusions. Never change, retag, publish, or otherwise touch `v0.0.104` during this workflow.
+3. Confirm maintainer authority. Merge only when the invocation grants it; otherwise stop when the PR is approval-ready.
+4. Check Git and GitHub access. Follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) on access failure.
+5. Fetch trusted `origin/main`. Read its PR-limit policy with `git show origin/main:.github/workflows/pr-limit.yaml`. For a non-exempt author, do not create a claim that would exceed the 10-open-PR limit.
+
+Do not stop or declare success before the cutoff. An empty queue means monitor, not finish.
+
+## Keep the Queue
+
+Read [Queue and Ownership](references/queue-and-ownership.md) before the first scan. Keep one table grouped by root cause:
+
+| Root cause | Run and jobs | State | Owner and PR | Next action |
+|---|---|---|---|---|
+
+Use only these states: `unclaimed`, `active`, `waiting-ci`, `waiting-review`, `approval-ready`, `merged`, `obsolete`, and `blocked`.
+
+Track each observed workflow run by run ID, attempt, status, conclusion, and job set. Re-read an in-progress or queued run when its state changes. Do not reanalyze an unchanged completed run.
+
+## Run the Loop
+
+Repeat these steps until the cutoff:
+
+1. Fetch current `origin/main` and list automatic E2E runs for that SHA and newer `main` SHAs.
+2. Inspect only new or changed runs. Read failed job logs and artifacts far enough to identify the earliest actionable product, test, workflow, runner, or cleanup failure.
+3. Group failures that share the same causal signature. Do not equate a job name with a root cause.
+4. Reconcile each group with open PRs before editing. If another maintainer owns it, record that PR and take the next unowned group.
+5. Prefer a peer drain PR that needs review or a final merge decision before starting another fix.
+6. Select one unowned root cause. Claim it before the product fix with a draft PR whose initial diff contains evidence for only that root cause.
+7. Work on only that root cause. Add the diagnostic or regression evidence that should have caught an escaped defect.
+8. When the PR is waiting on CI or peer review, it is no longer active editing work. Review a peer PR or take the next unowned root cause, while keeping only one fix actively edited at a time.
+9. Revisit waiting and blocked groups during each scan. Re-scan after every meaningful GitHub state change and each new automatic `main` result.
+
+If nothing is actionable, use the product's wait, loop, or monitoring mechanism and resume. Do not end the task early.
+
+## Claim One Root Cause
+
+Before changing product code:
+
+1. Apply the transport-ambiguity rule in [Review and Merge](references/review-and-merge.md) to every GitHub write.
+2. Search open PR titles and bodies using the run ID, job ID, stable error signature, affected component, and likely fix area.
+3. Read plausible matches. A different job with the same cause is already owned; a similar symptom with a different cause is not.
+4. Create a branch from current `origin/main`.
+5. Add one diagnostic or regression test for the root cause when feasible. Do not manufacture an unrelated placeholder diff.
+6. Re-read the policy from the refreshed trusted ref with `git show origin/main:.github/workflows/pr-limit.yaml`. If a non-exempt author has 10 open PRs, review, merge, or close existing work instead of creating a claim.
+7. Open a draft PR assigned to its author. Follow `nemoclaw-contributor-create-pr` for the template, verified commits, and DCO declaration.
+8. Put the root-cause key, source workflow URL, source run ID, failed job names and IDs, and failure signature in the PR body. Fix exactly one root cause in that PR.
+
+Do not begin a second active fix for the same agent. Waiting PRs may accumulate only within the open-PR limit.
+
+## Review and Merge as an Ecosystem
+
+Read [Review and Merge](references/review-and-merge.md) before reviewing, approving, refreshing, or merging a drain PR.
+
+- Never approve your own PR. After an independent current-head approval, either the author or another maintainer may perform the final gated merge.
+- Review another maintainer's exact PR head independently. Do not exchange approvals without reviewing correctness, security, tests, and scope.
+- Do not duplicate an active peer review. Respect an explicit review claim for the same head in agent coordination, a PR comment, or a submitted review.
+- Do not manually request reviewers unless the current user or repository-owned configuration authorizes the exact request. Follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
+- Require at least one current-head approval from an account that did not open, author, or co-author the PR.
+- Require the existing maintainer gate, all current GitHub-required checks, and any applicable security review to pass.
+- Refresh a branch only at the final merge gate and only when the decision table requires it. Refresh before approval because a new head invalidates earlier approval and CI evidence.
+- Re-read the PR and rules immediately before merge. Never use an administrator bypass.
+
+## Do Not Duplicate E2E
+
+Observe automatic push runs and workflow-owned replacement attempts. Never use `gh run rerun`, `gh workflow run .github/workflows/e2e.yaml`, or local live E2E to duplicate a drain run.
+
+Approving a first-time contributor's ordinary `pull_request` workflow after trust review is not a manual E2E dispatch. Environment approval for a secret-bearing or hardware E2E job is different: follow `nemoclaw-maintainer-e2e` only when the maintainer explicitly requests that run.
+
+Never weaken, skip, delete, relabel, or narrow coverage to make a failure disappear. Do not freeze `main`, block unrelated merges, or ask other maintainers to wait.
+
+## Close Obsolete Work
+
+Before each fix push and merge decision, check whether `main` or another PR already removed the root cause. When it did:
+
+1. Verify the superseding change against the original failure signature.
+2. Stop editing the obsolete fix.
+3. Close its PR with the superseding PR or commit and the verification evidence. Re-read the PR after the write.
+4. Mark the queue item `obsolete`; do not count it as this drain's verified fix.
+
+## Stop at the Cutoff
+
+At or after the cutoff, do not claim another failure. Finish a non-destructive read already in progress. Perform the required read-only reconciliation for each ambiguous GitHub write, but start no other read. Preserve source edits. Delete each owned temporary-evidence directory and verify its absence, then produce the handoff in [Cutoff Handoff](references/cutoff-handoff.md).
+
+Distinguish verified root-cause fixes from merged corrective changes that still lack a later automatic `main` result. Do not report `main` as passing when its newest relevant E2E run is queued, running, cancelled, stale, or failing.
