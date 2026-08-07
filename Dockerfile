@@ -11,6 +11,7 @@
 # to all FROM directives. Can be overridden via --build-arg.
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 ARG NEMOCLAW_CORPORATE_CA_B64=
+ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==
 ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY=sha512-30vSoZuW1DP6Nuz24Gg3jgVC37IYe0bZ/Fgc5+372gc0h72NN4zHYAbu5bRd/gUJ9GdwABKrrEPCoFPlOTVTnQ==
@@ -210,6 +211,55 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && rm -rf /opt/wechat-runtime/node_modules \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
+
+# Keep the complete managed-image messaging dependency graph inert for normal
+# Dockerfile builds. Release-image builds select the exact-lock cache stage;
+# the protected GPU rebuild supplies its verified archives through the same-run
+# cache handoff and executes every npm materialization step without networking.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS openclaw-managed-messaging-npm-cache-0
+RUN install -d -o root -g root -m 0755 /out/npm-cache
+
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS openclaw-managed-messaging-npm-cache-1
+ARG TARGETARCH
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+COPY agents/openclaw/managed-image-messaging-runtime/package.json agents/openclaw/managed-image-messaging-runtime/package-lock.json /opt/managed-image-messaging-runtime/
+COPY agents/openclaw/managed-image-messaging-runtime/npm-cache-seed/ /opt/nemoclaw-build-tools/npm-cache-seed/
+COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/nemoclaw-build-tools/checks/
+COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/lib/
+RUN --network=default set -eu; \
+    case "$TARGETARCH" in \
+        amd64) npm_target_cpu=x64 ;; \
+        arm64) npm_target_cpu=arm64 ;; \
+        *) echo "ERROR: unsupported managed messaging npm target: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    install -d -o root -g root -m 0755 /out/npm-cache; \
+    if [ -n "$(find /opt/nemoclaw-build-tools/npm-cache-seed -maxdepth 1 -type f -name '*.tgz' -print -quit)" ]; then \
+        node --experimental-strip-types /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
+            --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
+            --cache /out/npm-cache \
+            --registry-origin https://registry.npmjs.org/ \
+            --archive-directory /opt/nemoclaw-build-tools/npm-cache-seed \
+            --os linux --cpu "$npm_target_cpu" --libc glibc; \
+        NPM_CONFIG_OFFLINE=true npm ci --prefix /opt/managed-image-messaging-runtime \
+            --ignore-scripts --omit=dev --legacy-peer-deps \
+            --userconfig /dev/null --registry https://registry.npmjs.org/ \
+            --cache /out/npm-cache; \
+    else \
+        npm ci --prefix /opt/managed-image-messaging-runtime \
+            --ignore-scripts --omit=dev --legacy-peer-deps \
+            --userconfig /dev/null --registry https://registry.npmjs.org/ \
+            --cache /out/npm-cache; \
+    fi; \
+    npm cache verify --cache /out/npm-cache; \
+    rm -rf /opt/managed-image-messaging-runtime/node_modules \
+        /opt/nemoclaw-build-tools/npm-cache-seed; \
+    chown -R root:root /out/npm-cache; \
+    chmod -R a+rX,go-w /out/npm-cache
+
+# hadolint ignore=DL3006
+FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} AS openclaw-managed-messaging-npm-cache
 
 # Group repository-owned files outside the final image so both Docker builders
 # can collapse related payloads without invalidating earlier final-image work.
@@ -1504,14 +1554,24 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
 # so materialize a sandbox-owned throwaway copy for this RUN and remove it before
 # committing the layer. Never point npm directly at the trusted source cache.
 # hadolint ignore=DL3059,DL4006
-RUN set -eu; \
-    trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
+RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
+    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        trusted_cache=/opt/nemoclaw-managed-messaging-npm-cache; \
+    else \
+        trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
+    fi; \
     unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
     test -z "$unsafe_cache_entry"; \
     install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"; \
     trap 'rm -rf "$install_cache"' EXIT; \
     cp -R "$trusted_cache"/. "$install_cache"/; \
     chmod -R u+rwX,go-w "$install_cache"; \
+    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        export NPM_CONFIG_CACHE="$install_cache"; \
+        export NPM_CONFIG_OFFLINE=true; \
+        export NPM_CONFIG_AUDIT=false; \
+        export NPM_CONFIG_FUND=false; \
+    fi; \
     NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
         OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
         node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install; \

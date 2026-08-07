@@ -7,12 +7,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type CachePut, seedReviewedNpmCache } from "../scripts/lib/seed-reviewed-npm-cache.mts";
+import {
+  type CachePut,
+  lockedArchivesFromDirectory,
+  seedReviewedNpmCache,
+} from "../scripts/lib/seed-reviewed-npm-cache.mts";
 
 const PACKAGE_NAME = "@example/reviewed";
 const PACKAGE_SPEC = `${PACKAGE_NAME}@1.2.3`;
 const REGISTRY_ORIGIN = "https://registry.npmjs.org/";
 const TARBALL_URL = "https://registry.npmjs.org/@example/reviewed/-/reviewed-1.2.3.tgz";
+const TARGET = { cpu: "x64", libc: "glibc", os: "linux" } as const;
 const roots: string[] = [];
 
 type PutCall = Readonly<{
@@ -38,6 +43,8 @@ function fixture() {
       packages: {
         "": { dependencies: { [PACKAGE_NAME]: "1.2.3" } },
         [`node_modules/${PACKAGE_NAME}`]: {
+          bundleDependencies: ["bundled-child"],
+          hasShrinkwrap: true,
           integrity,
           resolved: TARBALL_URL,
           version: "1.2.3",
@@ -68,6 +75,43 @@ afterEach(() => {
 });
 
 describe("reviewed npm cache seed", () => {
+  it("maps one exact lock-derived archive directory without registry metadata", () => {
+    const input = fixture();
+    const archiveDirectory = path.join(input.root, "archives");
+    fs.mkdirSync(archiveDirectory);
+    const copiedArchive = path.join(archiveDirectory, path.basename(input.archivePath));
+    fs.copyFileSync(input.archivePath, copiedArchive);
+
+    expect(
+      lockedArchivesFromDirectory(archiveDirectory, input.lockfilePath, REGISTRY_ORIGIN, TARGET),
+    ).toEqual(new Map([[PACKAGE_SPEC, copiedArchive]]));
+  });
+
+  it("rejects extras and symlinked directories at the archive-directory boundary", () => {
+    const input = fixture();
+    const archiveDirectory = path.join(input.root, "archives");
+    const archiveDirectoryLink = path.join(input.root, "archives-link");
+    fs.mkdirSync(archiveDirectory);
+    fs.copyFileSync(
+      input.archivePath,
+      path.join(archiveDirectory, path.basename(input.archivePath)),
+    );
+    fs.writeFileSync(path.join(archiveDirectory, "unexpected.tgz"), "unexpected");
+    fs.symlinkSync(archiveDirectory, archiveDirectoryLink, "dir");
+
+    expect(() =>
+      lockedArchivesFromDirectory(archiveDirectory, input.lockfilePath, REGISTRY_ORIGIN, TARGET),
+    ).toThrow("archive directory is incomplete or contains extras");
+    expect(() =>
+      lockedArchivesFromDirectory(
+        archiveDirectoryLink,
+        input.lockfilePath,
+        REGISTRY_ORIGIN,
+        TARGET,
+      ),
+    ).toThrow("archive directory must be a non-symlink directory");
+  });
+
   it("seeds verified tarball and packument records from an exact local archive", async () => {
     const input = fixture();
     const calls: PutCall[] = [];
@@ -90,6 +134,39 @@ describe("reviewed npm cache seed", () => {
     ).toBe(true);
     expect(calls[2]?.data.toString()).toContain(`"integrity":"${input.integrity}"`);
     expect(calls[2]?.data.toString()).toContain(`"tarball":"${TARBALL_URL}"`);
+    expect(calls[2]?.data.toString()).toContain('"hasShrinkwrap":true');
+    expect(calls[2]?.data.toString()).toContain('"bundleDependencies":["bundled-child"]');
+  });
+
+  it("combines every locked version into one offline packument", async () => {
+    const input = fixture();
+    const sharedVersions = ["3.1.2", "5.0.1"] as const;
+    const archives = new Map<string, string>();
+    const packages: Record<string, unknown> = { "": {} };
+    for (const [index, version] of sharedVersions.entries()) {
+      const bytes = Buffer.from(`shared archive ${version}`);
+      const archivePath = path.join(input.root, `shared-${version}.tgz`);
+      fs.writeFileSync(archivePath, bytes);
+      archives.set(`shared@${version}`, archivePath);
+      packages[index === 0 ? "node_modules/shared" : "node_modules/parent/node_modules/shared"] = {
+        integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+        resolved: `https://registry.npmjs.org/shared/-/shared-${version}.tgz`,
+        version,
+      };
+    }
+    fs.writeFileSync(input.lockfilePath, JSON.stringify({ lockfileVersion: 3, packages }), "utf8");
+    const calls: PutCall[] = [];
+
+    await seedReviewedNpmCache(request(input, archives), async (cachePath, key, data, options) => {
+      calls.push({ cachePath, data, key, metadata: options?.metadata });
+    });
+
+    const packuments = calls.filter(({ key }) => key.endsWith("registry.npmjs.org/shared"));
+    expect(packuments).toHaveLength(2);
+    expect(packuments.map(({ data }) => JSON.parse(data.toString()).versions)).toEqual([
+      expect.objectContaining({ "3.1.2": expect.any(Object), "5.0.1": expect.any(Object) }),
+      expect.objectContaining({ "3.1.2": expect.any(Object), "5.0.1": expect.any(Object) }),
+    ]);
   });
 
   it("rejects missing, extra, and integrity-mismatched archives", async () => {

@@ -127,6 +127,7 @@ describe("OpenClaw final image layout", () => {
     expect(hasBuildKitRunMount(finalStage)).toBe(true);
     expect(finalStage.match(/^RUN[^\n]*--mount[^\n]*/gmu)).toEqual([
       "RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \\",
+      "RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \\",
     ]);
     expectManagedBootstrapNativeImageContract(dockerfile);
     expect(finalStage).not.toMatch(/^\s*ENV\b[^\n]*(?:\\\n[^\n]*)*NODE_OPTIONS=/mu);

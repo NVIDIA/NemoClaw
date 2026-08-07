@@ -93,6 +93,8 @@ function completeImportedCache(cacheRoot: string): void {
   }
   mkdirSync(path.join(cacheRoot, "npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"), "{}\n", "utf8");
+  mkdirSync(path.join(cacheRoot, "messaging-npm-cache-seed"));
+  writeFileSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"), "{}\n", "utf8");
 }
 
 function completeSourceBoundary(sourceRoot: string): void {
@@ -101,7 +103,28 @@ function completeSourceBoundary(sourceRoot: string): void {
   mkdirSync(path.join(sourceRoot, "tools", "mcp-tool-discovery-runtime", "npm-cache-seed"), {
     recursive: true,
   });
+  mkdirSync(
+    path.join(
+      sourceRoot,
+      "agents",
+      "openclaw",
+      "managed-image-messaging-runtime",
+      "npm-cache-seed",
+    ),
+    { recursive: true },
+  );
   writeFileSync(path.join(sourceRoot, "nemoclaw", "package-lock.json"), "{}\n", "utf8");
+  writeFileSync(
+    path.join(
+      sourceRoot,
+      "agents",
+      "openclaw",
+      "managed-image-messaging-runtime",
+      "package-lock.json",
+    ),
+    "{}\n",
+    "utf8",
+  );
   writeFileSync(
     path.join(sourceRoot, "scripts", "checks", "materialize-locked-npm-cache-seed.mts"),
     "export {};\n",
@@ -245,6 +268,12 @@ describe("protected managed-image build-cache boundary", () => {
       `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --output ${realpathSync(cacheRoot)}/npm-cache-seed`,
     );
     expect(existsSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"))).toBe(true);
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/agents/openclaw/managed-image-messaging-runtime/package-lock.json --output ${realpathSync(cacheRoot)}/messaging-npm-cache-seed`,
+    );
+    expect(existsSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"))).toBe(
+      true,
+    );
   });
 
   it.each([
@@ -303,10 +332,27 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
+  it("rejects an imported cache that omits the locked messaging npm seed", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    completeImportedCache(cacheRoot);
+    rmSync(path.join(cacheRoot, "messaging-npm-cache-seed"), { recursive: true });
+
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("imported cache has no locked messaging npm cache seed");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
   it("imports each agent cache and disables RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
+    const sourceMessagingSeed = path.join(
+      REPO_ROOT,
+      "agents/openclaw/managed-image-messaging-runtime/npm-cache-seed",
+    );
     const originalSeedNames = readdirSync(sourceSeed).sort();
+    const originalMessagingSeedNames = readdirSync(sourceMessagingSeed).sort();
     completeImportedCache(cacheRoot);
     stubBuildInvocation();
 
@@ -323,7 +369,11 @@ describe("protected managed-image build-cache boundary", () => {
     expect(readFileSync(seedLog, "utf8")).toContain(
       `materialize-locked-npm-cache-seed.mts copy --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --seed ${realpathSync(cacheRoot)}/npm-cache-seed`,
     );
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts copy --lockfile ${REPO_ROOT}/agents/openclaw/managed-image-messaging-runtime/package-lock.json --seed ${realpathSync(cacheRoot)}/messaging-npm-cache-seed`,
+    );
     expect(readdirSync(sourceSeed).sort()).toEqual(originalSeedNames);
+    expect(readdirSync(sourceMessagingSeed).sort()).toEqual(originalMessagingSeedNames);
   });
 
   it("rejects a nested symlink in a complete imported cache before invoking Docker", () => {

@@ -154,15 +154,16 @@ function resolveDependencyPath(
 
 function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget): string[] {
   const root = record(packages[""], "package-lock root package");
-  const queue: Array<{ dependency: string; fromPath: string; optional: boolean }> = [];
+  const queue: Array<{ dependency: string; fromPath: string; optional: boolean; peer: boolean }> =
+    [];
   for (const dependency of dependencyNames(root, "dependencies")) {
-    queue.push({ dependency, fromPath: "", optional: false });
+    queue.push({ dependency, fromPath: "", optional: false, peer: false });
   }
   for (const dependency of dependencyNames(root, "devDependencies")) {
-    queue.push({ dependency, fromPath: "", optional: false });
+    queue.push({ dependency, fromPath: "", optional: false, peer: false });
   }
   for (const dependency of dependencyNames(root, "optionalDependencies")) {
-    queue.push({ dependency, fromPath: "", optional: true });
+    queue.push({ dependency, fromPath: "", optional: true, peer: false });
   }
 
   const visited = new Set<string>();
@@ -170,7 +171,9 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
     const edge = queue.shift()!;
     const packagePath = resolveDependencyPath(packages, edge.fromPath, edge.dependency);
     if (packagePath === undefined) {
-      if (edge.optional) continue;
+      // A lock generated with --legacy-peer-deps records the package's peer
+      // declaration but correctly omits that peer from the install graph.
+      if (edge.optional || edge.peer) continue;
       throw new Error(`package-lock dependency is unresolved: ${edge.dependency}`);
     }
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
@@ -186,10 +189,10 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
     visited.add(packagePath);
 
     for (const dependency of dependencyNames(entry, "dependencies")) {
-      queue.push({ dependency, fromPath: packagePath, optional: false });
+      queue.push({ dependency, fromPath: packagePath, optional: false, peer: false });
     }
     for (const dependency of dependencyNames(entry, "optionalDependencies")) {
-      queue.push({ dependency, fromPath: packagePath, optional: true });
+      queue.push({ dependency, fromPath: packagePath, optional: true, peer: false });
     }
     const peerMetadata =
       entry.peerDependenciesMeta === undefined
@@ -198,7 +201,7 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
     for (const dependency of dependencyNames(entry, "peerDependencies")) {
       const metadata = peerMetadata[dependency];
       const optional = metadata === undefined ? false : record(metadata, "peer metadata").optional;
-      queue.push({ dependency, fromPath: packagePath, optional: optional === true });
+      queue.push({ dependency, fromPath: packagePath, optional: optional === true, peer: true });
     }
   }
   return [...visited];

@@ -95,10 +95,15 @@ source_root="$(cd -- "$source_root" && pwd -P)"
 seed_helper="$source_root/scripts/checks/materialize-locked-npm-cache-seed.mts"
 source_lockfile="$source_root/nemoclaw/package-lock.json"
 source_seed_dir="$source_root/tools/mcp-tool-discovery-runtime/npm-cache-seed"
+source_messaging_lockfile="$source_root/agents/openclaw/managed-image-messaging-runtime/package-lock.json"
+source_messaging_seed_dir="$source_root/agents/openclaw/managed-image-messaging-runtime/npm-cache-seed"
 [[ -f "$seed_helper" && ! -L "$seed_helper" ]] || usage
 [[ -f "$source_lockfile" && ! -L "$source_lockfile" ]] || usage
 [[ -d "$source_seed_dir" && ! -L "$source_seed_dir" ]] || usage
 [[ -z "$(find "$source_seed_dir" -type l -print -quit)" ]] || usage
+[[ -f "$source_messaging_lockfile" && ! -L "$source_messaging_lockfile" ]] || usage
+[[ -d "$source_messaging_seed_dir" && ! -L "$source_messaging_seed_dir" ]] || usage
+[[ -z "$(find "$source_messaging_seed_dir" -type l -print -quit)" ]] || usage
 if [[ -n "$cache_to" ]]; then
   [[ "$cache_to" == /* && "$cache_to" != *$'\n'* && ! -L "$cache_to" ]] || usage
   mkdir -p -- "$cache_to"
@@ -131,6 +136,14 @@ if [[ -n "$cache_from" ]]; then
     echo "ERROR: protected managed-image imported cache has no locked npm cache seed manifest" >&2
     exit 1
   }
+  [[ -d "$cache_from/messaging-npm-cache-seed" && ! -L "$cache_from/messaging-npm-cache-seed" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/messaging-npm-cache-seed/manifest.json" && ! -L "$cache_from/messaging-npm-cache-seed/manifest.json" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed manifest" >&2
+    exit 1
+  }
 fi
 
 for command in docker jq node sha256sum; do
@@ -143,10 +156,16 @@ done
 work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
 seed_overlay_active=0
 seed_backup="$work_dir/npm-cache-seed-original"
+messaging_seed_overlay_active=0
+messaging_seed_backup="$work_dir/messaging-npm-cache-seed-original"
 restore_worktree() {
   if [[ "$seed_overlay_active" == 1 ]]; then
     rm -rf -- "$source_seed_dir"
     cp -pR -- "$seed_backup" "$source_seed_dir"
+  fi
+  if [[ "$messaging_seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_messaging_seed_dir"
+    cp -pR -- "$messaging_seed_backup" "$source_messaging_seed_dir"
   fi
   rm -rf -- "$work_dir"
 }
@@ -167,6 +186,19 @@ if [[ -n "$cache_from" ]]; then
   seed_overlay_active=1
   rm -rf -- "$source_seed_dir"
   cp -pR -- "$imported_seed" "$source_seed_dir"
+
+  imported_messaging_seed="$work_dir/messaging-npm-cache-seed-import"
+  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+    --lockfile "$source_messaging_lockfile" \
+    --seed "$cache_from/messaging-npm-cache-seed" \
+    --output "$imported_messaging_seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  cp -pR -- "$source_messaging_seed_dir" "$messaging_seed_backup"
+  messaging_seed_overlay_active=1
+  rm -rf -- "$source_messaging_seed_dir"
+  cp -pR -- "$imported_messaging_seed" "$source_messaging_seed_dir"
 fi
 
 contracts="$work_dir/contracts.jsonl"
@@ -308,6 +340,12 @@ if [[ -n "$cache_to" ]]; then
   node --experimental-strip-types --no-warnings "$seed_helper" export \
     --lockfile "$source_lockfile" \
     --output "$cache_to/npm-cache-seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  node --experimental-strip-types --no-warnings "$seed_helper" export \
+    --lockfile "$source_messaging_lockfile" \
+    --output "$cache_to/messaging-npm-cache-seed" \
     --os "$npm_target_os" \
     --cpu "$npm_target_cpu" \
     --libc "$npm_target_libc"

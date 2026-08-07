@@ -165,6 +165,27 @@ describe("locked npm cache seed materialization", () => {
     ]);
   });
 
+  it("does not invent an archive for a peer omitted by a legacy-peer lock", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const lockfile = writeLock(testRoot, [alpha.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    lock.packages["node_modules/alpha"].peerDependencies = { host: ">=1" };
+    writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    const seed = path.join(testRoot, "seed");
+
+    const manifest = await materializeLockedNpmCacheSeed({
+      downloadArchive: async () => alpha.bytes,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+
+    expect(manifest.archiveCount).toBe(1);
+    expect(readdirSync(seed).sort()).toEqual(["alpha-1.0.0.tgz", "manifest.json"]);
+  });
+
   it("rejects a lock archive outside the exact npm registry origin", async () => {
     const alpha = archive("alpha", "alpha archive");
     const lockfile = writeLock(testRoot, [

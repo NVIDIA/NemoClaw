@@ -4,11 +4,23 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  lockedArchives,
+  type NpmPlatformTarget,
+} from "../checks/materialize-locked-npm-cache-seed.mts";
 import { verifyReviewedNpmLockPackages } from "./reviewed-npm-archive.mts";
 
 export type CachePut = (
@@ -23,10 +35,13 @@ export type ReviewedNpmCacheSeedRequest = Readonly<{
   cacheDirectory: string;
   lockfilePath: string;
   registryOrigin: string;
+  selectedPackageSpecs?: ReadonlySet<string>;
 }>;
 
 type LockedPackage = Readonly<{
+  bundleDependencies?: readonly string[];
   dependencies?: Readonly<Record<string, unknown>>;
+  hasShrinkwrap?: true;
   integrity: string;
   name: string;
   optionalDependencies?: Readonly<Record<string, unknown>>;
@@ -57,7 +72,13 @@ function readLockedPackages(
   lockfilePath: string,
   registryOrigin: string,
 ): readonly LockedPackage[] {
-  const expectedSpecs = new Set(verifyReviewedNpmLockPackages({ lockfilePath, registryOrigin }));
+  const expectedSpecs = new Set(
+    verifyReviewedNpmLockPackages({
+      allowNestedShrinkwrap: true,
+      lockfilePath,
+      registryOrigin,
+    }),
+  );
   const lock = requireObject(
     JSON.parse(readFileSync(lockfilePath, "utf8")) as unknown,
     "reviewed npm cache seed lockfile",
@@ -74,6 +95,17 @@ function readLockedPackages(
     const resolved = typeof record.resolved === "string" ? record.resolved : "";
     const packageSpec = `${name}@${version}`;
     if (!expectedSpecs.has(packageSpec)) continue;
+    if (record.hasShrinkwrap !== undefined && record.hasShrinkwrap !== true) {
+      throw new Error(`reviewed npm cache seed ${packageSpec} has invalid shrinkwrap metadata`);
+    }
+    const bundleDependencies = record.bundleDependencies;
+    if (
+      bundleDependencies !== undefined &&
+      (!Array.isArray(bundleDependencies) ||
+        bundleDependencies.some((dependency) => typeof dependency !== "string"))
+    ) {
+      throw new Error(`reviewed npm cache seed ${packageSpec} has invalid bundled dependencies`);
+    }
     const optionalRecord = (field: string): Readonly<Record<string, unknown>> | undefined => {
       const value = record[field];
       return value === undefined
@@ -81,7 +113,9 @@ function readLockedPackages(
         : requireObject(value, `reviewed npm cache seed ${packageSpec} ${field}`);
     };
     locked.push({
+      ...(bundleDependencies ? { bundleDependencies: bundleDependencies as string[] } : {}),
       dependencies: optionalRecord("dependencies"),
+      ...(record.hasShrinkwrap === true ? { hasShrinkwrap: true as const } : {}),
       integrity,
       name,
       optionalDependencies: optionalRecord("optionalDependencies"),
@@ -127,6 +161,53 @@ function readArchive(archivePath: string, packageSpec: string): Buffer {
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+export function lockedArchivesFromDirectory(
+  archiveDirectory: string,
+  lockfilePath: string,
+  registryOrigin: string,
+  target: NpmPlatformTarget,
+): ReadonlyMap<string, string> {
+  if (!isAbsolute(archiveDirectory)) {
+    throw new Error(
+      `reviewed npm cache seed archive directory must be absolute: ${archiveDirectory}`,
+    );
+  }
+  const directory = resolve(archiveDirectory);
+  const directoryEntry = lstatSync(directory);
+  if (!directoryEntry.isDirectory() || directoryEntry.isSymbolicLink()) {
+    throw new Error(
+      `reviewed npm cache seed archive directory must be a non-symlink directory: ${directory}`,
+    );
+  }
+
+  const selectedArchives = lockedArchives(readFileSync(lockfilePath, "utf8"), target);
+  const expectedByResolved = new Map(
+    selectedArchives.map((archive) => [archive.resolved, archive.archive]),
+  );
+  const unmatchedResolved = new Set(expectedByResolved.keys());
+  const archives = new Map<string, string>();
+  for (const entry of readLockedPackages(lockfilePath, registryOrigin)) {
+    const packageSpec = `${entry.name}@${entry.version}`;
+    const archiveName = expectedByResolved.get(entry.resolved);
+    if (!archiveName) continue;
+    if (!archiveName.endsWith(".tgz") || archiveName === ".tgz") {
+      throw new Error(`reviewed npm cache seed lock has an unsafe archive name: ${packageSpec}`);
+    }
+    unmatchedResolved.delete(entry.resolved);
+    archives.set(packageSpec, join(directory, archiveName));
+  }
+  if (unmatchedResolved.size > 0) {
+    throw new Error("reviewed npm cache seed could not map every selected lock archive");
+  }
+
+  const actualNames = readdirSync(directory).sort();
+  const expected = selectedArchives.map(({ archive }) => archive).sort();
+  if (JSON.stringify(actualNames) !== JSON.stringify(expected)) {
+    throw new Error("reviewed npm cache seed archive directory is incomplete or contains extras");
+  }
+  return archives;
 }
 
 function packumentUrl(registryOrigin: string, packageName: string): string {
@@ -176,14 +257,21 @@ export async function seedReviewedNpmCache(
   }
   const registryOrigin = parsedRegistry.origin;
   const locked = readLockedPackages(request.lockfilePath, registryOrigin);
-  const expectedArchives = new Set(request.archives.keys());
+  const selectedPackageSpecs =
+    request.selectedPackageSpecs ??
+    new Set(locked.map(({ name, version }) => `${name}@${version}`));
+  const expectedArchives = new Set(selectedPackageSpecs);
+  const unexpectedArchives = new Set(request.archives.keys());
   const cachePath = join(cacheDirectory, "_cacache");
+  const packumentVersions = new Map<string, Record<string, unknown>>();
   const seeded: string[] = [];
   for (const entry of locked) {
     const packageSpec = `${entry.name}@${entry.version}`;
+    if (!selectedPackageSpecs.has(packageSpec)) continue;
     const archivePath = request.archives.get(packageSpec);
     if (!archivePath) throw new Error(`reviewed npm cache seed archive is missing: ${packageSpec}`);
     expectedArchives.delete(packageSpec);
+    unexpectedArchives.delete(packageSpec);
     const archive = readArchive(archivePath, packageSpec);
     const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
     if (actualIntegrity !== entry.integrity) {
@@ -206,22 +294,33 @@ export async function seedReviewedNpmCache(
     await put(cachePath, `pacote:tarball:${packageSpec}`, archive);
 
     const version = {
+      ...(entry.bundleDependencies ? { bundleDependencies: entry.bundleDependencies } : {}),
       ...(entry.dependencies ? { dependencies: entry.dependencies } : {}),
       dist: { integrity: entry.integrity, tarball: entry.resolved },
+      ...(entry.hasShrinkwrap ? { hasShrinkwrap: true } : {}),
       name: entry.name,
       ...(entry.optionalDependencies ? { optionalDependencies: entry.optionalDependencies } : {}),
       ...(entry.peerDependencies ? { peerDependencies: entry.peerDependencies } : {}),
       ...(entry.peerDependenciesMeta ? { peerDependenciesMeta: entry.peerDependenciesMeta } : {}),
       version: entry.version,
     };
+    const versions = packumentVersions.get(entry.name) ?? {};
+    versions[entry.version] = version;
+    packumentVersions.set(entry.name, versions);
+    seeded.push(packageSpec);
+  }
+  for (const [packageName, versions] of [...packumentVersions].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    const versionNames = Object.keys(versions).sort((left, right) => left.localeCompare(right));
     const packument = Buffer.from(
       JSON.stringify({
-        "dist-tags": { latest: entry.version },
-        name: entry.name,
-        versions: { [entry.version]: version },
+        "dist-tags": { latest: versionNames.at(-1) },
+        name: packageName,
+        versions,
       }),
     );
-    const url = packumentUrl(registryOrigin, entry.name);
+    const url = packumentUrl(registryOrigin, packageName);
     for (const accept of [INSTALL_ACCEPT, "application/json"]) {
       await put(cachePath, `make-fetch-happen:request-cache:${url}`, packument, {
         metadata: {
@@ -240,11 +339,11 @@ export async function seedReviewedNpmCache(
         },
       });
     }
-    seeded.push(packageSpec);
   }
-  if (expectedArchives.size > 0) {
+  const unlockedArchives = new Set([...expectedArchives, ...unexpectedArchives]);
+  if (unlockedArchives.size > 0) {
     throw new Error(
-      `reviewed npm cache seed received unlocked archives: ${[...expectedArchives].join(", ")}`,
+      `reviewed npm cache seed received unlocked archives: ${[...unlockedArchives].join(", ")}`,
     );
   }
   return seeded;
@@ -254,13 +353,21 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
   let cacheDirectory = "";
   let lockfilePath = "";
   let registryOrigin = "";
+  let archiveDirectory = "";
+  let cpu = "";
+  let libc = "";
+  let os = "";
   const archives = new Map<string, string>();
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
     const value = args[index + 1];
     if (!value) throw new Error(`missing value for ${flag ?? "argument"}`);
-    if (flag === "--cache") cacheDirectory = value;
+    if (flag === "--archive-directory") archiveDirectory = value;
+    else if (flag === "--cache") cacheDirectory = value;
+    else if (flag === "--cpu") cpu = value;
+    else if (flag === "--libc") libc = value;
     else if (flag === "--lockfile") lockfilePath = value;
+    else if (flag === "--os") os = value;
     else if (flag === "--registry-origin") registryOrigin = value;
     else if (flag === "--archive") {
       const separator = value.indexOf("=");
@@ -277,12 +384,39 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
     } else throw new Error(`unknown reviewed npm cache seed option: ${flag}`);
     index += 1;
   }
-  if (!cacheDirectory || !lockfilePath || !registryOrigin || archives.size === 0) {
+  if (!cacheDirectory || !lockfilePath || !registryOrigin) {
     throw new Error(
-      "usage: seed-reviewed-npm-cache.mts --cache ABSOLUTE --lockfile FILE --registry-origin HTTPS_ORIGIN --archive PACKAGE@VERSION=ABSOLUTE",
+      "usage: seed-reviewed-npm-cache.mts --cache ABSOLUTE --lockfile FILE --registry-origin HTTPS_ORIGIN (--archive PACKAGE@VERSION=ABSOLUTE | --archive-directory ABSOLUTE)",
     );
   }
-  return { archives, cacheDirectory, lockfilePath, registryOrigin };
+  if (archiveDirectory && archives.size > 0) {
+    throw new Error(
+      "reviewed npm cache seed accepts either explicit archives or one archive directory",
+    );
+  }
+  if (archiveDirectory && (!cpu || !libc || !os)) {
+    throw new Error("reviewed npm cache seed archive directory requires --os, --cpu, and --libc");
+  }
+  if (!archiveDirectory && (cpu || libc || os)) {
+    throw new Error("reviewed npm cache seed platform target requires an archive directory");
+  }
+  const selectedArchives = archiveDirectory
+    ? lockedArchivesFromDirectory(archiveDirectory, lockfilePath, registryOrigin, {
+        cpu,
+        libc,
+        os,
+      })
+    : archives;
+  if (selectedArchives.size === 0) {
+    throw new Error("reviewed npm cache seed requires at least one locked archive");
+  }
+  return {
+    archives: selectedArchives,
+    cacheDirectory,
+    lockfilePath,
+    registryOrigin,
+    ...(archiveDirectory ? { selectedPackageSpecs: new Set(selectedArchives.keys()) } : {}),
+  };
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";

@@ -327,6 +327,12 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: compatibility -- Protected rebuilds must materialize mutable dependency graphs in explicit offline stages
   it("pins dependency-materialization RUN cache identity", () => {
     const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const managedMessagingRuntimePackage = JSON.parse(
+      fs.readFileSync(
+        path.join(repoRoot, "agents/openclaw/managed-image-messaging-runtime/package.json"),
+        "utf8",
+      ),
+    ) as { dependencies: Record<string, string> };
     const hermesDockerfile = fs.readFileSync(
       path.join(repoRoot, "agents/hermes/Dockerfile"),
       "utf8",
@@ -336,13 +342,32 @@ describe("MCP tool discovery image contract", () => {
       "utf8",
     );
 
-    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(4);
+    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(5);
     expect(openClawDockerfile.match(/^RUN --network=none\b/gmu)).toHaveLength(3);
     expect(openClawDockerfile).toContain(
       "RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro",
     );
     expect(openClawDockerfile).toContain("AS wechat-npm-cache");
     expect(openClawDockerfile).toContain("AS codex-acp-runtime");
+    expect(managedMessagingRuntimePackage.dependencies).toEqual({
+      "@openclaw/discord": "2026.7.1",
+      "@openclaw/googlechat": "2026.7.1",
+      "@openclaw/msteams": "2026.7.1",
+      "@openclaw/slack": "2026.7.1",
+      "@openclaw/whatsapp": "2026.7.1",
+      "@tencent-weixin/openclaw-weixin": "2.4.3",
+    });
+    expect(openClawDockerfile).toContain("AS openclaw-managed-messaging-npm-cache-0");
+    expect(openClawDockerfile).toContain("AS openclaw-managed-messaging-npm-cache-1");
+    expect(openClawDockerfile).toContain(
+      "FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} AS openclaw-managed-messaging-npm-cache",
+    );
+    expect(openClawDockerfile).toContain(
+      "--archive-directory /opt/nemoclaw-build-tools/npm-cache-seed",
+    );
+    expect(openClawDockerfile).toContain('--os linux --cpu "$npm_target_cpu" --libc glibc');
+    expect(openClawDockerfile).toContain('export NPM_CONFIG_CACHE="$install_cache"');
+    expect(openClawDockerfile).toContain("export NPM_CONFIG_OFFLINE=true");
     expect(hermesDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
     expect(dcodeDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
   });
