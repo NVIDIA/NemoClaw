@@ -387,7 +387,7 @@ interface DockerFixture {
   readonly seed: (journal: HostLocalCreateJournalRecord, running: boolean) => void;
 }
 
-function dockerFixture(): DockerFixture {
+function dockerFixture(configuredHostPort = ""): DockerFixture {
   let networkId = NETWORK_ID;
   let networkPresent = false;
   let networkTransactionId = TRANSACTION_ID;
@@ -435,7 +435,9 @@ function dockerFixture(): DockerFixture {
       HostConfig: {
         NetworkMode: "nemoclaw-llama-cpp-internal",
         RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 },
-        PortBindings: { "8081/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }] },
+        PortBindings: {
+          "8081/tcp": [{ HostIp: "127.0.0.1", HostPort: configuredHostPort }],
+        },
         ReadonlyRootfs: !hardeningDrift,
         CapDrop: ["ALL"],
         SecurityOpt: ["no-new-privileges:true"],
@@ -463,7 +465,9 @@ function dockerFixture(): DockerFixture {
       NetworkSettings: {
         Networks: { "nemoclaw-llama-cpp-internal": { NetworkID: networkId } },
         Ports: {
-          "8081/tcp": startedOnce ? [{ HostIp: "127.0.0.1", HostPort: "49152" }] : null,
+          "8081/tcp": startedOnce
+            ? [{ HostIp: "127.0.0.1", HostPort: configuredHostPort || "49152" }]
+            : null,
         },
       },
       Mounts: [
@@ -771,15 +775,17 @@ function preparedJournal(): HostLocalCreateJournalRecord {
 }
 
 describe("dormant Docker llama.cpp managed lifecycle", () => {
-  it("journals create/start/finalize and serves the provider-neutral lifecycle in a test-only bundle (#8395)", () => {
-    const fixture = dockerFixture();
+  it("journals a product install on its declared loopback host port (#8544)", () => {
+    const fixture = dockerFixture("8081");
     const store = journalStore();
-    const lifecycle = controller(fixture, store);
+    const lifecycle = createDockerLlamaCppManagedLifecycle(
+      options(fixture, store, { ...bindings(), hostPort: 8081 }),
+    );
     const writer = receiptWriter();
     const receipt = lifecycle.start(writer);
     const serialized = serializeHostLocalInferenceReceipt(receipt);
 
-    expect(receipt.endpoint.port).toBe(49152);
+    expect(receipt.endpoint.port).toBe(8081);
     expect(receipt.runtime).toMatchObject({
       kind: "container",
       runtimeId: RUNTIME_ID,
@@ -804,6 +810,13 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(lifecycle.runtime.prepareDestroy(receipt)).toEqual(receipt);
     expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
+  });
+
+  it("rejects a Docker binding that differs from the declared product port (#8544)", () => {
+    const lifecycle = createDockerLlamaCppManagedLifecycle(
+      options(dockerFixture("8082"), journalStore(), { ...bindings(), hostPort: 8081 }),
+    );
+    expect(() => lifecycle.start(receiptWriter())).toThrow("does not match its loopback binding");
   });
 
   it("uses the declarative readiness timeout as both curl retry budget and capture budget", () => {
