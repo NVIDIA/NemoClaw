@@ -27,7 +27,7 @@ vi.mock("./policy-context-seed", () => ({ seedInitialPolicyContext }));
 vi.mock("./policy-preset-sync", () => ({ syncPresetSelection }));
 
 describe("onboarding policy application", () => {
-  it("runs policy setup through the sandbox mutation lock", async () => {
+  it("runs policy application while holding the sandbox mutation lock", async () => {
     const events: string[] = [];
     const withSandboxMutationLock: OnboardPolicyApplicationDeps["withSandboxMutationLock"] = vi.fn(
       async (_sandboxName, action) => {
