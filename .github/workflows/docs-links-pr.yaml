@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   markdown-links:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout

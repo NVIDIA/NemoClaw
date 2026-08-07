@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   build-sandbox-images:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - &checkout
@@ -159,7 +159,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   build-hermes-sandbox-image:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - *checkout
@@ -315,7 +315,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   test-hermes-sandbox-image:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     needs: build-hermes-sandbox-image
     timeout-minutes: 90
     steps:
@@ -401,7 +401,7 @@ jobs:
           docker system df || true
 
   messaging-plan-image-boundary:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - *checkout
@@ -474,7 +474,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
   state-dir-guard-metadata:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [build-sandbox-images, build-hermes-sandbox-image]
     env:
@@ -529,7 +529,7 @@ jobs:
         uses: ./.github/actions/upload-e2e-artifacts
   build-sandbox-images-arm64:
     if: inputs.run_arm64
-    runs-on: linux-arm64-cpu4
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:
       - *checkout
@@ -588,7 +588,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   test-e2e-sandbox:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:
@@ -607,7 +607,7 @@ jobs:
         run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
 
   test-e2e-gateway-isolation:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:
@@ -631,7 +631,7 @@ jobs:
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
 
   runtime-overrides:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     # The live target owns 45 minutes; retain 15 minutes for setup, image
     # transfer, and the always-running artifact upload.
     timeout-minutes: 60
@@ -664,7 +664,7 @@ jobs:
         uses: ./.github/actions/upload-e2e-artifacts
 
   test-e2e-port-overrides:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build-sandbox-images
     steps:

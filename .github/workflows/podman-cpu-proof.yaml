@@ -26,7 +26,7 @@ concurrency:
 jobs:
   podman-cpu-lifecycle:
     name: Rootless Podman CPU lifecycle with Docker disabled
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/podman-cpu-proof

@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   update-latest:
-    runs-on: linux-amd64-cpu4
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
