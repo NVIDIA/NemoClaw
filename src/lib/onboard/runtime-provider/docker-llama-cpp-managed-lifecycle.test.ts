@@ -823,17 +823,21 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
   });
-  it("rejects configured or published Docker port drift from the recipe (#8544)", () => {
-    for (const args of [["8082"], ["8081", "8082"]] as const) {
-      const [fixture, store] = [dockerFixture(...args), journalStore()];
-      const lifecycle = createDockerLlamaCppManagedLifecycle(
-        options(fixture, store, { ...bindings(), hostPort: 8081 }),
-      );
-      expect(() => lifecycle.start(receiptWriter())).toThrow(/binding/u);
-      const calls = fixture.capture.mock.calls.map((call) => call[0]);
-      expect(store.list()).toEqual([]);
-      expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
-    }
+  it.each([
+    ["configured", "8082", undefined],
+    ["published", "8081", "8082"],
+  ] as const)("rolls back exact ownership for %s loopback port drift (#8544)", (_kind, configured, published) => {
+    const [fixture, store] = [dockerFixture(configured, published), journalStore()];
+    const lifecycle = createDockerLlamaCppManagedLifecycle(
+      options(fixture, store, { ...bindings(), hostPort: 8081 }),
+    );
+    expect(() => lifecycle.start(receiptWriter())).toThrow(/binding/u);
+    const calls = fixture.capture.mock.calls.map((call) => call[0]);
+    expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
+    expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
+    expect(store.list()).toEqual([]);
+  });
+  it("fails closed on unsafe published bindings during port-drift rollback (#8544)", () => {
     for (const args of [
       ["8081", "8082", "0.0.0.0", 1],
       ["8081", "invalid", "127.0.0.1", 1],
