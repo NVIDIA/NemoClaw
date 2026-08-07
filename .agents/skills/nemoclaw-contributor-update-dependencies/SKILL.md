@@ -11,6 +11,9 @@ description: Audit and implement a dependency upgrade as a semantic migration. U
 Treat an upgrade as a migration, not a version edit. Explain the changed upstream contracts,
 their NemoClaw consumers, the required migrations, and the evidence for each conclusion.
 
+This is a narrow specialist beneath `nemoclaw-contributor-implement-issue`. That workflow keeps the
+implementation handoff; this one owns the upgrade procedure only.
+
 ## Mutation boundary
 
 Change only the NVIDIA/NemoClaw checkout in scope. Treat upstream repositories, registries,

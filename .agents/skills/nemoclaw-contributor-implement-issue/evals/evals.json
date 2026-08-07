@@ -93,5 +93,28 @@
       "Fetches the issue and current repository context.",
       "Implements locally and does not publish a pull request."
     ]
+  },
+
+  {
+    "id": "positive-routed-review-repair",
+    "question": "The publication workflow classified a CodeRabbit finding on my open NemoClaw pull request as a real defect. Fix the code.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "This workflow owns the code repair that the publication workflow routes back from a classified review finding. The classified finding is the accepted scope.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Keeps the change inside the finding's root-cause group.",
+      "Returns the changed behavior and its evidence to `nemoclaw-contributor-create-pr` without pushing."
+    ]
+  },
+
+  {
+    "id": "negative-review-collection",
+    "question": "Collect every unresolved review thread on NemoClaw pull request #8396 and tell me which findings still apply.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Collecting and classifying review feedback belongs to the publication workflow and the shared PR follow-up contract.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not begin a code repair before classification."
+    ]
   }
 ]
