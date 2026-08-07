@@ -23,6 +23,7 @@ import {
   validateCandidateDockerfile,
   validateChatCompletionResponse,
   validateModelsResponse,
+  validateOpenClawQualificationImageLabels,
   validateQualificationPlan,
   validateStartupLog,
 } from "../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
@@ -337,6 +338,18 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         ]),
       );
       expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+      const agentQualificationArgv = buildServerContainerArgv(testPlan, {
+        apiKeyHostPath: "/work/tmp/api-key",
+        containerName: "qualified-server",
+        hostPort: 8081,
+        imageReference: `localhost:5000/repo@sha256:${"d".repeat(64)}`,
+        model,
+        networkName: "qualified-internal",
+        registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
+        runtimeGid: 1001,
+        runtimeUid: 1001,
+      });
+      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
@@ -372,6 +385,34 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     } finally {
       fs.rmSync(modelRoot, { force: true, recursive: true });
     }
+  });
+
+  it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {
+    const labels = {
+      "io.nvidia.nemoclaw.agent": "openclaw",
+      "io.nvidia.nemoclaw.managed-image.contract": "1",
+      "io.nvidia.nemoclaw.managed-image.platform": "linux/arm64",
+      "org.opencontainers.image.revision": "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+      "org.opencontainers.image.source": "https://github.com/NVIDIA/NemoClaw",
+    };
+    expect(() =>
+      validateOpenClawQualificationImageLabels(
+        JSON.stringify(labels),
+        "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateOpenClawQualificationImageLabels(
+        JSON.stringify({ ...labels, "io.nvidia.nemoclaw.agent": "hermes" }),
+        "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+      ),
+    ).toThrow(/declarative identity/u);
+    expect(() =>
+      validateOpenClawQualificationImageLabels(JSON.stringify(labels), "f".repeat(40)),
+    ).toThrow(/declarative identity/u);
+    expect(() => validateOpenClawQualificationImageLabels("{", "f".repeat(40))).toThrow(
+      /labels are invalid/u,
+    );
   });
 
   it("requires unambiguous full GPU offload and rejects CPU fallback warnings (#8260)", () => {
@@ -411,7 +452,10 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     ).not.toThrow();
     expect(() =>
       validateModelsResponse(
-        { data: [{ id: EXPECTED_MODEL }, { id: "unexpected" }], object: "list" },
+        {
+          data: [{ id: EXPECTED_MODEL }, { id: "unexpected" }],
+          object: "list",
+        },
         EXPECTED_MODEL,
       ),
     ).toThrow();
