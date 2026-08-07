@@ -180,8 +180,12 @@ describe("legacy Hermes shields compatibility", () => {
         case cmd.includes(HERMES_GUARD) && cmd.includes("--help"):
           return help;
         case isGuardAction(cmd, "begin-shields-transition"): {
-          const mode = cmd[cmd.indexOf("--shields-mode") + 1];
-          pendingMode = mode === "locked" ? "locked" : "mutable";
+          const modeIndex = cmd.indexOf("--shields-mode");
+          const mode = modeIndex >= 0 ? cmd[modeIndex + 1] : undefined;
+          if (mode !== "locked" && mode !== "mutable") {
+            throw new Error("Invalid --shields-mode in test fixture");
+          }
+          pendingMode = mode;
           return `lock_token=${LOCK_TOKEN} original_locked=1`;
         }
         case isGuardAction(cmd, "apply-shields-transition"):
