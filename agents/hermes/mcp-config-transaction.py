@@ -59,7 +59,7 @@ ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
 OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = re.compile(r"^v[0-9]+_[A-Za-z0-9_]+$")
-BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.85.json"
+BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.99.json"
 ANSI_ESCAPE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])"
 )
@@ -118,7 +118,7 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     # corrupt, or wrong-version OpenShell boundary manifest.
     # sourceBoundary: NemoClaw owns one reviewed manifest installed beside this
     # helper in images; the second path is the deterministic source-checkout layout.
-    # whyNotSourceFix: OpenShell v0.0.85 has no machine-readable child-env contract.
+    # whyNotSourceFix: OpenShell v0.0.99 has no machine-readable child-env contract.
     # It also deliberately hides the supervisor identity mount from workload
     # children and the Hermes image contains no OpenShell CLI. Executing
     # ``openshell --version`` here would therefore either fail every real
@@ -146,7 +146,7 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
         not isinstance(manifest, dict)
-        or manifest.get("openshellVersion") != "0.0.85"
+        or manifest.get("openshellVersion") != "0.0.99"
     ):
         raise RuntimeError("Hermes MCP credential boundary manifest is invalid")
     return manifest
@@ -330,7 +330,7 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     }
     if action == "add" and hostname in host_aliases:
         raise ValueError(
-            "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85"
+            "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.99"
         )
     if not (action == "remove" and hostname in host_aliases) and (
         hostname in {"localhost", "local", "internal", "metadata"}
@@ -1099,7 +1099,7 @@ def _assert_non_root_lifecycle_identity() -> None:
     # topology.
     # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the
     # immutable root-lifecycle marker and validates it before mutation.
-    # whyNotSourceFix: OpenShell 0.0.85 supports both topologies but exposes no
+    # whyNotSourceFix: OpenShell 0.0.99 supports both topologies but exposes no
     # attested same-UID capability that this packaged helper can query.
     # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe
     # and add when the root-lifecycle marker identifies the legacy topology.

@@ -514,7 +514,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   });
 
   it("rolls back when post-restore restart does not report an exact ok disposition", () => {
-    mockOpenClawSandbox("post-restore-failed-box");
+    mockOpenClawSandbox("post-restore-fail");
     setImmediateRecoveryPolling();
     const order: string[] = [];
     const { finalizeTransaction, relaunchManagedSupervisorSessionImpl } =
@@ -530,10 +530,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output:
-        "SANDBOX  BIND  PORT  PID  STATUS\npost-restore-failed-box  127.0.0.1  18789  12345  running",
+        "SANDBOX  BIND  PORT  PID  STATUS\npost-restore-fail  127.0.0.1  18789  12345  running",
     });
 
-    const result = checkAndRecoverSandboxProcesses("post-restore-failed-box", {
+    const result = checkAndRecoverSandboxProcesses("post-restore-fail", {
       quiet: true,
       isSandboxGatewayRunningImpl: () => false,
       requestGatewaySupervisorAction,
@@ -612,7 +612,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   });
 
   it("prints generic recovery hints when state recovery and rollback both fail", () => {
-    mockOpenClawSandbox("restore-and-rollback-failed-box");
+    mockOpenClawSandbox("restore-rollback");
     setImmediateRecoveryPolling();
     const finalize = vi.fn(() => ({
       backupRemoved: false,
@@ -634,7 +634,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const result = checkAndRecoverSandboxProcesses("restore-and-rollback-failed-box", {
+    const result = checkAndRecoverSandboxProcesses("restore-rollback", {
       quiet: false,
       isSandboxGatewayRunningImpl: () => false,
       requestGatewaySupervisorAction,

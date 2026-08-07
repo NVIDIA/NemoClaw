@@ -145,8 +145,9 @@ export function cleanupSandboxServices(
   // Source boundary: this exported helper can be called independently of CLI
   // dispatch, including from forced local recovery. Validate once before every
   // host and provider cleanup side effect, then derive the PID path from that
-  // same RFC 1123 name. Remove only when the helper accepts a validated-name
-  // type that cannot be constructed from unchecked input.
+  // same canonical OpenShell-compatible name. Remove only when the helper
+  // accepts a validated-name type that cannot be constructed from unchecked
+  // input.
   const validatedSandboxName = validateName(sandboxName, "sandbox name");
   const servicesPidDir = path.resolve("/tmp", `nemoclaw-services-${validatedSandboxName}`);
   const getSandbox = deps.getSandbox ?? registry.getSandbox;

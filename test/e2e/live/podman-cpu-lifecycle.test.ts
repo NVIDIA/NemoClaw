@@ -16,7 +16,11 @@ import { createPodmanRuntimeProviderBundle } from "../../../src/lib/onboard/runt
 import type { SandboxEntry } from "../../../src/lib/state/registry/types";
 import { expect, test } from "../fixtures/e2e-test.ts";
 
-const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+const AGENTS = [
+  { agent: "openclaw", sandboxName: "podman-openclaw" },
+  { agent: "hermes", sandboxName: "podman-hermes" },
+  { agent: "langchain-deepagents-code", sandboxName: "podman-dcode" },
+] as const;
 const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 const E2E_PHASES = [
   "pin the exact rootless Podman endpoint",
@@ -77,8 +81,7 @@ test("qualifies rootless Podman and preserves all-agent exact CPU lifecycle iden
   expect(bundle.capabilities.hostLocalInference).toBe(false);
 
   progress.phase("exercise all-agent exact-container start and stop");
-  for (const agent of AGENTS) {
-    const sandboxName = `podman-${agent}`;
+  for (const { agent, sandboxName } of AGENTS) {
     const agentEngines = engines();
     const agentBundle = createPodmanRuntimeProviderBundle({ engines: agentEngines });
     const lifecycle = supportedLifecycle(agentBundle);

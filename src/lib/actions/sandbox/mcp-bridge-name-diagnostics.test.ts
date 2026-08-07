@@ -21,6 +21,17 @@ function messageFrom(reject: () => void): string {
 }
 
 describe("MCP bridge name diagnostics", () => {
+  it("uses the canonical OpenShell 0.0.99 sandbox-name boundary (#8497)", () => {
+    expect(() => validateSandboxName("a".repeat(19))).not.toThrow();
+
+    for (const name of ["a".repeat(20), "legacy--box"]) {
+      const message = messageFrom(() => validateSandboxName(name));
+
+      expect(message).toContain(`Invalid sandbox name "${name}"`);
+      expect(message).toContain("Allowed format: 1-19 characters");
+    }
+  });
+
   it("escapes control characters in a rejected sandbox name (#7796)", () => {
     const message = messageFrom(() => validateSandboxName(`bad${ESC}[31mX`));
 
@@ -44,8 +55,10 @@ describe("MCP bridge name diagnostics", () => {
 
   it("bounds an over-length rejected name to a truncated preview (#7796)", () => {
     const message = messageFrom(() => validateSandboxName(`Bad${"x".repeat(200)}`));
+    const muchLongerMessage = messageFrom(() => validateSandboxName(`Bad${"x".repeat(2_000)}`));
 
     expect(message).toContain(`"Bad${"x".repeat(77)}..."`);
-    expect(message.length).toBeLessThan(200);
+    expect(muchLongerMessage.length).toBe(message.length);
+    expect(message.length).toBeLessThan(260);
   });
 });
