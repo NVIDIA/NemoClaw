@@ -190,6 +190,33 @@ describe("protected managed-image runtime contract", () => {
         "llama-cpp",
         "--model",
         "nvidia-nemotron-3-nano-30b-a3b",
+        "--gpu",
+      ]),
+    ).toThrow(/must not grant direct sandbox GPU access/u);
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        "managed-openclaw-llama-cpp",
+        "--local-provider",
+        "llama-cpp",
+      ]),
+    ).toThrow(/requires --model/u);
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        "managed-openclaw-llama-cpp",
+        "--local-provider",
+        "llama-cpp",
+        "--model",
+        "nvidia-nemotron-3-nano-30b-a3b",
         "--inject-bootstrap-completion-failure",
       ]),
     ).toThrow(/cannot be combined/u);

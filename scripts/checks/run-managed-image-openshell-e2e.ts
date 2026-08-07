@@ -100,7 +100,13 @@ export type ManagedImageOpenShellE2eProbeContext = {
   ) => ManagedImageOpenShellE2eProbeResult;
 };
 
-export type ManagedImageOpenShellE2eResult<T = never> = {
+export type ManagedImageOpenShellE2eLocalInferenceEvidence = {
+  readonly synchronousChat: true;
+};
+
+export type ManagedImageOpenShellE2eResult<
+  T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never,
+> = {
   readonly cleanup: {
     readonly gatewayRemoved: true;
     readonly networkRemoved: true;
@@ -247,19 +253,24 @@ function readGatewayPid(stateDir: string): number | null {
   }
 }
 
-function stopProcess(pid: number | null): void {
-  if (!pid) return;
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stopProcess(pid: number | null): boolean {
+  if (!pid || !processExists(pid)) return true;
   try {
     process.kill(pid, "SIGTERM");
   } catch {
-    return;
+    return !processExists(pid);
   }
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    try {
-      process.kill(pid, 0);
-    } catch {
-      return;
-    }
+    if (!processExists(pid)) return true;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   }
   try {
@@ -267,6 +278,11 @@ function stopProcess(pid: number | null): void {
   } catch {
     // The process exited between the liveness probe and the final signal.
   }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!processExists(pid)) return true;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  return !processExists(pid);
 }
 
 function createProtectedAuthorityStore(stateDir: string): ManagedBootstrapAuthorityStore {
@@ -691,7 +707,7 @@ function assertFailedSandboxAbsent(
   }
 }
 
-async function run<T = never>(
+async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
 ): Promise<ManagedImageOpenShellE2eResult<T>> {
@@ -944,6 +960,11 @@ async function run<T = never>(
             };
           },
         });
+        if (!probeEvidence || probeEvidence.synchronousChat !== true) {
+          throw new Error(
+            "managed-image post-route probe did not prove protected synchronous inference",
+          );
+        }
       }
       process.stdout.write(
         `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${input.localProvider ? ` with ${gpuEnabled ? "real NVIDIA GPU access and " : ""}${input.localProvider} inference.local completion` : ""}.\n`,
@@ -960,9 +981,19 @@ async function run<T = never>(
         15_000,
       );
     }
-    stopProcess(readGatewayPid(stateDir));
+    const gatewayPid = readGatewayPid(stateDir);
+    if (!stopProcess(gatewayPid)) {
+      cleanupErrors.push(`OpenShell gateway process ${String(gatewayPid)} did not stop`);
+    }
     if (onboard) {
-      commandResult(onboard.openshellArgv(["gateway", "remove", "nemoclaw"]), process.env, 15_000);
+      const removeGateway = commandResult(
+        onboard.openshellArgv(["gateway", "remove", "nemoclaw"]),
+        process.env,
+        15_000,
+      );
+      if (removeGateway.status !== 0) {
+        cleanupErrors.push(`OpenShell gateway removal failed: ${commandDetail(removeGateway)}`);
+      }
     }
     try {
       const resolved = exactHarnessContainerIds(input, networkName, process.env);

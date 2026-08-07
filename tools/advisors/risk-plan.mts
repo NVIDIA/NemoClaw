@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-
+import * as importedLlamaCppDgxSparkQualificationContract from "../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
 
 // The root TypeScript package is exposed as CJS under the exact
@@ -15,8 +15,16 @@ const protectedManagedImageContract = (
     : importedProtectedManagedImageContract
 ) as typeof import("../../scripts/checks/protected-managed-image-contract.ts");
 
+const llamaCppDgxSparkQualificationContract = (
+  "default" in importedLlamaCppDgxSparkQualificationContract &&
+  importedLlamaCppDgxSparkQualificationContract.default
+    ? importedLlamaCppDgxSparkQualificationContract.default
+    : importedLlamaCppDgxSparkQualificationContract
+) as typeof import("../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts");
+
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
+const { LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH } = llamaCppDgxSparkQualificationContract;
 
 export const RISK_PLAN_VERSION = 17 as const;
 
@@ -97,8 +105,6 @@ const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
   "test/e2e/live/managed-image-protected-runtime.",
 ] as const;
 const LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
-const LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION =
-  "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml";
 const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualification" as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
@@ -557,7 +563,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     // approval environment, and verified local model path are provisioned.
     matches: (file) =>
       file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION ||
-      file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION,
+      file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   },
   {
     id: "sandbox-boundary",

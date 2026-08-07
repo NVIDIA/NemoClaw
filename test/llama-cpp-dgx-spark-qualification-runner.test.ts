@@ -407,6 +407,12 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         "eb1d2f5700393892f227ac9fd56f485fc6718bce",
       ),
     ).toThrow(/declarative identity/u);
+    expect(() =>
+      validateOpenClawQualificationImageLabels(JSON.stringify(labels), "f".repeat(40)),
+    ).toThrow(/declarative identity/u);
+    expect(() => validateOpenClawQualificationImageLabels("{", "f".repeat(40))).toThrow(
+      /labels are invalid/u,
+    );
   });
 
   it("requires unambiguous full GPU offload and rejects CPU fallback warnings (#8260)", () => {

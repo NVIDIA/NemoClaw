@@ -351,6 +351,11 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     "-u GITHUB_TOKEN",
     "bash scripts/install-openshell.sh",
   ]);
+  if (text(installOpenShell?.run).includes(".candidate-llama-cpp/scripts")) {
+    errors.push(
+      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must install OpenShell only from trusted helper code`,
+    );
+  }
   const materialize = requireStep(
     errors,
     LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,

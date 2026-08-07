@@ -491,6 +491,11 @@ describe("deterministic PR risk plan", () => {
       "llama-cpp-dgx-spark-qualification",
     );
     expect(
+      riskPlanRequiredJobIds(
+        plan("managed-inference/qualifications/llama-cpp.other.spark-single.v1.yaml"),
+      ),
+    ).not.toContain("llama-cpp-dgx-spark-qualification");
+    expect(
       dormantImplementation.families.some(
         (family) => family.id === "llama-cpp-dgx-spark-qualification",
       ),

@@ -9,6 +9,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import YAML from "yaml";
 
 import {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
@@ -151,12 +152,7 @@ type LlamaCppQualificationRecipe = {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
 const manifestPath = path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml");
-const agentQualificationPath = path.join(
-  repoRoot,
-  "managed-inference",
-  "qualifications",
-  "llama-cpp.openclaw.spark-single.v1.yaml",
-);
+const agentQualificationPath = path.join(repoRoot, LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH);
 const recipePath = path.join(
   repoRoot,
   "managed-inference",
@@ -910,10 +906,7 @@ export function loadLlamaCppImageConfigFromRoot(sourceRoot: string) {
       "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
     ),
     fs.readFileSync(recipeSchemaPath, "utf8"),
-    readBoundedRegularFile(
-      root,
-      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml",
-    ),
+    readBoundedRegularFile(root, LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH),
   );
 }
 

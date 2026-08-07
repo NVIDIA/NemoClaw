@@ -17,7 +17,6 @@ import {
   validateChatCompletionResponse,
   validateModelsResponse,
 } from "./llama-cpp-dgx-spark-protocol-qualification.mts";
-import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
 import {
   LLAMA_CPP_DGX_SPARK_MODEL_PATH_PATTERN,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_IMAGE_REPOSITORY,
@@ -27,6 +26,7 @@ import {
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
 import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agent-qualification.mts";
+import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
 import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
 export { validateChatCompletionResponse, validateModelsResponse };
@@ -932,6 +932,11 @@ async function runQualification(
       plan.recipe.runtime.cuda.minimumDriverVersion,
     );
     await waitForHealth(loopbackPort, plan.recipe.readiness.timeoutSeconds);
+    const offload = validateStartupLog(
+      runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
+        maximumBytes: 16 * 1024 * 1024,
+      }).toString("utf8"),
+    );
     const authorization = `Bearer ${apiKey}`;
     const probes = await runLlamaCppDgxSparkProtocolQualification({
       authorization,
@@ -1009,11 +1014,6 @@ async function runQualification(
         else process.env[baseUrlEnvironmentName] = priorBaseUrl;
       }
     }
-    const offload = validateStartupLog(
-      runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
-        maximumBytes: 16 * 1024 * 1024,
-      }).toString("utf8"),
-    );
     successReceipt = {
       agentQualification,
       baseSha: invocation.candidateBase,

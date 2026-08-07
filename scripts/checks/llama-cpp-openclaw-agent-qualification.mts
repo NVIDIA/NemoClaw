@@ -12,7 +12,7 @@ export type LlamaCppOpenClawAgentQualificationEvidence = {
   readonly agentNormalTurn: true;
   readonly agentToolCall: {
     readonly argumentsValid: true;
-    readonly name: "read";
+    readonly name: LlamaCppDgxSparkAgentQualificationPlan["tool"]["name"];
   };
   readonly agentToolResultContinuation: true;
   readonly streamingChat: {
@@ -22,10 +22,6 @@ export type LlamaCppOpenClawAgentQualificationEvidence = {
   readonly synchronousChat: true;
 };
 
-function detail(result: ManagedImageOpenShellE2eProbeResult): string {
-  return `${result.stdout}\n${result.stderr}`.replace(/\s+/gu, " ").trim().slice(-2_000);
-}
-
 function requireSuccess(
   result: ManagedImageOpenShellE2eProbeResult,
   label: string,
@@ -33,7 +29,9 @@ function requireSuccess(
 ): void {
   const bytes = Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
   if (bytes > maximumBytes) throw new Error(`${label} exceeded the declarative response bound`);
-  if (result.status !== 0) throw new Error(`${label} failed: ${detail(result)}`);
+  if (result.status !== 0) {
+    throw new Error(`${label} failed with status ${result.status ?? "unknown"}`);
+  }
 }
 
 function agentArgv(session: string, prompt: string): string[] {
@@ -257,7 +255,7 @@ export async function runLlamaCppOpenClawAgentQualification(
   return {
     agentMultiTurn: true,
     agentNormalTurn: true,
-    agentToolCall: { argumentsValid: true, name: "read" },
+    agentToolCall: { argumentsValid: true, name: config.tool.name },
     agentToolResultContinuation: true,
     streamingChat: { done: true, events },
     synchronousChat: true,

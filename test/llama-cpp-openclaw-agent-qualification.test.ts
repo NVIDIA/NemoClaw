@@ -104,8 +104,8 @@ describe("llama.cpp OpenClaw qualification probe", () => {
     await expect(
       runLlamaCppOpenClawAgentQualification(
         config,
-        context([{ status: 1, stdout: "", stderr: "probe failed" }], invocations),
+        context([{ status: 1, stdout: "", stderr: "TOKEN=do-not-log" }], invocations),
       ),
-    ).rejects.toThrow(/synchronous probe failed/u);
+    ).rejects.toThrow(/^inference[.]local synchronous probe failed with status 1$/u);
   });
 });
