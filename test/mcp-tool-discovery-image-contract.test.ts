@@ -128,6 +128,65 @@ describe("MCP tool discovery image contract", () => {
   });
 
   it.skipIf(process.platform === "win32")(
+    "accepts a complete locked tree after npm's exact internal exit-handler failure",
+    () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-complete-tree-"));
+      const retryHelper = path.join(fixture, "npm-ci-locked.sh");
+      const mockBin = path.join(fixture, "bin");
+      const invocations = path.join(fixture, "npm-invocations");
+      fs.mkdirSync(mockBin);
+      fs.copyFileSync(
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
+        retryHelper,
+      );
+      fs.chmodSync(retryHelper, 0o755);
+      fs.writeFileSync(
+        path.join(mockBin, "npm"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$NEMOCLAW_TEST_NPM_INVOCATIONS"
+case "$1" in
+  ci)
+    echo 'npm error Exit handler never called!' >&2
+    exit 1
+    ;;
+  ls)
+    exit 0
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync("/bin/sh", [retryHelper, "--omit=dev"], {
+          encoding: "utf8",
+          cwd: fixture,
+          env: {
+            ...process.env,
+            NEMOCLAW_TEST_NPM_INVOCATIONS: invocations,
+            PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).toContain(
+          "internal exit-handler failure after completing the locked dependency tree",
+        );
+        expect(fs.readFileSync(invocations, "utf8").trim().split("\n")).toEqual([
+          "ci --omit=dev",
+          "ls --all --json --omit=dev",
+        ]);
+      } finally {
+        fs.rmSync(fixture, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "completes npm's exact internal exit-handler failure from locked cache archives",
     () => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-install-retry-"));
@@ -159,17 +218,22 @@ invocation=$(cat "$NEMOCLAW_TEST_NPM_COUNTER")
 invocation=$((invocation + 1))
 printf '%s\n' "$invocation" >"$NEMOCLAW_TEST_NPM_COUNTER"
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_NPM_INVOCATIONS"
-if [ "$invocation" -eq 1 ]; then
-  echo 'npm error Exit handler never called!' >&2
-  exit 1
-fi
-if [ "$invocation" -eq 2 ]; then
-  echo 'npm error code ENOTCACHED' >&2
-  echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
-  exit 1
-fi
 case "$invocation" in
-  3|4)
+  1)
+    echo 'npm error Exit handler never called!' >&2
+    exit 1
+    ;;
+  2)
+    echo 'npm error code ELSPROBLEMS' >&2
+    echo 'npm error missing: reviewed dependency tree is incomplete' >&2
+    exit 1
+    ;;
+  3)
+    echo 'npm error code ENOTCACHED' >&2
+    echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
+    exit 1
+    ;;
+  4|5)
     echo 'npm error code EAI_AGAIN' >&2
     echo 'npm error syscall getaddrinfo' >&2
     echo 'npm error request failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org' >&2
@@ -193,14 +257,17 @@ exit 0
         });
 
         expect(result.status).toBe(0);
-        expect(result.stderr).toContain("completing the locked install offline from cache");
+        expect(result.stderr).toContain(
+          "before completing the locked dependency tree; completing it offline from cache",
+        );
         expect(result.stderr).toContain("fetching one missing lockfile archive for offline retry");
         expect(result.stderr).toContain(
           "retrying the missing lockfile archive after a transient network failure",
         );
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("11");
-        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 6)).toEqual([
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("12");
+        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 7)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
+          "ls --all --json --ignore-scripts --no-audit --no-fund --no-progress",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
           "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
           "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",

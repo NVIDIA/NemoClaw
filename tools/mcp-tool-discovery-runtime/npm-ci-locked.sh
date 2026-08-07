@@ -16,7 +16,19 @@ else
     exit "$install_status"
   fi
 
-  echo "[nemoclaw] npm hit its internal exit-handler failure; completing the locked install offline from cache" >&2
+  # npm can emit its internal exit-handler failure after it has materialized a
+  # complete, lockfile-validated dependency tree. Preserve that tree when npm's
+  # own graph validator confirms it is complete. Rebuilding it first would
+  # discard valid packages and can require registry archives that npm consumed
+  # without committing to its content cache.
+  if npm ls --all --json "$@" >"$install_log" 2>&1; then
+    echo "[nemoclaw] npm hit its internal exit-handler failure after completing the locked dependency tree" >&2
+    rm -f "$install_log"
+    trap - EXIT
+    exit 0
+  fi
+
+  echo "[nemoclaw] npm hit its internal exit-handler failure before completing the locked dependency tree; completing it offline from cache" >&2
   cache_fill_count=0
   while :; do
     rm -rf node_modules
