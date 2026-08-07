@@ -9,6 +9,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import YAML from "yaml";
 
 import {
+  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
@@ -50,6 +51,7 @@ type ServerImageManifest = {
         gpu?: unknown;
         model?: unknown;
         platform?: unknown;
+        probeBounds?: unknown;
         probes?: unknown;
         profile?: unknown;
         recipeRef?: unknown;
@@ -90,6 +92,7 @@ type LlamaCppQualificationRecipe = {
       source: { repository: string; revision: string };
     };
     model: {
+      acquisition: { downloaderImage: string };
       id: string;
       revision: string;
       servedName: string;
@@ -108,6 +111,7 @@ type LlamaCppQualificationRecipe = {
       platforms: string[];
       containerRuntime: string;
       networkExposure: string;
+      restartPolicy: string;
       hosts: number;
       cuda: { baseImage: string; minimumDriverVersion: string };
       gpu: { vendor: string; count: number; offload: string; cpuFallback: string };
@@ -128,9 +132,6 @@ type LlamaCppQualificationRecipe = {
       kvCache: { key: string; value: string };
       speculativeDecoding: string;
       limits: {
-        maxRequestBodyBytes: number;
-        maxPromptTokens: number;
-        maxCompletionTokens: number;
         requestTimeoutSeconds: number;
       };
     };
@@ -138,6 +139,7 @@ type LlamaCppQualificationRecipe = {
       contractRef: string;
       timeoutSeconds: number;
       expectedModel: string;
+      probeImage: string;
       probes: { models: boolean; health: boolean; properties: boolean; metrics: boolean };
     };
     policy: { egress: string; modelSource: string; modelDownloads: string };
@@ -332,6 +334,7 @@ export function loadLlamaCppImageConfig(
     "gpu",
     "model",
     "platform",
+    "probeBounds",
     "probes",
     "profile",
     "recipeRef",
@@ -439,7 +442,7 @@ export function loadLlamaCppImageConfig(
       fullOffload: true,
       vendor: "nvidia",
     }) ||
-    JSON.stringify(qualification?.probes) !== JSON.stringify(["health", "completion"])
+    JSON.stringify(qualification?.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
   ) {
     throw new Error("invalid llama.cpp image publication contract");
   }
@@ -480,8 +483,6 @@ export function loadLlamaCppImageConfig(
     recipe.spec.serve.flashAttention !== "enabled" ||
     recipe.spec.serve.speculativeDecoding !== "disabled" ||
     recipe.spec.serve.microBatchSize > recipe.spec.serve.batchSize ||
-    recipe.spec.serve.limits.maxPromptTokens + recipe.spec.serve.limits.maxCompletionTokens >
-      recipe.spec.serve.contextSize ||
     recipe.spec.readiness.contractRef !== "llama-cpp.server-readiness/v1" ||
     recipe.spec.readiness.expectedModel !== recipe.spec.model.servedName ||
     !matchesExactRecord(recipe.spec.readiness.probes, {
@@ -538,6 +539,7 @@ export function loadLlamaCppImageConfig(
       id: qualificationModel?.id,
     },
     platform: qualification?.platform,
+    probeBounds: qualification?.probeBounds,
     probes: qualification?.probes,
     profile: qualification?.profile,
     recipeRef: qualificationRecipeRef,
@@ -671,9 +673,17 @@ export function loadLlamaCppImageConfig(
         revision: spec?.source?.revision,
       },
     },
+    qualification: {
+      probeBounds: qualification?.probeBounds,
+      probes: qualification?.probes,
+    },
     recipe: {
+      capabilities: recipe.spec.capabilities,
       id: recipe.metadata.id,
       model: {
+        acquisition: {
+          downloaderImage: recipe.spec.model.acquisition.downloaderImage,
+        },
         file: recipeModelFile,
         id: recipe.spec.model.id,
         revision: recipe.spec.model.revision,
@@ -685,6 +695,7 @@ export function loadLlamaCppImageConfig(
         cuda: recipe.spec.runtime.cuda,
         gpu: recipe.spec.runtime.gpu,
         resources: recipe.spec.runtime.resources,
+        restartPolicy: recipe.spec.runtime.restartPolicy,
       },
       serve: recipe.spec.serve,
       server: recipe.spec.server,

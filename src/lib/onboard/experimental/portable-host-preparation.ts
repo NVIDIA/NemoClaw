@@ -51,6 +51,28 @@ function requireCommand(result: SpawnResult, description: string): void {
   throw new Error(`${description} failed: ${commandDetail(result)}`);
 }
 
+/**
+ * The portable profile points DOCKER_HOST at the rootless Podman socket but still
+ * drives the managed registry — and the rest of onboarding's runtime preflight —
+ * through the `docker` CLI. On a genuinely Podman-only host that CLI is absent,
+ * so the first docker spawn fails with a cryptic `spawnSync docker ENOENT`
+ * instead of an actionable message (#8453). Detect that up front and tell the
+ * user to install the docker-compatible shim the profile expects.
+ */
+function requireDockerCompatibleCli(
+  docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  env: NodeJS.ProcessEnv,
+): void {
+  const probe = docker(["--version"], env);
+  if ((probe.error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") return;
+  throw new Error(
+    "The portable experimental profile drives Podman through a docker-compatible CLI, but no " +
+      "`docker` command was found on PATH. On a Podman-only host, install the podman-docker shim " +
+      "(Debian/Ubuntu: `sudo apt install podman-docker`; Fedora: `sudo dnf install podman-docker`), " +
+      "then rerun `nemoclaw onboard --experimental-profile portable`.",
+  );
+}
+
 function resolvePodmanDockerHost(result: SpawnResult): string {
   requireCommand(result, "Resolving the rootless Podman API socket");
   const socket = String(result.stdout ?? "").trim();
@@ -214,6 +236,7 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
+  requireDockerCompatibleCli(docker, env);
   ensureRegistryContainer(env, docker);
 }
 

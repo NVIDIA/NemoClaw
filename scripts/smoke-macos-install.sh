@@ -253,10 +253,18 @@ verify_cleanup() {
   fi
 
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    # Mirrors the uninstall selection in src/lib/actions/uninstall/run-plan.ts.
+    # `openclaw` is deliberately absent from both: uninstall does not remove the
+    # separate OpenClaw project's containers, so reporting them here would fail
+    # the smoke run on any host that also runs OpenClaw (#8496).
+    # `tolower($0) ~` rather than `BEGIN { IGNORECASE=1 }`: IGNORECASE is a gawk
+    # extension. macOS ships BWK awk and Ubuntu defaults to mawk, and both accept
+    # the assignment and then match case-sensitively, so the mirror silently
+    # disagreed with the case-insensitive filter it mirrors.
     local related_containers
     related_containers="$(
       docker ps -a --format '{{.Image}} {{.Names}}' 2>/dev/null \
-        | awk 'BEGIN { IGNORECASE=1 } /openshell-cluster|openshell|openclaw|nemoclaw/ { print }'
+        | awk 'tolower($0) ~ /openshell-cluster|openshell|nemoclaw/ { print }'
     )"
     if [ -n "$related_containers" ]; then
       warn "Related Docker containers remain after uninstall:"

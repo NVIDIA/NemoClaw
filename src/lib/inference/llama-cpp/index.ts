@@ -16,7 +16,6 @@ import {
 export * from "./contract";
 export * from "./gguf-acquisition";
 export * from "./gguf-cache-plan";
-export * from "./gguf-cache-receipt";
 export * from "./host-local-runtime";
 
 type LlamaCppModelEntry = {

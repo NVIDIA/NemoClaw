@@ -147,7 +147,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
       "${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_E2E_SHARD: "${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA:
       "${{ inputs.base_sha || github.event.before || github.sha }}",

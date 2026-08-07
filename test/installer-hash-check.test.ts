@@ -556,6 +556,52 @@ a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108  openshell-gate
 `,
   ],
 ]);
+const V0099_CHECKSUM_MANIFESTS = new Map([
+  [
+    "openshell-checksums-sha256.txt",
+    `35725a358e42ef7f0f0393035536da317706b0febcc459a2011e0555f6c2b71c  openshell-x86_64-unknown-linux-musl.tar.gz
+d00cbf0d8779c01ddea6453ead2ad4db3d89a1f14eb6f0785f7919f42813a279  openshell-aarch64-unknown-linux-musl.tar.gz
+e31cac5360e2adf3c971d5742a516626c58acf2fd3db4dcb0e45804def3dc844  openshell-aarch64-apple-darwin.tar.gz
+6f1f0a7a524850edddba52aa233eb53233ad77b9b85a8eee1bdd004e2ace8b6e  openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz
+4cb1dba9f29fec3111a7858f1bb4f9344d321ce7aa080c6e4ab0e69e8f2761fa  openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz
+195f865d304518cbf2270bf7d54326390fd0755692a2856ae7c5e7a9f6e38a99  openshell-driver-vm-aarch64-apple-darwin.tar.gz
+0d22a9cac0ca7d080c95ea032df81af382d8889149d959f5c547cf00c05a5918  openshell_0.0.99-1_amd64.deb
+33a9031a57f006e1ed4c0b409aa07a0b4246ee655eec51e74dc872b5f2ec7cc6  openshell_0.0.99-1_arm64.deb
+91e2fc11e09eb4bc4c52e2d512b10224f5e025bda7366c313739bc8301108125  openshell-0.0.99-1.fc44.aarch64.rpm
+5625914d36939bb02a0e1b6564067c1fc4efd429145ffc4691edbe1ca13dc490  openshell-0.0.99-1.fc44.x86_64.rpm
+68aa1f07b36ff10cdce89b3d6b75f0ebaeac1d063e382d7d234488ec4533ab06  openshell-gateway-0.0.99-1.fc44.aarch64.rpm
+f91ed9de71e51c6365e5c934225833b9d8a4cd3b62da8060919fc7993fe7d6b9  openshell-gateway-0.0.99-1.fc44.x86_64.rpm
+f7db8eb284fa0815c0ab375016def8524873ee033049940f071ffef4d0c1a61e  openshell-0.0.99-py3-none-macosx_13_0_arm64.whl
+b06e062563201d4f98a87e8de23e10e40733b548e12891623982ca5b120bccf2  openshell-0.0.99-py3-none-manylinux_2_39_aarch64.whl
+72f8f14c304f5da233755ae285ee8c4c19aaf7fb7b40b14f6c6b17ef9752141f  openshell-0.0.99-py3-none-manylinux_2_39_x86_64.whl
+`,
+  ],
+  [
+    "openshell-gateway-checksums-sha256.txt",
+    `640d204dc3c6bc28bffa1f3d870897fc23bbc5ec0151a6c642083e958455cb49  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz
+3a5d3092ae34356beb0ff2a920f9a87af4233c7a1086a53cd9429d48358f5c09  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz
+4340619292ecb565f90eb2250db504baa37dd410361b366b42e174d34512cb6c  openshell-gateway-aarch64-apple-darwin.tar.gz
+`,
+  ],
+  [
+    "openshell-sandbox-checksums-sha256.txt",
+    `84caed3dec4390e0938e89b38b1256d31e8970b4bfd85437bf92ed79f5b1ff05  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz
+c758e7dc2b8c904baa01e2ccce0f08daf96ede0c648478b23346d8c4dd16f432  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz
+`,
+  ],
+]);
+const V0099_ASSET_DIGESTS = new Map([
+  ...[...V0099_CHECKSUM_MANIFESTS.values()].flatMap((contents) =>
+    contents
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [digest, asset] = line.split(/\s+/);
+        return [asset, digest] as const;
+      }),
+  ),
+  ["openshell.rb", "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713"],
+]);
 const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "allowlisted-alternate-version": (source) => {
     const alternateEntries = [...CHECKSUM_MANIFESTS.entries()]
@@ -588,6 +634,7 @@ function renderPinFunction(
   assets: string[],
   openshellVersion: string,
   formatting: PinFormatting,
+  assetDigests = ASSET_DIGESTS,
 ): string {
   const functionOpening =
     formatting === "mixed-whitespace" ? `${functionName}\t( )\t{` : `${functionName}() {`;
@@ -603,7 +650,7 @@ function renderPinFunction(
       : '  case "${release_tag}:${asset}" in';
   const cases = assets
     .map((asset) => {
-      const digest = ASSET_DIGESTS.get(asset) ?? "missing";
+      const digest = assetDigests.get(asset) ?? "missing";
       const pattern =
         formatting === "quote-styles"
           ? `    'v${openshellVersion}:${asset}')`
@@ -689,6 +736,9 @@ function createFixture(
   openshellVersion = "0.0.72",
   formatting: PinFormatting = "canonical",
 ): string {
+  const checksumManifests =
+    openshellVersion === "0.0.99" ? V0099_CHECKSUM_MANIFESTS : CHECKSUM_MANIFESTS;
+  const assetDigests = openshellVersion === "0.0.99" ? V0099_ASSET_DIGESTS : ASSET_DIGESTS;
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
   const checksDir = path.join(scriptsDir, "checks");
@@ -717,7 +767,13 @@ function createFixture(
     path.join(scriptsDir, "install-openshell.sh"),
     renderInstallerTemplate(
       openshellVersion,
-      renderPinFunction("openshell_pinned_sha256", INSTALLER_ASSETS, openshellVersion, formatting),
+      renderPinFunction(
+        "openshell_pinned_sha256",
+        INSTALLER_ASSETS,
+        openshellVersion,
+        formatting,
+        assetDigests,
+      ),
     ),
   );
   fs.writeFileSync(
@@ -729,6 +785,7 @@ function createFixture(
         ASSETS.slice(0, 2),
         openshellVersion,
         formatting,
+        assetDigests,
       ),
     ),
   );
@@ -753,8 +810,8 @@ case "$url" in
     case "\${url##*/}" in
       openshell-checksums-sha256.txt)
         case "\${NEMOCLAW_TEST_CURL_MODE}" in
-          partial) printf '%s\\n' '${CHECKSUM_MANIFESTS.get("openshell-checksums-sha256.txt")?.split("\n")[0]}' >"$output" ;;
-          *) printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-checksums-sha256.txt")}' >"$output" ;;
+          partial) printf '%s\\n' '${checksumManifests.get("openshell-checksums-sha256.txt")?.split("\n")[0]}' >"$output" ;;
+          *) printf '%s' '${checksumManifests.get("openshell-checksums-sha256.txt")}' >"$output" ;;
         esac
         ;;
       openshell-gateway-checksums-sha256.txt)
@@ -763,11 +820,11 @@ case "$url" in
             printf '%s\n' 'curl: (22) The requested URL returned error: 404' >&2
             exit 22
             ;;
-          *) printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-gateway-checksums-sha256.txt")}' >"$output" ;;
+          *) printf '%s' '${checksumManifests.get("openshell-gateway-checksums-sha256.txt")}' >"$output" ;;
         esac
         ;;
       openshell-sandbox-checksums-sha256.txt)
-        printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
+        printf '%s' '${checksumManifests.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
         ;;
       openshell.rb)
         printf '%s\n' 'class Openshell < Formula; end' >"$output"
@@ -786,7 +843,7 @@ case "\${1:-}" in
   */openshell.rb)
     case "\${NEMOCLAW_TEST_CURL_MODE:-}" in
       formula-mismatch) digest='${"0".repeat(64)}' ;;
-      *) digest='${FORMULA_DIGEST}' ;;
+      *) digest='${assetDigests.get(FORMULA_ASSET)}' ;;
     esac
     printf '%s  %s\\n' "$digest" "$1"
     ;;
@@ -936,6 +993,23 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("accepts the reviewed OpenShell 0.0.99 release manifests (#8499)", () => {
+    const result = runFixture("complete", "0.0.99", true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.99 release assets");
+    expect(result.stdout).toContain(
+      "OK: openshell-checksums-sha256.txt (ea3e2c1a583e5ea00332c3b65a18068bd1f9b090f7ff0f5e24b29762cfc3b4c7)",
+    );
+    expect(result.stdout).toContain(
+      "OK: openshell-gateway-checksums-sha256.txt (7f84f728412548720c8ef51993c58414c4f04598451c282b26ead233185e40c5)",
+    );
+    expect(result.stdout).toContain(
+      "OK: openshell-sandbox-checksums-sha256.txt (9e67af6bab9f975432a1045fcfea5ab182ab585b17886c8c290c1eb77232b87a)",
+    );
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
