@@ -4,14 +4,7 @@
 import { buildOpenshellCommand } from "../adapters/openshell/command-argv";
 
 export function buildPolicySetCommand(policyFile: string, sandboxName: string): string[] {
-  return buildOpenshellCommand([
-    "policy",
-    "set",
-    "--policy",
-    policyFile,
-    "--wait",
-    sandboxName,
-  ]);
+  return buildOpenshellCommand(["policy", "set", "--policy", policyFile, "--wait", sandboxName]);
 }
 
 /** Read the round-trippable base policy before a mutation. */
