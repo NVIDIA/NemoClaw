@@ -9,6 +9,8 @@ import {
   type InferenceProviderHostGpu,
 } from "./provider-host-state";
 
+const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
+
 const SUPPORTED_WINDOWS_OLLAMA = {
   supported: true,
   detectedRuntime: "Docker Desktop",
@@ -182,7 +184,7 @@ describe("detectInferenceProviderHostState", () => {
   it("detects Windows-host Ollama from Docker Desktop when WSL cannot reach it (#8127)", () => {
     const logs: string[] = [];
     const dockerCapture = vi.fn((command: string[]) =>
-      command.includes("http://host.docker.internal:11434/api/tags") ? "{}" : "",
+      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "",
     );
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
@@ -227,7 +229,7 @@ describe("detectInferenceProviderHostState", () => {
         "2",
         "--max-time",
         "5",
-        "http://host.docker.internal:11434/api/tags",
+        WINDOWS_OLLAMA_TAGS_URL,
       ],
       { ignoreError: true },
     );
@@ -306,9 +308,7 @@ describe("detectInferenceProviderHostState", () => {
         if (joined.includes("wslinfo --networking-mode")) return "mirrored\n";
         return "";
       }),
-      dockerCapture: vi.fn((command) =>
-        command.includes("http://host.docker.internal:11434/api/tags") ? "{}" : "",
-      ),
+      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
     });
 
     const state = detectInferenceProviderHostState({
