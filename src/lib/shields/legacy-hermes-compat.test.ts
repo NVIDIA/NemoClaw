@@ -441,12 +441,14 @@ describe("legacy Hermes shields compatibility", () => {
     expect(commands.some((cmd) => isGuardAction(cmd, "begin-shields-transition"))).toBe(true);
   });
 
-  it("gives route-specific recovery guidance when inference convergence fails", () => {
+  it.each([
+    401, 403, 404,
+  ])("rolls back Shields down when Hermes returns unusable HTTP %i", (httpStatus) => {
     installExecResponses(CURRENT_GUARD_HELP, "3770", undefined, true);
     inferenceConvergenceSpy.mockReturnValue({
       ok: false,
       attempts: 4,
-      httpStatus: 503,
+      httpStatus,
     });
 
     expect(() =>
@@ -454,7 +456,9 @@ describe("legacy Hermes shields compatibility", () => {
         skipTimer: true,
         throwOnError: true,
       }),
-    ).toThrow(/inference route did not converge.*HTTP 503.*4 attempts/i);
+    ).toThrow(
+      new RegExp(`inference route did not converge.*HTTP ${String(httpStatus)}.*4 attempts`, "i"),
+    );
 
     const errors = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(errors).toContain(

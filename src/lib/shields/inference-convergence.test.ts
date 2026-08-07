@@ -1,15 +1,38 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { waitForHermesInferenceRouteConvergence } from "./inference-convergence";
+import { resolveOpenshell } from "../adapters/openshell/resolve";
+import {
+  type InferenceRouteConvergenceOptions,
+  waitForHermesInferenceRouteConvergence,
+} from "./inference-convergence";
+
+vi.mock("../adapters/openshell/resolve", () => ({
+  resolveOpenshell: vi.fn(() => "/opt/nvidia/bin/openshell"),
+}));
 
 function probe(status: number, output: string) {
   return { status, stdout: output, stderr: "" };
 }
 
+const OPENSHELL_BINARY = "/opt/nvidia/bin/openshell";
+
+function buildOpenshellCommand(args: readonly string[]): string[] {
+  return [OPENSHELL_BINARY, ...args];
+}
+
+function convergenceOptions(
+  run: InferenceRouteConvergenceOptions["run"],
+  options: Omit<InferenceRouteConvergenceOptions, "buildOpenshellCommand" | "run"> = {},
+): InferenceRouteConvergenceOptions {
+  return { ...options, buildOpenshellCommand, run };
+}
+
 describe("Hermes inference convergence after a Shields policy transition", () => {
+  afterEach(() => vi.clearAllMocks());
+
   it("returns on the first healthy route probe", () => {
     const run = vi.fn((_command: readonly string[], _options: object) => probe(0, "OK 200"));
     const sleep = vi.fn();
@@ -17,8 +40,10 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
     const result = waitForHermesInferenceRouteConvergence("hermes-box", { run, sleep });
 
     expect(result).toEqual({ ok: true, attempts: 1, httpStatus: 200 });
+    expect(resolveOpenshell).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
     expect(run.mock.calls[0]?.[0]).toEqual([
+      OPENSHELL_BINARY,
       "sandbox",
       "exec",
       "--name",
@@ -37,11 +62,10 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
       .mockReturnValueOnce(probe(0, "OK 200"));
     const sleep = vi.fn();
 
-    const result = waitForHermesInferenceRouteConvergence("hermes-box", {
-      retryDelayMs: 750,
-      run,
-      sleep,
-    });
+    const result = waitForHermesInferenceRouteConvergence(
+      "hermes-box",
+      convergenceOptions(run, { retryDelayMs: 750, sleep }),
+    );
 
     expect(result).toEqual({ ok: true, attempts: 2, httpStatus: 200 });
     expect(sleep).toHaveBeenCalledOnce();
@@ -52,11 +76,10 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
     const run = vi.fn((_command: readonly string[], _options: object) => probe(0, "BROKEN 503"));
     const sleep = vi.fn();
 
-    const result = waitForHermesInferenceRouteConvergence("hermes-box", {
-      maxAttempts: 3,
-      run,
-      sleep,
-    });
+    const result = waitForHermesInferenceRouteConvergence(
+      "hermes-box",
+      convergenceOptions(run, { maxAttempts: 3, sleep }),
+    );
 
     expect(result).toEqual({ ok: false, attempts: 3, httpStatus: 503 });
     expect(run).toHaveBeenCalledTimes(3);
@@ -70,12 +93,30 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
       stderr: "",
     }));
 
-    const result = waitForHermesInferenceRouteConvergence("hermes-box", {
-      maxAttempts: 1,
-      run,
-    });
+    const result = waitForHermesInferenceRouteConvergence(
+      "hermes-box",
+      convergenceOptions(run, { maxAttempts: 1 }),
+    );
 
     expect(result).toEqual({ ok: false, attempts: 1, httpStatus: 0 });
+  });
+
+  it.each([
+    401, 403, 404,
+  ])("does not accept HTTP %i as a usable Hermes inference response", (httpStatus) => {
+    const run = vi.fn((_command: readonly string[], _options: object) =>
+      probe(0, `OK ${String(httpStatus)}`),
+    );
+    const sleep = vi.fn();
+
+    const result = waitForHermesInferenceRouteConvergence(
+      "hermes-box",
+      convergenceOptions(run, { maxAttempts: 2, sleep }),
+    );
+
+    expect(result).toEqual({ ok: false, attempts: 2, httpStatus });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -85,11 +126,10 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
     const run = vi.fn((_command: readonly string[], _options: object) => probe(0, "BROKEN 503"));
     const sleep = vi.fn();
 
-    const result = waitForHermesInferenceRouteConvergence("hermes-box", {
-      maxAttempts,
-      run,
-      sleep,
-    });
+    const result = waitForHermesInferenceRouteConvergence(
+      "hermes-box",
+      convergenceOptions(run, { maxAttempts, sleep }),
+    );
 
     expect(result).toEqual({ ok: false, attempts: 4, httpStatus: 503 });
     expect(run).toHaveBeenCalledTimes(4);
@@ -105,11 +145,10 @@ describe("Hermes inference convergence after a Shields policy transition", () =>
       .mockReturnValueOnce(probe(0, "BROKEN 503"));
     const sleep = vi.fn();
 
-    const result = waitForHermesInferenceRouteConvergence("hermes-box", {
-      retryDelayMs,
-      run,
-      sleep,
-    });
+    const result = waitForHermesInferenceRouteConvergence(
+      "hermes-box",
+      convergenceOptions(run, { retryDelayMs, sleep }),
+    );
 
     expect(result).toEqual({ ok: true, attempts: 2, httpStatus: 200 });
     expect(sleep).toHaveBeenCalledOnce();

@@ -5,6 +5,7 @@ import {
   buildSandboxInferenceRouteProbeArgs,
   parseSandboxInferenceRouteProbeResult,
 } from "../actions/sandbox/connect-inference-route-probe";
+import { buildOpenshellCommand } from "../adapters/openshell/command-argv";
 
 const DEFAULT_MAX_ATTEMPTS = 4;
 const DEFAULT_RETRY_DELAY_MS = 500;
@@ -35,6 +36,7 @@ export interface InferenceRouteConvergenceResult {
 export interface InferenceRouteConvergenceOptions {
   maxAttempts?: number;
   retryDelayMs?: number;
+  buildOpenshellCommand?: (args: readonly string[]) => string[];
   run: RunInferenceRoute;
   sleep?: (milliseconds: number) => void;
 }
@@ -58,12 +60,13 @@ export function waitForHermesInferenceRouteConvergence(
   const retryDelayMs = Number.isFinite(configuredRetryDelayMs)
     ? Math.max(0, Math.trunc(configuredRetryDelayMs))
     : DEFAULT_RETRY_DELAY_MS;
+  const buildCommand = options.buildOpenshellCommand ?? buildOpenshellCommand;
   const sleep = options.sleep ?? sleepMs;
   let httpStatus = 0;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const probe = options.run(
-      buildSandboxInferenceRouteProbeArgs(sandboxName, { name: "hermes" }),
+      buildCommand(buildSandboxInferenceRouteProbeArgs(sandboxName, { name: "hermes" })),
       {
         ignoreError: true,
         suppressOutput: true,
@@ -76,7 +79,8 @@ export function waitForHermesInferenceRouteConvergence(
       stderr: String(probe.stderr ?? ""),
     });
     httpStatus = parsed.httpStatus;
-    if (parsed.healthy) return { ok: true, attempts: attempt, httpStatus };
+    const usable = parsed.healthy && httpStatus >= 200 && httpStatus < 300;
+    if (usable) return { ok: true, attempts: attempt, httpStatus };
     if (attempt < maxAttempts) sleep(retryDelayMs);
   }
 
