@@ -24,6 +24,7 @@ const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".r
 
 describe("protected managed-image runtime contract", () => {
   it.each([
+    ["llama-cpp", "llama-cpp-local", "NEMOCLAW_LLAMACPP_LOCAL_TOKEN", 8081],
     ["ollama", "ollama-local", "NEMOCLAW_OLLAMA_PROXY_TOKEN", 11435],
     ["nim", "vllm-local", "NEMOCLAW_VLLM_LOCAL_TOKEN", 8000],
     ["vllm", "vllm-local", "NEMOCLAW_VLLM_LOCAL_TOKEN", 8000],
@@ -31,7 +32,11 @@ describe("protected managed-image runtime contract", () => {
     const route = resolveManagedImageLocalInferenceRoute(kind);
 
     expect(MANAGED_IMAGE_LOCAL_INFERENCE_KINDS).toContain(kind);
-    expect(route).toMatchObject({ kind, providerName: provider, credentialEnv: credential });
+    expect(route).toMatchObject({
+      kind,
+      providerName: provider,
+      credentialEnv: credential,
+    });
     expect(new URL(route.defaultBaseUrl)).toMatchObject({
       hostname: "host.openshell.internal",
       port: String(port),
@@ -138,6 +143,83 @@ describe("protected managed-image runtime contract", () => {
         "--gpu",
       ]),
     ).toThrow(/--gpu requires/u);
+  });
+
+  it("allows only llama.cpp local inference without direct sandbox GPU access", () => {
+    expect(
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        "managed-openclaw-llama-cpp",
+        "--local-provider",
+        "llama-cpp",
+        "--model",
+        "nvidia-nemotron-3-nano-30b-a3b",
+      ]),
+    ).toMatchObject({
+      agent: "openclaw",
+      localProvider: "llama-cpp",
+      model: "nvidia-nemotron-3-nano-30b-a3b",
+    });
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        "managed-openclaw-vllm",
+        "--local-provider",
+        "vllm",
+        "--model",
+        "nvidia/nemotron-3-nano",
+      ]),
+    ).toThrow(/require --gpu/u);
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        "managed-openclaw-llama-cpp",
+        "--local-provider",
+        "llama-cpp",
+        "--model",
+        "nvidia-nemotron-3-nano-30b-a3b",
+        "--gpu",
+      ]),
+    ).toThrow(/must not grant direct sandbox GPU access/u);
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        "managed-openclaw-llama-cpp",
+        "--local-provider",
+        "llama-cpp",
+      ]),
+    ).toThrow(/requires --model/u);
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        "managed-openclaw-llama-cpp",
+        "--local-provider",
+        "llama-cpp",
+        "--model",
+        "nvidia-nemotron-3-nano-30b-a3b",
+        "--inject-bootstrap-completion-failure",
+      ]),
+    ).toThrow(/cannot be combined/u);
   });
 
   it("keeps rollback cleanup distinct from initial readiness", () => {
