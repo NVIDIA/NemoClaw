@@ -84,6 +84,8 @@ describe("native Podman CPU proof workflow", () => {
     const cleanup = namedStep("Clean up rootless Podman fixtures");
 
     expect(fixtures).toContain("for agent in openclaw hermes langchain-deepagents-code");
+    expect(fixtures).toContain('langchain-deepagents-code) sandbox_name="podman-dcode"');
+    expect(fixtures).not.toContain('sandbox_name="podman-$agent"');
     expect(fixtures).toContain("openshell.managed=true");
     expect(fixtures).toContain("openshell.sandbox-name=$sandbox_name");
     expect(fixtures).toContain("openshell.sandbox-namespace=default");
@@ -91,6 +93,7 @@ describe("native Podman CPU proof workflow", () => {
       "npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts",
     );
     expect(cleanup.if).toBe("always()");
+    expect(cleanup.run).toContain("podman-openclaw podman-hermes podman-dcode");
     expect(cleanup.run).toContain('podman --url "$endpoint" rm --force');
   });
 });
