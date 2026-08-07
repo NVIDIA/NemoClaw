@@ -472,6 +472,87 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(stale).not.toMatch(/\bcurl\b[^\n]*\|[^\n]*\b(?:bash|sh)\b/u);
   });
 
+  it("stages both annotated and lightweight release tags", () => {
+    const provisioning = read(
+      ".agents/skills/nemoclaw-maintainer-verify-stale/reference/brev-provisioning.md",
+    );
+    const installerBlock = provisioning.match(
+      /```bash\n(NEMOCLAW_RELEASE_REPOSITORY=[\s\S]*?\nprepare_release_installer\(\) \{[\s\S]*?\n\})\n```/u,
+    )?.[1];
+    expect(installerBlock).toBeDefined();
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "verify-stale-release-tags-"));
+    const releaseRepository = path.join(tmp, "release-repository");
+    const evidenceDir = path.join(tmp, "evidence");
+    fs.mkdirSync(releaseRepository);
+    fs.mkdirSync(evidenceDir);
+
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", args, { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+    };
+
+    try {
+      git("init", "--quiet", releaseRepository);
+      fs.writeFileSync(path.join(releaseRepository, "install.sh"), "#!/usr/bin/env bash\nexit 0\n");
+      fs.writeFileSync(path.join(releaseRepository, "package.json"), '{"name":"nemoclaw"}\n');
+      git("-C", releaseRepository, "add", "install.sh", "package.json");
+      git(
+        "-C",
+        releaseRepository,
+        "-c",
+        "user.name=NemoClaw Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "release fixture",
+      );
+      git("-C", releaseRepository, "tag", "v0.0.1");
+      git(
+        "-C",
+        releaseRepository,
+        "-c",
+        "user.name=NemoClaw Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "tag",
+        "-a",
+        "v0.0.2",
+        "-m",
+        "annotated release fixture",
+      );
+
+      const result = spawnSync("bash", [], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          TEST_EVIDENCE_DIR: evidenceDir,
+          TEST_RELEASE_REPOSITORY: releaseRepository,
+        },
+        input: `
+set -euo pipefail
+EVIDENCE_DIR="$TEST_EVIDENCE_DIR"
+VERIFY_STALE_SHA256_TOOL=$(command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo shasum)
+INSTANCE_NAME=verify-stale-test
+${installerBlock ?? ""}
+NEMOCLAW_RELEASE_REPOSITORY="$TEST_RELEASE_REPOSITORY"
+INSTALLER_GIT_DIR="$EVIDENCE_DIR/release.git"
+run_bounded() { return 0; }
+prepare_release_installer v0.0.1 baseline
+prepare_release_installer v0.0.2 latest
+`,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.statSync(path.join(evidenceDir, "baseline-release.tar")).size).toBeGreaterThan(0);
+      expect(fs.statSync(path.join(evidenceDir, "latest-release.tar")).size).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("exits nonzero and requires rotation when credential copy and cleanup cannot be confirmed", () => {
     const stale = readMarkdownTree(".agents/skills/nemoclaw-maintainer-verify-stale");
     const cleanupFunction = stale.match(

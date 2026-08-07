@@ -318,8 +318,8 @@ Two-pass design.
 Without the reported-release result, a newest-release result without the symptom is inconclusive. The reproducer might never have exposed the reported symptom.
 
 Prepare each installer from the exact release tag before its install pass. The fixed repository URL
-is the only accepted source. Historical NemoClaw release tags are annotated but unsigned, so this
-workflow verifies the annotated tag object and its complete reachable object graph. It then derives
+is the only accepted source. NemoClaw has both annotated and lightweight historical release tags, so
+this workflow verifies the fetched tag ref and its complete reachable object graph. It then derives
 the archive checksum locally before the archive crosses the Brev trust boundary.
 
 ```bash
@@ -362,16 +362,18 @@ prepare_release_installer() {
   fi
 
   tag_type=$(git --git-dir="$INSTALLER_GIT_DIR" cat-file -t "refs/tags/$release_tag") || return 1
-  [ "$tag_type" = tag ] || {
-    echo "ERROR: release ref $release_tag is not an annotated tag"
-    return 1
-  }
-  tag_name=$(git --git-dir="$INSTALLER_GIT_DIR" cat-file tag "refs/tags/$release_tag" \
-    | sed -n 's/^tag //p' | head -1) || return 1
-  [ "$tag_name" = "$release_tag" ] || {
-    echo "ERROR: annotated tag names '$tag_name', expected '$release_tag'"
-    return 1
-  }
+  case "$tag_type" in
+    tag)
+      tag_name=$(git --git-dir="$INSTALLER_GIT_DIR" cat-file tag "refs/tags/$release_tag" \
+        | sed -n 's/^tag //p' | head -1) || return 1
+      [ "$tag_name" = "$release_tag" ] || {
+        echo "ERROR: annotated tag names '$tag_name', expected '$release_tag'"
+        return 1
+      }
+      ;;
+    commit) ;; # Historical lightweight release tag.
+    *) echo "ERROR: release ref $release_tag has unsupported object type $tag_type"; return 1 ;;
+  esac
   if ! GIT_DIR="$INSTALLER_GIT_DIR" git fsck --strict --no-dangling; then
     echo "ERROR: release object verification failed for $release_tag"
     return 1
@@ -436,7 +438,7 @@ prepare_release_installer() {
 }
 ```
 
-A checksum mismatch, fetch failure, object failure, tag-type or tag-name failure, copy failure,
+A checksum mismatch, fetch failure, object failure, unsupported ref type or tag-name failure, copy failure,
 missing verifier or `tar`, extraction failure, or installer-shape failure is an infrastructure
 failure. Stop the workflow. Never execute a file that did not complete this verification.
 Each install sets `NEMOCLAW_REPO_ROOT` to the verified extracted source tree and sets
