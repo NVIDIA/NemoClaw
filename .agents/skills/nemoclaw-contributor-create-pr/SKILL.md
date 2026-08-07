@@ -60,9 +60,9 @@ Select checks that apply to the diff.
 
 When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
 
-Route each valid code-changing finding to `nemoclaw-contributor-implement-issue`. That workflow owns the repair, its validation, and its evidence.
+Group valid code-changing findings by root cause. Route each valid code-changing finding to `nemoclaw-contributor-implement-issue` as part of its root-cause group. That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for the group instead of one commit or push per finding.
 
-This workflow owns the push gate. After the routed repair returns, follow the numbered steps under `After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for validation, the commit, the independent documentation writer review, the final collection, evidence removal, and the push. Push only after that review covers the final `HEAD`, every blocking finding is resolved, and the receipt identifies that commit.
+This workflow owns the push gate. After the routed repair returns, follow the numbered steps under `After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for validation, the commit, the independent documentation writer review, the final collection, evidence removal, and the push. If that review identifies a valid finding, return the repair to `nemoclaw-contributor-implement-issue`, commit the result, and rerun the review against the new `HEAD`. Push after the independent documentation writer review covers the final `HEAD`, every blocking finding is resolved, and the receipt identifies that commit.
 
 Immediately before pushing, repeat the complete head-stable collection. Do not push while that collection contains an unclassified or actionable finding. Remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. If the user tells you to stop, stop without pushing. The user may defer only a non-blocking suggestion; record that disposition before pushing.
 
@@ -243,7 +243,7 @@ gh pr create \
   --body-file /tmp/nemoclaw-pr-body.md
 ```
 
-Add `--draft` to whichever `gh pr create` command you run when the contributor does not want review of the change set yet.
+For work that is not ready for review, complete Step 4 and add `--draft` to whichever `gh pr create` command you run.
 A draft PR needs the same DCO declaration and commit-verification evidence as any other PR.
 
 ### Assignment and Labels
@@ -251,16 +251,13 @@ A draft PR needs the same DCO declaration and commit-verification evidence as an
 Assignment and labels are triage writes.
 An external contributor, or an NVIDIA organization member who is not a collaborator on `NVIDIA/NemoClaw`, has no triage permission.
 
-Add `--assignee` and `--label` when one of these conditions is true:
+Run this command before deciding whether to add `--assignee` or `--label`:
 
-- The current user states that they can assign or label pull requests in the base repository.
-- This command reports `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`. Run it first:
+```bash
+gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
+```
 
-  ```bash
-  gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
-  ```
-
-If a condition above is true, run this command instead of the base command:
+Only when it reports `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`, run this command instead of the base command:
 
 ```bash
 gh pr create \

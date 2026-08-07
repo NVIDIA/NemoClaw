@@ -33,13 +33,13 @@
   },
   {
     "id": "negative-review-repair",
-    "question": "CodeRabbit found a real bug in my open NemoClaw pull request. Fix the code.",
+    "question": "The publication workflow already classified a CodeRabbit finding on my open NemoClaw pull request as a real defect. Fix the code.",
     "expected_skill": "nemoclaw-contributor-implement-issue",
-    "ground_truth": "The publication workflow collects and classifies review findings, then routes each valid code-changing finding to the implementation workflow for the repair.",
+    "ground_truth": "The publication workflow has already classified the finding. The implementation workflow owns the repair and validation, then returns the evidence to the publication workflow's push gate.",
     "expected_behavior": [
-      "Classifies the finding through the shared PR follow-up collection.",
-      "Routes the code repair to `nemoclaw-contributor-implement-issue`.",
-      "Returns to `nemoclaw-contributor-create-pr` for the push gate."
+      "Uses `nemoclaw-contributor-implement-issue` for the code repair.",
+      "Validates the changed behavior without collecting or classifying review feedback.",
+      "Returns the repair evidence to `nemoclaw-contributor-create-pr` for the push gate without pushing."
     ]
   },
   {

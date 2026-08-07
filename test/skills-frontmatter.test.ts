@@ -316,6 +316,9 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Assemble the whole command before you run it");
     expect(skill).toContain("gh repo view NVIDIA/NemoClaw --json viewerPermission");
     expect(skill).toContain("`TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`");
+    expect(skill).not.toContain(
+      "The current user states that they can assign or label pull requests",
+    );
     expect(skill).toContain("If a triage write is rejected, do not repeat that write");
     expect(skill).toContain("Confirm whether the PR exists before you run `gh pr create` again");
     expect(skill.indexOf("--body-file /tmp/nemoclaw-pr-body.md")).toBeLessThan(
