@@ -149,12 +149,9 @@ function ownedPolicy(
   const resolvedAddresses = options.resolvedAddresses ?? [new URL(entry.url).hostname];
   return {
     name: entry.policyName,
-    content: bridge.buildMcpBridgePolicyYaml(
-      entry.server,
-      entry.url,
-      adapter as AgentMcpAdapter,
-      resolvedAddresses,
-    ),
+    content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, adapter as AgentMcpAdapter, {
+      addresses: [...resolvedAddresses],
+    }),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   };
 }

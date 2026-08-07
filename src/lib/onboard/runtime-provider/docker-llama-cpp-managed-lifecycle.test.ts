@@ -9,12 +9,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
+import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 /* Test-only reconstruction of the exact immutable command for recovery fixtures. */
 import {
   buildLlamaCppHostLocalServerArgv,
   type LlamaCppHostLocalLaunchContract,
-  type LlamaCppHostLocalRuntimeBindings,
 } from "../../inference/llama-cpp/host-local-runtime";
 import {
   createDockerLlamaCppManagedLifecycle,
@@ -32,6 +32,7 @@ import {
 } from "./host-local-inference";
 import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
 
+const HOST_PORT = String(LLAMA_CPP_PORT);
 const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
 const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;
@@ -231,10 +232,11 @@ function keyRootIdentitySha256(): string {
   });
 }
 
-function bindings(): LlamaCppHostLocalRuntimeBindings {
+function bindings(): DockerLlamaCppManagedLifecycleOptions["bindings"] {
   return {
     apiKeyHostPath: apiKeyPath,
     containerName: "nemoclaw-llama-cpp",
+    hostPort: LLAMA_CPP_PORT,
     imageReference: IMAGE,
     model: {
       digest: MODEL_DIGEST,
@@ -388,7 +390,7 @@ interface DockerFixture {
 }
 
 function dockerFixture(
-  configuredHostPort = "",
+  configuredHostPort = HOST_PORT,
   publishedHostPort?: string,
   publishedHostIp = "127.0.0.1",
   publishedBindingCount = 1,
@@ -824,21 +826,22 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
   });
   it.each([
-    ["configured", "8082", undefined],
-    ["published", "8081", "8082"],
-  ] as const)("rolls back exact ownership for %s loopback port drift (#8544)", (_kind, configured, published) => {
+    ["configured", "8082", undefined, /bound host port/u],
+    ["published", "8081", "8082", /declared binding/u],
+  ] as const)("rolls back exact ownership for %s loopback port drift (#8544)", (_kind, configured, published, expectedError) => {
     const [fixture, store] = [dockerFixture(configured, published), journalStore()];
     const lifecycle = createDockerLlamaCppManagedLifecycle(
       options(fixture, store, { ...bindings(), hostPort: 8081 }),
     );
-    expect(() => lifecycle.start(receiptWriter())).toThrow(/binding/u);
+    expect(() => lifecycle.start(receiptWriter())).toThrow(expectedError);
     const calls = fixture.capture.mock.calls.map((call) => call[0]);
     expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
     expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
     expect(store.list()).toEqual([]);
   });
-  it("fails closed on non-loopback, malformed, or multiple published bindings during port-drift rollback (#8544)", () => {
+  it("rejects and cleans up malformed or non-loopback published bindings (#8544)", () => {
     for (const args of [
+      [HOST_PORT, HOST_PORT, "0.0.0.0", 1],
       ["8081", "8082", "0.0.0.0", 1],
       ["8081", "invalid", "127.0.0.1", 1],
       ["8081", "8082", "127.0.0.1", 2],
@@ -847,10 +850,11 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       const lifecycle = createDockerLlamaCppManagedLifecycle(
         options(fixture, store, { ...bindings(), hostPort: 8081 }),
       );
-      expect(() => lifecycle.start(receiptWriter())).toThrow("Exact rollback also failed");
+      expect(() => lifecycle.start(receiptWriter())).toThrow(/port|binding/u);
       const calls = fixture.capture.mock.calls.map((call) => call[0]);
-      expect(store.list()).not.toEqual([]);
-      expect(calls).not.toContainEqual(["rm", "--force", RUNTIME_ID]);
+      expect(store.list()).toEqual([]);
+      expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
+      expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
     }
   });
   it("uses the declarative readiness timeout as both curl retry budget and capture budget", () => {
