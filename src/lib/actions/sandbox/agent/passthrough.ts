@@ -106,8 +106,11 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
 import { requireCuaLifecycleReadiness } from "../../../cua/lifecycle-readiness";
+import { resolveSandboxGatewayName } from "../../../gateway-runtime-action";
+import { withGatewayRouteMutationLock } from "../../../inference/gateway-route-mutation-lock";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
+import { withMcpLifecycleLock as withSandboxMutationLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
 import {
   buildOpenshellExecArgs,
@@ -232,6 +235,9 @@ export interface AgentPassthroughDeps {
   runOllamaRestartRecovery?: typeof runOllamaRestartRecovery;
   getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   requireCuaReadiness?: (entry: registry.SandboxEntry) => unknown;
+  resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
+  withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
+  withSandboxMutationLock?: typeof withSandboxMutationLock;
   process?: {
     exit(code: number): never;
     stdout?: { write(s: string): unknown };
@@ -514,6 +520,40 @@ function rejectNotReadyForAgent(
   return proc.exit(1);
 }
 
+async function runCuaHeadlessUnderMutationLocks(
+  sandboxName: string,
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+  deps: AgentPassthroughDeps,
+): Promise<void> {
+  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
+  const lockGateway = deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock;
+  const resolveGateway = deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName;
+  await lockSandbox(sandboxName, async () => {
+    const lockedLookup = readSandboxAgentFromRegistry(sandboxName, deps.getSandbox);
+    if (lockedLookup.kind === "error") {
+      rejectRegistryReadError(sandboxName, lockedLookup.message, proc);
+    }
+    if (lockedLookup.kind !== "agent" || lockedLookup.agent !== "nemocua") {
+      rejectAgentResolutionError(
+        sandboxName,
+        "nemocua",
+        "NemoCUA authority changed while waiting for the sandbox mutation lock",
+        proc,
+      );
+    }
+    const gatewayName = resolveGateway(lockedLookup.entry);
+    await lockGateway(gatewayName, async () => {
+      try {
+        (deps.requireCuaReadiness ?? requireCuaLifecycleReadiness)(lockedLookup.entry);
+      } catch (error) {
+        rejectAgentResolutionError(sandboxName, "nemocua", (error as Error).message, proc);
+      }
+      const exec = deps.exec ?? execSandbox;
+      await exec(sandboxName, ["nemocua", "headless"], { tty: false });
+    });
+  });
+}
+
 export async function runAgentPassthrough(
   sandboxName: string,
   { extraArgs = [] }: AgentPassthroughOptions = {},
@@ -532,11 +572,6 @@ export async function runAgentPassthrough(
         "NemoCUA headless execution does not accept additional arguments",
         proc,
       );
-    }
-    try {
-      (deps.requireCuaReadiness ?? requireCuaLifecycleReadiness)(lookup.entry);
-    } catch (error) {
-      rejectAgentResolutionError(sandboxName, lookup.agent, (error as Error).message, proc);
     }
   }
   const command = getPassthroughCommand(sandboxName, lookup, extraArgs, proc);
@@ -559,6 +594,10 @@ export async function runAgentPassthrough(
   }
   if (phase !== "Ready" && phase !== "Running") {
     rejectNotReadyForAgent(sandboxName, phase, proc);
+  }
+  if (lookup.kind === "agent" && lookup.agent === "nemocua") {
+    await runCuaHeadlessUnderMutationLocks(sandboxName, proc, deps);
+    return;
   }
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);

@@ -5,8 +5,12 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
 
+export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntry | null {
+  return registry.getSandbox(sandboxName);
+}
+
 export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {
-  const sb = sandboxName ? registry.getSandbox(sandboxName) : null;
+  const sb = sandboxName ? getKnownSandboxTarget(sandboxName) : null;
   return sb ? resolveSandboxGatewayName(sb) : null;
 }
 

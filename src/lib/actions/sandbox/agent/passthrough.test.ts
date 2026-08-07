@@ -90,6 +90,33 @@ function createPluginApi(): OpenClawPluginApi {
   };
 }
 
+type AsyncTestLock = <T>(name: string, operation: () => Promise<T> | T) => Promise<T>;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function createSerialTestLock(events: string[], label: string): AsyncTestLock {
+  let tail = Promise.resolve();
+  return async <T>(_name: string, operation: () => Promise<T> | T): Promise<T> => {
+    const previous = tail;
+    const release = deferred();
+    tail = previous.then(() => release.promise);
+    await previous;
+    events.push(`${label}:acquired`);
+    try {
+      return await operation();
+    } finally {
+      events.push(`${label}:released`);
+      release.resolve();
+    }
+  };
+}
+
 describe("runAgentPassthrough", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -123,9 +150,9 @@ describe("runAgentPassthrough", () => {
     expect(writes.join("")).toMatch(/port 8642/);
   });
 
-  it("dispatches bare NemoCUA agent as the exact headless vector after readiness validation (#7755)", async () => {
+  it("holds CUA mutation authority through the exact headless child execution (#7755)", async () => {
     const entry = { name: "alpha", agent: "nemocua" };
-    getSandboxMock.mockReturnValueOnce(entry as never);
+    getSandboxMock.mockReturnValueOnce(entry as never).mockReturnValueOnce(entry as never);
     listAgentsMock.mockReturnValueOnce([
       "custom-terminal",
       "hermes",
@@ -141,12 +168,55 @@ describe("runAgentPassthrough", () => {
         headless_command: "nemocua headless",
       },
     });
-    const requireCuaReadiness = vi.fn();
+    const events: string[] = [];
+    const childStarted = deferred();
+    const releaseChild = deferred();
+    const withSandboxMutationLock = createSerialTestLock(events, "sandbox");
+    const withGatewayRouteMutationLock = createSerialTestLock(events, "gateway");
+    const requireCuaReadiness = vi.fn(() => events.push("readiness"));
+    execMock.mockImplementationOnce(async () => {
+      events.push("child");
+      childStarted.resolve();
+      await releaseChild.promise;
+    });
 
-    await runAgentPassthrough("alpha", {}, { requireCuaReadiness });
+    const passthrough = runAgentPassthrough(
+      "alpha",
+      {},
+      {
+        requireCuaReadiness,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withGatewayRouteMutationLock,
+        withSandboxMutationLock,
+      },
+    );
+    await childStarted.promise;
+    const mutation = withSandboxMutationLock("alpha", () =>
+      withGatewayRouteMutationLock("gateway-alpha", () => events.push("mutation")),
+    );
+    await Promise.resolve();
 
     expect(requireCuaReadiness).toHaveBeenCalledWith(entry);
     expect(execMock).toHaveBeenCalledWith("alpha", ["nemocua", "headless"], { tty: false });
+    expect(events).toEqual(["sandbox:acquired", "gateway:acquired", "readiness", "child"]);
+
+    releaseChild.resolve();
+    await passthrough;
+    await mutation;
+
+    expect(events).toEqual([
+      "sandbox:acquired",
+      "gateway:acquired",
+      "readiness",
+      "child",
+      "gateway:released",
+      "sandbox:released",
+      "sandbox:acquired",
+      "gateway:acquired",
+      "mutation",
+      "gateway:released",
+      "sandbox:released",
+    ]);
   });
 
   it("rejects added NemoCUA arguments before readiness probes or execution (#7755)", async () => {
