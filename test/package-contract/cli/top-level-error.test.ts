@@ -12,6 +12,7 @@ const dispatchPath = JSON.stringify(
 );
 const loggerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "cli", "logger.js"));
 const mainPath = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
+const redactorPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "security", "redact.js"));
 
 function expectTopLevelError(rejection: string, expectedStderr: string): void {
   const result = spawnSync(
@@ -65,7 +66,7 @@ function expectCleanLauncherFailure(env: NodeJS.ProcessEnv, expectedMessage: str
   expect(result.stderr.split(/\r?\n/).filter(Boolean)).toEqual([expectedMessage]);
 }
 
-function expectLoggerFallbackRedaction(secret: string): void {
+function expectLoggerFallbackRedaction(secret: string, redactorUnavailable = false): void {
   const result = spawnSync(
     process.execPath,
     [
@@ -74,10 +75,12 @@ function expectLoggerFallbackRedaction(secret: string): void {
 const cliPath = ${cliPath};
 const loggerPath = ${loggerPath};
 const mainPath = ${mainPath};
+const redactorPath = ${redactorPath};
 const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
   const resolved = Module._resolveFilename(request, parent, isMain);
   if (resolved === loggerPath) throw new Error("logger unavailable");
+  if (${redactorUnavailable} && resolved === redactorPath) throw new Error("redactor unavailable");
   if (resolved === mainPath) throw new Error(${JSON.stringify(`startup failed ${secret}`)});
   return originalLoad.apply(this, arguments);
 };
@@ -96,7 +99,9 @@ require(cliPath);`,
 
   expect(result.status).toBe(1);
   expect(result.stdout).toBe("");
-  expect(result.stderr).toBe("Error: startup failed <REDACTED>\n");
+  expect(result.stderr).toBe(
+    redactorUnavailable ? "Error: Command failed.\n" : "Error: startup failed <REDACTED>\n",
+  );
   expect(result.stderr).not.toContain(secret);
 }
 
@@ -129,7 +134,18 @@ describe("compiled CLI top-level errors", () => {
     );
   });
 
+  it("does not echo an untrusted invalid port when the shared redactor cannot load (#8202)", () => {
+    expectCleanLauncherFailure(
+      { NEMOCLAW_GATEWAY_PORT: `openai-${"a".repeat(40)}` },
+      "Error: Command failed.",
+    );
+  });
+
   it("redacts credential-shaped text when the logger fallback handles a module-load error (#8202)", () => {
     expectLoggerFallbackRedaction(`nvapi-${"a".repeat(20)}`);
+  });
+
+  it("prints a generic safe error when the logger and shared redactor cannot load (#8202)", () => {
+    expectLoggerFallbackRedaction(`openai-${"a".repeat(40)}`, true);
   });
 });
