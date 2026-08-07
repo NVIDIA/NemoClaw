@@ -3,9 +3,11 @@
 
 import {
   assertEndpointResolvesPublic,
+  isTrustedPrivateEndpointCapability,
   type TrustedPrivateEndpointCapability,
 } from "../inference/endpoint-ssrf-preflight";
 import { VLLM_MODELS } from "../inference/vllm-models";
+import { isLoopbackHostname } from "../private-networks";
 import { cliName } from "./branding";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "./setup-nim-flow";
 
@@ -77,7 +79,13 @@ async function managedVllmValidationOptions(baseUrl: string, apiKey: string) {
   const preflight = await assertEndpointResolvesPublic(baseUrl, undefined, {
     trustedPrivateHosts: [hostname],
   });
-  if (!preflight.ok || !preflight.trustedPrivateCapability) {
+  if (!preflight.ok) {
+    throw new Error("Managed vLLM endpoint authorization failed.");
+  }
+  if (
+    !isLoopbackHostname(hostname) &&
+    !isTrustedPrivateEndpointCapability(preflight.trustedPrivateCapability)
+  ) {
     throw new Error("Managed vLLM endpoint authorization failed.");
   }
   return {
