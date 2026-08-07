@@ -50,8 +50,13 @@ Action = Literal[
     "publish-startup-ready",
     "write-config",
     "recover",
+    "unlock-failed-startup",
 ]
 StartupIdentity = tuple[int, str, int]
+# One action only. It unseals both layers in a single mutex window, so the
+# multi-step host sequence can never mutate state on stale evidence (#8304).
+STARTUP_FAILURE_RECOVERY_ACTIONS = frozenset({"unlock-failed-startup"})
+INSTALLED_STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py"
 CONFIG_FILES = ("openclaw.json", ".config-hash")
 PRODUCTION_CONFIG_DIR = "/sandbox/.openclaw"
 MAX_FILE_BYTES = {
@@ -73,6 +78,18 @@ OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NODE_BINARY_PATH = "/usr/local/bin/node"
 JSON5_MODULE_PATH = "/opt/nemoclaw/node_modules/json5"
 JSON5_VALIDATION_TIMEOUT_SECONDS = 5
+# Whole-action budget for `unlock-failed-startup`. The recursive state guard
+# caps each transition at ten minutes. Give the forward transition that full
+# allowance, then reserve another full allowance plus two minutes of overhead
+# for the config relock and fail-closed recursive relock.
+# Keep the total below RECOVERY_CONTAINER_TIMEOUT in
+# src/lib/shields/openclaw-config-lock.ts, or the host can kill the guard before
+# the rollback finishes.
+STATE_DIR_GUARD_FORWARD_SECONDS = 10 * 60
+STATE_DIR_GUARD_ROLLBACK_SECONDS = 12 * 60
+STATE_DIR_GUARD_TIMEOUT_SECONDS = (
+    STATE_DIR_GUARD_FORWARD_SECONDS + STATE_DIR_GUARD_ROLLBACK_SECONDS
+)
 INSTALLED_HELPER_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py"
 COPY_BUFFER_BYTES = 1024 * 1024
 STABLE_READ_ATTEMPTS = 3
@@ -986,14 +1003,15 @@ def _pinned_process_matches_supervised_nonroot_start(
             os.close(proc_pid_fd)
 
 
-def _openshell_supervised_nonroot_start_is_live(
+def _openshell_supervised_nonroot_start_census(
     expected_root_uid: int,
     expected_sandbox_uid: int,
-    required_pid: int | None = None,
-) -> bool:
+) -> tuple[int, int | None] | None:
+    """Return a stable OpenShell start-child census, or ``None`` on uncertainty."""
+
     supervisor_identity = _openshell_supervisor_identity(expected_root_uid)
     if supervisor_identity is None:
-        return False
+        return None
     proc_root_fd = -1
     try:
         proc_root_fd = _open_proc_root()
@@ -1006,7 +1024,7 @@ def _openshell_supervised_nonroot_start_is_live(
                     continue
                 observed += 1
                 if observed > MAX_PROC_ENTRIES:
-                    return False
+                    return None
                 if _pinned_process_matches_supervised_nonroot_start(
                     proc_root_fd,
                     entry.name,
@@ -1016,18 +1034,42 @@ def _openshell_supervised_nonroot_start_is_live(
                     matches += 1
                     matched_pid = int(entry.name, 10)
                     if matches > 1:
-                        return False
-        return bool(
-            matches == 1
-            and (required_pid is None or matched_pid == required_pid)
-            and _openshell_supervisor_identity(expected_root_uid)
-            == supervisor_identity
-        )
+                        return matches, None
+        if _openshell_supervisor_identity(expected_root_uid) != supervisor_identity:
+            return None
+        return matches, matched_pid
     except OSError:
-        return False
+        return None
     finally:
         if proc_root_fd >= 0:
             os.close(proc_root_fd)
+
+
+def _openshell_supervised_nonroot_start_is_live(
+    expected_root_uid: int,
+    expected_sandbox_uid: int,
+    required_pid: int | None = None,
+) -> bool:
+    census = _openshell_supervised_nonroot_start_census(
+        expected_root_uid, expected_sandbox_uid
+    )
+    return bool(
+        census is not None
+        and census[0] == 1
+        and (required_pid is None or census[1] == required_pid)
+    )
+
+
+def _openshell_supervised_nonroot_start_is_absent(
+    expected_root_uid: int,
+    expected_sandbox_uid: int,
+) -> bool:
+    """Return whether a stable OpenShell supervisor has no start child."""
+
+    census = _openshell_supervised_nonroot_start_census(
+        expected_root_uid, expected_sandbox_uid
+    )
+    return census is not None and census[0] == 0
 
 
 def _pid1_effective_uid() -> int | None:
@@ -1325,7 +1367,14 @@ def _revoke_startup_ready(identity: Identity) -> None:
 
 def _validate_action_readiness(
     action: Action, startup_owner: bool, identity: Identity
-) -> None:
+) -> bool:
+    """Authorize ``action`` and report whether only the failed-startup path allowed it.
+
+    A ``True`` result is provisional: it rests on a live procfs census taken
+    before the mutation mutex, so the caller must reconfirm it under the mutex
+    with ``_reconfirm_startup_failure_recovery`` before any effect.
+    """
+
     startup_action = action in {"revoke-startup-ready", "publish-startup-ready"}
     if startup_action:
         if not _pid1_is_nemoclaw_start() or not startup_owner or os.getppid() != 1:
@@ -1334,7 +1383,7 @@ def _validate_action_readiness(
                 STARTUP_READY_PATH,
                 f"{action} is restricted to the PID 1 startup transaction",
             )
-        return
+        return False
     installed_current = os.path.realpath(__file__) == os.path.realpath(
         INSTALLED_HELPER_PATH
     )
@@ -1343,11 +1392,14 @@ def _validate_action_readiness(
         # A source helper injected into an older image, and the local unit
         # harness, retain their explicit compatibility path. Current images
         # use the installed helper and authenticate a namespace remap below.
-        return
+        return False
     protocol_active, startup_ready = _startup_lease_state(identity)
     if not pid1_is_nemoclaw_start and not protocol_active:
         if (
             installed_current
+            # The recovery action is authorized by the escape below and by
+            # nothing else.
+            and action not in STARTUP_FAILURE_RECOVERY_ACTIONS
             and _startup_markers_absent(identity)
             and _openshell_supervised_nonroot_start_is_live(
                 identity.root_uid, identity.sandbox_uid
@@ -1360,19 +1412,29 @@ def _validate_action_readiness(
             # and NSpid evidence selects the same two topologies. They cannot
             # publish root-owned readiness markers, so authenticate the stable
             # supervisor/child pair while refusing stale or malformed markers.
-            return
-        if installed_current:
-            raise GuardError(
-                "startup-not-ready",
-                STARTUP_READY_PATH,
-                "installed config guard requires NemoClaw PID 1",
+            return False
+        if (
+            installed_current
+            and action in STARTUP_FAILURE_RECOVERY_ACTIONS
+            and _startup_markers_absent(identity)
+            and _openshell_supervised_nonroot_start_is_absent(
+                identity.root_uid, identity.sandbox_uid
             )
-        return
+        ):
+            # Provisional: a child can still appear after this scan, so main()
+            # reconfirms under the mutation mutex before any effect (#8304).
+            return True
+        # The early return above leaves `installed_current` true here.
+        raise GuardError(
+            "startup-not-ready",
+            STARTUP_READY_PATH,
+            "installed config guard requires NemoClaw PID 1",
+        )
     # Source injected into an older image retains compatibility until that
     # image explicitly opts in. The trusted installed helper requires the
     # protocol from its very first exec, closing the pre-revoke boot race.
     if not installed_current and not protocol_active:
-        return
+        return False
     if installed_current and not protocol_active:
         # The supported --user sandbox entrypoint cannot create a root-owned
         # readiness capability. It also explicitly disables gateway privilege
@@ -1382,7 +1444,7 @@ def _validate_action_readiness(
         # capability opts even a non-root PID 1 into the strict lease below.
         pid1_euid = _pid1_effective_uid()
         if pid1_euid is not None and pid1_euid != identity.root_uid:
-            return
+            return False
     early_recover = action == "recover" and not startup_ready
     if early_recover:
         if not startup_owner or os.getppid() != 1:
@@ -1391,7 +1453,7 @@ def _validate_action_readiness(
                 STARTUP_READY_PATH,
                 f"{action} is restricted to the PID 1 startup transaction",
             )
-        return
+        return False
     if action in {
         "lock",
         "unlock",
@@ -1404,6 +1466,146 @@ def _validate_action_readiness(
             STARTUP_READY_PATH,
             "OpenClaw startup is not ready for host config mutations",
         )
+    return False
+
+
+def _reconfirm_startup_failure_recovery(action: Action, identity: Identity) -> None:
+    """Re-prove a failed startup while the mutation mutex is held.
+
+    The first scan runs before the mutex. Repeating it here binds the
+    authorization to the effect.
+    """
+
+    if _startup_markers_absent(identity) and _openshell_supervised_nonroot_start_is_absent(
+        identity.root_uid, identity.sandbox_uid
+    ):
+        return
+    raise GuardError(
+        "startup-not-ready",
+        STARTUP_READY_PATH,
+        f"{action} lost its failed-startup authorization before taking effect",
+    )
+
+
+def _run_state_dir_guard(
+    action: str,
+    config_dir: str,
+    plan_json: str,
+    mutation_lock_fd: int,
+    deadline: float,
+) -> None:
+    """Run the recursive state-dir guard under this process's mutation mutex.
+
+    The child takes the same mutex, so pass the held descriptor: it inherits
+    the lock instead of deadlocking on it.
+    """
+
+    if not os.path.isfile(INSTALLED_STATE_DIR_GUARD):
+        raise GuardError(
+            "state-dir-guard-missing",
+            INSTALLED_STATE_DIR_GUARD,
+            "recursive state guard is required for failed-startup recovery",
+        )
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise GuardError(
+            "state-dir-transition-timeout",
+            config_dir,
+            f"no recovery budget left for state-dir {action}",
+        )
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-I",
+                INSTALLED_STATE_DIR_GUARD,
+                action,
+                "--config-dir",
+                config_dir,
+                "--plan-json",
+                plan_json,
+                "--transition-lock-fd",
+                str(mutation_lock_fd),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=remaining,
+            check=False,
+            pass_fds=(mutation_lock_fd,),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise GuardError(
+            "state-dir-transition-timeout",
+            config_dir,
+            f"state-dir {action} exceeded the remaining recovery budget",
+        ) from exc
+    except subprocess.SubprocessError as exc:
+        raise GuardError(
+            "state-dir-transition-failed",
+            config_dir,
+            f"state-dir {action} could not complete: {exc}",
+        ) from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr.strip() or completed.stdout.strip())[:400]
+        raise GuardError(
+            "state-dir-transition-failed",
+            config_dir,
+            f"state-dir {action} failed: {detail}",
+        )
+
+
+def _run_failed_startup_unlock(
+    opened: OpenConfig,
+    identity: Identity,
+    config_dir: str,
+    plan_json: str,
+    mutation_lock_fd: int,
+    *,
+    quarantine_untrusted: bool,
+) -> None:
+    """Unseal both OpenClaw state layers or restore their locked posture.
+
+    The forward transition cannot consume the rollback reserve. Both deadlines
+    remain within the host's whole-action timeout.
+    """
+
+    rollback_deadline = time.monotonic() + STATE_DIR_GUARD_TIMEOUT_SECONDS
+    unlock_deadline = rollback_deadline - STATE_DIR_GUARD_ROLLBACK_SECONDS
+
+    try:
+        _run_state_dir_guard(
+            "unlock", config_dir, plan_json, mutation_lock_fd, unlock_deadline
+        )
+        _transition(
+            "unlock",
+            opened,
+            identity,
+            quarantine_untrusted=quarantine_untrusted,
+        )
+    except (GuardError, OSError) as exc:
+        rollback_errors: list[str] = []
+        try:
+            _transition(
+                "lock",
+                opened,
+                identity,
+                quarantine_untrusted=quarantine_untrusted,
+            )
+        except (GuardError, OSError) as rollback_exc:
+            rollback_errors.append(f"config lock: {rollback_exc}")
+        try:
+            _run_state_dir_guard(
+                "lock", config_dir, plan_json, mutation_lock_fd, rollback_deadline
+            )
+        except (GuardError, OSError) as rollback_exc:
+            rollback_errors.append(f"state-dir lock: {rollback_exc}")
+
+        detail = str(exc)
+        if rollback_errors:
+            detail += "; rollback issues: " + "; ".join(rollback_errors)
+        if isinstance(exc, GuardError):
+            raise GuardError(exc.code, exc.path, detail) from exc
+        raise GuardError("operation-failed", config_dir, detail) from exc
 
 
 def _write_secondary_journal(record: dict[str, object], identity: Identity) -> None:
@@ -3495,7 +3697,11 @@ def _transition(
         freeze_started = False
         try:
             freeze_started = True
-            _freeze(opened, identity)
+            _freeze(
+                opened,
+                identity,
+                quarantine_reserved=quarantine_untrusted,
+            )
             _settle_pending_transaction_for_lock(opened, identity)
             _repair_absent_hash_for_lock(opened, identity)
             source = _snapshot_raw_pair(opened)
@@ -3540,7 +3746,11 @@ def _transition(
     _verify_locked_posture(opened, pair, identity, allow_blocking_flags=True)
     snapshots: list[FileSnapshot] = []
     try:
-        _freeze(opened, identity)
+        _freeze(
+            opened,
+            identity,
+            quarantine_reserved=quarantine_untrusted,
+        )
         snapshots.extend(_snapshot_pair(opened))
         targets, _digest = _canonical_targets(
             (snapshots[0], snapshots[1]), identity, locked=False
@@ -4130,11 +4340,13 @@ def _parser() -> argparse.ArgumentParser:
             "publish-startup-ready",
             "write-config",
             "recover",
+            "unlock-failed-startup",
         ),
     )
     parser.add_argument("--config-dir", default=PRODUCTION_CONFIG_DIR)
     parser.add_argument("--expected-config-sha256", default="")
     parser.add_argument("--startup-owner", action="store_true")
+    parser.add_argument("--plan-json", default=None)
     return parser
 
 
@@ -4163,9 +4375,26 @@ def main(argv: list[str] | None = None) -> int:
                 f"helper is restricted to {PRODUCTION_CONFIG_DIR}",
             )
         identity = _production_identity()
-        _validate_action_readiness(action, args.startup_owner, identity)
+        startup_failure_recovery = _validate_action_readiness(
+            action, args.startup_owner, identity
+        )
+        if action == "unlock-failed-startup" and not startup_failure_recovery:
+            # Never let this action inherit the ordinary lease path.
+            raise GuardError(
+                "failed-startup-not-proven",
+                STARTUP_READY_PATH,
+                "unlock-failed-startup requires a proven terminal startup failure",
+            )
         read_only = action in {"preflight", "preflight-restart"}
         mutex = _acquire_mutation_mutex(action, identity, exclusive=not read_only)
+        if startup_failure_recovery:
+            _reconfirm_startup_failure_recovery(action, identity)
+        if action == "unlock-failed-startup" and args.plan_json is None:
+            raise GuardError(
+                "invalid-state-lock-plan",
+                "--plan-json",
+                "unlock-failed-startup requires the agent state lock plan",
+            )
 
         if action in {"revoke-startup-ready", "publish-startup-ready"}:
             if action == "revoke-startup-ready":
@@ -4312,6 +4541,19 @@ def main(argv: list[str] | None = None) -> int:
                 recovery, new_digest, original_locked = _recover_any_transaction(
                     opened, identity, pending_journal
                 )
+        elif action == "unlock-failed-startup":
+            # Every check that can refuse this action has already run, so no
+            # refusal can leave state unsealed under a locked config.
+            _run_failed_startup_unlock(
+                opened,
+                identity,
+                args.config_dir,
+                args.plan_json,
+                mutex.fd,
+                quarantine_untrusted=untrusted_reserved_entry,
+            )
+            new_digest = None
+            recovery = None
         else:
             _transition(
                 action,
