@@ -392,20 +392,23 @@ function applyPortableEnvironment(
 ): () => void {
   if (!options.experimentalProfile) return () => {};
   const hostedInference = resolveInferenceSource(env);
+  if (!hostedInference) {
+    throw new PortableInferenceSourceError(
+      "Portable hosted inference requires an activated credential descriptor or configured object source.",
+    );
+  }
   const portableEnvDefaults: Record<string, string> = {
     [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile,
     [TOOL_DISCLOSURE_ENV]: "direct",
-    NEMOCLAW_PROVIDER: hostedInference ? "custom" : "ollama",
-    NEMOCLAW_MODEL: hostedInference?.model ?? "qwen3-vl:4b",
+    NEMOCLAW_PROVIDER: "custom",
+    NEMOCLAW_MODEL: hostedInference.model,
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
-    NEMOCLAW_POLICY_MODE: "suggested",
+    NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_POLICY_TIER: "personal",
+    COMPATIBLE_API_KEY: hostedInference.apiKey,
+    NEMOCLAW_ENDPOINT_URL: hostedInference.baseUrl,
+    NEMOCLAW_PREFERRED_API: "openai-completions",
   };
-  if (hostedInference) {
-    portableEnvDefaults.COMPATIBLE_API_KEY = hostedInference.apiKey;
-    portableEnvDefaults.NEMOCLAW_ENDPOINT_URL = hostedInference.baseUrl;
-    portableEnvDefaults.NEMOCLAW_PREFERRED_API = "openai-completions";
-  }
   const previousPortableEnv = new Map<string, string | undefined>();
   const restore = () => {
     for (const [key, value] of previousPortableEnv) {

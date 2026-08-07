@@ -2706,16 +2706,14 @@ async function createSandboxWithBaseImageResolution(
       runtimePatch,
     );
   }
-
   let actualDashboardPort = 0;
   let finalHermesDashboardState = hermesDashboardState;
   if (manageDashboardForward) {
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
     });
-    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
+    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl)))
       chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
-    }
     process.env.CHAT_UI_URL = chatUiUrl;
     finalHermesDashboardState = hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
     hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);

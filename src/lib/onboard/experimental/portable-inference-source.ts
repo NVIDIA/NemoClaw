@@ -6,6 +6,7 @@ import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { TextDecoder } from "node:util";
 
 export const PORTABLE_INFERENCE_ACTIVATION_PATH = "/run/nemoclaw/portable-inference.b64";
+export const PORTABLE_INFERENCE_IMAGE_PATH = "/var/lib/nemoclaw/portable-inference.b64";
 
 const DEFAULT_RELATIVE_OBJECT_KEY = "secrets/nvcf-llm.b64";
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
@@ -28,9 +29,18 @@ export class PortableInferenceSourceError extends Error {
 export type PortableInferenceObjectReader = (uri: string, env: NodeJS.ProcessEnv) => Buffer;
 export type PortableInferenceActivationReader = () => Buffer | null;
 
-export function readPortableInferenceActivationFile(
-  filePath: string = PORTABLE_INFERENCE_ACTIVATION_PATH,
-): Buffer | null {
+export function readPortableInferenceActivationFile(filePath?: string): Buffer | null {
+  const candidates = filePath
+    ? [filePath]
+    : [PORTABLE_INFERENCE_ACTIVATION_PATH, PORTABLE_INFERENCE_IMAGE_PATH];
+  for (const candidate of candidates) {
+    const descriptor = readPortableInferenceActivationCandidate(candidate);
+    if (descriptor !== null) return descriptor;
+  }
+  return null;
+}
+
+function readPortableInferenceActivationCandidate(filePath: string): Buffer | null {
   let descriptorFd: number;
   try {
     const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;

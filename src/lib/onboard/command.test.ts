@@ -436,7 +436,7 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
-  it("prepares and scopes portable profile defaults around onboarding", async () => {
+  it("prepares and scopes hosted-only portable profile defaults around onboarding", async () => {
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
@@ -450,6 +450,11 @@ describe("onboard command options", () => {
     await runOnboardCommand({
       flags: { "experimental-profile": "portable" },
       env,
+      resolvePortableInferenceSource: () => ({
+        apiKey: "test-credential-value-1234",
+        baseUrl: "https://inference.example.test/v1",
+        model: "example/model-1",
+      }),
       runOnboard: async () => {
         for (const key of [
           "NEMOCLAW_EXPERIMENTAL_PROFILE",
@@ -467,10 +472,10 @@ describe("onboard command options", () => {
 
     expect(observed).toEqual({
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-      NEMOCLAW_PROVIDER: "ollama",
-      NEMOCLAW_MODEL: "qwen3-vl:4b",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_MODEL: "example/model-1",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
-      NEMOCLAW_POLICY_MODE: "suggested",
+      NEMOCLAW_POLICY_MODE: "skip",
       NEMOCLAW_POLICY_TIER: "personal",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });
@@ -483,6 +488,27 @@ describe("onboard command options", () => {
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     });
+  });
+
+  it("never falls back to local inference when portable activation is missing", async () => {
+    const runOnboard = vi.fn();
+    const errors: string[] = [];
+
+    await expect(
+      runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env: {},
+        resolvePortableInferenceSource: () => null,
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(runOnboard).not.toHaveBeenCalled();
+    expect(errors).toEqual([
+      "  Portable hosted inference requires an activated credential descriptor or configured object source.",
+    ]);
   });
 
   it("uses the portable hosted inference descriptor without starting local inference", async () => {
@@ -608,6 +634,11 @@ describe("onboard command options", () => {
       name: "portable profile",
       flags: { "experimental-profile": "portable" } as OnboardFlags,
       listServingProfiles: undefined,
+      resolvePortableInferenceSource: () => ({
+        apiKey: "test-credential-value-1234",
+        baseUrl: "https://inference.example.test/v1",
+        model: "example/model-1",
+      }),
       keys: [
         "NEMOCLAW_EXPERIMENTAL_PROFILE",
         "NEMOCLAW_PROVIDER",
@@ -619,6 +650,7 @@ describe("onboard command options", () => {
       name: "serving profile",
       flags: { profile: COMPATIBLE_NANO_PROFILE.id } as OnboardFlags,
       listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+      resolvePortableInferenceSource: undefined,
       keys: ["NEMOCLAW_SERVING_PRESET"],
     },
   ])("restores the $name environment when an agents manifest is invalid", async (testCase) => {
@@ -633,6 +665,7 @@ describe("onboard command options", () => {
           flags: { ...testCase.flags, agents: manifestPath },
           env,
           listServingProfiles: testCase.listServingProfiles,
+          resolvePortableInferenceSource: testCase.resolvePortableInferenceSource,
           runOnboard: vi.fn(),
         }),
       ).rejects.toThrow("--agents YAML parse error");
