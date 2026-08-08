@@ -299,7 +299,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
       "/dev/null",
       "-w",
       "%{http_code}",
-      `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/models`,
+      `http://127.0.0.1:${String(recipe.spec.serve.port)}/props`,
     ],
     {
       artifactName: "llama-cpp-unauthorized",
