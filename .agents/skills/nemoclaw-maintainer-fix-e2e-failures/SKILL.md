@@ -47,6 +47,12 @@ Repeat these steps continuously while the loop remains authorized:
 
 If nothing is actionable, use the product's wait, loop, or monitoring mechanism and resume. Do not end the task early.
 
+## Apply Common Decisions
+
+- If Linux and macOS jobs have the same stable readiness signature, group them in one claim.
+- If the PR head changes, discard the exact-head review. Claim and review the new head before approval.
+- If a later automatic `main` run proves that another merge removed the root cause, close the open fix as obsolete. Credit only the superseding fix.
+
 ## Claim One Root Cause
 
 Before changing product code:

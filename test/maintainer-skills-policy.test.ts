@@ -321,6 +321,12 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "Do not declare success or end because the queue is empty or the newest run passes",
     );
     expect(skill).toContain("Repeat these steps continuously while the loop remains authorized");
+    expect(skill).toContain("## Apply Common Decisions");
+    expect(skill).toContain(
+      "If Linux and macOS jobs have the same stable readiness signature, group them in one claim",
+    );
+    expect(skill).toContain("If the PR head changes, discard the exact-head review");
+    expect(skill).toContain("Credit only the superseding fix");
     expect(skill).toContain("Never change, retag, publish, or otherwise touch `v0.0.104`");
     expect(skill).toContain("git show origin/main:.github/workflows/pr-limit.yaml");
     expect(skill).toContain("For a non-exempt author");
@@ -344,6 +350,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(skill).toContain("Close Obsolete Work");
 
     expect(ownership).toContain("<affected surface> / <failure phase> / <stable causal signature>");
+    expect(ownership).toContain("## Contents");
+    expect(ownership).toContain("[Reconcile Concurrent Claims](#reconcile-concurrent-claims)");
     expect(ownership).toContain("Treat an open PR as ownership");
     expect(ownership).toContain("waiting PR may review peers");
     expect(ownership).toContain("a unique `mktemp -d` directory outside the repository");
@@ -357,6 +365,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(ownership).toContain("only in the private continuity handoff");
 
     expect(review).toContain("current-head approval");
+    expect(review).toContain("## Contents");
+    expect(review).toContain("[Review the Exact Head](#review-the-exact-head)");
     expect(review).toContain("A review claim applies only to the named head SHA");
     expect(review).toContain("If the head changes, release the old claim");
     expect(review).toContain("Reconcile Every GitHub Write");

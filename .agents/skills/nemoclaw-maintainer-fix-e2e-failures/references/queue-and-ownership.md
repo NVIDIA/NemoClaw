@@ -3,6 +3,16 @@
 
 # Queue and Ownership
 
+## Contents
+
+- [Build a Root-Cause Key](#build-a-root-cause-key)
+- [Record Evidence](#record-evidence)
+- [Search Before Editing](#search-before-editing)
+- [Claim Through a Draft PR](#claim-through-a-draft-pr)
+- [Interpret One Active Fix](#interpret-one-active-fix)
+- [Reconcile Concurrent Claims](#reconcile-concurrent-claims)
+- [Re-scan Without Reanalysis](#re-scan-without-reanalysis)
+
 ## Build a Root-Cause Key
 
 Name each group with three parts:

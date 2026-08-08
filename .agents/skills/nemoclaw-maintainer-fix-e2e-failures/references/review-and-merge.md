@@ -3,6 +3,16 @@
 
 # Review and Merge
 
+## Contents
+
+- [Reconcile Every GitHub Write](#reconcile-every-github-write)
+- [Separate Roles](#separate-roles)
+- [Review the Exact Head](#review-the-exact-head)
+- [Unblock “Approve and run workflows”](#unblock-approve-and-run-workflows)
+- [Decide Whether to Refresh the Branch](#decide-whether-to-refresh-the-branch)
+- [Final Merge Gate](#final-merge-gate)
+- [Merge Without Bypass](#merge-without-bypass)
+
 ## Reconcile Every GitHub Write
 
 Treat a nonzero exit, timeout, interrupted response, or malformed response from a GitHub write as ambiguous. Do not assume that the write failed, and do not retry immediately.
