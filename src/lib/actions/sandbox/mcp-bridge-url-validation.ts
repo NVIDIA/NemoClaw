@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isIP } from "node:net";
+
 import { resolveHostAddresses } from "../../adapters/dns/resolve";
 import { isLoopbackHostname } from "../../private-networks";
 import {
@@ -10,8 +12,8 @@ import {
 } from "../../security/mcp-url-target";
 import { TOKEN_PREFIX_PATTERNS } from "../../security/secret-patterns";
 import {
+  assertTrustedPrivateEndpointCapability,
   assertEndpointResolvesPublic,
-  isTrustedPrivateEndpointCapability,
   normalizeTrustedPrivateHost,
   type TrustedPrivateEndpointCapability,
 } from "../../security/trusted-private-endpoint";
@@ -281,29 +283,24 @@ export async function preflightMcpServerUrlResolvedTarget(
   const normalizedHostname = normalizeTrustedPrivateHost(parsed.hostname);
   const explicitTrust = normalizedTrustedHosts.includes(normalizedHostname);
   if (result.trustedPrivateEndpoint) {
-    if (!isTrustedPrivateEndpointCapability(result.trustedPrivateCapability)) {
+    try {
+      const authority = assertTrustedPrivateEndpointCapability(
+        normalizedHostname,
+        addresses,
+        result.trustedPrivateCapability,
+        { requireAllPrivate: true },
+      );
+      return {
+        addresses: [...authority.addresses],
+        trustedPrivateCapability: authority.trustedPrivateCapability,
+        trustedPrivateHost: authority.host,
+      };
+    } catch {
       throw new McpBridgeError(
-        `MCP server URL host '${normalizedHostname}' did not return a provenance-checked trusted-private capability.`,
+        `MCP server URL host '${normalizedHostname}' did not return exact routed-private authority. Trusted-private MCP endpoints must resolve only to supported routed private addresses, and every pin must match the host-bound capability.`,
         2,
       );
     }
-    const capabilityAddresses = [...result.trustedPrivateCapability.addresses]
-      .map((address) => address.toLowerCase())
-      .sort();
-    if (
-      capabilityAddresses.length !== addresses.length ||
-      capabilityAddresses.some((address, index) => address !== addresses[index])
-    ) {
-      throw new McpBridgeError(
-        `MCP server URL host '${normalizedHostname}' returned mixed public and private addresses. Trusted-private MCP endpoints must resolve only to supported routed private addresses.`,
-        2,
-      );
-    }
-    return {
-      addresses,
-      trustedPrivateCapability: result.trustedPrivateCapability,
-      trustedPrivateHost: normalizedHostname,
-    };
   }
   if (explicitTrust && options.requireTrustedPrivateEndpoint) {
     throw new McpBridgeError(
@@ -343,4 +340,76 @@ export async function inspectMcpRecordedTargetPins(
 
 export function parseMcpUrl(rawUrl: string): URL {
   return new URL(normalizeMcpServerUrl(rawUrl));
+}
+
+/**
+ * Revalidate URL syntax while preserving the exact destination authority
+ * issued by MCP target preflight or durable trusted-private replay.
+ */
+export function parseMcpUrlWithValidatedTarget(
+  rawUrl: string,
+  target: McpBridgeTargetValidation,
+): URL {
+  const addresses = [...target.addresses];
+  const sortedAddresses = [...addresses].sort();
+  if (
+    addresses.length === 0 ||
+    addresses.some(
+      (address) =>
+        typeof address !== "string" ||
+        isIP(address) === 0 ||
+        address !== address.toLowerCase() ||
+        address.includes("%"),
+    ) ||
+    new Set(addresses).size !== addresses.length ||
+    addresses.some((address, index) => address !== sortedAddresses[index])
+  ) {
+    throw new McpBridgeError(
+      "Validated MCP target must contain a non-empty canonical set of exact address pins.",
+      2,
+    );
+  }
+
+  const hasPrivateAuthority =
+    target.trustedPrivateCapability !== undefined || target.trustedPrivateHost !== undefined;
+  if (!hasPrivateAuthority) {
+    if (addresses.some((address) => isBlockedMcpUrlTargetHost(address))) {
+      throw new McpBridgeError(
+        "Validated public MCP target contains a private, local, or special-use address pin.",
+        2,
+      );
+    }
+    return new URL(normalizeMcpServerUrl(rawUrl));
+  }
+
+  if (!target.trustedPrivateHost || !target.trustedPrivateCapability) {
+    throw new McpBridgeError(
+      "Validated private MCP target has no provenance-checked endpoint capability.",
+      2,
+    );
+  }
+  let authority;
+  try {
+    authority = assertTrustedPrivateEndpointCapability(
+      target.trustedPrivateHost,
+      addresses,
+      target.trustedPrivateCapability,
+      { requireAllPrivate: true },
+    );
+  } catch {
+    throw new McpBridgeError(
+      "Validated private MCP target does not match its host-bound endpoint capability.",
+      2,
+    );
+  }
+  const trustedPrivateHost = authority.host;
+
+  const rawParsed = new URL(rawUrl);
+  if (normalizeTrustedPrivateHost(rawParsed.hostname) !== trustedPrivateHost) {
+    throw new McpBridgeError(
+      `Validated private MCP target host '${trustedPrivateHost}' does not match URL host '${rawParsed.hostname}'.`,
+      2,
+    );
+  }
+  return new URL(normalizeMcpServerUrl(rawUrl, { trustedPrivateHosts: [trustedPrivateHost] }));
 }

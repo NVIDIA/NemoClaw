@@ -8,7 +8,7 @@ metadata:
   id: llama-cpp.openclaw.spark-single.v1
 
 spec:
-  execution: disabled
+  execution: enabled
   agent: openclaw
   image:
     reference: ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e
