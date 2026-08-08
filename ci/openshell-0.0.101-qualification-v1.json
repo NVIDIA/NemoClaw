@@ -1,0 +1,406 @@
+{
+  "schemaVersion": 1,
+  "scope": "NVIDIA/NemoClaw#8590",
+  "repository": "NVIDIA/NemoClaw",
+  "inventoryState": "draft",
+  "requiredWorkflowGate": null,
+  "retirementEvidence": null,
+  "requiredStatusRulesetId": 15735613,
+  "artifacts": [],
+  "nemoclawRepositoryBaselineSha": "02398f3433f8c8d4cc329328229854bde7f4ce77",
+  "nemoclawUserBaselineTag": "v0.0.104",
+  "nemoclawUserBaselineTagObjectSha": "fc9b7ecee4e81048ab0f2c73c513cd606313797a",
+  "nemoclawUserBaselineCommitSha": "f389c9d872775006ae069473f58250fa8f3ad40f",
+  "lifecycle": "bootstrap",
+  "openshellRepositoryBaselineVersion": "0.0.99",
+  "openshellRepositoryBaselineTag": "v0.0.99",
+  "openshellRepositoryBaselineCommitSha": "8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032",
+  "openshellBaselineVersion": "0.0.85",
+  "openshellBaselineTag": "v0.0.85",
+  "openshellBaselineCommitSha": "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+  "openshellTargetVersion": "0.0.101",
+  "openshellTargetTag": "v0.0.101",
+  "openshellTargetCommitSha": "8ddd98c3dff62619a3963f99ba1e055b67650e72",
+  "trustedProducerWorkflowPath": ".github/workflows/openshell-0.0.101-qualification.yaml",
+  "tests": [
+    {
+      "id": "openshell-00101-docker-clean-install",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8605],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "clean-install",
+        "exact-candidate-base",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00099-to-00101-docker-upgrade",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8605],
+      "phases": ["selector"],
+      "requiredCases": [
+        "exact-candidate-base",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket",
+        "upgrade-from-00099"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00085-to-00101-docker-upgrade",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8605],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "direct-public-v85",
+        "exact-candidate-base",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-rootless-podman-controlled",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8603],
+      "phases": ["selector"],
+      "requiredCases": [
+        "exact-candidate-base",
+        "no-docker-fallback",
+        "published-artifacts",
+        "real-prepared-socket",
+        "real-runtime",
+        "real-socket"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-rootless-podman-clean-install",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8603],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "clean-install",
+        "exact-candidate-base",
+        "no-docker-fallback",
+        "published-artifacts",
+        "real-prepared-socket",
+        "real-runtime",
+        "real-socket"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00099-to-00101-rootless-podman-upgrade",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8603, 8605],
+      "phases": ["selector"],
+      "requiredCases": [
+        "exact-candidate-base",
+        "no-docker-fallback",
+        "published-artifacts",
+        "real-prepared-socket",
+        "real-runtime",
+        "real-socket",
+        "upgrade-from-00099"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00085-to-00101-rootless-podman-upgrade",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8603, 8605],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "direct-public-v85",
+        "exact-candidate-base",
+        "no-docker-fallback",
+        "published-artifacts",
+        "real-prepared-socket",
+        "real-runtime",
+        "real-socket"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-keepalive",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8601],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "exact-candidate-base",
+        "idle-over-interval",
+        "long-running",
+        "proxy-policy-path",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket",
+        "reconnect"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-policy-credentials",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8602],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "child-visible-boundary",
+        "default-db-selected",
+        "exact-candidate-base",
+        "no-external-driver",
+        "no-new-egress-mount-privilege",
+        "policy-deny",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket",
+        "secret-negative"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-credential-store-lifecycle",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8602],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "create-update-refresh-delete",
+        "exact-candidate-base",
+        "legacy-inline-preserved",
+        "owner-only-kek",
+        "plaintext-negative",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket",
+        "restart-retry-crash-cleanup",
+        "secret-negative",
+        "touched-key-handle-transition"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-component-coherence",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8602],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "artifact-component-coherence",
+        "exact-candidate-base",
+        "no-egress-adapter",
+        "no-go-sdk",
+        "no-vm-driver",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-runtime-identity",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8604],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "exact-candidate-base",
+        "full-id",
+        "image-identity",
+        "labels",
+        "non-root",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket",
+        "ssh-alias",
+        "supervisor-argv-workdir",
+        "workspace-name"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-upgrade-recovery",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8605],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "delete-convergence",
+        "direct-public-v85",
+        "exact-candidate-base",
+        "interruption",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket",
+        "rollback-retry"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    },
+    {
+      "id": "openshell-00101-same-name-isolation",
+      "approvedExceptions": [],
+      "matrix": { "lanes": [] },
+      "ownerIssues": [8605],
+      "phases": ["selector", "final"],
+      "requiredCases": [
+        "exact-candidate-base",
+        "published-artifacts",
+        "real-runtime",
+        "real-socket",
+        "same-name-isolation"
+      ],
+      "requiredDimensions": [
+        "all-registered-agents",
+        "applicable-gpu",
+        "cpu",
+        "supported-architecture",
+        "supported-os"
+      ],
+      "mappings": {
+        "selector": { "status": "pending", "source": null },
+        "final": { "status": "pending", "source": null }
+      }
+    }
+  ]
+}

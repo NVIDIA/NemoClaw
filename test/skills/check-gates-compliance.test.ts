@@ -774,7 +774,7 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(output.gates.ci_green_sha).toBe(false);
     expect(output.details.ci_missing_required_checks).toEqual(REQUIRED_CHECK_NAMES);
     expect(output.failures).toContain(
-      "substantive:ci_failures=0,pending=0,missing=checks,check-hash,changes,commit-lint,dco-check",
+      `substantive:ci_failures=0,pending=0,missing=${REQUIRED_CHECK_NAMES.join(",")}`,
     );
   });
 

@@ -310,6 +310,7 @@ interface ExactDiffIdentity {
   headSha: string;
   baseSha: string;
   headRefName: string;
+  baseRefName: string;
   headRepository: string;
 }
 
@@ -1228,8 +1229,12 @@ const PR_CI_RUN_TITLE =
   /^CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const INSTALLER_HASH_RUN_TITLE =
   /^Installer Hash PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
+const OPENSHELL_QUALIFICATION_RUN_TITLE =
+  /^OpenShell Qualification PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const E2E_GATE_RUN_TITLE =
   /^E2E Gate PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
+const GITHUB_ACTIONS_APP_ID = 15368;
+const OPENSHELL_QUALIFICATION_WORKFLOW_PATH = ".github/workflows/openshell-0.0.101-pr-gate.yaml";
 const REPOSITORY_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
   ["checks", ".github/workflows/pr.yaml"],
@@ -1237,6 +1242,7 @@ const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
   ["check-hash", ".github/workflows/installer-hash-check.yaml"],
   ["commit-lint", ".github/workflows/commit-lint.yaml"],
   ["dco-check", ".github/workflows/dco-check.yaml"],
+  ["openshell-qualification", OPENSHELL_QUALIFICATION_WORKFLOW_PATH],
   ["E2E / PR Gate", ".github/workflows/pr-e2e-gate.yaml"],
 ]);
 const PR_METADATA_EDIT_JOB_NAMES = new Set([
@@ -1261,6 +1267,7 @@ const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
 
 interface ActionRunMetadata {
   attempt: number;
+  appId: number | null;
   createdAt: number;
   updatedAt: number;
   exactDiff: boolean | null;
@@ -1268,9 +1275,14 @@ interface ActionRunMetadata {
   headShaMatches: boolean | null;
   headRefNameMatches: boolean | null;
   headRepositoryMatches: boolean | null;
+  baseHeadShaMatches: boolean | null;
+  baseHeadRefNameMatches: boolean | null;
+  baseHeadRepositoryMatches: boolean | null;
   immutablePrDiff: boolean | null;
   prCiGate: boolean | null;
   installerHashGate: boolean | null;
+  openshellQualificationDiff: boolean | null;
+  openshellQualificationGate: boolean | null;
   e2eGateDiff: boolean | null;
   e2eGateRun: boolean | null;
   event: string | null;
@@ -1411,6 +1423,8 @@ function currentCheckRollup(
     let immutablePrDiff: boolean | null = null;
     let prCiGate: boolean | null = null;
     let installerHashGate: boolean | null = null;
+    let openshellQualificationDiff: boolean | null = null;
+    let openshellQualificationGate: boolean | null = null;
     let e2eGateDiff: boolean | null = null;
     let e2eGateRun: boolean | null = null;
     if (event === "pull_request") {
@@ -1437,6 +1451,20 @@ function currentCheckRollup(
         }
       }
     }
+    if (event === "pull_request_target" && path === OPENSHELL_QUALIFICATION_WORKFLOW_PATH) {
+      const title = typeof record.display_title === "string" ? record.display_title : "";
+      const match = title.match(OPENSHELL_QUALIFICATION_RUN_TITLE);
+      if (match) {
+        const titlePrNumber = Number(match[1]);
+        if (Number.isSafeInteger(titlePrNumber) && titlePrNumber > 0) {
+          openshellQualificationDiff =
+            titlePrNumber === exactDiff.number &&
+            match[2] === exactDiff.headSha &&
+            match[3] === exactDiff.baseSha;
+          openshellQualificationGate = match[4] === "true";
+        }
+      }
+    }
     if (event === "pull_request_target" && path === ".github/workflows/pr-e2e-gate.yaml") {
       const title = typeof record.display_title === "string" ? record.display_title : "";
       const match = title.match(E2E_GATE_RUN_TITLE);
@@ -1453,9 +1481,36 @@ function currentCheckRollup(
     }
 
     const headRepository = record.head_repository;
+    const checkSuiteId = record.check_suite_id;
+    let appId: number | null = null;
+    if (
+      path === OPENSHELL_QUALIFICATION_WORKFLOW_PATH &&
+      Number.isSafeInteger(checkSuiteId) &&
+      (checkSuiteId as number) > 0
+    ) {
+      const checkSuite = ghJson(["api", `repos/${repo}/check-suites/${checkSuiteId as number}`]);
+      if (
+        typeof checkSuite === "object" &&
+        checkSuite !== null &&
+        !Array.isArray(checkSuite) &&
+        (checkSuite as Record<string, unknown>).id === checkSuiteId
+      ) {
+        const app = (checkSuite as Record<string, unknown>).app;
+        if (
+          typeof app === "object" &&
+          app !== null &&
+          !Array.isArray(app) &&
+          Number.isSafeInteger((app as Record<string, unknown>).id) &&
+          ((app as Record<string, unknown>).id as number) > 0
+        ) {
+          appId = (app as Record<string, unknown>).id as number;
+        }
+      }
+    }
 
     return {
       attempt: record.run_attempt as number,
+      appId,
       createdAt,
       updatedAt,
       exactDiff: exactDiffMatch,
@@ -1473,9 +1528,24 @@ function currentCheckRollup(
         typeof (headRepository as Record<string, unknown>).full_name === "string"
           ? (headRepository as Record<string, unknown>).full_name === exactDiff.headRepository
           : null,
+      baseHeadShaMatches:
+        typeof record.head_sha === "string" ? record.head_sha === exactDiff.baseSha : null,
+      baseHeadRefNameMatches:
+        typeof record.head_branch === "string"
+          ? record.head_branch === exactDiff.baseRefName
+          : null,
+      baseHeadRepositoryMatches:
+        typeof headRepository === "object" &&
+        headRepository !== null &&
+        !Array.isArray(headRepository) &&
+        typeof (headRepository as Record<string, unknown>).full_name === "string"
+          ? (headRepository as Record<string, unknown>).full_name === repo
+          : null,
       immutablePrDiff,
       prCiGate,
       installerHashGate,
+      openshellQualificationDiff,
+      openshellQualificationGate,
       e2eGateDiff,
       e2eGateRun,
       event,
@@ -1588,6 +1658,7 @@ function currentCheckRollup(
     if (
       !refreshed ||
       refreshed.attempt !== metadata.attempt ||
+      refreshed.appId !== metadata.appId ||
       refreshed.createdAt !== metadata.createdAt ||
       refreshed.updatedAt !== metadata.updatedAt ||
       refreshed.exactDiff !== metadata.exactDiff ||
@@ -1595,9 +1666,14 @@ function currentCheckRollup(
       refreshed.headShaMatches !== metadata.headShaMatches ||
       refreshed.headRefNameMatches !== metadata.headRefNameMatches ||
       refreshed.headRepositoryMatches !== metadata.headRepositoryMatches ||
+      refreshed.baseHeadShaMatches !== metadata.baseHeadShaMatches ||
+      refreshed.baseHeadRefNameMatches !== metadata.baseHeadRefNameMatches ||
+      refreshed.baseHeadRepositoryMatches !== metadata.baseHeadRepositoryMatches ||
       refreshed.immutablePrDiff !== metadata.immutablePrDiff ||
       refreshed.prCiGate !== metadata.prCiGate ||
       refreshed.installerHashGate !== metadata.installerHashGate ||
+      refreshed.openshellQualificationDiff !== metadata.openshellQualificationDiff ||
+      refreshed.openshellQualificationGate !== metadata.openshellQualificationGate ||
       refreshed.e2eGateDiff !== metadata.e2eGateDiff ||
       refreshed.e2eGateRun !== metadata.e2eGateRun ||
       refreshed.event !== metadata.event ||
@@ -1663,6 +1739,32 @@ function currentCheckRollup(
       run.headShaMatches === true &&
       run.headRefNameMatches === true &&
       run.headRepositoryMatches === true
+      ? "current"
+      : "unknown";
+  };
+
+  const openshellQualificationHeadBinding = (
+    run: ActionRunMetadata,
+  ): "current" | "other" | "unknown" => {
+    if (run.event !== "pull_request_target" || run.path !== OPENSHELL_QUALIFICATION_WORKFLOW_PATH) {
+      return "unknown";
+    }
+    if (
+      run.exactDiff === false ||
+      run.openshellQualificationDiff === false ||
+      run.openshellQualificationGate === false ||
+      run.baseHeadShaMatches === false ||
+      run.baseHeadRefNameMatches === false ||
+      run.baseHeadRepositoryMatches === false
+    ) {
+      return "other";
+    }
+    return run.openshellQualificationDiff === true &&
+      run.openshellQualificationGate === true &&
+      run.baseHeadShaMatches === true &&
+      run.baseHeadRefNameMatches === true &&
+      run.baseHeadRepositoryMatches === true &&
+      (run.exactDiff === true || run.hasPullRequests === false)
       ? "current"
       : "unknown";
   };
@@ -1761,6 +1863,10 @@ function currentCheckRollup(
         (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
         (run.path !== ".github/workflows/installer-hash-check.yaml" ||
           run.installerHashGate === true) &&
+        (run.path !== OPENSHELL_QUALIFICATION_WORKFLOW_PATH ||
+          (run.event === "pull_request_target" &&
+            run.openshellQualificationDiff === true &&
+            run.openshellQualificationGate === true)) &&
         (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
           run.event !== "pull_request_target" ||
           (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
@@ -1806,8 +1912,17 @@ function currentCheckRollup(
     const expectedWorkflowPath = REQUIRED_CHECK_WORKFLOW_PATHS.get(checkName);
     const runMetadata = actionRunMetadata(runId);
     const hasCurrentIdentity = runIdentityEvidence(runId, requiresExactDiff) === "current";
+    const hasTrustedAppIdentity =
+      checkName !== "openshell-qualification" ||
+      (runMetadata?.appId === GITHUB_ACTIONS_APP_ID &&
+        selected?.every(
+          (check) =>
+            check.__typename === "CheckRun" &&
+            (check.appId === undefined || check.appId === GITHUB_ACTIONS_APP_ID),
+        ) === true);
     if (
       !selected ||
+      !hasTrustedAppIdentity ||
       !hasCurrentIdentity ||
       !runMetadata ||
       !runMetadata.event ||
@@ -1816,6 +1931,10 @@ function currentCheckRollup(
       (expectedWorkflowPath === ".github/workflows/pr.yaml" && runMetadata.prCiGate !== true) ||
       (expectedWorkflowPath === ".github/workflows/installer-hash-check.yaml" &&
         runMetadata.installerHashGate !== true) ||
+      (expectedWorkflowPath === OPENSHELL_QUALIFICATION_WORKFLOW_PATH &&
+        (runMetadata.event !== "pull_request_target" ||
+          runMetadata.openshellQualificationDiff !== true ||
+          runMetadata.openshellQualificationGate !== true)) ||
       (expectedWorkflowPath === ".github/workflows/pr-e2e-gate.yaml" &&
         runMetadata.event === "pull_request_target" &&
         (runMetadata.e2eGateDiff !== true || runMetadata.e2eGateRun !== true)) ||
@@ -1958,6 +2077,9 @@ function currentCheckRollup(
       }
       return "unknown";
     }
+    if (metadata.path === OPENSHELL_QUALIFICATION_WORKFLOW_PATH) {
+      return openshellQualificationHeadBinding(metadata);
+    }
     if (metadata.exactDiff === true) {
       if (metadata.headShaMatches === true) {
         return "current";
@@ -1992,6 +2114,15 @@ function currentCheckRollup(
   const mergeRelevantStatusChecks = statusCheckRollup.filter(
     (check) => !isAuthenticatedAdvisoryPrReviewCheck(check),
   );
+  for (const check of mergeRelevantStatusChecks) {
+    if (
+      (check.name ?? check.context) === "openshell-qualification" &&
+      (check.__typename !== "CheckRun" ||
+        (check.appId !== undefined && check.appId !== GITHUB_ACTIONS_APP_ID))
+    ) {
+      incompleteAttemptEvidence.add("openshell-qualification");
+    }
+  }
   const allActionRunIds = new Set(
     mergeRelevantStatusChecks.map(actionRunId).filter((runId): runId is string => Boolean(runId)),
   );
@@ -2975,7 +3106,10 @@ function fetchFinalPrSnapshot(
                         startedAt
                         completedAt
                         detailsUrl
-                        checkSuite { workflowRun { workflow { name } } }
+                        checkSuite {
+                          app { databaseId }
+                          workflowRun { workflow { name } }
+                        }
                       }
                       ... on StatusContext {
                         context
@@ -3271,6 +3405,13 @@ function parseFinalStatusCheckRollup(
           ? (workflowRun.workflow as Record<string, unknown>)
           : null;
       const workflowName = workflow?.name;
+      const app =
+        typeof checkSuite?.app === "object" &&
+        checkSuite.app !== null &&
+        !Array.isArray(checkSuite.app)
+          ? (checkSuite.app as Record<string, unknown>)
+          : null;
+      const appId = app?.databaseId;
       const scalarFields = [
         node.name,
         node.status,
@@ -3283,6 +3424,9 @@ function parseFinalStatusCheckRollup(
       if (
         typeof node.name !== "string" ||
         typeof node.status !== "string" ||
+        (appId !== undefined &&
+          appId !== null &&
+          (!Number.isSafeInteger(appId) || (appId as number) < 1)) ||
         scalarFields.some(
           (value) => value !== undefined && value !== null && typeof value !== "string",
         )
@@ -3291,6 +3435,7 @@ function parseFinalStatusCheckRollup(
       }
       statusCheckRollup.push({
         __typename: "CheckRun",
+        ...(Number.isSafeInteger(appId) && (appId as number) > 0 ? { appId: appId as number } : {}),
         name: node.name,
         status: node.status,
         ...(typeof node.conclusion === "string" ? { conclusion: node.conclusion } : {}),
@@ -3428,6 +3573,7 @@ function main(): void {
     headSha: prData.headRefOid,
     baseSha: prData.baseRefOid,
     headRefName: prData.headRefName,
+    baseRefName: prData.baseRefName,
     headRepository,
   };
   const currentBaseSha = fetchCurrentBaseSha(repo, prNumber);

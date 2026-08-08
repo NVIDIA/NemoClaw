@@ -12,6 +12,7 @@ const REQUIRED_CHECK_NAMES = [
   "changes",
   "commit-lint",
   "dco-check",
+  "openshell-qualification",
 ] as const;
 
 type E2eCheckFixture = [number, number, string, string?, string?, string?, string?];
@@ -41,6 +42,11 @@ const REQUIRED_CHECK_RUNS: Record<string, { runId: number; jobId: number; workfl
     "check-hash": { runId: 91, jobId: 1, workflowName: "Security / Installer Hash Check" },
     "commit-lint": { runId: 92, jobId: 1, workflowName: "CI / Commit Lint" },
     "dco-check": { runId: 93, jobId: 1, workflowName: "CI / DCO Check" },
+    "openshell-qualification": {
+      runId: 95,
+      jobId: 1,
+      workflowName: "OpenShell 0.0.101 PR Gate",
+    },
     "E2E / PR Gate": { runId: 94, jobId: 1, workflowName: "E2E / PR Gate Controller" },
   };
 
@@ -57,6 +63,8 @@ interface ActionJobFixture {
 
 interface ActionRunFixture {
   attempt: number;
+  appId?: number | null;
+  checkSuiteId?: number;
   nextAttempt?: number;
   nextCreatedAt?: string;
   nextUpdatedAt?: string;
@@ -99,6 +107,7 @@ interface CoordinatorRunPartitionFixture {
 
 interface StatusCheckFixture {
   __typename?: string;
+  appId?: number;
   name?: string;
   context?: string;
   workflowName?: string;
@@ -201,6 +210,27 @@ function requiredCheck(name: string, conclusion = "SUCCESS") {
   }
   const { runId, jobId, workflowName } = REQUIRED_CHECK_RUNS[name];
   return e2eGateCheck([runId, jobId, conclusion, undefined, undefined, workflowName, name]);
+}
+
+function openshellQualificationRun(
+  result: string,
+  jobs: ActionJobFixture[],
+  gate = true,
+): ActionRunFixture {
+  return {
+    attempt: 1,
+    headSha: BASE_SHA,
+    headBranch: "main",
+    headRepository: "NVIDIA/NemoClaw",
+    repository: "NVIDIA/NemoClaw",
+    pullRequests: [],
+    displayTitle: `OpenShell Qualification PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate ${gate}`,
+    event: "pull_request_target",
+    path: ".github/workflows/openshell-0.0.101-pr-gate.yaml",
+    status: "completed",
+    conclusion: result,
+    jobs,
+  };
 }
 
 function initialE2eSeedJobs(): ActionJobFixture[] {
@@ -497,12 +527,16 @@ function runGate(fixture: ComplianceFixture) {
       ? fixture.currentBaseSha
       : fixture.finalCurrentBaseSha;
   const buildFinalPrSnapshotOutput = (statusChecks: StatusCheckFixture[]) => {
-    const nodes = statusChecks.map(({ workflowName, ...check }) => ({
-      ...check,
-      ...(workflowName
-        ? { checkSuite: { workflowRun: { workflow: { name: workflowName } } } }
-        : {}),
-    }));
+    const nodes = statusChecks.map(({ workflowName, appId, ...check }) => {
+      const checkSuite = {
+        ...(appId ? { app: { databaseId: appId } } : {}),
+        ...(workflowName ? { workflowRun: { workflow: { name: workflowName } } } : {}),
+      };
+      return {
+        ...check,
+        ...(Object.keys(checkSuite).length > 0 ? { checkSuite } : {}),
+      };
+    });
     const pageSize = fixture.finalStatusCheckPageSize ?? Math.max(1, nodes.length);
     const nodePages =
       nodes.length === 0
@@ -600,11 +634,13 @@ function runGate(fixture: ComplianceFixture) {
       event: "pull_request",
       path: ".github/workflows/dco-check.yaml",
     },
+    "95": openshellQualificationRun("success", [{ id: 1, name: "openshell-qualification" }]),
     ...fixture.actionRunAttempts,
   };
   const actionRunData = (runId: string, value: ActionRunFixture): Record<string, unknown> => ({
     id: Number(runId),
     run_attempt: value.attempt,
+    check_suite_id: value.checkSuiteId ?? 100_000 + Number(runId),
     ...(value.omitCreatedAt
       ? {}
       : {
@@ -659,6 +695,7 @@ function runGate(fixture: ComplianceFixture) {
       );
       const jobs = jobPages.flat();
       const runData = actionRunData(runId, value);
+      const checkSuiteId = value.checkSuiteId ?? 100_000 + Number(runId);
       const refreshedRunData = {
         ...runData,
         run_attempt: value.nextAttempt ?? value.attempt,
@@ -671,6 +708,7 @@ function runGate(fixture: ComplianceFixture) {
       const runMarker = path.join(tmp, `action-run-${runId}-seen`);
       return [
         `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}") if mkdir ${shellSingleQuote(runMarker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(runData))}; else printf '%s' ${shellSingleQuote(JSON.stringify(refreshedRunData))}; fi ;;`,
+        `  "api repos/NVIDIA/NemoClaw/check-suites/${checkSuiteId}") printf '%s' ${shellSingleQuote(JSON.stringify({ id: checkSuiteId, app: value.appId === null ? null : { id: value.appId ?? 15368 } }))} ;;`,
         `  "api --paginate --slurp repos/NVIDIA/NemoClaw/actions/runs/${runId}/attempts/${value.attempt}/jobs?per_page=100") printf '%s' ${shellSingleQuote(
           JSON.stringify(
             jobPages.map((page) => ({
@@ -916,6 +954,7 @@ export {
   HEAD_SHA,
   INCOMPLETE_E2E,
   installerHashRun,
+  openshellQualificationRun,
   prWorkflowJobs,
   prWorkflowRun,
   REQUIRED_CHECK_NAMES,

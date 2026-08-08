@@ -1,0 +1,257 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: OpenShell 0.0.101 PR Gate
+
+run-name: >-
+  ${{ format('OpenShell Qualification PR #{0} head {1} base {2} gate {3}',
+  github.event.pull_request.number, github.event.pull_request.head.sha,
+  github.event.pull_request.base.sha,
+  github.repository == 'NVIDIA/NemoClaw' &&
+  github.event.pull_request.base.repo.full_name == github.repository &&
+  github.event.pull_request.base.ref == 'main') }}
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  classify:
+    name: Classify trusted qualification scope
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      required: ${{ steps.classify.outputs.required }}
+      same-repository: ${{ steps.classify.outputs.same-repository }}
+    steps:
+      - name: Set up base-trusted qualification runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Checkout base-trusted qualification verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-openshell-qualification
+          persist-credentials: false
+          sparse-checkout: |
+            ci/openshell-0.0.101-qualification-v1.json
+            nemoclaw-blueprint/blueprint.yaml
+            scripts/checks/openshell-qualification-contract.mts
+            scripts/checks/openshell-qualification-core.mts
+            scripts/checks/openshell-qualification-github.mts
+            scripts/checks/openshell-qualification-io.mts
+            scripts/checks/openshell-qualification-matrix.mts
+            scripts/checks/openshell-qualification-paths.mts
+            scripts/checks/openshell-qualification-schema.mts
+            scripts/checks/verify-openshell-qualification-pr-gate.mts
+            scripts/scorecard/read-artifact-zip.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Classify pull request from base-trusted code
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          .trusted-openshell-qualification/scripts/checks/verify-openshell-qualification-pr-gate.mts
+          classify
+          --repository "$REPOSITORY"
+          --pr-number "$PR_NUMBER"
+          --candidate-sha "$CANDIDATE_SHA"
+          --base-sha "$BASE_SHA"
+          --base-root "$GITHUB_WORKSPACE/.trusted-openshell-qualification"
+          --github-output "$GITHUB_OUTPUT"
+
+  qualification-receipt:
+    name: Authenticate exact qualification receipt
+    needs: classify
+    if: >-
+      needs.classify.result == 'success' &&
+      needs.classify.outputs.required == 'true' &&
+      needs.classify.outputs.same-repository == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      authority-required: ${{ steps.receipt.outputs.authority-required }}
+      organization-ruleset-id: ${{ steps.receipt.outputs.organization-ruleset-id }}
+      receipt-required: ${{ steps.receipt.outputs.receipt-required }}
+      required-status-ruleset-id: ${{ steps.receipt.outputs.required-status-ruleset-id }}
+    steps:
+      - name: Set up base-trusted qualification runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Checkout base-trusted qualification verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-openshell-qualification
+          persist-credentials: false
+          sparse-checkout: |
+            ci/openshell-0.0.101-qualification-v1.json
+            nemoclaw-blueprint/blueprint.yaml
+            scripts/checks/openshell-qualification-contract.mts
+            scripts/checks/openshell-qualification-core.mts
+            scripts/checks/openshell-qualification-github.mts
+            scripts/checks/openshell-qualification-io.mts
+            scripts/checks/openshell-qualification-matrix.mts
+            scripts/checks/openshell-qualification-paths.mts
+            scripts/checks/openshell-qualification-schema.mts
+            scripts/checks/verify-openshell-qualification-pr-gate.mts
+            scripts/scorecard/read-artifact-zip.mts
+          sparse-checkout-cone-mode: false
+
+      # This checkout is data only. No candidate script, action, workflow, or
+      # package lifecycle hook is executed, and no privileged credential is in
+      # this job. Classification has already proved the exact PR is applicable
+      # and uses a same-repository head.
+      - name: Checkout candidate qualification data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .candidate-openshell-qualification
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+          sparse-checkout: |
+            ci/openshell-0.0.101-qualification-v1.json
+            nemoclaw-blueprint/blueprint.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Authenticate exact contract-mapped receipt
+        id: receipt
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          .trusted-openshell-qualification/scripts/checks/verify-openshell-qualification-pr-gate.mts
+          verify
+          --repository "$REPOSITORY"
+          --pr-number "$PR_NUMBER"
+          --candidate-sha "$CANDIDATE_SHA"
+          --base-sha "$BASE_SHA"
+          --base-root "$GITHUB_WORKSPACE/.trusted-openshell-qualification"
+          --candidate-root "$GITHUB_WORKSPACE/.candidate-openshell-qualification"
+          --github-output "$GITHUB_OUTPUT"
+
+  qualification-authority:
+    name: Authenticate protected ruleset authority
+    needs: [classify, qualification-receipt]
+    if: >-
+      needs.classify.result == 'success' &&
+      needs.classify.outputs.required == 'true' &&
+      needs.classify.outputs.same-repository == 'true' &&
+      needs.qualification-receipt.result == 'success' &&
+      needs.qualification-receipt.outputs.authority-required == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up base-trusted qualification runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Checkout base-trusted authority verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-openshell-qualification
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/checks/openshell-qualification-contract.mts
+            scripts/checks/openshell-qualification-core.mts
+            scripts/checks/openshell-qualification-github.mts
+            scripts/checks/openshell-qualification-io.mts
+            scripts/checks/openshell-qualification-matrix.mts
+            scripts/checks/openshell-qualification-paths.mts
+            scripts/checks/openshell-qualification-schema.mts
+            scripts/checks/verify-openshell-qualification-pr-gate.mts
+            scripts/scorecard/read-artifact-zip.mts
+          sparse-checkout-cone-mode: false
+
+      # The effective-rule endpoint is readable with this workflow's normal
+      # token. The job never checks out candidate content and receives no
+      # organization administrator credential.
+      - name: Authenticate effective required-workflow authority
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ORGANIZATION_RULESET_ID: ${{ needs.qualification-receipt.outputs.organization-ruleset-id }}
+          REQUIRED_STATUS_RULESET_ID: ${{ needs.qualification-receipt.outputs.required-status-ruleset-id }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          .trusted-openshell-qualification/scripts/checks/verify-openshell-qualification-pr-gate.mts
+          authority
+          --repository "$REPOSITORY"
+          --organization-ruleset-id "$ORGANIZATION_RULESET_ID"
+          --required-status-ruleset-id "$REQUIRED_STATUS_RULESET_ID"
+
+  openshell-qualification:
+    name: openshell-qualification
+    if: always()
+    needs: [classify, qualification-receipt, qualification-authority]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Report qualification decision
+        env:
+          AUTHORITY_REQUIRED: ${{ needs.qualification-receipt.outputs.authority-required }}
+          AUTHORITY_RESULT: ${{ needs.qualification-authority.result }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          RECEIPT_RESULT: ${{ needs.qualification-receipt.result }}
+          RECEIPT_REQUIRED: ${{ needs.qualification-receipt.outputs.receipt-required }}
+          REQUIRED: ${{ needs.classify.outputs.required }}
+          SAME_REPOSITORY: ${{ needs.classify.outputs.same-repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CLASSIFY_RESULT" != "success" ]]; then
+            echo "::error::Base-trusted OpenShell qualification classification failed."
+            exit 1
+          fi
+          if [[ "$REQUIRED" != "true" ]]; then
+            echo "OpenShell 0.0.101 qualification is not applicable to this pull request."
+            exit 0
+          fi
+          if [[ "$SAME_REPOSITORY" != "true" ]]; then
+            echo "::error::Qualification-sensitive fork pull requests fail closed."
+            exit 1
+          fi
+          if [[ "$RECEIPT_RESULT" != "success" ]]; then
+            echo "::error::The exact contract-mapped qualification receipt was not authenticated."
+            exit 1
+          fi
+          if [[ "$RECEIPT_REQUIRED" != "true" && "$RECEIPT_REQUIRED" != "false" ]]; then
+            echo "::error::The base-trusted receipt decision is missing or malformed."
+            exit 1
+          fi
+          if [[ "$AUTHORITY_REQUIRED" != "true" && "$AUTHORITY_REQUIRED" != "false" ]]; then
+            echo "::error::The base-trusted authority decision is missing or malformed."
+            exit 1
+          fi
+          if [[ "$AUTHORITY_REQUIRED" == "true" && "$AUTHORITY_RESULT" != "success" ]]; then
+            echo "::error::The protected required-workflow authority was not authenticated."
+            exit 1
+          fi
+          echo "The base-trusted OpenShell qualification decision is authenticated."

@@ -33,6 +33,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the OpenShell qualification producer workflow check (#8600)", () => {
+    expect(CHECKS).toContainEqual({
+      name: "openshell-qualification-producer-workflow",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/verify-openshell-qualification-producer-workflow.mts"],
+    });
+  });
+
   it("runs Windows command shims through cmd.exe", () => {
     expect(
       buildCheckSpawnInvocation(sampleCheck, "win32", {

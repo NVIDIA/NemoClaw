@@ -53,7 +53,7 @@ gate_state_open=$([ "$state" = "OPEN" ] && echo true || echo false)
 
 # Gate 2: CI passes on the PR SHA. statusCheckRollup contains the run for that SHA.
 # Fail closed when required checks are missing, including an empty rollup.
-required_checks='["checks","check-hash","changes","commit-lint","dco-check"]'
+required_checks='["checks","check-hash","changes","commit-lint","dco-check","openshell-qualification"]'
 observed_checks=$(printf '%s' "$raw" | jq -c '[(.statusCheckRollup // [])[] | (.name // .context // empty)] | unique')
 missing_checks=$(jq -cn --argjson required "$required_checks" --argjson observed "$observed_checks" '$required - $observed')
 missing_check_count=$(printf '%s' "$missing_checks" | jq 'length')

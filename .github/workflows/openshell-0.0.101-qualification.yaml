@@ -1,0 +1,287 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: OpenShell 0.0.101 Qualification
+run-name: "OpenShell 0.0.101 ${{ inputs.execution_context }} candidate ${{ inputs.candidate_sha }} base ${{ inputs.base_sha }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Receipt phase; final is shared by promotion and release contexts.
+        required: true
+        type: choice
+        options: [selector, final]
+      execution_context:
+        description: Trust and identity context for this receipt.
+        required: true
+        type: choice
+        options: [selector, final-promotion, release]
+      candidate_sha:
+        description: Exact lowercase candidate commit SHA.
+        required: true
+        type: string
+      base_sha:
+        description: Exact lowercase current PR base or final candidate first-parent SHA.
+        required: true
+        type: string
+      pr_number:
+        description: Open pull request number for selector or final-promotion; empty for release.
+        required: false
+        default: ""
+        type: string
+      workflow_sha:
+        description: Exact trusted producer workflow SHA (PR base or release candidate).
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: openshell-0.0.101-qualification-${{ inputs.execution_context }}-${{ inputs.candidate_sha }}
+  cancel-in-progress: true
+
+jobs:
+  receipt:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up trusted qualification runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Authenticate exact qualification dispatch
+        env:
+          ACTOR: ${{ github.actor }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXECUTION_CONTEXT: ${{ inputs.execution_context }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PHASE: ${{ inputs.phase }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_maintainer() {
+            local maintainer="$1"
+            [[ "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ && "$maintainer" != -* && "$maintainer" != *- ]] || {
+              echo "::error::Qualification actor is invalid" >&2
+              exit 1
+            }
+            local permission_json
+            permission_json="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            case "$(jq -r '.role_name // ""' <<<"$permission_json")" in
+              maintain | admin) ;;
+              *)
+                echo "::error::Qualification dispatch requires a repository maintainer or administrator" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Qualification receipt producer run attempt is invalid" >&2
+            exit 1
+          }
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::Qualification candidate and base must be lowercase full SHAs" >&2
+            exit 1
+          }
+          [[ "$CANDIDATE_SHA" != "$BASE_SHA" ]] || {
+            echo "::error::Qualification candidate and base must differ" >&2
+            exit 1
+          }
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || {
+            echo "::error::workflow_sha must match the trusted workflow revision" >&2
+            exit 1
+          }
+          authenticate_pull_request() {
+            local pull_json
+            pull_json="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            jq --exit-status \
+              --arg candidate "$CANDIDATE_SHA" \
+              --arg base "$BASE_SHA" \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --argjson number "$PR_NUMBER" \
+              '.number == $number and .state == "open" and .head.sha == $candidate and .head.repo.full_name == $repository and .base.sha == $base and .base.ref == "main" and .base.repo.full_name == $repository' \
+              <<<"$pull_json" >/dev/null || {
+              echo "::error::Qualification pull request is closed, stale, or identity-mismatched" >&2
+              exit 1
+            }
+          }
+
+          case "$EXECUTION_CONTEXT" in
+            selector)
+              [[ "$PHASE" == "selector" && "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$WORKFLOW_SHA" == "$BASE_SHA" ]] || {
+                echo "::error::Selector qualification requires selector phase, an open PR number, and base-trusted workflow" >&2
+                exit 1
+              }
+              authenticate_pull_request
+              ;;
+            final-promotion)
+              [[ "$PHASE" == "final" && "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$WORKFLOW_SHA" == "$BASE_SHA" ]] || {
+                echo "::error::Final promotion requires final phase, an open PR number, and base-trusted workflow" >&2
+                exit 1
+              }
+              authenticate_pull_request
+              ;;
+            release)
+              [[ "$PHASE" == "final" && -z "$PR_NUMBER" && "$WORKFLOW_SHA" == "$CANDIDATE_SHA" ]] || {
+                echo "::error::Release qualification requires final phase, an exact-main candidate workflow, and no PR number" >&2
+                exit 1
+              }
+              main_ref_json="$(curl --fail --silent --show-error --proto '=https' \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/ref/heads/main")"
+              [[ "$(jq -r '.object.sha // ""' <<<"$main_ref_json")" == "$CANDIDATE_SHA" ]] || {
+                echo "::error::Release qualification candidate is not the exact current main commit" >&2
+                exit 1
+              }
+              candidate_json="$(curl --fail --silent --show-error --proto '=https' \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${CANDIDATE_SHA}")"
+              [[ "$(jq -r '.parents[0].sha // ""' <<<"$candidate_json")" == "$BASE_SHA" ]] || {
+                echo "::error::Release qualification base is not the candidate's exact first parent" >&2
+                exit 1
+              }
+              ;;
+            *)
+              echo "::error::Qualification execution context is unsupported" >&2
+              exit 1
+              ;;
+          esac
+
+          require_maintainer "$ACTOR"
+          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+            require_maintainer "$TRIGGERING_ACTOR"
+          fi
+
+      - name: Check out base-trusted qualification contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.base_sha }}
+          path: .trusted-openshell-qualification
+          persist-credentials: false
+          sparse-checkout: |
+            ci/openshell-0.0.101-qualification-v1.json
+            scripts/checks/openshell-qualification-contract.mts
+            scripts/checks/openshell-qualification-core.mts
+            scripts/checks/openshell-qualification-github.mts
+            scripts/checks/openshell-qualification-io.mts
+            scripts/checks/openshell-qualification-matrix.mts
+            scripts/checks/openshell-qualification-schema.mts
+            scripts/scorecard/read-artifact-zip.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Check out candidate qualification contract data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: .candidate-openshell-qualification
+          persist-credentials: false
+          sparse-checkout: ci/openshell-0.0.101-qualification-v1.json
+          sparse-checkout-cone-mode: false
+
+      - name: Produce receipt from authenticated source checks
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-openshell-qualification
+          EXECUTION_CONTEXT: ${{ inputs.execution_context }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PHASE: ${{ inputs.phase }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          RECEIPT_DIR: ${{ runner.temp }}/openshell-0.0.101-qualification
+          REPOSITORY: ${{ github.repository }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+          TRUSTED_ROOT: ${{ github.workspace }}/.trusted-openshell-qualification
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RECEIPT_DIR"
+          args=(
+            produce
+            --contract-root "$TRUSTED_ROOT"
+            --candidate-root "$CANDIDATE_ROOT"
+            --execution-context "$EXECUTION_CONTEXT"
+            --phase "$PHASE"
+            --repository "$REPOSITORY"
+            --candidate-sha "$CANDIDATE_SHA"
+            --base-sha "$BASE_SHA"
+            --trusted-workflow-sha "$WORKFLOW_SHA"
+            --trusted-workflow-run-id "$RUN_ID"
+            --trusted-workflow-run-attempt "$RUN_ATTEMPT"
+            --trusted-workflow-run-url "$RUN_URL"
+            --output "$RECEIPT_DIR/qualification.json"
+          )
+          if [[ "$EXECUTION_CONTEXT" != "release" ]]; then
+            args+=(--pr-number "$PR_NUMBER")
+          fi
+          node --experimental-strip-types --no-warnings \
+            "$TRUSTED_ROOT/scripts/checks/openshell-qualification-contract.mts" "${args[@]}"
+
+      - name: Consume and validate the produced receipt
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-openshell-qualification
+          EXECUTION_CONTEXT: ${{ inputs.execution_context }}
+          PHASE: ${{ inputs.phase }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          RECEIPT_DIR: ${{ runner.temp }}/openshell-0.0.101-qualification
+          REPOSITORY: ${{ github.repository }}
+          TRUSTED_ROOT: ${{ github.workspace }}/.trusted-openshell-qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            validate
+            --contract-root "$TRUSTED_ROOT"
+            --candidate-root "$CANDIDATE_ROOT"
+            --execution-context "$EXECUTION_CONTEXT"
+            --receipt "$RECEIPT_DIR/qualification.json"
+            --phase "$PHASE"
+            --repository "$REPOSITORY"
+            --candidate-sha "$CANDIDATE_SHA"
+            --base-sha "$BASE_SHA"
+          )
+          if [[ "$EXECUTION_CONTEXT" != "release" ]]; then
+            args+=(--pr-number "$PR_NUMBER")
+          fi
+          node --experimental-strip-types --no-warnings \
+            "$TRUSTED_ROOT/scripts/checks/openshell-qualification-contract.mts" "${args[@]}"
+
+      - name: Upload exact qualification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openshell-0.0.101-qualification-${{ inputs.execution_context }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openshell-0.0.101-qualification/qualification.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

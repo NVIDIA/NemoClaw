@@ -92,6 +92,7 @@ export const REQUIRED_CHECK_NAMES: string[] = [
   "changes",
   "commit-lint", // commit-lint.yaml
   "dco-check", // dco-check.yaml
+  "openshell-qualification", // organization-required workflow on main
 ];
 
 // ---------------------------------------------------------------------------
@@ -101,6 +102,7 @@ export const REQUIRED_CHECK_NAMES: string[] = [
 /** Union of CheckRun and StatusContext fields from GitHub's statusCheckRollup. */
 export interface StatusCheck {
   __typename?: string;
+  appId?: number; // CheckRun producer GitHub App database ID
   name?: string; // CheckRun field
   context?: string; // StatusContext field
   workflowName?: string; // CheckRun workflow identity

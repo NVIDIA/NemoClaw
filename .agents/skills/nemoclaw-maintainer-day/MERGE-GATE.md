@@ -54,6 +54,7 @@ The checker requires these status-rollup entries:
 - `changes`
 - `commit-lint`
 - `dco-check`
+- `openshell-qualification`
 
 A first-time fork contributor might need **Approve and run** before `pull_request` checks appear.
 Former PR E2E contexts are advisory and do not affect `allPass`.

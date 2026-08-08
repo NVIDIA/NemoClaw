@@ -9,7 +9,7 @@ user_invocable: true
 
 # Cut Release Tag
 
-Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
+Use the release scripts for normal release operations. Do not improvise raw `git tag`, `git push`, `gh api`, or version-bump commands; use only the release scripts and exact evidence queries documented below.
 
 The release is one signed annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow requires that tag to be GitHub-Verified, points `latest` at the exact verified tag object, carries remaining open issues/PRs to the next patch label, and deletes the released label while holding the shared release-label coordination queue; release admins promote `lkg` manually after validation. After the workflow is verified, draft release notes, then verify the maintainer-published Announcement before final handoff.
 
@@ -40,9 +40,14 @@ The downstream scheduled reconciliation remains available if the event-driven di
 - Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
+- Inspect the #8590 qualification contract at both the plan candidate and its exact first parent before qualification or signing. Stop on mixed presence. Require an exact final-phase `qualification.json` only when the contract exists at both commits; use the legacy no-receipt path only when it is absent from both.
+- Execute `scripts/release-cut-tag.sh` only from an exact regular executable blob extracted from the plan candidate's first parent. Verify its mode and blob before use; never route release preflight or cutting through the candidate's `package.json`, `npm run release:cut`, or a candidate-controlled script path. In contract mode, the consumer must compare the complete frozen authority inventory with the first parent, reject hidden worktree changes to every locally referenced runtime file, and execute no candidate/worktree validator code. It materializes the contract JSON, contract CLI, core, GitHub authenticator, I/O validator, matrix validator, schema, and archive reader from exact regular first-parent blobs into a private tree, then re-hashes that whole runtime immediately before every authentication boundary.
+- In contract mode, require both effective `origin` fetch and push URLs to resolve exactly to `NVIDIA/NemoClaw` over canonical GitHub HTTPS or SSH before signing or publication. A fork, local mirror, URL rewrite, or other same-SHA remote cannot authorize writes to the hard-coded GitHub repository.
 - Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E and `Exact staging Brev Launchable` evidence.
 - Ask the maintainer to paste the confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
+- In contract mode, never publish the semver ref unless GitHub's tag-object creation response identifies the exact local object and reports `verification.verified: true` with `verification.reason: valid`.
+- In contract mode, sign the deterministic #8590 retirement metadata rendered from the exact final contract and authenticated artifact bytes. Do not replace the annotated tag message with the tag name or free-form release text.
 - Never push `latest` or `lkg` from this skill.
 - Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
 - Delete the released version label only after open work moves forward and a final query finds no open stragglers. Never rename or reuse a released label.
@@ -123,12 +128,62 @@ Read the generated `plan.json` and show the maintainer:
 Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
 When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
 
+Open one persistent terminal session for Steps 2 and 3. Freeze the contract mode and the executable release consumer in that session before collecting candidate-bound evidence. Set `PLAN_PATH` to the generated plan's absolute path, then run this exact setup from the candidate checkout:
+
+```bash
+set -euo pipefail
+
+PLAN_PATH="<absolute-path-to-plan.json>"
+[[ "$PLAN_PATH" == /* ]]
+test -f "$PLAN_PATH" && test ! -L "$PLAN_PATH"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CANDIDATE_SHA="$(jq -er '.originMainCommit | select(type == "string" and test("^[0-9a-f]{40}$"))' "$PLAN_PATH")"
+test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+test -z "$(git status --short)"
+BASE_SHA="$(git rev-parse "${CANDIDATE_SHA}^1")"
+CONTRACT_RELATIVE="ci/openshell-0.0.101-qualification-v1.json"
+RELEASE_CONSUMER_RELATIVE="scripts/release-cut-tag.sh"
+
+CANDIDATE_HAS_CONTRACT=false
+BASE_HAS_CONTRACT=false
+git cat-file -e "${CANDIDATE_SHA}:${CONTRACT_RELATIVE}" 2>/dev/null && CANDIDATE_HAS_CONTRACT=true
+git cat-file -e "${BASE_SHA}:${CONTRACT_RELATIVE}" 2>/dev/null && BASE_HAS_CONTRACT=true
+case "${CANDIDATE_HAS_CONTRACT}:${BASE_HAS_CONTRACT}" in
+  true:true) QUALIFICATION_REQUIRED=true ;;
+  false:false) QUALIFICATION_REQUIRED=false ;;
+  *)
+    echo "Qualification contract presence differs between candidate and first parent" >&2
+    exit 1
+    ;;
+esac
+
+BASE_CONSUMER_BLOB="$(git rev-parse "${BASE_SHA}:${RELEASE_CONSUMER_RELATIVE}")"
+BASE_CONSUMER_ENTRY="$(git ls-tree "$BASE_SHA" -- "$RELEASE_CONSUMER_RELATIVE")"
+test "$BASE_CONSUMER_ENTRY" = "100755 blob ${BASE_CONSUMER_BLOB}"$'\t'"${RELEASE_CONSUMER_RELATIVE}"
+if [[ "$QUALIFICATION_REQUIRED" == true ]]; then
+  CANDIDATE_CONSUMER_BLOB="$(git rev-parse "${CANDIDATE_SHA}:${RELEASE_CONSUMER_RELATIVE}")"
+  test "$CANDIDATE_CONSUMER_BLOB" = "$BASE_CONSUMER_BLOB"
+  test "$(git ls-tree "$CANDIDATE_SHA" -- "$RELEASE_CONSUMER_RELATIVE")" = "$BASE_CONSUMER_ENTRY"
+fi
+
+RELEASE_PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-release-consumer.XXXXXX")"
+chmod 0700 "$RELEASE_PRIVATE_DIR"
+trap 'rm -rf -- "$RELEASE_PRIVATE_DIR"' EXIT
+RELEASE_CONSUMER="$RELEASE_PRIVATE_DIR/release-cut-tag.sh"
+git show "${BASE_SHA}:${RELEASE_CONSUMER_RELATIVE}" >"$RELEASE_CONSUMER"
+chmod 0700 "$RELEASE_CONSUMER"
+test "$(git hash-object "$RELEASE_CONSUMER")" = "$BASE_CONSUMER_BLOB"
+
+QUALIFICATION_RECEIPT=""
+```
+
+Keep this terminal session and its variables through Step 3. If the session is lost, restart Step 2 and repeat the evidence and signing preflight; do not reconstruct individual variables by hand. Do not regenerate the extracted consumer after the maintainer confirms the plan. In contract mode, the consumer independently checks its executing bytes, checks the full frozen authority set for first-parent parity, validates hidden worktree changes to runtime paths, builds a private first-parent validator tree beneath `RELEASE_PRIVATE_DIR`, and rejects a noncanonical effective `origin`. Candidate and worktree validator modules are never executed.
+
 For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
 
 From a checkout whose `HEAD` is the plan candidate SHA and whose `git status --short` is empty, generate one release E2E preflight:
 
 ```bash
-CANDIDATE_SHA="<full-plan-sha>"
 npm run release:e2e-evidence -- \
   --candidate-sha "$CANDIDATE_SHA" \
   >"$EVIDENCE_DIR/preflight.json"
@@ -219,10 +274,164 @@ Before showing the confirmation prompt, present:
 Do not ask for the phrase until the workflow run concludes with `success` and each test and the exact Brev Launchable E2E job has successful evidence or its own permitted itemized exception.
 Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, discard all prior candidate-bound evidence, regenerate the plan, rerun preflight and the full E2E workflow for the new SHA, capture a new manifest, and rebuild the ledger before requesting confirmation.
 
-Exercise the configured Git signing backend before asking for confirmation:
+When `QUALIFICATION_REQUIRED=true`, dispatch and select the release-context final producer deterministically with the following recipe. It snapshots all pre-existing exact runs, accepts exactly one new exact run, captures its exact successful attempt, rechecks that it remains the newest exact run, and downloads exactly one non-expired artifact with the expected run-and-attempt-bound name:
 
 ```bash
-npm run release:cut -- --plan <plan.json> --preflight-only
+if [[ "$QUALIFICATION_REQUIRED" == true ]]; then
+  gh auth status --hostname github.com
+  QUALIFICATION_WORKFLOW="openshell-0.0.101-qualification.yaml"
+  EXPECTED_RUN_TITLE="OpenShell 0.0.101 release candidate ${CANDIDATE_SHA} base ${BASE_SHA}"
+  BEFORE_FINAL_RUN_IDS="$(
+    gh run list \
+      --repo NVIDIA/NemoClaw \
+      --workflow "$QUALIFICATION_WORKFLOW" \
+      --branch main \
+      --event workflow_dispatch \
+      --commit "$CANDIDATE_SHA" \
+      --limit 100 \
+      --json databaseId,displayTitle,event,headBranch,headSha \
+    | jq -c \
+        --arg title "$EXPECTED_RUN_TITLE" \
+        --arg sha "$CANDIDATE_SHA" \
+        '[.[] | select(
+          .displayTitle == $title and
+          .event == "workflow_dispatch" and
+          .headBranch == "main" and
+          .headSha == $sha
+        ) | .databaseId]'
+  )"
+
+  gh workflow run "$QUALIFICATION_WORKFLOW" \
+    --repo NVIDIA/NemoClaw \
+    --ref main \
+    -f phase=final \
+    -f execution_context=release \
+    -f candidate_sha="$CANDIDATE_SHA" \
+    -f base_sha="$BASE_SHA" \
+    -f workflow_sha="$CANDIDATE_SHA"
+
+  FINAL_RUN_ID=""
+  for _ in $(seq 1 60); do
+    FINAL_RUN_INVENTORY="$(
+      gh run list \
+        --repo NVIDIA/NemoClaw \
+        --workflow "$QUALIFICATION_WORKFLOW" \
+        --branch main \
+        --event workflow_dispatch \
+        --commit "$CANDIDATE_SHA" \
+        --limit 100 \
+        --json databaseId,displayTitle,event,headBranch,headSha
+    )"
+    NEW_FINAL_RUN_IDS="$(
+      jq -c \
+        --arg title "$EXPECTED_RUN_TITLE" \
+        --arg sha "$CANDIDATE_SHA" \
+        --argjson before "$BEFORE_FINAL_RUN_IDS" \
+        '[.[] | select(
+          .displayTitle == $title and
+          .event == "workflow_dispatch" and
+          .headBranch == "main" and
+          .headSha == $sha and
+          (.databaseId as $id | ($before | index($id) | not))
+        ) | .databaseId] | unique' <<<"$FINAL_RUN_INVENTORY"
+    )"
+    NEW_FINAL_RUN_COUNT="$(jq -r 'length' <<<"$NEW_FINAL_RUN_IDS")"
+    if (( NEW_FINAL_RUN_COUNT > 1 )); then
+      echo "More than one new exact final qualification run appeared" >&2
+      exit 1
+    fi
+    if (( NEW_FINAL_RUN_COUNT == 1 )); then
+      FINAL_RUN_ID="$(jq -r '.[0]' <<<"$NEW_FINAL_RUN_IDS")"
+      break
+    fi
+    sleep 2
+  done
+  test -n "$FINAL_RUN_ID"
+
+  gh run watch "$FINAL_RUN_ID" --repo NVIDIA/NemoClaw --exit-status
+  FINAL_RUN_JSON="$(
+    gh run view "$FINAL_RUN_ID" \
+      --repo NVIDIA/NemoClaw \
+      --json attempt,conclusion,databaseId,displayTitle,event,headBranch,headSha,status,url
+  )"
+  jq -e \
+    --arg id "$FINAL_RUN_ID" \
+    --arg title "$EXPECTED_RUN_TITLE" \
+    --arg sha "$CANDIDATE_SHA" \
+    '(.databaseId | tostring) == $id and
+     .displayTitle == $title and
+     .event == "workflow_dispatch" and
+     .headBranch == "main" and
+     .headSha == $sha and
+     (.attempt | type == "number" and . >= 1 and floor == .) and
+     .status == "completed" and
+     .conclusion == "success"' <<<"$FINAL_RUN_JSON" >/dev/null
+  FINAL_RUN_ATTEMPT="$(jq -er '.attempt' <<<"$FINAL_RUN_JSON")"
+
+  NEWEST_EXACT_FINAL_RUN_ID="$(
+    gh run list \
+      --repo NVIDIA/NemoClaw \
+      --workflow "$QUALIFICATION_WORKFLOW" \
+      --branch main \
+      --event workflow_dispatch \
+      --commit "$CANDIDATE_SHA" \
+      --limit 100 \
+      --json databaseId,displayTitle,event,headBranch,headSha \
+    | jq -r \
+        --arg title "$EXPECTED_RUN_TITLE" \
+        --arg sha "$CANDIDATE_SHA" \
+        '[.[] | select(
+          .displayTitle == $title and
+          .event == "workflow_dispatch" and
+          .headBranch == "main" and
+          .headSha == $sha
+        )] | sort_by(.databaseId) | last | .databaseId // empty'
+  )"
+  test "$NEWEST_EXACT_FINAL_RUN_ID" = "$FINAL_RUN_ID"
+
+  EXPECTED_ARTIFACT_NAME="openshell-0.0.101-qualification-release-${FINAL_RUN_ID}-${FINAL_RUN_ATTEMPT}"
+  ARTIFACT_PAGES="$(
+    gh api --paginate --slurp \
+      "repos/NVIDIA/NemoClaw/actions/runs/${FINAL_RUN_ID}/artifacts?per_page=100"
+  )"
+  ARTIFACT_MATCHES="$(
+    jq -c \
+      --arg name "$EXPECTED_ARTIFACT_NAME" \
+      --arg sha "$CANDIDATE_SHA" \
+      --arg run_id "$FINAL_RUN_ID" \
+      '[.[] | .artifacts[] | select(
+        .name == $name and
+        .expired == false and
+        (.workflow_run.id | tostring) == $run_id and
+        .workflow_run.head_sha == $sha
+      )]' <<<"$ARTIFACT_PAGES"
+  )"
+  test "$(jq -r 'length' <<<"$ARTIFACT_MATCHES")" = 1
+
+  QUALIFICATION_DIR="$RELEASE_PRIVATE_DIR/final-qualification"
+  install -d -m 0700 "$QUALIFICATION_DIR"
+  gh run download "$FINAL_RUN_ID" \
+    --repo NVIDIA/NemoClaw \
+    --name "$EXPECTED_ARTIFACT_NAME" \
+    --dir "$QUALIFICATION_DIR"
+  QUALIFICATION_RECEIPT="$QUALIFICATION_DIR/qualification.json"
+  test -f "$QUALIFICATION_RECEIPT" && test ! -L "$QUALIFICATION_RECEIPT"
+  test "$(find "$QUALIFICATION_DIR" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" = 1
+else
+  echo "Qualification contract is absent from both commits; using the legacy no-receipt path"
+fi
+```
+
+Do not dispatch final qualification in legacy mode. In contract mode, do not reuse a pre-existing run, an artifact from another run or attempt, or a receipt copied from another location. The release consumer authenticates the downloaded bytes against the newest exact Actions producer and source runs before signing, then repeats that complete authentication at the final fixed point immediately before the atomic ref transaction. A newer queued, failed, canceled, or rerun attempt invalidates the earlier receipt.
+
+Exercise the configured Git signing backend through the frozen first-parent consumer before asking for confirmation:
+
+```bash
+RELEASE_ARGS=(--plan "$PLAN_PATH")
+if [[ "$QUALIFICATION_REQUIRED" == true ]]; then
+  RELEASE_ARGS+=(--qualification-receipt "$QUALIFICATION_RECEIPT")
+fi
+(cd "$REPO_ROOT" && TMPDIR="$RELEASE_PRIVATE_DIR" bash "$RELEASE_CONSUMER" "${RELEASE_ARGS[@]}" --preflight-only)
 ```
 
 Require status 0. This preflight creates and deletes one local temporary tag. It does not push a ref. Git selects the maintainer's configured OpenPGP, SSH, or X.509 signer.
@@ -240,14 +449,19 @@ Do not proceed on a generic "yes" at this step.
 Run the cut script with the plan and the maintainer's phrase:
 
 ```bash
-npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
+CONFIRMATION='CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>'
+(cd "$REPO_ROOT" && TMPDIR="$RELEASE_PRIVATE_DIR" bash "$RELEASE_CONSUMER" \
+  "${RELEASE_ARGS[@]}" \
+  --confirm "$CONFIRMATION")
 ```
 
-The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state, then creates and pushes the signed annotated tag using the configured signing key. It writes:
+The script verifies a clean worktree, unchanged `origin/main`, canonical origin identity, tag availability, target reachability, the complete base-owned frozen authority set, the private first-parent runtime, and exact remote tag-object and peeled-target state. In contract mode it hashes the exact final contract and byte-identical authenticated receipt artifact, binds those hashes and the producer identity into the signed annotated tag message, uploads the signed tag object without publishing a ref, requires GitHub's response to bind the exact local object SHA to a valid verified signature, reauthenticates the complete receipt and deterministic tag metadata from the re-hashed private runtime immediately before publication, then atomically verifies that remote `main` still equals the plan target while creating the previously absent semver ref. An unverified response stops before ref publication; a concurrent `main` or semver-tag change rejects the whole ref transaction. After a successful response, the direct semver ref must still equal the exact GitHub-Verified local tag object and peel to the target; a replacement annotated object that peels to the same commit is still rejected. If the atomic update is applied but its response is lost, the script continues only after querying and matching the exact remote tag object, peeled target, and `main`; absent, mismatched, or unknowable state fails closed. In legacy mode it preserves the pre-contract Git push behavior. It writes:
 
 ```text
 <release-dir>/cut-result.json
 ```
+
+In contract mode, `cut-result.json.qualificationRetirementEvidence` is the exact object to place in the later final-to-retired contract transition. It includes the GitHub-Verified annotated tag object SHA; never reconstruct or edit that object by hand. The retirement PR remains a separate contract-only change and must pass live retirement authentication before merge.
 
 If the script fails because of SSH, authentication, remote access, authorization, or permissions, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). For other precondition failures, report the failed precondition and use the recovery guidance below. Do not improvise git commands.
 
@@ -365,7 +579,15 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - Launchable E2E or cleanup evidence is missing or invalid in an otherwise successful candidate run: dispatch full mode again or record the separate itemized maintainer exception. Do not infer Launchable E2E success from the workflow conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
+- Contract-mode `origin` does not resolve exactly to canonical `NVIDIA/NemoClaw`: stop before signing or upload. Restore the canonical HTTPS or SSH remote and remove any URL rewrite; do not use a matching-SHA fork or mirror as release authority.
+- Qualification contract presence differs between the candidate and first parent: stop and create a new candidate whose contract state is unambiguous. Do not force either receipt or legacy mode.
+- In contract mode, the final OpenShell qualification receipt is missing or invalid: stop and dispatch a new final-phase run for the exact plan candidate and its first parent. Do not reuse a selector, pre-existing, cross-attempt, or stale receipt. In legacy mode, do not add a receipt.
+- Extracted release consumer bytes differ from the first-parent blob, or contract-mode candidate and first-parent consumer blobs differ: stop. Do not invoke the candidate package script or copy a different consumer into place.
 - Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.
+- GitHub does not report the uploaded tag object as verified with reason `valid`: stop before ref publication and fix the signer identity or signature-verification failure. Do not create the semver ref manually.
+- Contract-mode retirement metadata or receipt bytes change after authentication: stop before ref publication, discard the unpublished local tag through the script's cleanup, and restart Step 2 with the exact downloaded artifact. Do not reuse metadata from a failed attempt.
+- The atomic publication call fails and reconciliation finds no remote semver ref: the transaction did not publish the tag; fix the reported transport or precondition failure, restart Step 2, and obtain confirmation again before retrying. If reconciliation finds a mismatched ref or cannot determine remote state, retain the local signed tag and hard-stop for protected-tag recovery; never retry blindly or create the ref manually.
+- Remote peel verification or `cut-result.json` writing fails after the exact semver ref exists: do not rerun Step 3 or recreate the immutable tag. Read-only verify that the remote tag ref equals the locally verified signed tag object, peels to the plan target, and remote `main` still equals that target. If all three match, retain the local tag, record the missing result artifact and failure in the handoff, and continue at Step 4; otherwise hard-stop for protected-tag recovery.
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.

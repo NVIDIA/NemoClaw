@@ -64,6 +64,11 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/openshell-policy-mutation-read.mts"],
   },
   {
+    name: "openshell-qualification-producer-workflow",
+    command: TSX,
+    args: ["scripts/checks/verify-openshell-qualification-producer-workflow.mts"],
+  },
+  {
     name: "layer-import-boundaries",
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.mts"],
