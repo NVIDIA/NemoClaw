@@ -180,7 +180,7 @@ A passing exact-commit run must prove all of these results:
 
 - The host uses Linux `amd64`, Docker Engine, and an NVIDIA GPU.
 - The installer uses the exact provider and recipe shown above without `NEMOCLAW_MODEL`.
-- The receipt matches the selected preset, recipe, model digest, and runtime image.
+- The managed owner state records the selected preset digest, and the receipt matches the recipe, model digest, and runtime image.
 - llama.cpp offloads every model layer to the assigned GPU.
 - An unauthenticated host request receives HTTP `401`.
 - Authenticated host inference, routed sandbox inference, and one OpenClaw agent turn succeed.
