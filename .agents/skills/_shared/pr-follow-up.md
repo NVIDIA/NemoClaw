@@ -85,7 +85,7 @@ Record whether the host retains collection evidence. If the host returns an arti
 
 ## Collect One Complete Review Cycle
 
-Before editing, collect and classify all review signals for one unchanged latest PR commit:
+Before editing, collect and classify all review signals for the latest PR commit as follows. The initial and final `headRefOid` values must match:
 
 1. Re-read `headRefOid`. Collect current required-check failures, issue comments, submitted reviews, inline threads with resolution state, advisor findings, and required independent-review findings. Record each source commit when GitHub provides it. Otherwise, record the latest PR commit SHA.
 2. Re-evaluate findings created for an earlier PR commit against the latest PR commit. Exclude a finding only when the changed code is gone or evidence shows that the defect is resolved. Record the disposition before editing.
@@ -134,7 +134,7 @@ After editing:
 3. Run the independent documentation writer review against that commit.
 4. If the review reports valid findings, apply them and rerun affected validation.
 5. Commit the corrections and review the new `HEAD`.
-6. Run one final complete collection for one unchanged latest PR commit.
+6. Run one final complete collection for the latest PR commit. Restart the collection if `headRefOid` changes.
 7. Classify every new or changed finding.
 8. If the collection contains a new actionable finding, do not push. Return to classification and repair, rerun affected validation, commit the corrections, review the new `HEAD`, and repeat the final collection.
 9. Remove retained collection evidence and verify its absence.

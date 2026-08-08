@@ -348,7 +348,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `guide variant` | Technical noun | One agent-specific rendering of shared documentation source. | copy, flavor |
 | `integration test` | Technical noun | A test of behavior across two or more real project components with external services mocked or isolated as required. | unit test, E2E test |
 | `issue` | Technical noun | A tracked problem, request, or decision record in the repository. | ticket, bug when the issue type is not known |
-| `latest PR commit` | Technical noun | The commit currently selected by the PR source branch. | current head, latest head, head when the Git object is intended |
+| `latest PR commit` | Technical noun | The commit to which the PR source branch currently points. | current head, latest head, head when the Git object is intended |
 | `live E2E` | Technical noun or adjective | An opt-in E2E test that changes real external state. | integration test, end-to-end test without the live qualifier |
 | `maintainer` | Technical noun | A person with repository authority to make the stated project decision or action. | owner unless ownership is established, admin |
 | `Markdown route` | Technical noun | A documentation URL that serves the page content in Markdown form for AI clients. | Markdown page, raw file URL |

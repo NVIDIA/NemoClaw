@@ -43,17 +43,18 @@ An agent must apply this section before each action:
 The review policy above controls findings about existing text. It does not permit an agent to
 publish text that violates this guide.
 
-Before each action, the agent must:
+Before each action, the agent must apply these requirements to the text it produces:
 
 - Name the actor when it is not the agent or reader. Always name the action and object.
 - Replace internal workflow shorthand with repository terms that readers know.
-- Name a Git commit instead of using `head` as a general synonym.
+- When the text identifies a Git commit, do not use `head` as a general synonym.
 - Use `commit under review` for the commit whose diff and evidence the reviewer evaluates.
-- Use `latest PR commit` for the commit currently selected by the PR source branch.
-- Write a tool label as a concrete verb phrase that names the object.
+- Use `latest PR commit` for the commit to which the PR source branch currently points.
 - Preserve literal identifiers such as `headRefOid` when the identifier itself matters.
 
-If the agent cannot complete the checklist, it must not perform the action.
+Before a tool call with a visible label or description, write that text as a concrete verb phrase that names the object.
+
+If the agent cannot satisfy the requirements that apply to the action, it must not perform the action.
 
 ### Full-Corpus Audits
 
