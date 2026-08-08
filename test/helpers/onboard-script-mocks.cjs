@@ -153,13 +153,52 @@ function mockOnboardRunCapture(command, options = {}) {
   if (isOpenClawSecurityInventoryProbe(command)) {
     return "nemoclaw-security-inventory-ok";
   }
-  if (/^docker run --rm --entrypoint \/usr\/bin\/ldd \S+ --version$/.test(normalized)) {
+  if (
+    normalized.startsWith("docker run ") &&
+    normalized.includes(" --entrypoint /usr/bin/ldd ") &&
+    normalized.endsWith(" --version")
+  ) {
     return "ldd (GNU libc) 2.41";
   }
   return mockSandboxExecCurl(command, options);
 }
 
+function mockStructuredOpenShellCaptureFromRunner() {
+  const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  const client = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"),
+  );
+  client.captureOpenshellCommand = (binary, args, options = {}) => {
+    const stdout = String(
+      runner.runCapture([binary, ...args], {
+        ...options,
+        ignoreError: true,
+        includeStderr: false,
+      }) || "",
+    );
+    const isSandboxGet = args[0] === "sandbox" && args[1] === "get";
+    if (isSandboxGet && stdout.trim().length === 0) {
+      const sandboxName = String(args.at(-1) || "unknown");
+      const stderr = `Error: sandbox ${sandboxName} not found\n`;
+      return {
+        status: 1,
+        output: options.includeStderr === true ? stderr.trim() : "",
+        ...(options.includeStreams === true ? { stdout: "", stderr } : {}),
+      };
+    }
+    return {
+      status: 0,
+      output: stdout.trim(),
+      ...(options.includeStreams === true ? { stdout, stderr: "" } : {}),
+    };
+  };
+}
+
 function mockStandaloneGatewayTeardownAuthority() {
+  // Recreate integration fixtures historically mock runner.runCapture. Keep
+  // the structured OpenShell probe on that same seam while preserving clean
+  // nonzero NotFound metadata after the fixture records deletion.
+  mockStructuredOpenShellCaptureFromRunner();
   const authority = require(
     path.resolve(__dirname, "../../src/lib/onboard/gateway-teardown-authority.ts"),
   );

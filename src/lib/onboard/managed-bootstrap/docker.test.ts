@@ -49,6 +49,41 @@ describe("Docker managed bootstrap adapter", () => {
     });
   });
 
+  it("accepts the immutable image ID recorded by the OpenShell Docker driver", async () => {
+    const fake = fixture();
+    fake.original!.Config!.Image = fake.original!.Image;
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle } = authority();
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+
+    await expect(adapter.inspectHeldWorkload({ handle, discovered })).resolves.toMatchObject({
+      runtimeId: OLD_ID,
+    });
+  });
+
+  it("rejects a configured image outside the reviewed manifest identity", async () => {
+    const fake = fixture();
+    fake.original!.Config!.Image = `sha256:${"9".repeat(64)}`;
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle } = authority();
+
+    await expect(
+      adapter.discoverHeldWorkload({
+        sandbox: handle.sandbox,
+        bootstrapIdentity: handle.bootstrapIdentity,
+        expectedImage: handle.plan.image,
+        metadata: handle.plan.metadata,
+      }),
+    ).rejects.toThrow(
+      "Managed bootstrap Docker configured image is neither the exact repository@manifestDigest nor its immutable runtime content ID.",
+    );
+  });
+
   it("stages Docker-derived console and protected-path defaults before cutover", async () => {
     const fake = fixture();
     Object.assign(fake.original!.HostConfig!, {

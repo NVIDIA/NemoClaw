@@ -112,26 +112,6 @@
       "category": "security"
     },
     {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "execs an explicitly supplied command instead of idling",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "refuses to launch when effective rlimits fail verification (#6545)",
-      "category": "security"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "refuses to launch when the required rlimit helper is missing (#6545)",
-      "category": "security"
-    },
-    {
-      "file": "test/dcode-start-keepalive.test.ts",
-      "test": "stays alive as a long-running process when invoked with no command",
-      "category": "compatibility"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
@@ -347,11 +327,6 @@
       "category": "security"
     },
     {
-      "file": "test/maintainer-pr-workflow-approval.test.ts",
-      "test": "keeps workflow approval inside the trusted metadata boundary",
-      "category": "security"
-    },
-    {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
       "test": "keeps secret-bearing live E2E on trusted main-branch code",
       "category": "security"
@@ -373,13 +348,18 @@
     },
     {
       "file": "test/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins reviewed packages and retains the production audit command (#8177)",
+      "test": "pins reviewed packages and audits their lock outside image builds (#8253)",
       "category": "security"
     },
     {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
       "category": "compatibility"
+    },
+    {
+      "file": "test/openshell-0.0.99-migration-review.test.ts",
+      "test": "associates every reviewed release identity with the 0.0.99 manifest (#8497)",
+      "category": "security"
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
@@ -604,6 +584,11 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "keeps the installer verifier inside the trusted composite action",
+      "category": "security"
+    },
+    {
+      "file": "test/openshell-e2e-qualification-workflow.test.ts",
+      "test": "keeps OpenShell E2E qualification inside the trusted composite action",
       "category": "security"
     },
     {

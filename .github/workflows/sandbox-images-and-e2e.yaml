@@ -613,6 +613,10 @@ jobs:
     steps:
       - *checkout
 
+      - *setup-node
+
+      - *install-root-dependencies
+
       - &download-isolation-image
         name: Download image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -626,6 +630,12 @@ jobs:
           set -euo pipefail
           gunzip -c /tmp/isolation-image.tar.gz | docker load
           docker image inspect nemoclaw-production >/dev/null
+
+      - name: Run glibc probe lifecycle regression
+        env:
+          NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
+          NEMOCLAW_TEST_IMAGE: nemoclaw-production
+        run: npx vitest run --project integration test/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh

@@ -17,3 +17,23 @@ runs:
       env:
         NEMOCLAW_INSTALLER_HASH_REPO_ROOT: ${{ inputs.repo-root }}
       run: bash "${{ github.action_path }}/../../../scripts/check-installer-hash.sh"
+
+    - name: Require exact-head OpenShell E2E qualification
+      if: ${{ github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        GITHUB_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPOSITORY: ${{ github.repository }}
+      run: >-
+        node --experimental-strip-types --no-warnings
+        "${{ github.action_path }}/../../../scripts/checks/verify-openshell-e2e-qualification.mts"
+        --repository "$REPOSITORY"
+        --pr-number "$PR_NUMBER"
+        --base-root "${{ github.action_path }}/../../.."
+        --candidate-root "${{ inputs.repo-root }}"
+        --candidate-sha "$CANDIDATE_SHA"
+        --base-sha "$BASE_SHA"
+        --workflow-sha "$BASE_SHA"

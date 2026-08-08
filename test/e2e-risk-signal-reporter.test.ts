@@ -30,7 +30,6 @@ vi.mock("node:child_process", () => ({
 }));
 
 const EXPECTED_SHA = "a".repeat(40);
-const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 
 function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pending">): TestModule {
@@ -79,7 +78,6 @@ function environment(artifactDir: string): RiskSignalEnvironment {
     shardId: "default",
     expectedSha: EXPECTED_SHA,
     testedSha: EXPECTED_SHA,
-    planHash: PLAN_HASH,
     correlationId: CORRELATION_ID,
   };
 }
@@ -99,19 +97,49 @@ describe("E2E risk signal reporter", () => {
     );
   });
 
-  it("attests the checked-out HEAD instead of echoing only the expected SHA", () => {
+  it("attests the checked-out HEAD without plan metadata", () => {
     const env = {
       E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
       E2E_TARGET_ID: "onboard-resume",
       GITHUB_WORKSPACE: "/workspace",
       NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
-      NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
       NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
       NEMOCLAW_E2E_SHARD: "default",
     };
 
     expect(configuredEnvironment(env, () => EXPECTED_SHA)?.testedSha).toBe(EXPECTED_SHA);
     expect(() => configuredEnvironment(env, () => "c".repeat(40))).toThrow(/checked-out HEAD/u);
+  });
+
+  it("attests an explicit tested root when trusted code runs beside the candidate checkout", () => {
+    const env = {
+      E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
+      E2E_TARGET_ID: "managed-image-protected-runtime",
+      GITHUB_WORKSPACE: "/workspace/trusted",
+      NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+      NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+      NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
+      NEMOCLAW_E2E_TESTED_ROOT: "/workspace/trusted/.candidate-runtime",
+    };
+    const resolveHead = vi.fn(() => EXPECTED_SHA);
+
+    expect(configuredEnvironment(env, resolveHead)?.testedSha).toBe(EXPECTED_SHA);
+    expect(resolveHead).toHaveBeenCalledWith("/workspace/trusted/.candidate-runtime");
+  });
+
+  it("rejects a relative tested root before resolving its HEAD", () => {
+    const env = {
+      E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
+      E2E_TARGET_ID: "managed-image-protected-runtime",
+      NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+      NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+      NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
+      NEMOCLAW_E2E_TESTED_ROOT: ".candidate-runtime",
+    };
+    const resolveHead = vi.fn(() => EXPECTED_SHA);
+
+    expect(() => configuredEnvironment(env, resolveHead)).toThrow(/absolute tested root/u);
+    expect(resolveHead).not.toHaveBeenCalled();
   });
 
   it("writes pass, failure, skip, and pending counts for the tested commit", () => {
@@ -161,7 +189,6 @@ describe("E2E risk signal reporter", () => {
       vi.stubEnv("E2E_ARTIFACT_DIR", dir);
       vi.stubEnv("E2E_TARGET_ID", "network-policy");
       vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", EXPECTED_SHA);
-      vi.stubEnv("NEMOCLAW_E2E_PLAN_HASH", PLAN_HASH);
       vi.stubEnv("NEMOCLAW_E2E_CORRELATION_ID", CORRELATION_ID);
       vi.stubEnv("NEMOCLAW_E2E_SHARD", "live-probes");
 

@@ -451,14 +451,14 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "installer-sandbox-build-pin-change": (source) =>
     mutateSandboxBuildFunction(source, (functionSource) =>
       functionSource.replace(
-        `      printf '%s\\n' "0.0.85"
+        `      printf '%s\\n' "0.0.99"
       ;;
     *)`,
-        `      printf '%s\\n' "0.0.85"
+        `      printf '%s\\n' "0.0.99"
       ;;
     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | \\
       bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
-      printf '%s\\n' "0.0.83"
+      printf '%s\\n' "0.0.98"
       ;;
     *)`,
       ),
@@ -996,7 +996,7 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("accepts the reviewed OpenShell 0.0.99 release manifests (#8499)", () => {
+  it("accepts the allowlisted OpenShell 0.0.99 release manifests (#8499)", () => {
     const result = runFixture("complete", "0.0.99", true);
 
     expect(result.status).toBe(0);

@@ -57,6 +57,28 @@ While NVIDIA does not currently have a public bug bounty program, we do offer ac
 For security bulletins, PSIRT policies, and all security-related concerns, visit the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) portal.
 Subscribe to notifications on that page to receive alerts when new bulletins are published.
 
+## Threat Models
+
+Component-level threat models for security-critical NemoClaw subsystems are documented here so a reviewer or auditor can understand what each subsystem is designed to prevent, which surfaces it protects, and where its guarantees end.
+
+### Ollama Auth Proxy Loopback Bind Probe (`#6014`)
+
+**Summary.** The Ollama auth proxy is the token-authenticated network gate in front of a locally-running Ollama backend on every topology where `shouldFrontOllamaWithProxy()` returns true (native Linux, macOS, WSL with a native dockerd runtime). Ollama itself has no built-in authentication. The proxy adds a bearer-token check on its own listen port and forwards to Ollama on the backend port.
+
+**Threat.** If the Ollama backend is reachable on any non-loopback interface on the host (e.g. the user set `OLLAMA_HOST=0.0.0.0:11434`, or an operator-supplied systemd unit binds to a public interface), an attacker on the same LAN, a co-tenant on a shared host, or any process that can open a socket on the host can bypass the proxy entirely by connecting directly to `<host-ip>:11434`. The proxy's token check on the listen port is useless in that case because Ollama is answering questions the proxy never sees.
+
+**Guarantee the bind probe adds.** Before the proxy accepts any traffic, it walks `/proc/net/tcp` and `/proc/net/tcp6` (Linux) or falls back to `lsof -sTCP:LISTEN` (macOS and any host without a readable /proc) to enumerate every LISTEN-state socket on the Ollama backend port. If any listener is not loopback, the proxy refuses to start with exit code `EXIT_BACKEND_NOT_LOOPBACK` (2) and writes a structured `backend-not-loopback` reason to its status file so the host CLI renders an actionable remediation. Loopback for this check is the full 127.0.0.0/8 block for IPv4, `::1` for IPv6, and `::ffff:127.0.0.0/8` for IPv4-mapped IPv6, so a legitimate bind to 127.0.0.2 or an IPv4-mapped IPv6 loopback is accepted.
+
+**Where the guarantee ends.**
+
+- **Docker-Desktop topologies (WSL + Windows-host Ollama, WSL + WSL-local Ollama).** These bypass the proxy entirely via `containerCanReachHostLoopback()` and are explicitly out of scope for this issue and probe. Hardening them is tracked separately.
+- **Operator override.** `NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE=1` disables the probe. The operator setting the override MUST accept that the security posture is degraded. The proxy emits an audit warning to stderr every time the override runs so an incident investigator scanning proxy logs sees the skip and the exact env knob that produced it. This is not fail-closed by design; the escape hatch exists for hosts where /proc is unreadable and `lsof` is missing, and for CI environments that intentionally exercise the non-loopback path.
+- **Probe unavailable (both `/proc` and `lsof` absent).** The proxy warns and continues rather than fail-closed. Same reasoning as the operator override: on a host where neither probe surface exists, refusing to start would break the headless install contract with no operator recourse. The systemd loopback override (retained by design for this PR) provides defense in depth on Linux.
+- **Runtime bind changes.** The probe runs at startup only. A backend that binds loopback at proxy-start time and later rebinds to a public interface is out of scope. Adding a periodic re-probe is a follow-up.
+- **Non-Ollama providers.** The probe protects the Ollama backend specifically; it does not cover NIM, vLLM, or other providers.
+
+**Enforced by:** `test/ollama-auth-proxy-bind-probe.test.ts` covers every branch of both the `/proc` and `lsof` classifiers (accepts full 127.0.0.0/8 including IPv4-mapped IPv6, refuses wildcard and LAN-scope, refuses the lsof `*` token) and the `EXIT_BACKEND_NOT_LOOPBACK = 2` contract with the host CLI.
+
 ## Documented Risk Acceptances
 
 The following security-relevant defaults are intentional. Each item names the code path that carries the constraint and the compensating controls that make the trade-off acceptable.

@@ -9,6 +9,8 @@ import Ajv2020 from "ajv/dist/2020.js";
 import YAML from "yaml";
 
 import {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
@@ -16,7 +18,10 @@ import {
 type ServerImageManifest = {
   apiVersion?: unknown;
   kind?: unknown;
-  metadata?: { id?: unknown };
+  metadata?: {
+    annotations?: { "nemoclaw.nvidia.com/request-guard-state"?: unknown };
+    id?: unknown;
+  };
   spec?: {
     build?: {
       backendDirectory?: unknown;
@@ -50,6 +55,7 @@ type ServerImageManifest = {
         gpu?: unknown;
         model?: unknown;
         platform?: unknown;
+        probeBounds?: unknown;
         probes?: unknown;
         profile?: unknown;
         recipeRef?: unknown;
@@ -149,6 +155,7 @@ type LlamaCppQualificationRecipe = {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
 const manifestPath = path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml");
+const agentQualificationPath = path.join(repoRoot, LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH);
 const recipePath = path.join(
   repoRoot,
   "managed-inference",
@@ -249,15 +256,53 @@ function parseImageManifest(source: string): ServerImageManifest {
   return document.toJS({ maxAliasCount: 0 }) as ServerImageManifest;
 }
 
+function parseAgentQualificationDocument(source: string): unknown {
+  const document = YAML.parseDocument(source, {
+    strict: true,
+    uniqueKeys: true,
+  });
+  const issues = [...document.errors, ...document.warnings];
+  if (issues.length > 0) {
+    throw new Error(`invalid llama.cpp agent qualification YAML: ${issues.join("; ")}`);
+  }
+  const value = document.toJS({ maxAliasCount: 0 }) as unknown;
+  assertExactKeys(value, "agent qualification document", [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec",
+  ]);
+  const qualification = value as {
+    apiVersion?: unknown;
+    kind?: unknown;
+    metadata?: unknown;
+    spec?: unknown;
+  };
+  assertExactKeys(qualification.metadata, "agent qualification metadata", ["id"]);
+  if (
+    qualification.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
+    qualification.kind !== "AgentQualification" ||
+    (qualification.metadata as { id?: unknown }).id !== "llama-cpp.openclaw.spark-single.v1"
+  ) {
+    throw new Error("invalid llama.cpp agent qualification identity");
+  }
+  return qualification.spec;
+}
+
 export function loadLlamaCppImageConfig(
   source = fs.readFileSync(manifestPath, "utf8"),
   recipeSource = fs.readFileSync(recipePath, "utf8"),
   recipeSchemaSource = fs.readFileSync(recipeSchemaPath, "utf8"),
+  agentQualificationSource = fs.readFileSync(agentQualificationPath, "utf8"),
 ) {
   const manifest = parseImageManifest(source);
   const recipe = parseQualificationRecipe(recipeSource, recipeSchemaSource);
+  const agentQualification = parseAgentQualificationDocument(agentQualificationSource);
   assertExactKeys(manifest, "manifest", ["apiVersion", "kind", "metadata", "spec"]);
-  assertExactKeys(manifest.metadata, "metadata", ["id"]);
+  assertExactKeys(manifest.metadata, "metadata", ["annotations", "id"]);
+  assertExactKeys(manifest.metadata?.annotations, "metadata annotations", [
+    "nemoclaw.nvidia.com/request-guard-state",
+  ]);
   assertExactKeys(manifest.spec, "spec", [
     "build",
     "cuda",
@@ -332,6 +377,7 @@ export function loadLlamaCppImageConfig(
     "gpu",
     "model",
     "platform",
+    "probeBounds",
     "probes",
     "profile",
     "recipeRef",
@@ -351,7 +397,8 @@ export function loadLlamaCppImageConfig(
   if (
     manifest?.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
     manifest?.kind !== "ServerImageBuild" ||
-    manifest?.metadata?.id !== "llama-cpp-server.v1"
+    manifest?.metadata?.id !== "llama-cpp-server.v1" ||
+    manifest?.metadata?.annotations?.["nemoclaw.nvidia.com/request-guard-state"] !== "dormant"
   ) {
     throw new Error("invalid llama.cpp server image manifest identity");
   }
@@ -439,7 +486,7 @@ export function loadLlamaCppImageConfig(
       fullOffload: true,
       vendor: "nvidia",
     }) ||
-    JSON.stringify(qualification?.probes) !== JSON.stringify(["health", "completion"])
+    JSON.stringify(qualification?.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
   ) {
     throw new Error("invalid llama.cpp image publication contract");
   }
@@ -536,6 +583,7 @@ export function loadLlamaCppImageConfig(
       id: qualificationModel?.id,
     },
     platform: qualification?.platform,
+    probeBounds: qualification?.probeBounds,
     probes: qualification?.probes,
     profile: qualification?.profile,
     recipeRef: qualificationRecipeRef,
@@ -566,6 +614,7 @@ export function loadLlamaCppImageConfig(
     curl: "8.5.0-2ubuntu10.11",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
     "gcc-14": "14.2.0-4ubuntu2~24.04.1",
+    "golang-go": "2:1.22~2build1",
     "libcurl4-openssl-dev": "8.5.0-2ubuntu10.11",
     "libssl-dev": "3.0.13-0ubuntu3.12",
   };
@@ -582,6 +631,8 @@ export function loadLlamaCppImageConfig(
   const expectedRequiredPaths = [
     "/opt/llama.cpp/lib/libggml-cuda.so",
     "/usr/local/bin/llama-server",
+    "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+    "/usr/local/share/licenses/go/copyright",
     "/usr/local/share/licenses/llama.cpp/AUTHORS",
     "/usr/local/share/licenses/llama.cpp/LICENSE",
   ];
@@ -669,7 +720,13 @@ export function loadLlamaCppImageConfig(
         revision: spec?.source?.revision,
       },
     },
+    qualification: {
+      agentQualification,
+      probeBounds: qualification?.probeBounds,
+      probes: qualification?.probes,
+    },
     recipe: {
+      capabilities: recipe.spec.capabilities,
       id: recipe.metadata.id,
       model: {
         acquisition: {
@@ -859,6 +916,7 @@ export function loadLlamaCppImageConfigFromRoot(sourceRoot: string) {
       "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
     ),
     fs.readFileSync(recipeSchemaPath, "utf8"),
+    readBoundedRegularFile(root, LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH),
   );
 }
 

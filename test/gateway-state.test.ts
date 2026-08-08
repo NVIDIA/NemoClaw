@@ -21,7 +21,7 @@ import {
 } from "../src/lib/state/gateway.js";
 
 const OPENSHELL_STATUS_ERROR_CONTRACT = JSON.parse(
-  readFileSync(new URL("./fixtures/openshell-status-errors-v0.0.85.json", import.meta.url), "utf8"),
+  readFileSync(new URL("./fixtures/openshell-status-errors-v0.0.99.json", import.meta.url), "utf8"),
 ) as {
   producer: string;
   openshellVersion: string;
@@ -304,11 +304,17 @@ describe("parseSandboxPhase", () => {
 describe("getGatewayReuseState", () => {
   it("classifies the pinned OpenShell status-error contract without making non-lifecycle failures stale (#7087)", () => {
     expect(OPENSHELL_STATUS_ERROR_CONTRACT.producer).toBe("OpenShell");
-    expect(OPENSHELL_STATUS_ERROR_CONTRACT.openshellVersion).toBe("0.0.85");
+    expect(OPENSHELL_STATUS_ERROR_CONTRACT.openshellVersion).toBe("0.0.99");
     expect(OPENSHELL_STATUS_ERROR_CONTRACT.command).toBe("openshell status");
-    expect(getGatewayReuseState(OPENSHELL_STATUS_ERROR_CONTRACT.connectionRefusal, "", "")).toBe(
-      "stale",
-    );
+    expect(
+      getGatewayReuseState(
+        OPENSHELL_STATUS_ERROR_CONTRACT.connectionRefusal,
+        "",
+        "",
+        "nemoclaw",
+        "nemoclaw",
+      ),
+    ).toBe("stale");
     expect(getGatewayReuseState(OPENSHELL_STATUS_ERROR_CONTRACT.nonLifecycleError, "", "")).toBe(
       "missing",
     );

@@ -123,12 +123,7 @@ function assertPreparedMcpAddResourcesAbsent(
       `MCP add preflight for '${entry.server}' found an existing policy ownership record '${entry.policyName}'. The durable add manifest was preserved without claiming it.`,
     );
   }
-  const policyContent = buildMcpBridgePolicyYaml(
-    entry.server,
-    entry.url,
-    adapter,
-    target.addresses,
-  );
+  const policyContent = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, target);
   const policyState = policies.getPresetContentGatewayState(sandboxName, policyContent);
   if (policyState !== "absent") {
     throw new McpBridgeError(
@@ -209,6 +204,7 @@ async function addMcpBridgeUnlocked(
       const replay = replayTrustedPrivateEndpoint(
         existingEntry.trustedPrivateHost,
         existingEntry.allowedIps ?? [],
+        { requireAllPrivate: true },
       );
       target = {
         addresses: [...replay.addresses],

@@ -482,11 +482,11 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
   });
 
   it("warns and does not recover a stale registered sandbox absent from the selected gateway", async () => {
-    const harness = createRecoveryHarness(["registered-elsewhere"], {
-      gatewayNames: { "registered-elsewhere": "gateway-b" },
+    const harness = createRecoveryHarness(["registered-away"], {
+      gatewayNames: { "registered-away": "gateway-b" },
       liveOutput: "selected-gateway-box Ready",
       latestBackup: null,
-      staleNames: ["registered-elsewhere"],
+      staleNames: ["registered-away"],
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -621,8 +621,8 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
   });
 
   it("does not flag a sandbox bound to another live gateway as orphaned (#6520)", async () => {
-    const harness = createRecoveryHarness(["registered-elsewhere"], {
-      gatewayNames: { "registered-elsewhere": "gateway-b" },
+    const harness = createRecoveryHarness(["registered-away"], {
+      gatewayNames: { "registered-away": "gateway-b" },
       liveOutput: "selected-box Ready",
     });
     vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "0");
@@ -678,10 +678,10 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
   });
 
   it("does not recover an absent sandbox bound to a different gateway even when a validated backup exists", async () => {
-    const harness = createRecoveryHarness(["registered-elsewhere"], {
-      gatewayNames: { "registered-elsewhere": "gateway-b" },
+    const harness = createRecoveryHarness(["registered-away"], {
+      gatewayNames: { "registered-away": "gateway-b" },
       liveOutput: "selected-box Ready",
-      staleNames: ["registered-elsewhere"],
+      staleNames: ["registered-away"],
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -776,9 +776,9 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
   });
 
   it("does not recover a non-Ready sandbox bound to another valid gateway (#6114)", async () => {
-    const harness = createRecoveryHarness(["registered-elsewhere"], {
-      gatewayNames: { "registered-elsewhere": "nemoclaw-12345" },
-      liveOutput: "registered-elsewhere Provisioning",
+    const harness = createRecoveryHarness(["registered-away"], {
+      gatewayNames: { "registered-away": "nemoclaw-12345" },
+      liveOutput: "registered-away Provisioning",
     });
 
     await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
