@@ -6,12 +6,12 @@ import { isIP } from "node:net";
 
 import YAML from "yaml";
 
-import { isPrivateIp, OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
+import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import {
+  assertTrustedPrivateEndpointCapability,
   assertEndpointResolvesPublic,
+  canonicalizeTrustedPrivateEndpointPins,
   type EndpointDnsLookupFn,
-  isOperatorTrustablePrivateIp,
-  isTrustedPrivateEndpointCapability,
   normalizeTrustedPrivateHost,
 } from "../security/trusted-private-endpoint";
 
@@ -107,24 +107,19 @@ function validateTrustedPrivatePinnedContent(content: string): void {
       if (!Array.isArray(endpoint.allowed_ips) || endpoint.allowed_ips.length === 0) {
         throw new Error(`trusted private policy endpoint '${host}' has no exact address pins`);
       }
-      const addresses = endpoint.allowed_ips.map((address) => {
-        if (
-          typeof address !== "string" ||
-          isIP(address) === 0 ||
-          address !== address.toLowerCase()
-        ) {
-          throw new Error(`trusted private policy endpoint '${host}' has a malformed address pin`);
-        }
-        if (isPrivateIp(address) && !isOperatorTrustablePrivateIp(address)) {
-          throw new Error(`trusted private policy endpoint '${host}' has a disallowed address pin`);
-        }
-        return address;
-      });
-      const canonical = [...new Set(addresses)].sort();
+      const addresses = endpoint.allowed_ips;
+      let canonical: readonly string[];
+      try {
+        canonical = canonicalizeTrustedPrivateEndpointPins(
+          host,
+          addresses as readonly string[],
+        ).addresses;
+      } catch {
+        throw new Error(`trusted private policy endpoint '${host}' has a disallowed address pin`);
+      }
       if (
         canonical.length !== addresses.length ||
-        canonical.some((address, index) => address !== addresses[index]) ||
-        !addresses.some((address) => isOperatorTrustablePrivateIp(address))
+        canonical.some((address, index) => address !== addresses[index])
       ) {
         throw new Error(`trusted private policy endpoint '${host}' has non-canonical private pins`);
       }
@@ -306,7 +301,7 @@ export async function prepareTrustedPrivatePolicyPresets(
         `Trusted private host '${host}' failed destination preflight: ${result.reason ?? "validation failed"}.`,
       );
     }
-    if (!isTrustedPrivateEndpointCapability(result.trustedPrivateCapability)) {
+    if (!result.trustedPrivateCapability) {
       if (requiredHostSet.has(host)) {
         throw new Error(
           `Trusted private host '${host}' did not resolve to an operator-trustable private address.`,
@@ -314,28 +309,20 @@ export async function prepareTrustedPrivatePolicyPresets(
       }
       continue;
     }
-    const resolvedPins = [
-      ...new Set(
-        (result.addresses?.length
-          ? result.addresses
-          : result.trustedPrivateCapability.addresses
-        ).map((address) => address.toLowerCase()),
-      ),
-    ].sort();
-    const capabilityPins = [...result.trustedPrivateCapability.addresses]
-      .map((address) => address.toLowerCase())
-      .sort();
-    if (
-      resolvedPins.length !== capabilityPins.length ||
-      resolvedPins.some((address, index) => address !== capabilityPins[index])
-    ) {
+    const resolvedPins = result.addresses?.length
+      ? result.addresses
+      : result.trustedPrivateCapability.addresses;
+    let pins: readonly string[];
+    try {
+      pins = assertTrustedPrivateEndpointCapability(
+        host,
+        resolvedPins,
+        result.trustedPrivateCapability,
+      ).addresses;
+    } catch {
       throw new Error(
-        `Trusted private host '${host}' returned mixed public and private addresses. Trusted-private policy endpoints must resolve only to supported routed private addresses.`,
+        `Trusted private host '${host}' returned address pins that do not match its capability.`,
       );
-    }
-    const pins = capabilityPins;
-    if (pins.length === 0) {
-      throw new Error(`Trusted private host '${host}' produced no validated address pins.`);
     }
     for (const { endpoint } of references) {
       endpoint.allowed_ips = [...pins];

@@ -37,17 +37,19 @@ import {
   buildOpenClawFirstTurnLatencyEvidence,
   extractOpenClawAgentPayloadText,
 } from "./agent-turn-latency-helpers.ts";
-import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
-import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
+import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
+const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
 const USE_PREINSTALLED_LAUNCHABLE = SETUP_MODE === "preinstalled-launchable";
+const PORTABLE_PROFILE = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";
 const LIVE_TIMEOUT_MS = 50 * 60_000;
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
@@ -143,11 +145,27 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
     artifactName: "phase-4-openclaw-launch-turn",
     cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
-    env: env(),
+    env: env(PORTABLE_PROFILE ? { DOCKER_HOST: "" } : {}),
+    exitCommand: "/exit",
     host: input.host,
     redactionValues: input.redactionValues,
     sandboxName: SANDBOX_NAME,
   });
+
+  const permissions = await input.sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw)\" = '2770 sandbox:sandbox' && " +
+        "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)\" = '660 sandbox:sandbox'",
+    ),
+    {
+      artifactName: "phase-4-openclaw-launch-permissions",
+      env: env(),
+      redactionValues: input.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(permissions.exitCode, resultText(permissions)).toBe(0);
 }
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
@@ -357,7 +375,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
   await artifacts.target.declare({
-    id: "full-e2e",
+    id: FULL_E2E_TARGET_ID,
     sandboxName: SANDBOX_NAME,
     endpointUrl: hosted.endpointUrl,
     model: hosted.model,
@@ -370,7 +388,9 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       "sandbox appears in list/status and has policy/inference configuration",
       "direct hosted inference and sandbox inference.local both respond",
       ...(process.platform === "linux"
-        ? ["a recovered OpenClaw sandbox completes a launch turn through inference.local"]
+        ? [
+            "a recovered OpenClaw sandbox completes a /exit launch turn through inference.local and restores the mutable config permission contract",
+          ]
         : []),
       "nemoclaw logs produces output and cleanup removes registry state",
       ...(securityPostureEnabled()
@@ -578,7 +598,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(registryText).not.toContain(SANDBOX_NAME);
 
   await artifacts.target.complete({
-    id: "full-e2e",
+    id: FULL_E2E_TARGET_ID,
     securityPosture,
     status: "passed",
   });

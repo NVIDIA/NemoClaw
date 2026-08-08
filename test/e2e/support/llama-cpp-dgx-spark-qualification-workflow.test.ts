@@ -73,6 +73,16 @@ describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
     );
   });
 
+  it("binds qualification candidate identity on ordinary main runs", () => {
+    const value = workflow();
+    const jobEnv = job(value, "llama-cpp-dgx-spark-qualification").env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA = "${{ inputs.checkout_sha }}";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification env must bind NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+
   it("rejects bypassing the declarative protected-runner plan", () => {
     const value = workflow();
     job(value, "llama-cpp-dgx-spark-qualification")["runs-on"] = "self-hosted";

@@ -1,0 +1,41 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.105
+
+NemoClaw v0.0.105 upgrades the managed OpenShell runtime to v0.0.99 and adds its sandbox-name, credential, policy, and migration contracts.
+It restores local and managed inference paths across Windows, Linux ARM64, DGX Spark, Ollama, vLLM, and managed llama.cpp.
+It also improves Shields recovery, uninstall ownership, Hermes operations, network-policy feedback, remote dashboard guidance, and agent output integrity.
+
+- The managed OpenShell runtime now uses v0.0.99 across installation, gateways, sandboxes, supervisors, and managed agent images.
+  NemoClaw enforces the new routable sandbox-name contract before destructive upgrade work, updates managed MCP and network-policy behavior, and retries a cold empty glibc probe only after it confirms cleanup of the first probe container.
+  For more information, refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes), [Configure Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Strict local-provider validation now retries one reasoning-only tool-call truncation with a larger token budget and still fails unless the retry returns a structured tool call.
+  vLLM parser errors now identify the required automatic tool-choice and parser settings, while Windows-host Ollama readiness runs from the Docker Desktop network context that reaches `host.docker.internal`.
+  For more information, refer to [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation), [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), and [Additional Setup for Windows Machines](/user-guide/openclaw/get-started/additional-setup/windows-preparation).
+- Managed vLLM onboarding now accepts its authenticated loopback endpoint without requiring an unrelated trusted-private capability.
+  Dual DGX Spark discovery accepts the filtered `ip neighbor` output produced by the host and names the failed rail check, while eligible native Linux ARM64 hosts can prove denylisted GPU names with the bounded Docker CUDA workload.
+  The experimental managed llama.cpp lifecycle also uses the exact loopback port declared by its selected recipe.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Set Up vLLM on Two DGX Sparks](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-sparks), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Shields down can now recover an OpenClaw sandbox whose protected startup failed before readiness, but only after the installed guard proves that no startup child or readiness lease remains.
+  Hermes Shields transitions now wait for the trusted inference route to converge and roll back the existing transaction when the bounded route check fails.
+  For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Full uninstall no longer matches unrelated Docker containers and images whose names contain `openclaw`.
+  It leaves resources from a separate OpenClaw installation in place while continuing to remove the Docker resources that NemoClaw identifies as its own.
+  For more information, refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+- Hermes now keeps legacy dashboard startup inside its prepared, privilege-separated profile and avoids unintended re-execution into the machine-level dashboard.
+  The `nemohermes <sandbox> sessions delete <id>` command also uses in-memory SQLite temporary storage so session deletion works inside the restricted sandbox process context.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands) and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
+- An interactive `policy restore` refusal now reports `Cancelled.`, and a non-interactive refusal prints the complete usage line.
+  Both refusal paths stop before policy mutation.
+  For more information, refer to [Network Policies Reference](/user-guide/openclaw/reference/network-policies) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- When an SSH operator needs a port forward for a running OpenClaw or Hermes dashboard, `status` now points to the tokenized URL from `dashboard-url`.
+  The hint remains absent for non-SSH sessions, stopped gateways, routable dashboards, and Deep Agents Code sandboxes.
+  For more information, refer to [Deploy to a Headless Server](/user-guide/openclaw/deployment/deploy-to-headless-server) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- OpenClaw message handling now reconciles cumulative assistant snapshots with delta and replacement events before it publishes the final response.
+  This recovers text from later snapshots without duplicating earlier output and uses the pinned headless loopback client identity accepted by OpenClaw v2026.7.1.
+- Managed Deep Agents Code requests for the reviewed Nemotron Ultra model IDs now include the fixed nonempty-content template argument without trusting mutable provider parameters.
+  A successful Deep Agents Code skill installation also prints its confirmed SHA-256 content digest so operators can compare later installations.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands) and [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).

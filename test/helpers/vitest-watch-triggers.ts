@@ -138,10 +138,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/code-scanning-workflow.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/approve-maintainer-pr-workflow-runs\.yaml$/,
-    testsToRun: runTests("test/maintainer-pr-workflow-approval.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
   },

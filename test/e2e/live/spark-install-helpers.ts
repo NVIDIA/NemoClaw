@@ -8,7 +8,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-export const DEFAULT_SPARK_INSTALL_SANDBOX_NAME = "e2e-spark-install-live";
+export const DEFAULT_SPARK_INSTALL_SANDBOX_NAME = "e2e-spark-install";
 export const DEFAULT_INSTALL_URL = "https://www.nvidia.com/nemoclaw.sh";
 
 export type InstallerInvocation = {
@@ -33,8 +33,8 @@ function requireSparkInstallContract(condition: boolean, message: string): void 
 export function assertSparkInstallSandboxName(name: string): string {
   validateSandboxName(name);
   requireSparkInstallContract(
-    name.startsWith("e2e-spark-install-"),
-    `spark install sandbox must use the e2e-spark-install- prefix: ${name}`,
+    name.startsWith("e2e-spark-"),
+    `spark install sandbox must use the e2e-spark- prefix: ${name}`,
   );
   return name;
 }

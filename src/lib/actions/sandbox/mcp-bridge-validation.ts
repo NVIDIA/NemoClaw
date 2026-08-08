@@ -5,7 +5,7 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { diagnosticPreview } from "../../name-validation";
+import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../../sandbox-name-contract";
 import {
   normalizeTrustedPrivateHost,
   parseTrustedPrivateHosts,
@@ -22,7 +22,7 @@ import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 // must reject a missing or malformed security manifest instead of letting the
 // CLI start with a weakened credential-name denylist. Input, package, image,
 // and workflow contracts pin its structure, installed path, and version.
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.85.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.99.json";
 
 export {
   MCP_SERVER_URL_MAX_LENGTH,
@@ -34,7 +34,6 @@ export {
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = /^v[0-9]+_[A-Za-z0-9_]+$/;
-const VALID_SANDBOX_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 const OPENSHELL_VERSION_OUTPUT_RE =
   /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
 const OPENSHELL_VERSION_PROBE_TIMEOUT_MS = 5_000;
@@ -165,9 +164,9 @@ const SANDBOX_RUNTIME_CONTROL_ENV_KEYS = new Set(childVisibleCredentialManifest.
 const SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES = childVisibleCredentialManifest.runtimeControlPrefixes;
 const MCP_PROVIDER_HASH_BYTES = 8;
 export function validateSandboxName(name: string): void {
-  if (!name || name.length > 63 || !VALID_SANDBOX_RE.test(name)) {
+  if (!isValidName(name)) {
     throw new McpBridgeError(
-      `Invalid sandbox name ${diagnosticPreview(name)}. Names must be 1-63 lowercase alphanumeric characters with optional internal hyphens.`,
+      `Invalid sandbox name ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
       2,
     );
   }
