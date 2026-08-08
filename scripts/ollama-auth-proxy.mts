@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// @ts-nocheck
 
 /**
  * Authenticated reverse proxy for Ollama.
@@ -22,12 +21,19 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 
+type BackendListener = { address: string; port: number };
+type BackendProbeResult = {
+  ok: boolean;
+  listeners: BackendListener[];
+  nonLoopback?: BackendListener[];
+};
+
 /**
  * Best-effort write of a structured exit reason for the host CLI to read
  * when proxy startup fails. The host (src/lib/inference/ollama/proxy.ts)
  * renders specific remediation messages based on `reason`.
  */
-function writeExitStatus(reason, details) {
+function writeExitStatus(reason: string, details?: string): void {
   const statusFile = process.env.NEMOCLAW_OLLAMA_PROXY_STATUS_FILE;
   if (!statusFile) return;
   try {
@@ -50,7 +56,7 @@ function clearExitStatus() {
   try {
     fs.unlinkSync(statusFile);
   } catch (err) {
-    if (err && err.code !== "ENOENT") {
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
       // Same as writeExitStatus: don't crash, this is hint metadata.
     }
   }
@@ -97,8 +103,8 @@ const IPV6_MAPPED_IPV4_LOOPBACK_PROC = "0000000000000000FFFF00000100007F";
  *
  * /proc/net/tcp{,6} state column 0x0A = LISTEN.
  */
-function parseProcNetTcpListeners(text, port) {
-  const listeners = [];
+function parseProcNetTcpListeners(text: string, port: number): BackendListener[] {
+  const listeners: BackendListener[] = [];
   const lines = text.split("\n");
   // Skip header line.
   for (let i = 1; i < lines.length; i++) {
@@ -132,7 +138,7 @@ function parseProcNetTcpListeners(text, port) {
  * upstream-hex-encoding subtleties so the loopback classifier below can
  * reason about actual address bytes instead of hex string patterns.
  */
-function decodeProcAddress(addr) {
+function decodeProcAddress(addr: string): number[] | null {
   const expectedGroups = addr.length === 8 ? 1 : addr.length === 32 ? 4 : 0;
   if (expectedGroups === 0) return null;
   const bytes = [];
@@ -156,12 +162,13 @@ function decodeProcAddress(addr) {
  * Returns false for any input the decoder produced that does not match one
  * of these shapes.
  */
-function isLoopbackProcAddress(addr) {
+function isLoopbackProcAddress(addr: string): boolean {
   const bytes = decodeProcAddress(addr);
   if (bytes === null) return false;
   if (bytes.length === 4) return bytes[0] === 0x7f;
   if (bytes.length !== 16) return false;
-  const allZero = (arr, from, to) => arr.slice(from, to).every((b) => b === 0);
+  const allZero = (arr: number[], from: number, to: number): boolean =>
+    arr.slice(from, to).every((b) => b === 0);
   // ::1 -> all-zero prefix, last byte 0x01
   if (allZero(bytes, 0, 15) && bytes[15] === 0x01) return true;
   // ::ffff:127.x.y.z -> 10 zeros, 0xFF 0xFF, then 127-prefixed IPv4
@@ -177,7 +184,7 @@ function isLoopbackProcAddress(addr) {
  * { ok: false, listeners } when at least one is not, and null when /proc
  * is unavailable so the caller can fall back to the cross-platform probe.
  */
-function probeLinuxLoopbackBind(port) {
+function probeLinuxLoopbackBind(port: number): BackendProbeResult | null {
   let v4Text = "";
   let v6Text = "";
   try {
@@ -186,7 +193,8 @@ function probeLinuxLoopbackBind(port) {
     // Any read failure (EACCES on some containers, EPERM under strict
     // sandboxes, or the absent-file case) degrades to null so the caller
     // falls back to `lsof` rather than crashing the proxy.
-    if (err && (err.code === "ENOENT" || err.code === "EACCES" || err.code === "EPERM")) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT" || code === "EACCES" || code === "EPERM") {
       return null;
     }
     return null;
@@ -223,7 +231,7 @@ function probeLinuxLoopbackBind(port) {
  * refuse legitimate loopback binds and, worse, mask a genuine non-loopback
  * mistake as "not-loopback" on the fallback path.
  */
-function isLoopbackLsofAddress(addr) {
+function isLoopbackLsofAddress(addr: string): boolean {
   if (addr === "localhost") return true;
   // IPv4 dotted quad, or IPv4-mapped IPv6 written as "::ffff:x.y.z.w" or
   // "[::ffff:x.y.z.w]" or a bracketed IPv6 wrapper on the same. Any of
@@ -245,15 +253,16 @@ function isLoopbackLsofAddress(addr) {
   return false;
 }
 
-function probeLsofLoopbackBind(port) {
-  let stdout;
+function probeLsofLoopbackBind(port: number): BackendProbeResult | null {
+  let stdout: string;
   try {
     stdout = execFileSync("lsof", ["-nP", "-iTCP:" + port, "-sTCP:LISTEN", "-F", "n"], {
       encoding: "utf8",
       timeout: 5_000,
     });
   } catch (err) {
-    if (err && (err.code === "ENOENT" || err.status === 1)) return null;
+    const processError = err as (NodeJS.ErrnoException & { status?: number }) | undefined;
+    if (processError?.code === "ENOENT" || processError?.status === 1) return null;
     return null;
   }
   const listeners = [];
@@ -272,7 +281,7 @@ function probeLsofLoopbackBind(port) {
   return { ok: nonLoopback.length === 0, listeners, nonLoopback };
 }
 
-function assertBackendBoundToLoopback(port) {
+function assertBackendBoundToLoopback(port: number): void {
   if (process.env.NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE === "1") {
     // PRA-5 audit trail: the operator override that disables the
     // loopback probe MUST leave a durable record in the proxy's stderr so
@@ -321,7 +330,7 @@ function assertBackendBoundToLoopback(port) {
   process.exit(EXIT_BACKEND_NOT_LOOPBACK);
 }
 
-function buildProxyServer(token, backendUrl) {
+function buildProxyServer(token: string, backendUrl: URL): http.Server {
   const expectedBuf = Buffer.from(`Bearer ${token}`);
   return http.createServer((clientReq, clientRes) => {
     // Every request must present a valid Bearer token. The proxy binds 0.0.0.0
@@ -390,7 +399,11 @@ function buildProxyServer(token, backendUrl) {
   });
 }
 
-function main() {
+function shouldProbeBackendHostname(hostname: string): boolean {
+  return isLoopbackLsofAddress(hostname);
+}
+
+function main(): void {
   const TOKEN = process.env.OLLAMA_PROXY_TOKEN;
   if (!TOKEN) {
     console.error("OLLAMA_PROXY_TOKEN required");
@@ -400,15 +413,11 @@ function main() {
   const LISTEN_PORT = parseInt(process.env.OLLAMA_PROXY_PORT || "11435", 10);
   const BACKEND_PORT = parseInt(process.env.OLLAMA_BACKEND_PORT || "11434", 10);
 
-  const BACKEND_URL = new URL(
-    process.env.OLLAMA_BACKEND_URL || `http://127.0.0.1:${BACKEND_PORT}`,
-  );
+  const BACKEND_URL = new URL(process.env.OLLAMA_BACKEND_URL || `http://127.0.0.1:${BACKEND_PORT}`);
   // A non-local backend is explicitly selected by the persisted adapter
   // configuration. The bind probe applies only to a local Ollama port.
-  if (BACKEND_URL.hostname === "127.0.0.1" || BACKEND_URL.hostname === "localhost") {
-    const backendPort = Number(
-      BACKEND_URL.port || (BACKEND_URL.protocol === "https:" ? 443 : 80),
-    );
+  if (shouldProbeBackendHostname(BACKEND_URL.hostname)) {
+    const backendPort = Number(BACKEND_URL.port || (BACKEND_URL.protocol === "https:" ? 443 : 80));
     assertBackendBoundToLoopback(backendPort);
   }
 
@@ -419,7 +428,7 @@ function main() {
   // exception. Exit cleanly with a non-zero code instead; the host-side
   // startOllamaAuthProxy() detects the missing process and reports the port
   // owner with remediation. See #4820.
-  server.on("error", (/** @type {NodeJS.ErrnoException} */ err) => {
+  server.on("error", (err: NodeJS.ErrnoException) => {
     if (err && err.code === "EADDRINUSE") {
       console.error(`Ollama auth proxy: port ${LISTEN_PORT} is already in use`);
       writeExitStatus("listen-port-conflict", `port ${LISTEN_PORT} in use`);
@@ -435,9 +444,7 @@ function main() {
     // The proxy is healthy; clear any stale exit status so a later failed
     // restart's status file is not misread as the current proxy's failure.
     clearExitStatus();
-    console.log(
-      `Ollama auth proxy listening on 0.0.0.0:${LISTEN_PORT} -> ${BACKEND_URL.origin}`,
-    );
+    console.log(`Ollama auth proxy listening on 0.0.0.0:${LISTEN_PORT} -> ${BACKEND_URL.origin}`);
   });
 }
 
@@ -446,16 +453,17 @@ if (import.meta.main) {
 }
 
 export {
-  parseProcNetTcpListeners,
-  isLoopbackProcAddress,
-  isLoopbackLsofAddress,
-  probeLinuxLoopbackBind,
-  probeLsofLoopbackBind,
-  writeExitStatus,
   clearExitStatus,
   decodeProcAddress,
+  EXIT_BACKEND_NOT_LOOPBACK,
   IPV4_LOOPBACK_PROC,
   IPV6_LOOPBACK_PROC,
   IPV6_MAPPED_IPV4_LOOPBACK_PROC,
-  EXIT_BACKEND_NOT_LOOPBACK,
+  isLoopbackLsofAddress,
+  isLoopbackProcAddress,
+  parseProcNetTcpListeners,
+  probeLinuxLoopbackBind,
+  probeLsofLoopbackBind,
+  shouldProbeBackendHostname,
+  writeExitStatus,
 };

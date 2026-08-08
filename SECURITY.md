@@ -61,7 +61,7 @@ Subscribe to notifications on that page to receive alerts when new bulletins are
 
 Component-level threat models for security-critical NemoClaw subsystems are documented here so a reviewer or auditor can understand what each subsystem is designed to prevent, which surfaces it protects, and where its guarantees end.
 
-### Ollama Auth Proxy Bind Probe (`#6014`)
+### Ollama Auth Proxy Loopback Bind Probe (`#6014`)
 
 **Summary.** The Ollama auth proxy is the token-authenticated network gate in front of a locally-running Ollama backend on every topology where `shouldFrontOllamaWithProxy()` returns true (native Linux, macOS, WSL with a native dockerd runtime). Ollama itself has no built-in authentication. The proxy adds a bearer-token check on its own listen port and forwards to Ollama on the backend port.
 

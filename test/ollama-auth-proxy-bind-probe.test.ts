@@ -43,6 +43,7 @@ type ProxyExports = {
   isLoopbackProcAddress: (addr: string) => boolean;
   isLoopbackLsofAddress: (addr: string) => boolean;
   probeLinuxLoopbackBind: (port: number) => ProbeResult;
+  shouldProbeBackendHostname: (hostname: string) => boolean;
   EXIT_BACKEND_NOT_LOOPBACK: number;
 };
 const {
@@ -50,6 +51,7 @@ const {
   isLoopbackProcAddress,
   isLoopbackLsofAddress,
   probeLinuxLoopbackBind,
+  shouldProbeBackendHostname,
   EXIT_BACKEND_NOT_LOOPBACK,
 } = proxyExports as ProxyExports;
 
@@ -313,6 +315,26 @@ describe("isLoopbackLsofAddress bind probe (#6014)", () => {
 });
 
 describe("public surface bind probe (#6014)", () => {
+  it.each([
+    "localhost",
+    "127.0.0.1",
+    "127.0.0.2",
+    "::1",
+    "[::1]",
+    "::ffff:127.0.0.9",
+  ])("probes the local backend hostname %s", (hostname) => {
+    expect(shouldProbeBackendHostname(hostname)).toBe(true);
+  });
+
+  it.each([
+    "10.0.0.1",
+    "192.168.1.9",
+    "ollama.example.com",
+    "2001:db8::1",
+  ])("skips the remote backend hostname %s", (hostname) => {
+    expect(shouldProbeBackendHostname(hostname)).toBe(false);
+  });
+
   it("exports EXIT_BACKEND_NOT_LOOPBACK as 2 (locked-in contract with the host CLI)", () => {
     // The host (src/lib/inference/ollama/proxy.ts) maps this code to a
     // specific remediation. Changing it would break the structured signal.
