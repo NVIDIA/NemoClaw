@@ -112,6 +112,15 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
+      - name: Bind E2E correlation identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          correlation_id="$(node --input-type=module -e \
+            'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
+          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
+          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >>"$GITHUB_ENV"
+
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
