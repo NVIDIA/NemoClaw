@@ -119,7 +119,6 @@ describe("sandbox build context staging", () => {
     writeFixture(
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
-    writeFixture(path.join("scripts", "checks", "node-tar-image-scan.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
@@ -672,9 +671,6 @@ describe("sandbox build context staging", () => {
         fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-bundled-npm-ip-address.mts")),
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "checks", "node-tar-image-scan.mts")),
-      ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),
       ).toBe(false);

@@ -226,10 +226,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "checks", "node-tar-image-scan.mts"),
-    path.join(stagedScriptsDir, "checks", "node-tar-image-scan.mts"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );

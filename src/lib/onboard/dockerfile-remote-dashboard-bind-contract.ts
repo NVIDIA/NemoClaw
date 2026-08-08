@@ -17,8 +17,6 @@ const OPENCLAW_CONFIG_GENERATOR_RE =
 const SAFE_VALIDATION_GENERATOR_RE =
   /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
-const NODE_TAR_IMAGE_SCAN_COPY_RE =
-  /^COPY scripts\/checks\/node-tar-image-scan\.mts \/scripts\/checks\/node-tar-image-scan\.mts$/;
 const CONFIG_MODE_RE = /^RUN\s+chmod\s+660\s+\/sandbox\/\.openclaw\/openclaw\.json$/;
 const CONFIG_HASH_RE =
   /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
@@ -58,7 +56,7 @@ const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "a0a554d474cb70087e50686d998915eae06201d6182a2410d3ccc4879e5058e6",
   "5af905889f94ffed2f6c371111d0589e38eed7b0de54ddb0dd68ad912a23149a",
   "1197b99bdb996b37a3e4e386a507dfabcdfb2c26a40b015d617f97208668187d",
-  "922a821187f11a892b03c66af8478ab36041048b37b7111e20620dda8e85557d",
+  "a619aead6cdf253dc7bf4504267e6b1d724fed672597072394b7400c08f81fd0",
   "c0b409e1bf4d33a9e44f407c6bd9b0445b2ffd0b796823fe3cfa5989314d6603",
   "9fcc674a44a152707380cdb09a67f8594f568288406c96f5354f1c87f5b939a6",
   "83567d1fa0e73bef6a3333383c13ace05e26704964ae6a7a76ee24a2f2be3d7e",
@@ -75,7 +73,6 @@ function instructionSha256(text: string): string {
 const postGeneratorInstructionAllowed = (instruction: DockerfileInstruction): boolean => {
   const { text } = instruction;
   if (PASSIVE_FINAL_STAGE_INSTRUCTION_RE.test(text)) return true;
-  if (NODE_TAR_IMAGE_SCAN_COPY_RE.test(text)) return true;
   if (SAFE_VALIDATION_GENERATOR_RE.test(text)) return true;
   if (EXACT_CUSTOM_POST_GENERATOR_RUN_RE.some((pattern) => pattern.test(text))) return true;
   return CANONICAL_POST_GENERATOR_RUN_SHA256.has(instructionSha256(text));

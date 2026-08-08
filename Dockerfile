@@ -1857,9 +1857,6 @@ RUN set -eu; \
         fi; \
     fi
 
-# Gate the completed local filesystem too; CI repeats this scan in an isolated
-# container and retains evidence keyed to the final image ID.
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
 RUN check_metadata() { \
       metadata_path="$1"; \
       expected_metadata="$2"; \
@@ -1882,13 +1879,7 @@ RUN check_metadata() { \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
     && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
     && check_metadata /usr/local/share/nemoclaw/state-lock-plan.json 'root:root:444' \
-    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644' \
-    && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root:755' \
-    && install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:openclaw \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
+    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
 # can detect and restart unhealthy containers in standalone deployments.

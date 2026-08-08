@@ -121,8 +121,6 @@ describe("OpenClaw final image layout", () => {
     const pluginCopy = "COPY --from=openclaw-plugin-payload / /";
     const patchCopy = "COPY --from=openclaw-patch-payload / /";
     const runtimeCopy = "COPY --from=openclaw-runtime-payload / /";
-    const scanCopy =
-      "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts";
 
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(hasBuildKitRunMount(dockerfile)).toBe(false);
@@ -146,7 +144,6 @@ describe("OpenClaw final image layout", () => {
       pluginCopy,
       patchCopy,
       runtimeCopy,
-      scanCopy,
     ]);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755'",
@@ -161,7 +158,6 @@ describe("OpenClaw final image layout", () => {
       "/usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500'",
       "/usr/local/share/nemoclaw/state-lock-plan.json 'root:root:444'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
-      "/scripts/checks/node-tar-image-scan.mts 'root:root:755'",
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
@@ -170,7 +166,6 @@ describe("OpenClaw final image layout", () => {
     const plugin = indexOfRequired(finalStage, pluginCopy);
     const patch = indexOfRequired(finalStage, patchCopy);
     const runtime = indexOfRequired(finalStage, runtimeCopy);
-    const scan = indexOfRequired(finalStage, scanCopy);
     const tarPatch = indexOfRequired(
       finalStage,
       "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
@@ -220,7 +215,6 @@ describe("OpenClaw final image layout", () => {
       "&& install -d -o root -g root -m 0755 /run/nemoclaw",
     );
     const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
-    const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
 
     expect(dependency).toBeLessThan(tarPatch);
     expect(tarPatch).toBeLessThan(braceExpansionPatch);
@@ -247,6 +241,5 @@ describe("OpenClaw final image layout", () => {
     );
     expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(runtime).toBeLessThan(runtimeChmod);
-    expect(scan).toBeLessThan(metadataCheck);
   });
 });
