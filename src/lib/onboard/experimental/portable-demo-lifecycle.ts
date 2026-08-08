@@ -416,6 +416,16 @@ function isStaleRootlessPauseProcess(result: CommandResult): boolean {
   );
 }
 
+function isPodmanMigrationCleanupPanic(result: CommandResult): boolean {
+  if (result.status === 0 && !result.error) return false;
+  const detail = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
+  return (
+    /panic: runtime error: invalid memory address or nil pointer dereference/iu.test(detail) &&
+    /storageService\)\.UnmountContainerImage/iu.test(detail) &&
+    /Runtime\)\.Migrate/iu.test(detail)
+  );
+}
+
 interface PodmanContainerQuery {
   ids: string[];
   ok: boolean;
@@ -989,10 +999,14 @@ export function recoverPortableDemoSandboxLifecycle(
   const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
   let initialInspection = podman(["inspect", receipt.containerId]);
   if (isStaleRootlessPauseProcess(initialInspection)) {
-    requireCommand(
-      podman(["system", "migrate"]),
-      "Resetting the stale rootless Podman pause process",
-    );
+    let migration = podman(["system", "migrate"]);
+    if (isPodmanMigrationCleanupPanic(migration)) {
+      (deps.log ?? console.log)(
+        "  Podman stopped stale portable workloads but crashed during 5.4.x storage cleanup; completing its rootless namespace migration.",
+      );
+      migration = podman(["system", "migrate"]);
+    }
+    requireCommand(migration, "Resetting the stale rootless Podman pause process");
     (deps.log ?? console.log)(
       "  Reset stale rootless Podman namespace state after the portable host resumed.",
     );
