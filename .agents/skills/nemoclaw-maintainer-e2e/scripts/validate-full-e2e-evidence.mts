@@ -7,6 +7,9 @@ import { parseArgs } from "node:util";
 
 type JsonRecord = Record<string, unknown>;
 
+const SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+
 export interface FullE2eEvidenceInput {
   candidateSha: string;
   cleanup: unknown;
@@ -90,13 +93,52 @@ function requireGitHubUrl(value: string, owner: string): void {
   }
 }
 
+function requireSha(value: JsonRecord, key: string, owner: string): string {
+  const sha = stringField(value, key, owner);
+  if (!SHA_PATTERN.test(sha)) {
+    throw new Error(`${owner}.${key} must be a lowercase 40-character SHA`);
+  }
+  return sha;
+}
+
+function requireRepository(value: JsonRecord, key: string, owner: string): string {
+  const repository = stringField(value, key, owner);
+  if (!REPOSITORY_PATTERN.test(repository)) {
+    throw new Error(`${owner}.${key} must be an owner/repository name`);
+  }
+  return repository;
+}
+
+function validateDispatchIdentity(dispatch: JsonRecord, candidateSha: string): string {
+  requireEqual(dispatch.candidateSha, candidateSha, "dispatch.candidateSha");
+  const kind = stringField(dispatch, "kind", "dispatch");
+  if (kind === "nemoclaw-e2e-dispatch-v1") return candidateSha;
+  if (kind !== "nemoclaw-e2e-dispatch-v2") {
+    throw new Error(
+      'dispatch.kind must equal "nemoclaw-e2e-dispatch-v1" or "nemoclaw-e2e-dispatch-v2"',
+    );
+  }
+
+  requireEqual(dispatch.repository, "NVIDIA/NemoClaw", "dispatch.repository");
+  const candidateRepository = requireRepository(dispatch, "candidateRepository", "dispatch");
+  const baseSha = requireSha(dispatch, "baseSha", "dispatch");
+  const workflowSha = requireSha(dispatch, "workflowSha", "dispatch");
+  if (dispatch.prNumber === null) {
+    requireEqual(candidateRepository, "NVIDIA/NemoClaw", "dispatch.candidateRepository");
+    requireEqual(baseSha, candidateSha, "dispatch.baseSha");
+    requireEqual(workflowSha, candidateSha, "dispatch.workflowSha");
+  } else {
+    positiveIntegerField(dispatch, "prNumber", "dispatch");
+  }
+  return workflowSha;
+}
+
 export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvidenceSummary {
-  if (!/^[0-9a-f]{40}$/.test(input.candidateSha)) {
+  if (!SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("candidate SHA must be a lowercase 40-character SHA");
   }
 
   const run = record(input.run, "run");
-  requireEqual(run.head_sha, input.candidateSha, "run.head_sha");
   requireEqual(run.head_branch, "main", "run.head_branch");
   requireEqual(run.event, "workflow_dispatch", "run.event");
   requireEqual(run.path, ".github/workflows/e2e.yaml", "run.path");
@@ -108,8 +150,8 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
   const runId = positiveIntegerField(run, "id", "run");
 
   const dispatch = record(input.dispatch, "dispatch");
-  requireEqual(dispatch.kind, "nemoclaw-e2e-dispatch-v1", "dispatch.kind");
-  requireEqual(dispatch.candidateSha, input.candidateSha, "dispatch.candidateSha");
+  const expectedWorkflowSha = validateDispatchIdentity(dispatch, input.candidateSha);
+  requireEqual(run.head_sha, expectedWorkflowSha, "run.head_sha");
   requireEqual(dispatch.eventName, "workflow_dispatch", "dispatch.eventName");
   requireEqual(dispatch.workflowRunId, String(runId), "dispatch.workflowRunId");
   const receiptAttempt = positiveIntegerField(dispatch, "workflowRunAttempt", "dispatch");

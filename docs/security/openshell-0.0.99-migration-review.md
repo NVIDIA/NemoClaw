@@ -155,6 +155,44 @@ keeps its OpenClaw-only binary scope, but its GET method and path inspection is 
 unavailable until npm is removed. The other routes retain their separate binary allowlists and
 authorization rules.
 
+## Automated Exact-Head Qualification Gate
+
+The required `check-hash` pull request check runs the OpenShell qualification verifier from the
+pull request's base revision. It treats the candidate checkout as inspected data and does not
+execute candidate verifier code.
+
+The verifier requires qualification when either side of a changed or renamed path touches one of
+these surfaces:
+
+- OpenShell selectors, installer pins, release identities, or trust manifests.
+- Agent manifests, blueprint runtime configuration, or credential-boundary manifests.
+- Gateway, supervisor, managed activation, command transport, or lifecycle implementation.
+- OpenShell E2E workflows, trusted preparation and artifact actions, or qualification code.
+
+An authenticated exact-revision dispatch creates a strict
+`nemoclaw-e2e-dispatch-v2` receipt in the trusted main workflow. The workflow uploads the receipt
+before candidate checkout or candidate-controlled commands can run. The receipt binds the
+repository, pull request, candidate repository and SHA, base SHA, trusted workflow SHA, run ID and
+attempt, event, selectors, and optional-runner flags.
+
+The base-trusted verifier derives the baseline and target versions independently from the base and
+candidate trees. It then requires the trusted receipt, the matching upgrade fixture, the workflow
+run link and ID, and each executed job's successful conclusion. Every default qualification job
+must succeed. Before candidate checkout, the trusted controller also pins the complete live-target
+and shared-test matrices; candidate planning must reproduce the exact shared-test IDs, files, and
+projects. Reviewed condition-only jobs may be skipped when the empty-selector dispatch does not
+select them, including Launchable, Jetson, DGX Spark, retired-selector compatibility, reporting,
+and scorecard jobs.
+
+Changes that can affect managed activation also require the current head's exact all-agent managed
+runtime activation check. Changes that can affect rootless Podman also require the current head's
+rootless Podman CPU lifecycle check with Docker disabled.
+
+The gate fails closed for missing, expired, duplicate, or malformed evidence. It also rejects a
+stale head or base, a workflow mismatch, nonempty selectors, an unreviewed skipped job, an
+incomplete job, or an unsuccessful or cancelled run. A later push changes the head SHA and
+invalidates every earlier receipt and proof check.
+
 ## Final Acceptance Gates
 
 - All active CLI, blueprint, installer, Brev, workflow, supervisor, and sandbox selectors agree on

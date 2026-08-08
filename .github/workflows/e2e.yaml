@@ -173,9 +173,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test_matrix='[]'
           case "${JOBS}:${TARGETS}" in
             :)
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
+              test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/vllm-docker-storage.test.ts","project":"integration"}]'
               ;;
             managed-image-protected-runtime:)
               matrix='[]'
@@ -195,6 +197,7 @@ jobs:
               ;;
           esac
           printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+          printf 'test_matrix=%s\n' "${test_matrix}" >> "${GITHUB_OUTPUT}"
 
       - id: runner_routing
         name: Build trusted larger-runner routing
@@ -296,6 +299,69 @@ jobs:
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository" >&2; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
+
+      - name: Record trusted E2E dispatch receipt
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
+          BASE_SHA: ${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          DISPATCH_JOBS: ${{ inputs.jobs }}
+          DISPATCH_RECEIPT_DIR: ${{ runner.temp }}/nemoclaw-e2e-dispatch
+          DISPATCH_TARGETS: ${{ inputs.targets }}
+          EVENT_NAME: ${{ github.event_name }}
+          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
+          PR_NUMBER: ${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$DISPATCH_RECEIPT_DIR"
+          jq -n \
+            --arg baseSha "$BASE_SHA" \
+            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg eventName "$EVENT_NAME" \
+            --arg jobs "$DISPATCH_JOBS" \
+            --arg prNumber "$PR_NUMBER" \
+            --arg repository "$REPOSITORY" \
+            --arg targets "$DISPATCH_TARGETS" \
+            --arg workflowRunId "$RUN_ID" \
+            --arg workflowSha "$WORKFLOW_SHA" \
+            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
+            --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
+            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
+            '{
+              kind: "nemoclaw-e2e-dispatch-v2",
+              repository: $repository,
+              prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end),
+              candidateRepository: $candidateRepository,
+              candidateSha: $candidateSha,
+              baseSha: $baseSha,
+              workflowSha: $workflowSha,
+              workflowRunId: $workflowRunId,
+              workflowRunAttempt: $workflowRunAttempt,
+              eventName: $eventName,
+              jobs: $jobs,
+              targets: $targets,
+              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
+              allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
+              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
+              emptySelectors: ($jobs == "" and $targets == "")
+            }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
+
+      - name: Upload trusted E2E dispatch receipt
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
 
       - name: Authorize Launchable E2E maintainer dispatch
         if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
@@ -548,6 +614,7 @@ jobs:
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
+          CONTROLLER_TEST_MATRIX: ${{ steps.controller_matrix.outputs.test_matrix }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
@@ -558,59 +625,16 @@ jobs:
             matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
             expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
             actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
-            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
+            test_matrix="$(sed -n 's/^test_matrix=//p' "${GITHUB_OUTPUT}")"
+            expected_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${CONTROLLER_TEST_MATRIX}")"
+            actual_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${test_matrix}")"
+            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ] ||
+              [ "${actual_controller_test_matrix}" != "${expected_controller_test_matrix}" ]; then
               : > "${GITHUB_OUTPUT}"
-              echo "::error::E2E planner matrix does not match controller-selected targets" >&2
+              echo "::error::E2E planner matrix does not match controller-selected targets or shared tests" >&2
               exit 1
             fi
           fi
-
-      - name: Record trusted E2E dispatch receipt
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
-          ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
-          DISPATCH_JOBS: ${{ inputs.jobs }}
-          DISPATCH_RECEIPT_DIR: ${{ runner.temp }}/nemoclaw-e2e-dispatch
-          DISPATCH_TARGETS: ${{ inputs.targets }}
-          EVENT_NAME: ${{ github.event_name }}
-          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          install -d -m 0700 "$DISPATCH_RECEIPT_DIR"
-          jq -n \
-            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
-            --arg candidateSha "$CANDIDATE_SHA" \
-            --arg eventName "$EVENT_NAME" \
-            --arg jobs "$DISPATCH_JOBS" \
-            --arg targets "$DISPATCH_TARGETS" \
-            --arg workflowRunId "$RUN_ID" \
-            --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
-            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
-            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
-            '{
-              kind: "nemoclaw-e2e-dispatch-v1",
-              candidateSha: $candidateSha,
-              eventName: $eventName,
-              workflowRunId: $workflowRunId,
-              workflowRunAttempt: $workflowRunAttempt,
-              jobs: $jobs,
-              targets: $targets,
-              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
-              allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
-              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
-              emptySelectors: ($jobs == "" and $targets == "")
-            }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
-
-      - name: Upload trusted E2E dispatch receipt
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
 
   retired-selector-compatibility:
     needs: generate-matrix
