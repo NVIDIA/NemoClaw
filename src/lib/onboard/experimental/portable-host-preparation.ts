@@ -167,7 +167,11 @@ function readPodmanStorageInfo(
   };
 }
 
-function persistentStorageConfig(source: string, info: PodmanStorageInfo): string {
+function persistentStorageConfig(
+  source: string,
+  info: PodmanStorageInfo,
+  durableGraphRoot: string,
+): string {
   const lines = source.replace(/\r\n/gu, "\n").split("\n");
   const storageStart = lines.findIndex((line) => /^\s*\[storage\]\s*(?:#.*)?$/u.test(line));
   if (storageStart < 0) {
@@ -179,15 +183,21 @@ function persistentStorageConfig(source: string, info: PodmanStorageInfo): strin
   const storageEnd = nextTable < 0 ? lines.length : nextTable;
   const values: Readonly<Record<string, string>> = {
     driver: JSON.stringify(info.driver),
-    graphroot: JSON.stringify(info.graphRoot),
+    graphroot: JSON.stringify(durableGraphRoot),
+    ...(info.graphRoot === durableGraphRoot
+      ? {}
+      : { imagestore: JSON.stringify(info.graphRoot) }),
     runroot: JSON.stringify(info.runRoot),
     transient_store: "false",
   };
   const seen = new Set<string>();
   for (let index = storageStart + 1; index < storageEnd; index += 1) {
-    const match = /^\s*(driver|graphroot|runroot|transient_store)\s*=/u.exec(lines[index] ?? "");
+    const match = /^\s*(driver|graphroot|imagestore|runroot|transient_store)\s*=/u.exec(
+      lines[index] ?? "",
+    );
     if (!match) continue;
     const key = match[1]!;
+    if (!Object.hasOwn(values, key)) continue;
     lines[index] = `${key} = ${values[key]}`;
     seen.add(key);
   }
@@ -204,17 +214,18 @@ function ensurePersistentPodmanStore(
   podman: NonNullable<PortableHostPreparationDeps["podman"]>,
 ): string | null {
   const before = readPodmanStorageInfo(podman, env);
-  if (!before.transientStore) return null;
+  const durableGraphRoot = path.join(home, ".nemoclaw", "portable-podman");
+  if (!before.transientStore && before.graphRoot === durableGraphRoot) return null;
 
   const existingContainers = podman(["ps", "-a", "--format", "{{.Names}}"], env);
-  requireCommand(existingContainers, "Checking the transient Podman container store");
+  requireCommand(existingContainers, "Checking the current Podman container store");
   const names = String(existingContainers.stdout ?? "")
     .split(/\r?\n/u)
     .map((name) => name.trim())
     .filter(Boolean);
   if (names.length > 0) {
     throw new Error(
-      `The portable profile cannot migrate a non-empty transient Podman store safely (containers: ${names.join(", ")}). Uninstall those transient containers, then rerun the portable installer.`,
+      `The portable profile cannot migrate a non-empty Podman store safely (containers: ${names.join(", ")}). Uninstall those containers, then rerun the portable installer.`,
     );
   }
 
@@ -232,18 +243,18 @@ function ensurePersistentPodmanStore(
     if (source !== null) break;
   }
   source ??= "[storage]\n";
-  writePrivateConfig(target, persistentStorageConfig(source, before));
+  writePrivateConfig(target, persistentStorageConfig(source, before, durableGraphRoot));
   env.CONTAINERS_STORAGE_CONF = target;
 
   const after = readPodmanStorageInfo(podman, env);
   if (
     after.transientStore ||
     after.driver !== before.driver ||
-    after.graphRoot !== before.graphRoot ||
+    after.graphRoot !== durableGraphRoot ||
     after.runRoot !== before.runRoot
   ) {
     throw new Error(
-      "The portable profile could not switch Podman to persistent container metadata without changing its existing storage paths",
+      "The portable profile could not move Podman metadata into durable user storage while preserving its image store",
     );
   }
   return target;
