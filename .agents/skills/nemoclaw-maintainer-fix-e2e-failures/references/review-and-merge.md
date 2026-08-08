@@ -124,6 +124,15 @@ Require all of these conditions:
 
 ## Merge Without Bypass
 
-When the invocation grants merge authority and every final gate remains true, merge with an allowed repository method. Never pass `--admin`, disable a rule, dismiss a required review, or accept a skipped or neutral required check.
+When the invocation grants merge authority and every final gate remains true, use an allowed repository merge method and bind the write to the captured reviewed head SHA:
 
-After the merge write, re-read the PR and require GitHub to report it merged with a merge commit. On rejection or transport ambiguity, apply the common write rule before any retry. Take the indicated normal action or record the blocker; do not retry through a bypass. Wait for later automatic `main` E2E evidence before counting the root cause as verified fixed.
+```bash
+gh api --method PUT \
+  "repos/NVIDIA/NemoClaw/pulls/<pr-number>/merge" \
+  -f sha='<captured-head-sha>' \
+  -f merge_method='<allowed-method>'
+```
+
+If the head precondition fails, re-read the PR and restart the final gate. Do not retry through another merge method. Never pass `--admin`, disable a rule, dismiss a required review, or accept a skipped or neutral required check.
+
+After the merge write, re-read the PR. Require GitHub to report `merged: true` and a resulting `merge_commit_sha` for the selected merge method. On rejection or transport ambiguity, apply the common write rule before any retry. Take the indicated normal action or record the blocker; do not retry through a bypass. Wait for later automatic `main` E2E evidence before counting the root cause as verified fixed.

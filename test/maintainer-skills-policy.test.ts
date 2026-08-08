@@ -394,6 +394,11 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(review).toContain("Rerun both the trusted gate checker and the effective-rules read");
     expect(review).toContain("Require the post-approval checker to return `allPass: true`");
     expect(review).toContain("allPass: true");
+    expect(review).toContain('"repos/NVIDIA/NemoClaw/pulls/<pr-number>/merge"');
+    expect(review).toContain("-f sha='<captured-head-sha>'");
+    expect(review).toContain("-f merge_method='<allowed-method>'");
+    expect(review).toContain("If the head precondition fails");
+    expect(review).toContain("Do not retry through another merge method");
     expect(review).toContain("Never pass `--admin`");
 
     expect(handoff).toContain("Verified fixes");
