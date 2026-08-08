@@ -115,6 +115,7 @@ jobs:
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
       - name: Run static checks
@@ -144,6 +145,7 @@ jobs:
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
       - name: Run build and type checks
@@ -168,6 +170,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
       - name: Detect trusted installer integration action
@@ -229,6 +232,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/actions/ci-wechat-runtime-audit
+            .github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh
           sparse-checkout-cone-mode: false
 
       - name: Detect trusted WeChat runtime audit
@@ -402,6 +406,7 @@ jobs:
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
       - name: Detect trusted E2E support sharding
@@ -572,6 +577,7 @@ jobs:
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
       - name: Merge CLI coverage
@@ -607,6 +613,7 @@ jobs:
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration
+            .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
       - name: Run plugin coverage

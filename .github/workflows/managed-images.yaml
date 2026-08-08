@@ -41,6 +41,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: managed-images-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
 
@@ -363,6 +367,7 @@ jobs:
           name: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
+          retention-days: 1
 
   pr-managed-activation:
     name: PR exact all-agent managed runtime activation
@@ -456,6 +461,7 @@ jobs:
           name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
           path: e2e-artifacts/live/managed-image-activation/
           if-no-files-found: error
+          retention-days: 1
 
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})

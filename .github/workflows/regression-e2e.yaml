@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           normalized="$(printf '%s' "$JOBS" | tr -d '[:space:]')"
           case ",${normalized}," in
-            ,|*,whatsapp-qr-compact-e2e,*)
+            ,,|*,whatsapp-qr-compact-e2e,*)
               echo "whatsapp_qr_compact=true" >> "$GITHUB_OUTPUT"
               ;;
             *)

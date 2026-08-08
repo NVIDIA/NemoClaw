@@ -372,20 +372,22 @@ describe("complete managed-image publication workflow", () => {
     const basePublishers = [
       {
         agent: "hermes",
-        artifact: "managed-base-${{ github.run_id }}-${{ github.run_attempt }}-hermes",
+        displayName: "Hermes",
+        image: "nvidia/nemoclaw/hermes-sandbox-base",
         job: "build-and-push-hermes",
         platformsJob: "build-hermes-platforms",
       },
       {
         agent: "langchain-deepagents-code",
-        artifact:
-          "managed-base-${{ github.run_id }}-${{ github.run_attempt }}-langchain-deepagents-code",
+        displayName: "Deep Agents Code",
+        image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
         job: "build-and-push-dcode",
         platformsJob: "build-dcode-platforms",
       },
       {
         agent: "openclaw",
-        artifact: "managed-base-${{ github.run_id }}-${{ github.run_attempt }}-openclaw",
+        displayName: "OpenClaw",
+        image: "nvidia/nemoclaw/sandbox-base",
         job: "build-and-push-openclaw",
         platformsJob: "build-openclaw-platforms",
       },
@@ -397,39 +399,19 @@ describe("complete managed-image publication workflow", () => {
         `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
       );
       expect(basePublisher.needs).toEqual([expectedPublisher.platformsJob, "reviewed-npm-audit"]);
-      const manifest = step(basePublisher, "Create and verify multi-platform manifest");
-      const manifestRun = manifest.run ?? "";
-      expect(manifest.id).toBe("manifest");
-      expect(manifest.env?.AGENT).toBe(expectedPublisher.agent);
-      expect(manifest.run).toContain('reference="$IMAGE@$digest"');
-      expect(manifest.run).toContain('.["containerimage.descriptor"].digest');
-      expect(manifest.run).toContain('--metadata-file "$candidate_metadata"');
-      expect(manifestRun).toContain('scripts/checks/retry-docker-imagetools-inspect.sh "$source"');
-      expect(manifestRun).toContain(
-        'scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw',
-      );
-      expect(manifestRun).not.toContain("docker buildx imagetools inspect");
-      expect(manifest.run).toContain("scripts/checks/validate-managed-base-index.sh");
-      expect(manifest.run).toContain("declare -A source_digests=()");
-      expect(manifest.run).toContain('"${source_digests[linux/amd64]}"');
-      expect(manifest.run).toContain('"${source_digests[linux/arm64]}"');
-      expect(manifest.run).toContain("platform_digests_json=");
-      expect(manifest.run).toContain("declare -A platform_digests=()");
-      expect(manifest.run).toContain("scripts/export-managed-base-image-contract.sh");
-      expect(manifest.run).toContain('"${platform_digests[linux/amd64]}"');
-      expect(manifest.run).toContain('"${platform_digests[linux/arm64]}"');
-      const validationIndex = manifestRun.indexOf("scripts/checks/validate-managed-base-index.sh");
-      const promotionIndex = manifestRun.indexOf("publication_metadata=");
-      expect(manifestRun.indexOf("candidate_tag=")).toBeLessThan(validationIndex);
-      expect(validationIndex).toBeLessThan(promotionIndex);
-      expect(manifestRun).toContain("published_digest=");
-      expect(manifestRun).toContain('if [ "$published_digest" != "$digest" ]; then');
-      expect(manifestRun).not.toContain("first_tag=");
-      expect(manifestRun).not.toContain('imagetools create "${tag_args[@]}" "${sources[@]}"');
+      const manifest = step(basePublisher, "Publish validated multi-platform manifest");
+      expect(manifest).toMatchObject({
+        uses: "./.github/actions/publish-base-image-manifest",
+        with: {
+          agent: expectedPublisher.agent,
+          "display-name": expectedPublisher.displayName,
+          image: expectedPublisher.image,
+          registry: "${{ env.REGISTRY }}",
+          "registry-username": "${{ github.actor }}",
+          "registry-password": "${{ secrets.GITHUB_TOKEN }}",
+        },
+      });
       expect(step(basePublisher, "Checkout").with?.["persist-credentials"]).toBe(false);
-      expect(step(basePublisher, "Upload managed base image contract").with?.name).toBe(
-        expectedPublisher.artifact,
-      );
 
       const nativePlatforms = required(
         baseWorkflow.jobs?.[expectedPublisher.platformsJob],

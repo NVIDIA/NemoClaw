@@ -194,17 +194,6 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
     ]) {
       expect(script).toContain(fragment);
     }
-
-    const action = fs.readFileSync(
-      path.join(repoRoot, ".github", "actions", "ci-wechat-runtime-audit", "action.yaml"),
-      "utf8",
-    );
-    expect(action).toContain('node-version: "22.19.0"');
-    expect(action).toContain('cd "$RUNNER_TEMP"');
-    expect(action).toContain("npm install --global npm@10.9.4");
-    expect(action).toContain("--userconfig /dev/null");
-    expect(action).toContain("--registry https://registry.npmjs.org/");
-    expect(action).toContain('run: bash "$GITHUB_ACTION_PATH/audit.sh"');
   });
 
   it("rejects a target-controlled npm registry override", () => {

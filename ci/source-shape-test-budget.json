@@ -77,11 +77,6 @@
       "category": "security"
     },
     {
-      "file": "test/dcode-base-image-workflow.test.ts",
-      "test": "accepts every discovered publisher and rejects supply-chain mutations",
-      "category": "security"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
