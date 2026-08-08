@@ -30,7 +30,6 @@ export const PREPARE_E2E_NO_BUILD_JOBS = new Set([
   "llama-cpp-dgx-spark-qualification",
   "managed-image-multiarch-startup",
   "ollama-auth-proxy",
-  "security-posture",
   "shields-config",
   "snapshot-commands",
   "spark-install",

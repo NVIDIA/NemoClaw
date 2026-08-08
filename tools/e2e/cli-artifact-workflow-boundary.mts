@@ -40,7 +40,7 @@ const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "f46080a39df2db871cfc2638dc3c7b2fa93ee0bb64702e3e405fe52a8e6ba50e";
+  "ba3ab24550161d5d229511a0c679be0a3c6442b1ccd3d998d934ad2ca147e678";
 const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
@@ -97,6 +97,7 @@ const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "retired-selector-compatibility",
   "sandbox-operations",
   "sandbox-survival",
+  "security-posture",
   "sessions-agents-cli",
   "shared-e2e",
   "skill-agent",
@@ -270,6 +271,7 @@ export function validateCliArtifactRestoreAction(
     'restore_dir="$(mktemp -d',
     'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
     '[[ -f "$cli_entrypoint" && ! -L "$cli_entrypoint" && -s "$cli_entrypoint" ]]',
+    "sandbox-name.cjs",
     '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
 
     ".sourceRevision == $candidateSha",
@@ -332,6 +334,7 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
     "for required_file in dist/nemoclaw.js dist/build-identity.json; do",
     '[[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]]',
+    "sandbox-name.cjs",
     '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
 
     ".sourceRevision == $candidateSha",

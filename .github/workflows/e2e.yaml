@@ -5168,6 +5168,11 @@ jobs:
         with:
           build-cli: "false"
 
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
         continue-on-error: true
