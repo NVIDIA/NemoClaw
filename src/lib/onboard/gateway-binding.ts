@@ -25,9 +25,8 @@ import type { GatewayReuseState } from "../state/gateway";
 /** Gateway registration name used for the default gateway port. */
 export const BASE_GATEWAY_NAME = "nemoclaw";
 /** Docker-driver gateway state directory leaf name for the default port. */
-// OpenShell gateway databases are not downgrade-compatible. Keep the pinned
-// 0.0.85 runtime in its own durable namespace so it cannot open a database
-// already migrated by 0.0.99/0.0.101 during a portable/GFN reinstall.
+// OpenShell gateway schemas are not downgrade-compatible. The pinned 0.0.85
+// stack must never open state written by 0.0.99/0.0.101 installer attempts.
 export const BASE_GATEWAY_STATE_DIR_NAME = "openshell-docker-gateway-v0.0.85";
 /** Docker-driver gateway compatibility container name for the default port. */
 export const BASE_GATEWAY_COMPAT_CONTAINER_NAME = "nemoclaw-openshell-gateway";

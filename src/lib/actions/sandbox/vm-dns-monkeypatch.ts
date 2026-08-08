@@ -5,10 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { BASE_GATEWAY_STATE_DIR_NAME } from "../../onboard/gateway-binding";
+
 import { type CaptureOpenshellResult, stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import type { SandboxEntry } from "../../state/registry";
-import { BASE_GATEWAY_STATE_DIR_NAME } from "../../onboard/gateway-binding";
 
 const GVPROXY_DNS = "192.168.127.1";
 const INIT_SCRIPT_RELATIVE_PATH = ["srv", "openshell-vm-sandbox-init.sh"] as const;

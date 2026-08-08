@@ -6,9 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { BASE_GATEWAY_STATE_DIR_NAME } from "./gateway-binding";
+
 import { waitUntil } from "../core/wait";
 import { clearDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
-import { BASE_GATEWAY_STATE_DIR_NAME } from "./gateway-binding";
 import {
   type OpenShellGatewayProcessTarget,
   hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,

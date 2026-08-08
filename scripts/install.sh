@@ -2811,6 +2811,13 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]]; then
+    info "Portable OpenShell 0.0.85 install is isolated from existing OpenShell state; skipping gateway migration and sandbox backup."
+    if command_exists systemctl; then
+      systemctl --user stop nemoclaw-openshell-gateway.service >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
   require_openshell_compatible_sandbox_names "$reg_file"
   if ! command_exists openshell; then
     # NemoClaw v0.0.55's OpenShell 0.0.44 layout could install this binary
@@ -3105,6 +3112,10 @@ run_installer_host_preflight() {
 recover_preexisting_sandboxes_before_onboard() {
   local cli_runner="$1"
   if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -le 0 ] 2>/dev/null; then
+    return 0
+  fi
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]]; then
+    info "OpenShell 0.0.85 portable state is isolated; not migrating sandboxes from prior OpenShell stacks."
     return 0
   fi
 

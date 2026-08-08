@@ -10,7 +10,10 @@ import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types"
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
-import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
+import {
+  installPortableDemoSandboxLifecycle,
+  preparePortableDemoSandboxCreation,
+} from "./experimental/portable-demo-lifecycle";
 import {
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
@@ -144,6 +147,7 @@ export async function runSandboxGpuCreateFlow(
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
   let registryImageRef: string | null = input.prebuild.imageRef;
+  preparePortableDemoSandboxCreation(input.sandboxName);
   const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
   const gpuCreateOutcome = await sandboxGpuCreateAttempt
     .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {

@@ -2724,7 +2724,7 @@ async function createSandboxWithBaseImageResolution(
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
-          dashboardForwardEnabled: manageDashboard,
+          dashboardForwardEnabled: manageDashboardForward,
           ...lifecycleRegistrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,

@@ -269,7 +269,6 @@ const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
   "backups",
   "sandboxes.json",
 ];
-const PORTABLE_PODMAN_STORE_PATTERN = /^portable-podman(?:-v[1-9][0-9]*)?$/u;
 
 const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
   "https-pin-runtime-adapter.pid",
@@ -381,50 +380,6 @@ function removePathExcept(
     return true;
   }
   deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
-  return true;
-}
-
-function removePortablePodmanStores(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
-  if (!runtime.existsSync(paths.nemoclawStateDir)) return true;
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(paths.nemoclawStateDir, { withFileTypes: true });
-  } catch (error) {
-    runtime.warn(
-      `Failed to inspect portable Podman stores under ${paths.nemoclawStateDir}: ${formatError(error)}`,
-    );
-    return false;
-  }
-  const stores = entries
-    .filter((entry) => PORTABLE_PODMAN_STORE_PATTERN.test(entry.name))
-    .map((entry) => path.join(paths.nemoclawStateDir, entry.name));
-  if (stores.length === 0) return true;
-  if (!runtime.commandExists("podman")) {
-    runtime.warn("Podman is required to remove portable UID-mapped container storage.");
-    return false;
-  }
-  for (const store of stores) {
-    const result = runtime.run(
-      "podman",
-      [
-        "unshare",
-        "sh",
-        "-c",
-        'umount -l "$1/overlay" 2>/dev/null || true\nrm -rf -- "$1"',
-        "nemoclaw-portable-store-cleanup",
-        store,
-      ],
-      {
-        env: runtime.env,
-        stdio: "ignore",
-      },
-    );
-    if (result.status !== 0 || runtime.existsSync(store)) {
-      runtime.warn(`Failed to remove portable Podman store ${store}.`);
-      return false;
-    }
-    runtime.log(`Removed portable Podman store ${store}`);
-  }
   return true;
 }
 
@@ -2002,24 +1957,8 @@ function resolvePreserveSet(
     );
     return [];
   }
-  const portableLifecycleInstalled = runtime.existsSync(
-    path.join(paths.nemoclawStateDir, "portable-demo-lifecycle"),
-  );
-  const defaultPreserveEntries = portableLifecycleInstalled
-    ? PRESERVED_USER_DATA_ENTRIES.filter((name) => name !== "sandboxes.json")
-    : PRESERVED_USER_DATA_ENTRIES;
-  if (
-    portableLifecycleInstalled &&
-    runtime.existsSync(path.join(paths.nemoclawStateDir, "sandboxes.json"))
-  ) {
-    runtime.log(
-      "Portable lifecycle state detected; removing sandboxes.json so uninstall cannot leave stranded sandbox registrations.",
-    );
-  }
-  const preservable = detectPreservableEntries(paths, runtime).filter((name) =>
-    defaultPreserveEntries.includes(name),
-  );
-  if (preservable.length === 0) return defaultPreserveEntries;
+  const preservable = detectPreservableEntries(paths, runtime);
+  if (preservable.length === 0) return PRESERVED_USER_DATA_ENTRIES;
   const nonInteractive =
     !runtime.isTty || options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1";
   if (nonInteractive) {
@@ -2028,7 +1967,7 @@ function resolvePreserveSet(
       "  Pass --destroy-user-data (or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1) to purge user data on uninstall.",
     );
     warnPreservedRegistryUnrecoverable(preservable, runtime);
-    return defaultPreserveEntries;
+    return PRESERVED_USER_DATA_ENTRIES;
   }
   runtime.log(`The following user data under ${paths.nemoclawStateDir} is preserved by default:`);
   for (const name of preservable) runtime.log(`  · ${name}`);
@@ -2040,7 +1979,7 @@ function resolvePreserveSet(
   }
   runtime.log("Keeping user data.");
   warnPreservedRegistryUnrecoverable(preservable, runtime);
-  return defaultPreserveEntries;
+  return PRESERVED_USER_DATA_ENTRIES;
 }
 
 function executePlan(
@@ -2208,9 +2147,6 @@ function executePlan(
       }
       const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
       const selectedIsDefault = path.resolve(paths.nemoclawStateDir) === path.resolve(sharedRoot);
-      if (!scopedToSelectedGateway && !removePortablePodmanStores(paths, runtime)) {
-        return { ok: false };
-      }
       if (scopedToSelectedGateway && selectedIsDefault && sharedRegistryMustBePreserved) {
         if (
           !preserveUnderStateDir.includes("sandboxes.json") &&

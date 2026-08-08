@@ -361,6 +361,20 @@ component_matches_cli_build() {
     && component_build_versions_match "$openshell_version" "$component_version"
 }
 
+report_installed_component_versions() {
+  local openshell_bin="$1"
+  local gateway_bin sandbox_bin cli_version gateway_version sandbox_version
+  gateway_bin="$(installed_component_path "$openshell_bin" openshell-gateway "${NEMOCLAW_OPENSHELL_GATEWAY_BIN:-}")"
+  sandbox_bin="$(selected_sandbox_component_path "$openshell_bin")"
+  cli_version="$(component_build_version "$openshell_bin" cli)" \
+    || fail "Could not verify the installed OpenShell CLI version."
+  gateway_version="$(component_build_version "$gateway_bin" gateway)" \
+    || fail "Could not verify the installed OpenShell gateway version."
+  sandbox_version="$(component_build_version "$sandbox_bin" sandbox)" \
+    || fail "Could not verify the installed OpenShell sandbox version."
+  info "OpenShell components: CLI ${cli_version}; gateway ${gateway_version}; sandbox ${sandbox_version}"
+}
+
 required_driver_bins_present() {
   local openshell_bin="${1:-$(command -v openshell 2>/dev/null || true)}"
   local gateway_bin sandbox_bin
@@ -806,6 +820,9 @@ if command -v openshell >/dev/null 2>&1; then
         if [ "$OS" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
           warn "Homebrew is not installed; reusing the standalone OpenShell gateway without reboot persistence."
         fi
+        if [ "$OS" = "Linux" ]; then
+          report_installed_component_versions "$ACTIVE_OPENSHELL_BIN"
+        fi
         info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite, MCP L7, and policy --base capable)"
         exit 0
       fi
@@ -1002,4 +1019,7 @@ required_driver_bins_installed_in_dir "$target_dir" \
   || fail "OpenShell release '$RELEASE_TAG' did not install the required Docker-driver binaries."
 require_openshell_messaging_features "$target_dir/openshell"
 
+if [ "$OS" = "Linux" ]; then
+  report_installed_component_versions "$target_dir/openshell"
+fi
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"
