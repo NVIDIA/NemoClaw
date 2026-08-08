@@ -602,6 +602,60 @@ const V0099_ASSET_DIGESTS = new Map([
   ),
   ["openshell.rb", "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713"],
 ]);
+const V00101_CHECKSUM_MANIFESTS = new Map([
+  [
+    "openshell-checksums-sha256.txt",
+    `7d49ab2a5ff0b826bd2bdca5e0244010f832dfc6901c808ea8c8467004c26913  openshell-x86_64-unknown-linux-musl.tar.gz
+b553d3bfc08e9354b990a10fb8abd976e039afeec2d3947f8a112018be40d296  openshell-aarch64-unknown-linux-musl.tar.gz
+9daaccdb9e30e220d56dd6d6bf4bd00ccca8ae4ad2845f5f0d9b9da3eb8ee881  openshell-aarch64-apple-darwin.tar.gz
+087c261d1594aace6f179710f07406bc03163aa37f1c87b8290eeb21ee81352f  openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz
+670039e6f973e35f7eac98b1e34ffdcdfcda7f094019bdec02007b4c0eaa0a43  openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz
+a7bf38218aa6c85ed73217b501f9fa44c32861fd48aa4a9141aa1fe478b7dc5b  openshell-driver-vm-aarch64-apple-darwin.tar.gz
+4b8e3deb2d3a4ec7b6fd05fbeaee58dfafc670a629077c3d80e85882211abddd  openshell_0.0.101-1_amd64.deb
+0087dab1206c8dbdec455ae65434b881033757b2a094ecf3a6f416c81057aeee  openshell_0.0.101-1_arm64.deb
+49be637bf2792910ae6f551f770de44ed869d10f28363236de0a96e4d093213b  openshell-0.0.101-1.fc44.aarch64.rpm
+e77a96379dce740b11bbec969cc4c9ba6959129af21673346978d5ed20fa3127  openshell-0.0.101-1.fc44.x86_64.rpm
+5fa81231f790de65b61421c96b3bd8ebdc8dff5cb1915bfbfdd20b9f26f8d3f4  openshell-gateway-0.0.101-1.fc44.aarch64.rpm
+45b7e3d1909e25db7324a9569e9fc3f372e43045a2fd2bc8df6d780e00b21161  openshell-gateway-0.0.101-1.fc44.x86_64.rpm
+a05a7379d6d7f329c3e3fd109af85a9b61184173dd41589e48e2dfff9c02a3d0  openshell-0.0.101-py3-none-macosx_13_0_arm64.whl
+8c86d18a23ade9650d1c616ada7c3f2df28ed839e9fdc29368d2573064a63a7d  openshell-0.0.101-py3-none-manylinux_2_39_aarch64.whl
+ae36a8001bceb7366f184b7b69d0d9d7f7b3a6b95d952d616ece4ff229fc0dcd  openshell-0.0.101-py3-none-manylinux_2_39_x86_64.whl
+`,
+  ],
+  [
+    "openshell-gateway-checksums-sha256.txt",
+    `eaeb094ccf7dcb1fe00c7e926e6aa9aaaefb89ecbef8343720628b0fd2d84654  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz
+ac842ccc2ab8b5682f7479d71532cc650839250a8a41dbfae2b871cbbdfd3279  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz
+0f9e195b7cde57f4c2080df95159c5e7e72b0248306abc242ae00a3bb6f07f14  openshell-gateway-aarch64-apple-darwin.tar.gz
+`,
+  ],
+  [
+    "openshell-sandbox-checksums-sha256.txt",
+    `953b90eaa7d2fc1bb7bdf38eb0ada6fad7902b13f9f895ca20b89caeac483a9e  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz
+c39b7ba3cf212b88712a00d2a0e3d28e2c1e0e9f47a9a6ca818a8f06ed2140aa  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz
+`,
+  ],
+]);
+const V00101_ASSET_DIGESTS = new Map([
+  ...[...V00101_CHECKSUM_MANIFESTS.values()].flatMap((contents) =>
+    contents
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [digest, asset] = line.split(/\s+/);
+        return [asset, digest] as const;
+      }),
+  ),
+  ["openshell.rb", "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"],
+]);
+const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
+  ["0.0.99", V0099_CHECKSUM_MANIFESTS],
+  ["0.0.101", V00101_CHECKSUM_MANIFESTS],
+]);
+const ASSET_DIGESTS_BY_VERSION = new Map([
+  ["0.0.99", V0099_ASSET_DIGESTS],
+  ["0.0.101", V00101_ASSET_DIGESTS],
+]);
 const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "allowlisted-alternate-version": (source) => {
     const alternateEntries = [...CHECKSUM_MANIFESTS.entries()]
@@ -737,8 +791,8 @@ function createFixture(
   formatting: PinFormatting = "canonical",
 ): string {
   const checksumManifests =
-    openshellVersion === "0.0.99" ? V0099_CHECKSUM_MANIFESTS : CHECKSUM_MANIFESTS;
-  const assetDigests = openshellVersion === "0.0.99" ? V0099_ASSET_DIGESTS : ASSET_DIGESTS;
+    CHECKSUM_MANIFESTS_BY_VERSION.get(openshellVersion) ?? CHECKSUM_MANIFESTS;
+  const assetDigests = ASSET_DIGESTS_BY_VERSION.get(openshellVersion) ?? ASSET_DIGESTS;
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
   const checksDir = path.join(scriptsDir, "checks");
@@ -1009,6 +1063,23 @@ describe("installer hash verification", () => {
     );
     expect(result.stdout).toContain(
       "OK: openshell-sandbox-checksums-sha256.txt (9e67af6bab9f975432a1045fcfea5ab182ab585b17886c8c290c1eb77232b87a)",
+    );
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("accepts the reviewed OpenShell 0.0.101 release manifests (#8598)", () => {
+    const result = runFixture("complete", "0.0.101", true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.101 release assets");
+    expect(result.stdout).toContain(
+      "OK: openshell-checksums-sha256.txt (9c90869d00b109b5ac1062b1a9808a592c2311d3c0c4926bae44d136b979d8a9)",
+    );
+    expect(result.stdout).toContain(
+      "OK: openshell-gateway-checksums-sha256.txt (dcb3f1917713bf2a8e8e1803ac42c5e39d9dd41e644136b05def32b077082777)",
+    );
+    expect(result.stdout).toContain(
+      "OK: openshell-sandbox-checksums-sha256.txt (d16f7d369c54d74d36c7df036565267a960e7ce6fb143012fe9d77f257d6e8b3)",
     );
     expect(result.stdout).toContain("All installer hashes are current");
   });
