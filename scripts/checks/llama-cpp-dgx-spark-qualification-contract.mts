@@ -37,7 +37,7 @@ export const LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE =
 export const LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE =
   "docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e" as const;
 export const LLAMA_CPP_DGX_SPARK_TOOL_IMAGE =
-  "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2" as const;
+  "nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03" as const;
 export const LLAMA_CPP_DGX_SPARK_MINIMUM_DRIVER_VERSION = "580.65.06" as const;
 export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "health",
