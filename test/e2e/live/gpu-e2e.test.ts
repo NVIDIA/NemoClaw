@@ -9,6 +9,7 @@ import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
   assertNvidiaAvailable,
+  buildLlamaCppCompatibilityTargetEnv,
   CLI,
   chatContent,
   cleanupGpu,
@@ -63,7 +64,7 @@ llamaCppCompatibilityTest(
       {
         artifactName: "llama-cpp-generic-gpu-compatibility-target",
         cwd: REPO_ROOT,
-        env: buildAvailabilityProbeEnv(process.env),
+        env: buildLlamaCppCompatibilityTargetEnv(process.env),
         timeoutMs: 84 * 60_000,
       },
     );
