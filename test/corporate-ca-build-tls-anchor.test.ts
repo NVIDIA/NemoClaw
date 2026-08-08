@@ -108,26 +108,24 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
     expect(finalTrustIndex).toBeLessThan(firstSnapshotCurlIndex);
   });
 
-  // source-shape-contract: security -- DCode discovery npm installs must trust the host corporate CA before registry access
-  it("trusts the corporate CA before the DCode discovery runtime npm install", () => {
+  // source-shape-contract: security -- DCode discovery assembly must not make registry requests that bypass the final image trust anchor
+  it("copies the reviewed DCode discovery runtime without registry access", () => {
     const discoveryStageIndex = finalDockerfile.indexOf("AS mcp-tool-discovery-runtime");
-    const discoveryArgIndex = finalDockerfile.indexOf(
-      "ARG NEMOCLAW_CORPORATE_CA_B64",
+    const reviewedBundleIndex = finalDockerfile.indexOf(
+      "reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle",
       discoveryStageIndex,
     );
-    const discoveryTrustIndex = finalDockerfile.indexOf(
-      "export NODE_EXTRA_CA_CERTS=/tmp/nemoclaw-corporate-ca.pem",
-      discoveryArgIndex,
-    );
-    const discoveryInstallIndex = finalDockerfile.indexOf(
-      "./install-reviewed-runtime.sh",
-      discoveryTrustIndex,
-    );
+    const discoveryStageEnd = finalDockerfile.indexOf("\nFROM ", reviewedBundleIndex);
+    const finalStageIndex = finalDockerfile.indexOf("FROM ${BASE_IMAGE}", discoveryStageEnd);
+    const discoveryStage = finalDockerfile.slice(discoveryStageIndex, discoveryStageEnd);
 
     expect(discoveryStageIndex).toBeGreaterThan(-1);
-    expect(discoveryArgIndex).toBeGreaterThan(discoveryStageIndex);
-    expect(discoveryTrustIndex).toBeGreaterThan(discoveryArgIndex);
-    expect(discoveryInstallIndex).toBeGreaterThan(discoveryTrustIndex);
+    expect(reviewedBundleIndex).toBeGreaterThan(discoveryStageIndex);
+    expect(discoveryStageEnd).toBeGreaterThan(reviewedBundleIndex);
+    expect(finalStageIndex).toBeGreaterThan(discoveryStageEnd);
+    expect(discoveryStage).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
+    expect(discoveryStage).not.toContain("install-reviewed-runtime.sh");
+    expect(discoveryStage).not.toContain("RUN ");
   });
 
   // source-shape-contract: security -- DCode final images must decode the sandbox-specific corporate CA even when the base is reused

@@ -49,40 +49,15 @@ COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
 RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
     && /opt/nemoclaw/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
 
-# Build the agent-neutral, names-only MCP diagnostic once from a committed
-# production lock. The final image copies only the bundled runtime, not its
-# build-time dependency tree.
-# Depend on the completed plugin builder so BuildKit does not run two npm
-# dependency installs concurrently on connection-constrained GPU runners. The
-# final image still copies only the reviewed MCP bundle from this stage.
-FROM builder AS mcp-tool-discovery-runtime
-ARG NEMOCLAW_CORPORATE_CA_B64
-ENV AWS_EC2_METADATA_DISABLED=true \
-    NPM_CONFIG_AUDIT=false \
-    NPM_CONFIG_FUND=false \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
-WORKDIR /opt/mcp-tool-discovery-runtime
-COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/npm-ci-locked.sh tools/mcp-tool-discovery-runtime/*.ts ./
-COPY tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed/ ./npm-cache-seed/
-RUN --network=default ./install-reviewed-runtime.sh \
-    && rm -rf ./npm-cache-seed \
-    && rm -f ./install-reviewed-runtime.sh ./npm-ci-locked.sh
+# Copy the reviewed, CI-audited runtime artifacts without materializing an npm
+# graph during image assembly. Protected rebuilds remain network-free and the
+# final image still receives only the generated bundles.
+FROM scratch AS mcp-tool-discovery-runtime
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
 
-# Bundle the driver-neutral startup-profile applicator into one CommonJS file.
-# The final image needs no TypeScript loader or repository dependency tree.
-FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
-WORKDIR /opt/nemoclaw-managed-startup-build
-COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
-COPY src/lib/messaging/ ./src/lib/messaging/
-COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/
-COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
-COPY src/lib/security/credential-hash.ts ./src/lib/security/
-COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
-RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
-        src/lib/onboard/managed-bootstrap/image-runtime.ts \
-        --bundle --platform=node --format=cjs --target=node22 \
-        --outfile=/out/managed-startup-image-runtime.cjs \
-    && chmod 0444 /out/managed-startup-image-runtime.cjs
+FROM scratch AS managed-startup-runtime-builder
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains

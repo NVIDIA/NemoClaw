@@ -98,7 +98,7 @@
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "trusts the corporate CA before the DCode discovery runtime npm install",
+      "test": "copies the reviewed DCode discovery runtime without registry access",
       "category": "security"
     },
     {

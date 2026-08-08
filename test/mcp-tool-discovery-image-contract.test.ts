@@ -191,7 +191,7 @@ describe("MCP tool discovery image contract", () => {
     );
     expect(installer).toContain('export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"');
     const openClawDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-    expect(openClawDockerfile).toContain("FROM builder AS mcp-tool-discovery-runtime");
+    expect(openClawDockerfile).toContain("FROM scratch AS mcp-tool-discovery-runtime");
     expect(openClawDockerfile).toContain(
       "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /opt/nemoclaw-build-tools/npm-cache-seed/",
     );
@@ -199,11 +199,10 @@ describe("MCP tool discovery image contract", () => {
       "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/",
     );
     expect(openClawDockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed/ ./npm-cache-seed/",
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
     );
-    expect(openClawDockerfile).toContain(
-      "RUN --network=default ./install-reviewed-runtime.sh \\\n    && rm -rf ./npm-cache-seed",
-    );
+    expect(openClawDockerfile).not.toContain("mcp-runtime-npm-cache-seed/");
+    expect(openClawDockerfile).not.toContain("install-reviewed-runtime.sh");
   });
 
   it.skipIf(process.platform === "win32")(
@@ -242,12 +241,6 @@ describe("MCP tool discovery image contract", () => {
       label: "NemoClaw CLI",
       lockfile: "nemoclaw/package-lock.json",
       seedDirectory: "tools/mcp-tool-discovery-runtime/npm-cache-seed",
-    },
-    {
-      archiveCount: 97,
-      label: "MCP discovery runtime",
-      lockfile: "tools/mcp-tool-discovery-runtime/package-lock.json",
-      seedDirectory: "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
     },
   ])("pins every reachable $label lockfile archive for protected Linux x64 builds", (fixture) => {
     const seedDirectory = path.join(repoRoot, fixture.seedDirectory);
@@ -300,44 +293,62 @@ describe("MCP tool discovery image contract", () => {
     }
   });
 
-  it("pins the MCP runtime esbuild binary for protected Linux arm64 builds", () => {
-    const archive = "linux-arm64-0.27.4.tgz";
+  it("does not commit MCP runtime registry archives", () => {
     const seedDirectory = path.join(
       repoRoot,
       "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
     );
-    const archiveParts = fs
-      .readdirSync(seedDirectory)
-      .filter((seedName) => seedName.startsWith(`${archive}.part-`))
-      .sort();
-    const lock = JSON.parse(
-      fs.readFileSync(
-        path.join(repoRoot, "tools/mcp-tool-discovery-runtime/package-lock.json"),
-        "utf8",
-      ),
-    );
-    const lockEntry = lock.packages["node_modules/@esbuild/linux-arm64"] as {
-      integrity: string;
-      resolved: string;
-    };
-    const seed = Buffer.concat(
-      archiveParts.map((seedName) => fs.readFileSync(path.join(seedDirectory, seedName))),
-    );
+    const trackedSeedFiles = fs.readdirSync(seedDirectory).filter((name) => name !== ".gitkeep");
 
-    expect(archiveParts).toEqual([
-      `${archive}.part-000`,
-      `${archive}.part-001`,
-      `${archive}.part-002`,
-    ]);
-    expect(
-      archiveParts
-        .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
-        .every((size) => size <= 2_000_000),
-    ).toBe(true);
-    expect(`sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`).toBe(
-      lockEntry.integrity,
+    expect(trackedSeedFiles).toEqual([]);
+  });
+
+  it("pins the reviewed image runtime artifacts exactly", () => {
+    const bundleRoot = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle",
     );
-    expect(path.basename(new URL(lockEntry.resolved).pathname)).toBe(archive);
+    const expectedHashes = {
+      "managed-startup-image-runtime.bundle":
+        "8522801ee753f87723ea5181ca52edbe5810e6d4aeeba9e678a6b28bddfbb51e",
+      "mcp-tool-discovery/BUNDLED_PACKAGES.json":
+        "df5dc8f167101085a8e73c444aa56854b2a4716a0bb7de9886fec4e50f402601",
+      "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt":
+        "ae0820debd0e33a10baa3a9c6c7ea831e8ad32a43f8500d52c7dc961ba5513a5",
+      "mcp-tool-discovery/mcp-tool-discovery.bundle":
+        "defdba693829bfdfad16ce2edaad6b0a454388a32f15113854850e652a950012",
+    } as const;
+
+    for (const [relativePath, expectedHash] of Object.entries(expectedHashes)) {
+      const actualHash = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
+        .digest("hex");
+      expect(actualHash, relativePath).toBe(expectedHash);
+    }
+
+    const executableFixture = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-reviewed-mcp-runtime-"),
+    );
+    try {
+      const executablePath = path.join(executableFixture, "mcp-tool-discovery.mjs");
+      fs.copyFileSync(
+        path.join(bundleRoot, "mcp-tool-discovery/mcp-tool-discovery.bundle"),
+        executablePath,
+      );
+      const discoveryResult = spawnSync(process.execPath, [executablePath], { encoding: "utf8" });
+      expect(discoveryResult).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(discoveryResult.stdout)).toEqual({
+        protocol: 1,
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "tool discovery received invalid runtime arguments",
+      });
+    } finally {
+      fs.rmSync(executableFixture, { force: true, recursive: true });
+    }
   });
 
   it.skipIf(process.platform === "win32")(
@@ -382,7 +393,7 @@ describe("MCP tool discovery image contract", () => {
       "utf8",
     );
 
-    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(4);
+    expect(openClawDockerfile.match(/--network=default\b/gu)).toHaveLength(3);
     expect(openClawDockerfile.match(/^RUN --network=none\b/gmu)).toHaveLength(4);
     expect(openClawDockerfile).toContain(
       "RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro",
@@ -413,23 +424,26 @@ describe("MCP tool discovery image contract", () => {
     expect(openClawDockerfile).toContain("--packuments-only");
     expect(openClawDockerfile).toContain('export NPM_CONFIG_CACHE="$install_cache"');
     expect(openClawDockerfile).toContain("export NPM_CONFIG_OFFLINE=true");
-    expect(hermesDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
-    expect(dcodeDockerfile.match(/^RUN --network=default\b/gmu)).toHaveLength(1);
+    expect(hermesDockerfile.match(/^RUN --network=default\b/gmu) ?? []).toHaveLength(0);
+    expect(dcodeDockerfile.match(/^RUN --network=default\b/gmu) ?? []).toHaveLength(0);
   });
 
   it.each(
     dockerfiles,
-  )("%s installs and probes the bundled runtime at its canonical path (#6901)", (relativePath) => {
+  )("%s copies and probes the bundled runtime at its canonical path (#6901)", (relativePath) => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
     expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed/ ./npm-cache-seed/",
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
     );
-    expect(dockerfile).toContain("rm -rf ./npm-cache-seed");
+    expect(dockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+    );
     expect(dockerfile).toContain(
       `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
     );
-    expect(dockerfile).toContain("tools/mcp-tool-discovery-runtime/npm-ci-locked.sh");
+    expect(dockerfile).not.toContain("mcp-runtime-npm-cache-seed/");
+    expect(dockerfile).not.toContain("install-reviewed-runtime.sh");
     expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
     expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
   });

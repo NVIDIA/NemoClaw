@@ -253,9 +253,11 @@ describe("OpenClaw final image layout", () => {
     expect(managedRuntimeDirectory).toBeLessThan(runtimeChmod);
     expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+    );
+    expect(dockerfile).not.toContain(
       "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
     );
-    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(runtime).toBeLessThan(runtimeChmod);
     expect(scan).toBeLessThan(metadataCheck);
   });
