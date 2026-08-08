@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
 import { load as loadRegistry } from "../../state/registry/persistence";
-import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
 /**
  * The sandbox's own memory cgroup records `oom_kill` when the kernel kills a

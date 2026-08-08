@@ -92,7 +92,7 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly apiKeyHostPath: string;
   readonly containerName: string;
   readonly imageReference: string;
-  /** Fixed loopback host port for product installs; omitted only by isolated qualification. */
+  /** Fixed host bridge port for product installs; omitted only by isolated qualification. */
   readonly hostPort?: number;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
@@ -375,8 +375,6 @@ function buildLlamaCppHostLocalDockerRunArgv(
     contract.runtime.restartPolicy,
     "--user",
     runtimeIdentity,
-    "--publish",
-    `127.0.0.1:${bindings.hostPort === undefined ? "" : String(bindings.hostPort)}:${String(serve.port)}`,
     "--read-only",
     "--cap-drop",
     "ALL",

@@ -23,17 +23,19 @@ export type ManagedLlamaCppSelectionResult =
   | { readonly kind: "selected"; readonly selection: ResolvedLlamaCppInferenceSelection }
   | { readonly kind: "rejected"; readonly reason: string };
 
-function uniquePresetForRecipe(
+function explicitPresetsForRecipe(
   catalog: CompiledManagedInferenceCatalog,
   requestedRecipeId: string,
-): string | null {
-  const matches = catalog.presets.filter(
-    (preset) =>
-      preset.spec.selection === "explicit-only" &&
-      preset.spec.plan.backend === "install-llama-cpp" &&
-      preset.spec.plan.recipeRef === requestedRecipeId,
-  );
-  return matches.length === 1 ? matches[0]!.metadata.id : null;
+): readonly string[] {
+  return catalog.presets
+    .filter(
+      (preset) =>
+        preset.spec.selection === "explicit-only" &&
+        preset.spec.plan.backend === "install-llama-cpp" &&
+        preset.spec.plan.recipeRef === requestedRecipeId,
+    )
+    .map(({ metadata }) => metadata.id)
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function defaultRecipeId(catalog: CompiledManagedInferenceCatalog): string | null {
@@ -63,11 +65,11 @@ export function resolveManagedLlamaCppSelection(
       reason: `${LLAMA_CPP_RECIPE_ENV} must name one supported declarative recipe.`,
     };
   }
-  const presetId = uniquePresetForRecipe(catalog, recipeId);
-  if (!presetId) {
+  const presetIds = explicitPresetsForRecipe(catalog, recipeId);
+  if (presetIds.length === 0) {
     return {
       kind: "rejected",
-      reason: `Managed llama.cpp recipe ${recipeId} does not resolve one explicit serving preset.`,
+      reason: `Managed llama.cpp recipe ${recipeId} does not resolve an explicit serving preset.`,
     };
   }
   if (String(env.NEMOCLAW_MODEL ?? "").trim()) {
@@ -76,17 +78,38 @@ export function resolveManagedLlamaCppSelection(
       reason: `NEMOCLAW_MODEL cannot override the served model in ${LLAMA_CPP_RECIPE_ENV}.`,
     };
   }
-  const resolution = resolveManagedInferenceServing(
-    {
-      readinessReports: [{ nodeId: os.hostname(), report }],
-      topologyQualifications: [],
-      intent: { provider: "install-llama-cpp", preset: presetId },
-    },
-    catalog,
-  );
-  if (resolution.outcome !== "selected") {
-    return { kind: "rejected", reason: resolution.message };
+  const resolutions = presetIds.map((presetId) => ({
+    presetId,
+    resolution: resolveManagedInferenceServing(
+      {
+        readinessReports: [{ nodeId: os.hostname(), report }],
+        topologyQualifications: [],
+        intent: { provider: "install-llama-cpp", preset: presetId },
+      },
+      catalog,
+    ),
+  }));
+  const selected = resolutions.filter(({ resolution }) => resolution.outcome === "selected");
+  if (selected.length !== 1) {
+    if (selected.length > 1) {
+      return {
+        kind: "rejected",
+        reason: `Managed llama.cpp recipe ${recipeId} matches more than one explicit serving preset: ${selected.map(({ presetId }) => presetId).join(", ")}.`,
+      };
+    }
+    return {
+      kind: "rejected",
+      reason: `Managed llama.cpp recipe ${recipeId} does not match this host: ${resolutions
+        .map(({ presetId, resolution }) =>
+          resolution.outcome === "selected"
+            ? `${presetId}: matched unexpectedly`
+            : `${presetId}: ${resolution.message}`,
+        )
+        .join("; ")}`,
+    };
   }
+  const resolution = selected[0]!.resolution;
+  if (resolution.outcome !== "selected") throw new Error("Selected resolution is unavailable.");
   if (
     !isLlamaCppServingRecipe(resolution.recipe) ||
     resolution.recipe.spec.execution.materializerRef !== LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF ||

@@ -106,6 +106,19 @@ describe("docker-driver-gateway-launch", () => {
     expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
   });
 
+  it("writes the exact rootless socket only for the Podman driver", () => {
+    const toml = buildDockerDriverGatewayConfigToml({
+      OPENSHELL_DRIVERS: "podman",
+      OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+    });
+
+    expect(toml).toContain("[openshell.drivers.podman]");
+    expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
+  });
+
   it("rejects wildcard binds for direct host gateway launches", () => {
     expect(() => {
       withTempBinaries(({ dir, gatewayBin }) => {

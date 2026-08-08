@@ -7,20 +7,26 @@ import type {
 } from "../../adapters/container-engine";
 import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 
-// OpenShell v0.0.85 Podman ownership contract. A later label schema must use a
-// separate adapter so this mutation boundary never guesses container ownership.
+// OpenShell v0.0.99 Podman ownership contract. Keep the legacy managed marker,
+// but bind sandbox identity to the same labels and default-workspace name that
+// the pinned OpenShell release emits.
 export const PODMAN_MANAGED_LABEL = "openshell.managed";
-export const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
-export const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
-export const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.sandbox-namespace";
-export const PODMAN_SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
+export const PODMAN_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+export const PODMAN_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+export const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
+export const PODMAN_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
+export const PODMAN_SANDBOX_NAMESPACE = "";
+export const PODMAN_SANDBOX_WORKSPACE = "default";
+export const PODMAN_SANDBOX_CONTAINER_PREFIX = `openshell-${PODMAN_SANDBOX_WORKSPACE}--`;
 
 const FULL_ID = /^(?:sha256:)?([0-9a-f]{64})$/iu;
 const BOOTSTRAP_IDENTITY = /^[0-9a-f]{64}$/u;
 const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
+const SAFE_SANDBOX_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_STRING_BYTES = 64 * 1024;
 const MAX_ARGV_BYTES = 128 * 1024;
+const MAX_CONTAINER_NAME_BYTES = 255;
 const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 type JsonRecord = Record<string, unknown>;
@@ -79,6 +85,21 @@ function safeSandboxName(value: string): string {
     throw new Error("Managed bootstrap Podman sandbox name is invalid.");
   }
   return value;
+}
+
+function safeSandboxId(value: string): string {
+  if (!SAFE_SANDBOX_ID.test(value)) {
+    throw new Error("Managed bootstrap Podman sandbox ID is invalid.");
+  }
+  return value;
+}
+
+function exactContainerName(sandboxName: string, sandboxId: string): string {
+  const name = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
+  if (Buffer.byteLength(name, "utf8") > MAX_CONTAINER_NAME_BYTES) {
+    throw new Error("Managed bootstrap Podman sandbox container name exceeds OpenShell's limit.");
+  }
+  return name;
 }
 
 function fullId(value: unknown, label: string): string {
@@ -148,7 +169,13 @@ function listEntryId(value: unknown, index: number): string {
   return fullId(id, `Podman managed container list entry ${String(index)} ID`);
 }
 
-function discoverRuntimeId(engine: ContainerEngine, sandboxName: string): string {
+function discoverRuntimeId(
+  engine: ContainerEngine,
+  identity: {
+    readonly sandboxId: string;
+    readonly sandboxName: string;
+  },
+): string {
   const output = capture(
     engine,
     [
@@ -159,7 +186,11 @@ function discoverRuntimeId(engine: ContainerEngine, sandboxName: string): string
       "--filter",
       `label=${PODMAN_MANAGED_LABEL}=true`,
       "--filter",
-      `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
+      `label=${PODMAN_SANDBOX_ID_LABEL}=${identity.sandboxId}`,
+      "--filter",
+      `label=${PODMAN_SANDBOX_NAME_LABEL}=${identity.sandboxName}`,
+      "--filter",
+      `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
       "--format",
       "json",
     ],
@@ -169,7 +200,7 @@ function discoverRuntimeId(engine: ContainerEngine, sandboxName: string): string
   const ids = entries.map(listEntryId);
   if (ids.length !== 1 || new Set(ids).size !== 1) {
     throw new Error(
-      `Managed bootstrap requires exactly one Podman workload for sandbox '${sandboxName}'; found ${String(ids.length)}.`,
+      `Managed bootstrap requires exactly one Podman workload for sandbox '${identity.sandboxName}'; found ${String(ids.length)}.`,
     );
   }
   return ids[0] as string;
@@ -202,7 +233,7 @@ function parseObservation(
     throw new Error("Podman held workload identity changed after discovery.");
   }
   const containerName = safeString(inspect.Name, "Podman inspect Name");
-  const expectedContainerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${input.sandboxName}`;
+  const expectedContainerName = exactContainerName(input.sandboxName, input.sandboxId);
   if (containerName !== expectedContainerName) {
     throw new Error("Podman held workload name does not match its OpenShell sandbox identity.");
   }
@@ -212,7 +243,8 @@ function parseObservation(
     labels[PODMAN_MANAGED_LABEL] !== "true" ||
     labels[PODMAN_SANDBOX_NAME_LABEL] !== input.sandboxName ||
     labels[PODMAN_SANDBOX_ID_LABEL] !== input.sandboxId ||
-    labels[PODMAN_SANDBOX_NAMESPACE_LABEL] !== input.sandboxNamespace
+    labels[PODMAN_SANDBOX_NAMESPACE_LABEL] !== input.sandboxNamespace ||
+    labels[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE
   ) {
     throw new Error("Podman held workload labels do not match its exact OpenShell ownership.");
   }
@@ -274,7 +306,7 @@ function sameObservation(
 }
 
 /**
- * Resolve and inspect one OpenShell v0.0.85 Podman workload twice. The caller
+ * Resolve and inspect one OpenShell v0.0.99 Podman workload twice. The caller
  * receives only immutable ownership and startup evidence; replacement planning
  * remains in the provider transaction that owns the complete launch spec.
  */
@@ -289,13 +321,18 @@ export function inspectExactPodmanHeldWorkload(
     throw new Error("Managed bootstrap Podman held command has an invalid bootstrap identity.");
   }
   const sandboxName = safeSandboxName(input.sandboxName);
-  const sandboxNamespace = safeString(
-    input.sandboxNamespace,
-    "Managed bootstrap Podman sandbox namespace",
-  );
-  const runtimeId = discoverRuntimeId(input.engine, sandboxName);
+  const sandboxId = safeSandboxId(input.sandboxId);
+  if (input.sandboxNamespace !== PODMAN_SANDBOX_NAMESPACE) {
+    throw new Error("Managed bootstrap Podman sandbox namespace must match OpenShell v0.0.99.");
+  }
+  const sandboxNamespace = PODMAN_SANDBOX_NAMESPACE;
+  exactContainerName(sandboxName, sandboxId);
+  const runtimeId = discoverRuntimeId(input.engine, {
+    sandboxId,
+    sandboxName,
+  });
   const inspectArgs = ["container", "inspect", runtimeId] as const;
-  const values = { ...input, sandboxName, sandboxNamespace };
+  const values = { ...input, sandboxId, sandboxName, sandboxNamespace };
   const first = parseObservation(
     capture(input.engine, inspectArgs, "Managed bootstrap Podman inspect").stdout,
     values,

@@ -171,6 +171,8 @@ describe("checkAgentVersion", () => {
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS, gatewayName: "nemoclaw" },
     );
     const sshArgs = vi.mocked(spawnSync).mock.calls[0]?.[1] as string[];
+    expect(sshArgs).toContain("openshell-test-sb.default");
+    expect(sshArgs).not.toContain("openshell-test-sb");
     const configFile = sshArgs[sshArgs.indexOf("-F") + 1];
     const configDir = dirname(configFile);
     expect(configDir).not.toBe(tmpdir());

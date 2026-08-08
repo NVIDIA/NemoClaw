@@ -226,10 +226,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "checks", "node-tar-image-scan.mts"),
-    path.join(stagedScriptsDir, "checks", "node-tar-image-scan.mts"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
@@ -347,6 +343,11 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
+  );
+  fs.mkdirSync(path.join(stagedScriptsDir, "openclaw"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
+    path.join(stagedScriptsDir, "openclaw", "patch-gateway-daemon-dialback.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "extract-semver.sh"),

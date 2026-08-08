@@ -307,18 +307,11 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
         ],
       },
-      {
-        stage: "hermes-scan-payload",
-        copies: [
-          "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
-        ],
-      },
     ] as const;
     const npmPatchCopy = "COPY --from=hermes-npm-patch-payload / /";
     const agentCopy = "COPY --from=hermes-agent-payload / /";
     const runtimeCopy = "COPY --from=hermes-runtime-payload / /";
     const wrapperCopy = "COPY --from=hermes-wrapper-payload / /";
-    const scanCopy = "COPY --from=hermes-scan-payload / /";
 
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(hasBuildKitRunMount(dockerfile)).toBe(false);
@@ -333,13 +326,11 @@ describe("Hermes final image layout", () => {
       agentCopy,
       runtimeCopy,
       wrapperCopy,
-      scanCopy,
     ]);
     const npmPatch = indexOfRequired(finalStage, npmPatchCopy);
     const agent = indexOfRequired(finalStage, agentCopy);
     const runtime = indexOfRequired(finalStage, runtimeCopy);
     const wrapper = indexOfRequired(finalStage, wrapperCopy);
-    const scan = indexOfRequired(finalStage, scanCopy);
     const tarPatch = requireSingleReviewedDockerfileRunCommand(
       finalStage,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
@@ -391,10 +382,6 @@ describe("Hermes final image layout", () => {
     );
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
     const modeNormalize = indexOfRequired(finalStage, "RUN chmod 755 \\");
-    const imageScan = indexOfRequired(
-      finalStage,
-      "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
-    );
 
     expect(npmPatch).toBeLessThan(tarPatch);
     expect(agent).toBeGreaterThan(certifiInstall);
@@ -415,9 +402,7 @@ describe("Hermes final image layout", () => {
     expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
     expect(wrapper).toBeLessThan(pythonCheck);
-    expect(scan).toBeGreaterThan(darwinCompatibility);
-    expect(scan).toBeLessThan(metadataCheck);
-    expect(modeNormalize).toBeGreaterThan(scan);
+    expect(modeNormalize).toBeGreaterThan(darwinCompatibility);
     expect(modeNormalize).toBeLessThan(metadataCheck);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
@@ -439,12 +424,9 @@ describe("Hermes final image layout", () => {
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755'",
       "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'",
-      "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
-    expect(metadataCheck).toBeGreaterThan(scan);
-    expect(metadataCheck).toBeLessThan(imageScan);
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );

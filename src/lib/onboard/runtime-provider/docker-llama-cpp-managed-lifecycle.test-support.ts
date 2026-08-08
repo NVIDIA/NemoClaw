@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppHostLocalLaunchContract } from "../../inference/llama-cpp/host-local-runtime";
 
-export const HOST_PORT = String(LLAMA_CPP_PORT);
 export const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
 export const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
 export const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;

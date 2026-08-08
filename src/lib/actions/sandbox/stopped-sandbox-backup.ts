@@ -3,6 +3,7 @@
 
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
+import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import {
   findLabeledSandboxContainers,
   OPENSHELL_MANAGED_BY_LABEL,
@@ -11,7 +12,6 @@ import {
 } from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
-import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 import * as snapshotBackup from "./snapshot/backup-authority";
 
 /** Read a registered sandbox's OpenShell driver, treating registry read

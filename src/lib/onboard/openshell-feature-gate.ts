@@ -110,7 +110,7 @@ function componentBuildVersionsMatch(left: string, right: string): boolean {
 // from version text alone. sourceBoundary: OpenShell owns component identity
 // and the future native capability response; this scanner is an artifact and
 // install-repair preflight only and never authorizes an MCP mutation.
-// whyNotSourceFix: v0.0.85 has no structured installed-feature response.
+// whyNotSourceFix: v0.0.99 has no structured installed-feature response.
 // regressionTest: openshell-feature-gate.test.ts covers mixed roots, symlink
 // farms, stale components, unreadable binaries, and the pinned sandbox digest.
 // removalCondition: replace this scan when OpenShell exposes a versioned native
