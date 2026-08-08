@@ -419,27 +419,27 @@ function dockerFixture(
       ],
     },
   ];
-
   const capture = vi.fn((args: readonly string[]) => {
     const unexpected = `unexpected Docker command: ${args.join(" ")}`;
     switch (args[0]) {
       case "network":
         switch (args[1]) {
           case "inspect":
-            if (args[2] === "openshell-docker") {
-              return {
-                status: 0,
-                stdout: JSON.stringify([
-                  {
-                    Name: "openshell-docker",
-                    Internal: false,
-                    Driver: "bridge",
-                    Scope: "local",
-                    IPAM: { Config: [{ Subnet: "172.29.0.0/16", Gateway: "172.29.0.1" }] },
-                  },
-                ]),
-                stderr: "",
-              };
+            switch (args[2]) {
+              case "openshell-docker":
+                return {
+                  status: 0,
+                  stdout: JSON.stringify([
+                    {
+                      Name: "openshell-docker",
+                      Internal: false,
+                      Driver: "bridge",
+                      Scope: "local",
+                      IPAM: { Config: [{ Subnet: "172.29.0.0/16", Gateway: "172.29.0.1" }] },
+                    },
+                  ]),
+                  stderr: "",
+                };
             }
             switch (networkPresent) {
               case false:

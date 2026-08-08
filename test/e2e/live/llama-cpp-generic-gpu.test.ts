@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -49,6 +50,17 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
   delete selected.NEMOCLAW_MODEL;
   return selected;
+}
+
+function loadGenericGpuSetting() {
+  const catalog = loadManagedInferenceCatalog();
+  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID);
+  assert(recipe && isLlamaCppServingRecipe(recipe), "generic GPU E2E llama.cpp recipe is missing");
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === PRESET_ID);
+  assert(preset, "generic GPU E2E preset is missing");
+  const modelFile = recipe.spec.model.files[0];
+  assert(modelFile && "sizeBytes" in modelFile, "generic GPU E2E GGUF identity is incomplete");
+  return { modelFile, preset, recipe };
 }
 
 test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real agent turn (#8144)", {
@@ -130,17 +142,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   expect(nvidia.exitCode, resultText(nvidia)).toBe(0);
   expect(nvidia.stdout.trim()).toMatch(/^NVIDIA .+,[ ]*[0-9.]+,[ ]*[1-9][0-9]*$/u);
 
-  const catalog = loadManagedInferenceCatalog();
-  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID);
-  const preset = catalog.presets.find(({ metadata }) => metadata.id === PRESET_ID);
-  if (!recipe || !isLlamaCppServingRecipe(recipe)) {
-    throw new Error("generic GPU E2E llama.cpp recipe is missing");
-  }
-  if (!preset) throw new Error("generic GPU E2E preset is missing");
-  const modelFile = recipe.spec.model.files[0];
-  if (!modelFile || !("sizeBytes" in modelFile)) {
-    throw new Error("generic GPU E2E GGUF identity is incomplete");
-  }
+  const { modelFile, preset, recipe } = loadGenericGpuSetting();
 
   progress.phase("run the declarative managed llama.cpp installer");
   const install = await host.command("bash", ["install.sh", "--non-interactive"], {
@@ -206,7 +208,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   );
   expect(inspect.exitCode, resultText(inspect)).toBe(0);
   const inspectedRuntime = JSON.parse(inspect.stdout) as Array<{
-    Config?: { Cmd?: unknown };
+    Config?: { Cmd?: unknown; Image?: unknown };
     HostConfig?: { PortBindings?: Record<string, unknown> };
     NetworkSettings?: { Ports?: Record<string, unknown> };
     State?: { Pid?: unknown; Running?: unknown };
@@ -215,6 +217,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   const runtime = inspectedRuntime[0];
   expect(runtime?.State?.Running).toBe(true);
   expect(runtime?.State?.Pid).toEqual(expect.any(Number));
+  expect(runtime?.Config?.Image).toBe(recipe.spec.runtime.image);
   const containerPid = runtime?.State?.Pid as number;
   expect(containerPid).toBeGreaterThan(0);
   expect(runtime?.Config?.Cmd).toEqual(expect.any(Array));

@@ -31,6 +31,10 @@ import {
 
 const TIMEOUT_MS = 75 * 60_000;
 const bootstrapLlamaCppTarget = shouldBootstrapLlamaCppGenericGpuTarget();
+type SkipTest = (reason?: string) => never;
+const skipOllamaForLlamaCppCompatibility: (skip: SkipTest) => void = bootstrapLlamaCppTarget
+  ? (skip) => skip("dedicated llama.cpp target owns this pre-merge GPU run")
+  : () => undefined;
 
 // Manual PR E2E executes trusted main workflow YAML, so the new dedicated job
 // cannot select its candidate test until this change lands. The existing GPU
@@ -155,7 +159,7 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-  if (bootstrapLlamaCppTarget) skip("dedicated llama.cpp target owns this pre-merge GPU run");
+  skipOllamaForLlamaCppCompatibility(skip);
   await artifacts.target.declare({
     id: "gpu-e2e",
     boundary:

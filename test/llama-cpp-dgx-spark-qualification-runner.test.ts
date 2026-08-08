@@ -337,7 +337,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           "--no-agent",
         ]),
       );
-      expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+      expect(valuesAfter(argv, "--publish")).toEqual([]);
       const agentQualificationArgv = buildServerContainerArgv(testPlan, {
         apiKeyHostPath: "/work/tmp/api-key",
         containerName: "qualified-server",
@@ -349,7 +349,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         runtimeGid: 1001,
         runtimeUid: 1001,
       });
-      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
+      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);

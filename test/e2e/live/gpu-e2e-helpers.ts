@@ -34,18 +34,22 @@ export function shouldBootstrapLlamaCppGenericGpuTarget(
 export function buildLlamaCppCompatibilityTargetEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = {
-    ...buildAvailabilityProbeEnv(base),
-    NEMOCLAW_RUN_LIVE_E2E: "1",
-  };
-  for (const key of [
+  const forwarded = [
     "NEMOCLAW_E2E_CORRELATION_ID",
     "NEMOCLAW_E2E_EXPECTED_SHA",
     "NEMOCLAW_E2E_SHARD",
-  ] as const) {
-    if (base[key] !== undefined) childEnv[key] = base[key];
-  }
-  return childEnv;
+  ].reduce<NodeJS.ProcessEnv>(
+    (selected, key) => ({
+      ...selected,
+      ...(base[key] === undefined ? {} : { [key]: base[key] }),
+    }),
+    {},
+  );
+  return {
+    ...buildAvailabilityProbeEnv(base),
+    ...forwarded,
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+  };
 }
 
 function tcpPort(value: string | undefined, fallback: string): string {
