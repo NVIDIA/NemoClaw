@@ -120,7 +120,7 @@ class FakeRunner implements CommandRunner {
 function instance(overrides: Partial<NemoClawInstance> = {}): NemoClawInstance {
   return {
     onboarding: "cloud-openclaw",
-    sandboxName: "e2e-cloud-oc",
+    sandboxName: "e2e-ubuntu-repo-cloud-openclaw",
     agent: "openclaw",
     provider: "nvidia",
     providerEnv: "cloud",
@@ -151,7 +151,7 @@ describe("state-validation phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(0, "200"));
-    runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
 
     const result = await fixture(runner).from("cloud-openclaw-ready", instance());
 
@@ -201,7 +201,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "204"));
-    runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
 
     const result = await fixture(runner).from("cloud-openclaw-ready", instance());
 
@@ -220,7 +220,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "401"));
-    runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
 
     const result = await fixture(runner).from(
       "local-ollama-openclaw-ready",
@@ -237,7 +237,7 @@ describe("state-validation phase fixture", () => {
         "sandbox",
         "exec",
         "-n",
-        "e2e-cloud-oc",
+        "e2e-ubuntu-repo-cloud-openclaw",
         "--",
         "curl",
         "-sS",
@@ -360,7 +360,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(1, "gateway stopped"));
     runner.enqueue(shellResult(7, "connection refused"));
-    runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
 
     await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
       /nemoclaw listed it/,
@@ -373,7 +373,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(1, "gateway stopped"));
     runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
-    runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
 
     await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
       /OpenShell listed it/,
@@ -419,8 +419,8 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(1, "gateway stopped"));
     runner.enqueue(shellResult(7, "connection refused"));
-    runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc-old\n"));
-    runner.enqueue(shellResult(0, "NAME\nold-e2e-cloud-oc\n"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw-old\n"));
+    runner.enqueue(shellResult(0, "NAME\nold-e2e-ubuntu-repo-cloud-openclaw\n"));
 
     const result = await fixture(runner).from("preflight-failure-no-sandbox", instance());
 
@@ -488,11 +488,11 @@ describe("state-validation phase fixture", () => {
     const runner = new FakeRunner();
     const fx = fixture(runner, {
       readRegistry: () => ({
-        entries: { "e2e-cloud-oc": {} },
+        entries: { "e2e-ubuntu-repo-cloud-openclaw": {} },
       }),
     });
 
-    expect(() => fx.expectLocalRegistryContains("e2e-cloud-oc")).not.toThrow();
+    expect(() => fx.expectLocalRegistryContains("e2e-ubuntu-repo-cloud-openclaw")).not.toThrow();
     runner.enqueue(shellResult(0));
     runner.enqueue(shellResult(0, "survived\n"));
     runner.enqueue(shellResult(0, "/sandbox/.openclaw/config.json\n"));
@@ -506,9 +506,9 @@ describe("state-validation phase fixture", () => {
     await fx.expectSandboxDirectoryPopulated(instance(), "/sandbox/.openclaw");
 
     expect(runner.calls.map((call) => call.args.slice(0, 7))).toEqual([
-      ["sandbox", "exec", "-n", "e2e-cloud-oc", "--", "sh", "-lc"],
-      ["sandbox", "exec", "-n", "e2e-cloud-oc", "--", "sh", "-lc"],
-      ["sandbox", "exec", "-n", "e2e-cloud-oc", "--", "sh", "-lc"],
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
     ]);
   });
 
@@ -573,8 +573,8 @@ describe("state-validation host-side probes", () => {
     const fx = fixture(runner, {
       readRegistry: () => ({
         entries: {
-          "e2e-cloud-oc": {
-            name: "e2e-cloud-oc",
+          "e2e-ubuntu-repo-cloud-openclaw": {
+            name: "e2e-ubuntu-repo-cloud-openclaw",
           },
         },
       }),
@@ -591,7 +591,7 @@ describe("state-validation host-side probes", () => {
     const fx = fixture(runner, { readRegistry: () => null });
 
     await expect(fx.from(localRegistryState, instance())).rejects.toThrow(
-      /expected local registry entry for 'e2e-cloud-oc'.*does not exist/,
+      /expected local registry entry for 'e2e-ubuntu-repo-cloud-openclaw'.*does not exist/,
     );
   });
 
@@ -608,7 +608,7 @@ describe("state-validation host-side probes", () => {
 
   it("docker-sandbox-container-present passes when docker ps -a returns labeled names", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "e2e-cloud-oc\n"));
+    runner.enqueue(shellResult(0, "e2e-ubuntu-repo-cloud-openclaw\n"));
     const fx = fixture(runner);
 
     const result = await fx.from(dockerContainerState, instance());
@@ -621,12 +621,12 @@ describe("state-validation host-side probes", () => {
           "ps",
           "-a",
           "--filter",
-          "label=openshell.ai/sandbox-name=e2e-cloud-oc",
+          "label=openshell.ai/sandbox-name=e2e-ubuntu-repo-cloud-openclaw",
           "--format",
           "{{.Names}}",
         ],
         options: {
-          artifactName: "docker-sandbox-container-present-e2e-cloud-oc",
+          artifactName: "docker-sandbox-container-present-e2e-ubuntu-repo-cloud-openclaw",
           env: expect.objectContaining({ PATH: expect.any(String) }),
           timeoutMs: 15_000,
         },
@@ -636,7 +636,9 @@ describe("state-validation host-side probes", () => {
 
   it("docker-sandbox-container-present matches *-nemoclaw-gpu-backup-* sibling containers", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "e2e-cloud-oc-nemoclaw-gpu-backup-1717280000000\n"));
+    runner.enqueue(
+      shellResult(0, "e2e-ubuntu-repo-cloud-openclaw-nemoclaw-gpu-backup-1717280000000\n"),
+    );
     const fx = fixture(runner);
 
     const result = await fx.from(dockerContainerState, instance());

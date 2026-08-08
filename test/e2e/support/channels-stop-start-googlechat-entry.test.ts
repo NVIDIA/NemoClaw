@@ -40,14 +40,14 @@ describe("channels stop/start Google Chat live composition", () => {
 
     await addGooglechatForChannelsStopStartLiveE2e(
       {
-        sandboxName: "e2e-oc-ch-cycle",
+        sandboxName: "e2e-channels-stop-start-openclaw",
         audience: "  https://e2e-fake.trycloudflare.com/googlechat  ",
       },
       { addSandboxChannel },
     );
 
     expect(addSandboxChannel).toHaveBeenCalledWith(
-      "e2e-oc-ch-cycle",
+      "e2e-channels-stop-start-openclaw",
       { channel: "googlechat" },
       {
         googlechatNonInteractiveAudienceCapability: {
@@ -68,7 +68,7 @@ describe("channels stop/start Google Chat live composition", () => {
         },
         { addSandboxChannel },
       ),
-    ).rejects.toThrow(/only accepts openclaw sandbox names with prefix e2e-oc-ch-/);
+    ).rejects.toThrow(/only accepts sandbox names with prefix/);
     expect(addSandboxChannel).not.toHaveBeenCalled();
   });
 
@@ -78,7 +78,7 @@ describe("channels stop/start Google Chat live composition", () => {
     await expect(
       addGooglechatForChannelsStopStartLiveE2e(
         {
-          sandboxName: "e2e-oc-ch-cycle",
+          sandboxName: "e2e-channels-stop-start-openclaw",
           audience: " ",
         },
         { addSandboxChannel },

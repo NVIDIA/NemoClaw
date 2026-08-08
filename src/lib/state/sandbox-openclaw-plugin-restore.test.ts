@@ -35,7 +35,7 @@ function discover() {
   return discoverFreshOpenClawPluginExtensionDirs(
     {
       getSshConfig: () => "unused",
-      sshArgs: (configFile, sandboxName) => ["-F", configFile, `openshell-${sandboxName}.default`],
+      sshArgs: (configFile, sandboxName) => ["-F", configFile, `openshell-${sandboxName}`],
     },
     "/tmp/ssh-config",
     "sandbox-one",

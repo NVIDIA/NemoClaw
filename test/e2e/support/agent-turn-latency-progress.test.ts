@@ -11,23 +11,11 @@ import {
   validateE2EPhasePlan,
 } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import type { AgentTurnInference } from "../live/agent-turn-latency-helpers.ts";
 import {
   bestEffortPreclean,
   cleanupTurnSandboxes,
   installSandbox,
 } from "../live/agent-turn-latency-helpers.ts";
-
-function fakeInference(apiKey = "secret-api-key"): AgentTurnInference {
-  return {
-    mode: "internal-nvidia",
-    model: "test-model",
-    provider: "custom",
-    expectedRouteProvider: "compatible-endpoint",
-    env: (extra = {}) => ({ ...extra, COMPATIBLE_API_KEY: apiKey }),
-    redactionValues: () => [apiKey],
-  };
-}
 
 function progressHarness() {
   const state = {
@@ -216,7 +204,7 @@ describe("live test progress", () => {
       host,
       "e2e-openclaw-turn-latency",
       "openclaw",
-      fakeInference(),
+      "secret-api-key",
       undefined,
       progress,
     );
@@ -256,7 +244,7 @@ describe("live test progress", () => {
       host,
       "e2e-openclaw-turn-latency",
       "openclaw",
-      fakeInference(),
+      "secret-api-key",
       cleanupBeforeRetry,
       progress,
     );
@@ -310,7 +298,7 @@ describe("live test progress", () => {
         host,
         "e2e-openclaw-turn-latency",
         "openclaw",
-        fakeInference(),
+        "secret-api-key",
         cleanupBeforeRetry,
         progress,
       ),
@@ -341,7 +329,7 @@ describe("live test progress", () => {
       onOutput: vi.fn(),
     };
 
-    await cleanupTurnSandboxes(host, sandbox, fakeInference(), progress);
+    await cleanupTurnSandboxes(host, sandbox, progress);
 
     expect(command).toHaveBeenCalledTimes(2);
     expect(openshell).toHaveBeenCalledTimes(4);

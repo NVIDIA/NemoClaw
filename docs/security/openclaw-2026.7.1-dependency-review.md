@@ -301,23 +301,11 @@ archive under `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1`, applies every current
 NemoClaw patch, verifies syntax, and exercises the live device self-approval
 proof. This is not a substitute for focused nightly E2E proof.
 
-The `2026.7.1` dist changed eight reviewed shapes:
+The `2026.7.1` dist changed seven reviewed shapes:
 
 - strict managed-proxy activation now uses `isStrictManagedProxyActive`; the
   patch still activates only inside OpenShell and only without an explicit
   dispatcher policy;
-- gateway daemon backend calls ignore the inherited `OPENCLAW_GATEWAY_URL` only
-  when `process.title === "openclaw-gateway"` and `OPENSHELL_SANDBOX=1`, so
-  gateway daemon self-dialback uses loopback. Descendant agents retain the
-  environment variable for private-interface routing. Explicit gateway URL
-  overrides, local port overrides, configured remote URLs, and behavior outside
-  this condition are unchanged.
-  `scripts/openclaw/patch-gateway-daemon-dialback.mts` is gated to the exact
-  `2026.7.1` version and rejects missing or ambiguous compiled-dist shapes. Its
-  regression test covers the daemon and descendant boundaries.
-  Remove the patch when upstream OpenClaw distinguishes gateway daemon
-  self-dialback from descendant agent routing without changing the inherited
-  gateway URL.
 - queued follow-up execution now resolves inbound context before allocating a
   run id; `scripts/patch-openclaw-chat-send.mts` preserves the submitted run id
   at that new boundary. It also suppresses the premature empty final event that
@@ -513,7 +501,7 @@ Reviewed behavior:
 - The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
 
 `diagnostic_id` is not a distributed trace identifier and does not correlate with an OpenShell audit event.
-`NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor. The OCSF schema vendored by the pinned OpenShell `0.0.99` includes the optional `http_request.uid` field, but OpenShell's Rust `HttpRequest` object and current HTTP audit-event builders neither expose nor populate it. A shared request identifier is therefore not emitted today.
+`NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor, and the OCSF `http_request` object in the pinned OpenShell `0.0.85` has no slot for a request-scoped correlation identifier, so a shared identifier is not representable today.
 The local identifier distinguishes application-side diagnostics, but operators still correlate each diagnostic with OpenShell audit events by endpoint and time.
 
 Managed transport diagnostics remains separate from `scripts/patch-openclaw-mcp-reliability.mts`.

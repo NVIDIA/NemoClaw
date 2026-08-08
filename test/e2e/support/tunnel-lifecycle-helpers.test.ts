@@ -89,7 +89,7 @@ describe("tunnel lifecycle cleanup registration", () => {
 
     expect(result.failures).toEqual([
       {
-        name: "destroy sandbox e2e-tunnel-life",
+        name: "destroy sandbox e2e-tunnel-lifecycle",
         message: "docker daemon denied sandbox destroy",
       },
     ]);
@@ -139,8 +139,10 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     );
 
     try {
-      expect(getCloudflaredLogPath(logRoot, "e2e-tunnel-life")).toBeUndefined();
-      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-life")).toBe("nemoclaw_no_spawn");
+      expect(getCloudflaredLogPath(logRoot, "e2e-tunnel-lifecycle-current")).toBeUndefined();
+      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-lifecycle-current")).toBe(
+        "nemoclaw_no_spawn",
+      );
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }
@@ -148,14 +150,16 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
 
   it("classifies only the sandbox-specific cloudflared log", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
-    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-life");
+    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-lifecycle-current");
     fs.mkdirSync(sandboxDir, { recursive: true });
     const sandboxLog = path.join(sandboxDir, "cloudflared.log");
     fs.writeFileSync(sandboxLog, "https://current.trycloudflare.com\n");
 
     try {
-      expect(getCloudflaredLogPath(logRoot, "e2e-tunnel-life")).toBe(sandboxLog);
-      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-life")).toBe("nemoclaw_capture_bug");
+      expect(getCloudflaredLogPath(logRoot, "e2e-tunnel-lifecycle-current")).toBe(sandboxLog);
+      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-lifecycle-current")).toBe(
+        "nemoclaw_capture_bug",
+      );
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }
@@ -163,7 +167,7 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
 
   it("classifies localhost/origin-refused logs as a NemoClaw local-origin fault", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
-    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-life");
+    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-lifecycle-current");
     fs.mkdirSync(sandboxDir, { recursive: true });
     fs.writeFileSync(
       path.join(sandboxDir, "cloudflared.log"),
@@ -171,7 +175,9 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     );
 
     try {
-      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-life")).toBe("nemoclaw_local");
+      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-lifecycle-current")).toBe(
+        "nemoclaw_local",
+      );
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }
@@ -179,7 +185,7 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
 
   it("classifies representative quick-tunnel registration failures as Cloudflare faults", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
-    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-life");
+    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-lifecycle-current");
     fs.mkdirSync(sandboxDir, { recursive: true });
     fs.writeFileSync(
       path.join(sandboxDir, "cloudflared.log"),
@@ -187,7 +193,7 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     );
 
     try {
-      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-life")).toBe("cloudflare");
+      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-lifecycle-current")).toBe("cloudflare");
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }

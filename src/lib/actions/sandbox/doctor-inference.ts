@@ -18,21 +18,13 @@ export type DoctorInferenceRoute = {
   effectiveReasoningEffort?: EffectiveReasoningEffort | null;
 };
 
-type ManagedLlamaCppDoctorDeps = {
-  inspectManagedLlamaCppStatusImpl?: typeof inspectManagedLlamaCppStatus;
-};
-
 export function collectManagedLlamaCppDoctorChecks(
   sandboxName: string,
   gatewayPort?: number | null,
-  deps: ManagedLlamaCppDoctorDeps = {},
 ): DoctorCheck[] {
-  const managed = (deps.inspectManagedLlamaCppStatusImpl ?? inspectManagedLlamaCppStatus)(
-    sandboxName,
-    {
-      ...(typeof gatewayPort === "number" ? { gatewayPort } : {}),
-    },
-  );
+  const managed = inspectManagedLlamaCppStatus(sandboxName, {
+    ...(typeof gatewayPort === "number" ? { gatewayPort } : {}),
+  });
   if (!managed) return [];
   const runtimeStatus =
     managed.state === "running"

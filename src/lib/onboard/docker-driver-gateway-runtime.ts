@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
-import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   createDockerDriverGatewayPortListenerHelpers,
   type DockerDriverGatewayPortListenerOptions,
@@ -21,7 +20,6 @@ import {
   readDockerDriverGatewayProcessIdentity,
 } from "./docker-driver-gateway-process-identity";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
-import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
@@ -37,7 +35,7 @@ import * as vmDriverProcess from "./vm-driver-process";
 
 const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
   "0.0.72": "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
-  "0.0.99": "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
+  "0.0.85": "sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
 };
 
 export type DockerDriverGatewayRuntimeDrift = { reason: string };
@@ -224,23 +222,11 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
   ): Record<string, string> {
-    const dockerHost = process.env.DOCKER_HOST;
-    let podmanSocketPath: string | undefined;
-    if (isPortableExperimentalProfile()) {
-      const candidate = dockerHost?.trim();
-      if (!candidate || !isSupportedGatewayDockerHost(dockerHost)) {
-        throw new Error(
-          "Portable OpenShell gateway requires the prepared absolute rootless Podman socket.",
-        );
-      }
-      podmanSocketPath = candidate.slice("unix://".length);
-    }
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-      podmanSocketPath,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
     });

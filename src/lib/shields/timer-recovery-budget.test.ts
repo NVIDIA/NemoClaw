@@ -148,7 +148,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
   });
 
   it("waits beyond the recovery budget for a verified live lifecycle owner, then restores", async () => {
-    const sandboxName = "healthy-owner";
+    const sandboxName = "healthy-backup-owner";
     let markOwnerEntered!: () => void;
     let releaseOwner!: () => void;
     const ownerEntered = new Promise<void>((resolve) => {
@@ -253,7 +253,9 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
   });
 
   it("retains its exact deadline when publication and containment both fail", async () => {
-    const { args, lockPath, markerPath, sandboxName, timer } = await createFixture("publish-gate");
+    const { args, lockPath, markerPath, sandboxName, timer } = await createFixture(
+      "publication-retained-gate",
+    );
     const containmentPath = `${lockPath}.containment`;
     const deadlinePath = `${lockPath}.deadline`;
     const originalAsyncLink = fs.promises.link.bind(fs.promises);
@@ -290,7 +292,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     expect(audits).toHaveLength(1);
     expect(audits[0]?.error).toContain("recovery failed after 1 attempt");
     expect(audits[0]?.error).toContain("Correct the state-directory write failure");
-    expect(audits[0]?.error).toContain("`nemoclaw publish-gate shields status`");
+    expect(audits[0]?.error).toContain("`nemoclaw publication-retained-gate shields status`");
     expect(audits[0]?.error).not.toContain("setup is retrying");
     await expect(
       withMcpLifecycleLock(
@@ -305,7 +307,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
   });
 
   it("exits immediately when durable containment already owns recovery", async () => {
-    const { args, lockPath, sandboxName, timer } = await createFixture("existing-contain");
+    const { args, lockPath, sandboxName, timer } = await createFixture("existing-containment");
     beginCommittedMcpLifecycleContainmentSync(
       sandboxName,
       PROCESS_TOKEN,

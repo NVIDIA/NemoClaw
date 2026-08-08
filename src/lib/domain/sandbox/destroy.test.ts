@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  dockerSandboxContainerNamePrefix,
   getSandboxDeleteOutcome,
   hasNoLiveSandboxes,
   hasRunningDockerSandboxContainer,
@@ -189,6 +190,7 @@ describe("sandbox destroy helpers", () => {
   });
 
   it("matches Docker sandbox containers with a literal name prefix (#4662)", () => {
+    expect(dockerSandboxContainerNamePrefix("npmtest")).toBe("openshell-npmtest-");
     expect(
       hasRunningDockerSandboxContainer("npmtest", {
         output: "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-e487d1bd\n",
@@ -203,23 +205,6 @@ describe("sandbox destroy helpers", () => {
       hasRunningDockerSandboxContainer(
         "npmtest",
         { output: "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-extra-e487d1bd\n" },
-        ["npmtest", "npmtest-extra"],
-      ),
-    ).toBe(false);
-    expect(
-      hasRunningDockerSandboxContainer("npmtest", {
-        output: "openshell-default--npmtest-e487d1bd\n",
-      }),
-    ).toBe(true);
-    expect(
-      hasRunningDockerSandboxContainer("npmtest", {
-        output: "openshell-review--npmtest-e487d1bd\n",
-      }),
-    ).toBe(false);
-    expect(
-      hasRunningDockerSandboxContainer(
-        "npmtest",
-        { output: "openshell-default--npmtest-extra-e487d1bd\n" },
         ["npmtest", "npmtest-extra"],
       ),
     ).toBe(false);

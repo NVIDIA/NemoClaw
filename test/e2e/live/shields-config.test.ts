@@ -30,10 +30,6 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  failedStartupProcessControlCommands,
-  resumeSupervisorIfPaused,
-} from "../fixtures/shields-failed-startup.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
@@ -258,23 +254,10 @@ async function preCleanSandbox(
 }
 
 async function findSandboxContainer(host: HostCliClient): Promise<string> {
-  const result = await docker(
-    host,
-    [
-      "ps",
-      "--filter",
-      "label=openshell.ai/managed-by=openshell",
-      "--filter",
-      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-      "--filter",
-      "label=openshell.ai/sandbox-workspace=default",
-      "-q",
-    ],
-    {
-      artifactName: "docker-ps-sandbox-container",
-      timeoutMs: 30_000,
-    },
-  );
+  const result = await docker(host, ["ps", "--filter", `name=openshell-${SANDBOX_NAME}`, "-q"], {
+    artifactName: "docker-ps-sandbox-container",
+    timeoutMs: 30_000,
+  });
   expect(result.exitCode, resultText(result)).toBe(0);
   const containerId = result.stdout.trim().split(/\s+/).filter(Boolean)[0] ?? "";
   expect(containerId, `could not find openshell container for ${SANDBOX_NAME}`).not.toBe("");
@@ -321,7 +304,22 @@ async function runInstalledFailedStartupUnlock(
   });
 }
 
-async function waitForChildlessStartup(host: HostCliClient, containerId: string): Promise<void> {
+async function waitForChildlessStartup(
+  host: HostCliClient,
+  containerId: string,
+  startupPid: number,
+): Promise<void> {
+  expect(Number.isSafeInteger(startupPid) && startupPid > 1).toBe(true);
+  const terminate = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "kill", "-TERM", String(startupPid)],
+    { artifactName: "phase-12-terminate-startup-child", timeoutMs: 30_000 },
+  );
+  expect(
+    terminate.exitCode === 0 || /no such process/i.test(resultText(terminate)),
+    resultText(terminate),
+  ).toBe(true);
+
   await pollUntil({
     artifactPrefix: "phase-12-childless-census",
     attempts: 20,
@@ -984,6 +982,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
   expect(liveCensus.pid).not.toBeNull();
+  const liveStartupPid = liveCensus.pid ?? 0;
   const liveChildRefusal = await runInstalledFailedStartupUnlock(
     host,
     recoveryContainerId,
@@ -996,45 +995,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     owner: "root:root",
   });
 
-  // A running OpenShell PID 1 can restart its child while the recovery guard
-  // scans procfs. Register the fail-safe first so every later assertion can
-  // leave the sandbox supervisor runnable for cleanup.
-  let supervisorPaused = false;
-  cleanup.trackDisposable(`resume stopped supervisor for ${SANDBOX_NAME}`, async () => {
-    await resumeSupervisorIfPaused(supervisorPaused, async () => {
-      const resume = await docker(host, supervisorControl.resumeSupervisor, {
-        artifactName: "cleanup-phase-12-resume-startup-supervisor",
-        timeoutMs: 30_000,
-      });
-      expect(resume.exitCode, resultText(resume)).toBe(0);
-    });
-  });
-  const supervisorControl = failedStartupProcessControlCommands(recoveryContainerId, 2);
-  const pauseSupervisor = await docker(host, supervisorControl.pauseSupervisor, {
-    artifactName: "phase-12-pause-startup-supervisor",
-    timeoutMs: 30_000,
-  });
-  expect(pauseSupervisor.exitCode, resultText(pauseSupervisor)).toBe(0);
-  supervisorPaused = true;
-
-  const pausedCensus = await installedStartupCensus(
-    host,
-    recoveryContainerId,
-    "phase-12-paused-startup-census",
-  );
-  expect(pausedCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
-  expect(pausedCensus.pid).not.toBeNull();
-  const processControl = failedStartupProcessControlCommands(
-    recoveryContainerId,
-    pausedCensus.pid ?? 0,
-  );
-  const terminateChild = await docker(host, processControl.terminateStartupChild, {
-    artifactName: "phase-12-terminate-startup-child",
-    timeoutMs: 30_000,
-  });
-  expect(terminateChild.exitCode, resultText(terminateChild)).toBe(0);
-
-  await waitForChildlessStartup(host, recoveryContainerId);
+  await waitForChildlessStartup(host, recoveryContainerId, liveStartupPid);
   const childlessUnlock = await runInstalledFailedStartupUnlock(
     host,
     recoveryContainerId,
@@ -1050,13 +1011,6 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(
     await statPath(sandbox, `${CONFIG_DIR}/workspace`, "phase-12-state-tree-unlocked"),
   ).toMatchObject({ mode: "2770", owner: "sandbox:sandbox" });
-
-  const resumeSupervisor = await docker(host, processControl.resumeSupervisor, {
-    artifactName: "phase-12-resume-startup-supervisor",
-    timeoutMs: 30_000,
-  });
-  expect(resumeSupervisor.exitCode, resultText(resumeSupervisor)).toBe(0);
-  supervisorPaused = false;
 
   // Reconcile the host-side Shields receipt after the direct installed-guard
   // proof, then restart the failed sandbox and return cleanup to lockdown.

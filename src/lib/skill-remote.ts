@@ -3,7 +3,6 @@
 
 import { spawnSync } from "node:child_process";
 
-import { openshellSandboxSshHost } from "./adapters/openshell/sandbox-ssh-host";
 import { shellQuote } from "./core/shell-quote";
 import type { SkillPaths } from "./skill-install";
 
@@ -43,7 +42,7 @@ export function sshExec(
         "ConnectTimeout=10",
         "-o",
         "LogLevel=ERROR",
-        openshellSandboxSshHost(ctx.sandboxName),
+        `openshell-${ctx.sandboxName}`,
         command,
       ],
       {

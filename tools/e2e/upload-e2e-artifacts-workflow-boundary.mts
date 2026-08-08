@@ -333,9 +333,6 @@ function validateUploadPlacement(
   jobSteps: readonly WorkflowStep[],
   upload: WorkflowStep,
 ): void {
-  // The generate-matrix receipt is intentionally uploaded before candidate
-  // checkout. Its exact pre-checkout position is enforced by workflow-boundary.
-  if (jobName === "generate-matrix") return;
   const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
   if (
     stepsAfterUpload.length > 1 ||

@@ -1,0 +1,8 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "producer": "OpenShell",
+  "openshellVersion": "0.0.85",
+  "command": "openshell status",
+  "connectionRefusal": "Server Status\n\nGateway: nemoclaw\nServer: https://127.0.0.1:8080/\nError: Connection refused (os error 61)\n",
+  "nonLifecycleError": "Server Status\n\nGateway: nemoclaw\nServer: https://127.0.0.1:8080/\nError: authentication failed\n"
+}

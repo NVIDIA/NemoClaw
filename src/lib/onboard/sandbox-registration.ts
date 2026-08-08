@@ -72,7 +72,6 @@ export interface CreatedSandboxRegistryEntryInput {
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
-  dashboardForwardEnabled?: boolean;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
@@ -224,7 +223,6 @@ export function buildCreatedSandboxRegistryEntry(
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     dashboardPort: input.dashboardPort,
-    ...(input.dashboardForwardEnabled === false ? { dashboardForwardEnabled: false } : {}),
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,

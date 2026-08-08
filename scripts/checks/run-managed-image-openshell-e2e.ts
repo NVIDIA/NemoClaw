@@ -8,7 +8,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
-import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
   type InitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
@@ -166,8 +165,8 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
     throw new Error("--image must be an immutable repository@sha256 manifest reference");
   }
   const sandbox = requiredValue(argv, "--sandbox");
-  if (!isValidName(sandbox)) {
-    throw new Error(`--sandbox must use ${NAME_ALLOWED_FORMAT}`);
+  if (!/^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$/u.test(sandbox)) {
+    throw new Error("--sandbox must be a valid RFC 1123 label");
   }
   const gpu = argv.includes("--gpu");
   const localProviderValue = argv.includes("--local-provider")

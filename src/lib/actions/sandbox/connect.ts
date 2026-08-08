@@ -1110,21 +1110,7 @@ async function runConnectEntryPreflight(
       if (registry.getSandboxEntryInference(registered).kind === "configured") {
         assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
       }
-      const portableRecovery = recoverPortableDemoSandboxLifecycleForConnect(
-        sandboxName,
-        registered,
-        gatewayName,
-      );
-      if (
-        portableRecovery.kind !== "not-installed" &&
-        registered.dashboardForwardEnabled !== false
-      ) {
-        if (!registry.updateSandbox(sandboxName, { dashboardForwardEnabled: false })) {
-          throw new Error(
-            `Portable sandbox '${sandboxName}' could not persist its no-forward connect mode`,
-          );
-        }
-      }
+      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);

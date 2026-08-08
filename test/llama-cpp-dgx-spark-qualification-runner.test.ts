@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import { loadLlamaCppImageConfig } from "../scripts/checks/export-llama-cpp-image-config.mts";
 import {
   buildCandidateImageArgv,
-  buildRuntimeLogForbiddenValues,
   buildServerContainerArgv,
   expectedRegistryName,
   expectedRegistryOwner,
@@ -26,7 +25,6 @@ import {
   validateModelsResponse,
   validateOpenClawQualificationImageLabels,
   validateQualificationPlan,
-  validateRuntimeLogRedaction,
   validateStartupLog,
 } from "../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 
@@ -339,7 +337,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           "--no-agent",
         ]),
       );
-      expect(valuesAfter(argv, "--publish")).toEqual([]);
+      expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
       const agentQualificationArgv = buildServerContainerArgv(testPlan, {
         apiKeyHostPath: "/work/tmp/api-key",
         containerName: "qualified-server",
@@ -351,7 +349,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         runtimeGid: 1001,
         runtimeUid: 1001,
       });
-      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([]);
+      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
@@ -430,45 +428,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       "offloaded 57/57 layers to GPU\noffloaded 58/58 layers to GPU",
     ]) {
       expect(() => validateStartupLog(log)).toThrow();
-    }
-  });
-
-  it("rejects every runner-derived credential, model path, prompt, and response in bounded runtime logs (#8144)", () => {
-    const apiKey = "a".repeat(64);
-    const authorization = `Bearer ${apiKey}`;
-    const forbidden = buildRuntimeLogForbiddenValues(
-      plan,
-      parsedInvocation(),
-      apiKey,
-      authorization,
-    );
-    expect(forbidden).toEqual(
-      expect.arrayContaining([
-        `${authorization.slice(0, -1)}0`,
-        MODEL_PATH,
-        `/models/${plan.recipe.model.file.path}`,
-        "This request must be rejected.",
-        "Return one short readiness token.",
-        "Reply with exactly: ready",
-        "Reply with one token.",
-        "Count upward without stopping.",
-        "Report the requested qualification status.",
-        "Use the available tool to get the weather in Seattle.",
-        '{"conditions":"clear","temperature_c":21}',
-        '{"location":"Seattle"}',
-        plan.qualification.agentQualification.prompts.normal,
-        plan.qualification.agentQualification.prompts.tool,
-        plan.qualification.agentQualification.prompts.continuation,
-        plan.qualification.agentQualification.fixture.value,
-      ]),
-    );
-    expect(validateRuntimeLogRedaction("server request complete\n", forbidden)).toEqual({
-      ok: true,
-    });
-    for (const value of forbidden) {
-      expect(() => validateRuntimeLogRedaction(`server log: ${value}\n`, forbidden)).toThrow(
-        /credential, path, prompt, or response/u,
-      );
     }
   });
 

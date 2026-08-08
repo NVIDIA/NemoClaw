@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  type CaptureOpenshellOptions,
-  type CaptureOpenshellResult,
-  captureOpenshellCommand,
-  stripAnsi,
-} from "../adapters/openshell/client";
+import { stripAnsi } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { parseSandboxPhase } from "../state/gateway";
@@ -14,18 +9,6 @@ import {
   fingerprintSandboxLiveIdentity,
   type SandboxRecreateObservation,
 } from "./sandbox-recreate-transaction";
-
-export const SANDBOX_RECREATE_PROBE_TIMEOUT_MS = OPENSHELL_PROBE_TIMEOUT_MS;
-
-export type { CaptureOpenshellOptions, CaptureOpenshellResult };
-
-export function captureSandboxRecreateOpenshellCommand(
-  binary: string,
-  args: string[],
-  options: CaptureOpenshellOptions,
-): CaptureOpenshellResult {
-  return captureOpenshellCommand(binary, args, options);
-}
 
 export interface SandboxRecreateTarget {
   readonly sandboxName: string;
