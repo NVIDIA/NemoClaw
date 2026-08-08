@@ -341,6 +341,18 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.openclaw.generated.mdx
                 slug: best-practices
+              - section: "Security Controls"
+                slug: security-controls
+                contents:
+                  - page: "Filesystem Controls"
+                    path: _build/agent-variants/security/filesystem-controls.openclaw.generated.mdx
+                    slug: filesystem-controls
+                  - page: "Process Controls"
+                    path: _build/agent-variants/security/process-controls.openclaw.generated.mdx
+                    slug: process-controls
+                  - page: "Gateway and Secret Controls"
+                    path: _build/agent-variants/security/gateway-authentication-controls.openclaw.generated.mdx
+                    slug: gateway-authentication-controls
               - page: "Configure Corporate CA Trust"
                 path: _build/agent-variants/security/configure-corporate-ca-trust.openclaw.generated.mdx
                 slug: configure-corporate-ca-trust
@@ -681,6 +693,18 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.deepagents.generated.mdx
                 slug: best-practices
+              - section: "Security Controls"
+                slug: security-controls
+                contents:
+                  - page: "Filesystem Controls"
+                    path: _build/agent-variants/security/filesystem-controls.deepagents.generated.mdx
+                    slug: filesystem-controls
+                  - page: "Process Controls"
+                    path: _build/agent-variants/security/process-controls.deepagents.generated.mdx
+                    slug: process-controls
+                  - page: "Gateway and Secret Controls"
+                    path: _build/agent-variants/security/gateway-authentication-controls.deepagents.generated.mdx
+                    slug: gateway-authentication-controls
               - page: "Configure Corporate CA Trust"
                 path: _build/agent-variants/security/configure-corporate-ca-trust.deepagents.generated.mdx
                 slug: configure-corporate-ca-trust
@@ -1060,6 +1084,18 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.hermes.generated.mdx
                 slug: best-practices
+              - section: "Security Controls"
+                slug: security-controls
+                contents:
+                  - page: "Filesystem Controls"
+                    path: _build/agent-variants/security/filesystem-controls.hermes.generated.mdx
+                    slug: filesystem-controls
+                  - page: "Process Controls"
+                    path: _build/agent-variants/security/process-controls.hermes.generated.mdx
+                    slug: process-controls
+                  - page: "Gateway and Secret Controls"
+                    path: _build/agent-variants/security/gateway-authentication-controls.hermes.generated.mdx
+                    slug: gateway-authentication-controls
               - page: "Configure Corporate CA Trust"
                 path: _build/agent-variants/security/configure-corporate-ca-trust.hermes.generated.mdx
                 slug: configure-corporate-ca-trust
