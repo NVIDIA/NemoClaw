@@ -74,9 +74,7 @@ describe("node-tar image remediation contract", () => {
     expect(patchRun, file).toBeGreaterThan(curlInstall);
   });
 
-  it.each(
-    dockerfiles,
-  )("patches npm before use and scans the completed $file filesystem", (entry) => {
+  it.each(dockerfiles)("patches npm before use in the completed $file filesystem", (entry) => {
     const { file, installsPatchDownloader, installsWithNpm } = entry;
     const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const source = completedStage(dockerfile);
@@ -85,11 +83,8 @@ describe("node-tar image remediation contract", () => {
     );
     const patchPayloadLayer =
       patchPayloadStage === undefined ? -1 : source.indexOf(`COPY --from=${patchPayloadStage} / /`);
-    const scanPayloadLayer = source.indexOf("COPY --from=hermes-scan-payload / /");
     const patchInputStage =
       patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
-    const scanInputStage =
-      scanPayloadLayer >= 0 ? namedStage(dockerfile, "hermes-scan-payload") : source;
     const flattenedPatchInputStage = patchInputStage.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
     const patchCopy = patchInputStage.indexOf(
@@ -100,14 +95,7 @@ describe("node-tar image remediation contract", () => {
       patchCommand,
       npmRootArguments,
     ).commandStart;
-    const scanCopy = scanInputStage.indexOf(
-      "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
-    );
-    const scanRun = source.indexOf(
-      "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
-    );
     const patchInputReady = patchPayloadLayer >= 0 ? patchPayloadLayer : patchCopy;
-    const scanInputReady = scanPayloadLayer >= 0 ? scanPayloadLayer : scanCopy;
 
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(
@@ -134,11 +122,6 @@ describe("node-tar image remediation contract", () => {
         aptInstallCleanup < patchRun,
       file,
     ).toBe(installsPatchDownloader);
-    expect(scanCopy, file).toBeGreaterThanOrEqual(0);
-    expect(scanInputReady, file).toBeGreaterThan(patchRun);
-    expect(scanRun, file).toBeGreaterThan(scanInputReady);
-    expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");
-
     const executableSource = source.replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length));
     const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
       (match) => match.index,

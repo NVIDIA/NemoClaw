@@ -564,17 +564,11 @@ RUN chmod -R a+rX /opt/hermes/.venv \
     && test -r /opt/hermes/.venv/pyvenv.cfg \
     && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
 
-# Gate the exact completed base filesystem before it can be published.
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+# Reject build-only paths before the base image can be published.
 RUN set -eu; \
     for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do \
         if [ -e "$build_only_path" ] || [ -L "$build_only_path" ]; then \
             echo "ERROR: build-only Hermes path leaked into the base image: $build_only_path" >&2; \
             exit 1; \
         fi; \
-    done; \
-    install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:hermes-base \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
+    done

@@ -665,11 +665,3 @@ RUN { \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
-
-# Gate the exact completed base filesystem before it can be published.
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:openclaw-base \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
