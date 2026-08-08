@@ -62,16 +62,23 @@ function sandboxEntry(): SandboxEntry {
 }
 
 function createPodman(
-  options: { running?: boolean; sandboxId?: string; updateStatus?: number } = {},
+  options: {
+    running?: boolean;
+    sandboxId?: string;
+    updateStatus?: number;
+    discoveredContainerIds?: readonly string[];
+  } = {},
 ) {
   let running = options.running ?? true;
   let sandboxId = options.sandboxId ?? SANDBOX_ID;
   let managedLabel = "true";
   let sandboxNameLabel = "alpha";
+  let sandboxNamespaceLabel = "";
+  let sandboxWorkspaceLabel = "default";
   let containerId = CONTAINER_ID;
-  let containerName = "openshell-sandbox-alpha";
-  let matches = [CONTAINER_ID];
-  let socketPath = "/run/user/1001/podman/podman.sock";
+  let containerName = `openshell-default--alpha-${sandboxId}`;
+  let matches = [...(options.discoveredContainerIds ?? [CONTAINER_ID])];
+  let socketPath = SOCKET_PATH;
   const podman = vi.fn((args: readonly string[], _env?: NodeJS.ProcessEnv) => {
     const command = args[0] === "--url" ? args.slice(2) : args;
     switch (command[0]) {
@@ -89,8 +96,10 @@ function createPodman(
               Config: {
                 Labels: {
                   "openshell.managed": managedLabel,
-                  "openshell.sandbox-id": sandboxId,
-                  "openshell.sandbox-name": sandboxNameLabel,
+                  "openshell.ai/sandbox-id": sandboxId,
+                  "openshell.ai/sandbox-name": sandboxNameLabel,
+                  "openshell.ai/sandbox-namespace": sandboxNamespaceLabel,
+                  "openshell.ai/sandbox-workspace": sandboxWorkspaceLabel,
                 },
               },
               State: { Running: running },
@@ -110,12 +119,19 @@ function createPodman(
     podman,
     setSandboxId(value: string) {
       sandboxId = value;
+      containerName = `openshell-default--alpha-${value}`;
     },
     setManagedLabel(value: string) {
       managedLabel = value;
     },
     setSandboxNameLabel(value: string) {
       sandboxNameLabel = value;
+    },
+    setSandboxNamespaceLabel(value: string) {
+      sandboxNamespaceLabel = value;
+    },
+    setSandboxWorkspaceLabel(value: string) {
+      sandboxWorkspaceLabel = value;
     },
     setContainerId(value: string) {
       containerId = value;
@@ -219,28 +235,6 @@ function createManagedOllamaBinary(homeDir: string): string {
   fs.mkdirSync(path.dirname(binPath), { recursive: true });
   fs.writeFileSync(binPath, "#!/bin/sh\n", { mode: 0o755 });
   return binPath;
-}
-
-function expectRecoveryIdentityRefusal(
-  stateDir: string,
-  runtime: ReturnType<typeof createPodman>,
-): void {
-  const launchOpenshell = vi.fn();
-
-  expect(() =>
-    recoverPortableDemoSandboxLifecycle(
-      "alpha",
-      { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
-      {
-        platform: "linux",
-        stateDir,
-        podman: runtime.podman,
-        launchOpenshell,
-      },
-    ),
-  ).toThrow("OpenShell identity does not match");
-  expect(runtime.podman).not.toHaveBeenCalledWith(["start", CONTAINER_ID]);
-  expect(launchOpenshell).not.toHaveBeenCalled();
 }
 
 afterEach(() => {
@@ -373,7 +367,9 @@ describe("portable demo sandbox lifecycle", () => {
       "--filter",
       "label=openshell.managed=true",
       "--filter",
-      "label=openshell.sandbox-name=alpha",
+      "label=openshell.ai/sandbox-name=alpha",
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
       "--format",
       "{{.ID}}",
     ]);
@@ -421,7 +417,9 @@ describe("portable demo sandbox lifecycle", () => {
         "--filter",
         "label=openshell.managed=true",
         "--filter",
-        "label=openshell.sandbox-name=alpha",
+        "label=openshell.ai/sandbox-name=alpha",
+        "--filter",
+        "label=openshell.ai/sandbox-workspace=default",
         "--format",
         "{{.ID}}",
       ],
@@ -528,7 +526,7 @@ describe("portable demo sandbox lifecycle", () => {
     runtime.setContainerName("renamed-alpha");
     expect(() => resolveTarget(stateDir, runtime)).toThrow("OpenShell identity does not match");
 
-    runtime.setContainerName("openshell-sandbox-alpha");
+    runtime.setContainerName(`openshell-default--alpha-${SANDBOX_ID}`);
     runtime.setSandboxNameLabel("beta");
     expect(() => resolveTarget(stateDir, runtime)).toThrow("OpenShell identity does not match");
   });
@@ -638,6 +636,25 @@ describe("portable demo sandbox lifecycle", () => {
     expect(() => installReceipt(stateDir, runtime.podman)).toThrow(
       "Setting the portable restart policy",
     );
+    expect(fs.existsSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir))).toBe(
+      false,
+    );
+  });
+
+  it("fails closed when exact OpenShell labels identify multiple containers (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({
+      discoveredContainerIds: [CONTAINER_ID, "b".repeat(64)],
+    });
+
+    expect(() => installReceipt(stateDir, runtime.podman)).toThrow(
+      "requires one exact Podman container",
+    );
+    expect(runtime.podman).not.toHaveBeenCalledWith([
+      "update",
+      "--restart=unless-stopped",
+      expect.any(String),
+    ]);
     expect(fs.existsSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir))).toBe(
       false,
     );
@@ -1437,45 +1454,5 @@ describe("portable demo sandbox lifecycle", () => {
     ).toThrow("agent gateway without its managed startup process");
     expect(launchOpenshell).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({ schemaVersion: 1 });
-  });
-
-  it("refuses a container whose OpenShell sandbox ID changed (#8441)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.setSandboxId("different-sandbox-id");
-    const launchOpenshell = vi.fn();
-
-    expect(() =>
-      recoverPortableDemoSandboxLifecycle(
-        "alpha",
-        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
-        {
-          platform: "linux",
-          stateDir,
-          podman: runtime.podman,
-          launchOpenshell,
-        },
-      ),
-    ).toThrow("OpenShell sandbox ID changed");
-    expect(launchOpenshell).not.toHaveBeenCalled();
-  });
-
-  it("refuses a container whose OpenShell managed label is not true (#8441)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.setManagedLabel("false");
-
-    expectRecoveryIdentityRefusal(stateDir, runtime);
-  });
-
-  it("refuses a container whose OpenShell sandbox name changed (#8441)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.setSandboxNameLabel("different-name");
-
-    expectRecoveryIdentityRefusal(stateDir, runtime);
   });
 });

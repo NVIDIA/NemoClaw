@@ -47,7 +47,7 @@ function openshellSshStdinCommand(payload: string, remoteShell: string): string 
       "-o UserKnownHostsFile=/dev/null",
       "-o ConnectTimeout=10",
       "-o LogLevel=ERROR",
-      shellQuote(`openshell-${SANDBOX_NAME}`),
+      shellQuote(`openshell-${SANDBOX_NAME}.default`),
       shellQuote(remoteShell),
     ].join(" "),
   ].join("; ");
@@ -130,7 +130,7 @@ async function assertSshParameterPayloadStaysLiteral(
       "-o UserKnownHostsFile=/dev/null",
       "-o ConnectTimeout=10",
       "-o LogLevel=ERROR",
-      shellQuote(`openshell-${SANDBOX_NAME}`),
+      shellQuote(`openshell-${SANDBOX_NAME}.default`),
       shellQuote('MSG=$(cat) && echo "$MSG"'),
       '> "$out_file" 2>&1',
     ].join(" "),

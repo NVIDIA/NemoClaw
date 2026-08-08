@@ -73,11 +73,13 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   const expectedMatrix = [
     {
       agent: "openclaw",
+      expect_non_root_entrypoint: "1",
       sandbox_name: "e2e-oc-security",
       test_file: "test/e2e/live/full-e2e.test.ts",
     },
     {
       agent: "hermes",
+      expect_non_root_entrypoint: "0",
       sandbox_name: "e2e-hm-security",
       test_file: "test/e2e/live/hermes-e2e.test.ts",
     },
@@ -94,6 +96,7 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "${{ matrix.agent }}",
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT: "${{ matrix.expect_non_root_entrypoint }}",
     NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
     NEMOCLAW_E2E_SECURITY_POSTURE: "1",
     NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",

@@ -111,6 +111,37 @@ describe("E2E risk signal reporter", () => {
     expect(() => configuredEnvironment(env, () => "c".repeat(40))).toThrow(/checked-out HEAD/u);
   });
 
+  it("attests an explicit tested root when trusted code runs beside the candidate checkout", () => {
+    const env = {
+      E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
+      E2E_TARGET_ID: "managed-image-protected-runtime",
+      GITHUB_WORKSPACE: "/workspace/trusted",
+      NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+      NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+      NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
+      NEMOCLAW_E2E_TESTED_ROOT: "/workspace/trusted/.candidate-runtime",
+    };
+    const resolveHead = vi.fn(() => EXPECTED_SHA);
+
+    expect(configuredEnvironment(env, resolveHead)?.testedSha).toBe(EXPECTED_SHA);
+    expect(resolveHead).toHaveBeenCalledWith("/workspace/trusted/.candidate-runtime");
+  });
+
+  it("rejects a relative tested root before resolving its HEAD", () => {
+    const env = {
+      E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
+      E2E_TARGET_ID: "managed-image-protected-runtime",
+      NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+      NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+      NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
+      NEMOCLAW_E2E_TESTED_ROOT: ".candidate-runtime",
+    };
+    const resolveHead = vi.fn(() => EXPECTED_SHA);
+
+    expect(() => configuredEnvironment(env, resolveHead)).toThrow(/absolute tested root/u);
+    expect(resolveHead).not.toHaveBeenCalled();
+  });
+
   it("writes pass, failure, skip, and pending counts for the tested commit", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
     try {
