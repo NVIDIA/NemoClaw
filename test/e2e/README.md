@@ -163,9 +163,7 @@ and exact-staging Launchable job own its product coverage:
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
 The retired nightly caller no longer runs. Each push to `main` starts a workflow that selects the default workflow E2E jobs.
-Manual Ollama GPU validation must use `gpu-e2e`.
-Manual managed llama.cpp validation on Linux amd64 NVIDIA hardware must use `llama-cpp-generic-gpu`.
-That target runs the declarative installer, full GPU-offload check, authenticated API probes, sandbox route, and OpenClaw agent proof.
+Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
 
 ## Credential-free tests
