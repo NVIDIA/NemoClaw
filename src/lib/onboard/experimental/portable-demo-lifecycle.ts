@@ -323,12 +323,7 @@ function inspectPodmanContainer(
     : dockerIdentityMatches
       ? dockerSandboxId
       : null;
-  if (
-    inspection.Id !== containerId ||
-    containerName !== expectedContainerName ||
-    sandboxId === null ||
-    typeof state?.Running !== "boolean"
-  ) {
+  if (inspection.Id !== containerId || sandboxId === null || typeof state?.Running !== "boolean") {
     const checks = [
       `immutable-id=${inspection.Id === containerId ? "match" : "mismatch"}`,
       `container-name=${containerName === expectedContainerName ? "match" : "mismatch"}`,
@@ -356,50 +351,31 @@ function discoverPodmanContainer(
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
 ): PodmanContainerInspection {
   const expectedContainerName = `${SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
-  const result = podman([
-    "ps",
-    "-a",
-    "--no-trunc",
-    "--filter",
-    `name=^${expectedContainerName}$`,
-    "--format",
-    "{{.ID}}",
-  ]);
-  requireCommand(result, `Finding portable sandbox '${sandboxName}'`);
-  const matches = String(result.stdout ?? "")
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (matches.length !== 1 || !CONTAINER_ID_PATTERN.test(matches[0] ?? "")) {
-    const diagnosticMatchCount = (filter: string): string => {
-      const diagnostic = podman([
-        "ps",
-        "-a",
-        "--no-trunc",
-        "--filter",
-        filter,
-        "--format",
-        "{{.ID}}",
-      ]);
-      if (diagnostic.status !== 0 || diagnostic.error) return "query-error";
-      return String(
-        String(diagnostic.stdout ?? "")
-          .split(/\r?\n/u)
-          .map((line) => line.trim())
-          .filter(Boolean).length,
-      );
+  const query = (filter: string): { ids: string[]; ok: boolean } => {
+    const result = podman(["ps", "-a", "--no-trunc", "--filter", filter, "--format", "{{.ID}}"]);
+    if (result.status !== 0 || result.error) return { ids: [], ok: false };
+    return {
+      ids: String(result.stdout ?? "")
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean),
+      ok: true,
     };
-    const podmanLabelMatches = diagnosticMatchCount(
-      `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
-    );
-    const dockerLabelMatches = diagnosticMatchCount(
-      `label=${DOCKER_SANDBOX_NAME_LABEL}=${sandboxName}`,
-    );
+  };
+  const exactName = query(`name=^${expectedContainerName}$`);
+  const podmanLabel = query(`label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`);
+  const dockerLabel = query(`label=${DOCKER_SANDBOX_NAME_LABEL}=${sandboxName}`);
+  const candidates = [...new Set([...exactName.ids, ...podmanLabel.ids, ...dockerLabel.ids])];
+  const queriesSucceeded = exactName.ok && podmanLabel.ok && dockerLabel.ok;
+  const idsAreCanonical = candidates.every((id) => CONTAINER_ID_PATTERN.test(id));
+  if (!queriesSucceeded || candidates.length !== 1 || !idsAreCanonical) {
+    const count = (result: { ids: string[]; ok: boolean }): string =>
+      result.ok ? String(result.ids.length) : "query-error";
     throw new Error(
-      `Portable demo lifecycle requires one exact Podman container for sandbox '${sandboxName}'; exact-name matches=${String(matches.length)}, podman-label matches=${podmanLabelMatches}, docker-label matches=${dockerLabelMatches}`,
+      `Portable demo lifecycle requires one exact Podman container for sandbox '${sandboxName}'; exact-name matches=${count(exactName)}, podman-label matches=${count(podmanLabel)}, docker-label matches=${count(dockerLabel)}, unique candidates=${String(candidates.length)}`,
     );
   }
-  return inspectPodmanContainer(matches[0]!, sandboxName, podman);
+  return inspectPodmanContainer(candidates[0]!, sandboxName, podman);
 }
 
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
