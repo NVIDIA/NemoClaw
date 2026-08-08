@@ -6,12 +6,6 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-import {
-  loadLocalAdapterPid,
-  persistLocalAdapterPid,
-  removeLocalAdapterFile,
-} from "../../inference/local-adapter-lifecycle";
-
 const SHA256 = /^[a-f0-9]{64}$/u;
 const PROCESS_EXIT_WAIT_MS = 5_000;
 const PROCESS_EXIT_POLL_MS = 50;
@@ -143,11 +137,9 @@ function defaultSleep(milliseconds: number): void {
 }
 
 export function createDockerLlamaCppPrivateBridgeController(
-  stateDir: string,
   dependencies: DockerLlamaCppPrivateBridgeDependencies = {},
 ): DockerLlamaCppPrivateBridgeController {
   const scriptPath = path.join(__dirname, "docker-llama-cpp-private-bridge-process.js");
-  const pidPath = path.join(stateDir, "llama-cpp-private-bridge.pid");
   const spawnProcess = dependencies.spawnProcess ?? spawn;
   const processIsAlive = dependencies.processIsAlive ?? defaultProcessIsAlive;
   const signalProcess = dependencies.signalProcess ?? defaultSignalProcess;
@@ -162,13 +154,8 @@ export function createDockerLlamaCppPrivateBridgeController(
     authority: DockerLlamaCppPrivateBridgeAuthority,
   ): readonly number[] => {
     const expected = expectedArgv(authority);
-    const persisted = loadLocalAdapterPid(pidPath);
-    const candidates = new Set<number>([
-      ...(persisted === null ? [] : [persisted]),
-      ...listProcessIds(),
-    ]);
     return Object.freeze(
-      [...candidates]
+      listProcessIds()
         .filter((pid) => processIsAlive(pid) && exactArgv(readProcessArgv(pid), expected))
         .sort((left, right) => left - right),
     );
@@ -178,13 +165,8 @@ export function createDockerLlamaCppPrivateBridgeController(
     if (!SHA256.test(transactionId)) {
       throw new Error("Docker llama.cpp private bridge transaction is invalid.");
     }
-    const persisted = loadLocalAdapterPid(pidPath);
-    const candidates = new Set<number>([
-      ...(persisted === null ? [] : [persisted]),
-      ...listProcessIds(),
-    ]);
     return Object.freeze(
-      [...candidates]
+      listProcessIds()
         .filter((pid) => {
           if (!processIsAlive(pid)) return false;
           const argv = readProcessArgv(pid);
@@ -207,7 +189,6 @@ export function createDockerLlamaCppPrivateBridgeController(
         `Docker llama.cpp private bridge has ${String(matches.length)} matching processes; expected one.`,
       );
     }
-    persistLocalAdapterPid(pidPath, matches[0]);
     return matches[0]!;
   };
 
@@ -230,7 +211,6 @@ export function createDockerLlamaCppPrivateBridgeController(
         }
       }
     }
-    removeLocalAdapterFile(pidPath);
   };
 
   return Object.freeze({
@@ -241,7 +221,6 @@ export function createDockerLlamaCppPrivateBridgeController(
         throw new Error("Docker llama.cpp private bridge ownership is ambiguous.");
       }
       if (existing.length === 1) {
-        persistLocalAdapterPid(pidPath, existing[0]);
         return;
       }
       const stale = transactionProcessIds(authority.transactionId);
@@ -259,7 +238,6 @@ export function createDockerLlamaCppPrivateBridgeController(
       if (!Number.isInteger(child.pid) || !child.pid || child.pid < 1) {
         throw new Error("Docker llama.cpp private bridge did not return a process identity.");
       }
-      persistLocalAdapterPid(pidPath, child.pid);
       child.unref();
     },
     assertRunning(authorityValue: DockerLlamaCppPrivateBridgeAuthority) {

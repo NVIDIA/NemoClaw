@@ -1284,9 +1284,7 @@ export function createDockerLlamaCppManagedLifecycle(
   normalizeHostLocalInferenceImageRef(options.probeImageReference);
   readinessTimeoutSeconds(options);
   const qualifiedAuthority = qualifyEngine(options);
-  const privateBridge =
-    dependencies.privateBridge ??
-    createDockerLlamaCppPrivateBridgeController(options.apiKeyRootHostPath);
+  const privateBridge = dependencies.privateBridge ?? createDockerLlamaCppPrivateBridgeController();
 
   const authorizeStaticReceipt = (value: HostLocalInferenceReceipt) => {
     const receipt = normalizeHostLocalInferenceReceipt(value);

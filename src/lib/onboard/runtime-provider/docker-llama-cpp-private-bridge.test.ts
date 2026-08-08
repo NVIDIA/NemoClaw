@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChildProcess, spawn } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createDockerLlamaCppPrivateBridgeController,
   type DockerLlamaCppPrivateBridgeAuthority,
@@ -21,12 +18,6 @@ const authority: DockerLlamaCppPrivateBridgeAuthority = {
   listenPort: 8081,
   bindAddresses: ["127.0.0.1", "172.29.0.1"],
 };
-let temporaryRoot = "";
-
-beforeEach(() => {
-  temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bridge-")));
-});
-afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
 
 function fixture() {
   let nextPid = 40_001;
@@ -37,7 +28,7 @@ function fixture() {
     processes.set(pid, [file, ...args]);
     return { pid, unref: vi.fn() } as unknown as ChildProcess;
   }) as unknown as typeof spawn;
-  const controller = createDockerLlamaCppPrivateBridgeController(temporaryRoot, {
+  const controller = createDockerLlamaCppPrivateBridgeController({
     spawnProcess,
     processIsAlive: (pid) => processes.has(pid),
     signalProcess: (pid, signal) => {
