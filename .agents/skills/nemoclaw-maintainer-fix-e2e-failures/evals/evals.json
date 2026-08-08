@@ -33,6 +33,7 @@
       "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
       "Keeps one actively edited fix per agent.",
       "Does not duplicate an owned root cause or an active peer review.",
+      "Treats a review claim as valid only for its named head and reviews a changed head again.",
       "Requires a non-contributor reviewer to approve the current head.",
       "Allows an independently approved author or peer maintainer to perform the gated merge."
     ]
@@ -82,6 +83,7 @@
     "expected_behavior": [
       "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
       "Does not edit or open a duplicate PR.",
+      "Rechecks the root-cause claim and open-PR count together immediately before creating a draft.",
       "Records the existing claim and continues the queue."
     ]
   },
@@ -107,6 +109,7 @@
       "Does not treat the transfer time as an endpoint.",
       "Does not call main passing or count pending work as verified fixed.",
       "Includes owners, next actors, worktrees, local state, and pending evidence.",
+      "Uses only source-provided URLs and reports a stable identifier with `URL unavailable` when a link is missing.",
       "Keeps monitoring active until the receiver acknowledges ownership."
     ]
   },

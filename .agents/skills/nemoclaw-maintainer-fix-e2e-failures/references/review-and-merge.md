@@ -21,6 +21,8 @@ Do not approve when the reviewer is the PR opener, a commit author, or a co-auth
 
 Use available agent coordination before starting a review. Treat `Reviewing <head-sha>` in the coordination channel or on the PR as a review claim. If another reviewer already owns that exact head, review another PR or resume the failure queue.
 
+A review claim applies only to the named head SHA. If the head changes, release the old claim, rescan, and claim and review the new head before approval. A waiting-CI PR may be reviewed, but approval must wait until required CI passes on that same head.
+
 ## Review the Exact Head
 
 1. Capture the PR number, head SHA, base SHA, author, commits, files, draft state, merge state, reviews, review threads, and required checks.

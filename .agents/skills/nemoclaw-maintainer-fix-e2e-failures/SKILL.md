@@ -56,9 +56,10 @@ Before changing product code:
 3. Read plausible matches. A different job with the same cause is already owned; a similar symptom with a different cause is not.
 4. Create a branch from current `origin/main`.
 5. Add one diagnostic or regression test for the root cause when feasible. Do not manufacture an unrelated placeholder diff.
-6. Re-read the policy from the refreshed trusted ref with `git show origin/main:.github/workflows/pr-limit.yaml`. If a non-exempt author has 10 open PRs, review, merge, or close existing work instead of creating a claim.
-7. Open a draft PR assigned to its author. Follow `nemoclaw-contributor-create-pr` for the template, verified commits, and DCO declaration.
-8. Put the root-cause key, source workflow URL, source run ID, failed job names and IDs, and failure signature in the PR body. Fix exactly one root cause in that PR.
+6. Immediately before creating the draft, re-read open PRs and shared coordination for the root-cause key, then recount the author's open PRs under the policy from refreshed `origin/main`. Treat both checks as one pre-write gate.
+7. If a matching claim exists or the new PR would exceed the limit, do not create it. Record the current owner or limit state and rescan.
+8. Otherwise, open a draft PR assigned to its author. Follow `nemoclaw-contributor-create-pr` for the template, verified commits, and DCO declaration.
+9. Put the root-cause key, source workflow URL, source run ID, failed job names and IDs, and failure signature in the PR body. Fix exactly one root cause in that PR.
 
 Do not begin a second active fix for the same agent. Waiting PRs may accumulate only within the open-PR limit.
 

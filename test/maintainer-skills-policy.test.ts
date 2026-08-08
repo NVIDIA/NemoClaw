@@ -327,6 +327,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(skill).toContain("would exceed the 10-open-PR limit");
     expect(skill).toContain("grouped by root cause");
     expect(skill).toContain("Search open PR titles and bodies");
+    expect(skill).toContain("Treat both checks as one pre-write gate");
+    expect(skill).toContain("If a matching claim exists or the new PR would exceed the limit");
+    expect(skill).toContain("do not create it");
     expect(skill).toContain(
       "draft PR whose initial diff contains evidence for only that root cause",
     );
@@ -354,6 +357,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(ownership).toContain("only in the private continuity handoff");
 
     expect(review).toContain("current-head approval");
+    expect(review).toContain("A review claim applies only to the named head SHA");
+    expect(review).toContain("If the head changes, release the old claim");
     expect(review).toContain("Reconcile Every GitHub Write");
     expect(review).toContain("do not retry immediately");
     expect(review).toContain("If ownership transfers or the operator cancels");
@@ -385,6 +390,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(handoff).toContain("Local state/changed paths");
     expect(handoff).toContain("Next actor/action");
     expect(handoff).toContain("Do not reset, stash, delete, or otherwise discard source edits");
+    expect(handoff).toContain("Never construct or guess a URL");
+    expect(handoff).toContain("`URL unavailable`");
     expect(handoff).toContain("State `inconclusive` instead of passing");
     expect(handoff).toContain(
       "continues monitoring until the receiving agent acknowledges ownership",

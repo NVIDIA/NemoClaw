@@ -54,6 +54,6 @@ Do not count these as fixes:
 
 Before handoff, record each active worktree's absolute path, branch, local HEAD, last pushed SHA, and `git status --short` changed paths. Do not reset, stash, delete, or otherwise discard source edits. Name the owner and next actor for every local or remote item. Put a failed evidence-cleanup path only in this private continuity handoff, never on GitHub.
 
-Link every PR, run, and job. State `inconclusive` instead of passing when the newest current-`main` evidence has not completed.
+Use only URLs present in GitHub evidence or the shared queue. Never construct or guess a URL. If a URL is unavailable, report its stable identifier followed by `URL unavailable`. State `inconclusive` instead of passing when the newest current-`main` evidence has not completed.
 
 For a transfer, the outgoing agent continues monitoring until the receiving agent acknowledges ownership. A passing snapshot does not complete the loop. If no receiving agent accepts ownership, keep the loop active unless the operator explicitly cancels it.
