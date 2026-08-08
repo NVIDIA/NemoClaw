@@ -38,11 +38,14 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   The `main.yaml` workflow uses the merged action.
   The action uses Node `22.19.0` and npm `10.9.4`.
   It materializes the committed graph with scripts disabled.
-  It rejects any low-or-higher production advisory, verifies registry signatures, and uploads the reports.
+  The action rejects any low-or-higher production advisory and verifies registry signatures.
+  The PR and main workflows upload the resulting reports.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
-  The action retries `npm audit signatures` at most three times when a failed attempt contains `npm error Failed to download`.
+  The action makes at most three `npm audit signatures` attempts.
+  It retries only when a failed attempt contains `npm error Failed to download`.
   For other nonzero results, including invalid or missing signatures, the action stops after the first attempt.
-  The report directory retains each attempt's output and any npm debug logs from failed attempts.
+  The report directory stores each attempt in `npm-audit-signatures-attempt-<n>.txt`.
+  After a failed attempt, the action copies npm debug logs to `npm-audit-signature-debug/`.
   Removal condition: delete the PR #6739 bootstrap checkout, its paired conditional audit step, and the bootstrap-specific test assertions in the first follow-up after this PR merges, before the next release tag; all later PRs must use the normal base-SHA action path.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --prefix agents/openclaw/wechat-runtime`.
 - Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.
