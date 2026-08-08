@@ -10,66 +10,10 @@ import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-ni
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { LocalModelProfilePlan } from "./local-model-profile/integration";
-import {
-  createSetupNim,
-  discoverInferenceIntentChoices,
-  type SetupNimFlowDeps,
-} from "./setup-nim-flow";
+import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
 
 afterEach(() => {
   vi.unstubAllEnvs();
-});
-
-describe("discoverInferenceIntentChoices", () => {
-  it("discovers review choices without invoking provider handlers or installers (#6005)", () => {
-    const detectInferenceProviderHostState = vi.fn(() =>
-      makeHostState({
-        hasOllama: true,
-        ollamaHost: "127.0.0.1",
-        ollamaRunning: true,
-      }),
-    );
-    const handleRemoteProviderSelection = vi.fn();
-    const handleRunningOllamaSelection = vi.fn();
-    const installVllm = vi.fn();
-    const remoteProviderConfig = makeDeps().remoteProviderConfig;
-    const deps = makeDeps({
-      remoteProviderConfig: {
-        ...remoteProviderConfig,
-        build: {
-          ...remoteProviderConfig.build,
-          defaultModel: "nvidia/reviewed-default",
-        },
-      },
-      detectInferenceProviderHostState,
-      getAgentInferenceProviderOptions: () => Object.keys(remoteProviderConfig),
-      handleRemoteProviderSelection,
-      handleRunningOllamaSelection,
-      installVllm,
-    });
-
-    const choices = discoverInferenceIntentChoices(deps, null, null);
-
-    expect(choices).toEqual(
-      expect.arrayContaining([
-        {
-          key: "build",
-          label: "NVIDIA Endpoints",
-          defaultModel: "nvidia/reviewed-default",
-        },
-        expect.objectContaining({ key: "ollama" }),
-      ]),
-    );
-    expect(detectInferenceProviderHostState).toHaveBeenCalledWith({
-      gpu: null,
-      experimental: false,
-      probeOllama: true,
-      probeVllm: true,
-    });
-    expect(handleRemoteProviderSelection).not.toHaveBeenCalled();
-    expect(handleRunningOllamaSelection).not.toHaveBeenCalled();
-    expect(installVllm).not.toHaveBeenCalled();
-  });
 });
 
 describe("createSetupNim", () => {

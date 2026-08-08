@@ -9,6 +9,8 @@ export {
   createSetupNim,
   discoverInferenceIntentChoices,
   probeLlamaCppAttachment,
+  resolveCurrentRuntimeProviderBundle,
+  resumeManagedLlamaCppRuntime,
 } from "../setup-nim-flow";
 export * from "./boundary";
 export * from "./controller";
