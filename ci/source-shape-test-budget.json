@@ -588,7 +588,7 @@
     },
     {
       "file": "test/openshell-e2e-qualification-workflow.test.ts",
-      "test": "keeps OpenShell E2E qualification inside the trusted composite action",
+      "test": "keeps installer verification independent from full E2E qualification",
       "category": "security"
     },
     {
