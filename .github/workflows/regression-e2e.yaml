@@ -43,20 +43,17 @@ jobs:
     outputs:
       whatsapp_qr_compact: ${{ steps.select.outputs.whatsapp_qr_compact }}
     steps:
+      - name: Checkout trusted selector
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - id: select
+        name: Select regression jobs
         env:
           JOBS: ${{ inputs.jobs }}
-        run: |
-          set -euo pipefail
-          normalized="$(printf '%s' "$JOBS" | tr -d '[:space:]')"
-          case ",${normalized}," in
-            ,,|*,whatsapp-qr-compact-e2e,*)
-              echo "whatsapp_qr_compact=true" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "whatsapp_qr_compact=false" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
+        shell: bash
+        run: bash .github/scripts/select-regression-e2e-jobs.sh
 
   # ── WhatsApp compact-QR reporter-workflow E2E ──────────────────
   # Coverage guard for #4522. Drives the real @openclaw/whatsapp +
