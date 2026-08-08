@@ -171,6 +171,15 @@ function commandDetail(result: CommandResult): string {
   return `exit ${String(result.status)}`;
 }
 
+function podmanStartDetail(result: CommandResult): string {
+  const detail = commandDetail(result);
+  const stderr = String(result.stderr ?? "")
+    .replaceAll(/[\r\n\t]+/gu, " ")
+    .trim();
+  if (!stderr) return detail;
+  return `${detail}: ${stderr.slice(0, 2_000)}`;
+}
+
 function requireCommand(result: CommandResult, action: string): void {
   if (result.status === 0 && !result.error) return;
   throw new Error(`${action} failed: ${commandDetail(result)}`);
@@ -668,10 +677,12 @@ export function recoverPortableDemoSandboxLifecycle(
     );
   }
   if (!inspection.running) {
-    requireCommand(
-      podman(["start", receipt.containerId]),
-      `Starting portable sandbox '${sandboxName}'`,
-    );
+    const started = podman(["start", receipt.containerId]);
+    if (started.status !== 0 || started.error) {
+      throw new Error(
+        `Starting portable sandbox '${sandboxName}' failed: ${podmanStartDetail(started)}`,
+      );
+    }
     inspection = inspectPodmanContainer(receipt.containerId, sandboxName, podman);
     if (!inspection.running) {
       throw new Error(`Portable sandbox '${sandboxName}' did not enter the running state`);
