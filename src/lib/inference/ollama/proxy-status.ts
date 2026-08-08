@@ -17,7 +17,6 @@
 
 const fs = require("fs");
 const path = require("path");
-const { OLLAMA_PORT } = require("../../core/ports");
 
 export type ProxyExitStatus = {
   reason: string;
@@ -104,7 +103,10 @@ export function clearStaleProxyStatus(statusPath: string): void {
  * specific actionable message. Otherwise return false so the caller falls
  * back to its existing owner-or-port remediation.
  */
-export function printProxyStartupReason(status: ProxyExitStatus | null): boolean {
+export function printProxyStartupReason(
+  status: ProxyExitStatus | null,
+  ollamaPort: number,
+): boolean {
   if (status === null) return false;
   if (status.reason === "backend-not-loopback") {
     console.error("  Error: Ollama auth proxy refused to start.");
@@ -114,7 +116,7 @@ export function printProxyStartupReason(status: ProxyExitStatus | null): boolean
       }), which would bypass the proxy's token check entirely.`,
     );
     console.error(
-      `  Remediation: bind Ollama to loopback only. On Linux, set OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ` +
+      `  Remediation: bind Ollama to loopback only. On Linux, set OLLAMA_HOST=127.0.0.1:${ollamaPort} ` +
         "in the Ollama systemd unit's [Service] section. On other platforms, set OLLAMA_HOST=127.0.0.1 " +
         "in the launcher's environment before starting Ollama.",
     );

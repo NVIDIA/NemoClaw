@@ -7,7 +7,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  createPodmanContainerEngine,
+  hardenPodmanSocketDirectory,
+  localPodmanEnvironment,
+  type PodmanSocketAuthorityDeps,
+} from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
 import {
@@ -32,9 +41,10 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const PODMAN_MANAGED_LABEL = "openshell.managed";
 const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
 const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
+const PODMAN_SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
-const CURRENT_RECEIPT_SCHEMA_VERSION = 2;
+const CURRENT_RECEIPT_SCHEMA_VERSION = 3;
 const STARTUP_PROCESS_PATTERN =
   "^(/usr/local/bin/nemoclaw-start|(bash|/bin/bash|/usr/bin/bash) /usr/local/bin/nemoclaw-start)( |$)";
 const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
@@ -47,11 +57,12 @@ type CommandResult = {
 };
 
 interface PortableDemoLifecycleReceipt {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   sandboxName: string;
   sandboxId: string;
   containerId: string;
   dashboardPort: number;
+  registryGeneration?: string;
 }
 
 interface PodmanContainerInspection {
@@ -60,12 +71,22 @@ interface PodmanContainerInspection {
   running: boolean;
 }
 
+export interface PortableDemoPrivilegedExecTarget {
+  readonly assertRuntimeAuthority: () => void;
+  readonly containerId: string;
+  readonly dockerHost: string;
+}
+
 export interface PortableDemoLifecycleDeps {
   platform?: NodeJS.Platform;
   stateDir?: string;
   env?: NodeJS.ProcessEnv;
   openshellBinary?: string;
-  podman?: (args: readonly string[]) => CommandResult;
+  podman?: (args: readonly string[], env?: NodeJS.ProcessEnv) => CommandResult;
+  podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
+  hardenSocketDirectory?: (socketPath: string) => void;
+  registryGeneration?: string;
+  backfillRegistryGeneration?: (registryGeneration: string) => boolean;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
   launchOpenshell?: (args: readonly string[]) => void;
   captureHost?: (command: string, args: readonly string[], timeoutMs: number) => CommandResult;
@@ -89,6 +110,8 @@ export type PortableDemoLifecycleRecoveryResult =
 export interface PortableDemoLifecycleContext {
   agent?: string | null;
   gatewayName: string;
+  lifecycleGeneration?: string;
+  openshellDriver?: string | null;
   provider?: string | null;
 }
 
@@ -212,11 +235,17 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
   }
   const receipt = value;
   const keys = Object.keys(receipt).sort();
-  if (keys.join(",") !== "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion") {
+  const expectedKeys =
+    receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION
+      ? "containerId,dashboardPort,registryGeneration,sandboxId,sandboxName,schemaVersion"
+      : "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion";
+  if (keys.join(",") !== expectedKeys) {
     throw new Error("Portable demo lifecycle receipt fields are invalid");
   }
   if (
-    (receipt.schemaVersion !== 1 && receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
+    (receipt.schemaVersion !== 1 &&
+      receipt.schemaVersion !== 2 &&
+      receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
     receipt.sandboxName !== sandboxName ||
     typeof receipt.containerId !== "string" ||
     !CONTAINER_ID_PATTERN.test(receipt.containerId) ||
@@ -224,11 +253,32 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
     !SANDBOX_ID_PATTERN.test(receipt.sandboxId) ||
     !Number.isInteger(receipt.dashboardPort) ||
     Number(receipt.dashboardPort) < 1024 ||
-    Number(receipt.dashboardPort) > 65535
+    Number(receipt.dashboardPort) > 65535 ||
+    (receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION &&
+      (typeof receipt.registryGeneration !== "string" ||
+        !SANDBOX_ID_PATTERN.test(receipt.registryGeneration)))
   ) {
     throw new Error("Portable demo lifecycle receipt values are invalid");
   }
   return receipt as unknown as PortableDemoLifecycleReceipt;
+}
+
+function requireCurrentRegistryGeneration(
+  receipt: PortableDemoLifecycleReceipt,
+  registryGeneration: string | undefined,
+): boolean {
+  // Legacy receipts predate an explicit generation field. Their immutable
+  // container ID may claim a missing registry generation only after exact
+  // local runtime validation; an existing generation must already match.
+  const receiptGeneration =
+    receipt.schemaVersion === 3 ? receipt.registryGeneration : receipt.containerId;
+  if (registryGeneration === undefined && receipt.schemaVersion !== 3) return true;
+  if (receiptGeneration !== registryGeneration) {
+    throw new Error(
+      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' does not belong to the current registry generation`,
+    );
+  }
+  return false;
 }
 
 function loadReceipt(sandboxName: string, stateDir: string): PortableDemoLifecycleReceipt | null {
@@ -308,6 +358,7 @@ function inspectPodmanContainer(
   const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
   if (
     inspection.Id !== containerId ||
+    inspection.Name !== `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}` ||
     labels?.[PODMAN_MANAGED_LABEL] !== "true" ||
     labels?.[PODMAN_SANDBOX_NAME_LABEL] !== sandboxName ||
     typeof sandboxId !== "string" ||
@@ -355,6 +406,127 @@ function discoverPodmanContainer(
     );
   }
   return inspectPodmanContainer(matches[0]!, sandboxName, podman);
+}
+
+function podmanSocketPath(
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  env: NodeJS.ProcessEnv,
+): string {
+  const result = podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
+  requireCommand(result, "Resolving the portable Podman socket");
+  const socket = String(result.stdout ?? "").trim();
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(socket)) {
+    throw new Error("The portable Podman socket path is invalid");
+  }
+  const socketPath = socket.startsWith("unix://") ? socket.slice("unix://".length) : socket;
+  if (!path.posix.isAbsolute(socketPath)) {
+    throw new Error("The portable Podman socket path is invalid");
+  }
+  return socketPath;
+}
+
+function podmanCapture(
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  env: NodeJS.ProcessEnv,
+): ContainerEngineCommandCapture {
+  return (_executable, args) => {
+    const result = podman(args, env);
+    return {
+      status: result.status ?? 1,
+      stdout: String(result.stdout ?? ""),
+      stderr: String(result.stderr ?? ""),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  };
+}
+
+function qualifiedPodmanAuthority(commandEnv: NodeJS.ProcessEnv, deps: PortableDemoLifecycleDeps) {
+  const podman = deps.podman ?? ((args, env = commandEnv) => defaultPodman(args, env));
+  const podmanEnv = localPodmanEnvironment(commandEnv);
+  const socketPath = podmanSocketPath(podman, podmanEnv);
+  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath);
+  const socketAuthority = capturePodmanSocketAuthority(socketPath, deps.podmanSocketAuthorityDeps);
+  const provider = createPodmanContainerEngine({
+    operation: "sandbox-lifecycle",
+    socketAuthority,
+    authorityDeps: deps.podmanSocketAuthorityDeps,
+    ...(deps.podman ? { capture: podmanCapture(podman, podmanEnv) } : {}),
+  });
+  return {
+    assertRuntimeAuthority: () =>
+      assertPodmanSocketAuthority(socketAuthority, deps.podmanSocketAuthorityDeps),
+    dockerHost: `unix://${socketAuthority.socketPath}`,
+    podman: (args: readonly string[]) => provider.capture(args, COMMAND_TIMEOUT_MS),
+  };
+}
+
+function requireReceiptOwnedInspection(
+  receipt: PortableDemoLifecycleReceipt,
+  inspection: PodmanContainerInspection,
+): void {
+  if (inspection.containerId !== receipt.containerId) {
+    throw new Error(
+      `Portable demo lifecycle refused container '${inspection.containerId}' because the recorded container identity changed`,
+    );
+  }
+  if (inspection.sandboxId !== receipt.sandboxId) {
+    throw new Error(
+      `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
+    );
+  }
+}
+
+function backfillLegacyReceiptGeneration(
+  receipt: PortableDemoLifecycleReceipt,
+  stateDir: string,
+  backfillRequired: boolean,
+  deps: PortableDemoLifecycleDeps,
+): PortableDemoLifecycleReceipt {
+  if (receipt.schemaVersion === 3) return receipt;
+  if (
+    backfillRequired &&
+    (!deps.backfillRegistryGeneration || !deps.backfillRegistryGeneration(receipt.containerId))
+  ) {
+    throw new Error(
+      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' could not claim the current registry generation`,
+    );
+  }
+  if (receipt.schemaVersion === 1) return receipt;
+  const migrated: PortableDemoLifecycleReceipt = {
+    ...receipt,
+    schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
+    registryGeneration: receipt.containerId,
+  };
+  writeReceipt(migrated, stateDir);
+  return migrated;
+}
+
+/** Resolve the receipt-owned portable container for a host-side privileged exec. */
+export function resolvePortableDemoPrivilegedExecTarget(
+  sandboxName: string,
+  deps: PortableDemoLifecycleDeps = {},
+): PortableDemoPrivilegedExecTarget | null {
+  const commandEnv = deps.env ?? process.env;
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  const receipt = loadReceipt(sandboxName, stateDir);
+  if (!receipt) return null;
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
+  }
+  const backfillRequired = requireCurrentRegistryGeneration(receipt, deps.registryGeneration);
+  const authority = qualifiedPodmanAuthority(commandEnv, deps);
+  const inspection = discoverPodmanContainer(sandboxName, authority.podman);
+  requireReceiptOwnedInspection(receipt, inspection);
+  if (!inspection.running) {
+    throw new Error(`Portable sandbox '${sandboxName}' is not running`);
+  }
+  authority.assertRuntimeAuthority();
+  backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
+  return {
+    assertRuntimeAuthority: authority.assertRuntimeAuthority,
+    containerId: inspection.containerId,
+    dockerHost: authority.dockerHost,
+  };
 }
 
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
@@ -604,32 +776,49 @@ export function installPortableDemoSandboxLifecycle(
   createdStartupArgv: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   deps: PortableDemoLifecycleDeps = {},
-): void {
-  if (!isPortableExperimentalProfile(env)) return;
+): string | null {
+  const stateDir = deps.stateDir ?? defaultStateDir(env);
   if (
+    !isPortableExperimentalProfile(env) ||
     createdStartupArgv[createdStartupArgv.length - 1] !== "/usr/local/bin/nemoclaw-start" ||
     startupEnvValue(createdStartupArgv, "OPENCLAW_HOME") === null
   ) {
-    return;
+    removeReceipt(sandboxName, stateDir);
+    return null;
   }
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle requires Linux");
   }
   const commandEnv = deps.env ?? env;
-  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  const podmanEnv = localPodmanEnvironment(commandEnv);
+  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
   const inspection = discoverPodmanContainer(sandboxName, podman);
+  const registryGeneration = deps.registryGeneration ?? inspection.containerId;
+  if (!SANDBOX_ID_PATTERN.test(registryGeneration)) {
+    throw new Error("Portable demo lifecycle registry generation is invalid");
+  }
   const receipt: PortableDemoLifecycleReceipt = {
     schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
     sandboxName,
     sandboxId: inspection.sandboxId,
     containerId: inspection.containerId,
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
+    registryGeneration,
   };
   requireCommand(
     podman(["update", "--restart=unless-stopped", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
-  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
+  writeReceipt(receipt, stateDir);
+  return registryGeneration;
+}
+
+/** Retire portable lifecycle authority only after its sandbox registry entry is removed. */
+export function removePortableDemoSandboxLifecycleReceipt(
+  sandboxName: string,
+  stateDir = defaultStateDir(process.env),
+): void {
+  removeReceipt(sandboxName, stateDir);
 }
 
 /**
@@ -642,15 +831,24 @@ export function recoverPortableDemoSandboxLifecycle(
   deps: PortableDemoLifecycleDeps = {},
 ): PortableDemoLifecycleRecoveryResult {
   if ((context.agent ?? "openclaw") !== "openclaw") return { kind: "not-installed" };
+  if (context.openshellDriver !== "docker") return { kind: "not-installed" };
   const commandEnv = deps.env ?? process.env;
-  const receipt = loadReceipt(sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  let receipt = loadReceipt(sandboxName, stateDir);
   if (!receipt) return { kind: "not-installed" };
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
-
-  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
-  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  const backfillRequired = requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+  if (backfillRequired || receipt.schemaVersion === 2) {
+    const authority = qualifiedPodmanAuthority(commandEnv, deps);
+    const migrationInspection = discoverPodmanContainer(sandboxName, authority.podman);
+    requireReceiptOwnedInspection(receipt, migrationInspection);
+    authority.assertRuntimeAuthority();
+    receipt = backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
+  }
+  const podmanEnv = localPodmanEnvironment(commandEnv);
+  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
   const initialInspection = podman(["inspect", receipt.containerId]);
   if (isMissingPodmanContainer(initialInspection)) {
     removeReceipt(sandboxName, stateDir);
@@ -696,7 +894,7 @@ export function recoverPortableDemoSandboxLifecycle(
   }
   recoverManagedOllama(context, commandEnv, stateDir, timing, deps);
   const gatewayRunning = gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS);
-  const refreshStartup = receipt.schemaVersion < CURRENT_RECEIPT_SCHEMA_VERSION;
+  const refreshStartup = receipt.schemaVersion === 1;
   if (!refreshStartup && gatewayRunning) {
     return { kind: "already-running" };
   }
@@ -765,7 +963,11 @@ export function recoverPortableDemoSandboxLifecycle(
   }
   if (refreshStartup) {
     writeReceipt(
-      { ...receipt, schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION },
+      {
+        ...receipt,
+        schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
+        registryGeneration: context.lifecycleGeneration ?? receipt.containerId,
+      },
       deps.stateDir ?? defaultStateDir(commandEnv),
     );
   }

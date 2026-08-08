@@ -2,16 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture } from "../adapters/docker/run";
+import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
 import * as registry from "../state/registry";
+import { compareAndSetLegacySandboxLifecycleGeneration } from "../state/registry/lifecycle-generation";
 
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 
-type SandboxEntry = {
-  name?: string;
-  openshellDriver?: string | null;
-};
+type SandboxEntry = import("../state/registry").SandboxEntry;
 
 type LabeledSandboxContainer = {
   id: string;
@@ -210,11 +209,41 @@ function privilegedSandboxExecArgv(
 ): string[] {
   const entry = readSandboxEntry(sandboxName);
   if (!entry) throw missingRegistryEntryError(sandboxName);
-  const driver = normalizeDriver(entry?.openshellDriver);
+  const driver = normalizeDriver(entry.openshellDriver);
   if (driver !== null && driver !== "docker" && driver !== "vm") {
     throw unsupportedDirectDriverError(sandboxName, driver);
   }
-
+  const portableTarget =
+    driver === "docker"
+      ? resolvePortableDemoPrivilegedExecTarget(sandboxName, {
+          ...(entry.lifecycleGeneration ? { registryGeneration: entry.lifecycleGeneration } : {}),
+          backfillRegistryGeneration: (generation) =>
+            compareAndSetLegacySandboxLifecycleGeneration(entry, generation),
+        })
+      : null;
+  if (portableTarget) {
+    if (expectedContainerId !== undefined && portableTarget.containerId !== expectedContainerId) {
+      throw new Error(
+        `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
+          "refusing privileged execution against a different container.",
+      );
+    }
+    const sanitizedEnvArgs = sanitizeEnvironment
+      ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
+      : [];
+    portableTarget.assertRuntimeAuthority();
+    return [
+      "--host",
+      portableTarget.dockerHost,
+      "exec",
+      ...(stdin ? ["-i"] : []),
+      ...sanitizedEnvArgs,
+      "--user",
+      "root",
+      portableTarget.containerId,
+      ...cmd,
+    ];
+  }
   // Docker/direct-container is the only supported privileged mutation path.
   // Try it even when older registry entries do not record a driver, then fail
   // clearly if no matching sandbox container is running.

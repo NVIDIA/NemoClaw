@@ -332,7 +332,7 @@ function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string):
     //   2. Port conflict (EADDRINUSE race lost after pre-check)
     //   3. Generic "exited during startup" without a structured reason
     const status = readProxyExitStatus(PROXY_STATUS_PATH);
-    if (printProxyStartupReason(status)) {
+    if (printProxyStartupReason(status, OLLAMA_PORT)) {
       // Already rendered above.
     } else {
       const owners = inspectForeignProxyPortOwners("any");

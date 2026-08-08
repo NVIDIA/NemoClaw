@@ -298,7 +298,8 @@ test/e2e/
   A maintainer can also dispatch the trusted `main` workflow against the exact
   head of an open internal or fork PR. The manual path validates the actor, PR
   number, head repository, head SHA, base SHA, workflow SHA, review reason, and
-  selected mode before candidate checkout. For a PR revision run, leave `jobs` and
+  allowed jobs, targets, and Launchable combination before candidate checkout.
+  For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
   E2E except `Exact staging Brev Launchable`. It also selects all shared credential-free tests and
   these controller-selected registry targets:
@@ -331,8 +332,10 @@ test/e2e/
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
-  invocations and suppress PR reporting and scorecards. The workflow boundary
-  requires every selected job shard to upload its evidence artifact.
+  invocations and suppress PR reporting and scorecards. Each risk signal binds
+  its result counts to the expected and tested candidate SHA, correlation ID,
+  job ID, and shard ID. The workflow boundary requires every selected job shard
+  to upload its evidence artifact.
 - `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
   four independent shards on each of macOS and WSL, with `fail-fast` disabled.
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute
