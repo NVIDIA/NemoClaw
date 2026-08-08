@@ -120,11 +120,14 @@ case "$*" in
     exit 0
     ;;
   "--user enable --now podman.socket")
-    mkdir -p "\${service_dir}"
+    install -d -m 755 "\${service_dir}"
     nohup podman system service --time=0 "unix://\${socket_path}" >"\${log_file}" 2>&1 &
     echo $! >"\${pid_file}"
     for _ in $(seq 1 100); do
-      [[ -S "\${socket_path}" ]] && exit 0
+      if [[ -S "\${socket_path}" ]]; then
+        chmod 660 "\${socket_path}"
+        exit 0
+      fi
       sleep 0.1
     done
     cat "\${log_file}" >&2 || true
@@ -182,6 +185,7 @@ async function main(progress: TestProgress): Promise<void> {
     progress.phase("prepare the rootless container runtime");
     preparePortableExperimentalHost(process.env);
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
+    assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
