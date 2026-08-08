@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { privilegedSandboxExecArgv } from "../../../src/lib/sandbox/privileged-exec.ts";
+import { buildSubprocessEnv } from "../../../src/lib/subprocess-env.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "./clients/sandbox.ts";
@@ -71,6 +72,11 @@ const OPENSHELL_SUPERVISOR_ARGV = [
   "/sandbox",
 ] as const;
 const SYSTEM_BASH_EXECUTABLES = ["/bin/bash", "/usr/bin/bash"] as const;
+const NEMOCLAW_START_SUPERVISOR_PATHS = [
+  "nemoclaw-start",
+  "/usr/local/bin/nemoclaw-start",
+] as const;
+const BASH_ARGV0 = ["bash", ...SYSTEM_BASH_EXECUTABLES] as const;
 const LIVE_PROCESS_STATES = ["D", "R", "S"] as const;
 const SAFE_OPENSHELL_IDENTITY_COMPONENT = /^[a-z0-9][a-z0-9_.-]*$/u;
 const MAX_PROC_ENTRIES = 32_768;
@@ -88,12 +94,12 @@ import pwd
 
 PROC_ROOT = Path("/proc")
 MAX_PROC_ENTRIES = ${MAX_PROC_ENTRIES}
-OPENSHELL_SUPERVISOR_ARGV = (b"/opt/openshell/bin/openshell-sandbox", b"--workdir", b"/sandbox")
-OPENSHELL_SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox"
-NEMOCLAW_START_SUPERVISOR = (b"nemoclaw-start", b"/usr/local/bin/nemoclaw-start")
-BASH = (b"bash", b"/bin/bash", b"/usr/bin/bash")
-SYSTEM_BASH_EXECUTABLES = {"/bin/bash", "/usr/bin/bash"}
-LIVE_PROCESS_STATES = {"D", "R", "S"}
+OPENSHELL_SUPERVISOR_ARGV = tuple(item.encode("utf-8") for item in ${JSON.stringify(OPENSHELL_SUPERVISOR_ARGV)})
+OPENSHELL_SUPERVISOR_EXECUTABLE = ${JSON.stringify(OPENSHELL_SUPERVISOR_EXECUTABLE)}
+NEMOCLAW_START_SUPERVISOR = tuple(item.encode("utf-8") for item in ${JSON.stringify(NEMOCLAW_START_SUPERVISOR_PATHS)})
+BASH = tuple(item.encode("utf-8") for item in ${JSON.stringify(BASH_ARGV0)})
+SYSTEM_BASH_EXECUTABLES = set(${JSON.stringify(SYSTEM_BASH_EXECUTABLES)})
+LIVE_PROCESS_STATES = set(${JSON.stringify(LIVE_PROCESS_STATES)})
 
 def argv_for(path):
     raw = (path / "cmdline").read_bytes()
@@ -105,7 +111,7 @@ def argv_for(path):
 
 def is_nemoclaw_start_supervisor(argv):
     return (
-        argv in ((NEMOCLAW_START_SUPERVISOR[0],), (NEMOCLAW_START_SUPERVISOR[1],))
+        (len(argv) == 1 and argv[0] in NEMOCLAW_START_SUPERVISOR)
         or (
             len(argv) == 2
             and argv[0] in BASH
@@ -245,6 +251,20 @@ function probeEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function subprocessEnvironmentIdentity(env: NodeJS.ProcessEnv): string {
+  return JSON.stringify(
+    Object.entries(env)
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function requireStablePrivilegedDockerEnvironment(expectedIdentity: string): void {
+  if (subprocessEnvironmentIdentity(buildSubprocessEnv()) !== expectedIdentity) {
+    throw new Error("privileged Docker environment changed during security posture inspection");
+  }
+}
+
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -352,12 +372,16 @@ function requireExactSupplementaryGroups(values: string[], expected: number, lab
 }
 
 function canonicalNemoclawStartSupervisorArgv(argv: string[]): boolean {
-  const starts = ["nemoclaw-start", "/usr/local/bin/nemoclaw-start"];
-  if (argv.length === 1 && starts.includes(argv[0] ?? "")) return true;
+  if (
+    argv.length === 1 &&
+    (NEMOCLAW_START_SUPERVISOR_PATHS as readonly string[]).includes(argv[0] ?? "")
+  ) {
+    return true;
+  }
   return (
     argv.length === 2 &&
-    ["bash", "/bin/bash", "/usr/bin/bash"].includes(argv[0] ?? "") &&
-    starts.includes(argv[1] ?? "")
+    (BASH_ARGV0 as readonly string[]).includes(argv[0] ?? "") &&
+    (NEMOCLAW_START_SUPERVISOR_PATHS as readonly string[]).includes(argv[1] ?? "")
   );
 }
 
@@ -505,6 +529,20 @@ export function parseOpenShellContainerId(output: string, sandboxName: string): 
   return id;
 }
 
+export function dockerRuntimeEndpointArgs(privilegedExecArgs: readonly string[]): string[] {
+  if (privilegedExecArgs[0] === "exec") return [];
+  const dockerHost = privilegedExecArgs[1];
+  if (
+    privilegedExecArgs[0] !== "--host" ||
+    !dockerHost ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(dockerHost) ||
+    privilegedExecArgs[2] !== "exec"
+  ) {
+    throw new Error("privileged Docker execution did not identify a supported runtime endpoint");
+  }
+  return ["--host", dockerHost];
+}
+
 export function securityPostureEnabled(): boolean {
   return securityPostureExpectations().enabled;
 }
@@ -551,9 +589,23 @@ export async function assertSecurityPosture(
   );
   requireSuccess("non-root host user", hostUser);
 
+  const privilegedExecArgv = dependencies.privilegedExecArgv ?? privilegedSandboxExecArgv;
+  const splitProcessProbeCommand = ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE];
+  const privilegedDockerEnv = buildSubprocessEnv();
+  const privilegedDockerEnvironmentIdentity = subprocessEnvironmentIdentity(privilegedDockerEnv);
+  const initialPrivilegedExecArgs = privilegedExecArgv(
+    sandboxName,
+    splitProcessProbeCommand,
+    false,
+    true,
+  );
+  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
+  const dockerEndpointArgs = dockerRuntimeEndpointArgs(initialPrivilegedExecArgs);
+
   const containers = await host.command(
     "docker",
     [
+      ...dockerEndpointArgs,
       "ps",
       "--no-trunc",
       "--filter",
@@ -565,28 +617,33 @@ export async function assertSecurityPosture(
     ],
     {
       artifactName: "security-posture-container-identity",
-      env: probeEnv(),
+      env: privilegedDockerEnv,
       timeoutMs: 30_000,
     },
   );
   requireSuccess("OpenShell Docker container discovery", containers);
   const containerId = parseOpenShellContainerId(containers.stdout, sandboxName);
-  const privilegedExecArgv = dependencies.privilegedExecArgv ?? privilegedSandboxExecArgv;
-  const splitProcessProbe = await host.command(
-    "docker",
-    privilegedExecArgv(
-      sandboxName,
-      ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE],
-      false,
-      true,
-      containerId,
-    ),
-    {
-      artifactName: "security-posture-split-processes",
-      env: probeEnv(),
-      timeoutMs: 30_000,
-    },
+  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
+  const finalPrivilegedExecArgs = privilegedExecArgv(
+    sandboxName,
+    splitProcessProbeCommand,
+    false,
+    true,
+    containerId,
   );
+  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
+  const finalDockerEndpointArgs = dockerRuntimeEndpointArgs(finalPrivilegedExecArgs);
+  if (
+    finalDockerEndpointArgs.length !== dockerEndpointArgs.length ||
+    finalDockerEndpointArgs.some((argument, index) => argument !== dockerEndpointArgs[index])
+  ) {
+    throw new Error("container runtime endpoint changed before privileged inspection");
+  }
+  const splitProcessProbe = await host.command("docker", finalPrivilegedExecArgs, {
+    artifactName: "security-posture-split-processes",
+    env: privilegedDockerEnv,
+    timeoutMs: 30_000,
+  });
   requireSuccess(
     "OpenShell and nemoclaw-start child supervisor security posture",
     splitProcessProbe,

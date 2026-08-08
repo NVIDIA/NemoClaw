@@ -12,6 +12,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertSecurityPosture,
+  dockerRuntimeEndpointArgs,
   OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   parseOpenShellContainerId,
   parseSplitProcessSecurityReport,
@@ -30,6 +31,7 @@ const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_NAME = "secure-sandbox";
 const SANDBOX_ID = "sandbox-id";
 const CONTAINER_NAME = `openshell-default--${SANDBOX_NAME}-${SANDBOX_ID}`;
+const PORTABLE_DOCKER_HOST = "unix:///run/user/1000/podman/podman.sock";
 
 type ReportMutationCase = {
   error: RegExp;
@@ -116,6 +118,7 @@ describe("security posture fixture", () => {
       { encoding: "utf8" },
     );
 
+    expect(compiled.error, "python3 is required to compile the embedded probe").toBeUndefined();
     expect(compiled.status, compiled.stderr).toBe(0);
   });
 
@@ -133,6 +136,7 @@ describe("security posture fixture", () => {
         },
       );
 
+      expect(isolated.error, "python3 is required to verify isolated mode").toBeUndefined();
       expect(isolated.status, isolated.stderr).toBe(0);
       expect(isolated.stdout.trim()).toBe('{"isolated": true}');
     } finally {
@@ -420,6 +424,19 @@ describe("security posture fixture", () => {
     expect(parseOpenShellContainerId(row, SANDBOX_NAME)).toBe(CONTAINER_ID);
   });
 
+  it("derives Docker discovery from the privileged execution endpoint", () => {
+    expect(dockerRuntimeEndpointArgs(["exec", "--user", "root"])).toEqual([]);
+    expect(
+      dockerRuntimeEndpointArgs(["--host", PORTABLE_DOCKER_HOST, "exec", "--user", "root"]),
+    ).toEqual(["--host", PORTABLE_DOCKER_HOST]);
+    expect(() => dockerRuntimeEndpointArgs(["--host", "", "exec"])).toThrow(
+      /supported runtime endpoint/u,
+    );
+    expect(() => dockerRuntimeEndpointArgs(["--context", "remote", "exec"])).toThrow(
+      /supported runtime endpoint/u,
+    );
+  });
+
   it.each([
     ["", /found 0/u],
     [
@@ -446,9 +463,17 @@ describe("security posture fixture", () => {
     expect(() => parseOpenShellContainerId(output, SANDBOX_NAME)).toThrow(error);
   });
 
-  it("checks the split-process report before the remaining sandbox posture", async () => {
+  it.each([
+    ["direct Docker", []],
+    ["portable container runtime", ["--host", PORTABLE_DOCKER_HOST]],
+  ])("checks the split-process report through %s before the remaining posture", async (_runtime, dockerEndpointArgs) => {
     vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
+    vi.stubEnv("DOCKER_HOST", "unix:///run/trusted-docker.sock");
+    vi.stubEnv("DOCKER_CONTEXT", "untrusted-context");
+    vi.stubEnv("DOCKER_CONFIG", "/tmp/untrusted-docker-config");
+    vi.stubEnv("DOCKER_TLS_VERIFY", "1");
+    vi.stubEnv("DOCKER_CERT_PATH", "/tmp/untrusted-docker-certs");
     const report = validReport();
     const containerRow = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
     const command = vi
@@ -460,6 +485,7 @@ describe("security posture fixture", () => {
     const host = { command } as unknown as HostCliClient;
     const sandbox = { execShell } as unknown as SandboxClient;
     const privilegedProbeArgs = [
+      ...dockerEndpointArgs,
       "exec",
       "--env",
       "LD_PRELOAD=",
@@ -503,6 +529,7 @@ describe("security posture fixture", () => {
       2,
       "docker",
       [
+        ...dockerEndpointArgs,
         "ps",
         "--no-trunc",
         "--filter",
@@ -520,14 +547,106 @@ describe("security posture fixture", () => {
       privilegedProbeArgs,
       expect.objectContaining({ artifactName: "security-posture-split-processes" }),
     );
-    expect(privilegedExecArgv).toHaveBeenCalledWith(
+    expect(privilegedExecArgv).toHaveBeenNthCalledWith(
+      1,
+      SANDBOX_NAME,
+      ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE],
+      false,
+      true,
+    );
+    expect(privilegedExecArgv).toHaveBeenNthCalledWith(
+      2,
       SANDBOX_NAME,
       ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE],
       false,
       true,
       CONTAINER_ID,
     );
+    for (const callIndex of [1, 2]) {
+      const dockerEnv = command.mock.calls[callIndex]?.[2]?.env;
+      expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///run/trusted-docker.sock" });
+      expect(dockerEnv).not.toHaveProperty("DOCKER_CONTEXT");
+      expect(dockerEnv).not.toHaveProperty("DOCKER_CONFIG");
+      expect(dockerEnv).not.toHaveProperty("DOCKER_TLS_VERIFY");
+      expect(dockerEnv).not.toHaveProperty("DOCKER_CERT_PATH");
+    }
     expect(execShell).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects container runtime endpoint drift before privileged inspection", async () => {
+    vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
+    vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
+    const containerRow = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
+    const command = vi
+      .fn<HostCliClient["command"]>()
+      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+      .mockResolvedValueOnce(successfulProbe(containerRow));
+    const execShell = vi.fn<SandboxClient["execShell"]>();
+    let invocation = 0;
+    const privilegedExecArgv = vi.fn(
+      (
+        _sandboxName: string,
+        _command: string[],
+        _stdin?: boolean,
+        _sanitizeEnvironment?: boolean,
+        _expectedContainerId?: string,
+      ) => [
+        "--host",
+        invocation++ === 0 ? "unix:///run/podman-a.sock" : "unix:///run/podman-b.sock",
+        "exec",
+      ],
+    );
+
+    await expect(
+      assertSecurityPosture(
+        { command } as unknown as HostCliClient,
+        { execShell } as unknown as SandboxClient,
+        SANDBOX_NAME,
+        "openclaw",
+        { privilegedExecArgv },
+      ),
+    ).rejects.toThrow(/runtime endpoint changed/u);
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(execShell).not.toHaveBeenCalled();
+  });
+
+  it("rejects Docker environment drift before privileged inspection", async () => {
+    vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
+    vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
+    vi.stubEnv("DOCKER_HOST", "unix:///run/docker-a.sock");
+    const containerRow = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
+    const command = vi
+      .fn<HostCliClient["command"]>()
+      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+      .mockImplementationOnce(async () => {
+        vi.stubEnv("DOCKER_HOST", "unix:///run/docker-b.sock");
+        return successfulProbe(containerRow);
+      });
+    const execShell = vi.fn<SandboxClient["execShell"]>();
+    const privilegedExecArgv = vi.fn(
+      (
+        _sandboxName: string,
+        _command: string[],
+        _stdin?: boolean,
+        _sanitizeEnvironment?: boolean,
+        _expectedContainerId?: string,
+      ) => ["exec"],
+    );
+
+    await expect(
+      assertSecurityPosture(
+        { command } as unknown as HostCliClient,
+        { execShell } as unknown as SandboxClient,
+        SANDBOX_NAME,
+        "openclaw",
+        { privilegedExecArgv },
+      ),
+    ).rejects.toThrow(/privileged Docker environment changed/u);
+
+    expect(privilegedExecArgv).toHaveBeenCalledTimes(1);
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(execShell).not.toHaveBeenCalled();
   });
 
   it("rejects a disabled split-process expectation before running a command", async () => {
