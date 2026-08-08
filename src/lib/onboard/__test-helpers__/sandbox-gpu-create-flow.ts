@@ -39,7 +39,6 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     createArgv: ["openshell", "sandbox", "create", "--gpu"],
     sandboxEnv: {},
     sandboxStartupCommand: ["nemoclaw-start"],
-    lifecycleStartupCommand: ["nemoclaw-start"],
     prebuild: {
       createArgs: ["--from", "openshell/sandbox-from:test", "--name", "alpha", "--gpu"],
       imageRef: "openshell/sandbox-from:test",

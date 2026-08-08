@@ -127,6 +127,8 @@ const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = requir
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
 const dockerDriverPlatform: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
 const { isLinuxDockerDriverGatewayEnabled } = dockerDriverPlatform;
+const portableDemoLifecycle: typeof import("./onboard/experimental/portable-demo-lifecycle") =
+  require("./onboard/experimental/portable-demo-lifecycle");
 const {
   reconcileGatewayGpuReuseForGpuIntent,
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
@@ -2186,6 +2188,30 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     runCaptureOpenshell,
   });
 
+function installPortableLifecycleAfterCommittedCreate(
+  sandboxName: string,
+  intendedSandboxStartupCommand: readonly string[],
+): number | null {
+  let dashboardPort: number | null = null;
+  try {
+    dashboardPort =
+      portableDemoLifecycle.installPortableDemoSandboxLifecycle(
+        sandboxName,
+        intendedSandboxStartupCommand,
+      ) ?? null;
+  } catch (error) {
+    const detail = redact(error instanceof Error ? error.message : String(error)).slice(0, 500);
+    if (dockerDriverPlatform.isPortableExperimentalProfile()) {
+      throw new Error(`Portable demo lifecycle setup did not complete: ${detail}`);
+    }
+    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+  }
+  if (dockerDriverPlatform.isPortableExperimentalProfile() && dashboardPort === null) {
+    throw new Error("Portable demo lifecycle setup did not return a dashboard port");
+  }
+  return dashboardPort;
+}
+
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
 async function createSandboxWithBaseImageResolution(
@@ -2629,7 +2655,6 @@ async function createSandboxWithBaseImageResolution(
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
-    portableDashboardPort,
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
@@ -2644,7 +2669,6 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
-      lifecycleStartupCommand: intendedSandboxStartupCommand,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2699,6 +2723,10 @@ async function createSandboxWithBaseImageResolution(
       runtimePatch,
     );
   }
+  const portableDashboardPort = installPortableLifecycleAfterCommittedCreate(
+    sandboxName,
+    intendedSandboxStartupCommand,
+  );
   let actualDashboardPort =
     portableDashboardPort ??
     (dockerDriverPlatform.isPortableExperimentalProfile() ? Number(effectiveDashboardPort) : 0);

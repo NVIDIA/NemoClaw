@@ -4,14 +4,12 @@
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import type { SandboxGpuProofResult } from "../state/registry";
-import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
-import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import {
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
@@ -81,7 +79,6 @@ export interface SandboxGpuCreateFlowInput {
   createArgv: string[];
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
-  lifecycleStartupCommand: string[];
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
@@ -108,8 +105,6 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
-  /** Production callers configure the hidden portable lifecycle through the default implementation. */
-  installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */
   createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
 }
@@ -121,7 +116,6 @@ export interface SandboxGpuCreateFlowResult {
   firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
-  portableDashboardPort: number | null;
 }
 
 /**
@@ -253,29 +247,10 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
-  let portableDashboardPort: number | null = null;
-  try {
-    portableDashboardPort =
-      (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-        input.sandboxName,
-        input.lifecycleStartupCommand,
-      ) ?? null;
-  } catch (error) {
-    const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
-    if (isPortableExperimentalProfile()) {
-      throw new Error(`Portable demo lifecycle setup did not complete: ${detail}`);
-    }
-    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
-  }
-  if (isPortableExperimentalProfile() && portableDashboardPort === null) {
-    throw new Error("Portable demo lifecycle setup did not return a dashboard port");
-  }
-
   return {
     ...gpuCreateOutcome.value,
     route: gpuCreateOutcome.route,
     firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
-    portableDashboardPort,
   };
 }
