@@ -75,6 +75,8 @@ interface PodmanContainerInspection {
   containerId: string;
   sandboxId: string;
   running: boolean;
+  driver: string;
+  resolvConfPath: string;
 }
 
 export interface PortableDemoPrivilegedExecTarget {
@@ -198,6 +200,13 @@ function defaultSleep(milliseconds: number): void {
 function commandDetail(result: CommandResult): string {
   if (result.error)
     return (result.error as NodeJS.ErrnoException).code ?? "command execution error";
+  const output = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
+  if (/creating resolv\.conf for container[\s\S]*no such file or directory/iu.test(output)) {
+    return `exit ${String(result.status)}: Podman's ephemeral container run directory is missing`;
+  }
+  if (/common\.pid[\s\S]*no such file or directory/iu.test(output)) {
+    return `exit ${String(result.status)}: Podman's rootless pause-process state is missing`;
+  }
   return `exit ${String(result.status)}`;
 }
 
@@ -375,6 +384,8 @@ function inspectPodmanContainer(
   const labels = config && isRecord(config.Labels) ? config.Labels : null;
   const state = isRecord(inspection.State) ? inspection.State : null;
   const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
+  const driver = inspection.Driver;
+  const resolvConfPath = inspection.ResolvConfPath;
   const sandboxNameMatches = labels?.[PODMAN_SANDBOX_NAME_LABEL] === sandboxName;
   const containerNameMatches =
     String(inspection.Name ?? "").replace(/^\//u, "") ===
@@ -388,7 +399,11 @@ function inspectPodmanContainer(
   if (
     inspection.Id !== containerId ||
     !legacyIdentityMatches ||
-    typeof state?.Running !== "boolean"
+    typeof state?.Running !== "boolean" ||
+    typeof driver !== "string" ||
+    !/^[a-z0-9_-]+$/u.test(driver) ||
+    typeof resolvConfPath !== "string" ||
+    !path.isAbsolute(resolvConfPath)
   ) {
     const checks = [
       `immutable-id=${inspection.Id === containerId ? "match" : "mismatch"}`,
@@ -397,12 +412,56 @@ function inspectPodmanContainer(
       `sandbox-id=${typeof sandboxId === "string" && SANDBOX_ID_PATTERN.test(sandboxId) ? "valid" : "invalid"}`,
       `legacy-ownership=${legacyIdentityMatches ? "match" : "mismatch"}`,
       `running-state=${typeof state?.Running === "boolean" ? "present" : "missing"}`,
+      `runtime-path=${typeof resolvConfPath === "string" && path.isAbsolute(resolvConfPath) ? "absolute" : "invalid"}`,
     ].join(", ");
     throw new Error(
       `Portable demo lifecycle refused container '${containerId}' because its OpenShell identity does not match sandbox '${sandboxName}' (${checks})`,
     );
   }
-  return { containerId, sandboxId, running: state.Running };
+  return { containerId, sandboxId, running: state.Running, driver, resolvConfPath };
+}
+
+function restoreReceiptBoundPodmanRunDirectory(
+  inspection: PodmanContainerInspection,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (inspection.running) return;
+  const uid = process.getuid?.();
+  if (!Number.isInteger(uid) || Number(uid) < 0) {
+    throw new Error("Portable demo lifecycle could not resolve the current user ID");
+  }
+  const configuredRuntimeDir = env.XDG_RUNTIME_DIR?.trim();
+  const runtimeDir = configuredRuntimeDir || `/run/user/${String(uid)}`;
+  if (!path.isAbsolute(runtimeDir) || path.normalize(runtimeDir) !== runtimeDir) {
+    throw new Error("Portable demo lifecycle refused an invalid Podman runtime directory");
+  }
+  const expectedRunDirectory = path.join(
+    runtimeDir,
+    "containers",
+    `${inspection.driver}-containers`,
+    inspection.containerId,
+    "userdata",
+  );
+  if (inspection.resolvConfPath !== path.join(expectedRunDirectory, "resolv.conf")) {
+    throw new Error(
+      `Portable demo lifecycle refused an unexpected runtime path for sandbox container '${inspection.containerId}'`,
+    );
+  }
+  try {
+    const existing = fs.lstatSync(expectedRunDirectory);
+    if (!existing.isDirectory() || existing.isSymbolicLink()) {
+      throw new Error("runtime path is not a directory");
+    }
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(
+        `Portable demo lifecycle refused the existing runtime path for sandbox container '${inspection.containerId}'`,
+      );
+    }
+  }
+  fs.mkdirSync(expectedRunDirectory, { mode: 0o700, recursive: true });
+  fs.chmodSync(expectedRunDirectory, 0o700);
 }
 
 function isMissingPodmanContainer(result: CommandResult): boolean {
@@ -583,6 +642,7 @@ export function preparePortableDemoSandboxCreation(
         `Restoring the portable restart policy for sandbox '${sandboxName}'`,
       );
       if (!inspection.running) {
+        restoreReceiptBoundPodmanRunDirectory(inspection, commandEnv);
         requireCommand(
           podman(["start", receipt.containerId]),
           `Starting portable sandbox '${sandboxName}'`,
@@ -1078,6 +1138,7 @@ export function recoverPortableDemoSandboxLifecycle(
     );
   }
   if (!inspection.running) {
+    restoreReceiptBoundPodmanRunDirectory(inspection, commandEnv);
     requireCommand(
       podman(["start", receipt.containerId]),
       `Starting portable sandbox '${sandboxName}'`,
