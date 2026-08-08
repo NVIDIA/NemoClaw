@@ -38,5 +38,6 @@ the result and required action separately. Classify the result as an infrastruct
 inconclusive verification when applicable. Classify the action as rollback, retry, or stop. Ask the
 user before choosing a behavior that changes security, data safety, cost, or a supported contract.
 
-The [Security Rubric](security-rubric.md) owns the authorization boundary. For a public or external
-write, record its evidence that authorization is enforced for the exact resource and action.
+The [Security Rubric](security-rubric.md) owns the authentication and authorization category and its
+evidence expectations. For a public or external write, record the positive and negative evidence that
+authorization is enforced for the exact resource and action.

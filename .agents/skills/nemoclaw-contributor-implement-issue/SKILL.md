@@ -107,7 +107,7 @@ security control changed, state why and cite the reviewed trust boundaries.
 Confirm that allowed, denied, error, and boundary behavior remains coherent across failure, retry,
 cleanup, cached, resumed, and compatibility paths that apply.
 Re-check the recorded operation and failure class, sibling paths, and sensitive-workflow state
-outcomes against the completed diff, and report a sibling path that still needs the same change.
+outcomes against the completed diff, and report each sibling path that still needs the same change.
 Separate completed local evidence from CI, live E2E, hardware, publication, and other external
 gates.
 

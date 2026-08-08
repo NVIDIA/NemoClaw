@@ -138,7 +138,7 @@ describe("repo skill markdown files", () => {
     expect(checks).toContain("Sensitive-Workflow State Matrix");
     expect(checks).toContain("location, access, lifetime, and removal");
     expect(checks).toContain("Assume a possible write and re-read external state");
-    expect(checks).toContain("owns the authorization boundary");
+    expect(checks).toContain("owns the authentication and authorization category");
     expect(checks).toContain("security-rubric.md");
     expect(checks).not.toMatch(/\bsrc\/|\btest\/|npm run|\.github\/workflows/u);
 
