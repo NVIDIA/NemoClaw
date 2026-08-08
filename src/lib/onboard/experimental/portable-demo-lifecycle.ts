@@ -30,13 +30,10 @@ const POLL_INTERVAL_MS = 1_000;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const PODMAN_MANAGED_LABEL = "openshell.managed";
-const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
-const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
 const DOCKER_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const DOCKER_MANAGED_BY_VALUE = "openshell";
-const DOCKER_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
-const DOCKER_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
-const SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
+const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
 const CURRENT_RECEIPT_SCHEMA_VERSION = 2;
@@ -303,30 +300,28 @@ function inspectPodmanContainer(
   const config = isRecord(inspection.Config) ? inspection.Config : null;
   const labels = config && isRecord(config.Labels) ? config.Labels : null;
   const state = isRecord(inspection.State) ? inspection.State : null;
-  const containerName =
-    typeof inspection.Name === "string" ? inspection.Name.replace(/^\/+/, "") : null;
-  const expectedContainerName = `${SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
-  const podmanSandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
-  const dockerSandboxId = labels?.[DOCKER_SANDBOX_ID_LABEL];
+  const sandboxId = labels?.[OPENSHELL_SANDBOX_ID_LABEL];
+  const sandboxNameMatches = labels?.[OPENSHELL_SANDBOX_NAME_LABEL] === sandboxName;
   const podmanIdentityMatches =
     labels?.[PODMAN_MANAGED_LABEL] === "true" &&
-    labels?.[PODMAN_SANDBOX_NAME_LABEL] === sandboxName &&
-    typeof podmanSandboxId === "string" &&
-    SANDBOX_ID_PATTERN.test(podmanSandboxId);
+    sandboxNameMatches &&
+    typeof sandboxId === "string" &&
+    SANDBOX_ID_PATTERN.test(sandboxId);
   const dockerIdentityMatches =
     labels?.[DOCKER_MANAGED_BY_LABEL] === DOCKER_MANAGED_BY_VALUE &&
-    labels?.[DOCKER_SANDBOX_NAME_LABEL] === sandboxName &&
-    typeof dockerSandboxId === "string" &&
-    SANDBOX_ID_PATTERN.test(dockerSandboxId);
-  const sandboxId = podmanIdentityMatches
-    ? podmanSandboxId
-    : dockerIdentityMatches
-      ? dockerSandboxId
-      : null;
-  if (inspection.Id !== containerId || sandboxId === null || typeof state?.Running !== "boolean") {
+    sandboxNameMatches &&
+    typeof sandboxId === "string" &&
+    SANDBOX_ID_PATTERN.test(sandboxId);
+  if (
+    inspection.Id !== containerId ||
+    (!podmanIdentityMatches && !dockerIdentityMatches) ||
+    typeof sandboxId !== "string" ||
+    typeof state?.Running !== "boolean"
+  ) {
     const checks = [
       `immutable-id=${inspection.Id === containerId ? "match" : "mismatch"}`,
-      `container-name=${containerName === expectedContainerName ? "match" : "mismatch"}`,
+      `sandbox-name=${sandboxNameMatches ? "match" : "mismatch"}`,
+      `sandbox-id=${typeof sandboxId === "string" && SANDBOX_ID_PATTERN.test(sandboxId) ? "valid" : "invalid"}`,
       `podman-ownership=${podmanIdentityMatches ? "match" : "mismatch"}`,
       `docker-ownership=${dockerIdentityMatches ? "match" : "mismatch"}`,
       `running-state=${typeof state?.Running === "boolean" ? "present" : "missing"}`,
@@ -350,9 +345,15 @@ function discoverPodmanContainer(
   sandboxName: string,
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
 ): PodmanContainerInspection {
-  const expectedContainerName = `${SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
-  const query = (filter: string): { ids: string[]; ok: boolean } => {
-    const result = podman(["ps", "-a", "--no-trunc", "--filter", filter, "--format", "{{.ID}}"]);
+  const query = (filters: readonly string[]): { ids: string[]; ok: boolean } => {
+    const result = podman([
+      "ps",
+      "-a",
+      "--no-trunc",
+      ...filters.flatMap((filter) => ["--filter", filter]),
+      "--format",
+      "{{.ID}}",
+    ]);
     if (result.status !== 0 || result.error) return { ids: [], ok: false };
     return {
       ids: String(result.stdout ?? "")
@@ -362,17 +363,22 @@ function discoverPodmanContainer(
       ok: true,
     };
   };
-  const exactName = query(`name=^${expectedContainerName}$`);
-  const podmanLabel = query(`label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`);
-  const dockerLabel = query(`label=${DOCKER_SANDBOX_NAME_LABEL}=${sandboxName}`);
-  const candidates = [...new Set([...exactName.ids, ...podmanLabel.ids, ...dockerLabel.ids])];
-  const queriesSucceeded = exactName.ok && podmanLabel.ok && dockerLabel.ok;
+  const podmanLabels = query([
+    `label=${PODMAN_MANAGED_LABEL}=true`,
+    `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+  ]);
+  const dockerLabels = query([
+    `label=${DOCKER_MANAGED_BY_LABEL}=${DOCKER_MANAGED_BY_VALUE}`,
+    `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+  ]);
+  const candidates = [...new Set([...podmanLabels.ids, ...dockerLabels.ids])];
+  const queriesSucceeded = podmanLabels.ok && dockerLabels.ok;
   const idsAreCanonical = candidates.every((id) => CONTAINER_ID_PATTERN.test(id));
   if (!queriesSucceeded || candidates.length !== 1 || !idsAreCanonical) {
     const count = (result: { ids: string[]; ok: boolean }): string =>
       result.ok ? String(result.ids.length) : "query-error";
     throw new Error(
-      `Portable demo lifecycle requires one exact Podman container for sandbox '${sandboxName}'; exact-name matches=${count(exactName)}, podman-label matches=${count(podmanLabel)}, docker-label matches=${count(dockerLabel)}, unique candidates=${String(candidates.length)}`,
+      `Portable demo lifecycle requires one exact OpenShell-owned Podman container for sandbox '${sandboxName}'; podman-ownership matches=${count(podmanLabels)}, docker-ownership matches=${count(dockerLabels)}, unique candidates=${String(candidates.length)}`,
     );
   }
   return inspectPodmanContainer(candidates[0]!, sandboxName, podman);
