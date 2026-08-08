@@ -2699,7 +2699,9 @@ async function createSandboxWithBaseImageResolution(
       runtimePatch,
     );
   }
-  let actualDashboardPort = portableDashboardPort ?? 0;
+  let actualDashboardPort =
+    portableDashboardPort ??
+    (dockerDriverPlatform.isPortableExperimentalProfile() ? Number(effectiveDashboardPort) : 0);
   let finalHermesDashboardState = hermesDashboardState;
   if (manageDashboardForward) {
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {

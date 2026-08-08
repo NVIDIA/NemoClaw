@@ -4,6 +4,7 @@
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import type { SandboxGpuProofResult } from "../state/registry";
+import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
@@ -261,7 +262,13 @@ export async function runSandboxGpuCreateFlow(
       ) ?? null;
   } catch (error) {
     const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
+    if (isPortableExperimentalProfile()) {
+      throw new Error(`Portable demo lifecycle setup did not complete: ${detail}`);
+    }
     console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+  }
+  if (isPortableExperimentalProfile() && portableDashboardPort === null) {
+    throw new Error("Portable demo lifecycle setup did not return a dashboard port");
   }
 
   return {
