@@ -8,8 +8,11 @@
 // for src/lib/tunnel/services.ts; the ESM plugin re-exports it through
 // nemoclaw/src/banner.ts for nemoclaw/src/index.ts. Keeping one renderer
 // prevents the drift already observed between the two former copies.
-// regressionTest: src/lib/cli/banner.test.ts and nemoclaw/src/banner.test.ts
-// exercise this module through the retained package wrappers.
+// sourceBoundary: Callers own content safety; this renderer only sizes and
+// truncates the box. It does not escape terminal control sequences.
+// regressionTest: nemoclaw/src/shared/banner-boundary.test.ts covers the
+// renderer directly; test/package-contract/banner-boundary.test.ts proves both
+// built package wrappers resolve to this one generated function.
 // removalCondition: remove only when a single package renders the banner.
 
 /** A banner content row; null renders as a blank separator row. */
@@ -24,12 +27,10 @@ export interface RenderBoxOptions {
 }
 
 /**
- * Render content lines inside a dynamically-sized Unicode box.
- *
- * The renderer expands to fit long content when the terminal is wide enough and
- * otherwise truncates content while preserving a two-space safety gap before the
- * closing border. That gap prevents terminal link detectors from treating the
- * box-drawing border as part of long URLs or endpoints.
+ * Render content lines inside a dynamically-sized Unicode box. Long content
+ * expands the box when the terminal is wide enough, otherwise it is truncated
+ * with a two-space safety gap before the closing border so terminal link
+ * detectors do not treat the border as part of a long URL or endpoint.
  */
 export function renderBox(
   lines: BannerLine[],
