@@ -37,6 +37,52 @@ describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
     expect(validateLlamaCppDgxSparkQualificationWorkflow(workflow())).toEqual([]);
   });
 
+  it("requires DGX Spark opt-in before protected runner assignment", () => {
+    const value = workflow();
+    const triggers = value.on as {
+      workflow_dispatch: {
+        inputs: Record<string, Record<string, unknown>>;
+      };
+    };
+    const input = triggers.workflow_dispatch.inputs.allow_dgx_spark_runner_queue!;
+    input.type = "string";
+    input.default = true;
+    input.description = "Queue the runner";
+    job(value, "llama-cpp-dgx-spark-plan").if = "${{ true }}";
+    job(value, "llama-cpp-dgx-spark-qualification").if =
+      "${{ needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toEqual(
+      expect.arrayContaining([
+        "workflow_dispatch allow_dgx_spark_runner_queue input must be boolean",
+        "workflow_dispatch allow_dgx_spark_runner_queue input must default to false",
+        "workflow_dispatch allow_dgx_spark_runner_queue input must require repository administrator confirmation from the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory and document queued timeout behavior",
+        "llama-cpp-dgx-spark-plan must require allow_dgx_spark_runner_queue and retain manual selectors",
+        "llama-cpp-dgx-spark-qualification must require allow_dgx_spark_runner_queue after the trusted plan is enabled",
+      ]),
+    );
+  });
+
+  it("does not record manual PR risk signals on main pushes", () => {
+    const value = workflow();
+    const jobEnv = job(value, "llama-cpp-dgx-spark-qualification").env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
+  it("binds qualification candidate identity on ordinary main runs", () => {
+    const value = workflow();
+    const jobEnv = job(value, "llama-cpp-dgx-spark-qualification").env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA = "${{ inputs.checkout_sha }}";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification env must bind NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+
   it("rejects bypassing the declarative protected-runner plan", () => {
     const value = workflow();
     job(value, "llama-cpp-dgx-spark-qualification")["runs-on"] = "self-hosted";
@@ -147,6 +193,33 @@ describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
 
     expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
       "llama-cpp-dgx-spark-qualification cleanup must always run",
+    );
+  });
+
+  it("rejects installing OpenShell outside declarative agent activation", () => {
+    const value = workflow();
+    namedStep(
+      value,
+      "llama-cpp-dgx-spark-qualification",
+      "Install OpenShell CLI for declarative OpenClaw qualification",
+    ).if = "always()";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification must gate OpenShell installation on the declarative agent qualification",
+    );
+  });
+
+  it("rejects installing OpenShell through candidate-controlled code", () => {
+    const value = workflow();
+    const install = namedStep(
+      value,
+      "llama-cpp-dgx-spark-qualification",
+      "Install OpenShell CLI for declarative OpenClaw qualification",
+    );
+    install.run = `${String(install.run)}\nbash .candidate-llama-cpp/scripts/install-openshell.sh`;
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification must install OpenShell only from trusted helper code",
     );
   });
 

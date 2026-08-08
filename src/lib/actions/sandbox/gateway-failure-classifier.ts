@@ -7,10 +7,10 @@ import { dockerInfo } from "../../adapters/docker/info";
 import { dockerCapture } from "../../adapters/docker/run";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
+import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
-import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
 const DOCKER_TIMEOUT_MS = 3000;
 const PORT_PROBE_TIMEOUT_MS = 2000;

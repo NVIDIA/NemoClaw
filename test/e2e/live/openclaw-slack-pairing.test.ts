@@ -27,7 +27,7 @@ import {
   trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-slack-pairing";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-slack-pair";
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-fake-slack-pairing-e2e";
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-fake-slack-pairing-e2e";
 const LIVE_TIMEOUT_MS = 55 * 60_000;

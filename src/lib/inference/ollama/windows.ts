@@ -6,8 +6,13 @@
 // Detection lives in onboard.ts; this module owns the action side.
 
 const { spawn, spawnSync } = require("child_process");
+const { dockerCapture } = require("../../adapters/docker/command");
 const { run, runCapture } = require("../../runner");
-const { OLLAMA_HOST_DOCKER_INTERNAL, setResolvedOllamaHost } = require("../local");
+const {
+  getWindowsHostOllamaDockerReachabilityArgs,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  setResolvedOllamaHost,
+} = require("../local");
 const { OLLAMA_PORT } = require("../../core/ports");
 
 function sleep(seconds: number): void {
@@ -111,18 +116,9 @@ function awaitWindowsOllamaReady(): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
   for (let attempt = 0; attempt < 15; attempt++) {
     sleep(2);
-    const probe = runCapture(
-      [
-        "curl",
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
-      ],
-      { ignoreError: true },
-    );
+    const probe = dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
+      ignoreError: true,
+    });
     if (probe) {
       setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
       return true;
@@ -220,9 +216,7 @@ function printWindowsOllamaTimeoutDiagnostics(): void {
   console.error(
     '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
   );
-  console.error(
-    `    curl -sS --connect-timeout 2 --max-time 5 http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
-  );
+  console.error(`    docker ${getWindowsHostOllamaDockerReachabilityArgs().join(" ")}`);
 }
 
 module.exports = {

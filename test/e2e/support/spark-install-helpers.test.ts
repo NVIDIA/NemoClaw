@@ -94,11 +94,9 @@ describe("spark install live test helpers", () => {
   });
 
   it("rejects non-test-owned sandbox names before destructive cleanup can use them", () => {
-    expect(assertSparkInstallSandboxName("e2e-spark-install-live")).toBe("e2e-spark-install-live");
-    expect(assertSparkInstallSandboxName("e2e-spark-install-local-1")).toBe(
-      "e2e-spark-install-local-1",
-    );
-    expect(() => assertSparkInstallSandboxName("personal-dev")).toThrow(/e2e-spark-install-/);
+    expect(assertSparkInstallSandboxName("e2e-spark-live")).toBe("e2e-spark-live");
+    expect(assertSparkInstallSandboxName("e2e-spark-local")).toBe("e2e-spark-local");
+    expect(() => assertSparkInstallSandboxName("personal-dev")).toThrow(/e2e-spark-/);
     expect(() => assertSparkInstallSandboxName("bad name")).toThrow(/sandbox name is invalid/);
   });
 

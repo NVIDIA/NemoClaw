@@ -156,6 +156,7 @@ COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/p
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
 COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
+COPY scripts/openclaw/patch-gateway-daemon-dialback.mts /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
 COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
 COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
@@ -407,6 +408,7 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
         /usr/local/lib/nemoclaw/extract-semver \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
@@ -996,6 +998,22 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-chat-
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
+# Keep backend RPC initiated by the OpenClaw gateway daemon on loopback while
+# preserving OPENCLAW_GATEWAY_URL for agent processes that OpenShell requires
+# to use the private sandbox interface. This avoids pairing failures when the
+# transparent proxy makes gateway daemon self-dialback appear to originate from
+# a private IP address and trigger pairing while preserving sessions_spawn
+# routing (#7215).
+#
+# Removal criteria: drop when upstream OpenClaw distinguishes gateway daemon
+# self-dialback from descendant agent routing without changing the inherited
+# gateway URL.
+# hadolint ignore=DL3059
+RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+      node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
+        /usr/local/lib/node_modules/openclaw/dist; \
+    fi
+
 # Patch OpenClaw TUI unreachable-inference diagnostics for #4434.
 #
 # OpenClaw 2026.7.1 formats sandbox inference egress failures as either generic
@@ -1206,9 +1224,9 @@ ARG NEMOCLAW_MESSAGING_PLAN_B64=
 # union. It is inert by default and must never be enabled for a deployment-
 # specific Dockerfile build carrying an active messaging plan.
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
-# OpenClaw already uses a root supervisor; the explicit value keeps the managed
-# image entry-user contract uniform with Hermes and DCode publication.
-ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+# OpenShell requires USER sandbox as the image default. The managed-image
+# publication workflow selects root to preserve gateway and agent UID isolation.
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
 # Base64-encoded JSON array of secondary OpenClaw agent config entries
 # (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",
 # "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
@@ -1301,7 +1319,11 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
             ;; \
         *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION must be 0 or 1" >&2; exit 1 ;; \
     esac \
-    && test "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "root"
+    && case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
+        root|sandbox) ;; \
+        *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER must be root or sandbox" >&2; exit 1 ;; \
+    esac \
+    && command -v setpriv >/dev/null 2>&1
 
 # Bake reduced messaging runtime metadata for the entrypoint. The full
 # NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
@@ -1855,6 +1877,7 @@ RUN check_metadata() { \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
     && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
+    && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts 'root:root:755' \
     && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
     && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755' \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
@@ -1981,7 +2004,9 @@ RUN set -eu; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.
 
-# Entrypoint runs as root to start the gateway as the gateway user,
-# then drops to sandbox for agent commands. See nemoclaw-start.sh.
+# Stock builds use a non-root OCI default for OpenShell compatibility.
+# Deployments that require gateway and agent UID isolation can override
+# the runtime user to root.
+USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]

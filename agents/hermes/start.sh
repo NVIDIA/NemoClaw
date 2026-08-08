@@ -1442,6 +1442,9 @@ start_socat_forwarder() {
 }
 
 build_hermes_dashboard_args() {
+  # HERMES_DASHBOARD_HOME is a dedicated profile for privilege separation.
+  # Hermes otherwise treats a profiles/<name> launch as a request for its
+  # unified machine dashboard and re-execs outside this prepared profile.
   HERMES_DASHBOARD_ARGS=(
     dashboard
     --host
@@ -1450,6 +1453,7 @@ build_hermes_dashboard_args() {
     "$DASHBOARD_INTERNAL_PORT"
     --skip-build
     --no-open
+    --isolated
   )
   if hermes_dashboard_tui_enabled; then
     HERMES_DASHBOARD_ARGS+=(--tui)
@@ -3275,7 +3279,7 @@ fi
 # while Hermes actually runs in the legacy root-separated topology.
 # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the immutable
 # root-lifecycle marker and stamps it before starting the root-separated gateway.
-# whyNotSourceFix: OpenShell 0.0.85 supports both topologies but exposes no
+# whyNotSourceFix: OpenShell 0.0.99 supports both topologies but exposes no
 # attested same-UID capability that this packaged entrypoint can query.
 # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe and
 # add when the root-lifecycle marker identifies the legacy topology.

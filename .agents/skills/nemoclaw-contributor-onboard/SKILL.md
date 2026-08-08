@@ -74,18 +74,15 @@ npm run agent
 Pass user-supplied Pi arguments after `--`.
 Do not install or invoke a global Pi binary.
 
-## Prepare for the First PR
+## Hand Off to the Contributor Lifecycle
 
-Before the contributor starts implementation, explain this workflow:
+This workflow ends after the doctor reports that every contributor-readiness check passes and every approved CLI-exposure, runtime-onboarding, or pinned-agent step is complete.
+Name the workflow that owns the next stage instead of restating its rules:
 
-1. Create a feature branch from current `main`.
-2. Use Conventional Commits in `<type>(<scope>): <description>` form.
-3. Run tests targeted to the changed behavior and `npm run docs` for documentation changes.
-4. Commit with configured signing so every pushed commit appears as `Verified` on GitHub.
-5. Include `Signed-off-by: Name <email>` in the PR description for DCO compliance.
-6. Follow `.github/PULL_REQUEST_TEMPLATE.md` and monitor required CI and automated review feedback.
+- `nemoclaw-contributor-plan-issue` refines an issue into capability slices.
+- `nemoclaw-contributor-implement-issue` implements a slice and owns its tests.
+- `nemoclaw-contributor-create-pr` publishes the change and owns the branch-state, commit-verification, DCO, template, and review follow-up requirements.
 
-Use `nemoclaw-contributor-create-pr` when the user asks to publish the changes.
 Do not create a branch, commit, push, or PR unless the user's request includes that action.
 
 ## Report the Result

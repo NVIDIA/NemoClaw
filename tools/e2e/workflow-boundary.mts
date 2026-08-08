@@ -261,7 +261,7 @@ const NETWORK_POLICY_SCENARIO_MATRIX = {
     {
       scenario: "live-probes",
       selector: "^network-policy:.+probes$",
-      sandbox: "e2e-net-policy-live-probes",
+      sandbox: "e2e-net-policy",
     },
   ],
 } as const;
@@ -2020,8 +2020,8 @@ function validateRebuildHermesJob(
     if (jobEnv.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E !== "1") {
       errors.push(`${jobName} job must enable NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1`);
     }
-    if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes-base") {
-      errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes-base`);
+    if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-base") {
+      errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-base`);
     }
   } else if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes") {
     errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes`);
@@ -2575,24 +2575,20 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
-      jobName === "jetson-nvmap-gpu"
-        ? checkoutIndex + 2
-        : jobName === "hermes-gpu-startup"
-          ? checkoutIndex + 3
-          : jobName === "managed-image-protected-runtime"
-            ? protectedCacheDownloadIndex + 1
-            : checkoutIndex + 1;
+      jobName === "hermes-gpu-startup"
+        ? checkoutIndex + 3
+        : jobName === "managed-image-protected-runtime"
+          ? protectedCacheDownloadIndex + 1
+          : checkoutIndex + 1;
     if (
       checkoutIndex < 0 ||
       (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
       authIndex !== expectedAuthIndex
     ) {
       errors.push(
-        jobName === "jetson-nvmap-gpu"
-          ? `${jobName} Docker Hub auth must run immediately after the Jetson dispatch guard`
-          : jobName === "managed-image-protected-runtime"
-            ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
-            : `${jobName} Docker Hub auth must run immediately after checkout`,
+        jobName === "managed-image-protected-runtime"
+          ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
+          : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {
@@ -2836,8 +2832,8 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
   if (jobEnv.NEMOCLAW_FRESH !== "1") {
     errors.push("spark-install job must set NEMOCLAW_FRESH=1");
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-spark-install-ci") {
-    errors.push("spark-install job must use the stable e2e-spark-install-ci sandbox name");
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-spark-install") {
+    errors.push("spark-install job must use the stable e2e-spark-install sandbox name");
   }
   if (jobEnv.NEMOCLAW_PROVIDER !== "cloud") {
     errors.push("spark-install job must use the cloud provider");
@@ -3324,8 +3320,8 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("channels-add-remove job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-channels-add-remove") {
-    errors.push("channels-add-remove job must set NEMOCLAW_SANDBOX_NAME=e2e-channels-add-remove");
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-ch-add-remove") {
+    errors.push("channels-add-remove job must set NEMOCLAW_SANDBOX_NAME=e2e-ch-add-remove");
   }
   if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
     errors.push("channels-add-remove job must set NEMOCLAW_NON_INTERACTIVE=1");
@@ -3568,8 +3564,15 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-stop-start strategy.fail-fast must be false");
   }
   const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
-    errors.push("channels-stop-start matrix.agent must be openclaw,hermes");
+  if (
+    !isDeepStrictEqual(matrix, {
+      include: [
+        { agent: "openclaw", sandbox_name: "e2e-oc-ch-cycle" },
+        { agent: "hermes", sandbox_name: "e2e-hm-ch-cycle" },
+      ],
+    })
+  ) {
+    errors.push("channels-stop-start matrix must bind canonical per-agent sandbox names");
   }
 
   const jobEnv = asRecord(job.env);
@@ -3587,9 +3590,9 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("channels-stop-start job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-channels-stop-start-${{ matrix.agent }}") {
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "${{ matrix.sandbox_name }}") {
     errors.push(
-      "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
+      "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
     );
   }
   if (jobEnv.NEMOCLAW_AGENT !== "${{ matrix.agent }}") {
@@ -3757,7 +3760,7 @@ function validateDashboardRemoteBindJob(errors: string[], jobs: WorkflowRecord):
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/dashboard-remote-bind",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
-    NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind",
+    NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-bind",
   };
   for (const [key, value] of Object.entries(expectedEnv)) {
     if (jobEnv[key] !== value) {
@@ -3818,8 +3821,17 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     errors.push("bedrock-runtime-compatible-anthropic strategy.fail-fast must be false");
   }
   const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
-    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw,hermes");
+  if (
+    !isDeepStrictEqual(matrix, {
+      include: [
+        { agent: "openclaw", sandbox_name: "e2e-oc-bedrock" },
+        { agent: "hermes", sandbox_name: "e2e-hm-bedrock" },
+      ],
+    })
+  ) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic matrix must bind canonical per-agent sandbox names",
+    );
   }
 
   const jobEnv = asRecord(job.env);
@@ -3863,9 +3875,9 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
       "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
     );
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-bedrock-${{ matrix.agent }}") {
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "${{ matrix.sandbox_name }}") {
     errors.push(
-      "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent",
+      "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
     );
   }
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
@@ -3938,72 +3950,40 @@ function validateAllowJetsonRunnerQueueInput(
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Repository administrators") ||
+    !description.includes("repository administrator confirmation") ||
     !description.includes("Jetson runner") ||
     !description.includes("authoritative") ||
     !description.includes("NVIDIA/NemoClaw Settings -> Actions -> Runners") ||
     !description.includes("timeout-minutes")
   ) {
     errors.push(
-      "workflow_dispatch allow_jetson_runner_queue input must identify repository administrators and NVIDIA/NemoClaw Settings -> Actions -> Runners as the authoritative runner inventory, and document queued timeout behavior",
+      "workflow_dispatch allow_jetson_runner_queue input must require repository administrator confirmation from the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory and document queued timeout behavior",
     );
   }
 }
 
-function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecord): void {
+function validateJetsonJobOptInBoundary(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["jetson-nvmap-gpu"]);
   if (job.needs !== "generate-matrix") {
     errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
   }
   const trustedSelector =
-    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
+    "${{ inputs.allow_jetson_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
   if (job.if !== trustedSelector) {
-    errors.push("jetson-nvmap-gpu job must use the trusted-main selector condition");
-  }
-  const guardedRunsOn =
-    "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}";
-  if (job["runs-on"] !== guardedRunsOn) {
     errors.push(
-      "jetson-nvmap-gpu job must queue the configured runner for main and default manual runs",
+      "jetson-nvmap-gpu job must require allow_jetson_runner_queue before runner assignment and retain trusted-main selectors",
     );
+  }
+  const configuredRunsOn =
+    "${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}";
+  if (job["runs-on"] !== configuredRunsOn) {
+    errors.push("jetson-nvmap-gpu job must use the configured runner only after job-level opt-in");
   }
 
   const steps = asSteps(job.steps);
-  const guard = namedStep(steps, "Guard Jetson runner dispatch");
-  const checkoutIndex = steps.findIndex((step) =>
-    stringValue(step.uses).startsWith("actions/checkout@"),
-  );
-  const guardIndex = steps.findIndex((step) => step.name === "Guard Jetson runner dispatch");
-  const dockerAuthIndex = steps.findIndex((step) => step.name === DOCKER_HUB_AUTH_STEP);
-  if (!guard) {
-    errors.push("jetson-nvmap-gpu job missing step: Guard Jetson runner dispatch");
-    return;
+  if (steps.some((step) => step.name === "Guard Jetson runner dispatch")) {
+    errors.push("jetson-nvmap-gpu must enforce opt-in before runner assignment, not in a step");
   }
-  if (checkoutIndex < 0 || guardIndex <= checkoutIndex) {
-    errors.push("jetson-nvmap-gpu dispatch guard must run after checkout");
-  }
-  if (dockerAuthIndex >= 0 && guardIndex >= dockerAuthIndex) {
-    errors.push("jetson-nvmap-gpu dispatch guard must run before Docker Hub auth");
-  }
-  if (
-    guard.if !==
-    "${{ github.event_name == 'workflow_dispatch' && (inputs.jobs != '' || inputs.targets != '') && !inputs.allow_jetson_runner_queue }}"
-  ) {
-    errors.push("jetson-nvmap-gpu dispatch guard must reject unconfirmed selective queueing");
-  }
-  if (
-    asRecord(guard.env).JETSON_E2E_RUNNER_LABEL !==
-    "${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}"
-  ) {
-    errors.push("jetson-nvmap-gpu dispatch guard must receive the configured Jetson runner label");
-  }
-  requireRunContains(errors, guard, "allow_jetson_runner_queue=true");
-  requireRunContains(errors, guard, "timeout-minutes");
-  requireRunContains(errors, guard, "repository administrator");
-  requireRunContains(errors, guard, "authoritative");
-  requireRunContains(errors, guard, "NVIDIA/NemoClaw Settings -> Actions -> Runners");
-  requireRunContains(errors, guard, "${JETSON_E2E_RUNNER_LABEL}");
-  requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
 }
 
 export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[] {
@@ -4013,7 +3993,7 @@ export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[
   const errors: string[] = [];
 
   validateAllowJetsonRunnerQueueInput(errors, asRecord(workflowDispatch.inputs));
-  validateJetsonRunnerDispatchGuard(errors, asRecord(workflowRecord.jobs));
+  validateJetsonJobOptInBoundary(errors, asRecord(workflowRecord.jobs));
   return errors;
 }
 
@@ -4289,7 +4269,10 @@ function validateTrustedE2eDispatchReceipt(
   }
   const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
   const expectedDispatchReceiptEnv = {
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
+    BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
+    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
     CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DISPATCH_JOBS: "${{ inputs.jobs }}",
     DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
@@ -4297,28 +4280,86 @@ function validateTrustedE2eDispatchReceipt(
     EVENT_NAME: "${{ github.event_name }}",
     INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
+    REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
   if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
     errors.push(
-      "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
+      "trusted E2E dispatch receipt must bind only the authenticated repository, PR, candidate, workflow, run, and dispatch identities",
     );
   }
+  if (dispatchReceipt?.shell !== "bash") {
+    errors.push("trusted E2E dispatch receipt must use bash");
+  }
   for (const fragment of [
-    'kind: "nemoclaw-e2e-dispatch-v1"',
+    'kind: "nemoclaw-e2e-dispatch-v2"',
+    "repository: $repository",
+    'prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end)',
+    "candidateRepository: $candidateRepository",
     "candidateSha: $candidateSha",
+    "baseSha: $baseSha",
+    "workflowSha: $workflowSha",
     "eventName: $eventName",
     "workflowRunId: $workflowRunId",
     "workflowRunAttempt: $workflowRunAttempt",
     "jobs: $jobs",
     "targets: $targets",
+    "allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
     'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
   ]) {
     requireRunContains(errors, dispatchReceipt, fragment);
+  }
+
+  const dispatchUpload = requireStep(errors, generateSteps, "Upload trusted E2E dispatch receipt");
+  if (dispatchUpload?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+    errors.push("trusted E2E dispatch receipt upload must run for workflow dispatches only");
+  }
+  if (dispatchUpload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {
+    errors.push("trusted E2E dispatch receipt upload must use the reviewed pinned action");
+  }
+  if (
+    !isDeepStrictEqual(asRecord(dispatchUpload?.with), {
+      name: "e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json",
+    })
+  ) {
+    errors.push("trusted E2E dispatch receipt upload must preserve its immutable run identity");
+  }
+
+  const authentication = namedStep(generateSteps, "Authenticate manual PR dispatch");
+  const candidateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  const authenticationIndex = authentication ? generateSteps.indexOf(authentication) : -1;
+  const receiptIndex = dispatchReceipt ? generateSteps.indexOf(dispatchReceipt) : -1;
+  const uploadIndex = dispatchUpload ? generateSteps.indexOf(dispatchUpload) : -1;
+  const checkoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
+  const trustedPrefix = [
+    "Build trusted controller target matrix",
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Upload trusted E2E dispatch receipt",
+  ];
+  if (
+    !isDeepStrictEqual(
+      generateSteps.slice(0, trustedPrefix.length).map((step) => step.name),
+      trustedPrefix,
+    ) ||
+    authenticationIndex < 0 ||
+    receiptIndex !== authenticationIndex + 1 ||
+    uploadIndex !== receiptIndex + 1 ||
+    checkoutIndex <= uploadIndex
+  ) {
+    errors.push(
+      "trusted E2E dispatch receipt must be created and uploaded immediately after authentication and before candidate execution",
+    );
   }
 }
 
@@ -4446,12 +4487,29 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     .join(",");
   const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  const defaultTestMappings = [
+    {
+      file: "test/onboard-managed-image-buildless-e2e.test.ts",
+      id: "onboard-managed-image-buildless-e2e",
+      project: "integration",
+    },
+    {
+      file: "test/vllm-docker-storage.test.ts",
+      id: "vllm-docker-storage",
+      project: "integration",
+    },
+  ]
+    .map(({ file, id, project }) => `{"id":"${id}","file":"${file}","project":"${project}"}`)
+    .join(",");
   requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
+  requireRunContains(errors, controllerMatrix, `test_matrix='[${defaultTestMappings}]'`);
   const trustedControllerMatrixScript = [
     "set -euo pipefail",
+    "test_matrix='[]'",
     'case "${JOBS}:${TARGETS}" in',
     ":)",
     `matrix='[${defaultMappings}]'`,
+    `test_matrix='[${defaultTestMappings}]'`,
     ";;",
     "managed-image-protected-runtime:)",
     "matrix='[]'",
@@ -4471,6 +4529,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     ";;",
     "esac",
     `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+    `printf 'test_matrix=%s\\n' "\${test_matrix}" >> "\${GITHUB_OUTPUT}"`,
   ];
   const controllerMatrixLines = controllerMatrixScript
     .split("\n")
@@ -4513,6 +4572,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateEnv.CONTROLLER_MATRIX !== "${{ steps.controller_matrix.outputs.matrix }}") {
     errors.push("matrix generation step must receive the trusted controller matrix");
   }
+  if (generateEnv.CONTROLLER_TEST_MATRIX !== "${{ steps.controller_matrix.outputs.test_matrix }}") {
+    errors.push("matrix generation step must receive the trusted controller test matrix");
+  }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
   }
@@ -4526,6 +4588,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, generate, "GITHUB_OUTPUT");
   requireRunContains(errors, generate, "expected_controller_matrix=");
   requireRunContains(errors, generate, "actual_controller_matrix=");
+  requireRunContains(errors, generate, "expected_controller_test_matrix=");
+  requireRunContains(errors, generate, "actual_controller_test_matrix=");
   requireRunContains(errors, generate, ': > "${GITHUB_OUTPUT}"');
   requireRunContains(
     errors,

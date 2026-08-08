@@ -16,8 +16,12 @@ on:
       - "scripts/install.sh"
       - "scripts/install-openshell.sh"
       - "src/lib/onboard/**"
+      - "src/lib/actions/sandbox/**"
       - "src/lib/domain/sandbox/image-tag.ts"
-      - "src/lib/sandbox/build-context.ts"
+      - "src/lib/sandbox/**"
+      - "test/e2e/fixtures/availability-env.ts"
+      - "test/e2e/live/full-e2e.test.ts"
+      - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "tools/e2e/check-semantic-phases.mts"
@@ -93,3 +97,119 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  portable-launch:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: portable-launch
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-launch
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_EXPERIMENTAL_PROFILE: portable
+      NEMOCLAW_SANDBOX_NAME: portable-launch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Provision restricted rootless Linux runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          runtime_dir="/run/user/$(id -u)"
+          sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            sudo usermod --add-subuids 100000-165535 "$USER"
+          fi
+          if ! grep -q "^${USER}:" /etc/subgid; then
+            sudo usermod --add-subgids 100000-165535 "$USER"
+          fi
+
+          shim_dir="${RUNNER_TEMP}/nemoclaw-portable-bin"
+          install -d -m 700 "$shim_dir"
+          cat >"$shim_dir/systemctl" <<'SHIM'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          runtime_dir="${XDG_RUNTIME_DIR:?}"
+          service_dir="${runtime_dir}/podman"
+          socket_path="${service_dir}/podman.sock"
+          pid_file="${runtime_dir}/nemoclaw-podman-service.pid"
+          log_file="${runtime_dir}/nemoclaw-podman-service.log"
+          case "$*" in
+            "--user set-environment "*) exit 0 ;;
+            "--user try-restart podman.service")
+              if [[ -f "$pid_file" ]]; then
+                kill "$(<"$pid_file")" 2>/dev/null || true
+                rm -f "$pid_file" "$socket_path"
+              fi
+              ;;
+            "--user enable --now podman.socket")
+              install -d -m 755 "$service_dir"
+              nohup podman system service --time=0 "unix://$socket_path" >"$log_file" 2>&1 &
+              echo $! >"$pid_file"
+              for _ in $(seq 1 100); do
+                if [[ -S "$socket_path" ]]; then
+                  chmod 660 "$socket_path"
+                  exit 0
+                fi
+                sleep 0.1
+              done
+              cat "$log_file" >&2 || true
+              exit 1
+              ;;
+            *)
+              echo "unexpected user-service command: $*" >&2
+              exit 64
+              ;;
+          esac
+          SHIM
+          chmod 700 "$shim_dir/systemctl"
+
+          export PATH="$shim_dir:$PATH"
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          systemctl --user enable --now podman.socket
+          printf '%s\n' "$shim_dir" >>"$GITHUB_PATH"
+          printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$GITHUB_ENV"
+          printf 'DOCKER_HOST=unix://%s/podman/podman.sock\n' "$runtime_dir" >>"$GITHUB_ENV"
+          podman --version
+          docker --version
+          docker --host "unix://$runtime_dir/podman/podman.sock" info
+
+      - name: Exercise a portable launch through chat and permission restoration
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: >-
+          npx tsx tools/e2e/live-vitest-invocation.mts run
+          --test-path test/e2e/live/full-e2e.test.ts
+
+      - name: Upload portable launch E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-launch-e2e-artifacts
+          path: e2e-artifacts/portable-launch/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up portable runtime
+        if: always()
+        shell: bash
+        run: |
+          podman system reset --force || true
+          pid_file="${XDG_RUNTIME_DIR}/nemoclaw-podman-service.pid"
+          if [[ -f "$pid_file" ]]; then
+            kill "$(<"$pid_file")" 2>/dev/null || true
+          fi

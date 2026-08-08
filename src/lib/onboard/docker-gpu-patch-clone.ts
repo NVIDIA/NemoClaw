@@ -14,6 +14,7 @@ const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
 export const JETSON_DEVICE_GROUP_BOOTSTRAP =
   "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
 const MAX_JETSON_DEVICE_GROUPS = 16;
+const OPENSHELL_V0_0_99_WORKDIR_COMMAND = ["--workdir", "/sandbox"] as const;
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
   "NVIDIA_DRIVER_CAPABILITIES",
@@ -337,6 +338,35 @@ function dockerNetworkAliases(
     .filter((alias) => !sameContainerId(alias, containerId));
 }
 
+function exactArrayEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function dockerContainerCommandArgs(
+  entrypoint: readonly string[],
+  configuredCommand: readonly string[],
+  sandboxCommand: string | null,
+  commandOverride: readonly string[] | null | undefined,
+): string[] {
+  if (commandOverride != null) return [...commandOverride];
+  if (!sandboxCommand) return [...entrypoint.slice(1), ...configuredCommand];
+
+  // OpenShell through v0.0.85 cleared the image command, while v0.0.99
+  // requires this exact supervisor workdir tuple. Preserve only the reviewed
+  // release contract: replaying arbitrary image-controlled command arguments
+  // at the root supervisor boundary would widen the recreation trust surface.
+  if (!exactArrayEqual(entrypoint, [OPENSHELL_SANDBOX_ENTRYPOINT])) {
+    throw new Error(
+      "OpenShell sandbox supervisor command is not a reviewed restart-safe contract.",
+    );
+  }
+  if (configuredCommand.length === 0) return [];
+  if (exactArrayEqual(configuredCommand, OPENSHELL_V0_0_99_WORKDIR_COMMAND)) {
+    return [...configuredCommand];
+  }
+  throw new Error("OpenShell sandbox supervisor command is not a reviewed restart-safe contract.");
+}
+
 export function buildDockerGpuCloneRunArgs(
   inspect: DockerContainerInspect,
   mode: DockerGpuPatchMode,
@@ -495,12 +525,12 @@ export function buildDockerGpuCloneRunArgs(
   } else if (entrypoint.length > 0) {
     args.push("--entrypoint", entrypoint[0]);
   }
-  const originalCommandArgs = sandboxCommand
-    ? []
-    : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
-  const targetCommandArgs = options.containerCommand
-    ? [...options.containerCommand]
-    : originalCommandArgs;
+  const targetCommandArgs = dockerContainerCommandArgs(
+    entrypoint,
+    stringArray(config.Cmd),
+    sandboxCommand,
+    options.containerCommand,
+  );
   const commandArgs = preserveJetsonGroups
     ? [
         "--device-group-gids",
@@ -509,9 +539,7 @@ export function buildDockerGpuCloneRunArgs(
         groupBootstrapTarget,
         ...targetCommandArgs,
       ]
-    : options.containerCommand
-      ? [...options.containerCommand]
-      : originalCommandArgs;
+    : targetCommandArgs;
   args.push(image, ...commandArgs);
   return args;
 }

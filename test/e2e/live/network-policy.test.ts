@@ -18,7 +18,11 @@ import { listPresets } from "../../../src/lib/policy/index.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -29,6 +33,7 @@ import {
   requirePolicyPresetNumber,
 } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
 import {
   ensureDockerAvailable,
@@ -41,8 +46,9 @@ const PERMISSIVE_POLICY = path.join(
   "policies",
   "openclaw-sandbox-permissive.yaml",
 );
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-net-policy-${process.pid}`;
-const SUPPRESSION_SANDBOX_NAME = `${SANDBOX_NAME}-suppression`;
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
+const SUPPRESSION_SANDBOX_NAME =
+  process.env.NEMOCLAW_NETWORK_POLICY_SUPPRESSION_SANDBOX_NAME ?? "e2e-net-suppress";
 
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const ONBOARD_TIMEOUT_MS = 15 * 60_000;
@@ -60,6 +66,8 @@ const ENCODED_SLASH_DENIED_REASON =
 type NemoEnv = NodeJS.ProcessEnv;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+validateSandboxName(SANDBOX_NAME);
+validateSandboxName(SUPPRESSION_SANDBOX_NAME);
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -509,7 +517,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     e2ePhases: [
       "confirm built CLI Docker OpenShell and credential",
       "clear the sandbox and onboard restricted policy",
-      "prove zero active presets, default denial, and the weather allowlist",
+      "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
       "exercise package and SaaS policy presets",
       "prove dry-run and per-binary Jira approval",
       "verify hot reload inference exemption and SSRF guards",
@@ -524,7 +532,8 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     contracts: [
       "deny-by-default egress",
       "restricted tier begins with zero active presets",
-      "OpenShell 0.0.85 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
+      "package metadata is readable while package database writes remain denied (#8467)",
+      "OpenShell 0.0.99 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
       "read-only preset allowlist behavior",
       "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
       "live policy-add and dry-run behavior",
@@ -561,7 +570,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     timeoutMs: 30_000,
   });
   expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
-  expect(text(openshellVersion)).toContain("0.0.85");
+  expect(text(openshellVersion)).toContain("0.0.99");
 
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
@@ -645,7 +654,9 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
 
   // Keep the actual OpenShell boundary in the retained journey: a default
   // restricted onboard must have no active preset before operator mutation.
-  progress.phase("prove zero active presets, default denial, and the weather allowlist");
+  progress.phase(
+    "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
+  );
   const policyListAfterOnboard = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
     artifactName: "tc-net-01-policy-list-after-onboard",
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -663,6 +674,15 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     "policy-list must return one complete, verified preset listing",
   ).not.toBeNull();
   expect(activePresets?.length, "restricted tier must begin with zero active presets").toBe(0);
+
+  await expectPackageDatabaseReadOnly({
+    artifactPrefix: "tc-net",
+    env: baseEnv(),
+    host,
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+  });
 
   const denyDefault = await fetchStatus(sandbox, "https://example.com/", "tc-net-01-deny-default");
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(

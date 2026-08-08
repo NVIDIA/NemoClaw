@@ -82,14 +82,14 @@ assert.equal(
 const NEMOCLAW_RELEASE_TAG = "v0.0.71";
 const NEMOCLAW_RELEASE_COMMIT = "e4b9111f5f0535c2fc3d6fbe8dc8dca101a6fdce";
 const NEMOCLAW_RELEASE_OPENSHELL_VERSION = "0.0.71";
-const CURRENT_OPENSHELL_VERSION = "0.0.85";
+const CURRENT_OPENSHELL_VERSION = "0.0.99";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
 const RELEASE_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
 const CURRENT_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-plugin-exdev";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 const EXDEV_TMPFS_MOUNT = "/tmp/nemoclaw-exdev-tmpfs";
@@ -1173,7 +1173,7 @@ test("the current-lifecycle custom plugin survives restart and recreation withou
     boundary: "fresh-openclaw-sandbox-exec",
     regressionTargets: ["#6108", "#3513", "#3127"],
     contract: [
-      "the current CLI uses OpenShell 0.0.85 for current lifecycle coverage",
+      "the current CLI uses OpenShell 0.0.99 for current lifecycle coverage",
       "the CLI and Dockerfile use the same checkout source and a compatible sandbox base image",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
       "custom-plugin v1 survives restart and recreation installs v2",
