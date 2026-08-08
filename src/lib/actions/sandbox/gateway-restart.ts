@@ -71,7 +71,9 @@ export type GatewayRestartResult =
       detail: string;
     };
 
-type SandboxAgentLookup = (sandboxName: string) => { agent?: string | null } | null | undefined;
+type SandboxAgentLookup = (
+  sandboxName: string,
+) => { agent?: string | null; dashboardForwardEnabled?: boolean } | null | undefined;
 
 type SupervisorAction = (
   sandboxName: string,
@@ -360,6 +362,7 @@ export function restartSandboxGatewayWithDeps(
   }
   const agentName = agent?.name ?? persistedAgent ?? "openclaw";
   const dashboardPort = deps.resolveSandboxDashboardPort(sandboxName);
+  const dashboardForwardEnabled = deps.getSandbox(sandboxName)?.dashboardForwardEnabled !== false;
 
   if (!agent && persistedAgent && persistedAgent !== "openclaw") {
     const detail = unsupportedGatewayRestartAgentDetail(
@@ -434,7 +437,9 @@ export function restartSandboxGatewayWithDeps(
     }
   }
 
-  const forwardRecovered = deps.ensureSandboxPortForward(sandboxName);
+  const forwardRecovered = dashboardForwardEnabled
+    ? deps.ensureSandboxPortForward(sandboxName)
+    : false;
   const dashboardForwardRecovered = deps.ensureHermesDashboardPortForwardIfEnabled(sandboxName);
   const messagingForwardRecovered = deps.recoverMessagingHostForward(sandboxName, { quiet });
   const declaredForwardsRecovered = deps.recoverDeclaredAgentForwardPorts(
@@ -448,7 +453,7 @@ export function restartSandboxGatewayWithDeps(
     { label: "one or more agent-declared host forwards", recovered: declaredForwardsRecovered },
   ]);
 
-  if (!forwardRecovered) {
+  if (dashboardForwardEnabled && !forwardRecovered) {
     const detail =
       "gateway health passed but the primary dashboard/API host forward could not be re-established";
     printGatewayRestartFailure(sandboxName, "forward recovery failure", detail);

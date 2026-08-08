@@ -142,6 +142,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
   dashboardPort?: number | null;
+  /** False when the in-sandbox dashboard intentionally has no host-side forward. */
+  dashboardForwardEnabled?: boolean;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
   /** Generation proving which durable same-name recreate registered this row. */

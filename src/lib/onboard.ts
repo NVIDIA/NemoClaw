@@ -2254,6 +2254,7 @@ async function createSandboxWithBaseImageResolution(
     resolvedCreateIntent,
   );
   const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
+  const manageDashboardForward = dashboardRuntime.shouldManageDashboardForwardForAgent(agent);
   const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
   let effectivePort = 0,
     chatUiUrl = "";
@@ -2296,7 +2297,7 @@ async function createSandboxWithBaseImageResolution(
       sandboxGpuConfig: effectiveSandboxGpuConfig,
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
-      manageDashboard,
+      manageDashboard: manageDashboardForward,
       ensureDashboardForward,
       hermesDashboardForwarding,
       updateReusedSandboxMetadata,
@@ -2708,7 +2709,7 @@ async function createSandboxWithBaseImageResolution(
 
   let actualDashboardPort = 0;
   let finalHermesDashboardState = hermesDashboardState;
-  if (manageDashboard) {
+  if (manageDashboardForward) {
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
     });
@@ -2781,6 +2782,7 @@ async function createSandboxWithBaseImageResolution(
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
+          dashboardForwardEnabled: manageDashboardForward,
           ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
@@ -4503,7 +4505,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
             getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
-          }, { diagnoseCustomOpenClawRuntime: verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(liveFinalFlowContext.fromDockerfile, agent?.name) });
+          }, { diagnoseCustomOpenClawRuntime: verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(liveFinalFlowContext.fromDockerfile, agent?.name), verifyDashboardForward: dashboardRuntime.shouldManageDashboardForwardForAgent(agent) });
         },
         formatVerificationDiagnostics: (result) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
