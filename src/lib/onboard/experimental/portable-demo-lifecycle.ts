@@ -32,6 +32,11 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const PODMAN_MANAGED_LABEL = "openshell.managed";
 const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
 const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
+const DOCKER_MANAGED_BY_LABEL = "openshell.ai/managed-by";
+const DOCKER_MANAGED_BY_VALUE = "openshell";
+const DOCKER_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+const DOCKER_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+const SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
 const CURRENT_RECEIPT_SCHEMA_VERSION = 2;
@@ -298,17 +303,41 @@ function inspectPodmanContainer(
   const config = isRecord(inspection.Config) ? inspection.Config : null;
   const labels = config && isRecord(config.Labels) ? config.Labels : null;
   const state = isRecord(inspection.State) ? inspection.State : null;
-  const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
+  const containerName =
+    typeof inspection.Name === "string" ? inspection.Name.replace(/^\/+/, "") : null;
+  const expectedContainerName = `${SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
+  const podmanSandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
+  const dockerSandboxId = labels?.[DOCKER_SANDBOX_ID_LABEL];
+  const podmanIdentityMatches =
+    labels?.[PODMAN_MANAGED_LABEL] === "true" &&
+    labels?.[PODMAN_SANDBOX_NAME_LABEL] === sandboxName &&
+    typeof podmanSandboxId === "string" &&
+    SANDBOX_ID_PATTERN.test(podmanSandboxId);
+  const dockerIdentityMatches =
+    labels?.[DOCKER_MANAGED_BY_LABEL] === DOCKER_MANAGED_BY_VALUE &&
+    labels?.[DOCKER_SANDBOX_NAME_LABEL] === sandboxName &&
+    typeof dockerSandboxId === "string" &&
+    SANDBOX_ID_PATTERN.test(dockerSandboxId);
+  const sandboxId = podmanIdentityMatches
+    ? podmanSandboxId
+    : dockerIdentityMatches
+      ? dockerSandboxId
+      : null;
   if (
     inspection.Id !== containerId ||
-    labels?.[PODMAN_MANAGED_LABEL] !== "true" ||
-    labels?.[PODMAN_SANDBOX_NAME_LABEL] !== sandboxName ||
-    typeof sandboxId !== "string" ||
-    !SANDBOX_ID_PATTERN.test(sandboxId) ||
+    containerName !== expectedContainerName ||
+    sandboxId === null ||
     typeof state?.Running !== "boolean"
   ) {
+    const checks = [
+      `immutable-id=${inspection.Id === containerId ? "match" : "mismatch"}`,
+      `container-name=${containerName === expectedContainerName ? "match" : "mismatch"}`,
+      `podman-ownership=${podmanIdentityMatches ? "match" : "mismatch"}`,
+      `docker-ownership=${dockerIdentityMatches ? "match" : "mismatch"}`,
+      `running-state=${typeof state?.Running === "boolean" ? "present" : "missing"}`,
+    ].join(", ");
     throw new Error(
-      `Portable demo lifecycle refused container '${containerId}' because its OpenShell identity does not match sandbox '${sandboxName}'`,
+      `Portable demo lifecycle refused container '${containerId}' because its OpenShell identity does not match sandbox '${sandboxName}' (${checks})`,
     );
   }
   return { containerId, sandboxId, running: state.Running };
@@ -326,14 +355,13 @@ function discoverPodmanContainer(
   sandboxName: string,
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
 ): PodmanContainerInspection {
+  const expectedContainerName = `${SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
   const result = podman([
     "ps",
     "-a",
     "--no-trunc",
     "--filter",
-    `label=${PODMAN_MANAGED_LABEL}=true`,
-    "--filter",
-    `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    `name=^${expectedContainerName}$`,
     "--format",
     "{{.ID}}",
   ]);
@@ -343,8 +371,32 @@ function discoverPodmanContainer(
     .map((line) => line.trim())
     .filter(Boolean);
   if (matches.length !== 1 || !CONTAINER_ID_PATTERN.test(matches[0] ?? "")) {
+    const diagnosticMatchCount = (filter: string): string => {
+      const diagnostic = podman([
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        filter,
+        "--format",
+        "{{.ID}}",
+      ]);
+      if (diagnostic.status !== 0 || diagnostic.error) return "query-error";
+      return String(
+        String(diagnostic.stdout ?? "")
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean).length,
+      );
+    };
+    const podmanLabelMatches = diagnosticMatchCount(
+      `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    );
+    const dockerLabelMatches = diagnosticMatchCount(
+      `label=${DOCKER_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    );
     throw new Error(
-      `Portable demo lifecycle requires one exact Podman container for sandbox '${sandboxName}'; found ${matches.length}`,
+      `Portable demo lifecycle requires one exact Podman container for sandbox '${sandboxName}'; exact-name matches=${String(matches.length)}, podman-label matches=${podmanLabelMatches}, docker-label matches=${dockerLabelMatches}`,
     );
   }
   return inspectPodmanContainer(matches[0]!, sandboxName, podman);
