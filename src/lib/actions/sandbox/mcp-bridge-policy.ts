@@ -10,7 +10,7 @@ import { diagnosticPreview } from "../../name-validation";
 import * as policies from "../../policy";
 import { isBlockedMcpUrlTargetHost } from "../../security/mcp-url-target";
 import {
-  assertTrustedPrivateEndpointCapability,
+  isTrustedPrivateEndpointCapability,
   replayTrustedPrivateEndpoint,
 } from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -92,7 +92,7 @@ function requireCanonicalAllowedIps(
   networkPolicy: unknown,
   policyName: string,
   bridge: McpBridgeEntry,
-): McpBridgeTargetValidation {
+): readonly string[] {
   const addressKind = bridge.trustedPrivateHost ? "trusted-private" : "public";
   if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
     throw new Error(`Managed MCP policy '${policyName}' has non-canonical generated content`);
@@ -129,9 +129,7 @@ function requireCanonicalAllowedIps(
   if (bridge.trustedPrivateHost) {
     let replay;
     try {
-      replay = replayTrustedPrivateEndpoint(bridge.trustedPrivateHost, bridge.allowedIps ?? [], {
-        requireAllPrivate: true,
-      });
+      replay = replayTrustedPrivateEndpoint(bridge.trustedPrivateHost, bridge.allowedIps ?? []);
     } catch {
       throw new Error(
         `Managed MCP policy '${policyName}' has invalid trusted-private address pins`,
@@ -146,15 +144,10 @@ function requireCanonicalAllowedIps(
         `Managed MCP policy '${policyName}' does not match its recorded trusted-private address pins`,
       );
     }
-    return {
-      addresses: [...pins],
-      trustedPrivateCapability: replay.trustedPrivateCapability,
-      trustedPrivateHost: replay.host,
-    };
   } else if (pins.some((address) => isBlockedMcpUrlTargetHost(address))) {
     throw new Error(`Managed MCP policy '${policyName}' has invalid public address pins`);
   }
-  return { addresses: [...pins] };
+  return pins;
 }
 
 function resolveCanonicalManagedMcpAdapter(
@@ -231,7 +224,7 @@ function requireCanonicalManagedPolicy(
   }
 
   const registeredNetworkPolicy = registeredPolicies[policyKey];
-  const target = requireCanonicalAllowedIps(registeredNetworkPolicy, policyName, bridge);
+  const allowedIps = requireCanonicalAllowedIps(registeredNetworkPolicy, policyName, bridge);
   let expectedDocument: Record<string, unknown>;
   try {
     expectedDocument = parseManagedPolicyDocument(
@@ -239,7 +232,7 @@ function requireCanonicalManagedPolicy(
         bridge.server,
         bridge.url,
         resolveCanonicalManagedMcpAdapter(sandbox, bridge),
-        target,
+        allowedIps,
       ),
       `Canonical managed MCP policy '${policyName}'`,
     );
@@ -610,7 +603,7 @@ export function applyGeneratedPolicy(
     );
   }
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
-  const content = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, target);
+  const content = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, resolvedAddresses);
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const sameNamePolicy = registry
     .getCustomPolicies(sandboxName)
@@ -722,23 +715,22 @@ export function assertMcpBridgePolicyTarget(
     }
     return target.addresses;
   }
-  let authority;
-  try {
-    authority = assertTrustedPrivateEndpointCapability(
-      entry.trustedPrivateHost,
-      target.addresses,
-      target.trustedPrivateCapability,
-      { requireAllPrivate: true },
-    );
-  } catch {
+  if (
+    target.trustedPrivateHost !== entry.trustedPrivateHost ||
+    !isTrustedPrivateEndpointCapability(target.trustedPrivateCapability)
+  ) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no provenance-checked capability for trusted private host '${entry.trustedPrivateHost}'.`,
     );
   }
   const recordedPins = entry.allowedIps ?? [];
+  const capabilityPins = [...target.trustedPrivateCapability.addresses].sort();
   if (
-    target.trustedPrivateHost !== authority.host ||
-    !isDeepStrictEqual(authority.addresses, recordedPins)
+    recordedPins.length === 0 ||
+    target.addresses.length !== recordedPins.length ||
+    target.addresses.some((address, index) => address !== recordedPins[index]) ||
+    capabilityPins.length !== recordedPins.length ||
+    capabilityPins.some((address, index) => address !== recordedPins[index])
   ) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' no longer resolves to its recorded trusted-private address pins. Remove and re-add the server to approve changed pins.`,
@@ -748,20 +740,9 @@ export function assertMcpBridgePolicyTarget(
   return recordedPins;
 }
 
-function getUnownedGeneratedPolicyState(
-  sandboxName: string,
-  entry: McpBridgeEntry,
-): "absent" | "present" | null {
-  try {
-    return policies.getLiveSandboxPolicyEntryDigest(
-      sandboxName,
-      buildMcpBridgePolicyKey(entry.server),
-    ) === null
-      ? "absent"
-      : "present";
-  } catch {
-    return null;
-  }
+function generatedPolicyContent(entry: McpBridgeEntry): string {
+  const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
+  return buildMcpBridgePolicyYaml(entry.server, entry.url, adapter);
 }
 
 export function assertGeneratedPolicyMutationSafe(
@@ -773,11 +754,12 @@ export function assertGeneratedPolicyMutationSafe(
   const reconciled = registeredPolicy
     ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
     : undefined;
-  const state = reconciled?.state ?? getUnownedGeneratedPolicyState(sandboxName, entry);
+  const content = reconciled?.policy.content ?? generatedPolicyContent(entry);
+  const state = reconciled?.state ?? policies.getPresetContentGatewayState(sandboxName, content);
   if (state === "absent") return;
   if (!owned || state !== "match") {
     throw new McpBridgeError(
-      `Generated MCP policy '${entry.policyName}' is unowned, unreachable, or drifted. Refusing to mutate the adapter, provider, or same-key live policy until ownership is resolved. The registry entry was preserved so cleanup can be retried.`,
+      `Generated MCP policy '${entry.policyName}' is unowned, unreachable, or drifted. Refusing to mutate the adapter, provider, or same-key live policy until ownership is resolved.`,
     );
   }
 }
@@ -833,7 +815,7 @@ export function assertGeneratedPolicyExactReadOnly(
   }
   let expectedContent: string;
   try {
-    expectedContent = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, target);
+    expectedContent = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, resolvedAddresses);
   } catch {
     // Registry entries are untrusted local state. Keep malformed URLs and any
     // credential-shaped material out of the recovery diagnostic.
@@ -885,12 +867,9 @@ export function removeGeneratedPolicy(
       ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
       : undefined;
   const effectiveRegistration = reconciled?.policy ?? registeredPolicy;
-  const content = effectiveRegistration?.content;
+  const content = effectiveRegistration?.content ?? generatedPolicyContent(entry);
   const gatewayState =
-    reconciled?.state ??
-    (content
-      ? policies.getPresetContentGatewayState(sandboxName, content)
-      : getUnownedGeneratedPolicyState(sandboxName, entry));
+    reconciled?.state ?? policies.getPresetContentGatewayState(sandboxName, content);
   if (gatewayState === "absent") {
     if (ownsRegistration) {
       registry.removeCustomPolicyByName(sandboxName, policyName);
@@ -911,12 +890,6 @@ export function removeGeneratedPolicy(
   });
   // OpenShell can acknowledge a superseded policy revision as success. Confirm
   // the exact generated key is absent before discarding its ownership record.
-  if (!content) {
-    if (options.bestEffort) return;
-    throw new McpBridgeError(
-      `Generated MCP policy '${policyName}' has no exact ownership content. Refusing to delete same-key policy state.`,
-    );
-  }
   const activeState = policies.getPresetContentGatewayState(sandboxName, content);
   if (activeState === "absent") {
     registry.removeCustomPolicyByName(sandboxName, policyName);

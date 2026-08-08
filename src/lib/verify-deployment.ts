@@ -159,7 +159,7 @@ function buildGatewayLogHint(sandboxName: string, customRuntimeHint: string | nu
     `The gateway probe failed after retrying. Inspect the in-sandbox gateway log with ` +
     `\`nemoclaw ${sandboxName} logs\` (the gateway writes to /tmp/gateway.log inside the sandbox when it starts). ` +
     `If the sandbox itself never came up, also check the host-side OpenShell gateway log at ` +
-    `~/.local/state/nemoclaw/openshell-docker-gateway-v0.0.85/openshell-gateway.log ` +
+    `~/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log ` +
     `(or ~/.local/state/openshell/openshell-gateway.log on older installs).`
   );
 }

@@ -7,16 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import {
-  assertPodmanSocketAuthority,
-  capturePodmanSocketAuthority,
-  createPodmanContainerEngine,
-  hardenPodmanSocketDirectory,
-  localPodmanEnvironment,
-  type PodmanSocketAuthorityDeps,
-} from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
 import {
@@ -41,15 +32,9 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const PODMAN_MANAGED_LABEL = "openshell.managed";
 const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
 const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
-const PODMAN_SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
-const STALE_NEWER_MANAGED_BY_LABEL = "openshell.ai/managed-by";
-const STALE_NEWER_MANAGED_BY_VALUE = "openshell";
-const STALE_NEWER_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
-const STALE_NEWER_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
-const PINNED_OPENSHELL_VERSION = "0.0.85";
-const CURRENT_RECEIPT_SCHEMA_VERSION = 4;
+const CURRENT_RECEIPT_SCHEMA_VERSION = 2;
 const STARTUP_PROCESS_PATTERN =
   "^(/usr/local/bin/nemoclaw-start|(bash|/bin/bash|/usr/bin/bash) /usr/local/bin/nemoclaw-start)( |$)";
 const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
@@ -62,27 +47,17 @@ type CommandResult = {
 };
 
 interface PortableDemoLifecycleReceipt {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2;
   sandboxName: string;
   sandboxId: string;
   containerId: string;
   dashboardPort: number;
-  registryGeneration?: string;
-  openshellVersion?: typeof PINNED_OPENSHELL_VERSION;
 }
 
 interface PodmanContainerInspection {
   containerId: string;
   sandboxId: string;
   running: boolean;
-  driver: string;
-  resolvConfPath: string;
-}
-
-export interface PortableDemoPrivilegedExecTarget {
-  readonly assertRuntimeAuthority: () => void;
-  readonly containerId: string;
-  readonly dockerHost: string;
 }
 
 export interface PortableDemoLifecycleDeps {
@@ -90,11 +65,7 @@ export interface PortableDemoLifecycleDeps {
   stateDir?: string;
   env?: NodeJS.ProcessEnv;
   openshellBinary?: string;
-  podman?: (args: readonly string[], env?: NodeJS.ProcessEnv) => CommandResult;
-  podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
-  hardenSocketDirectory?: (socketPath: string) => void;
-  registryGeneration?: string;
-  backfillRegistryGeneration?: (registryGeneration: string) => boolean;
+  podman?: (args: readonly string[]) => CommandResult;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
   launchOpenshell?: (args: readonly string[]) => void;
   captureHost?: (command: string, args: readonly string[], timeoutMs: number) => CommandResult;
@@ -105,7 +76,6 @@ export interface PortableDemoLifecycleDeps {
     executableFd: number,
   ) => void;
   loadManagedOllama?: () => string | null;
-  ensureGateway?: () => void;
   sleep?: (milliseconds: number) => void;
   now?: () => number;
   log?: (message: string) => void;
@@ -119,8 +89,6 @@ export type PortableDemoLifecycleRecoveryResult =
 export interface PortableDemoLifecycleContext {
   agent?: string | null;
   gatewayName: string;
-  lifecycleGeneration?: string;
-  openshellDriver?: string | null;
   provider?: string | null;
 }
 
@@ -200,13 +168,6 @@ function defaultSleep(milliseconds: number): void {
 function commandDetail(result: CommandResult): string {
   if (result.error)
     return (result.error as NodeJS.ErrnoException).code ?? "command execution error";
-  const output = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
-  if (/creating resolv\.conf for container[\s\S]*no such file or directory/iu.test(output)) {
-    return `exit ${String(result.status)}: Podman's ephemeral container run directory is missing`;
-  }
-  if (/common\.pid[\s\S]*no such file or directory/iu.test(output)) {
-    return `exit ${String(result.status)}: Podman's rootless pause-process state is missing`;
-  }
   return `exit ${String(result.status)}`;
 }
 
@@ -251,20 +212,11 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
   }
   const receipt = value;
   const keys = Object.keys(receipt).sort();
-  const expectedKeys =
-    receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION
-      ? "containerId,dashboardPort,openshellVersion,registryGeneration,sandboxId,sandboxName,schemaVersion"
-      : receipt.schemaVersion === 3
-        ? "containerId,dashboardPort,registryGeneration,sandboxId,sandboxName,schemaVersion"
-        : "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion";
-  if (keys.join(",") !== expectedKeys) {
+  if (keys.join(",") !== "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion") {
     throw new Error("Portable demo lifecycle receipt fields are invalid");
   }
   if (
-    (receipt.schemaVersion !== 1 &&
-      receipt.schemaVersion !== 2 &&
-      receipt.schemaVersion !== 3 &&
-      receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
+    (receipt.schemaVersion !== 1 && receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
     receipt.sandboxName !== sandboxName ||
     typeof receipt.containerId !== "string" ||
     !CONTAINER_ID_PATTERN.test(receipt.containerId) ||
@@ -272,41 +224,11 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
     !SANDBOX_ID_PATTERN.test(receipt.sandboxId) ||
     !Number.isInteger(receipt.dashboardPort) ||
     Number(receipt.dashboardPort) < 1024 ||
-    Number(receipt.dashboardPort) > 65535 ||
-    ((receipt.schemaVersion === 3 || receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION) &&
-      (typeof receipt.registryGeneration !== "string" ||
-        !SANDBOX_ID_PATTERN.test(receipt.registryGeneration))) ||
-    (receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION &&
-      receipt.openshellVersion !== PINNED_OPENSHELL_VERSION)
+    Number(receipt.dashboardPort) > 65535
   ) {
     throw new Error("Portable demo lifecycle receipt values are invalid");
   }
   return receipt as unknown as PortableDemoLifecycleReceipt;
-}
-
-function requireCurrentRegistryGeneration(
-  receipt: PortableDemoLifecycleReceipt,
-  registryGeneration: string | undefined,
-): boolean {
-  // Legacy receipts predate an explicit generation field. Their immutable
-  // container ID may claim a missing registry generation only after exact
-  // local runtime validation; an existing generation must already match.
-  const receiptGeneration =
-    receipt.schemaVersion === 3 || receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION
-      ? receipt.registryGeneration
-      : receipt.containerId;
-  if (
-    registryGeneration === undefined &&
-    receipt.schemaVersion !== 3 &&
-    receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION
-  )
-    return true;
-  if (receiptGeneration !== registryGeneration) {
-    throw new Error(
-      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' does not belong to the current registry generation`,
-    );
-  }
-  return false;
 }
 
 function loadReceipt(sandboxName: string, stateDir: string): PortableDemoLifecycleReceipt | null {
@@ -384,84 +306,19 @@ function inspectPodmanContainer(
   const labels = config && isRecord(config.Labels) ? config.Labels : null;
   const state = isRecord(inspection.State) ? inspection.State : null;
   const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
-  const driver = inspection.Driver;
-  const resolvConfPath = inspection.ResolvConfPath;
-  const sandboxNameMatches = labels?.[PODMAN_SANDBOX_NAME_LABEL] === sandboxName;
-  const containerNameMatches =
-    String(inspection.Name ?? "").replace(/^\//u, "") ===
-    `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
-  const legacyIdentityMatches =
-    labels?.[PODMAN_MANAGED_LABEL] === "true" &&
-    sandboxNameMatches &&
-    containerNameMatches &&
-    typeof sandboxId === "string" &&
-    SANDBOX_ID_PATTERN.test(sandboxId);
   if (
     inspection.Id !== containerId ||
-    !legacyIdentityMatches ||
-    typeof state?.Running !== "boolean" ||
-    typeof driver !== "string" ||
-    !/^[a-z0-9_-]+$/u.test(driver) ||
-    typeof resolvConfPath !== "string" ||
-    !path.isAbsolute(resolvConfPath)
+    labels?.[PODMAN_MANAGED_LABEL] !== "true" ||
+    labels?.[PODMAN_SANDBOX_NAME_LABEL] !== sandboxName ||
+    typeof sandboxId !== "string" ||
+    !SANDBOX_ID_PATTERN.test(sandboxId) ||
+    typeof state?.Running !== "boolean"
   ) {
-    const checks = [
-      `immutable-id=${inspection.Id === containerId ? "match" : "mismatch"}`,
-      `container-name=${containerNameMatches ? "match" : "mismatch"}`,
-      `sandbox-name=${sandboxNameMatches ? "match" : "mismatch"}`,
-      `sandbox-id=${typeof sandboxId === "string" && SANDBOX_ID_PATTERN.test(sandboxId) ? "valid" : "invalid"}`,
-      `legacy-ownership=${legacyIdentityMatches ? "match" : "mismatch"}`,
-      `running-state=${typeof state?.Running === "boolean" ? "present" : "missing"}`,
-      `runtime-path=${typeof resolvConfPath === "string" && path.isAbsolute(resolvConfPath) ? "absolute" : "invalid"}`,
-    ].join(", ");
     throw new Error(
-      `Portable demo lifecycle refused container '${containerId}' because its OpenShell identity does not match sandbox '${sandboxName}' (${checks})`,
+      `Portable demo lifecycle refused container '${containerId}' because its OpenShell identity does not match sandbox '${sandboxName}'`,
     );
   }
-  return { containerId, sandboxId, running: state.Running, driver, resolvConfPath };
-}
-
-function restoreReceiptBoundPodmanRunDirectory(
-  inspection: PodmanContainerInspection,
-  env: NodeJS.ProcessEnv,
-): void {
-  if (inspection.running) return;
-  const uid = process.getuid?.();
-  if (!Number.isInteger(uid) || Number(uid) < 0) {
-    throw new Error("Portable demo lifecycle could not resolve the current user ID");
-  }
-  const configuredRuntimeDir = env.XDG_RUNTIME_DIR?.trim();
-  const runtimeDir = configuredRuntimeDir || `/run/user/${String(uid)}`;
-  if (!path.isAbsolute(runtimeDir) || path.normalize(runtimeDir) !== runtimeDir) {
-    throw new Error("Portable demo lifecycle refused an invalid Podman runtime directory");
-  }
-  const expectedRunDirectory = path.join(
-    runtimeDir,
-    "containers",
-    `${inspection.driver}-containers`,
-    inspection.containerId,
-    "userdata",
-  );
-  if (inspection.resolvConfPath !== path.join(expectedRunDirectory, "resolv.conf")) {
-    throw new Error(
-      `Portable demo lifecycle refused an unexpected runtime path for sandbox container '${inspection.containerId}'`,
-    );
-  }
-  try {
-    const existing = fs.lstatSync(expectedRunDirectory);
-    if (!existing.isDirectory() || existing.isSymbolicLink()) {
-      throw new Error("runtime path is not a directory");
-    }
-    return;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw new Error(
-        `Portable demo lifecycle refused the existing runtime path for sandbox container '${inspection.containerId}'`,
-      );
-    }
-  }
-  fs.mkdirSync(expectedRunDirectory, { mode: 0o700, recursive: true });
-  fs.chmodSync(expectedRunDirectory, 0o700);
+  return { containerId, sandboxId, running: state.Running };
 }
 
 function isMissingPodmanContainer(result: CommandResult): boolean {
@@ -472,336 +329,32 @@ function isMissingPodmanContainer(result: CommandResult): boolean {
   );
 }
 
-interface PodmanContainerQuery {
-  ids: string[];
-  ok: boolean;
-}
-
-function queryPodmanContainerIds(
+function discoverPodmanContainer(
+  sandboxName: string,
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  filters: readonly string[],
-): PodmanContainerQuery {
+): PodmanContainerInspection {
   const result = podman([
     "ps",
     "-a",
     "--no-trunc",
-    ...filters.flatMap((filter) => ["--filter", filter]),
+    "--filter",
+    `label=${PODMAN_MANAGED_LABEL}=true`,
+    "--filter",
+    `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
     "--format",
     "{{.ID}}",
   ]);
-  if (result.status !== 0 || result.error) return { ids: [], ok: false };
-  return {
-    ids: String(result.stdout ?? "")
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter(Boolean),
-    ok: true,
-  };
-}
-
-function podmanQueryCount(result: PodmanContainerQuery): string {
-  return result.ok ? String(result.ids.length) : "query-error";
-}
-
-function discoverPodmanContainer(
-  sandboxName: string,
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  expectedSandboxId?: string,
-): PodmanContainerInspection {
-  const queries = [
-    queryPodmanContainerIds(podman, [
-      `label=${PODMAN_MANAGED_LABEL}=true`,
-      `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
-      ...(expectedSandboxId
-        ? [`label=${PODMAN_SANDBOX_ID_LABEL}=${expectedSandboxId}`]
-        : []),
-    ]),
-  ];
-  const candidates = [...new Set(queries.flatMap((query) => query.ids))];
-  const queriesSucceeded = queries.every((query) => query.ok);
-  const idsAreCanonical = candidates.every((id) => CONTAINER_ID_PATTERN.test(id));
-  if (!queriesSucceeded || candidates.length !== 1 || !idsAreCanonical) {
+  requireCommand(result, `Finding portable sandbox '${sandboxName}'`);
+  const matches = String(result.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (matches.length !== 1 || !CONTAINER_ID_PATTERN.test(matches[0] ?? "")) {
     throw new Error(
-      `Portable demo lifecycle requires one exact OpenShell 0.0.85 Podman container for sandbox '${sandboxName}'${expectedSandboxId ? ` with sandbox ID '${expectedSandboxId}'` : ""}; found ${String(candidates.length)} (matches=${queries.map(podmanQueryCount).join(",")})`,
+      `Portable demo lifecycle requires one exact Podman container for sandbox '${sandboxName}'; found ${matches.length}`,
     );
   }
-  const inspection = inspectPodmanContainer(candidates[0]!, sandboxName, podman);
-  if (expectedSandboxId && inspection.sandboxId !== expectedSandboxId) {
-    throw new Error(
-      `Portable demo lifecycle refused container '${inspection.containerId}' because its OpenShell sandbox ID changed`,
-    );
-  }
-  return inspection;
-}
-
-interface OwnedStaleContainer {
-  containerId: string;
-  sandboxId: string;
-}
-
-function inspectOwnedStaleContainer(
-  containerId: string,
-  sandboxName: string,
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  result: CommandResult = podman(["inspect", containerId]),
-): OwnedStaleContainer | null {
-  if (isMissingPodmanContainer(result)) return null;
-  requireCommand(result, `Inspecting stale portable sandbox '${sandboxName}'`);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(result.stdout ?? ""));
-  } catch {
-    throw new Error(`Inspecting stale portable sandbox '${sandboxName}' returned invalid JSON`);
-  }
-  if (!Array.isArray(parsed) || parsed.length !== 1 || !isRecord(parsed[0])) {
-    throw new Error(`Inspecting stale portable sandbox '${sandboxName}' returned an invalid record`);
-  }
-  const inspection = parsed[0];
-  const config = isRecord(inspection.Config) ? inspection.Config : null;
-  const labels = config && isRecord(config.Labels) ? config.Labels : null;
-  const containerNameMatches =
-    String(inspection.Name ?? "").replace(/^\//u, "") ===
-    `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
-  const legacySandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
-  const newerSandboxId = labels?.[STALE_NEWER_SANDBOX_ID_LABEL];
-  const legacyOwned =
-    labels?.[PODMAN_MANAGED_LABEL] === "true" &&
-    labels?.[PODMAN_SANDBOX_NAME_LABEL] === sandboxName &&
-    typeof legacySandboxId === "string" &&
-    SANDBOX_ID_PATTERN.test(legacySandboxId);
-  const newerOwned =
-    labels?.[STALE_NEWER_MANAGED_BY_LABEL] === STALE_NEWER_MANAGED_BY_VALUE &&
-    labels?.[STALE_NEWER_SANDBOX_NAME_LABEL] === sandboxName &&
-    typeof newerSandboxId === "string" &&
-    SANDBOX_ID_PATTERN.test(newerSandboxId);
-  if (
-    inspection.Id !== containerId ||
-    !containerNameMatches ||
-    (!legacyOwned && !newerOwned)
-  ) {
-    return null;
-  }
-  return {
-    containerId,
-    sandboxId: (legacyOwned ? legacySandboxId : newerSandboxId) as string,
-  };
-}
-
-function removeExactOwnedStaleContainer(
-  owned: OwnedStaleContainer,
-  sandboxName: string,
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-): void {
-  requireCommand(
-    podman(["rm", "-f", owned.containerId]),
-    `Removing stale OpenShell-owned sandbox '${sandboxName}'`,
-  );
-  podman(["volume", "rm", `${PODMAN_SANDBOX_CONTAINER_PREFIX}${owned.sandboxId}-workspace`]);
-  podman(["secret", "rm", `openshell-token-${owned.sandboxId}`]);
-}
-
-/**
- * Clear only exact OpenShell-owned name conflicts before 0.0.85 creates a sandbox.
- * Receipts written by newer installer attempts are deliberately retired instead
- * of being migrated into the isolated 0.0.85 gateway database.
- */
-export function preparePortableDemoSandboxCreation(
-  sandboxName: string,
-  env: NodeJS.ProcessEnv = process.env,
-  deps: PortableDemoLifecycleDeps = {},
-): void {
-  if (!isPortableExperimentalProfile(env)) return;
-  if ((deps.platform ?? process.platform) !== "linux") {
-    throw new Error("Portable demo lifecycle requires Linux");
-  }
-  const commandEnv = deps.env ?? env;
-  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
-  const receipt = loadReceipt(sandboxName, stateDir);
-
-  if (
-    receipt?.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION &&
-    receipt.openshellVersion === PINNED_OPENSHELL_VERSION
-  ) {
-    const result = podman(["inspect", receipt.containerId]);
-    if (!isMissingPodmanContainer(result)) {
-      const inspection = inspectPodmanContainer(
-        receipt.containerId,
-        sandboxName,
-        podman,
-        result,
-      );
-      if (inspection.sandboxId !== receipt.sandboxId) {
-        throw new Error(
-          `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
-        );
-      }
-      requireCommand(
-        podman(["update", "--restart=always", receipt.containerId]),
-        `Restoring the portable restart policy for sandbox '${sandboxName}'`,
-      );
-      if (!inspection.running) {
-        restoreReceiptBoundPodmanRunDirectory(inspection, commandEnv);
-        requireCommand(
-          podman(["start", receipt.containerId]),
-          `Starting portable sandbox '${sandboxName}'`,
-        );
-      }
-      return;
-    }
-    removeReceipt(sandboxName, stateDir);
-  } else if (receipt) {
-    const result = podman(["inspect", receipt.containerId]);
-    const owned = inspectOwnedStaleContainer(
-      receipt.containerId,
-      sandboxName,
-      podman,
-      result,
-    );
-    if (owned) {
-      removeExactOwnedStaleContainer(owned, sandboxName, podman);
-    } else if (!isMissingPodmanContainer(result)) {
-      throw new Error(
-        `Portable demo lifecycle refused to remove receipt-bound container '${receipt.containerId}' because it is not an exact OpenShell-owned '${sandboxName}' sandbox`,
-      );
-    }
-    removeReceipt(sandboxName, stateDir);
-  }
-
-  const queries = [
-    queryPodmanContainerIds(podman, [
-      `label=${PODMAN_MANAGED_LABEL}=true`,
-      `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
-    ]),
-    queryPodmanContainerIds(podman, [
-      `label=${STALE_NEWER_MANAGED_BY_LABEL}=${STALE_NEWER_MANAGED_BY_VALUE}`,
-      `label=${STALE_NEWER_SANDBOX_NAME_LABEL}=${sandboxName}`,
-    ]),
-  ];
-  if (!queries.every((query) => query.ok)) {
-    throw new Error(`Could not inspect stale OpenShell-owned sandbox '${sandboxName}'`);
-  }
-  const candidates = [...new Set(queries.flatMap((query) => query.ids))];
-  for (const containerId of candidates) {
-    if (!CONTAINER_ID_PATTERN.test(containerId)) {
-      throw new Error(`OpenShell returned an invalid container ID for sandbox '${sandboxName}'`);
-    }
-    const owned = inspectOwnedStaleContainer(containerId, sandboxName, podman);
-    if (!owned) {
-      throw new Error(
-        `Portable demo lifecycle refused to remove container '${containerId}' because its ownership could not be proven`,
-      );
-    }
-    removeExactOwnedStaleContainer(owned, sandboxName, podman);
-  }
-}
-
-function podmanSocketPath(
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  env: NodeJS.ProcessEnv,
-): string {
-  const result = podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
-  requireCommand(result, "Resolving the portable Podman socket");
-  const socket = String(result.stdout ?? "").trim();
-  if (/[\u0000-\u001f\u007f-\u009f]/u.test(socket)) {
-    throw new Error("The portable Podman socket path is invalid");
-  }
-  const socketPath = socket.startsWith("unix://") ? socket.slice("unix://".length) : socket;
-  if (!path.posix.isAbsolute(socketPath)) {
-    throw new Error("The portable Podman socket path is invalid");
-  }
-  return socketPath;
-}
-
-function podmanCapture(
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  env: NodeJS.ProcessEnv,
-): ContainerEngineCommandCapture {
-  return (_executable, args) => {
-    const result = podman(args, env);
-    return {
-      status: result.status ?? 1,
-      stdout: String(result.stdout ?? ""),
-      stderr: String(result.stderr ?? ""),
-      ...(result.error ? { error: result.error } : {}),
-    };
-  };
-}
-
-function qualifiedPodmanAuthority(commandEnv: NodeJS.ProcessEnv, deps: PortableDemoLifecycleDeps) {
-  const podman = deps.podman ?? ((args, env = commandEnv) => defaultPodman(args, env));
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const socketPath = podmanSocketPath(podman, podmanEnv);
-  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath);
-  const socketAuthority = capturePodmanSocketAuthority(socketPath, deps.podmanSocketAuthorityDeps);
-  const provider = createPodmanContainerEngine({
-    operation: "sandbox-lifecycle",
-    socketAuthority,
-    authorityDeps: deps.podmanSocketAuthorityDeps,
-    ...(deps.podman ? { capture: podmanCapture(podman, podmanEnv) } : {}),
-  });
-  return {
-    assertRuntimeAuthority: () =>
-      assertPodmanSocketAuthority(socketAuthority, deps.podmanSocketAuthorityDeps),
-    dockerHost: `unix://${socketAuthority.socketPath}`,
-    podman: (args: readonly string[]) => provider.capture(args, COMMAND_TIMEOUT_MS),
-  };
-}
-
-function requireReceiptOwnedInspection(
-  receipt: PortableDemoLifecycleReceipt,
-  inspection: PodmanContainerInspection,
-): void {
-  if (inspection.containerId !== receipt.containerId) {
-    throw new Error(
-      `Portable demo lifecycle refused container '${inspection.containerId}' because the recorded container identity changed`,
-    );
-  }
-  if (inspection.sandboxId !== receipt.sandboxId) {
-    throw new Error(
-      `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
-    );
-  }
-}
-
-function requirePinnedReceipt(receipt: PortableDemoLifecycleReceipt): void {
-  if (
-    receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION ||
-    receipt.openshellVersion !== PINNED_OPENSHELL_VERSION
-  ) {
-    throw new Error(
-      `Portable sandbox '${receipt.sandboxName}' has lifecycle state from a different OpenShell stack; rerun the pinned 0.0.85 installer`,
-    );
-  }
-}
-
-/** Resolve the receipt-owned portable container for a host-side privileged exec. */
-export function resolvePortableDemoPrivilegedExecTarget(
-  sandboxName: string,
-  deps: PortableDemoLifecycleDeps = {},
-): PortableDemoPrivilegedExecTarget | null {
-  const commandEnv = deps.env ?? process.env;
-  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
-  const receipt = loadReceipt(sandboxName, stateDir);
-  if (!receipt) return null;
-  if ((deps.platform ?? process.platform) !== "linux") {
-    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
-  }
-  requirePinnedReceipt(receipt);
-  requireCurrentRegistryGeneration(receipt, deps.registryGeneration);
-  const authority = qualifiedPodmanAuthority(commandEnv, deps);
-  const inspection = inspectPodmanContainer(receipt.containerId, sandboxName, authority.podman);
-  requireReceiptOwnedInspection(receipt, inspection);
-  if (!inspection.running) {
-    throw new Error(`Portable sandbox '${sandboxName}' is not running`);
-  }
-  authority.assertRuntimeAuthority();
-  return {
-    assertRuntimeAuthority: authority.assertRuntimeAuthority,
-    containerId: inspection.containerId,
-    dockerHost: authority.dockerHost,
-  };
+  return inspectPodmanContainer(matches[0]!, sandboxName, podman);
 }
 
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
@@ -1051,50 +604,32 @@ export function installPortableDemoSandboxLifecycle(
   createdStartupArgv: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   deps: PortableDemoLifecycleDeps = {},
-): string | null {
-  const stateDir = deps.stateDir ?? defaultStateDir(env);
+): void {
+  if (!isPortableExperimentalProfile(env)) return;
   if (
-    !isPortableExperimentalProfile(env) ||
     createdStartupArgv[createdStartupArgv.length - 1] !== "/usr/local/bin/nemoclaw-start" ||
     startupEnvValue(createdStartupArgv, "OPENCLAW_HOME") === null
   ) {
-    removeReceipt(sandboxName, stateDir);
-    return null;
+    return;
   }
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle requires Linux");
   }
   const commandEnv = deps.env ?? env;
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
   const inspection = discoverPodmanContainer(sandboxName, podman);
-  const registryGeneration = deps.registryGeneration ?? inspection.containerId;
-  if (!SANDBOX_ID_PATTERN.test(registryGeneration)) {
-    throw new Error("Portable demo lifecycle registry generation is invalid");
-  }
   const receipt: PortableDemoLifecycleReceipt = {
     schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-    openshellVersion: PINNED_OPENSHELL_VERSION,
     sandboxName,
     sandboxId: inspection.sandboxId,
     containerId: inspection.containerId,
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
-    registryGeneration,
   };
   requireCommand(
-    podman(["update", "--restart=always", inspection.containerId]),
+    podman(["update", "--restart=unless-stopped", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
-  writeReceipt(receipt, stateDir);
-  return registryGeneration;
-}
-
-/** Retire portable lifecycle authority only after its sandbox registry entry is removed. */
-export function removePortableDemoSandboxLifecycleReceipt(
-  sandboxName: string,
-  stateDir = defaultStateDir(process.env),
-): void {
-  removeReceipt(sandboxName, stateDir);
+  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
 }
 
 /**
@@ -1107,24 +642,19 @@ export function recoverPortableDemoSandboxLifecycle(
   deps: PortableDemoLifecycleDeps = {},
 ): PortableDemoLifecycleRecoveryResult {
   if ((context.agent ?? "openclaw") !== "openclaw") return { kind: "not-installed" };
-  if (context.openshellDriver !== "docker") return { kind: "not-installed" };
   const commandEnv = deps.env ?? process.env;
-  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
-  const receipt = loadReceipt(sandboxName, stateDir);
+  const receipt = loadReceipt(sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
   if (!receipt) return { kind: "not-installed" };
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
-  requirePinnedReceipt(receipt);
-  requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
-  deps.ensureGateway?.();
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
+
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
   const initialInspection = podman(["inspect", receipt.containerId]);
   if (isMissingPodmanContainer(initialInspection)) {
-    throw new Error(
-      `Portable sandbox '${sandboxName}' recorded OpenShell 0.0.85 container '${receipt.containerId}' is absent; its lifecycle receipt was preserved`,
-    );
+    removeReceipt(sandboxName, stateDir);
+    return { kind: "not-installed" };
   }
   let inspection = inspectPodmanContainer(
     receipt.containerId,
@@ -1138,7 +668,6 @@ export function recoverPortableDemoSandboxLifecycle(
     );
   }
   if (!inspection.running) {
-    restoreReceiptBoundPodmanRunDirectory(inspection, commandEnv);
     requireCommand(
       podman(["start", receipt.containerId]),
       `Starting portable sandbox '${sandboxName}'`,
@@ -1167,7 +696,7 @@ export function recoverPortableDemoSandboxLifecycle(
   }
   recoverManagedOllama(context, commandEnv, stateDir, timing, deps);
   const gatewayRunning = gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS);
-  const refreshStartup = receipt.schemaVersion === 1;
+  const refreshStartup = receipt.schemaVersion < CURRENT_RECEIPT_SCHEMA_VERSION;
   if (!refreshStartup && gatewayRunning) {
     return { kind: "already-running" };
   }
@@ -1236,11 +765,7 @@ export function recoverPortableDemoSandboxLifecycle(
   }
   if (refreshStartup) {
     writeReceipt(
-      {
-        ...receipt,
-        schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-        registryGeneration: context.lifecycleGeneration ?? receipt.containerId,
-      },
+      { ...receipt, schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION },
       deps.stateDir ?? defaultStateDir(commandEnv),
     );
   }

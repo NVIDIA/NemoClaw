@@ -6,8 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { BASE_GATEWAY_STATE_DIR_NAME } from "./gateway-binding";
-
 import { waitUntil } from "../core/wait";
 import { clearDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
 import {
@@ -110,7 +108,13 @@ export function resolveDockerDriverGatewayStateDir(
 ): string {
   const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
   if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", BASE_GATEWAY_STATE_DIR_NAME);
+  return path.join(
+    homeDir,
+    ".local",
+    "state",
+    "nemoclaw",
+    "openshell-docker-gateway-v0.0.85-pr8578",
+  );
 }
 
 export function resolveDockerDriverGatewayPidFile(

@@ -38,27 +38,6 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
 
 (
   cd "${source_dir}"
-  # Test::Harness validates signal-result parsing by deliberately sending
-  # SIGSEGV to a child Perl process. Desktop crash reporters surface that
-  # expected child signal as a scary "process crash" notification during the
-  # otherwise healthy package build. Skip only that self-crash subtest; the
-  # rest of cpan/Test-Harness/t/harness.t still runs normally.
-  readonly test_harness_test='cpan/Test-Harness/t/harness.t'
-  readonly test_harness_tmp="${test_harness_test}.nemoclaw"
-  test "$(grep -Fc 'skip "No SIGSEGV on $^O", 1 if' "${test_harness_test}")" -eq 1
-  awk '
-    index($0, "skip \"No SIGSEGV on $^O\", 1 if") {
-      print "        skip \"NemoClaw package builds do not intentionally raise SIGSEGV\", 1;"
-      next
-    }
-    { print }
-  ' "${test_harness_test}" >"${test_harness_tmp}"
-  mv "${test_harness_tmp}" "${test_harness_test}"
-  test "$(
-    grep -Fxc \
-      '        skip "NemoClaw package builds do not intentionally raise SIGSEGV", 1;' \
-      "${test_harness_test}"
-  )" -eq 1
   # Pin the reviewed d_syscallproto result for trixie's libc so both native
   # architectures use the same known declaration instead of relying on a
   # Configure probe that previously returned a false negative under QEMU.
@@ -75,29 +54,6 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
     -Dman3dir=none
   make -j"$(nproc)"
   make test_prep
-  readonly extutils_constant_test='../cpan/ExtUtils-Constant/t/Constant.t'
-  readonly -a raw_icmp_tests=(
-    '../dist/Net-Ping/t/001_new.t'
-    '../dist/Net-Ping/t/110_icmp_inst.t'
-    '../dist/Net-Ping/t/500_ping_icmp.t'
-    '../dist/Net-Ping/t/520_icmp_ttl.t'
-  )
-  parallel_test_exclusion='--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$'
-  : >"${build_root}/perl-tests-capability-skipped"
-  # Rootless Podman maps the build user to effective UID 0 inside its user
-  # namespace without granting CAP_NET_RAW. Net::Ping treats UID 0 as proof
-  # that raw ICMP sockets are available, so these four upstream cases attempt
-  # privileged socket creation and fail with EPERM. Probe the actual capability:
-  # full-capability builders still run every test, while rootless builders omit
-  # only the cases that cannot execute in their namespace.
-  if ! env -C t ./perl -MNet::Ping -e 'Net::Ping->new("icmp")' >/dev/null 2>&1; then
-    parallel_test_exclusion='--nre=^(?:[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t|[.][.]/dist/Net-Ping/t/(?:001_new|110_icmp_inst|500_ping_icmp|520_icmp_ttl)[.]t)$'
-    env -C t ./perl harness -dumptests "${raw_icmp_tests[@]}" \
-      >"${build_root}/perl-tests-capability-skipped"
-    printf '%s\n' \
-      'Skipping four Net::Ping raw-ICMP tests because this build namespace lacks CAP_NET_RAW.' \
-      >&2
-  fi
   # ExtUtils::Constant's test recursively invokes make and produced an incomplete
   # TAP plan when it overlapped another test locally, so run it alone first and
   # exclude exactly that already-passed file from the parallel pass.
@@ -107,17 +63,16 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
   env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
     >"${build_root}/perl-tests-full"
   env -C t ./perl harness -dumptests \
-    "${extutils_constant_test}" \
+    ../cpan/ExtUtils-Constant/t/Constant.t \
     >"${build_root}/perl-tests-serial"
   env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
-    "${parallel_test_exclusion}" \
+    '--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
     >"${build_root}/perl-tests-parallel"
   sort "${build_root}/perl-tests-full" \
     >"${build_root}/perl-tests-full.sorted"
   sort \
     "${build_root}/perl-tests-serial" \
     "${build_root}/perl-tests-parallel" \
-    "${build_root}/perl-tests-capability-skipped" \
     >"${build_root}/perl-tests-combined.sorted"
   cmp \
     "${build_root}/perl-tests-full.sorted" \
@@ -132,11 +87,11 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
   # scheduler use each native runner efficiently instead of serializing every
   # script in QEMU.
   TEST_JOBS=1 \
-    TEST_ARGS="${extutils_constant_test}" \
+    TEST_ARGS='../cpan/ExtUtils-Constant/t/Constant.t' \
     make test_harness
   TEST_JOBS="$(nproc)" \
   PERL_TEST_HARNESS_ASAP=1 \
-  TEST_ARGS="${parallel_test_exclusion}" \
+  TEST_ARGS='--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
     make -j"$(nproc)" test_harness
   make install DESTDIR="${perl_root}"
 )

@@ -476,7 +476,7 @@ describe("onboard command options", () => {
       NEMOCLAW_PROVIDER: "custom",
       NEMOCLAW_MODEL: "example/model-1",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
-      NEMOCLAW_POLICY_MODE: "suggested",
+      NEMOCLAW_POLICY_MODE: "skip",
       NEMOCLAW_POLICY_TIER: "personal",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });

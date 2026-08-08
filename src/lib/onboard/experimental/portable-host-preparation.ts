@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { hardenPodmanSocketDirectory, localPodmanEnvironment } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
 
@@ -28,11 +27,6 @@ firewall_driver = "iptables"
 [engine]
 env = ["NETAVARK_FW=iptables"]
 `;
-const PORTABLE_GATEWAY_SYSTEMD_DROP_IN = `[Unit]
-Requires=podman.socket
-After=podman.socket
-Before=podman-restart.service
-`;
 
 type SpawnResult = ReturnType<typeof spawnSync>;
 
@@ -43,7 +37,6 @@ export interface PortableHostPreparationDeps {
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   podman?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
-  hardenSocketDirectory?: (socketPath: string, uid: number) => void;
 }
 
 function commandDetail(result: SpawnResult): string {
@@ -126,16 +119,6 @@ function writePortableRuntimeConfig(home: string, env: NodeJS.ProcessEnv): strin
   // The OpenShell gateway service and sandbox prebuild read this file through CONTAINERS_CONF.
   const containersConf = path.join(configHome, "nemoclaw", "portable", "containers.conf");
   writePrivateConfig(containersConf, PORTABLE_CONTAINERS_CONF);
-  writePrivateConfig(
-    path.join(
-      configHome,
-      "systemd",
-      "user",
-      "nemoclaw-openshell-gateway.service.d",
-      "portable.conf",
-    ),
-    PORTABLE_GATEWAY_SYSTEMD_DROP_IN,
-  );
   return containersConf;
 }
 
@@ -213,10 +196,6 @@ export function preparePortableExperimentalHost(
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
   requireCommand(
-    systemctl(["--user", "daemon-reload"], env),
-    "Reloading the portable user services",
-  );
-  requireCommand(
     systemctl(
       [
         "--user",
@@ -236,10 +215,6 @@ export function preparePortableExperimentalHost(
     systemctl(["--user", "enable", "--now", "podman.socket"], env),
     "Starting the rootless container socket",
   );
-  requireCommand(
-    systemctl(["--user", "enable", "podman-restart.service"], env),
-    "Enabling rootless container restart after login",
-  );
 
   const podman =
     deps.podman ??
@@ -249,14 +224,9 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
-  const podmanEnv = localPodmanEnvironment(env);
-  const dockerHost = resolvePodmanDockerHost(
-    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], podmanEnv),
+  env.DOCKER_HOST = resolvePodmanDockerHost(
+    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env),
   );
-  const socketPath = dockerHost.slice("unix://".length);
-  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));
-  env.DOCKER_HOST = dockerHost;
-  podmanEnv.DOCKER_HOST = dockerHost;
 
   const docker =
     deps.docker ??
@@ -266,8 +236,8 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
-  requireDockerCompatibleCli(docker, podmanEnv);
-  ensureRegistryContainer(podmanEnv, docker);
+  requireDockerCompatibleCli(docker, env);
+  ensureRegistryContainer(env, docker);
 }
 
 export const portableHostPreparationInternals = {
@@ -275,6 +245,5 @@ export const portableHostPreparationInternals = {
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
-  PORTABLE_GATEWAY_SYSTEMD_DROP_IN,
   resolvePodmanDockerHost,
 };

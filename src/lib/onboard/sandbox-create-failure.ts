@@ -8,7 +8,6 @@ import path from "node:path";
 import { GATEWAY_PORT } from "../core/ports";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
-import { BASE_GATEWAY_STATE_DIR_NAME } from "./gateway-binding";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -48,14 +47,6 @@ function timestampForPath(now: Date): string {
 
 function gatewayLogCandidates(homeDir: string): string[] {
   return [
-    path.join(
-      homeDir,
-      ".local",
-      "state",
-      "nemoclaw",
-      BASE_GATEWAY_STATE_DIR_NAME,
-      "openshell-gateway.log",
-    ),
     path.join(
       homeDir,
       ".local",

@@ -244,7 +244,6 @@ export type DockerContainerInspect = {
       } | null;
     }> | null;
     NetworkMode?: string;
-    PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null> | null;
     RestartPolicy?: { Name?: string; MaximumRetryCount?: number } | null;
     CapAdd?: string[] | null;
     CapDrop?: string[] | null;

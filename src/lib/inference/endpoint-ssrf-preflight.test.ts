@@ -70,7 +70,7 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(lookup).toHaveBeenCalledWith("llm.corp.example", { all: true });
   });
 
-  it("pins mixed public and trusted-private answers for an exact trusted hostname (#8176)", async () => {
+  it("rejects mixed public and trusted-private answers for an exact trusted hostname (#8176)", async () => {
     const result = await assertEndpointResolvesPublic(
       "https://llm.corp.example/v1",
       async () => [
@@ -81,14 +81,11 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      addresses: ["10.0.0.8", "93.184.216.34"],
-      trustedPrivateEndpoint: true,
+      ok: false,
+      reasonCode: "mixed-answer",
+      offendingAddress: "93.184.216.34",
     });
-    expect(result.trustedPrivateCapability).toMatchObject({
-      host: "llm.corp.example",
-      addresses: ["10.0.0.8", "93.184.216.34"],
-    });
+    expect(result.trustedPrivateCapability).toBeUndefined();
   });
 
   it("does not treat a trusted hostname as a suffix or wildcard allowlist (#6861)", async () => {
@@ -270,13 +267,13 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("preserves a URL-valid public hostname outside declaration grammar (#8176)", async () => {
-    const lookup = resolverTo("93.184.216.34");
+  it("returns a rejected result when URL parsing accepts a non-canonical hostname (#8176)", async () => {
+    const lookup = vi.fn<EndpointDnsLookupFn>();
 
     await expect(
       assertEndpointResolvesPublic("https://my_host.corp.example/v1", lookup),
-    ).resolves.toEqual({ ok: true, addresses: ["93.184.216.34"] });
-    expect(lookup).toHaveBeenCalledWith("my_host.corp.example", { all: true });
+    ).resolves.toMatchObject({ ok: false, reasonCode: "rejected" });
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it.each([

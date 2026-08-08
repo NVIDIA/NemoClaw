@@ -5,8 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { BASE_GATEWAY_STATE_DIR_NAME } from "../../onboard/gateway-binding";
-
 import { type CaptureOpenshellResult, stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import type { SandboxEntry } from "../../state/registry";
@@ -50,7 +48,7 @@ export function shouldApplyVmDnsMonkeypatch(
 function dockerDriverGatewayStateDir(env: NodeJS.ProcessEnv, homeDir: string): string {
   const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
   if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", BASE_GATEWAY_STATE_DIR_NAME);
+  return path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
 }
 
 export function parseSandboxIdFromGetOutput(output: string): string | null {

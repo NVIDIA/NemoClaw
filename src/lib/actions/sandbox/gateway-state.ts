@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -52,7 +51,6 @@ import {
   type PortableDemoLifecycleRecoveryResult,
   recoverPortableDemoSandboxLifecycle,
 } from "../../onboard/experimental/portable-demo-lifecycle";
-import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
@@ -93,42 +91,15 @@ function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
 export function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
-  sandbox: SandboxEntry | null,
+  sandbox: Pick<SandboxEntry, "agent" | "provider"> | null,
   gatewayName: string,
 ): PortableDemoLifecycleRecoveryResult {
-  if (!sandbox || sandbox.openshellDriver !== "docker") return { kind: "not-installed" };
+  if (!sandbox) return { kind: "not-installed" };
   return recoverPortableDemoSandboxLifecycle(
     sandboxName,
+    { agent: sandbox.agent, gatewayName, provider: sandbox.provider },
     {
-      agent: sandbox.agent,
-      gatewayName,
-      lifecycleGeneration: sandbox.lifecycleGeneration,
-      openshellDriver: sandbox.openshellDriver,
-      provider: sandbox.provider,
-    },
-    {
-      backfillRegistryGeneration: (generation) =>
-        compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
       openshellBinary: getOpenshellBinary(),
-      ensureGateway: () => {
-        const result = spawnSync(
-          "systemctl",
-          ["--user", "start", "nemoclaw-openshell-gateway.service"],
-          {
-            encoding: "utf-8",
-            env: process.env,
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-          },
-        );
-        if (result.status === 0 && !result.error) return;
-        const detail =
-          result.error?.message ||
-          String(result.stderr ?? "").trim() ||
-          String(result.stdout ?? "").trim() ||
-          `exit ${String(result.status)}`;
-        throw new Error(`Starting the portable OpenShell gateway failed: ${detail}`);
-      },
       captureOpenshell: (args, timeoutMs) => {
         const result = captureOpenshell([...args], {
           ignoreError: true,
