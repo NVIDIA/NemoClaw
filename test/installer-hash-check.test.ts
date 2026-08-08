@@ -643,14 +643,16 @@ const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>
           `  "9.9.9|${manifest}|${createHash("sha256").update(contents).digest("hex")}"`,
       )
       .join("\n");
-    const withManifests = source.replace(
+    const manifests = source.replace(
       "readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n",
       `readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n${alternateEntries}\n`,
     );
-    return withManifests.replace(
+    const formula = manifests.replace(
       "readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n",
       `readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n  "9.9.9|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v9.9.9/openshell.rb|${FORMULA_DIGEST}"\n`,
     );
+    expect(manifests !== source && formula !== manifests, "alternate anchors").toBe(true);
+    return formula;
   },
   "duplicate-trusted-formula": (source) =>
     source.replace(
@@ -783,17 +785,17 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
   expect(sandboxFunctionStart, "sandbox build map template start").not.toBe(-1);
   expect(sandboxFunctionEnd, "sandbox build map template end").not.toBe(-1);
   const sandboxFunction = withPinFunction.slice(sandboxFunctionStart, sandboxFunctionEnd);
-  if (sandboxFunction.includes(`printf '%s\\n' "${openshellVersion}"`)) {
-    return withPinFunction;
-  }
+  const hasSandboxBuild = sandboxFunction.includes(`printf '%s\\n' "${openshellVersion}"`);
   const selectedDigests =
     openshellVersion === "0.0.101"
       ? V00101_SANDBOX_BUILD_DIGESTS
       : openshellVersion === "9.9.9"
         ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
         : undefined;
-  expect(selectedDigests, `trusted sandbox build fixture for ${openshellVersion}`).toBeDefined();
-  return addSandboxBuildPins(withPinFunction, openshellVersion, selectedDigests!);
+  expect(hasSandboxBuild || selectedDigests, `sandbox fixture ${openshellVersion}`).toBeTruthy();
+  return hasSandboxBuild
+    ? withPinFunction
+    : addSandboxBuildPins(withPinFunction, openshellVersion, selectedDigests!);
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
@@ -960,8 +962,11 @@ function runFixture(
     path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
     trustedParserPath,
   );
-  const mutateParser = PARSER_MUTATIONS[mode] ?? ((source: string) => source);
-  fs.writeFileSync(trustedParserPath, mutateParser(fs.readFileSync(trustedParserPath, "utf8")));
+  const parserSource = fs.readFileSync(trustedParserPath, "utf8");
+  const mutateParser = PARSER_MUTATIONS[mode];
+  const parserResult = mutateParser?.(parserSource) ?? parserSource;
+  expect(parserResult === parserSource, `parser mutation ${mode}`).toBe(mutateParser === undefined);
+  fs.writeFileSync(trustedParserPath, parserResult);
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -969,8 +974,11 @@ function runFixture(
       : fs.readFileSync(targetChecker, "utf8"),
   );
   const checker = trustedChecker ? trustedCheckerPath : targetChecker;
-  const mutateChecker = CHECKER_MUTATIONS[mode] ?? ((source: string) => source);
-  fs.writeFileSync(checker, mutateChecker(fs.readFileSync(checker, "utf8")));
+  const checkerSource = fs.readFileSync(checker, "utf8");
+  const mutateChecker = CHECKER_MUTATIONS[mode];
+  const checkerResult = mutateChecker?.(checkerSource) ?? checkerSource;
+  expect(checkerResult === checkerSource, `checker ${mode}`).toBe(mutateChecker === undefined);
+  fs.writeFileSync(checker, checkerResult);
   const installer = path.join(fixtureRoot, "scripts", "install-openshell.sh");
   const blueprint = path.join(fixtureRoot, "nemoclaw-blueprint", "blueprint.yaml");
   const installerSource = fs.readFileSync(installer, "utf8");
