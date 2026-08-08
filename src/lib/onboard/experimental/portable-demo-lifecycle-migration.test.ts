@@ -68,12 +68,14 @@ function createPodman(matches = [CONTAINER_ID]) {
         stdout: JSON.stringify([
           {
             Id: CONTAINER_ID,
-            Name: "openshell-sandbox-alpha",
+            Name: `openshell-default--alpha-${SANDBOX_ID}`,
             Config: {
               Labels: {
                 "openshell.managed": "true",
-                "openshell.sandbox-id": SANDBOX_ID,
-                "openshell.sandbox-name": "alpha",
+                "openshell.ai/sandbox-id": SANDBOX_ID,
+                "openshell.ai/sandbox-name": "alpha",
+                "openshell.ai/sandbox-namespace": "",
+                "openshell.ai/sandbox-workspace": "default",
               },
             },
             State: { Running: true },

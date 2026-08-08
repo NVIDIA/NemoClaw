@@ -20,6 +20,16 @@ import {
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
 import {
+  PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_CONTAINER_PREFIX,
+  PODMAN_SANDBOX_ID_LABEL,
+  PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
+  PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
+} from "../runtime-provider/podman-lifecycle";
+import {
   loadUserLocalOllamaOwnership,
   OLLAMA_PORT,
   recordUserLocalOllamaOwnership,
@@ -38,10 +48,6 @@ const MANAGED_EXECUTABLE_CHILD_FD = 3;
 const POLL_INTERVAL_MS = 1_000;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
-const PODMAN_MANAGED_LABEL = "openshell.managed";
-const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
-const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
-const PODMAN_SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
 const CURRENT_RECEIPT_SCHEMA_VERSION = 3;
@@ -356,11 +362,17 @@ function inspectPodmanContainer(
   const labels = config && isRecord(config.Labels) ? config.Labels : null;
   const state = isRecord(inspection.State) ? inspection.State : null;
   const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
+  const expectedContainerName =
+    typeof sandboxId === "string"
+      ? `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`
+      : null;
   if (
     inspection.Id !== containerId ||
-    inspection.Name !== `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}` ||
+    inspection.Name !== expectedContainerName ||
     labels?.[PODMAN_MANAGED_LABEL] !== "true" ||
     labels?.[PODMAN_SANDBOX_NAME_LABEL] !== sandboxName ||
+    labels?.[PODMAN_SANDBOX_NAMESPACE_LABEL] !== PODMAN_SANDBOX_NAMESPACE ||
+    labels?.[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE ||
     typeof sandboxId !== "string" ||
     !SANDBOX_ID_PATTERN.test(sandboxId) ||
     typeof state?.Running !== "boolean"
@@ -392,6 +404,8 @@ function discoverPodmanContainer(
     `label=${PODMAN_MANAGED_LABEL}=true`,
     "--filter",
     `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    "--filter",
+    `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
     "--format",
     "{{.ID}}",
   ]);
@@ -533,7 +547,7 @@ function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
   const port = String(receipt.dashboardPort);
   // A raw Podman restart can preserve a merged CA bundle from the previous
   // OpenShell supervisor generation. Seed recovery from the current root-owned
-  // v0.0.85 OpenShell CA paths. The startup-applied marker skips the stale
+  // v0.0.99 OpenShell CA paths. The startup-applied marker skips the stale
   // bundle merge, and the cleared merged marker prevents connect shells from
   // inheriting stale CA paths. #8058 removes this direct startup contract.
   return [

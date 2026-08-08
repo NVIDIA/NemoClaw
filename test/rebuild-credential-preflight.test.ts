@@ -153,7 +153,7 @@ function createFixture(opts: {
   fs.writeFileSync(atomicityMarker, "dcode-atomicity-marker\n");
 
   const sshConfig = [
-    `Host openshell-${sandboxName}`,
+    `Host openshell-${sandboxName}.default`,
     "  HostName 127.0.0.1",
     "  Port 2222",
     "  User sandbox",
@@ -249,7 +249,7 @@ process.exit(0);
 
   const activeSessionLines = Array.from(
     { length: activeSessionCount ?? 0 },
-    (_, index) => `${9000 + index} ssh openshell-${sandboxName}`,
+    (_, index) => `${9000 + index} ssh openshell-${sandboxName}.default`,
   ).join("\n");
   fs.writeFileSync(
     path.join(tmpDir, "ps"),
