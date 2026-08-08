@@ -404,10 +404,21 @@ function removePortablePodmanStores(paths: UninstallPaths, runtime: UninstallRun
     return false;
   }
   for (const store of stores) {
-    const result = runtime.run("podman", ["unshare", "rm", "-rf", "--", store], {
-      env: runtime.env,
-      stdio: "ignore",
-    });
+    const result = runtime.run(
+      "podman",
+      [
+        "unshare",
+        "sh",
+        "-c",
+        'umount -l "$1/overlay" 2>/dev/null || true\nrm -rf -- "$1"',
+        "nemoclaw-portable-store-cleanup",
+        store,
+      ],
+      {
+        env: runtime.env,
+        stdio: "ignore",
+      },
+    );
     if (result.status !== 0 || runtime.existsSync(store)) {
       runtime.warn(`Failed to remove portable Podman store ${store}.`);
       return false;

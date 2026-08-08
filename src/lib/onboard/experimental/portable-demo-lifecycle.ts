@@ -399,6 +399,55 @@ function inspectPodmanContainer(
   return { containerId, sandboxId, running: state.Running };
 }
 
+function ensurePodmanContainerRunDirectory(
+  containerId: string,
+  sandboxName: string,
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  log: (message: string) => void,
+): void {
+  const result = podman([
+    "info",
+    "--format",
+    "{{.Store.GraphDriverName}}|{{.Store.RunRoot}}",
+  ]);
+  requireCommand(result, "Reading the portable Podman runtime location");
+  const [driver, runRoot, ...extra] = String(result.stdout ?? "")
+    .trim()
+    .split("|")
+    .map((value) => value.trim());
+  if (
+    extra.length > 0 ||
+    !driver ||
+    !/^[a-z0-9][a-z0-9._+-]{0,63}$/u.test(driver) ||
+    !path.isAbsolute(runRoot ?? "") ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(runRoot ?? "")
+  ) {
+    throw new Error("Reading the portable Podman runtime location returned invalid data");
+  }
+  const runDirectory = path.join(
+    runRoot!,
+    `${driver}-containers`,
+    containerId,
+    "userdata",
+  );
+  if (fs.existsSync(runDirectory)) return;
+
+  // containers/storage normally creates this per-session directory from its
+  // durable container record. GFN can discard the rootless RunRoot while the
+  // user manager (and Podman's alive marker) survives, so Podman skips its
+  // reboot refresh and later fails creating resolv.conf. Recreate the exact
+  // ContainerRunDirectory path before starting the already-validated container.
+  fs.mkdirSync(runDirectory, { mode: 0o700, recursive: true });
+  const state = fs.lstatSync(runDirectory);
+  if (!state.isDirectory() || state.isSymbolicLink()) {
+    throw new Error(
+      `Portable Podman runtime path for sandbox '${sandboxName}' is not a directory`,
+    );
+  }
+  fs.chmodSync(runDirectory, 0o700);
+  log(`  Restored portable Podman runtime directory for sandbox '${sandboxName}'.`);
+}
+
 function isMissingPodmanContainer(result: CommandResult): boolean {
   if (result.status === 0 && !result.error) return false;
   const detail = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
@@ -1014,6 +1063,12 @@ export function recoverPortableDemoSandboxLifecycle(
     );
   }
   if (!inspection.running) {
+    ensurePodmanContainerRunDirectory(
+      receipt.containerId,
+      sandboxName,
+      podman,
+      deps.log ?? console.log,
+    );
     requireCommand(
       podman(["start", receipt.containerId]),
       `Starting portable sandbox '${sandboxName}'`,

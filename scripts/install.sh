@@ -2755,9 +2755,9 @@ stop_legacy_openshell_gateway_process() {
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
     runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
   elif [ "$gateway_port" -eq 8080 ]; then
-    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway"
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-v0.0.85"
   else
-    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-v0.0.85-${gateway_port}"
   fi
   pid_file="${runtime_dir}/openshell-gateway.pid"
   [ -f "$pid_file" ] || return 1
