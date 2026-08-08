@@ -74,7 +74,9 @@ describe("node-tar image remediation contract", () => {
     expect(patchRun, file).toBeGreaterThan(curlInstall);
   });
 
-  it.each(dockerfiles)("patches npm before use in the completed $file filesystem", (entry) => {
+  it.each(
+    dockerfiles,
+  )("places bundled npm tar remediation in the final $file stage before any npm consumers", (entry) => {
     const { file, installsPatchDownloader, installsWithNpm } = entry;
     const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const source = completedStage(dockerfile);
