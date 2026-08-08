@@ -277,7 +277,7 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
     expect(portableReceipt).toMatchObject({
       containerId: exactContainerId(runtimeEngines.sandboxLifecycle, openclawSandbox),
       sandboxName: openclawSandbox,
-      schemaVersion: 2,
+      schemaVersion: 3,
     });
 
     progress.phase("exercise exact-container stop and start");
