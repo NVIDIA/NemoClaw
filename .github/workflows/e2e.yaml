@@ -2893,6 +2893,11 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
+      # Selects the shared E2E inference adapter's internal-nvidia mode
+      # (#5745) so this real-latency measurement always runs against a real
+      # hosted endpoint; the adapter defaults to hermetic `mock` otherwise,
+      # which the test now explicitly refuses to measure latency against.
+      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
