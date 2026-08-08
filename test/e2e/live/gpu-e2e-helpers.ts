@@ -244,36 +244,34 @@ export async function cleanupOllama(
 
 export function ollamaCleanupScript(): string {
   return `set -euo pipefail
-sudo_prefix=()
-if [ "$(id -u)" -eq 0 ]; then
-  sudo_prefix=()
-elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-  sudo_prefix=(sudo -n)
-fi
-
 if command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop ollama.service >/dev/null 2>&1 || true
-  if [ "$(id -u)" -eq 0 ] || [ "\${#sudo_prefix[@]}" -gt 0 ]; then
-    "\${sudo_prefix[@]}" systemctl stop ollama.service >/dev/null 2>&1 || true
+  if systemctl cat ollama.service >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+      systemctl stop ollama.service
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      sudo -n systemctl stop ollama.service
+    else
+      echo 'Ollama system service exists but passwordless sudo is unavailable' >&2
+      exit 1
+    fi
   fi
 fi
 pkill -f '[o]llama-auth-proxy' >/dev/null 2>&1 || true
 pkill -f '[o]llama serve' >/dev/null 2>&1 || true
-if [ "\${#sudo_prefix[@]}" -gt 0 ]; then
-  "\${sudo_prefix[@]}" pkill -f '[o]llama serve' >/dev/null 2>&1 || true
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  sudo -n pkill -f '[o]llama serve' >/dev/null 2>&1 || true
 fi
 
-for _ in $(seq 1 20); do
-  if ! pgrep -f '[o]llama serve' >/dev/null 2>&1 &&
-    ! curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
-    exit 0
-  fi
-  sleep 1
-done
-
-echo 'Ollama cleanup left a daemon process or listener on 127.0.0.1:11434' >&2
-pgrep -af '[o]llama serve' >&2 || true
-exit 1`;
+if pgrep -f '[o]llama serve' >/dev/null 2>&1; then
+  echo 'Ollama cleanup left a daemon process' >&2
+  pgrep -af '[o]llama serve' >&2 || true
+  exit 1
+fi
+if curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  echo 'Ollama cleanup left a listener on 127.0.0.1:11434' >&2
+  exit 1
+fi`;
 }
 
 export function assertNvidiaAvailable(
