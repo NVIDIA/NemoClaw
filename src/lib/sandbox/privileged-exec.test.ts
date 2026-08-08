@@ -101,7 +101,10 @@ describe("privileged sandbox exec routing", () => {
   it("matches only the requested OpenShell sandbox container name pattern", () => {
     expect(containerNameMatchesSandbox("openshell-demo", "demo")).toBe(true);
     expect(containerNameMatchesSandbox("openshell-demo-abc123", "demo")).toBe(true);
+    expect(containerNameMatchesSandbox("openshell-default--demo-abc123", "demo")).toBe(true);
     expect(containerNameMatchesSandbox("openshell-demolition", "demo")).toBe(false);
+    expect(containerNameMatchesSandbox("openshell-review--demo-abc123", "demo")).toBe(false);
+    expect(containerNameMatchesSandbox("openshell-default--demo--abc123", "demo")).toBe(false);
     expect(containerNameMatchesSandbox("openshell-gateway-nemoclaw", "demo")).toBe(false);
   });
 
@@ -109,6 +112,12 @@ describe("privileged sandbox exec routing", () => {
     expect(selectDirectSandboxContainer("demo", "abc123\topenshell-demo-2026\n", ["demo"])).toBe(
       "abc123",
     );
+  });
+
+  it("selects the immutable id of one v0.0.99 default-workspace container", () => {
+    expect(
+      selectDirectSandboxContainer("demo", "abc123\topenshell-default--demo-2026\n", ["demo"]),
+    ).toBe("abc123");
   });
 
   it("rejects ambiguous labeled running containers", () => {
@@ -142,6 +151,16 @@ describe("privileged sandbox exec routing", () => {
     ).toThrow(/labels and names disagree.*refusing lifecycle execution/);
   });
 
+  it("rejects a workspace-qualified prefix collision owned by a longer sandbox name", () => {
+    expect(() =>
+      selectDirectSandboxContainer(
+        "alpha",
+        "child-id\topenshell-default--alpha-child-runtime-id\n",
+        ["alpha", "alpha-child"],
+      ),
+    ).toThrow(/labels and names disagree.*refusing lifecycle execution/);
+  });
+
   it("builds privileged docker exec argv through the registered direct sandbox container", () => {
     withPrivilegedExecMocks(
       {
@@ -150,7 +169,7 @@ describe("privileged sandbox exec routing", () => {
           sandboxes: [{ name: "alpha" }, { name: "alpha-child" }],
           defaultSandbox: "alpha",
         }),
-        dockerCapture: () => "immutable-alpha-id\topenshell-alpha-abc123\n",
+        dockerCapture: () => "immutable-alpha-id\topenshell-default--alpha-abc123\n",
       },
       ({ privilegedSandboxExecArgv }) => {
         expect(privilegedSandboxExecArgv("alpha", ["id"], true)).toEqual([

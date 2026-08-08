@@ -55,7 +55,7 @@ run_as_sandbox() {
 
 # Helper: run a command inside the container as root
 run_as_root() {
-  docker run --rm --entrypoint "" "$IMAGE" bash -c "$1" 2>&1
+  docker run --rm --user root --entrypoint "" "$IMAGE" bash -c "$1" 2>&1
 }
 
 # ── Test 1: Gateway user exists and is different from sandbox ────
@@ -192,7 +192,7 @@ fi
 
 info "13. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &
   GW_PID=$!
   sleep 0.5
@@ -268,7 +268,7 @@ info "14. Entrypoint drops the full issue #3280 dangerous-cap inventory from san
 # STEP_DOWN_PREFIX_SANDBOX array directly. This avoids depending on the
 # entrypoint's volume mounts / config files while still exercising the
 # exact production code paths.
-OUT=$(docker run --rm --entrypoint "" \
+OUT=$(docker run --rm --user root --entrypoint "" \
   --cap-add=CAP_SYS_ADMIN --cap-add=CAP_SYS_PTRACE \
   "$IMAGE" \
   bash -c '
@@ -449,7 +449,7 @@ fi
 # cannot modify it.
 
 info "25. proxy-env.sh is not writable by sandbox user"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
   chown root:root /tmp/nemoclaw-proxy-env.sh
   chmod 444 /tmp/nemoclaw-proxy-env.sh
@@ -464,7 +464,7 @@ fi
 # ── Test 26: proxy-env.sh has correct permissions (#2181) ─────────
 
 info "26. proxy-env.sh is read-only (mode 444, root-owned)"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
   chown root:root /tmp/nemoclaw-proxy-env.sh
   chmod 444 /tmp/nemoclaw-proxy-env.sh
@@ -512,7 +512,7 @@ fi
 # QA test T5893674.
 
 info "26c. bash -ic and bash -lc export proxy env from /tmp/nemoclaw-proxy-env.sh"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   printf "export NEMOCLAW_PROXY_PROBE=https://probe.invalid:9999\n" \
     > /tmp/nemoclaw-proxy-env.sh
   chmod 444 /tmp/nemoclaw-proxy-env.sh
@@ -551,7 +551,7 @@ fi
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
 info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
-OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
+OUT=$(docker run --rm --user root -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
   # Source the entrypoint function without running the full startup. Keep the
   # extraction whitespace-tolerant and fail closed if the function cannot be
@@ -590,7 +590,7 @@ fi
 # ── Test 29: Model override is a no-op when env var is unset ─────
 
 info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
   if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
     echo "EXTRACT_FAIL apply_model_override"
@@ -615,7 +615,7 @@ fi
 # directory descriptor to the root-only baseline lock.
 
 info "30. One-shot cleanup repairs 700/600 without CAP_DAC_OVERRIDE"
-OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -645,7 +645,7 @@ fi
 # ── Test 30a: Mutable repair rejects a non-sandbox tree owner ─────
 
 info "30a. One-shot cleanup rejects a mutable tree owned by another UID"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -708,7 +708,7 @@ done
 # ── Test 30c: Post-override capture severs hardlink aliases ─────
 
 info "30c. Post-override capture freshens a hardlinked recovery baseline"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -740,7 +740,7 @@ fi
 # ── Test 30d: Pinned owner descriptor rejects path replacement ──
 
 info "30d. One-shot cleanup rejects replacement after owner normalization"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   python3 - <<"PY_INJECT_HANDOFF_RACE"
 from pathlib import Path
@@ -789,7 +789,7 @@ fi
 # ── Test 30e: Empty-config recovery never follows sandbox links ─
 
 info "30e. Empty-config recovery refuses a protected-target symlink"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -821,7 +821,7 @@ fi
 # ── Test 30f: Root never falls back to an environment helper ────
 
 info "30f. Root repair rejects an environment-selected helper"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   cat >/tmp/untrusted-normalizer.py <<"PY_UNTRUSTED_NORMALIZER"
 from pathlib import Path
@@ -851,7 +851,7 @@ fi
 # ── Test 30g: Exact root-owned boot recovery is fail-closed ──────
 
 info "30g. Boot recovery reclaims only the exact root-owned mutable signature"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   trap '\''printf "ROOT_BOOT_RECLAIM_FAIL line=%s status=%s\n" "$LINENO" "$?" >&2'\'' ERR
   {
@@ -978,7 +978,7 @@ fi
 # ── Test 30h: Root recovery refuses mounted config trees ─────────
 
 info "30h. Boot recovery refuses a mounted .openclaw tree"
-OUT=$(docker run --rm --tmpfs /sandbox/.openclaw:rw,mode=700,uid=0,gid=0 \
+OUT=$(docker run --rm --user root --tmpfs /sandbox/.openclaw:rw,mode=700,uid=0,gid=0 \
   --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {

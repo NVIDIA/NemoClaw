@@ -242,6 +242,7 @@ async function main(progress: TestProgress): Promise<void> {
       platform: "linux",
       gatewayPort: 8080,
       stateDir,
+      podmanSocketPath: `${runtimeDir}/podman/podman.sock`,
       getDockerSupervisorImage: () => "supervisor:e2e-not-launched",
       resolveSandboxBin: () => sandboxBin,
     });
@@ -251,6 +252,10 @@ async function main(progress: TestProgress): Promise<void> {
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
       /host_gateway_ip = "169\.254\.1\.2"/,
+    );
+    assert.match(
+      fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
+      new RegExp(`socket_path = "${runtimeDir}/podman/podman[.]sock"`),
     );
     assert.doesNotMatch(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),

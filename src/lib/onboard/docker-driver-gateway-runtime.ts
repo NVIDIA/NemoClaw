@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
+import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   createDockerDriverGatewayPortListenerHelpers,
   type DockerDriverGatewayPortListenerOptions,
@@ -20,6 +21,7 @@ import {
   readDockerDriverGatewayProcessIdentity,
 } from "./docker-driver-gateway-process-identity";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
+import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
@@ -222,11 +224,23 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
   ): Record<string, string> {
+    const dockerHost = process.env.DOCKER_HOST;
+    let podmanSocketPath: string | undefined;
+    if (isPortableExperimentalProfile()) {
+      const candidate = dockerHost?.trim();
+      if (!candidate || !isSupportedGatewayDockerHost(dockerHost)) {
+        throw new Error(
+          "Portable OpenShell gateway requires the prepared absolute rootless Podman socket.",
+        );
+      }
+      podmanSocketPath = candidate.slice("unix://".length);
+    }
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
+      podmanSocketPath,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
     });

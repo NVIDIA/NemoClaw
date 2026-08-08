@@ -470,7 +470,7 @@ async function runOpenClawAgentAssertion(
         "ConnectTimeout=10",
         "-o",
         "LogLevel=ERROR",
-        `openshell-${args.sandboxName}`,
+        `openshell-${args.sandboxName}.default`,
         remoteCommand,
       ],
       {
