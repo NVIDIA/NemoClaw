@@ -688,6 +688,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(createPr).toContain("Do not push while any finding is unclassified");
     expect(createPr).toContain("Do not push while any unresolved finding requires a change");
     expect(createPr).not.toContain("an unclassified or actionable finding");
+
+    expect(createPr).not.toContain("every blocking finding is resolved");
     expect(followUp).toContain("Push once when the receipt identifies the reviewed `HEAD`");
     expect(writingReview).toContain("Do not stop after the first blocking finding");
     expect(writingReview).toContain("Report all evidence-backed findings in one review result");
