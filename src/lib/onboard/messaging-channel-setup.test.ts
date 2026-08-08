@@ -671,7 +671,7 @@ describe("setupMessagingChannels", () => {
       manifests("googlechat"),
       {
         interactive: false,
-        sandboxName: "e2e-channels-stop-start-openclaw",
+        sandboxName: "e2e-oc-ch-cycle",
       },
     );
 

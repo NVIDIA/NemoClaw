@@ -169,7 +169,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
   // Fake openshell — also returns a parseable YAML policy for the
   // shields-down policy snapshot capture path.
   const sshConfig = [
-    `Host openshell-${sandboxName}`,
+    `Host openshell-${sandboxName}.default`,
     "  HostName 127.0.0.1",
     "  Port 2222",
     "  User sandbox",
@@ -183,7 +183,7 @@ const fs = require("node:fs");
 const a = process.argv.slice(2);
 const deleteMarkerPath = ${JSON.stringify(deleteMarkerPath)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
+if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.99\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deleteMarkerPath, "deleted\\n"); process.exit(0); }
@@ -211,7 +211,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.85\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.99\\n");
 process.exit(0);
 `,
       { mode: 0o755 },

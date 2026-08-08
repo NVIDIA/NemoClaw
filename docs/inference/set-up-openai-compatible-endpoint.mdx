@@ -150,8 +150,12 @@ NEMOCLAW_TRUSTED_PRIVATE_HOSTS=llm.corp.example \
   $$nemoclaw onboard --non-interactive
 ```
 
-NemoClaw still resolves the host before probing and pins the probe to the resolved address.
-Only RFC1918, carrier-grade network address translation (CGNAT), and IPv6 unique local address (ULA) destinations can be admitted; link-local metadata and other reserved ranges remain blocked.
+NemoClaw still resolves the host before probing and pins outbound validation to the complete canonical address set.
+An exact trusted host can return both public and supported private addresses.
+NemoClaw pins every canonical answer.
+If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the endpoint instead of discarding that answer.
+Among private answers, NemoClaw admits only RFC1918, carrier-grade network address translation (CGNAT), and IPv6 unique local address (ULA) destinations.
+Link-local metadata and other reserved ranges remain blocked.
 An unlisted private host, a hostname suffix match, or a DNS failure also remains blocked.
 
 ## Related Topics

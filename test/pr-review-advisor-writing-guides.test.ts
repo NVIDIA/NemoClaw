@@ -24,6 +24,11 @@ describe("PR review advisor writing guides", () => {
     expect(writingGuide).toContain("# NemoClaw Writing Guide");
     expect(writingGuide).toContain("Use one term for one concept");
     expect(writingGuide).toContain("## Scope and Review Policy");
+
+    expect(writingGuide).toContain("### Agent-Written Text");
+    expect(writingGuide).toContain("Tool-call labels and descriptions");
+    expect(controlledWords).toContain("| `commit under review` | Technical noun |");
+    expect(controlledWords).toContain("| `latest PR commit` | Technical noun |");
     expect(controlledWords).toContain("| `commit SHA` | Technical noun |");
     expect(considerations).toContain("# Code Change Considerations");
     expect(prompt).toContain("Trusted security rubric from workflow checkout");
@@ -39,7 +44,15 @@ describe("PR review advisor writing guides", () => {
   it("includes terminology and review-scope policy", () => {
     const prompt = buildSystemPrompt();
 
-    expect(prompt).toContain("Apply its review policy when you evaluate changed explanatory text");
+    expect(prompt).toContain(
+      "Apply it before you return a response or start a tool call with a visible label or description",
+    );
+    expect(prompt).toContain(
+      "documentation, code comments, test titles, user-visible messages, and tool-call labels or descriptions",
+    );
+    expect(prompt).toContain(
+      "Apply the guide's language-finding threshold to each related finding",
+    );
     expect(prompt).toContain("Do not request unrelated language cleanup");
     expect(prompt).toContain("SSRF-shaped input");
     expect(prompt).toContain("sandbox escape, SSRF bypass, policy bypass");

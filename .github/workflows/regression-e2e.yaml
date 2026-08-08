@@ -152,7 +152,7 @@ jobs:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev-release
           E2E_TARGET_ID: openclaw-plugin-runtime-exdev-release
           NEMOCLAW_RUN_LIVE_E2E: "1"
-          NEMOCLAW_SANDBOX_NAME: e2e-openclaw-plugin-exdev-release
+          NEMOCLAW_SANDBOX_NAME: e2e-oc-exdev-rel
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \

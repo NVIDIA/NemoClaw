@@ -248,7 +248,7 @@ describe("OpenShell 0.0.85 migration review", () => {
     expect(mcpProof).toContain("managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY,");
   });
 
-  it("binds stable selectors while keeping the physical Spark proof separate", () => {
+  it("keeps the historical review separate from the current stable selectors", () => {
     const blueprint = fs.readFileSync(
       path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml"),
       "utf8",
@@ -261,15 +261,15 @@ describe("OpenShell 0.0.85 migration review", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.85.json",
+          "openshell-child-visible-credentials.v0.0.99.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.85"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.85"');
-    expect(manifest.openshellVersion).toBe("0.0.85");
+    expect(blueprint).toContain('min_openshell_version: "0.0.99"');
+    expect(blueprint).toContain('max_openshell_version: "0.0.99"');
+    expect(manifest.openshellVersion).toBe("0.0.99");
     expect(review).toContain("binds NemoClaw's `0.0.85` selectors");
     expect(review).toContain("physical Docker 27 DGX Spark");
     expect(review).toContain("loopback first-byte test");
