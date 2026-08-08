@@ -49,7 +49,7 @@ export function writeFixtureFile(root: string, relativePath: string, content: st
   fs.writeFileSync(target, `${content.trim()}\n`, "utf8");
 }
 
-export function createPackageFixture(version = "0.1.34"): string {
+export function createPackageFixture(version = "0.1.54"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   packageFixtureDirs.add(tempDir);
   const packageDir = path.join(tempDir, "deepagents_code");

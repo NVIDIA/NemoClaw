@@ -1096,7 +1096,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const [name, expectedVersion] of [
       ["aiohttp", "3.14.3"],
       ["cryptography", "50.0.0"],
-      ["deepagents-code", "0.1.34"],
+      ["deepagents-code", "0.1.54"],
     ] as const) {
       expect(dockerfileBase).toContain(`'${name}': '${expectedVersion}'`);
     }

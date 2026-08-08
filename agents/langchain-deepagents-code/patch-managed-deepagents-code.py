@@ -10,7 +10,7 @@
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
 # posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.34 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.54 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, while hostile analytics values exercise patched entrypoints and
@@ -26,7 +26,7 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.34"
+EXPECTED_DCODE_VERSION = "0.1.54"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
@@ -67,6 +67,8 @@ os.environ.pop("DEEPAGENTS_CODE_SHELL_ALLOW_LIST", None)
 os.environ.pop("PYTHONHOME", None)
 os.environ.pop("PYTHONPATH", None)
 os.environ.pop("OPENAI_PROXY", None)
+os.environ.pop("DEEPAGENTS_CODE_APPROVAL_MODE", None)
+os.environ.pop("DEEPAGENTS_CODE_STARTUP_MODE", None)
 
 from deepagents_code._nemoclaw_managed import assert_safe_runtime
 
@@ -94,6 +96,8 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     os.environ.pop("PYTHONHOME", None)
     os.environ.pop("PYTHONPATH", None)
     os.environ.pop("OPENAI_PROXY", None)
+    os.environ.pop("DEEPAGENTS_CODE_APPROVAL_MODE", None)
+    os.environ.pop("DEEPAGENTS_CODE_STARTUP_MODE", None)
 
     from deepagents_code._nemoclaw_managed import (
         assert_safe_runtime as _nemoclaw_assert_safe_runtime,
@@ -164,6 +168,13 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.acp = False
     if hasattr(args, "startup_cmd"):
         args.startup_cmd = None
+    # 0.1.54 adds persisted startup/approval modes. Managed sessions always
+    # start in manual mode; the separately attested -y capability remains the
+    # only route to thread-scoped auto-approval.
+    if hasattr(args, "startup_mode"):
+        args.startup_mode = "manual"
+    if hasattr(args, "approval_mode"):
+        args.approval_mode = "manual"
 
     _nemoclaw_assert_safe_runtime()
     if (
@@ -228,7 +239,7 @@ async def _nemoclaw_handle_command(self, command: str) -> None:
             or (root == "/goal" and len(tokens) <= 3)
         )
     )
-    if blocked_model_params or blocked_grader_model or root in {"/auth", "/connect", "/update", "/auto-update", "/install", "/mcp"}:
+    if blocked_model_params or blocked_grader_model or root in {"/auth", "/connect", "/update", "/auto-update", "/install", "/mcp", "/mode", "/auto", "/yolo"}:
         await self._mount_message(UserMessage(command))
         await self._mount_message(AppMessage(_NEMOCLAW_MANAGED_UI_MESSAGE))
         return
@@ -559,7 +570,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Source-of-truth boundary: upstream Deep Agents Code 0.1.34 resolves and pins
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.54 resolves and pins
 # destination DNS locally, then disables environment proxies. That is a sound
 # standalone SSRF defense but cannot operate in OpenShell's proxy-only network
 # namespace, where direct DNS and direct target connections are rejected. The
@@ -599,7 +610,7 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.34 cannot inject
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.54 cannot inject
 # managed progressive-disclosure or Relay middleware into both main and subagent
 # graphs, nor attach a metadata-only callback to the compiled graph. Without this
 # root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo

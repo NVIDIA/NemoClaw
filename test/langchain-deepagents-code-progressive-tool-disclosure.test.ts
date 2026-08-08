@@ -26,7 +26,7 @@ const DISCLOSURE_MARKER = "NemoClaw-managed progressive tool disclosure.";
 const OBSERVABILITY_MARKER = "NemoClaw-managed backend-neutral observability.";
 
 const PACKAGE_SOURCES: Record<string, string> = {
-  "__init__.py": `"""Deep Agents Code 0.1.34 test package."""`,
+  "__init__.py": `"""Deep Agents Code 0.1.54 test package."""`,
   "__main__.py": `from deepagents_code.main import cli_main
 
 if __name__ == "__main__":
@@ -333,7 +333,7 @@ function writeFixtureFile(root: string, relativePath: string, content: string): 
   return target;
 }
 
-function makePatchFixture(version = "0.1.34"): PatchFixture {
+function makePatchFixture(version = "0.1.54"): PatchFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-disclosure-"));
   const packageDir = path.join(root, "deepagents_code");
   const sourcePaths = Object.entries(PACKAGE_SOURCES).map(([relativePath, source]) =>
@@ -670,7 +670,7 @@ describe("Deep Agents progressive tool disclosure", () => {
   });
 });
 
-describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
+describe("Deep Agents 0.1.54 progressive-disclosure build patch", () => {
   it("patches the complete package and isolated main/subagent wiring idempotently", () => {
     const fixture = makePatchFixture();
     const first = runPatcher(fixture);
@@ -765,7 +765,7 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
     const result = runPatcher(fixture);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Expected deepagents-code==0.1.34");
+    expect(result.stderr).toContain("Expected deepagents-code==0.1.54");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.existsSync(fixture.modulePath)).toBe(false);
   });

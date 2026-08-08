@@ -31,7 +31,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     );
   });
 
-  it("patches every 0.1.34 mutation and credential boundary idempotently", () => {
+  it("patches every 0.1.54 mutation and credential boundary idempotently", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     patchFixture(tempDir);
@@ -1421,7 +1421,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.34");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.54");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");

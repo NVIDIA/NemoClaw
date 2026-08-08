@@ -353,7 +353,7 @@ describe("agent base image provisioning", () => {
         makeAgent({
           name: "langchain-deepagents-code",
           displayName: "LangChain Deep Agents Code",
-          expectedVersion: "0.1.34",
+          expectedVersion: "0.1.54",
           dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
           dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
         }),
@@ -366,7 +366,7 @@ describe("agent base image provisioning", () => {
           ],
           validateImage: expect.any(Function),
           validationDescription:
-            "deepagents-code==0.1.34 and the immutable security package inventory",
+            "deepagents-code==0.1.54 and the immutable security package inventory",
         }),
       );
     });
@@ -386,7 +386,7 @@ describe("agent base image provisioning", () => {
         makeAgent({
           name: "langchain-deepagents-code",
           displayName: "LangChain Deep Agents Code",
-          expectedVersion: "0.1.34",
+          expectedVersion: "0.1.54",
           dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
           dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
         }),
@@ -417,7 +417,7 @@ describe("agent base image provisioning", () => {
         makeAgent({
           name: "langchain-deepagents-code",
           displayName: "LangChain Deep Agents Code",
-          expectedVersion: "0.1.34",
+          expectedVersion: "0.1.54",
           dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
           dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
         }),

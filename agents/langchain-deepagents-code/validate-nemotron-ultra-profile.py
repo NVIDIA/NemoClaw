@@ -33,7 +33,7 @@ from langchain_openai import ChatOpenAI
 
 EXPECTED_VERSIONS = {
     "nemoclaw-deepagents-profile": "0.1.0",
-    "deepagents-code": "0.1.34",
+    "deepagents-code": "0.1.54",
     "deepagents": "0.7.0a6",
     "langchain": "1.3.11",
     "langchain-core": "1.4.8",

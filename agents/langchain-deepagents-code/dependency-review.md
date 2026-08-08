@@ -16,9 +16,15 @@ Update it whenever `requirements.lock` changes.
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.
 The lock now selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `uv==0.11.33`, `mcp==1.28.1`, `Pillow==12.3.0`, and `pyasn1==0.6.4`.
 These selections clear `GHSA-cq5v-8q36-5273` and `GHSA-g6cj-pr64-35w5`.
-The direct MCP and pyasn1 requirements are temporary, hash-locked constraints for the released Deep Agents Code `0.1.34` graph.
-Deep Agents Code `0.1.45` and later contain the MCP and pyasn1 fixes, but their hook boundary has changed.
-Remove the temporary direct constraints only as part of a separately validated semantic migration to `>=0.1.45` that preserves NemoClaw's managed runtime hooks.
+The Deep Agents Code selector is the published `0.1.54` release at commit
+`81258067f4c74c3ede7d2b2895d9835137ba5977`. Its reviewed wheel is
+`deepagents_code-0.1.54-py3-none-any.whl` with SHA-256
+`fbfd0fc31caf5a8b0f1ff4ddea4da0de7837b0ffd3e6a222118c6480c99671ae`;
+the corresponding source archive has SHA-256
+`74df86f91a11d5dbace943d1c747bf67a2354670416c343a6e909133feecaf27`.
+This migration crosses the `0.1.45` MCP and pyasn1 fixes while retaining the
+managed hook, approval, credential, update, and startup-mode guards at the
+NemoClaw launcher and exact-version package-patch boundaries.
 
 The image build runs `pip3 check` and asserts all seven installed package versions, including Deep Agents Code itself, before publishing.
 The complete point-in-time audit now reports only two duplicate database records for `setuptools==82.0.1`; that record is outside the Critical/High remediation scope.
@@ -26,7 +32,7 @@ This review does not claim the complete lock is vulnerability-free.
 
 ## Managed `fetch_url` Proxy Adapter
 
-Deep Agents Code `0.1.34` deliberately disables ambient proxies and resolves
+Deep Agents Code `0.1.54` deliberately disables ambient proxies and resolves
 destination DNS locally before pinning the address used by `fetch_url`. That is
 the wrong transport inside a NemoClaw-managed sandbox: ordinary egress and
 destination resolution must pass through the policy proxy, so the direct path
@@ -62,18 +68,18 @@ behavior.
 
 ## Released Nemotron 3 Ultra Profile
 
-Deep Agents Code `0.1.34` pins `deepagents==0.7.0a6`, whose official wheel
+Deep Agents Code `0.1.54` pins `deepagents==0.7.0a6`, whose official wheel
 contains the Nemotron 3 Ultra harness profile merged in Deep Agents PR #4192.
 NemoClaw no longer vendors or overlays that source.
 
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `8fe85c62293c74147848732dc56c33e8ab60133fa41c071da4328ac60f2bf44f`
-- Adapter project metadata SHA-256: `7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686`
+- Adapter module SHA-256: `8fba11c64c561cad2568714363199f6ac28826e028f7743e19a2439a6de5a874`
+- Adapter project metadata SHA-256: `c7bc651acc8c719aafb74993578b31c105a2190dc7dcf329c52c098cb6fa9c5f`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
-  requirements are the exact `deepagents-code==0.1.34` and
+  requirements are the exact `deepagents-code==0.1.54` and
   `deepagents==0.7.0a6` entries covered by the lockfile audit command above; no
   additional third-party distribution is introduced.
 
@@ -216,7 +222,7 @@ rejection, and unchanged concrete-command states. The
 deleted source-backport license path, `LICENSE.langchain-deepagents`, is not
 staged into the image, and image regression tests enforce that absence.
 
-Deep Agents Code `0.1.34` is the released consumer; prerelease risk is limited
+Deep Agents Code `0.1.54` is the released consumer; prerelease risk is limited
 to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
 consumer and SDK are hash locked and all source, version, middleware, graph,
 and dispatch contracts are enforced by the isolated image-build validator.
