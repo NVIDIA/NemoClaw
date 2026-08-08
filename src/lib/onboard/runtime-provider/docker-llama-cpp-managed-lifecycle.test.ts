@@ -395,7 +395,7 @@ function dockerFixture(
                 HostIp: publishedHostIp,
                 HostPort: effectivePublishedHostPort,
               }))
-            : [],
+            : undefined,
         },
       },
       Mounts: [

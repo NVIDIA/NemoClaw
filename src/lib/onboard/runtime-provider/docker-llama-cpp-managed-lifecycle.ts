@@ -328,14 +328,7 @@ function parseInspection(
       throw new Error("Docker llama.cpp configured host port is not the bound host port.");
     }
     const publishedBindings = ports[portKey];
-    if (mode === "created") {
-      if (
-        publishedBindings !== null &&
-        (!Array.isArray(publishedBindings) || publishedBindings.length !== 0)
-      ) {
-        throw new Error("Docker llama.cpp created container has unexpected published ports.");
-      }
-    } else {
+    if (mode === "runtime") {
       if (!Array.isArray(publishedBindings) || publishedBindings.length !== 1) {
         throw new Error("Docker llama.cpp container has unexpected published ports.");
       }
