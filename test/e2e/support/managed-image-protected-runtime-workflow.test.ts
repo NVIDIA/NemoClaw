@@ -50,6 +50,26 @@ describe("protected managed-image runtime workflow boundary", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  it("binds protected risk evidence to the isolated exact candidate checkout", () => {
+    const value = workflow();
+    const jobEnv = runtimeJob(value).env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_TESTED_ROOT = "${{ github.workspace }}";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime env must bind NEMOCLAW_E2E_TESTED_ROOT to ${{ github.workspace }}/.candidate-runtime",
+    );
+  });
+
+  it("binds protected candidate identity on ordinary main runs", () => {
+    const value = workflow();
+    const jobEnv = runtimeJob(value).env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha }}";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+
   it("does not record manual PR risk signals on main pushes", () => {
     const value = workflow();
     const jobEnv = multiarchJob(value).env as Record<string, unknown>;

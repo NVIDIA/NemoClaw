@@ -3,8 +3,9 @@
 
 # Documentation Writing and Review Routing
 
-Use this routing contract in any skill that writes or reviews comments, test titles, PR text,
-documentation, changelog entries, Announcements, or maintainer guidance.
+Use this routing contract in any skill that writes or reviews agent responses, progress updates,
+tool-call labels or descriptions, GitHub text, comments, test titles, documentation, changelog
+entries, Announcements, or maintainer guidance.
 
 ## Load the Guidance for the Surface
 
@@ -14,6 +15,7 @@ documentation, changelog entries, Announcements, or maintainer guidance.
   public-facing documentation.
   It owns documentation procedures, patterns, and validation.
 
+Follow the [Agent-Written Text](../../../WRITING.md#agent-written-text) requirements at every boundary that section defines.
 Do not copy either guide's rules into a skill.
 
 ## Complete the Assigned Review

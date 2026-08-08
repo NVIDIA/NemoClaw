@@ -675,7 +675,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(createPr).toContain("rerun the review against the new `HEAD`");
     expect(createPr).toContain("receipt identifies that commit");
 
-    expect(followUp).toContain("Run a final complete, head-stable collection");
+    expect(followUp).toContain("Run one final complete collection for the latest PR commit");
 
     expect(followUp).toContain("If the collection contains a new actionable finding, do not push");
     expect(followUp).toContain("Deferral does not authorize a push with an unresolved blocking");
