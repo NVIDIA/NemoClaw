@@ -39,7 +39,7 @@ describe("regression E2E selector", () => {
     "unknown",
     "whatsapp-qr-compact-e2",
     "whatsapp-qr-compact-e2e-extra",
-  ])("rejects unsupported jobs input %j", (jobs) => {
+  ])("does not select the WhatsApp regression for unsupported jobs input %j", (jobs) => {
     expect(select(jobs)).toBe("whatsapp_qr_compact=false");
   });
 });
