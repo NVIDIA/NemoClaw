@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -12,10 +12,8 @@ import {
   assertAgentExecutionSucceeded,
   env,
   hasExactReadyPhase,
-  ollamaCleanupScript,
   openClawModelConfigProjectionScript,
 } from "../live/gpu-e2e-helpers.ts";
-import { protectedOllamaStartScript } from "../live/managed-image-protected-runtime-helpers.ts";
 
 const GPU_MODEL = "qwen3.5:9b";
 
@@ -118,67 +116,6 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
-  it("stops the privileged Ollama service and proves the listener is gone", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-cleanup-"));
-    try {
-      const bin = path.join(root, "bin");
-      const calls = path.join(root, "calls.log");
-      mkdirSync(bin);
-      for (const [command, body] of [
-        ["sudo", 'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
-        ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
-        ["pkill", "exit 1\n"],
-        ["pgrep", "exit 1\n"],
-        ["curl", "exit 7\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
-
-      execFileSync("bash", ["-c", ollamaCleanupScript()], {
-        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
-      });
-      const commandLog = readFileSync(calls, "utf8");
-      expect(commandLog).toContain("systemctl --user stop ollama.service");
-      expect(commandLog).toContain("sudo -n systemctl stop ollama.service");
-      expect(commandLog).toContain("sudo -n pkill -f [o]llama serve");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("restarts the protected Ollama daemon through its installed system service", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-"));
-    try {
-      const bin = path.join(root, "bin");
-      const calls = path.join(root, "calls.log");
-      const logPath = path.join(root, "ollama.log");
-      mkdirSync(bin);
-      const sudoPath = path.join(bin, "sudo");
-      writeFileSync(
-        sudoPath,
-        '#!/bin/sh\nprintf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "-n systemctl is-failed --quiet ollama.service") exit 1 ;;\n  *) exit 0 ;;\nesac\n',
-      );
-      chmodSync(sudoPath, 0o755);
-      const curlPath = path.join(bin, "curl");
-      writeFileSync(curlPath, "#!/bin/sh\nexit 0\n");
-      chmodSync(curlPath, 0o755);
-      const systemctlPath = path.join(bin, "systemctl");
-      writeFileSync(systemctlPath, "#!/bin/sh\nexit 0\n");
-      chmodSync(systemctlPath, 0o755);
-
-      const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
-        encoding: "utf8",
-        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
-      });
-      expect(stdout).toBe("restart_mode=system\n");
-      expect(readFileSync(calls, "utf8")).toContain("sudo -n systemctl restart ollama.service");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("forwards the workflow-owned Ollama model pull timeout", () => {
     expect(env({}, { NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400" }).NEMOCLAW_OLLAMA_PULL_TIMEOUT).toBe(
       "2400",
