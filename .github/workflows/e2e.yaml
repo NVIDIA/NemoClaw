@@ -7276,12 +7276,12 @@ jobs:
         with:
           build-cli: "false"
 
-      - name: Run WhatsApp compact QR live test
+      - name: Run WhatsApp compact QR code E2E test
         run: |-
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/whatsapp-qr-compact.test.ts
 
-      - name: Upload WhatsApp compact QR artifacts
+      - name: Upload WhatsApp compact QR code artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 

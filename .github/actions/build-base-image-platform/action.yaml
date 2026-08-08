@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: build-base-image-platform
-description: Build and publish one immutable base-image platform digest.
+description: Build and publish one immutable base image digest for a platform.
 
 inputs:
   agent:
@@ -15,7 +15,7 @@ inputs:
     description: Docker platform to build.
     required: true
   dockerfile:
-    description: Base-image Dockerfile path.
+    description: Path to the base image Dockerfile.
     required: true
   image:
     description: Image repository relative to the registry.
@@ -85,7 +85,7 @@ runs:
             exit 1
           fi
           if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
-            echo "ERROR: OpenClaw version must be a whole decimal dotted version (for example, 2026.6.10)." >&2
+            echo "ERROR: OpenClaw version must contain one or more decimal integers separated by periods (for example, 2026.6.10)." >&2
             exit 1
           fi
         fi

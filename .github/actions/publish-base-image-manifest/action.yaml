@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: publish-base-image-manifest
-description: Validate platform digests and publish one multi-platform base-image manifest.
+description: Validate platform digests and publish one multi-platform base image manifest.
 
 inputs:
   agent:
-    description: Agent identifier stored in the managed-base contract.
+    description: Agent identifier stored in the managed base image contract.
     required: true
   display-name:
     description: Agent name used in validation errors.

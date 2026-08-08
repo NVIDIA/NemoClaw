@@ -940,7 +940,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("rejects CLI artifact consumer registry drift", () => {
+  it("rejects a missing CLI artifact consumer in the shared job contract", () => {
     const consumers = E2E_JOB_CONTRACT.cliArtifactConsumers as unknown as string[];
     const removed = consumers.pop();
     expect(removed).toBeDefined();
