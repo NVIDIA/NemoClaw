@@ -218,12 +218,22 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
       "      export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
       "      export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
       "    fi; \\",
-      `    ${agentInstallCommand} \\`,
-      '    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \\',
+      `    ${agentInstallCommand}`,
+      "",
+    ].join("\n");
+    const managedUnionInstallRun = dockerfileInstructions(finalStage).find(
+      (instruction) =>
+        instruction.keyword === "RUN" &&
+        instruction.body.includes("--agent hermes --phase managed-image-capability-union"),
+    );
+    const expectedManagedUnionInstallRun = [
+      "RUN --network=none --mount=from=hermes-managed-teams-wheels,target=/opt/nemoclaw-hermes-teams-wheels,ro \\",
+      '    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \\',
+      "        UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels \\",
       "        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \\",
       "            --agent hermes --phase managed-image-capability-union; \\",
-      "    fi \\",
-      "    && /opt/hermes/.venv/bin/python -I -c \\",
+      "    fi; \\",
+      "    /opt/hermes/.venv/bin/python -I -c \\",
       "        \"from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual\"",
       "",
     ].join("\n");
@@ -258,6 +268,7 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
     }
     expect(packageInstallRun?.text).toBe(expectedPackageInstallRun);
     expect(packageInstallRun?.text).not.toContain("else");
+    expect(managedUnionInstallRun?.text).toBe(expectedManagedUnionInstallRun);
     expect(finalStage.match(/^ENV (?:SSL_CERT_FILE|REQUESTS_CA_BUNDLE)=/gmu) ?? []).toEqual([]);
   });
 });
