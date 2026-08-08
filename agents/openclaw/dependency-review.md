@@ -42,10 +42,11 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   The PR and main workflows upload the resulting reports.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
   The action makes at most three `npm audit signatures` attempts.
-  It retries only when a failed attempt contains `npm error Failed to download`.
-  For other nonzero results, including invalid or missing signatures, the action stops after the first attempt.
+  It retries a failed attempt only when the output contains `npm error Failed to download`.
+  A failed attempt without this marker stops further attempts.
+  Any final nonzero status fails the action.
   The report directory stores each attempt in `npm-audit-signatures-attempt-<n>.txt`.
-  After a failed attempt, the action copies npm debug logs to `npm-audit-signature-debug/`.
+  After a failed attempt, the action copies available npm debug logs to `npm-audit-signature-debug/`.
   Removal condition: delete the PR #6739 bootstrap checkout, its paired conditional audit step, and the bootstrap-specific test assertions in the first follow-up after this PR merges, before the next release tag; all later PRs must use the normal base-SHA action path.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --prefix agents/openclaw/wechat-runtime`.
 - Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.
