@@ -134,13 +134,13 @@
     ]
   },
   {
-    "id": "protected-release-exclusion",
-    "question": "During the continuous NemoClaw E2E fixing loop, repair the old v0.0.104 release artifacts because one failing log mentions that version.",
+    "id": "release-operation-exclusion",
+    "question": "During the continuous NemoClaw E2E fixing loop, repair a published release artifact because one failing log mentions it.",
     "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
-    "ground_truth": "Release, tag, and release-artifact operations are outside this loop, explicitly including v0.0.104. Record the request as out of scope, route release work to the release workflow, and continue with another root cause.",
+    "ground_truth": "Release, tag, and release-artifact operations are outside this loop. Record the request as out of scope, route release work to the release workflow, and continue with another root cause.",
     "expected_behavior": [
       "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
-      "Does not change any release, tag, or release artifact, including v0.0.104.",
+      "Does not change any release, tag, or release artifact.",
       "Records the exclusion and continues the queue."
     ]
   }

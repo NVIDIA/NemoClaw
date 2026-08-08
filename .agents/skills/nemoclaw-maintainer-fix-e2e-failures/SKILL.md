@@ -13,7 +13,7 @@ Run a persistent, multi-maintainer loop against automatic `main` E2E results. Us
 ## Set the Loop Contract
 
 1. Start without a scheduled endpoint. Do not infer an endpoint from local time, a shift boundary, a passing run, or an empty queue.
-2. Keep release operations out of scope. Never change, retag, publish, or otherwise touch a release, tag, or release artifact during this workflow. Route release work to the existing release workflow. This explicitly includes `v0.0.104`.
+2. Keep release operations out of scope. Never change, retag, publish, or otherwise touch a release, tag, or release artifact during this workflow. Route release work to the existing release workflow.
 3. Confirm maintainer authority. Merge only when the invocation grants it; otherwise leave the PR approval-ready and continue the loop.
 4. Check Git and GitHub access. Follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) on access failure.
 5. Fetch trusted `origin/main`. Read its PR-limit policy with `git show origin/main:.github/workflows/pr-limit.yaml`. For a non-exempt author, do not create a claim that would exceed the 10-open-PR limit.

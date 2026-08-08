@@ -39,7 +39,7 @@ Use this handoff only when responsibility moves to another active agent or the o
 - Manual duplicate E2E runs: none
 - Coverage weakened or skipped: none
 - Unrelated merges blocked: none
-- Release, tag, or release artifact state touched: no (including `v0.0.104`)
+- Release, tag, or release artifact state touched: no
 ```
 
 Count a root cause as **verified fixed** only when a later automatic `main` run uses a descendant of the merge commit, reaches the original failure phase for every affected target, and those jobs pass without the original causal signature. If a target is absent, replaced, skipped, or still running, keep the PR under **Merged, awaiting verification**.
