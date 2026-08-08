@@ -14,6 +14,7 @@ trap cleanup EXIT
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 seed_dir="$script_dir/npm-cache-seed"
+seed_archive_count=0
 if [ -d "$seed_dir" ]; then
   for seed_source in "$seed_dir"/*.tgz "$seed_dir"/*.tgz.part-000; do
     [ -e "$seed_source" ] || continue
@@ -70,7 +71,37 @@ NODE
       cat "$install_log" >&2
       exit "$install_status"
     }
+    seed_archive_count=$((seed_archive_count + 1))
   done
+fi
+
+# A materialized protected-build seed contains the complete target-specific
+# lock graph. Consume it before attempting registry access: npm can otherwise
+# hit its internal exit-handler failure after downloading an archive without
+# committing that archive to its content cache, making the offline recovery
+# path depend on registry DNS that protected GPU runners intentionally lack.
+if [ "$seed_archive_count" -gt 0 ]; then
+  if npm ci "$@" --offline >"$install_log" 2>&1; then
+    cat "$install_log"
+    cleanup
+    trap - EXIT
+    exit 0
+  else
+    install_status=$?
+  fi
+
+  cat "$install_log" >&2
+  if grep -Fq 'Exit handler never called!' "$install_log" \
+    && npm ls --all --json "$@" >"$install_log" 2>&1; then
+    echo "[nemoclaw] npm hit its internal exit-handler failure after completing the seeded locked dependency tree" >&2
+    cleanup
+    trap - EXIT
+    exit 0
+  fi
+  if ! grep -Fq 'npm error code ENOTCACHED' "$install_log"; then
+    exit "$install_status"
+  fi
+  echo "[nemoclaw] pinned npm cache seed was incomplete; continuing with the bounded registry install" >&2
 fi
 
 if npm ci "$@" >"$install_log" 2>&1; then

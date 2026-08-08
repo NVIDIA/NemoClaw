@@ -207,12 +207,12 @@ describe("MCP tool discovery image contract", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "installs the pinned cache seed without registry access",
+    "installs the complete pinned cache seed offline before registry access",
     async () => {
       const { cache, fixture, retryHelper } = createCacheSeedFixture();
 
       try {
-        const installResult = spawnSync("/bin/sh", [retryHelper, "--offline", "--ignore-scripts"], {
+        const installResult = spawnSync("/bin/sh", [retryHelper, "--ignore-scripts"], {
           encoding: "utf8",
           cwd: fixture,
           env: { ...process.env, NPM_CONFIG_CACHE: cache },
