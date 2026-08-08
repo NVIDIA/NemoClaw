@@ -79,21 +79,21 @@ Record this identity and completeness evidence with the collection:
 
 Report the collection as `blocked` if the host cannot establish every condition in this list. Do not edit, commit, or push from a blocked collection.
 
-Re-evaluate findings from an older source commit against the local candidate `HEAD`. Record whether each finding remains in that candidate. Apply reviewer or bot filters only after collection is complete.
+Re-evaluate findings from an earlier review against the local candidate `HEAD`. Record whether each finding remains in that commit. Apply reviewer or bot filters only after collection is complete.
 
 Record whether the host retains collection evidence. If the host returns an artifact path or identifier, record it, remove that exact artifact after classification, and verify its absence. If the host retains no artifact, record `retained evidence: none`. Report the collection as `blocked` when the host retains evidence but cannot remove it or verify its absence.
 
 ## Collect One Complete Review Cycle
 
-Before editing, collect and classify all review signals in the latest completed head-stable collection:
+Before editing, collect and classify all review signals for the latest PR commit as follows. The initial and final `headRefOid` values must match:
 
-1. Re-read `headRefOid`. Collect current required-check failures, issue comments, submitted reviews, inline threads with resolution state, advisor findings, and required independent-review findings. Record each source commit when GitHub provides it; otherwise record the collected head SHA.
-2. Re-evaluate findings created for an older head against the current head. Exclude a finding only when the changed code is gone or evidence shows that the defect is resolved. Record the disposition before editing.
+1. Re-read `headRefOid`. Collect current required-check failures, issue comments, submitted reviews, inline threads with resolution state, advisor findings, and required independent-review findings. Record each source commit when GitHub provides it. Otherwise, record the latest PR commit SHA.
+2. Re-evaluate findings created for an earlier PR commit against the latest PR commit. Exclude a finding only when the changed code is gone or evidence shows that the defect is resolved. Record the disposition before editing.
 3. Group findings by root cause. Name the behavior contract and acceptance evidence for each group.
 4. Inspect adjacent paths that implement the same operation or failure class. Record which sibling paths were checked.
 5. Decide which groups are valid, false positives, design-changing, or blocked before changing files.
 
-Do not create a separate commit or push for each finding. Apply all findings in the same root-cause group as one coherent change set. Classify every finding in the latest completed head-stable collection before beginning that change set. If the user tells you to stop, remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. Then stop without further edits, commits, or pushes. The user may explicitly defer a non-blocking suggestion or allow work to proceed without an optional pending review. Record that decision before editing. Do not proceed without a required review. Deferral does not authorize a push with an unresolved blocking, correctness, security, data safety, supported-contract, required-review, or required-check finding.
+Do not create a separate commit or push for each finding. Apply all findings in the same root-cause group as one coherent change set. Classify every finding collected for the unchanged latest PR commit before beginning that change set. If the user tells you to stop, remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. Then stop without further edits, commits, or pushes. The user may explicitly defer a non-blocking suggestion or allow work to proceed without an optional pending review. Record that decision before editing. Do not proceed without a required review. Deferral does not authorize a push with an unresolved blocking, correctness, security, data safety, supported-contract, required-review, or required-check finding.
 
 ### Sensitive-Workflow State Matrix
 
@@ -134,14 +134,14 @@ After editing:
 3. Run the independent documentation writer review against that commit.
 4. If the review reports valid findings, apply them and rerun affected validation.
 5. Commit the corrections and review the new `HEAD`.
-6. Run a final complete, head-stable collection.
+6. Run one final complete collection for the latest PR commit. Restart the collection if `headRefOid` changes.
 7. Classify every new or changed finding.
 8. If the collection contains a new actionable finding, do not push. Return to classification and repair, rerun affected validation, commit the corrections, review the new `HEAD`, and repeat the final collection.
 9. Remove retained collection evidence and verify its absence.
 10. Push once when the receipt identifies the reviewed `HEAD` and no actionable finding remains.
-11. Monitor the pushed head for new actionable findings.
+11. Monitor the latest PR commit for new actionable findings.
 
-Repeat the applicable steps only when the reviewed or pushed head produces a new actionable finding. Stop if the user tells you to stop.
+Repeat the applicable steps only when the commit under review or latest PR commit produces a new actionable finding. Stop if the user tells you to stop.
 
 If a push or GitHub query has an access error, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md).
 Resolve merge conflicts and dirty-worktree problems in the PR workflow.

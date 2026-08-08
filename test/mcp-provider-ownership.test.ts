@@ -513,6 +513,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 policies.getPresetContentGatewayState = () => "absent";
+policies.getLiveSandboxPolicyEntryDigest = () => null;
 policies.removePreset = () => true;
 processRecovery.executeSandboxCommand = () => ({ status: 0, stdout: "", stderr: "" });
 processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });

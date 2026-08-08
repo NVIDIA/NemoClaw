@@ -1252,6 +1252,12 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "static-checks",
   "wechat-runtime-audit",
 ]);
+const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "PR Review / Advisor";
+const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
+const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
+  "PR review advisor (GPT-5.6 Terra)",
+  "PR review advisor (Nemotron 3 Ultra)",
+]);
 
 interface ActionRunMetadata {
   attempt: number;
@@ -1827,6 +1833,66 @@ function currentCheckRollup(
   const actionRunId = (check: StatusCheck): string | undefined =>
     check.detailsUrl?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
 
+  const actionRunJobIdentity = (check: StatusCheck): { runId: string; jobId: string } | null => {
+    if (!check.detailsUrl) return null;
+    let url: URL;
+    try {
+      url = new URL(check.detailsUrl);
+    } catch {
+      return null;
+    }
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "github.com" ||
+      url.port ||
+      url.username ||
+      url.password
+    ) {
+      return null;
+    }
+    const segments = url.pathname.split("/").filter(Boolean);
+    if (
+      segments.length !== 7 ||
+      `${segments[0]}/${segments[1]}` !== repo ||
+      segments[2] !== "actions" ||
+      segments[3] !== "runs" ||
+      segments[5] !== "job" ||
+      !/^[1-9][0-9]*$/u.test(segments[4]) ||
+      !/^[1-9][0-9]*$/u.test(segments[6])
+    ) {
+      return null;
+    }
+    return { runId: segments[4], jobId: segments[6] };
+  };
+
+  const isAuthenticatedAdvisoryPrReviewCheck = (check: StatusCheck): boolean => {
+    const checkName = check.name ?? "";
+    if (
+      check.__typename !== "CheckRun" ||
+      check.workflowName !== PR_REVIEW_ADVISOR_WORKFLOW_NAME ||
+      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName)
+    ) {
+      return false;
+    }
+    const identity = actionRunJobIdentity(check);
+    if (!identity) return false;
+    const run = actionRunMetadata(identity.runId);
+    const job = latestAttemptJobs(identity.runId)?.get(identity.jobId);
+    const checkStatus = check.status?.toUpperCase() ?? null;
+    const checkConclusion = check.conclusion?.toUpperCase() ?? null;
+    return Boolean(
+      run &&
+        job &&
+        run.event === "pull_request_target" &&
+        run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
+        run.hasPullRequests === true &&
+        run.exactDiff === true &&
+        job.name === checkName &&
+        job.status === checkStatus &&
+        job.conclusion === checkConclusion,
+    );
+  };
+
   const isTrustedCustomE2eCheck = (check: StatusCheck): boolean =>
     e2eCoordinationEvidence.trustedCustomCheckId !== undefined &&
     check.name === "E2E / PR Gate" &&
@@ -1916,8 +1982,11 @@ function currentCheckRollup(
     return "unknown";
   }
 
+  const mergeRelevantStatusChecks = statusCheckRollup.filter(
+    (check) => !isAuthenticatedAdvisoryPrReviewCheck(check),
+  );
   const allActionRunIds = new Set(
-    statusCheckRollup.map(actionRunId).filter((runId): runId is string => Boolean(runId)),
+    mergeRelevantStatusChecks.map(actionRunId).filter((runId): runId is string => Boolean(runId)),
   );
   const hasMeaningfulAlternateRun = (runId: string): boolean => {
     const { event, path } = actionRunMetadata(runId) ?? {};
@@ -1931,7 +2000,7 @@ function currentCheckRollup(
   };
 
   const groups = new Map<string, StatusCheck[]>();
-  for (const check of statusCheckRollup) {
+  for (const check of mergeRelevantStatusChecks) {
     const identity = JSON.stringify([
       check.__typename ?? (check.context ? "StatusContext" : "CheckRun"),
       check.name ?? check.context ?? "(unknown)",

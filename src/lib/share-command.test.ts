@@ -168,7 +168,8 @@ describe("ShareCommand mount/status actions", () => {
           sshfsConfigPath = args[configFlagIndex + 1];
           expect(fs.statSync(sshfsConfigPath).mode & 0o777).toBe(0o600);
           expect(args).toContain("sftp_server=/usr/lib/openssh/sftp-server");
-          expect(args).toContain("openshell-alpha:/workspace");
+          expect(args).toContain("openshell-alpha.default:/workspace");
+          expect(args).not.toContain("openshell-alpha:/workspace");
           expect(args.at(-1)).toBe(localMount);
           return { status: 0, stdout: "", stderr: "" };
         }
@@ -181,8 +182,13 @@ describe("ShareCommand mount/status actions", () => {
       expect(deps.getSshConfig).toHaveBeenCalledWith("alpha");
       expect(spawnSyncMock).toHaveBeenCalledWith(
         "sshfs",
-        expect.arrayContaining(["openshell-alpha:/workspace", localMount]),
+        expect.arrayContaining(["openshell-alpha.default:/workspace", localMount]),
         expect.objectContaining({ timeout: 30_000 }),
+      );
+      expect(spawnSyncMock).not.toHaveBeenCalledWith(
+        "sshfs",
+        expect.arrayContaining(["openshell-alpha:/workspace"]),
+        expect.anything(),
       );
       expect(sshfsConfigPath).not.toBe("");
       expect(fs.existsSync(sshfsConfigPath)).toBe(false);
