@@ -64,7 +64,17 @@ Group valid code-changing findings by root cause. Route each valid code-changing
 
 This workflow owns the push gate. After the routed repair returns, follow the numbered steps under `After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for validation, the commit, the independent documentation writer review, the final collection, evidence removal, and the push. If that review identifies a valid finding, return the repair to `nemoclaw-contributor-implement-issue`, commit the result, and rerun the review against the new `HEAD`. Push after the independent documentation writer review covers the final `HEAD`, every blocking finding is resolved, and the receipt identifies that commit.
 
-Immediately before pushing, repeat the complete head-stable collection. Do not push while that collection contains an unclassified or actionable finding. Remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. If the user tells you to stop, stop without pushing. The user may defer only a non-blocking suggestion; record that disposition before pushing.
+Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
+
+Apply these push conditions:
+
+- Do not push while any finding is unclassified.
+- Do not push while any unresolved finding requires a change.
+- After classification, remove retained collection evidence by its exact artifact path or identifier.
+- Verify that the artifact is absent.
+- If the host retained no artifact, record `retained evidence: none`.
+- If the user tells you to stop, stop without pushing.
+- The user may defer only a non-blocking suggestion. Record that disposition before pushing.
 
 ### Hook Evidence
 
