@@ -130,6 +130,7 @@ function disabledPlan() {
     probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
     profile: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
     recipeRef: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
+    requestGuard: "required",
     required: true,
     runner: null,
   };
@@ -267,6 +268,7 @@ function executionPlan() {
       agentQualification: agentQualification(),
       probeBounds: probeBounds(),
       probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+      requestGuard: "required",
     },
     recipe: {
       capabilities: {
@@ -335,8 +337,13 @@ function executionPlan() {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
         limits: {
+          maxRequestBodyBytes: 1048576,
+          maxRequestHeaderBytes: 32768,
+          maxOutputTokens: 4096,
           requestTimeoutSeconds: 900,
+          shutdownTimeoutSeconds: 25,
         },
+        requestGuard: { upstreamPort: 8082 },
       },
       server: {
         technology: "llama.cpp",
@@ -555,6 +562,7 @@ describe("llama.cpp DGX Spark qualification contract", () => {
           microBatchSize: 256,
           kvCache: { key: "q8_0", value: "q8_0" },
           limits: {
+            ...value.recipe.serve.limits,
             requestTimeoutSeconds: 600,
           },
         },
@@ -605,6 +613,40 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         ...value,
         recipe: {
           ...value.recipe,
+          serve: {
+            ...value.recipe.serve,
+            limits: { ...value.recipe.serve.limits, maxOutputTokens: 262145 },
+          },
+        },
+      }),
+    ).toThrow("maximum output tokens is invalid");
+    expect(() =>
+      parseLlamaCppDgxSparkExecutionPlan({
+        ...value,
+        recipe: {
+          ...value.recipe,
+          serve: {
+            ...value.recipe.serve,
+            requestGuard: { upstreamPort: value.recipe.serve.port },
+          },
+        },
+      }),
+    ).toThrow("serve contract is invalid");
+    const { shutdownTimeoutSeconds: _removed, ...incompleteLimits } = value.recipe.serve.limits;
+    expect(() =>
+      parseLlamaCppDgxSparkExecutionPlan({
+        ...value,
+        recipe: {
+          ...value.recipe,
+          serve: { ...value.recipe.serve, limits: incompleteLimits },
+        },
+      }),
+    ).toThrow("request limits has unexpected fields");
+    expect(() =>
+      parseLlamaCppDgxSparkExecutionPlan({
+        ...value,
+        recipe: {
+          ...value.recipe,
           policy: { ...value.recipe.policy, egress: "enabled" },
         },
       }),
@@ -636,6 +678,12 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         },
       }),
     ).toThrow("protocol probes are invalid");
+    expect(() =>
+      parseLlamaCppDgxSparkExecutionPlan({
+        ...value,
+        qualification: { ...value.qualification, requestGuard: "disabled" },
+      }),
+    ).toThrow("request-guard activation is invalid");
   });
 
   it("accepts one bounded receipt with only allowlisted workflow, image, model, and Spark evidence (#8260)", () => {
