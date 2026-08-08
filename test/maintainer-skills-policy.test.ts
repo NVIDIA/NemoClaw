@@ -327,8 +327,10 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(updateDocs).not.toContain("scan `<previous-tag>..origin/main`");
     expect(updateDocs).toContain("planned release date");
     expect(updateDocs).toContain("Stop before PR creation");
-    expect(createPr).toContain('--label "area: docs"');
-    expect(createPr).not.toContain('--label "documentation"');
+    expect(createPr).not.toContain('--label "area: docs"');
+    expect(createPr).toContain(
+      "Leave label selection and application to the repository triage workflow",
+    );
     expect(evening.indexOf("/nemoclaw-contributor-update-docs for <version>")).toBeLessThan(
       evening.indexOf("Load `cut-release-tag`"),
     );
@@ -673,7 +675,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(createPr).toContain("rerun the review against the new `HEAD`");
     expect(createPr).toContain("receipt identifies that commit");
 
-    expect(followUp).toContain("Run a final complete, head-stable collection");
+    expect(followUp).toContain("Run one final complete collection for the latest PR commit");
 
     expect(followUp).toContain("If the collection contains a new actionable finding, do not push");
     expect(followUp).toContain("Deferral does not authorize a push with an unresolved blocking");

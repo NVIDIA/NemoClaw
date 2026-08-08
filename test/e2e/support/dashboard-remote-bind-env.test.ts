@@ -11,21 +11,21 @@ import {
 
 describe("dashboard remote-bind E2E environment", () => {
   it("prepares remote dashboard exposure during install and onboarding", () => {
-    const env = buildDashboardRemoteBindEnv("e2e-dashboard-remote-bind", {
+    const env = buildDashboardRemoteBindEnv("e2e-dashboard-bind", {
       NVIDIA_INFERENCE_API_KEY: "test-key",
     });
 
     expect(env).toMatchObject({
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
       NEMOCLAW_RECREATE_SANDBOX: "1",
-      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind",
+      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-bind",
       NVIDIA_INFERENCE_API_KEY: "test-key",
     });
     expect(env.PATH).toContain(buildAvailabilityProbeEnv().PATH);
   });
 
   it("does not allow command overlays to disable remote exposure preparation", () => {
-    const env = buildDashboardRemoteBindEnv("e2e-dashboard-remote-bind", {
+    const env = buildDashboardRemoteBindEnv("e2e-dashboard-bind", {
       NEMOCLAW_DASHBOARD_BIND: "127.0.0.1",
     });
 
@@ -40,7 +40,7 @@ describe("dashboard remote-bind E2E environment", () => {
           stdout: "\u001B[32m✓\u001B[0m Dashboard port forward re-established.\n",
           stderr: "client_loop: send disconnect: Broken pipe\n",
         },
-        "e2e-dashboard-remote-bind",
+        "e2e-dashboard-bind",
         "18789",
       ),
     ).toBe(true);
@@ -54,7 +54,7 @@ describe("dashboard remote-bind E2E environment", () => {
           stdout: "Connecting to sandbox...\n",
           stderr: "",
         },
-        "e2e-dashboard-remote-bind",
+        "e2e-dashboard-bind",
         "18789",
       ),
     ).toBe(false);

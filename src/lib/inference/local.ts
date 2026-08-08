@@ -106,13 +106,26 @@ export {
 
 export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 
-// Hosts that the WSL-side onboard CLI tries when probing Ollama. Native Linux
-// and macOS only ever reach Ollama on the local loopback. WSL with Docker
-// Desktop can also reach a Windows-host Ollama through the docker-desktop
-// integration's `host.docker.internal` alias when that host explicitly exposes
-// Ollama outside Windows loopback.
+// Hosts that local-provider discovery may try when probing Ollama. The Windows
+// onboarding path separately checks host.docker.internal from Docker Desktop's
+// network context because the alias may not resolve from the WSL host.
 export const OLLAMA_LOCALHOST = "127.0.0.1";
 export const OLLAMA_HOST_DOCKER_INTERNAL = "host.docker.internal";
+
+/** Build the credential-free Docker Desktop probe for Windows-host Ollama. */
+export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
+  return [
+    "run",
+    "--rm",
+    CONTAINER_REACHABILITY_IMAGE,
+    "-sf",
+    "--connect-timeout",
+    "2",
+    "--max-time",
+    "5",
+    `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
+  ];
+}
 
 let _resolvedOllamaHost: string | null = null;
 

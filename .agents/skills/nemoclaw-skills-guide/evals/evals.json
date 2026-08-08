@@ -1,0 +1,60 @@
+[
+  {
+    "id": "positive-choose-a-skill",
+    "question": "What NemoClaw agent skills are available, and which one fits my task?",
+    "expected_skill": "nemoclaw-skills-guide",
+    "ground_truth": "The guide lists every shipped skill by audience and recommends the starting skill for the user's role.",
+    "expected_behavior": [
+      "Uses `nemoclaw-skills-guide`.",
+      "Asks which role describes the user.",
+      "Presents the applicable skills and a starting skill."
+    ]
+  },
+  {
+    "id": "positive-lifecycle-owner",
+    "question": "Which NemoClaw skill owns implementing an accepted issue, and which owns opening the pull request?",
+    "expected_skill": "nemoclaw-skills-guide",
+    "ground_truth": "The contributor lifecycle has one owner per stage: planning, implementation, then publication.",
+    "expected_behavior": [
+      "Names `nemoclaw-contributor-implement-issue` for implementation.",
+      "Names `nemoclaw-contributor-create-pr` for publication."
+    ]
+  },
+  {
+    "id": "negative-messaging-channel",
+    "question": "I want to add a new messaging channel to NemoClaw. Which skill do I load?",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "No skill owns messaging channels. Generic implementation carries the change and `src/lib/messaging/AGENTS.md` owns the architecture, invariants, and testing guidance.",
+    "expected_behavior": [
+      "Routes to `nemoclaw-contributor-implement-issue`.",
+      "Points at `src/lib/messaging/AGENTS.md` for the channel contract.",
+      "Names no messaging-channel skill."
+    ]
+  },
+  {
+    "id": "negative-perform-the-work",
+    "question": "Implement NVIDIA/NemoClaw issue #8378 and add its tests.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "A concrete work request goes to the owning workflow rather than the catalog.",
+    "expected_behavior": ["Uses `nemoclaw-contributor-implement-issue`."]
+  },
+  {
+    "id": "ambiguous-what-can-you-do",
+    "question": "What can you do with NemoClaw?",
+    "expected_skill": null,
+    "ground_truth": "The request does not state whether the user operates a sandbox, contributes code, or maintains the project.",
+    "expected_behavior": [
+      "Asks which role describes the user before listing a bucket."
+    ]
+  },
+  {
+    "id": "clean-context-orientation",
+    "question": "We have not discussed this before. I am new to the NemoClaw repository. Where do I start?",
+    "expected_skill": "nemoclaw-skills-guide",
+    "ground_truth": "Orientation with no prior context routes to the catalog, which recommends the starting skill for the identified role.",
+    "expected_behavior": [
+      "Uses `nemoclaw-skills-guide`.",
+      "Recommends `nemoclaw-contributor-onboard` for a contributor."
+    ]
+  }
+]

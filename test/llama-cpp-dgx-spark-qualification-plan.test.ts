@@ -98,7 +98,7 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
     );
 
     expect(output.execution).toBe("enabled");
-    expect(output.agent_qualification_execution).toBe("disabled");
+    expect(output.agent_qualification_execution).toBe("enabled");
     expect(output.runner).toBe("linux-arm64-gpu-dgx-spark-gb10-protected-1");
     expect(parseLlamaCppDgxSparkQualificationPlan(JSON.parse(output.qualification))).toMatchObject({
       execution: "enabled",
@@ -112,7 +112,7 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
       qualification: {
         agentQualification: {
           agent: "openclaw",
-          execution: "disabled",
+          execution: "enabled",
           runtimeProvider: "docker",
         },
         probeBounds: {
@@ -146,6 +146,7 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
     const output = exportLlamaCppDgxSparkQualificationPlan(repoRoot);
 
     expect(output).toMatchObject({
+      agent_qualification_execution: "enabled",
       environment: "approve-dgx-spark-image-qualification",
       execution: "enabled",
       model_host_path: "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",

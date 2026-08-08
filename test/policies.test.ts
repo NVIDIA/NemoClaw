@@ -468,16 +468,14 @@ exit 1
       expect(waitIdx < nameIdx).toBeTruthy();
     });
 
-    it("uses the resolved openshell binary when provided by the installer path", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-bin-"));
-      const override = path.join(tmpDir, "openshell");
-      fs.writeFileSync(override, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      const prev = process.env.NEMOCLAW_OPENSHELL_BIN;
-      process.env.NEMOCLAW_OPENSHELL_BIN = override;
+    it("uses the resolved openshell binary for every policy command", () => {
+      const resolved = "/opt/nvidia/bin/openshell";
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(resolved);
       try {
-        const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-        expect(cmd).toEqual([
-          override,
+        expect(policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant")).toEqual([
+          resolved,
           "policy",
           "set",
           "--policy",
@@ -485,10 +483,22 @@ exit 1
           "--wait",
           "my-assistant",
         ]);
+        expect(policies.buildPolicyGetCommand("my-assistant")).toEqual([
+          resolved,
+          "policy",
+          "get",
+          "--base",
+          "my-assistant",
+        ]);
+        expect(policies.buildPolicyGetFullCommand("my-assistant")).toEqual([
+          resolved,
+          "policy",
+          "get",
+          "--full",
+          "my-assistant",
+        ]);
       } finally {
-        if (prev === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
-        else process.env.NEMOCLAW_OPENSHELL_BIN = prev;
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        resolveSpy.mockRestore();
       }
     });
   });

@@ -536,7 +536,7 @@ jobs:
             fi
             source="$IMAGE@sha256:$digest"
             source_platform="$(
-              docker buildx imagetools inspect "$source" \
+              scripts/checks/retry-docker-imagetools-inspect.sh "$source" \
                 --format '{{.Image.OS}}/{{.Image.Architecture}}'
             )"
             if [ "$source_platform" != "linux/$expected_arch" ]; then
@@ -577,7 +577,7 @@ jobs:
           fi
           reference="$IMAGE@$digest"
           actual_platforms="$(
-            docker buildx imagetools inspect "$reference" --raw \
+            scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw \
               | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
               | sort -u \
               | paste -sd, -
@@ -705,7 +705,7 @@ jobs:
             fi
             source="$IMAGE@sha256:$digest"
             source_platform="$(
-              docker buildx imagetools inspect "$source" \
+              scripts/checks/retry-docker-imagetools-inspect.sh "$source" \
                 --format '{{.Image.OS}}/{{.Image.Architecture}}'
             )"
             if [ "$source_platform" != "linux/$expected_arch" ]; then
@@ -746,7 +746,7 @@ jobs:
           fi
           reference="$IMAGE@$digest"
           actual_platforms="$(
-            docker buildx imagetools inspect "$reference" --raw \
+            scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw \
               | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
               | sort -u \
               | paste -sd, -
@@ -876,7 +876,7 @@ jobs:
             fi
             source="$IMAGE@sha256:$digest"
             source_platform="$(
-              docker buildx imagetools inspect "$source" \
+              scripts/checks/retry-docker-imagetools-inspect.sh "$source" \
                 --format '{{.Image.OS}}/{{.Image.Architecture}}'
             )"
             if [ "$source_platform" != "linux/$expected_arch" ]; then
@@ -917,7 +917,7 @@ jobs:
           fi
           reference="$IMAGE@$digest"
           actual_platforms="$(
-            docker buildx imagetools inspect "$reference" --raw \
+            scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw \
               | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
               | sort -u \
               | paste -sd, -

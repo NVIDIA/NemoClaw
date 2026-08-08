@@ -11,7 +11,7 @@ function writeExecutable(target: string, contents: string): void {
 export function writeOkOpenshell(fakeBin: string): void {
   writeExecutable(
     path.join(fakeBin, "openshell"),
-    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = ssh-config ]; then printf "Host openshell-%s\\n  HostName 127.0.0.1\\n  User sandbox\\n" "${3:-sandbox}"; fi\nexit 0\n',
+    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = ssh-config ]; then printf "Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n" "${3:-sandbox}"; fi\nexit 0\n',
   );
   writeExecutable(
     path.join(fakeBin, "ssh"),
