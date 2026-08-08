@@ -1069,6 +1069,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
     isWsl: isWslOverride,
+    recoverPrimaryDashboardForward = true,
     onRecoveryFailureLayer,
   }: {
     quiet?: boolean;
@@ -1078,6 +1079,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    recoverPrimaryDashboardForward?: boolean;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
   } = {},
 ) {
@@ -1117,46 +1119,83 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     if (mcpRefusal) return mcpRefusal;
   }
   if (running) {
-    // Gateway is alive but the host-side forward can still be dead or
-    // owned by another sandbox. Probe and re-establish only when
-    // necessary so the live-and-healthy path stays a no-op.
-    const forwardHealthy = isSandboxForwardHealthy(sandboxName, { isWsl: isWslOverride });
-    if (forwardHealthy === false) {
-      if (!quiet) {
-        console.log("");
-        console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
-        console.log("  Re-establishing...");
-      }
-      const forwardRecovered = ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride });
-      const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
-      const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
-      const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(
-        sandboxName,
-        recoveryPort,
-        {
-          quiet,
-        },
-      );
-      const auxiliaryResults = [
-        { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
-        { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
-        {
-          label: "one or more agent-declared host forwards",
-          recovered: declaredForwardsRecovered,
-        },
-      ];
-      const auxiliaryFailureDetail = auxiliaryRecoveryFailureDetail(auxiliaryResults);
-      if (!quiet) {
-        if (forwardRecovered) {
-          console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
-        } else {
-          console.error("  Failed to re-establish the dashboard port forward.");
-          console.error(
-            `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-          );
+    if (recoverPrimaryDashboardForward) {
+      // Gateway is alive but the host-side forward can still be dead or
+      // owned by another sandbox. Probe and re-establish only when
+      // necessary so the live-and-healthy path stays a no-op.
+      const forwardHealthy = isSandboxForwardHealthy(sandboxName, { isWsl: isWslOverride });
+      if (forwardHealthy === false) {
+        if (!quiet) {
+          console.log("");
+          console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
+          console.log("  Re-establishing...");
         }
+        const forwardRecovered = ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride });
+        const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+        const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
+        const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(
+          sandboxName,
+          recoveryPort,
+          {
+            quiet,
+          },
+        );
+        const auxiliaryResults = [
+          { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
+          { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
+          {
+            label: "one or more agent-declared host forwards",
+            recovered: declaredForwardsRecovered,
+          },
+        ];
+        const auxiliaryFailureDetail = auxiliaryRecoveryFailureDetail(auxiliaryResults);
+        if (!quiet) {
+          if (forwardRecovered) {
+            console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+          } else {
+            console.error("  Failed to re-establish the dashboard port forward.");
+            console.error(
+              `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
+            );
+          }
+        }
+        if (!forwardRecovered) {
+          return {
+            checked: true,
+            wasRunning: true,
+            recovered: false,
+            forwardRecovered: false,
+            forwardRecoveryFailed: true,
+            forwardRecoveryFailureDetail:
+              "the primary dashboard/API host forward could not be re-established",
+          };
+        }
+        if (auxiliaryFailureDetail !== null) {
+          if (!quiet) console.error(`  ${auxiliaryFailureDetail}.`);
+          return {
+            checked: true,
+            wasRunning: true,
+            recovered: false,
+            forwardRecovered: false,
+            forwardRecoveryFailed: true,
+            forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+          };
+        }
+        return {
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
+        };
       }
-      if (!forwardRecovered) {
+      if (forwardHealthy === "occupied") {
+        if (!quiet) {
+          console.log("");
+          console.error(
+            `  Dashboard port forward for '${sandboxName}' is owned by another sandbox.`,
+          );
+          console.error("  Leaving the existing port forward unchanged.");
+        }
         return {
           checked: true,
           wasRunning: true,
@@ -1164,53 +1203,20 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           forwardRecovered: false,
           forwardRecoveryFailed: true,
           forwardRecoveryFailureDetail:
-            "the primary dashboard/API host forward could not be re-established",
+            "the primary dashboard/API host forward is owned by another sandbox",
         };
       }
-      if (auxiliaryFailureDetail !== null) {
-        if (!quiet) console.error(`  ${auxiliaryFailureDetail}.`);
+      if (forwardHealthy === null) {
         return {
           checked: true,
           wasRunning: true,
           recovered: false,
           forwardRecovered: false,
           forwardRecoveryFailed: true,
-          forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+          forwardRecoveryFailureDetail:
+            "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
         };
       }
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
-      };
-    }
-    if (forwardHealthy === "occupied") {
-      if (!quiet) {
-        console.log("");
-        console.error(`  Dashboard port forward for '${sandboxName}' is owned by another sandbox.`);
-        console.error("  Leaving the existing port forward unchanged.");
-      }
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward is owned by another sandbox",
-      };
-    }
-    if (forwardHealthy === null) {
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
-      };
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
@@ -1456,12 +1462,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
-    const forwardRecovered = ensureSandboxPortForward(sandboxName, {
-      afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
-      beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
-      isWsl: isWslOverride,
-    });
-    if (!forwardRecovered && relaunchedIdentityRejected) {
+    const forwardRecovered = recoverPrimaryDashboardForward
+      ? ensureSandboxPortForward(sandboxName, {
+          afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
+          beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
+          isWsl: isWslOverride,
+        })
+      : false;
+    if (recoverPrimaryDashboardForward && !forwardRecovered && relaunchedIdentityRejected) {
       return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
@@ -1485,16 +1493,18 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const auxiliaryFailureDetail = auxiliaryRecoveryFailureDetail(auxiliaryResults);
     if (!quiet) {
       console.log(`  ${G}✓${R} ${recoveryDisplayName} gateway restarted inside sandbox.`);
-      if (forwardRecovered) {
-        console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
-      } else {
-        console.error("  Failed to re-establish the dashboard port forward.");
-        console.error(
-          `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-        );
+      if (recoverPrimaryDashboardForward) {
+        if (forwardRecovered) {
+          console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+        } else {
+          console.error("  Failed to re-establish the dashboard port forward.");
+          console.error(
+            `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
+          );
+        }
       }
     }
-    if (!forwardRecovered) {
+    if (recoverPrimaryDashboardForward && !forwardRecovered) {
       return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
@@ -1542,6 +1552,7 @@ export function checkAndRecoverSandboxProcesses(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    recoverPrimaryDashboardForward?: boolean;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
   } = {},
 ) {

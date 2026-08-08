@@ -235,7 +235,10 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
-async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
+async function runSandboxConnectProbe(
+  sandboxName: string,
+  { recoverPrimaryDashboardForward = true }: { recoverPrimaryDashboardForward?: boolean } = {},
+): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
@@ -256,6 +259,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
+    recoverPrimaryDashboardForward,
     onRecoveryFailureLayer: (layer) => {
       recoveryFailureLayer = layer;
     },
@@ -1096,7 +1100,8 @@ function waitForSandboxReadyOrExit(
 async function runConnectEntryPreflight(
   sandboxName: string,
   { probeOnly }: { probeOnly: boolean },
-): Promise<void> {
+): Promise<{ recoverPrimaryDashboardForward: boolean }> {
+  let recoverPrimaryDashboardForward = true;
   try {
     assertNoOpenShellGatewayEndpointOverride();
     const registered = registry.getSandbox(sandboxName);
@@ -1110,7 +1115,17 @@ async function runConnectEntryPreflight(
       if (registry.getSandboxEntryInference(registered).kind === "configured") {
         assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
       }
-      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
+      const portableRecovery = recoverPortableDemoSandboxLifecycleForConnect(
+        sandboxName,
+        registered,
+        gatewayName,
+      );
+      // Portable/GFN sessions do not consume the dashboard host forward. The
+      // receipt-backed lifecycle recovery above is authoritative for this
+      // narrow mode, so avoid making interactive connect wait on an optional
+      // OpenShell forward while preserving the normal behavior everywhere
+      // else.
+      recoverPrimaryDashboardForward = portableRecovery.kind === "not-installed";
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -1143,6 +1158,7 @@ async function runConnectEntryPreflight(
   ) {
     failConnectReadinessDockerRuntimeDown(sandboxName);
   }
+  return { recoverPrimaryDashboardForward };
 }
 
 /**
@@ -1156,7 +1172,9 @@ async function runConnectEntryPreflight(
 export async function prepareInteractiveSession(
   sandboxName: string,
 ): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
-  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
+  const { recoverPrimaryDashboardForward } = await runConnectEntryPreflight(sandboxName, {
+    probeOnly: false,
+  });
 
   // Version staleness check — warn but don't block
   try {
@@ -1186,7 +1204,9 @@ export async function prepareInteractiveSession(
     /* non-fatal — don't block connect on session detection failure */
   }
 
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
+    recoverPrimaryDashboardForward,
+  });
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
@@ -1230,7 +1250,9 @@ export async function connectSandbox(
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
-    await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+    const { recoverPrimaryDashboardForward } = await runConnectEntryPreflight(sandboxName, {
+      probeOnly: true,
+    });
     waitForSandboxReadyOrExit(sandboxName, {
       defaultTimeoutSec: 300,
       retryCommand: "connect --probe-only",
@@ -1239,7 +1261,7 @@ export async function connectSandbox(
     // before any in-sandbox process or host-forward mutation. The readiness
     // polls are already owner-scoped; this also catches registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName);
+    return await runSandboxConnectProbe(sandboxName, { recoverPrimaryDashboardForward });
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);
