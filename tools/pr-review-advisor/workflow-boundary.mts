@@ -8,6 +8,8 @@ import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
+const OPENSHELL_SANDBOX_NAME_MAX_LENGTH = 19;
+const OPENSHELL_SANDBOX_NAME_PATTERN = /^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/u;
 const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
 const DEFAULT_OPENSHELL_POLICY_PATH = join(
   REPO_ROOT,
@@ -451,12 +453,21 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   if (entries.filter((entry) => booleanValue(entry.publish_comment) === true).length !== 1) {
     errors.push("advisor matrix must identify one primary artifact lane");
   }
-  for (const field of ["model", "artifact_dir", "artifact_name"]) {
+  for (const field of ["model", "artifact_dir", "artifact_name", "sandbox_name"]) {
     requireUniqueMatrixField(errors, entries, field);
   }
   for (const [index, entry] of entries.entries()) {
     if (!/^[a-z0-9][a-z0-9-]*$/u.test(stringValue(entry.artifact_dir))) {
       errors.push(`advisor matrix entry ${index + 1} artifact_dir must be a simple directory name`);
+    }
+    const sandboxName = stringValue(entry.sandbox_name);
+    if (
+      sandboxName.length > OPENSHELL_SANDBOX_NAME_MAX_LENGTH ||
+      !OPENSHELL_SANDBOX_NAME_PATTERN.test(sandboxName)
+    ) {
+      errors.push(
+        `advisor matrix entry ${index + 1} sandbox_name must satisfy the OpenShell 0.0.99 sandbox-name contract`,
+      );
     }
   }
 
@@ -518,13 +529,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   );
   requireEnv(errors, "review job", reviewJob, "PI_IMAGE", PINNED_PI_IMAGE);
   requireEnv(errors, "review job", reviewJob, "PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS", "2100");
-  requireEnv(
-    errors,
-    "review job",
-    reviewJob,
-    "SANDBOX_NAME",
-    "pr-advisor-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.advisor.id }}",
-  );
+  requireEnv(errors, "review job", reviewJob, "SANDBOX_NAME", "${{ matrix.advisor.sandbox_name }}");
 
   const steps = asSteps(reviewJob.steps);
   if (steps.length === 0) errors.push("review job must declare steps");

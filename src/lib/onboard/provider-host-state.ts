@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture as defaultDockerCapture } from "../adapters/docker";
-import { OLLAMA_PORT } from "../core/ports";
 import {
   findReachableOllamaHost,
   getLocalProviderAvailabilityEndpoint,
+  getWindowsHostOllamaDockerReachabilityArgs,
   isLocalProviderProbeOutputHealthy,
   OLLAMA_HOST_DOCKER_INTERNAL,
 } from "../inference/local";
@@ -142,18 +142,13 @@ function probeVllmRunning(deps: DetectInferenceProviderHostStateDeps): boolean {
 function probeWindowsOllamaReachable(input: {
   isWsl: boolean;
   isWindowsHostOllama: boolean;
-  runCapture: RunCapture;
+  dockerRequirementSupported: boolean;
+  dockerCapture: DockerCapture;
 }): boolean {
-  if (!input.isWsl || input.isWindowsHostOllama) return false;
-  return !!input.runCapture(
-    [
-      "curl",
-      "-sf",
-      ...LOCAL_PROVIDER_PROBE_CURL_ARGS,
-      `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
-    ],
-    { ignoreError: true },
-  );
+  if (!input.isWsl || input.isWindowsHostOllama || !input.dockerRequirementSupported) return false;
+  return !!input.dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
+    ignoreError: true,
+  });
 }
 
 function maybeWarnAboutDuplicateOllamaDaemons(input: {
@@ -207,7 +202,12 @@ export function detectInferenceProviderHostState(
   const windowsOllamaReachable =
     input.probeOllama === false
       ? false
-      : probeWindowsOllamaReachable({ isWsl, isWindowsHostOllama, runCapture: deps.runCapture });
+      : probeWindowsOllamaReachable({
+          isWsl,
+          isWindowsHostOllama,
+          dockerRequirementSupported: windowsHostOllamaDockerRequirement.supported,
+          dockerCapture: deps.dockerCapture,
+        });
 
   maybeWarnAboutDuplicateOllamaDaemons({
     isWsl,

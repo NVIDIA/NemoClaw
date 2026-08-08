@@ -165,6 +165,30 @@ async function expectLockedPosture(sandbox: SandboxClient, cycle: number): Promi
   expect(result.stdout).toContain(`444 root:root ${HERMES_DIR}/.config-hash`);
 }
 
+async function expectImmediateInferenceRoute(sandbox: SandboxClient, cycle: number): Promise<void> {
+  const result = await sandboxShell(
+    sandbox,
+    [
+      "set -eu",
+      'response="$(mktemp)"',
+      "trap 'rm -f \"$response\"' EXIT",
+      'curl -fsS --connect-timeout 3 --max-time 10 https://inference.local/v1/models -o "$response"',
+      "python3 - \"$response\" <<'PY'",
+      "import json, pathlib, sys",
+      "payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))",
+      `assert ${JSON.stringify(COMPATIBLE_MODEL)} in {entry.get("id") for entry in payload["data"]}`,
+      "print('HERMES_SHIELDS_INFERENCE_ROUTE_READY')",
+      "PY",
+    ].join("\n"),
+    `cycle-${cycle}-immediate-inference-route`,
+  );
+  assertExitZero(
+    result,
+    `probe Hermes inference route immediately after Shields down cycle ${cycle}`,
+  );
+  expect(result.stdout).toContain("HERMES_SHIELDS_INFERENCE_ROUTE_READY");
+}
+
 async function completeShieldsCycle(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -176,6 +200,7 @@ async function completeShieldsCycle(
     `cycle-${cycle}-shields-down`,
   );
   assertExitZero(down, `unlock fresh Hermes config in cycle ${cycle}`);
+  await expectImmediateInferenceRoute(sandbox, cycle);
   await expectShieldsStatus(host, "DOWN", `cycle-${cycle}-status-down`);
   await expectMutablePosture(sandbox, cycle);
 
@@ -211,6 +236,7 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
       "shields-up establishes the root-owned locked posture",
       "start restores a stopped Hermes sandbox while shields are up",
       "start restores a stopped Hermes sandbox while shields are down",
+      "each successful shields-down returns only after inference.local serves the configured model",
       "a second down/up cycle completes without corrupting config state",
     ],
     issue: "#6381",
@@ -342,6 +368,7 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
     "cycle-2-shields-down",
   );
   assertExitZero(down, "unlock fresh Hermes config in cycle 2");
+  await expectImmediateInferenceRoute(sandbox, 2);
   await expectShieldsStatus(host, "DOWN", "cycle-2-status-down");
   await expectMutablePosture(sandbox, 2);
   await expectStopStartRecovery(host, "DOWN", "cycle-2-shields-down-start-recovery");
@@ -379,6 +406,7 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
       freshNonrootTrigger: true,
       stateLockPlanModes: true,
       firstCycle: true,
+      postTransitionInferenceRoute: true,
       shieldsDownStartRecovery: true,
       shieldsUpStartRecovery: true,
       secondCycle: true,

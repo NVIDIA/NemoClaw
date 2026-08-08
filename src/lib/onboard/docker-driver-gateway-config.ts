@@ -80,9 +80,10 @@ export function buildDockerDriverGatewayConfigToml(
     ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
+    ["socket_path", driver === "podman" ? gatewayEnv.OPENSHELL_PODMAN_SOCKET : undefined],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
     ["supervisor_image", gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE],
-    // OpenShell 0.0.85 accepts supervisor_bin only for the Docker driver.
+    // OpenShell 0.0.99 accepts supervisor_bin only for the Docker driver.
     // The Podman schema rejects the entire driver table when this Docker-only
     // field is present, so portable onboarding must rely on supervisor_image.
     ["supervisor_bin", driver === "docker" ? (sandboxBin ?? undefined) : undefined],

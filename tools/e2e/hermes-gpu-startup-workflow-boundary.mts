@@ -122,9 +122,9 @@ export function validateHermesGpuStartupWorkflow(
     strategy["max-parallel"] !== 1 ||
     JSON.stringify(matrix.include) !==
       JSON.stringify([
-        { scenario: "native" },
-        { scenario: "fallback" },
-        { scenario: "compatibility-only" },
+        { scenario: "native", sandbox_name: "e2e-hgpu-native" },
+        { scenario: "fallback", sandbox_name: "e2e-hgpu-fallback" },
+        { scenario: "compatibility-only", sandbox_name: "e2e-hgpu-compat" },
       ])
   ) {
     errors.push(`${JOB_NAME} must serialize GPU scenarios`);
@@ -141,7 +141,7 @@ export function validateHermesGpuStartupWorkflow(
     NEMOCLAW_E2E_SHARD: "${{ matrix.scenario }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
-    NEMOCLAW_SANDBOX_NAME: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
+    NEMOCLAW_SANDBOX_NAME: "${{ matrix.sandbox_name }}",
   } as const;
   for (const [name, expected] of Object.entries(requiredEnv)) {
     if (jobEnv[name] !== expected) {

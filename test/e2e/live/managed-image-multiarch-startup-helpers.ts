@@ -42,7 +42,7 @@ function positiveIntegerEnvironment(name: string): number {
 export function protectedManagedImageDispatchEnvironment(): ProtectedManagedImageDispatchEnvironment {
   const platform = requiredEnvironment("NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM");
   const cohort = requiredEnvironment("NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT");
-  const headSha = requiredEnvironment("NEMOCLAW_E2E_EXPECTED_SHA");
+  const headSha = requiredEnvironment("NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA");
   const baseSha = requiredEnvironment("NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA");
   const workflowSha = requiredEnvironment("NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA");
 

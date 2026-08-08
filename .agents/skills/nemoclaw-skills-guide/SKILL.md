@@ -30,12 +30,17 @@ Covers routing human users' AI agents to the canonical NemoClaw Markdown documen
 For project maintainers.
 Covers the daily maintainer cadence, trusted E2E dispatch, workflow policy, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
 
-### `nemoclaw-contributor-*` (7 skills)
+### `nemoclaw-contributor-*` (6 skills)
 
 For contributors to the NemoClaw codebase.
-Covers trusted checkout setup and readiness checks, issue planning and capability slicing, issue implementation, dependency
-migration audits, creating pull requests that follow the project template, monitoring CI and
-automated review feedback, drafting documentation updates, and onboarding new messaging channels.
+The lifecycle runs from checkout setup through planning, implementation, and publication.
+Each stage has one owner: `nemoclaw-contributor-plan-issue` refines an issue into capability slices,
+`nemoclaw-contributor-implement-issue` implements a slice and owns its tests, and
+`nemoclaw-contributor-create-pr` publishes the branch and follows CI and automated review.
+Load `nemoclaw-contributor-update-dependencies` for a dependency upgrade and
+`nemoclaw-contributor-update-docs` for documentation catch-up.
+The dependency workflow runs inside the implementation stage. The documentation workflow also runs during pre-tag release preparation.
+Component-specific guidance lives with the package it describes, not in a skill.
 
 ## Skill Catalog
 
@@ -76,7 +81,6 @@ automated review feedback, drafting documentation updates, and onboarding new me
 | `nemoclaw-contributor-implement-issue` | Implement the smallest accepted issue capability slice with focused validation and no pull request publication. |
 | `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
 | `nemoclaw-contributor-update-dependencies` | Audit and implement a dependency upgrade from current upstream and downstream contracts, including Hermes CalVer and base-image upgrades. |
-| `nemoclaw-contributor-onboard-messaging-channel` | Add or review a messaging channel through the current messaging architecture and accepted product scope. |
 | `nemoclaw-contributor-update-docs` | Find user-visible changes and update their owning documentation under current repository policy. |
 
 ## Getting Started
@@ -92,7 +96,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 8 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 23 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 7 | `nemoclaw-contributor-onboard` |
+| Maintainer | All skills | 22 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

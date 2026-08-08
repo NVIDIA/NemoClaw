@@ -48,6 +48,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DOCKER_NETWORK_NAME",
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
   "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+  "OPENSHELL_PODMAN_SOCKET",
   "OPENSHELL_GATEWAY_CONFIG",
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
@@ -60,6 +61,7 @@ export interface BuildDockerDriverGatewayEnvOptions {
   gatewayPort?: number;
   stateDir: string;
   dockerNetworkName?: string;
+  podmanSocketPath?: string;
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
   enableBindMounts?: boolean;
@@ -224,6 +226,7 @@ export function buildDockerDriverGatewayEnv({
   gatewayPort = GATEWAY_PORT,
   stateDir,
   dockerNetworkName = "openshell-docker",
+  podmanSocketPath,
   getDockerSupervisorImage,
   resolveSandboxBin,
   enableBindMounts = false,
@@ -243,6 +246,20 @@ export function buildDockerDriverGatewayEnv({
   if (enableBindMounts) env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS = "1";
   if (portable) {
     env.NETAVARK_FW = "iptables";
+    if (podmanSocketPath !== undefined) {
+      const rawSocketPath = String(podmanSocketPath);
+      const normalizedSocketPath = rawSocketPath.trim();
+      if (
+        normalizedSocketPath === "" ||
+        rawSocketPath !== normalizedSocketPath ||
+        /[\0\r\n]/u.test(rawSocketPath) ||
+        !path.isAbsolute(normalizedSocketPath) ||
+        path.normalize(normalizedSocketPath) !== normalizedSocketPath
+      ) {
+        throw new Error("OpenShell Podman gateway socket must be a safe normalized absolute path.");
+      }
+      env.OPENSHELL_PODMAN_SOCKET = normalizedSocketPath;
+    }
     const containersConf = process.env.CONTAINERS_CONF?.trim();
     if (containersConf) env.CONTAINERS_CONF = containersConf;
   }

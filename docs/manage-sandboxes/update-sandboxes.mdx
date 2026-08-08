@@ -38,6 +38,27 @@ The `langchain-deepagents-code` agent manifest declares the expected Deep Agents
 
 </AgentOnly>
 
+<Warning>
+OpenShell 0.0.99 limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
+A NemoClaw sandbox name must contain 1 to 19 characters.
+It must start with a lowercase letter, use lowercase letters, numbers, and single internal hyphens, and end with a letter or number.
+Before the OpenShell upgrade, the installer checks registered sandboxes for the selected gateway.
+If the installer finds incompatible names, it lists each name and exits before it can:
+
+- Prepare the NemoClaw CLI for the upgrade.
+- Start a backup of the registered sandboxes.
+- Retire the selected OpenShell gateway.
+- Install OpenShell 0.0.99.
+- Recreate a sandbox.
+
+NemoClaw does not automatically truncate or change the sandbox name.
+Use the installed NemoClaw and OpenShell versions to create a replacement sandbox with a compatible name.
+Then use [Transfer State Manually](../state-and-backups/transfer-state-manually) to move the required state into the replacement sandbox.
+After you verify the transferred state, destroy the incompatible sandbox with the installed NemoClaw and OpenShell versions.
+Then rerun the installer.
+If you manually retired the gateway, restore the previously installed OpenShell version and its gateway before you transfer the sandbox state.
+</Warning>
+
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check
