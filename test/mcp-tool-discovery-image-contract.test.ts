@@ -243,6 +243,12 @@ describe("MCP tool discovery image contract", () => {
       lockfile: "nemoclaw/package-lock.json",
       seedDirectory: "tools/mcp-tool-discovery-runtime/npm-cache-seed",
     },
+    {
+      archiveCount: 97,
+      label: "MCP discovery runtime",
+      lockfile: "tools/mcp-tool-discovery-runtime/package-lock.json",
+      seedDirectory: "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
+    },
   ])("pins every reachable $label lockfile archive for protected Linux x64 builds", (fixture) => {
     const seedDirectory = path.join(repoRoot, fixture.seedDirectory);
     const manifest = JSON.parse(fs.readFileSync(path.join(seedDirectory, "manifest.json"), "utf8"));
@@ -292,16 +298,6 @@ describe("MCP tool discovery image contract", () => {
       expect(integrity).toBe(archive.integrity);
       expect(matches.length).toBeGreaterThan(0);
     }
-  });
-
-  it("does not commit MCP runtime registry archives", () => {
-    const seedDirectory = path.join(
-      repoRoot,
-      "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
-    );
-    const trackedSeedFiles = fs.readdirSync(seedDirectory).filter((name) => name !== ".gitkeep");
-
-    expect(trackedSeedFiles).toEqual([]);
   });
 
   it.skipIf(process.platform === "win32")(
