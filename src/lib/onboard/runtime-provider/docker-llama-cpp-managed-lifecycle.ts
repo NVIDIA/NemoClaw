@@ -22,6 +22,11 @@ import {
   type LlamaCppHostLocalRuntimeBindings,
 } from "../../inference/llama-cpp/host-local-runtime";
 import {
+  createDockerLlamaCppPrivateBridgeController,
+  type DockerLlamaCppPrivateBridgeAuthority,
+  type DockerLlamaCppPrivateBridgeController,
+} from "./docker-llama-cpp-private-bridge";
+import {
   type HostLocalCreateJournalExecutionLease,
   type HostLocalCreateJournalRecord,
   type HostLocalCreateJournalStore,
@@ -51,6 +56,7 @@ import {
 const PROVIDER_ID = "docker";
 const SERVICE = "llama-cpp";
 const ENDPOINT_HOST = "host.openshell.internal";
+const OPENSHELL_DOCKER_NETWORK = "openshell-docker";
 const FULL_ID = /^[a-f0-9]{64}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -71,6 +77,7 @@ export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleIn
 
 export interface DockerLlamaCppManagedLifecycleDependencies {
   readonly now?: () => number;
+  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
 }
 
 export type DockerLlamaCppRecoveryResult = HostLocalInferenceRecoveryResult;
@@ -82,6 +89,11 @@ interface DockerNetworkAuthority {
   readonly name: string;
 }
 
+interface DockerGatewayBridgeAuthority {
+  readonly gatewayIp: string;
+  readonly name: typeof OPENSHELL_DOCKER_NETWORK;
+}
+
 interface DockerContainerInspection {
   readonly id: string;
   readonly name: string;
@@ -91,7 +103,7 @@ interface DockerContainerInspection {
   readonly status: string;
   readonly networkId: string | null;
   readonly networkName: string;
-  readonly hostPort: number | null;
+  readonly containerIp: string | null;
   readonly mounts: readonly {
     readonly type: string;
     readonly source: string;
@@ -199,12 +211,22 @@ function exactId(value: unknown, label: string): string {
   return value;
 }
 
-function exactPort(value: unknown): number {
-  const port = typeof value === "string" && /^[0-9]{1,5}$/u.test(value) ? Number(value) : -1;
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("Docker llama.cpp inspection returned an invalid host port.");
+function exactPrivateIpv4(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$/u.test(value)) {
+    throw new Error(`${label} must be one private IPv4 address.`);
   }
-  return port;
+  const octets = value.split(".").map(Number);
+  if (
+    octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255) ||
+    !(
+      octets[0] === 10 ||
+      (octets[0] === 172 && octets[1]! >= 16 && octets[1]! <= 31) ||
+      (octets[0] === 192 && octets[1] === 168)
+    )
+  ) {
+    throw new Error(`${label} must be one private IPv4 address.`);
+  }
+  return value;
 }
 
 function inspectNetworkIfPresent(
@@ -248,6 +270,47 @@ function inspectNetworkIfPresent(
     id: exactId(source.Id, "Docker network identity"),
     name,
   });
+}
+
+function inspectGatewayBridge(engine: ContainerEngine): DockerGatewayBridgeAuthority {
+  const output = requireSuccess(
+    "OpenShell bridge inspection",
+    engine.capture(["network", "inspect", OPENSHELL_DOCKER_NETWORK], INSPECT_TIMEOUT_MS),
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("Docker llama.cpp OpenShell bridge inspection returned unreadable JSON.");
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
+    throw new Error("Docker llama.cpp requires exactly one OpenShell Docker bridge.");
+  }
+  const source = record(parsed[0], "Docker llama.cpp OpenShell bridge inspection");
+  const ipam = record(source.IPAM, "Docker llama.cpp OpenShell bridge IPAM");
+  const configs = ipam.Config;
+  if (
+    source.Name !== OPENSHELL_DOCKER_NETWORK ||
+    source.Driver !== "bridge" ||
+    source.Scope !== "local" ||
+    source.Internal !== false ||
+    !Array.isArray(configs)
+  ) {
+    throw new Error("Docker llama.cpp requires the native OpenShell Docker bridge.");
+  }
+  const gatewayIps = configs.flatMap((candidate) => {
+    const config = record(candidate, "Docker llama.cpp OpenShell bridge IPAM entry");
+    return typeof config.Gateway === "string" &&
+      /^172\.(?:1[6-9]|2[0-9]|3[01])\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})$/u.test(config.Gateway)
+      ? [config.Gateway]
+      : typeof config.Gateway === "string" && /^(?:10\.|192\.168\.)/u.test(config.Gateway)
+        ? [config.Gateway]
+        : [];
+  });
+  if (gatewayIps.length !== 1) {
+    throw new Error("Docker llama.cpp requires one private IPv4 OpenShell bridge gateway.");
+  }
+  return Object.freeze({ gatewayIp: gatewayIps[0]!, name: OPENSHELL_DOCKER_NETWORK });
 }
 
 function inspectNetwork(
@@ -308,38 +371,28 @@ function parseInspection(
       : mode !== "runtime" && attachedNetworkId === ""
         ? null
         : exactId(attachedNetworkId, "Docker attached network identity");
-  let hostPort: number | null = null;
+  const attachedIp = attached.IPAddress;
+  const containerIp =
+    typeof attachedIp === "string" && attachedIp !== ""
+      ? exactPrivateIpv4(attachedIp, "Docker llama.cpp container address")
+      : (mode !== "runtime" || state.Running === false) && attachedIp === ""
+        ? null
+        : exactPrivateIpv4(attachedIp, "Docker llama.cpp container address");
   if (mode !== "cleanup") {
     const ports = record(networkSettings.Ports, "Docker llama.cpp published ports");
     const portKey = `${String(contract.serve.port)}/tcp`;
     const configuredPorts = record(hostConfig.PortBindings, "Docker llama.cpp configured ports");
-    if (Object.keys(configuredPorts).length !== 1) {
-      throw new Error("Docker llama.cpp container has extra configured ports.");
+    if (Object.keys(configuredPorts).length !== 0) {
+      throw new Error("Docker llama.cpp container must not configure published ports.");
     }
-    const configuredBindings = configuredPorts[portKey];
-    if (!Array.isArray(configuredBindings) || configuredBindings.length !== 1) {
-      throw new Error("Docker llama.cpp container has unexpected configured ports.");
-    }
-    const configuredPort = record(configuredBindings[0], "Docker llama.cpp configured port");
-    if (configuredPort.HostIp !== "127.0.0.1") {
-      throw new Error("Docker llama.cpp configured host port is not loopback-only.");
-    }
-    if (configuredPort.HostPort !== String(bindings.hostPort)) {
-      throw new Error("Docker llama.cpp configured host port is not the bound host port.");
-    }
-    const publishedBindings = ports[portKey];
-    if (mode === "runtime") {
-      if (!Array.isArray(publishedBindings) || publishedBindings.length !== 1) {
-        throw new Error("Docker llama.cpp container has unexpected published ports.");
-      }
-      const published = record(publishedBindings[0], "Docker llama.cpp published port");
-      if (published.HostIp !== "127.0.0.1") {
-        throw new Error("Docker llama.cpp host port is not loopback-only.");
-      }
-      hostPort = exactPort(published.HostPort);
-      if (hostPort !== bindings.hostPort) {
-        throw new Error("Docker llama.cpp published host port differs from its declared binding.");
-      }
+    const portKeys = Object.keys(ports);
+    if (
+      portKeys.some((key) => key !== portKey) ||
+      (portKeys.includes(portKey) && ports[portKey] !== null)
+    ) {
+      throw new Error(
+        "Docker llama.cpp container must not publish ports from its internal network.",
+      );
     }
   }
   if (!Array.isArray(source.Mounts)) {
@@ -409,7 +462,7 @@ function parseInspection(
     status: stateStatus,
     networkId,
     networkName,
-    hostPort,
+    containerIp,
     mounts: Object.freeze(mounts),
     hardening: Object.freeze({
       user: String(config.User ?? ""),
@@ -880,13 +933,117 @@ function probeReady(
   );
 }
 
+function privateBridgeAuthority(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  journal: HostLocalCreateJournalRecord,
+  container: DockerContainerInspection,
+  gateway: DockerGatewayBridgeAuthority,
+): DockerLlamaCppPrivateBridgeAuthority {
+  if (container.containerIp === null) {
+    throw new Error("Docker llama.cpp running container lacks an internal address.");
+  }
+  if (options.bindings.hostPort !== options.contract.serve.port) {
+    throw new Error("Docker llama.cpp host bridge port differs from its declarative server port.");
+  }
+  return Object.freeze({
+    transactionId: journal.transactionId,
+    targetHost: container.containerIp,
+    targetPort: options.contract.serve.port,
+    listenPort: options.bindings.hostPort,
+    bindAddresses: Object.freeze(["127.0.0.1", gateway.gatewayIp]) as readonly [
+      "127.0.0.1",
+      string,
+    ],
+  });
+}
+
+function probePrivateBridge(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  bridge: DockerLlamaCppPrivateBridgeController,
+  journal: HostLocalCreateJournalRecord,
+  container: DockerContainerInspection,
+  lease: HostLocalCreateJournalExecutionLease,
+  execution: MutationExecutionState,
+): void {
+  const gateway = inspectGatewayBridge(options.engine);
+  const authority = privateBridgeAuthority(options, journal, container, gateway);
+  options.journalStore.assertExecution(lease);
+  bridge.start(authority);
+  options.journalStore.assertExecution(lease);
+  const timeoutSeconds = Math.min(readinessTimeoutSeconds(options), 30);
+  const curlArguments = (url: string): readonly string[] => [
+    "--fail",
+    "--silent",
+    "--show-error",
+    "--max-time",
+    String(timeoutSeconds),
+    "--retry",
+    String(timeoutSeconds),
+    "--retry-delay",
+    "1",
+    "--retry-max-time",
+    String(timeoutSeconds),
+    "--retry-connrefused",
+    url,
+  ];
+  bridge.assertRunning(authority);
+  options.journalStore.assertExecution(lease);
+  requireSuccess(
+    "private loopback bridge probe",
+    captureMutation(
+      options,
+      lease,
+      execution,
+      [
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "host",
+        "--entrypoint",
+        "curl",
+        options.probeImageReference,
+        ...curlArguments(`http://127.0.0.1:${String(options.bindings.hostPort)}/health`),
+      ],
+      timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
+    ),
+  );
+  requireSuccess(
+    "private sandbox bridge probe",
+    captureMutation(
+      options,
+      lease,
+      execution,
+      [
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        gateway.name,
+        "--add-host",
+        `${ENDPOINT_HOST}:${gateway.gatewayIp}`,
+        "--entrypoint",
+        "curl",
+        options.probeImageReference,
+        ...curlArguments(`http://${ENDPOINT_HOST}:${String(options.bindings.hostPort)}/health`),
+      ],
+      timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
+    ),
+  );
+  bridge.assertRunning(authority);
+  options.journalStore.assertExecution(lease);
+}
+
 function rollbackExact(
   options: DockerLlamaCppManagedLifecycleOptions,
+  bridge: DockerLlamaCppPrivateBridgeController,
   record: HostLocalCreateJournalRecord,
   lease: HostLocalCreateJournalExecutionLease,
   execution: MutationExecutionState,
   uncertainRecoveryUnixMs?: number,
 ): void {
+  options.journalStore.assertExecution(lease);
+  bridge.stopTransaction(record.transactionId);
   options.journalStore.assertExecution(lease);
   if (record.phase === "network-creating") {
     let network = inspectNetworkIfPresent(
@@ -1029,8 +1186,8 @@ function receiptFor(
   journal: HostLocalCreateJournalRecord,
   container: DockerContainerInspection,
 ): HostLocalInferenceReceipt {
-  if (container.hostPort === null) {
-    throw new Error("Docker llama.cpp did not publish one loopback host port.");
+  if (!container.running || container.containerIp === null) {
+    throw new Error("Docker llama.cpp cannot publish a receipt for a stopped runtime.");
   }
   return normalizeHostLocalInferenceReceipt({
     schemaVersion: 1,
@@ -1039,7 +1196,7 @@ function receiptFor(
     engineAuthority: authority,
     endpoint: {
       host: ENDPOINT_HOST,
-      port: container.hostPort,
+      port: options.bindings.hostPort,
       networkName: options.bindings.network.name,
     },
     runtime: {
@@ -1127,6 +1284,9 @@ export function createDockerLlamaCppManagedLifecycle(
   normalizeHostLocalInferenceImageRef(options.probeImageReference);
   readinessTimeoutSeconds(options);
   const qualifiedAuthority = qualifyEngine(options);
+  const privateBridge =
+    dependencies.privateBridge ??
+    createDockerLlamaCppPrivateBridgeController(options.apiKeyRootHostPath);
 
   const authorizeStaticReceipt = (value: HostLocalInferenceReceipt) => {
     const receipt = normalizeHostLocalInferenceReceipt(value);
@@ -1234,7 +1394,7 @@ export function createDockerLlamaCppManagedLifecycle(
     if (inspected === null) throw new Error("Docker llama.cpp owned runtime is absent.");
     const container = requireOwnedContainer(inspected, options, authorized.journal);
     if (
-      container.hostPort !== authorized.receipt.endpoint.port ||
+      options.bindings.hostPort !== authorized.receipt.endpoint.port ||
       authorized.receipt.endpoint.host !== ENDPOINT_HOST ||
       authorized.receipt.endpoint.networkName !== options.bindings.network.name
     ) {
@@ -1265,6 +1425,18 @@ export function createDockerLlamaCppManagedLifecycle(
       }
       assertApiKeyIdentity(options, activeKeyIdentity, inspected.journal.apiKeyRootIdentitySha256);
       assertModelFilesystemAuthority(options);
+      if (inspected.container.running) {
+        privateBridge.assertRunning(
+          privateBridgeAuthority(
+            options,
+            inspected.journal,
+            inspected.container,
+            inspectGatewayBridge(options.engine),
+          ),
+        );
+      } else {
+        privateBridge.assertStopped(inspected.journal.transactionId);
+      }
       return Object.freeze({
         running: inspected.container.running,
         receipt: inspected.receipt,
@@ -1276,6 +1448,10 @@ export function createDockerLlamaCppManagedLifecycle(
       const execution: MutationExecutionState = { unknown: false };
       try {
         let inspected = inspectAuthorized(receipt);
+        options.journalStore.assertExecution(lease);
+        privateBridge.stopTransaction(inspected.journal.transactionId);
+        privateBridge.assertStopped(inspected.journal.transactionId);
+        options.journalStore.assertExecution(lease);
         if (!inspected.container.running) {
           if (!AT_REST.has(inspected.container.status)) {
             throw new Error("Docker llama.cpp container is not in an exact stoppable state.");
@@ -1322,6 +1498,14 @@ export function createDockerLlamaCppManagedLifecycle(
           throw new Error("Docker llama.cpp cannot preserve a stopped runtime.");
         }
         probeReady(options, lease, execution);
+        probePrivateBridge(
+          options,
+          privateBridge,
+          inspected.journal,
+          inspected.container,
+          lease,
+          execution,
+        );
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(
           options,
@@ -1364,11 +1548,15 @@ export function createDockerLlamaCppManagedLifecycle(
         options.bindings,
       );
       if (existing === null) {
+        privateBridge.stopTransaction(normalized.runtime.model.generation);
+        privateBridge.assertStopped(normalized.runtime.model.generation);
         const journal = options.journalStore.load(normalized.runtime.model.generation);
         if (journal !== null) {
           const lease = options.journalStore.acquireExecution(journal.transactionId);
           try {
             const authorized = authorizeReceipt(normalized, true);
+            options.journalStore.assertExecution(lease);
+            privateBridge.stopTransaction(authorized.journal.transactionId);
             options.journalStore.assertExecution(lease);
             options.journalStore.retire(authorized.journal.transactionId);
             options.journalStore.assertExecution(lease);
@@ -1385,6 +1573,9 @@ export function createDockerLlamaCppManagedLifecycle(
       const execution: MutationExecutionState = { unknown: false };
       try {
         const inspected = inspectAuthorized(normalized);
+        options.journalStore.assertExecution(lease);
+        privateBridge.stopTransaction(inspected.journal.transactionId);
+        options.journalStore.assertExecution(lease);
         requireSuccess(
           "container removal",
           captureMutation(
@@ -1457,6 +1648,14 @@ export function createDockerLlamaCppManagedLifecycle(
           }
         }
         probeReady(options, lease, execution);
+        probePrivateBridge(
+          options,
+          privateBridge,
+          inspected.journal,
+          inspected.container,
+          lease,
+          execution,
+        );
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(
           options,
@@ -1617,6 +1816,7 @@ export function createDockerLlamaCppManagedLifecycle(
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
         requireExactNetwork(options, network.id, transactionId);
         probeReady(options, lease, execution);
+        probePrivateBridge(options, privateBridge, journal, started, lease, execution);
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
         requireExactNetwork(options, network.id, transactionId);
@@ -1656,7 +1856,7 @@ export function createDockerLlamaCppManagedLifecycle(
           !execution.unknown
         ) {
           try {
-            rollbackExact(options, journal, lease, execution);
+            rollbackExact(options, privateBridge, journal, lease, execution);
           } catch (rollbackError) {
             rollbackFailure = rollbackError;
           }
@@ -1740,6 +1940,14 @@ export function createDockerLlamaCppManagedLifecycle(
               throw new Error("Docker llama.cpp receipt publication requires a running runtime.");
             }
             probeReady(options, lease, execution);
+            probePrivateBridge(
+              options,
+              privateBridge,
+              journal,
+              inspected.container,
+              lease,
+              execution,
+            );
             assertModelFilesystemAuthority(options);
             assertApiKeyIdentity(options, activeKeyIdentity, journal.apiKeyRootIdentitySha256);
             requireExactNetwork(options, requireJournalNetworkId(journal), journal.transactionId);
@@ -1751,6 +1959,7 @@ export function createDockerLlamaCppManagedLifecycle(
           } else {
             rollbackExact(
               options,
+              privateBridge,
               journal,
               lease,
               execution,

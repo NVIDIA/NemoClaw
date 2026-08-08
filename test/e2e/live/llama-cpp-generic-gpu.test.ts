@@ -6,14 +6,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { validateStartupLog } from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/index.ts";
-import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { managedInferenceDigest } from "../../../src/lib/inference/serving/catalog-integrity.ts";
-import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
-import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import {
   MANAGED_LLAMA_CPP_CONTAINER_NAME,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
@@ -24,11 +16,20 @@ import {
   loadManagedLlamaCppReceipt,
   managedLlamaCppStatePaths,
 } from "../../../src/lib/inference/llama-cpp/managed-state.ts";
+import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
+import { managedInferenceDigest } from "../../../src/lib/inference/serving/catalog-integrity.ts";
+import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/index.ts";
+import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertAgentExecutionSucceeded,
   chatContent,
   hasExactReadyPhase,
 } from "./gpu-e2e-helpers.ts";
+
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
@@ -179,7 +180,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
     providerId: "docker",
     service: "llama-cpp",
     endpoint: {
-      host: "127.0.0.1",
+      host: "host.openshell.internal",
       networkName: MANAGED_LLAMA_CPP_NETWORK_NAME,
       port: recipe.spec.serve.port,
     },
@@ -205,6 +206,17 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
     },
   );
   expect(inspect.exitCode, resultText(inspect)).toBe(0);
+  const inspectedRuntime = JSON.parse(inspect.stdout) as Array<{
+    HostConfig?: { PortBindings?: Record<string, unknown> };
+    NetworkSettings?: { Ports?: Record<string, unknown> };
+  }>;
+  expect(inspectedRuntime).toHaveLength(1);
+  expect(inspectedRuntime[0]?.HostConfig?.PortBindings).toEqual({});
+  expect(
+    Object.values(inspectedRuntime[0]?.NetworkSettings?.Ports ?? {}).every(
+      (value) => value === null,
+    ),
+  ).toBe(true);
   const logs = await host.command(
     "docker",
     ["logs", "--tail", "20000", MANAGED_LLAMA_CPP_CONTAINER_NAME],
