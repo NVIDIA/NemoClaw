@@ -1957,8 +1957,24 @@ function resolvePreserveSet(
     );
     return [];
   }
-  const preservable = detectPreservableEntries(paths, runtime);
-  if (preservable.length === 0) return PRESERVED_USER_DATA_ENTRIES;
+  const portableLifecycleInstalled = runtime.existsSync(
+    path.join(paths.nemoclawStateDir, "portable-demo-lifecycle"),
+  );
+  const defaultPreserveEntries = portableLifecycleInstalled
+    ? PRESERVED_USER_DATA_ENTRIES.filter((name) => name !== "sandboxes.json")
+    : PRESERVED_USER_DATA_ENTRIES;
+  if (
+    portableLifecycleInstalled &&
+    runtime.existsSync(path.join(paths.nemoclawStateDir, "sandboxes.json"))
+  ) {
+    runtime.log(
+      "Portable lifecycle state detected; removing sandboxes.json so uninstall cannot leave stranded sandbox registrations.",
+    );
+  }
+  const preservable = detectPreservableEntries(paths, runtime).filter((name) =>
+    defaultPreserveEntries.includes(name),
+  );
+  if (preservable.length === 0) return defaultPreserveEntries;
   const nonInteractive =
     !runtime.isTty || options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1";
   if (nonInteractive) {
@@ -1967,7 +1983,7 @@ function resolvePreserveSet(
       "  Pass --destroy-user-data (or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1) to purge user data on uninstall.",
     );
     warnPreservedRegistryUnrecoverable(preservable, runtime);
-    return PRESERVED_USER_DATA_ENTRIES;
+    return defaultPreserveEntries;
   }
   runtime.log(`The following user data under ${paths.nemoclawStateDir} is preserved by default:`);
   for (const name of preservable) runtime.log(`  · ${name}`);
@@ -1979,7 +1995,7 @@ function resolvePreserveSet(
   }
   runtime.log("Keeping user data.");
   warnPreservedRegistryUnrecoverable(preservable, runtime);
-  return PRESERVED_USER_DATA_ENTRIES;
+  return defaultPreserveEntries;
 }
 
 function executePlan(
