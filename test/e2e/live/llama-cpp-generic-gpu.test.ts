@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { validateStartupLog } from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 import {
   MANAGED_LLAMA_CPP_CONTAINER_NAME,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
@@ -207,10 +206,22 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   );
   expect(inspect.exitCode, resultText(inspect)).toBe(0);
   const inspectedRuntime = JSON.parse(inspect.stdout) as Array<{
+    Config?: { Cmd?: unknown };
     HostConfig?: { PortBindings?: Record<string, unknown> };
     NetworkSettings?: { Ports?: Record<string, unknown> };
+    State?: { Pid?: unknown; Running?: unknown };
   }>;
   expect(inspectedRuntime).toHaveLength(1);
+  const runtime = inspectedRuntime[0];
+  expect(runtime?.State?.Running).toBe(true);
+  expect(runtime?.State?.Pid).toEqual(expect.any(Number));
+  const containerPid = runtime?.State?.Pid as number;
+  expect(containerPid).toBeGreaterThan(0);
+  expect(runtime?.Config?.Cmd).toEqual(expect.any(Array));
+  const command = runtime?.Config?.Cmd as string[];
+  const gpuLayersIndex = command.indexOf("--gpu-layers");
+  expect(gpuLayersIndex).toBeGreaterThanOrEqual(0);
+  expect(command[gpuLayersIndex + 1]).toBe("all");
   expect(inspectedRuntime[0]?.HostConfig?.PortBindings).toEqual({});
   expect(
     Object.values(inspectedRuntime[0]?.NetworkSettings?.Ports ?? {}).every(
@@ -227,25 +238,37 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
     },
   );
   expect(logs.exitCode, resultText(logs)).toBe(0);
-  const offload = validateStartupLog(resultText(logs));
-  expect(offload.offloadedLayers).toBe(offload.totalLayers);
-  const containerGpu = await host.command(
-    "docker",
-    [
-      "exec",
-      MANAGED_LLAMA_CPP_CONTAINER_NAME,
-      "nvidia-smi",
-      "--query-gpu=name,driver_version,memory.used",
-      "--format=csv,noheader,nounits",
-    ],
+  const startupLog = resultText(logs);
+  expect(Buffer.byteLength(startupLog)).toBeGreaterThan(0);
+  expect(Buffer.byteLength(startupLog)).toBeLessThanOrEqual(16 * 1024 * 1024);
+  expect(startupLog).not.toMatch(
+    /no usable GPU|gpu-layers[^\n]*ignored|compiled without[^\n]*GPU|CPU fallback|fallback to CPU|falling back to CPU/iu,
+  );
+  expect(startupLog).toContain("llama_server: model loaded");
+  expect(startupLog).toContain(
+    `llama_server: listening on http://0.0.0.0:${recipe.spec.serve.port}`,
+  );
+  const computeApps = await host.command(
+    "nvidia-smi",
+    ["--query-compute-apps=pid,process_name,used_gpu_memory", "--format=csv,noheader,nounits"],
     {
-      artifactName: "managed-llama-cpp-container-nvidia-smi",
+      artifactName: "managed-llama-cpp-nvidia-compute-apps",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     },
   );
-  expect(containerGpu.exitCode, resultText(containerGpu)).toBe(0);
-  expect(containerGpu.stdout.trim()).toMatch(/^NVIDIA .+,[ ]*[0-9.]+,[ ]*[1-9][0-9]*$/u);
+  expect(computeApps.exitCode, resultText(computeApps)).toBe(0);
+  const llamaGpuProcess = computeApps.stdout
+    .trim()
+    .split("\n")
+    .map((line) => line.split(",").map((value) => value.trim()))
+    .find(
+      ([pid, processName]) => Number(pid) === containerPid && /llama-server$/u.test(processName),
+    );
+  expect(llamaGpuProcess, resultText(computeApps)).toBeDefined();
+  const usedGpuMemoryMiB = Number(llamaGpuProcess?.[2]);
+  const minimumFullOffloadMemoryMiB = Math.floor((modelFile.sizeBytes / 1024 ** 2) * 0.75);
+  expect(usedGpuMemoryMiB).toBeGreaterThanOrEqual(minimumFullOffloadMemoryMiB);
   const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
     artifactName: "managed-llama-cpp-status",
     env: env(),
@@ -402,7 +425,13 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
       servedName: recipe.spec.model.servedName,
     },
     runtime: { image: recipe.spec.runtime.image, provider: receipt!.providerId },
-    gpu: { host: nvidia.stdout.trim(), container: containerGpu.stdout.trim(), ...offload },
+    gpu: {
+      host: nvidia.stdout.trim(),
+      computeProcess: computeApps.stdout.trim(),
+      requestedLayers: command[gpuLayersIndex + 1],
+      usedMemoryMiB: usedGpuMemoryMiB,
+      minimumFullOffloadMemoryMiB,
+    },
     probes: {
       unauthorizedStatus: 401,
       health: "passed",
