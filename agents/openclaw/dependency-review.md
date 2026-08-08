@@ -36,7 +36,8 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   Because PR #6739's base SHA predates the action, only that PR can use the pinned bootstrap action from signed immutable commit `HOYALIM/NemoClaw@0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2`.
   Other PRs fail closed if their base lacks the action.
   The `main.yaml` workflow uses the merged action.
-  The action uses Node `22.19.0`. It downloads `npm@10.9.4`, verifies the committed SRI value, and installs the archive offline with lifecycle scripts disabled.
+  The action uses Node.js `22.19.0`.
+  It downloads `npm@10.9.4`, verifies the SRI value committed in the action, and installs the archive offline with lifecycle scripts disabled.
   It materializes the committed graph with scripts disabled.
   The action rejects any low-or-higher production advisory and verifies registry signatures.
   The PR and main workflows upload the resulting reports.

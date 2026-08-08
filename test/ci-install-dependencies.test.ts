@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("shared CI dependency installer", () => {
-  it("installs root and plugin lockfiles without lifecycle scripts", () => {
+  it("installs root and plugin dependencies from lockfiles without lifecycle scripts", () => {
     const root = mkdtempSync(join(tmpdir(), "nemoclaw-ci-install-"));
     temporaryRoots.push(root);
     const bin = join(root, "bin");
