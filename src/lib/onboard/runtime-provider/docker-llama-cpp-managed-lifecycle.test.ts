@@ -347,7 +347,6 @@ function dockerFixture(
         command: string[];
       }
     | undefined;
-
   const inspection = () => [
     {
       Id: RUNTIME_ID,
@@ -389,14 +388,14 @@ function dockerFixture(
         Status: container?.status ?? "created",
       },
       NetworkSettings: {
-        Networks: { "nemoclaw-llama-cpp-internal": { NetworkID: networkId } },
+        Networks: { [bindings().network.name]: { NetworkID: startedOnce ? networkId : "" } },
         Ports: {
           "8081/tcp": startedOnce
             ? Array.from({ length: publishedBindingCount }, () => ({
                 HostIp: publishedHostIp,
                 HostPort: effectivePublishedHostPort,
               }))
-            : null,
+            : [],
         },
       },
       Mounts: [
@@ -609,6 +608,7 @@ function dockerFixture(
       networkId = journal.networkId;
       networkTransactionId = journal.transactionId;
       networkPresent = true;
+      startedOnce = journal.phase !== "creating" && journal.phase !== "created";
       container = {
         labels: {
           "io.nvidia.nemoclaw.host-local-inference.managed": "true",

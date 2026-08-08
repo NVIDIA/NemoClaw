@@ -89,7 +89,7 @@ interface DockerContainerInspection {
   readonly labels: Readonly<Record<string, string>>;
   readonly running: boolean;
   readonly status: string;
-  readonly networkId: string;
+  readonly networkId: string | null;
   readonly networkName: string;
   readonly hostPort: number | null;
   readonly mounts: readonly {
@@ -118,7 +118,7 @@ interface DockerContainerInspection {
   };
 }
 
-type DockerContainerInspectionMode = "runtime" | "cleanup";
+type DockerContainerInspectionMode = "created" | "runtime" | "cleanup";
 
 interface StableFileIdentity {
   readonly dev: bigint;
@@ -301,8 +301,15 @@ function parseInspection(
     throw new Error("Docker llama.cpp container has unexpected network attachments.");
   }
   const attached = record(networks[networkName], "Docker llama.cpp network attachment");
+  const attachedNetworkId = attached.NetworkID;
+  const networkId =
+    typeof attachedNetworkId === "string" && FULL_ID.test(attachedNetworkId)
+      ? attachedNetworkId
+      : mode !== "runtime" && attachedNetworkId === ""
+        ? null
+        : exactId(attachedNetworkId, "Docker attached network identity");
   let hostPort: number | null = null;
-  if (mode === "runtime") {
+  if (mode !== "cleanup") {
     const ports = record(networkSettings.Ports, "Docker llama.cpp published ports");
     const portKey = `${String(contract.serve.port)}/tcp`;
     const configuredPorts = record(hostConfig.PortBindings, "Docker llama.cpp configured ports");
@@ -321,22 +328,25 @@ function parseInspection(
       throw new Error("Docker llama.cpp configured host port is not the bound host port.");
     }
     const publishedBindings = ports[portKey];
-    if (
-      publishedBindings !== null &&
-      (!Array.isArray(publishedBindings) || publishedBindings.length !== 1)
-    ) {
-      throw new Error("Docker llama.cpp container has unexpected published ports.");
-    }
-    const published =
-      publishedBindings === null
-        ? null
-        : record(publishedBindings[0], "Docker llama.cpp published port");
-    if (published !== null && published.HostIp !== "127.0.0.1") {
-      throw new Error("Docker llama.cpp host port is not loopback-only.");
-    }
-    hostPort = published === null ? null : exactPort(published.HostPort);
-    if (hostPort !== null && hostPort !== bindings.hostPort) {
-      throw new Error("Docker llama.cpp published host port differs from its declared binding.");
+    if (mode === "created") {
+      if (
+        publishedBindings !== null &&
+        (!Array.isArray(publishedBindings) || publishedBindings.length !== 0)
+      ) {
+        throw new Error("Docker llama.cpp created container has unexpected published ports.");
+      }
+    } else {
+      if (!Array.isArray(publishedBindings) || publishedBindings.length !== 1) {
+        throw new Error("Docker llama.cpp container has unexpected published ports.");
+      }
+      const published = record(publishedBindings[0], "Docker llama.cpp published port");
+      if (published.HostIp !== "127.0.0.1") {
+        throw new Error("Docker llama.cpp host port is not loopback-only.");
+      }
+      hostPort = exactPort(published.HostPort);
+      if (hostPort !== bindings.hostPort) {
+        throw new Error("Docker llama.cpp published host port differs from its declared binding.");
+      }
     }
   }
   if (!Array.isArray(source.Mounts)) {
@@ -404,7 +414,7 @@ function parseInspection(
     labels: parseLabels(config.Labels),
     running: state.Running,
     status: stateStatus,
-    networkId: exactId(attached.NetworkID, "Docker attached network identity"),
+    networkId,
     networkName,
     hostPort,
     mounts: Object.freeze(mounts),
@@ -782,7 +792,9 @@ function requireOwnedContainer(
     (record.runtimeId !== null && container.id !== record.runtimeId) ||
     container.name !== record.containerName ||
     container.imageRef !== options.bindings.imageReference ||
-    container.networkId !== record.networkId ||
+    (container.networkId === null
+      ? container.running || container.status !== "created"
+      : container.networkId !== record.networkId) ||
     container.networkName !== options.bindings.network.name ||
     container.labels[MANAGED_LABEL] !== "true" ||
     container.labels[PROVIDER_LABEL] !== PROVIDER_ID ||
@@ -1573,6 +1585,7 @@ export function createDockerLlamaCppManagedLifecycle(
           options.bindings.containerName,
           options.contract,
           options.bindings,
+          "created",
         );
         if (create.error || create.status !== 0 || created === null) {
           throw new Error(
