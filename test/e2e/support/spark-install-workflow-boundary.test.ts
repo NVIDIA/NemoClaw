@@ -83,7 +83,7 @@ describe("spark install workflow boundary", () => {
           "spark-install job must set NEMOCLAW_NON_INTERACTIVE=1",
           "spark-install job must accept third-party software non-interactively",
           "spark-install job must set NEMOCLAW_FRESH=1",
-          "spark-install job must use the stable e2e-spark-install-ci sandbox name",
+          "spark-install job must use the stable e2e-spark-install sandbox name",
           "spark-install job must use the cloud provider",
           "spark-install job must force OPENSHELL_GATEWAY=nemoclaw",
           "spark-install job env must not include NVIDIA_INFERENCE_API_KEY",

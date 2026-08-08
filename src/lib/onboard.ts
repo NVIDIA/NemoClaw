@@ -74,7 +74,6 @@ const dockerGpuRoute: typeof import("./onboard/docker-gpu-route") = require("./o
 const sandboxGpuCreateFlow: typeof import("./onboard/sandbox-gpu-create-flow") = require("./onboard/sandbox-gpu-create-flow");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
-const gatewayService: typeof import("./onboard/docker-driver-gateway-service") = require("./onboard/docker-driver-gateway-service");
 const dockerDriverGatewayCutover: typeof import("./onboard/docker-driver-gateway-cutover") = require("./onboard/docker-driver-gateway-cutover");
 const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExceptOrFail } =
   require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
@@ -127,9 +126,6 @@ const { isLinuxDockerDriverGatewayEnabled } = dockerDriverPlatform;
 const {
   reconcileGatewayGpuReuseForGpuIntent,
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
-const {
-  syncPresetSelection,
-}: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
 const {
   maybeForceE2eStepFailure,
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
@@ -495,10 +491,7 @@ const {
 }: typeof import("./onboard/machine/initial-flow-composition") = require("./onboard/machine/initial-flow-composition");
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
-const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
-const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
-const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
@@ -589,7 +582,6 @@ import {
   setupHermesToolGateways,
   stringSetsEqual,
 } from "./onboard/hermes-managed-tools";
-import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
 import { filterEnabledChannelsByAgent } from "./onboard/messaging-state";
 import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import * as ollamaFlow from "./onboard/ollama-probe-failure";
@@ -600,15 +592,7 @@ import type {
   OpenShellInstallDeps,
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
-import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
-import {
-  computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
-  preparePolicyPresetResumeSelection,
-  type SetupPolicySelectionOptions,
-  type SetupPresetSuggestionOptions,
-  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
-} from "./onboard/policy-selection";
-import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-prompts";
+import { createOnboardPolicyApplication } from "./onboard/policy-selection";
 import {
   printLowMemoryWarning,
   printMessagingProviderMissing,
@@ -754,6 +738,7 @@ const {
   openshellArgv,
   runOpenshell,
   runCaptureOpenshell,
+  captureOpenshell,
   getGatewayPortArg,
   getDockerDriverGatewayEndpointArg,
 } = createOpenshellCliHelpers({
@@ -784,9 +769,27 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
     cliDisplayName,
   });
 
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { getSandboxReuseState, getSandboxRecreateObservation } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME });
+const { refreshDockerDriverGatewayReuseState } =
+  gatewayReuse.createDockerDriverGatewayReuseApplication({
+    gatewayName: () => GATEWAY_NAME,
+    getGatewayCompatContainerName: () =>
+      gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
+    resolveOpenShellGatewayBinary,
+    getDockerDriverGatewayEnv,
+    runCaptureOpenshell,
+    getDockerDriverGatewayStateDir,
+    resolveOpenShellSandboxBinary,
+    getDockerDriverGatewayPid,
+    isDockerDriverGatewayProcessAlive,
+    getDockerDriverGatewayReuseDrift: getGatewayReuseDrift,
+    checkGatewayPortAvailable,
+    getDockerDriverGatewayPortListenerPid,
+    rememberDockerDriverGatewayPid,
+  });
 
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, captureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME, waitUntil });
 const {
   executeSandboxCommandForVerification,
 }: typeof import("./onboard/sandbox-verification-exec") =
@@ -1236,66 +1239,6 @@ function retireLegacyGatewayForDockerDriverUpgrade(): void {
 
 function logDockerDriverGatewayRestart(reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
-}
-
-async function refreshDockerDriverGatewayReuseState(
-  gatewayReuseState: GatewayReuseState,
-): Promise<GatewayReuseState> {
-  if (!isLinuxDockerDriverGatewayEnabled() || gatewayReuseState !== "healthy") {
-    return gatewayReuseState;
-  }
-  const gatewayBin = resolveOpenShellGatewayBinary();
-  const baseDesiredEnv = getDockerDriverGatewayEnv(
-    runCaptureOpenshell(["--version"], { ignoreError: true }),
-  );
-  const runtimeIdentity = gatewayBin
-    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
-        gatewayBin,
-        gatewayEnv: baseDesiredEnv,
-        stateDir: getDockerDriverGatewayStateDir(),
-        sandboxBin: resolveOpenShellSandboxBinary(),
-        gatewayName: GATEWAY_NAME,
-        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
-      })
-    : null;
-  const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
-  const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
-  const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
-  const managedServicePid = gatewayService.getTrustedActiveOpenShellGatewayUserServicePid();
-  const pid = getDockerDriverGatewayPid();
-  if (pid !== null && isDockerDriverGatewayProcessAlive()) {
-    const drift = getGatewayReuseDrift(pid, desiredEnv, driftBin, managedServicePid);
-    if (drift) {
-      console.log(
-        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
-      );
-      return "stale";
-    }
-    return gatewayReuseState;
-  }
-
-  const portCheck = await checkGatewayPortAvailable();
-  const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck, {
-    gatewayBin: identityBin,
-  });
-  if (dockerGatewayPid !== null) {
-    const drift = getGatewayReuseDrift(dockerGatewayPid, desiredEnv, driftBin, managedServicePid);
-    if (dockerGatewayPid !== managedServicePid) rememberDockerDriverGatewayPid(dockerGatewayPid);
-    if (drift) {
-      console.log(
-        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
-      );
-      return "stale";
-    }
-    return "healthy";
-  }
-
-  // `openshell status` already proved the selected gateway is reachable. If
-  // the port probe cannot identify the owning PID, avoid tearing down a live
-  // gateway solely because the pid file is stale.
-  if (!portCheck.ok && !portCheck.pid) return "healthy";
-
-  return "stale";
 }
 
 function destroyGateway(
@@ -2586,7 +2529,7 @@ async function createSandboxWithBaseImageResolution(
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, sandboxName], { ignoreError: true }); }
+    if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, sandboxName], { ignoreError: true }); if (!waitForSandboxRecreateDeleteAbsence(sandboxName, recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, note)) throw new Error(`Cannot continue sandbox '${sandboxName}' recreation: OpenShell did not confirm explicit source absence after delete.`); }
     recreateRuntime.confirmDeleted();
     const replacementReusesPreviousImage =
       replacementWorkload.source.kind === "managed-image" &&
@@ -2638,6 +2581,7 @@ async function createSandboxWithBaseImageResolution(
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
+    lifecycleRegistrationFields,
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
@@ -2652,6 +2596,7 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
+      lifecycleRegistrationFields: recreateRuntime.registrationFields,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2671,8 +2616,6 @@ async function createSandboxWithBaseImageResolution(
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
 
-  // Clean up build context regardless of outcome.
-  // Use fs.rmSync instead of run() to avoid spawning a shell process.
   // Only deregister the 'exit' safety net when inline cleanup succeeded;
   // otherwise leave it armed so a later process.exit() still removes the
   // temp dir (which may hold source and env-arg API keys).
@@ -2783,7 +2726,7 @@ async function createSandboxWithBaseImageResolution(
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
           dashboardForwardEnabled: manageDashboardForward,
-          ...recreateRuntime.registrationFields,
+          ...lifecycleRegistrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
@@ -3684,89 +3627,6 @@ const setupOpenclaw = createOpenclawSetup({
   cleanupTempDir,
 });
 
-// ── Step 7: Policy presets ───────────────────────────────────────
-
-function arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[] = []): boolean {
-  if (!Array.isArray(selectedPresets) || selectedPresets.length === 0) return false;
-  const applied = new Set(policies.getAppliedPresets(sandboxName));
-  return selectedPresets.every((preset) => applied.has(preset));
-}
-
-function getPolicySelectionPromptHelpers(): ReturnType<typeof createPolicySelectionPromptHelpers> {
-  return createPolicySelectionPromptHelpers({
-    tiers,
-    policyTierEnv,
-    isNonInteractive,
-    note,
-    prompt,
-    selectFromNumberedMenuOrExit,
-    makeOnboardCancelExit,
-    sandboxCancelRollback,
-    useColor: USE_COLOR,
-  });
-}
-
-async function selectPolicyTier(): Promise<string> {
-  return getPolicySelectionPromptHelpers().selectPolicyTier();
-}
-
-async function selectTierPresetsAndAccess(
-  tierName: string,
-  allPresets: Array<{ name: string; description?: string }>,
-  initialSelected?: string[],
-): Promise<Array<{ name: string; access: string }>> {
-  return getPolicySelectionPromptHelpers().selectTierPresetsAndAccess(
-    tierName,
-    allPresets,
-    initialSelected,
-  );
-}
-
-async function presetsCheckboxSelector(
-  allPresets: Array<{ name: string; description: string }>,
-  initialSelected: string[],
-): Promise<string[]> {
-  return getPolicySelectionPromptHelpers().presetsCheckboxSelector(allPresets, initialSelected);
-}
-
-const computeSetupPresetSuggestions = (
-  tierName: string,
-  options: SetupPresetSuggestionOptions = {},
-): string[] =>
-  computeSetupPresetSuggestionsImpl(
-    { policies, tiers, localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"] },
-    tierName,
-    options,
-  );
-async function setupPoliciesWithSelection(
-  sandboxName: string,
-  options: SetupPolicySelectionOptions = {},
-) {
-  return sandboxMutationLock.withSandboxMutationLock(sandboxName, () =>
-    setupPoliciesWithSelectionImpl(
-      {
-        policies,
-        tiers,
-        localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"],
-        step,
-        note,
-        isNonInteractive,
-        waitForSandboxReady,
-        waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
-        syncPresetSelection,
-        selectPolicyTier,
-        setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
-        getRecordedPolicyTier: (s) => registry.getSandbox(s)?.policyTier ?? null,
-        selectTierPresetsAndAccess,
-        parsePolicyPresetEnv,
-        env: process.env,
-      },
-      sandboxName,
-      options,
-    ),
-  );
-}
-
 const {
   buildChain,
   buildControlUiUrls,
@@ -3806,6 +3666,39 @@ const sandboxCancelRollback = installSandboxCancelRollback({
   clearOnboardSession: onboardSession.clearSession,
 }); // #4614
 
+const {
+  arePolicyPresetsApplied,
+  computeSetupPresetSuggestions,
+  filterSetupPolicyPresets,
+  getSuggestedPolicyPresets,
+  mergePolicyMessagingChannels,
+  preparePolicyPresetResumeSelection,
+  presetsCheckboxSelector,
+  resolveSandboxBaselinePolicy,
+  selectPolicyTier,
+  selectTierPresetsAndAccess,
+  setupPoliciesWithSelection,
+  validatePolicyTierEnvEarly,
+} = createOnboardPolicyApplication({
+  localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"],
+  step,
+  note,
+  isNonInteractive,
+  prompt,
+  selectFromNumberedMenuOrExit,
+  makeOnboardCancelExit,
+  sandboxCancelRollback,
+  useColor: USE_COLOR,
+  withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
+  waitForSandboxReady,
+  waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
+  setPolicyTier: (sandboxName, tierName) =>
+    registry.updateSandbox(sandboxName, { policyTier: tierName }),
+  getRecordedPolicyTier: (sandboxName) => registry.getSandbox(sandboxName)?.policyTier ?? null,
+  parsePolicyPresetEnv,
+  env: process.env,
+});
+
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
 const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
@@ -3836,7 +3729,7 @@ async function preflightAuthoritativeRebuildTarget(
     await authoritativeRebuildTarget.preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
       {
-        resolveBaselinePolicy: (sandboxName) => policies.resolveSandboxBaselinePolicy(sandboxName),
+        resolveBaselinePolicy: resolveSandboxBaselinePolicy,
         runFatalRuntimePreflight: () =>
           fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
             {
@@ -3916,7 +3809,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
   });
   const onboardingComputePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
+  if (isNonInteractive()) validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,
@@ -4447,8 +4340,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         mergePolicyMessagingChannels,
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         verifyCompatibleEndpointSandboxSmoke: (options) => verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell: runCoreGatewayOpenshell, redact }),
-        preparePolicyPresetResumeSelection: (name, options) =>
-          preparePolicyPresetResumeSelection({ policies }, name, options),
+        preparePolicyPresetResumeSelection,
         arePolicyPresetsApplied,
         skippedStepMessage,
         recordStateSkipped,
@@ -4657,7 +4549,7 @@ module.exports = {
   getSuggestedPolicyPresets,
   computeSetupPresetSuggestions,
   mergeRequiredHermesToolGatewayPolicyPresets,
-  filterSetupPolicyPresets: policies.filterSetupPolicyPresets,
+  filterSetupPolicyPresets,
   LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,
   selectPolicyTier,

@@ -108,7 +108,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
   };
 }
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.99");
 
 const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
   github: {
@@ -149,12 +149,9 @@ function ownedPolicy(
   const resolvedAddresses = options.resolvedAddresses ?? [new URL(entry.url).hostname];
   return {
     name: entry.policyName,
-    content: bridge.buildMcpBridgePolicyYaml(
-      entry.server,
-      entry.url,
-      adapter as AgentMcpAdapter,
-      resolvedAddresses,
-    ),
+    content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, adapter as AgentMcpAdapter, {
+      addresses: [...resolvedAddresses],
+    }),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   };
 }

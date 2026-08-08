@@ -45,7 +45,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
     secrets.optional("NVIDIA_INFERENCE_API_KEY") ??
     skipLive(skip, "NVIDIA_INFERENCE_API_KEY not set — cannot test credential isolation");
   await requireLivePrerequisites(host, skip);
-  const sandboxName = inferenceSandboxName("e2e-inf-cred");
+  const sandboxName = inferenceSandboxName("e2e-cred");
   cleanup.add(`best-effort inference-routing credential-isolation cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
@@ -274,7 +274,7 @@ test("TC-INF-03 Anthropic provider responds through inference.local", {
   const apiKey =
     secrets.optional("ANTHROPIC_API_KEY") ?? skipLive(skip, "ANTHROPIC_API_KEY not set");
   await requireLivePrerequisites(host, skip);
-  const sandboxName = inferenceSandboxName("e2e-anthropic");
+  const sandboxName = inferenceSandboxName("e2e-anth");
   const model = process.env.NEMOCLAW_ANTHROPIC_MODEL || "claude-sonnet-4-6";
   cleanup.add(`best-effort inference-routing Anthropic cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),

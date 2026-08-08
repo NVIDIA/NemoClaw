@@ -15,10 +15,13 @@ import type {
 } from "./contract";
 
 export const PODMAN_MANAGED_LABEL = "openshell.managed";
-export const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
-export const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
-export const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.sandbox-namespace";
-export const PODMAN_SANDBOX_CONTAINER_PREFIX = "openshell-sandbox-";
+export const PODMAN_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+export const PODMAN_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+export const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
+export const PODMAN_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
+export const PODMAN_SANDBOX_NAMESPACE = "";
+export const PODMAN_SANDBOX_WORKSPACE = "default";
+export const PODMAN_SANDBOX_CONTAINER_PREFIX = `openshell-${PODMAN_SANDBOX_WORKSPACE}--`;
 
 const PROBE_TIMEOUT_MS = 5000;
 const MUTATION_TIMEOUT_MS = 40_000;
@@ -32,9 +35,12 @@ type JsonRecord = Record<string, unknown>;
 
 interface PodmanManagedContainer {
   readonly containerId: string;
+  readonly labels: Readonly<Record<string, string>>;
   readonly name: string;
   readonly paused: boolean;
   readonly running: boolean;
+  readonly sandboxId: string;
+  readonly sandboxNamespace: string;
   readonly status: string;
 }
 
@@ -85,9 +91,25 @@ function labels(value: unknown): Readonly<Record<string, string>> {
   return result;
 }
 
+function sameStringMap(
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => Object.hasOwn(right, key) && left[key] === right[key])
+  );
+}
+
 function parsePodmanManagedContainer(
   output: string,
-  expected: { readonly sandboxName: string; readonly name: string; readonly containerId: string },
+  expected: {
+    readonly sandboxName: string;
+    readonly containerId: string;
+    readonly previous?: PodmanManagedContainer;
+  },
 ): PodmanManagedContainer {
   let parsed: unknown;
   try {
@@ -104,9 +126,6 @@ function parsePodmanManagedContainer(
     throw new Error("Podman managed sandbox identity changed after it was pinned.");
   }
   const name = safeText(entry.Name, "Podman inspect Name");
-  if (name !== expected.name) {
-    throw new Error(`Podman managed sandbox name changed from '${expected.name}' to '${name}'.`);
-  }
   const config = record(entry.Config, "Podman inspect Config");
   const containerLabels = labels(config.Labels);
   if (containerLabels[PODMAN_MANAGED_LABEL] !== "true") {
@@ -117,11 +136,39 @@ function parsePodmanManagedContainer(
       `Podman sandbox is missing exact label ${PODMAN_SANDBOX_NAME_LABEL}=${expected.sandboxName}.`,
     );
   }
-  safeText(containerLabels[PODMAN_SANDBOX_ID_LABEL], `Podman label ${PODMAN_SANDBOX_ID_LABEL}`);
-  safeText(
+  const sandboxId = safeText(
+    containerLabels[PODMAN_SANDBOX_ID_LABEL],
+    `Podman label ${PODMAN_SANDBOX_ID_LABEL}`,
+  );
+  const sandboxNamespace = safeLabelValue(
     containerLabels[PODMAN_SANDBOX_NAMESPACE_LABEL],
     `Podman label ${PODMAN_SANDBOX_NAMESPACE_LABEL}`,
   );
+  if (sandboxNamespace !== PODMAN_SANDBOX_NAMESPACE) {
+    throw new Error(
+      `Podman sandbox is missing exact OpenShell v0.0.99 label ${PODMAN_SANDBOX_NAMESPACE_LABEL}=<empty>.`,
+    );
+  }
+  if (containerLabels[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE) {
+    throw new Error(
+      `Podman sandbox is missing exact label ${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}.`,
+    );
+  }
+  const expectedName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${expected.sandboxName}-${sandboxId}`;
+  if (name !== expectedName) {
+    throw new Error(
+      `Podman managed sandbox name '${name}' does not match its exact OpenShell identity.`,
+    );
+  }
+  if (
+    expected.previous &&
+    (expected.previous.name !== name ||
+      expected.previous.sandboxId !== sandboxId ||
+      expected.previous.sandboxNamespace !== sandboxNamespace ||
+      !sameStringMap(expected.previous.labels, containerLabels))
+  ) {
+    throw new Error("Podman managed sandbox ownership changed after it was pinned.");
+  }
   const state = record(entry.State, "Podman inspect State");
   if (typeof state.Running !== "boolean") {
     throw new Error("Podman inspect State.Running must be a boolean.");
@@ -131,9 +178,12 @@ function parsePodmanManagedContainer(
   }
   return {
     containerId,
+    labels: containerLabels,
     name,
     running: state.Running,
     paused: state.Paused === true,
+    sandboxId,
+    sandboxNamespace,
     status: safeText(state.Status, "Podman inspect State.Status").toLowerCase(),
   };
 }
@@ -159,7 +209,11 @@ function requireLifecycleEngine(engine: ContainerEngine): void {
 
 function inspectExactContainer(
   engine: ContainerEngine,
-  expected: { readonly sandboxName: string; readonly name: string; readonly containerId: string },
+  expected: {
+    readonly sandboxName: string;
+    readonly containerId: string;
+    readonly previous?: PodmanManagedContainer;
+  },
 ): PodmanManagedContainer {
   const inspected = engine.capture(
     ["container", "inspect", expected.containerId],
@@ -179,7 +233,6 @@ function resolveManagedContainer(
   if (!isValidName(sandboxName)) {
     throw new Error("Podman lifecycle requires a valid sandbox name.");
   }
-  const expectedName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
   const lookup = engine.capture(
     [
       "ps",
@@ -189,8 +242,10 @@ function resolveManagedContainer(
       `label=${PODMAN_MANAGED_LABEL}=true`,
       "--filter",
       `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
+      "--filter",
+      `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
       "--format",
-      "{{.ID}}\t{{.Names}}",
+      "{{.ID}}",
     ],
     PROBE_TIMEOUT_MS,
   );
@@ -209,14 +264,8 @@ function resolveManagedContainer(
       `Refusing Podman lifecycle mutation: sandbox '${sandboxName}' has ${String(rows.length)} managed containers.`,
     );
   }
-  const columns = rows[0]?.split("\t") ?? [];
-  if (columns.length !== 2 || columns[1] !== expectedName) {
-    throw new Error(
-      `Refusing Podman lifecycle mutation: sandbox '${sandboxName}' has an unexpected container identity.`,
-    );
-  }
-  const containerId = fullContainerId(columns[0], "Podman managed container ID");
-  return inspectExactContainer(engine, { sandboxName, name: expectedName, containerId });
+  const containerId = fullContainerId(rows[0], "Podman managed container ID");
+  return inspectExactContainer(engine, { sandboxName, containerId });
 }
 
 function resultForFailure(error: unknown): RuntimeProviderLifecycleResult {
@@ -259,8 +308,8 @@ export function startPodmanSandbox(
     mutateContainer(engine, operation, container);
     const verified = inspectExactContainer(engine, {
       sandboxName: input.sandboxName,
-      name: container.name,
       containerId: container.containerId,
+      previous: container,
     });
     if (!verified.running || verified.paused) {
       throw new Error(`Podman ${operation} did not leave the exact managed container running.`);
@@ -297,8 +346,8 @@ export function stopPodmanSandbox(
     mutateContainer(engine, "stop", container);
     const verified = inspectExactContainer(engine, {
       sandboxName: input.sandboxName,
-      name: container.name,
       containerId: container.containerId,
+      previous: container,
     });
     if (verified.running || verified.paused || !AT_REST_STATES.has(verified.status)) {
       throw new Error("Podman stop did not leave the exact managed container at rest.");

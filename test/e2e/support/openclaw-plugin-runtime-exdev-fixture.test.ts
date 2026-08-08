@@ -42,7 +42,7 @@ describe("OpenClaw plugin runtime EXDEV current lifecycle", () => {
       currentLifecycleCommands({
         cliEntrypoint: "/repo/bin/nemoclaw.js",
         dockerfilePath: "/fixture/Dockerfile",
-        sandboxName: "e2e-openclaw-plugin-exdev",
+        sandboxName: "e2e-oc-exdev",
       }),
     ).toEqual({
       onboard: {
@@ -70,7 +70,7 @@ describe("OpenClaw plugin runtime EXDEV current lifecycle", () => {
           "--yes",
           "--yes-i-accept-third-party-software",
           "--name",
-          "e2e-openclaw-plugin-exdev",
+          "e2e-oc-exdev",
           "--agent",
           "openclaw",
           "--from",
@@ -79,7 +79,7 @@ describe("OpenClaw plugin runtime EXDEV current lifecycle", () => {
       },
       restart: {
         command: "node",
-        args: ["/repo/bin/nemoclaw.js", "e2e-openclaw-plugin-exdev", "gateway", "restart"],
+        args: ["/repo/bin/nemoclaw.js", "e2e-oc-exdev", "gateway", "restart"],
       },
     });
     expect(CURRENT_LIFECYCLE_PHASES).toEqual([

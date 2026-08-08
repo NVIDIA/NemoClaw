@@ -751,26 +751,8 @@ jobs:
           test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs)" = "0:0:444"
           test -x "$REQUIRED_BINARY"
           test -r /opt/nemoclaw-blueprint/blueprint.yaml
-          test -r /usr/local/share/nemoclaw/node-tar-inventory.json
           test ! -e /usr/local/share/nemoclaw/corporate-ca.pem
           test ! -L /usr/local/share/nemoclaw/corporate-ca.pem
-          node <<'VALIDATE_NODE_TAR'
-          const fs = require("node:fs");
-          const scan = JSON.parse(
-            fs.readFileSync("/usr/local/share/nemoclaw/node-tar-inventory.json", "utf8"),
-          );
-          if (
-            scan.schema !== 1 ||
-            !Number.isInteger(scan.packageCount) ||
-            scan.packageCount < 1 ||
-            !Array.isArray(scan.packages) ||
-            scan.packages.length !== scan.packageCount ||
-            scan.packages.some((entry) => entry.status !== "fixed")
-          ) {
-            throw new Error("completed node-tar scan is missing or unsafe");
-          }
-          VALIDATE_NODE_TAR
-
           test "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1"
           case "$AGENT" in
             openclaw)

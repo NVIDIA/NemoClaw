@@ -714,6 +714,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       CONTENT_ADDRESSED_ARTIFACT_NAME,
       UNBOUND_ARTIFACT_NAME,
     );
+    packageStep.run = packageStep.run!.replace("sandbox-name.cjs", "missing-boundary.cjs");
     const uploadStep = requireStep(workflow, "generate-matrix", CLI_ARTIFACT_PUBLISH_STEP);
     uploadStep.uses = "actions/upload-artifact@v7";
 
@@ -722,6 +723,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         "generate-matrix must expose exact cli_artifact_provenance provenance",
         "CLI artifact package step must bind candidate and trusted workflow identities explicitly",
         `CLI artifact package step must contain ${CONTENT_ADDRESSED_ARTIFACT_NAME}`,
+        "CLI artifact package step must contain sandbox-name.cjs",
         "CLI artifact upload must use the immutable content-addressed upload contract",
       ]),
     );
@@ -898,6 +900,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       const actionPath = path.join(directory, "action.yaml");
       const source = readRepoText(".github/actions/restore-e2e-cli-artifact/action.yaml")
         .replace("tar --no-same-owner --no-same-permissions", "tar")
+        .replace("sandbox-name.cjs", "missing-boundary.cjs")
         .replace('[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]', '[[ -s "$payload" ]]');
       fs.writeFileSync(actionPath, source);
 
@@ -905,6 +908,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         expect.arrayContaining([
           "CLI artifact restore action must match its immutable workflow pin",
           'CLI artifact payload verification must contain tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
+          "CLI artifact payload verification must contain sandbox-name.cjs",
           'CLI artifact payload verification must contain [[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
         ]),
       );
@@ -924,13 +928,14 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("excludes installer-backed jobs from the shared CLI artifact", () => {
+  it("requires security posture to restore the shared CLI modules", () => {
     const workflow = workflowFixture();
-    const inheritedRestore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
-    workflow.jobs["security-posture"].steps!.push(inheritedRestore);
+    workflow.jobs["security-posture"].steps = workflow.jobs["security-posture"].steps!.filter(
+      (step) => step.name !== CLI_ARTIFACT_RESTORE_STEP,
+    );
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "security-posture must not consume the shared CLI artifact",
+      "security-posture must verify and restore the exact CLI artifact exactly once",
     );
   });
 });

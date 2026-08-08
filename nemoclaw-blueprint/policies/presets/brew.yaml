@@ -19,7 +19,10 @@ network_policies:
       - host: github.com
         port: 443
         access: full
-        tls: skip
+        # Keep GitHub and raw-content routes on automatic TLS handling so this
+        # preset composes with the agent baselines and narrower inspected
+        # routes under OpenShell 0.0.99. System git is excluded below; the
+        # remaining curl/Homebrew clients trust the sandbox CA.
       - host: ghcr.io
         port: 443
         access: full
@@ -35,7 +38,7 @@ network_policies:
       - host: raw.githubusercontent.com
         port: 443
         access: full
-        tls: skip
+        # See the automatic-TLS compatibility rationale on github.com above.
     # System git is intentionally excluded; git-based Homebrew operations require the github preset.
     binaries:
       - { path: /usr/bin/curl }

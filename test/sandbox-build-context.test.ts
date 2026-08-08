@@ -119,7 +119,6 @@ describe("sandbox build context staging", () => {
     writeFixture(
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
-    writeFixture(path.join("scripts", "checks", "node-tar-image-scan.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
@@ -154,6 +153,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-managed-transport-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
+    writeFixture(path.join("scripts", "openclaw", "patch-gateway-daemon-dialback.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
@@ -655,6 +655,11 @@ describe("sandbox build context staging", () => {
       ).toBe(true);
       expect(
         fs.existsSync(
+          path.join(buildCtx, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
           path.join(buildCtx, "scripts", "patch-openclaw-shared-state-permissions.mts"),
         ),
       ).toBe(true);
@@ -666,9 +671,6 @@ describe("sandbox build context staging", () => {
         fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-bundled-npm-ip-address.mts")),
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "checks", "node-tar-image-scan.mts")),
-      ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),
       ).toBe(false);
