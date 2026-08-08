@@ -16,6 +16,7 @@ import {
   LLAMA_CPP_DGX_SPARK_MODEL_ID,
   LLAMA_CPP_DGX_SPARK_MODEL_PATH_PATTERN,
   LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE,
+  LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX,
   LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION,
   LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
   LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
@@ -105,7 +106,7 @@ function agentQualification() {
       upstreamBaseUrl: "http://host.openshell.internal:8081/v1",
     },
     runtimeProvider: "docker",
-    sandbox: { gpuAccess: "disabled", name: "nemoclaw-llama-cpp-openclaw" },
+    sandbox: { gpuAccess: "disabled", name: LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX },
     sessions: {
       normal: "llama-cpp-openclaw-normal",
       tool: "llama-cpp-openclaw-tool",

@@ -25,7 +25,7 @@ command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 90"
 command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 90"
 
 # GET /v1/models — lightweight 200 check (no API key in curl; gateway routes inference)
-ssh_host="openshell-${SANDBOX_NAME}"
+ssh_host="openshell-${SANDBOX_NAME}.default"
 curl_inner='curl -sS -o /dev/null -w "%{http_code}" --max-time 60 https://inference.local/v1/models'
 
 set +e

@@ -91,6 +91,16 @@ describe("selectDirectSandboxContainer", () => {
     expect(selected).toBe("generated-id");
   });
 
+  it("returns the immutable id for a v0.0.99 default-workspace container", () => {
+    const selected = selectDirectSandboxContainer(
+      "demo",
+      "generated-id\topenshell-default--demo-abc123\n",
+      ["demo"],
+    );
+
+    expect(selected).toBe("generated-id");
+  });
+
   it("rejects a prefix-collision container owned by a longer sandbox name", () => {
     expect(() =>
       selectDirectSandboxContainer("demo", "child-id\topenshell-demo-child\n", [
