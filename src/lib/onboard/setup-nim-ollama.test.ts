@@ -265,7 +265,7 @@ describe("createSetupNimOllamaHandlers", () => {
       }),
     );
 
-    const result = await handleRunningOllamaSelection(null, "qwen3.6:35b", null, true, state);
+    const result = await handleRunningOllamaSelection(null, "qwen3.6:35b", null, true, state, true);
 
     expect(result).toBe("selected");
     expect(state).toMatchObject({
@@ -273,6 +273,26 @@ describe("createSetupNimOllamaHandlers", () => {
       provider: "ollama-local",
       endpointUrl: "http://host.docker.internal:11434/v1",
     });
+  });
+
+  it("skips the Linux systemd loopback override for a Windows-host Ollama daemon (#8596)", async () => {
+    const state = makeState();
+    const ensureOverride = vi.fn<Deps["ensureOllamaLoopbackSystemdOverride"]>(() => "unchanged");
+    const runStartup = vi.fn<Deps["runOllamaStartupOrGate"]>(() => ({ kind: "ready" }));
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        ensureOllamaLoopbackSystemdOverride: ensureOverride,
+        runOllamaStartupOrGate: runStartup,
+        getLocalProviderBaseUrl: () => "http://host.docker.internal:11434/v1",
+      }),
+    );
+
+    const result = await handleRunningOllamaSelection(null, "qwen3.6:35b", null, true, state, true);
+
+    expect(result).toBe("selected");
+    expect(ensureOverride).not.toHaveBeenCalled();
+    expect(runStartup).toHaveBeenCalledWith(expect.objectContaining({ ollamaReady: true }));
+    expect(state.endpointUrl).toBe("http://host.docker.internal:11434/v1");
   });
 
   it("passes the Hermes Ollama context floor to systemd repair and model validation", async () => {

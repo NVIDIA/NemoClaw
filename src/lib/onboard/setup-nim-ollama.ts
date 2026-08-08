@@ -91,6 +91,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama?: boolean,
   ) => Promise<SetupNimSelectionResult>;
   handleInstallOllamaSelection: (
     gpu: any,
@@ -260,6 +261,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama = false,
   ): Promise<SetupNimSelectionResult> {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
@@ -267,17 +269,22 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     const initialState = { ...state, hermesToolGateways: [...state.hermesToolGateways] };
     const lockedModel = preflightOllamaRoute(state, requestedModel, recoveredModel);
     let ollamaReady = ollamaRunning;
-    const overrideState = deps.ensureOllamaLoopbackSystemdOverride({
-      isNonInteractive: deps.isNonInteractive,
-      contextWindowFloor: state.ollamaContextWindowFloor,
-    });
-    if (overrideState === "ready") {
-      ollamaReady = true;
-    } else if (overrideState === "failed") {
-      console.error(
-        "  Ollama systemd restart did not recover after applying the loopback override.",
-      );
-      deps.process.exit(1);
+    // A Windows-host Ollama daemon reached at host.docker.internal is not a
+    // Linux systemd service. Applying the loopback override targets an
+    // unrelated local ollama.service and exits 1 (#8596, regression of #4208).
+    if (!isWindowsHostOllama) {
+      const overrideState = deps.ensureOllamaLoopbackSystemdOverride({
+        isNonInteractive: deps.isNonInteractive,
+        contextWindowFloor: state.ollamaContextWindowFloor,
+      });
+      if (overrideState === "ready") {
+        ollamaReady = true;
+      } else if (overrideState === "failed") {
+        console.error(
+          "  Ollama systemd restart did not recover after applying the loopback override.",
+        );
+        deps.process.exit(1);
+      }
     }
     const startup = deps.runOllamaStartupOrGate({
       ollamaReady,

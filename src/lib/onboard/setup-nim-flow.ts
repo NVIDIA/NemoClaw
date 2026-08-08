@@ -168,6 +168,7 @@ export interface SetupNimFlowDeps {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama?: boolean,
   ): Promise<SetupNimSelectionResult>;
   handleWindowsHostOllamaSelection(
     gpu: SetupNimGpu,
@@ -759,6 +760,7 @@ export function createSetupNim(
             recoveredFromSandbox ? recoveredModel : null,
             ollamaRunning,
             state,
+            isWindowsHostOllama,
           );
           ({
             model,
