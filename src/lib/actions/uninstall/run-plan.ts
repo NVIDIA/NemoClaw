@@ -269,6 +269,7 @@ const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
   "backups",
   "sandboxes.json",
 ];
+const PORTABLE_PODMAN_STORE_PATTERN = /^portable-podman(?:-v[1-9][0-9]*)?$/u;
 
 const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
   "https-pin-runtime-adapter.pid",
@@ -380,6 +381,39 @@ function removePathExcept(
     return true;
   }
   deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
+  return true;
+}
+
+function removePortablePodmanStores(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
+  if (!runtime.existsSync(paths.nemoclawStateDir)) return true;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(paths.nemoclawStateDir, { withFileTypes: true });
+  } catch (error) {
+    runtime.warn(
+      `Failed to inspect portable Podman stores under ${paths.nemoclawStateDir}: ${formatError(error)}`,
+    );
+    return false;
+  }
+  const stores = entries
+    .filter((entry) => PORTABLE_PODMAN_STORE_PATTERN.test(entry.name))
+    .map((entry) => path.join(paths.nemoclawStateDir, entry.name));
+  if (stores.length === 0) return true;
+  if (!runtime.commandExists("podman")) {
+    runtime.warn("Podman is required to remove portable UID-mapped container storage.");
+    return false;
+  }
+  for (const store of stores) {
+    const result = runtime.run("podman", ["unshare", "rm", "-rf", "--", store], {
+      env: runtime.env,
+      stdio: "ignore",
+    });
+    if (result.status !== 0 || runtime.existsSync(store)) {
+      runtime.warn(`Failed to remove portable Podman store ${store}.`);
+      return false;
+    }
+    runtime.log(`Removed portable Podman store ${store}`);
+  }
   return true;
 }
 
@@ -2163,6 +2197,9 @@ function executePlan(
       }
       const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
       const selectedIsDefault = path.resolve(paths.nemoclawStateDir) === path.resolve(sharedRoot);
+      if (!scopedToSelectedGateway && !removePortablePodmanStores(paths, runtime)) {
+        return { ok: false };
+      }
       if (scopedToSelectedGateway && selectedIsDefault && sharedRegistryMustBePreserved) {
         if (
           !preserveUnderStateDir.includes("sandboxes.json") &&
