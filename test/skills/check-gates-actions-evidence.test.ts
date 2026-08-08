@@ -19,6 +19,66 @@ import {
   successfulRequiredChecksWithoutE2e,
 } from "./check-gates-test-fixtures.ts";
 
+const ADVISOR_WORKFLOW_NAME = "PR Review / Advisor";
+const ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
+const NEMOTRON_ADVISOR_JOB = "PR review advisor (Nemotron 3 Ultra)";
+
+interface AdvisorCheckOptions {
+  name?: string;
+  workflowName?: string;
+  detailsUrl?: string;
+  status?: string;
+  conclusion?: string;
+}
+
+interface AdvisorRunOptions {
+  jobName?: string;
+  path?: string;
+  event?: string;
+  pullRequests?: unknown[];
+  status?: string;
+  conclusion?: string | null;
+  jobStatus?: string;
+  jobConclusion?: string | null;
+}
+
+function advisorCheck(runId: number, jobId: number, options: AdvisorCheckOptions = {}) {
+  return {
+    __typename: "CheckRun",
+    name: NEMOTRON_ADVISOR_JOB,
+    workflowName: ADVISOR_WORKFLOW_NAME,
+    detailsUrl: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${jobId}`,
+    startedAt: "2026-01-01T00:00:00Z",
+    status: "COMPLETED",
+    conclusion: "FAILURE",
+    ...options,
+  };
+}
+
+function advisorRun(jobId: number, options: AdvisorRunOptions = {}) {
+  return {
+    attempt: 1,
+    headSha: BASE_SHA,
+    headBranch: "main",
+    headRepository: "NVIDIA/NemoClaw",
+    pullRequestHeadSha: HEAD_SHA,
+    baseSha: BASE_SHA,
+    event: "pull_request_target",
+    path: ADVISOR_WORKFLOW_PATH,
+    status: "completed",
+    conclusion: "failure",
+    jobs: [
+      {
+        id: jobId,
+        name: options.jobName ?? NEMOTRON_ADVISOR_JOB,
+        status: options.jobStatus ?? "completed",
+        conclusion: options.jobConclusion === undefined ? "failure" : options.jobConclusion,
+      },
+    ],
+    ...options,
+  };
+}
+
 describe("maintainer merge-gate contributor compliance", () => {
   it("requires PR/base SHA evidence for optional Actions checks", () => {
     const result = runGate({
@@ -51,6 +111,146 @@ describe("maintainer merge-gate contributor compliance", () => {
       failingChecks: ["optional-check: latest attempt evidence incomplete"],
     });
     expect(output.allPass).toBe(false);
+  });
+
+  it.each([
+    {
+      state: "failed",
+      name: "PR review advisor (GPT-5.6 Terra)",
+      runId: 9001,
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+      runStatus: "completed",
+      runConclusion: "failure",
+    },
+    {
+      state: "pending",
+      name: NEMOTRON_ADVISOR_JOB,
+      runId: 9002,
+      status: "IN_PROGRESS",
+      conclusion: undefined,
+      runStatus: "in_progress",
+      runConclusion: null,
+    },
+  ])("keeps an authenticated $state PR Review Advisor lane advisory", ({
+    name,
+    runId,
+    status,
+    conclusion,
+    runStatus,
+    runConclusion,
+  }) => {
+    const jobId = runId + 100;
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...successfulRequiredChecks(),
+        advisorCheck(runId, jobId, { name, status, conclusion }),
+      ],
+      actionRunAttempts: {
+        [String(runId)]: advisorRun(jobId, {
+          jobName: name,
+          status: runStatus,
+          conclusion: runConclusion,
+          jobStatus: runStatus,
+          jobConclusion: runConclusion,
+        }),
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
+  });
+
+  it.each([
+    { evidence: "the REST job has another name", run: { jobName: "unrelated job" } },
+    {
+      evidence: "the job URL has an attacker origin",
+      check: {
+        detailsUrl: "https://attacker.example/NVIDIA/NemoClaw/actions/runs/9010/job/9110",
+      },
+    },
+    {
+      evidence: "the job URL names another repository",
+      check: {
+        detailsUrl: "https://github.com/NVIDIA/OtherRepo/actions/runs/9010/job/9110",
+      },
+    },
+    {
+      evidence: "the REST job status differs",
+      check: { status: "IN_PROGRESS", conclusion: undefined },
+      run: {
+        status: "in_progress",
+        conclusion: null,
+        jobStatus: "queued",
+        jobConclusion: null,
+      },
+    },
+    { evidence: "the REST job conclusion differs", run: { jobConclusion: "success" } },
+    { evidence: "the workflow path differs", run: { path: ".github/workflows/other.yaml" } },
+    { evidence: "the workflow path is missing", run: { path: undefined } },
+    { evidence: "the workflow event differs", run: { event: "workflow_dispatch" } },
+    { evidence: "the PR association is missing", run: { pullRequests: [] } },
+    { evidence: "the workflow name is missing", check: { workflowName: undefined } },
+    { evidence: "the workflow name differs", check: { workflowName: "PR Review / Advisor 2" } },
+    {
+      evidence: "the run URL has no job",
+      check: { detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/9010" },
+    },
+    { evidence: "the run metadata is missing", includeRun: false },
+    {
+      evidence: "the publish job is not allowlisted",
+      check: { name: "Publish PR review advisor" },
+      run: { jobName: "Publish PR review advisor" },
+    },
+    {
+      evidence: "a future advisor job is not allowlisted",
+      check: { name: "PR review advisor (Future Model)" },
+      run: { jobName: "PR review advisor (Future Model)" },
+    },
+  ])("keeps an advisor-like check merge-relevant when $evidence", ({ check, run, includeRun }) => {
+    const runId = 9010;
+    const jobId = 9110;
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [...successfulRequiredChecks(), advisorCheck(runId, jobId, check)],
+      actionRunAttempts:
+        includeRun === false ? undefined : { [String(runId)]: advisorRun(jobId, run) },
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: false,
+      gates: { ci: { pass: false } },
+    });
+  });
+
+  it("does not accept an advisor workflow job as the required checks context", () => {
+    const runId = 9020;
+    const jobId = 9120;
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...successfulRequiredChecks().filter((check) => check.name !== "checks"),
+        advisorCheck(runId, jobId, { name: "checks", conclusion: "SUCCESS" }),
+      ],
+      actionRunAttempts: {
+        [String(runId)]: advisorRun(jobId, {
+          jobName: "checks",
+          status: "completed",
+          conclusion: "success",
+          jobConclusion: "success",
+        }),
+      },
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output).toMatchObject({ allPass: false, gates: { ci: { pass: false } } });
+    expect(output.gates.ci.failingChecks).toContain("checks: latest attempt evidence incomplete");
   });
 
   it.each([

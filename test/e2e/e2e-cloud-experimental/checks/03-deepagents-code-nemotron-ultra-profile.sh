@@ -3,11 +3,19 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Case: the stock Deep Agents Code sandbox resolves the Nemotron 3 Ultra
-# harness profile before later checks intentionally re-onboard to another model.
+# harness profile, and the installed managed resolver supplies the reviewed
+# Ultra template argument, before later checks intentionally rerun onboarding
+# with another model.
 #
-# This is a local runtime contract only. It builds the same pre-resolved
-# ChatOpenAI shape that DCode uses, then inspects the selected built-in profile;
-# it never invokes the model or makes a network request.
+# This runtime contract builds the same pre-resolved ChatOpenAI settings that
+# DCode uses, then inspects the selected built-in profile. It never invokes the
+# model or makes a network request.
+#
+# The config.toml assertions below describe the sandbox configuration, which is
+# not what #7441 broke: the hardened managed resolver never consumes the config
+# params table, so a TOML round-trip passes with or without the fix. The managed
+# resolver contract therefore calls the installed deepagents_code.config
+# function directly, under a socket guard that fails closed on any network use.
 
 set -euo pipefail
 
@@ -32,6 +40,7 @@ profile_contract_source() {
 import asyncio
 import hashlib
 import importlib.metadata
+import socket
 from pathlib import Path
 import tomllib
 
@@ -127,6 +136,106 @@ assert model_kwargs == {
     "use_responses_api": False,
     "extra_body": EXPECTED_EXTRA_BODY,
 }
+
+# Managed resolver contract (#7441). The assertions above cover the sandbox
+# configuration and upstream's config reader; the managed launcher builds its
+# model from the installed resolver below, which deliberately ignores that
+# params table. Only this block verifies the installed patch, so it checks all
+# returned settings rather than one key.
+from deepagents_code.config import (
+    _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS,
+    _get_provider_kwargs,
+)
+from deepagents_code._nemoclaw_managed import (
+    managed_inference_base_url,
+    managed_reasoning_effort,
+)
+from deepagents_code.model_config import ModelConfigError
+
+# A mutable allowlist would let a caller widen the shaped set at runtime.
+assert isinstance(_NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS, frozenset)
+assert set(_NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS) == set(MANAGED_MODEL_IDS)
+
+MANAGED_BASE_URL = managed_inference_base_url()
+assert MANAGED_BASE_URL == provider["base_url"], MANAGED_BASE_URL
+# The resolver supplies only the fixed synthetic credential. The provider
+# credential never reaches the constructor or appears in the returned settings.
+OPENAI_CONTRACT = {
+    "api_key": "nemoclaw-managed-inference",
+    "base_url": MANAGED_BASE_URL,
+    "use_responses_api": False,
+}
+MANAGED_REASONING_EFFORT = managed_reasoning_effort()
+if MANAGED_REASONING_EFFORT is not None:
+    OPENAI_CONTRACT["extra_body"] = {
+        "reasoning_effort": MANAGED_REASONING_EFFORT,
+    }
+MANAGED_ULTRA_EXTRA_BODY = {
+    **OPENAI_CONTRACT.get("extra_body", {}),
+    **EXPECTED_EXTRA_BODY,
+}
+OPENROUTER_CONTRACT = {
+    "api_key": "nemoclaw-managed-inference",
+    "base_url": MANAGED_BASE_URL,
+}
+# Deliberate near miss: a different Nemotron generation must not be shaped.
+UNSHAPED_MODEL_NAMES = ("gpt-4.1-mini", "nvidia/nemotron-4-ultra-550b-a55b", None)
+BLOCKED_PROVIDERS = ("anthropic", "fireworks", "ollama", "nvidia")
+
+
+def blocked_socket(*args, **kwargs):
+    raise AssertionError("managed resolver contract attempted a network connection")
+
+
+real_socket = socket.socket
+socket.socket = blocked_socket
+try:
+    for model_id in MANAGED_MODEL_IDS:
+        assert _get_provider_kwargs("openai", model_name=model_id) == {
+            **OPENAI_CONTRACT,
+            "extra_body": MANAGED_ULTRA_EXTRA_BODY,
+        }, model_id
+        # The reviewed argument belongs to the OpenAI adapter alone; the managed
+        # OpenRouter adapter keeps the unshaped contract for the same model.
+        assert (
+            _get_provider_kwargs("openrouter", model_name=model_id)
+            == OPENROUTER_CONTRACT
+        ), model_id
+
+    for model_name in UNSHAPED_MODEL_NAMES:
+        assert (
+            _get_provider_kwargs("openai", model_name=model_name) == OPENAI_CONTRACT
+        ), model_name
+        assert (
+            _get_provider_kwargs("openrouter", model_name=model_name)
+            == OPENROUTER_CONTRACT
+        ), model_name
+
+    for blocked_provider in BLOCKED_PROVIDERS:
+        try:
+            _get_provider_kwargs(blocked_provider, model_name=MANAGED_MODEL_IDS[0])
+        except ModelConfigError:
+            pass
+        else:
+            raise AssertionError(blocked_provider)
+
+    # Mutation of one result cannot change a later result.
+    tampered = _get_provider_kwargs("openai", model_name=MANAGED_MODEL_IDS[0])
+    tampered["api_key"] = "tampered"
+    tampered["extra_body"]["chat_template_kwargs"]["force_nonempty_content"] = False
+    assert _get_provider_kwargs("openai", model_name=MANAGED_MODEL_IDS[0]) == {
+        **OPENAI_CONTRACT,
+        "extra_body": MANAGED_ULTRA_EXTRA_BODY,
+    }
+finally:
+    socket.socket = real_socket
+
+print(
+    "NEMOCLAW_MANAGED_RESOLVER_CONTRACT_OK:"
+    f"shaped={len(MANAGED_MODEL_IDS)}:"
+    f"unshaped={len(UNSHAPED_MODEL_NAMES)}:"
+    f"blocked={len(BLOCKED_PROVIDERS)}"
+)
 
 
 class ProfileOnlyChatOpenAI(ChatOpenAI):
@@ -288,5 +397,7 @@ profile_output="$(
 )" || fail "Nemotron Ultra harness profile contract failed: $profile_output"
 printf '%s\n' "$profile_output" | grep -Fq "NEMOCLAW_NEMOTRON_ULTRA_PROFILE_OK:" || fail "profile verification marker is missing"
 pass "configured ChatOpenAI resolves the complete Nemotron Ultra profile without inference"
+printf '%s\n' "$profile_output" | grep -Fq "NEMOCLAW_MANAGED_RESOLVER_CONTRACT_OK:" || fail "managed resolver contract marker is missing"
+pass "installed managed resolver matches the tested Ultra, non-Ultra, provider, and network contracts without inference"
 
-printf '%s: 1 passed, 0 failed\n' "$PREFIX"
+printf '%s: 2 passed, 0 failed\n' "$PREFIX"

@@ -3454,7 +3454,7 @@ GATEWAYURLENVEOF
     # src/lib/onboard/sandbox-create-launch.ts) and is the only in-container
     # source of the name; capture it here for the renderer below.
     #
-    # Apply the same RFC-1123 allowlist the renderer uses (mirrors
+    # Apply the same canonical sandbox-name allowlist the renderer uses (mirrors
     # NAME_VALID_PATTERN in src/lib/name-validation.ts). Missing or invalid
     # values cannot reach a copyable command. An accepted value is limited to
     # [a-z0-9-] and needs no further escaping.
@@ -3467,9 +3467,9 @@ GATEWAYURLENVEOF
       _sandbox_label=""
       case "$_sandbox_label_src" in
         "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-        [!a-z]* | *- | *[!a-z0-9-]*) ;;
+        [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
         *)
-          if [ "${#_sandbox_label_src}" -le 63 ]; then
+          if [ "${#_sandbox_label_src}" -le 19 ]; then
             _sandbox_label="$_sandbox_label_src"
           fi
           ;;
@@ -3942,11 +3942,12 @@ _nemoclaw_valid_sandbox_label() {
   # The candidates are untrusted input interpolated into a copyable `nemoclaw …`
   # command, so allowlist rather than merely strip: only render a value that is
   # a valid sandbox name. This mirrors NAME_VALID_PATTERN in
-  # src/lib/name-validation.ts (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts
-  # with a lowercase letter, then lowercase alphanumerics/hyphens, no trailing
-  # hyphen. Anything else (digit-leading labels, control characters, ANSI
-  # escapes, shell metacharacters, whitespace) is rejected, and the caller falls
-  # back to a placeholder the user resolves with `nemoclaw list`. Shell `case`
+  # src/lib/name-validation.ts (lowercase, max 19, no consecutive hyphens):
+  # starts with a lowercase letter, then lowercase alphanumerics/single internal
+  # hyphens, with no trailing hyphen. Anything else (digit-leading labels,
+  # control characters, ANSI escapes, shell metacharacters, whitespace) is
+  # rejected, and the caller falls back to a placeholder the user resolves with
+  # `nemoclaw list`. Shell `case`
   # globs match newlines as ordinary characters, so an embedded newline is
   # rejected by the metacharacter class. The boolean forms are OpenShell's older
   # "this is a sandbox" marker rather than a name.
@@ -3959,9 +3960,9 @@ _nemoclaw_valid_sandbox_label() {
   LC_ALL=C
   case "${1:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-    [!a-z]* | *- | *[!a-z0-9-]*) ;;
+    [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
     *)
-      if [ "${#1}" -le 63 ]; then
+      if [ "${#1}" -le 19 ]; then
         printf '%s' "$1"
       fi
       ;;

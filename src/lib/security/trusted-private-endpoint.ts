@@ -42,11 +42,14 @@ OPERATOR_TRUSTABLE_PRIVATE_NETWORKS.addSubnet("fc00::", 7, "ipv6");
 declare const trustedPrivateEndpointCapabilityBrand: unique symbol;
 
 /**
- * Ephemeral proof that the shared SSRF preflight admitted an exact set of
- * operator-trusted private addresses. Callers can carry this value, but only
- * this module can issue one and the curl boundary validates its provenance.
+ * Ephemeral proof that the shared SSRF preflight admitted the exact pins for
+ * an operator-trusted private host. The set includes every accepted public and
+ * private DNS answer so consumers can pin without re-resolving. Callers can
+ * carry this value, but only this module can issue one and enforcement
+ * boundaries validate its provenance.
  */
 export interface TrustedPrivateEndpointCapability {
+  readonly host: string;
   readonly addresses: readonly string[];
   readonly [trustedPrivateEndpointCapabilityBrand]: true;
 }
@@ -54,9 +57,11 @@ export interface TrustedPrivateEndpointCapability {
 const TRUSTED_PRIVATE_ENDPOINT_CAPABILITIES = new WeakSet<object>();
 
 function issueTrustedPrivateEndpointCapability(
+  host: string,
   addresses: readonly string[],
 ): TrustedPrivateEndpointCapability {
   const capability = Object.freeze({
+    host,
     addresses: Object.freeze([...new Set(addresses.map(normalizeIpLiteral))].sort()),
   }) as unknown as TrustedPrivateEndpointCapability;
   TRUSTED_PRIVATE_ENDPOINT_CAPABILITIES.add(capability);
@@ -94,21 +99,20 @@ export interface EndpointSsrfPreflightResult {
   /** Human-readable reason, present only when `ok === false`. */
   reason?: string;
   /** Stable failure classification for callers that must not parse `reason`. */
-  reasonCode?: "mixed-answer" | "private-answer" | "rejected" | "unresolved";
+  reasonCode?: "private-answer" | "rejected" | "unresolved";
   /** Exact rejected DNS answer when `reasonCode` identifies an address failure. */
   offendingAddress?: string;
   /**
-   * Validated public addresses the endpoint host resolved to, for connection
+   * Every validated address the endpoint host resolved to, for connection
    * pinning (curl `--resolve`) so a subsequent probe cannot re-resolve the name
-   * to a rebound private/internal address (TOCTOU). Present only when
-   * `ok === true` and pinning applies — resolved public names and public IP
-   * literals. An empty array is the explicit trusted-no-pin capability for
-   * loopback, OpenShell-managed aliases, and public IP literals. Callers must
-   * preserve it so credentialed probes bypass ambient proxies even when no
-   * curl `--resolve` argument is needed.
+   * to a rebound private/internal address (TOCTOU). Present when `ok === true`
+   * and pinning applies. An empty array is the explicit trusted-no-pin result
+   * for inference-local endpoints and IP literals. Callers must preserve it so
+   * credentialed probes bypass ambient proxies even when no curl `--resolve`
+   * argument is needed.
    */
   addresses?: string[];
-  /** Non-forgeable proof of the exact private addresses admitted by the operator allowlist. */
+  /** Non-forgeable proof of the exact accepted pins for an operator-trusted private host. */
   trustedPrivateCapability?: TrustedPrivateEndpointCapability;
   /** True only when an exact operator allowlist entry admitted a private address. */
   trustedPrivateEndpoint?: true;
@@ -123,6 +127,13 @@ function normalizeIpLiteral(address: string): string {
   if (isIP(address) !== 6) return address.toLowerCase();
   const hostname = new URL(`http://[${address}]/`).hostname;
   return hostname.slice(1, -1).toLowerCase();
+}
+
+function normalizeEndpointHostname(hostname: string): string {
+  const value =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const normalized = value.replace(/\.$/, "").toLowerCase();
+  return isIP(normalized) === 0 ? normalized : normalizeIpLiteral(normalized);
 }
 
 /** Normalize one exact hostname or IP literal for an operator trust decision. */
@@ -190,31 +201,106 @@ export interface TrustedPrivateEndpointReplay {
   readonly trustedPrivateCapability: TrustedPrivateEndpointCapability;
 }
 
-/** Reissue in-process capability authority from exact durable private pins. */
-export function replayTrustedPrivateEndpoint(
+export interface TrustedPrivateEndpointPinOptions {
+  /** Require every pin to be in a supported routed-private range. */
+  requireAllPrivate?: boolean;
+}
+
+export interface TrustedPrivateEndpointPins {
+  readonly host: string;
+  readonly addresses: readonly string[];
+}
+
+/**
+ * Validate and canonicalize exact pins without granting network authority.
+ * Callers must use a provenance-checked capability before enforcement.
+ */
+export function canonicalizeTrustedPrivateEndpointPins(
   host: string,
   addresses: readonly string[],
-): TrustedPrivateEndpointReplay {
+  options: TrustedPrivateEndpointPinOptions = {},
+): TrustedPrivateEndpointPins {
   const normalizedHost = normalizeTrustedPrivateHost(host);
   if (addresses.length === 0) {
     throw new Error(`trusted private host "${normalizedHost}" has no recorded address pins`);
   }
+  const { isPrivateIp } = require("../private-networks") as typeof import("../private-networks");
   const normalizedAddresses = addresses.map((address) => {
-    if (typeof address !== "string" || !isOperatorTrustablePrivateIp(address)) {
+    if (typeof address !== "string" || isIP(address) === 0 || address.includes("%")) {
       throw new Error(
         `trusted private host "${normalizedHost}" has a disallowed recorded address pin`,
       );
     }
-    return normalizeIpLiteral(address);
+    const normalizedAddress = normalizeIpLiteral(address);
+    if (isPrivateIp(normalizedAddress) && !isOperatorTrustablePrivateIp(normalizedAddress)) {
+      throw new Error(
+        `trusted private host "${normalizedHost}" has a disallowed recorded address pin`,
+      );
+    }
+    return normalizedAddress;
   });
   if (new Set(normalizedAddresses).size !== normalizedAddresses.length) {
     throw new Error(`trusted private host "${normalizedHost}" has duplicate recorded address pins`);
   }
-  const pinnedAddresses = Object.freeze([...normalizedAddresses].sort());
+  if (!normalizedAddresses.some((address) => isOperatorTrustablePrivateIp(address))) {
+    throw new Error(
+      `trusted private host "${normalizedHost}" has no recorded address pin in a supported private range`,
+    );
+  }
+  if (
+    options.requireAllPrivate &&
+    normalizedAddresses.some((address) => !isOperatorTrustablePrivateIp(address))
+  ) {
+    throw new Error(
+      `trusted private host "${normalizedHost}" has an address pin outside the supported private ranges`,
+    );
+  }
   return Object.freeze({
     host: normalizedHost,
-    addresses: pinnedAddresses,
-    trustedPrivateCapability: issueTrustedPrivateEndpointCapability(pinnedAddresses),
+    addresses: Object.freeze([...normalizedAddresses].sort()),
+  });
+}
+
+/** Prove that an issued capability grants the exact canonical host and pins. */
+export function assertTrustedPrivateEndpointCapability(
+  host: string,
+  addresses: readonly string[],
+  capability: unknown,
+  options: TrustedPrivateEndpointPinOptions = {},
+): TrustedPrivateEndpointReplay {
+  if (!isTrustedPrivateEndpointCapability(capability)) {
+    throw new Error("trusted private endpoint capability was not issued by the SSRF preflight");
+  }
+  const pins = canonicalizeTrustedPrivateEndpointPins(host, addresses, options);
+  if (capability.host !== pins.host) {
+    throw new Error(
+      `trusted private endpoint capability host '${capability.host}' does not match '${pins.host}'`,
+    );
+  }
+  if (
+    pins.addresses.length !== addresses.length ||
+    pins.addresses.some((address, index) => address !== addresses[index]) ||
+    capability.addresses.length !== pins.addresses.length ||
+    capability.addresses.some((address, index) => address !== pins.addresses[index])
+  ) {
+    throw new Error("trusted private endpoint capability addresses do not match the exact pins");
+  }
+  return Object.freeze({
+    ...pins,
+    trustedPrivateCapability: capability,
+  });
+}
+
+/** Reissue in-process capability authority from exact durable private pins. */
+export function replayTrustedPrivateEndpoint(
+  host: string,
+  addresses: readonly string[],
+  options: TrustedPrivateEndpointPinOptions = {},
+): TrustedPrivateEndpointReplay {
+  const pins = canonicalizeTrustedPrivateEndpointPins(host, addresses, options);
+  return Object.freeze({
+    ...pins,
+    trustedPrivateCapability: issueTrustedPrivateEndpointCapability(pins.host, pins.addresses),
   });
 }
 
@@ -230,11 +316,10 @@ export function replayTrustedPrivateEndpoint(
  * authoritative config-write DNS-pinning boundary (`validateUrlValueWithDnsResult`)
  * which runs later, before the URL is persisted.
  *
- * Loopback (`127.0.0.0/8`, `::1`, and `localhost`) remains exempt only when the
- * endpoint hostname is itself loopback. This preserves local inference
- * behavior. A public name that resolves to loopback is treated as a rebinding
- * attempt and rejected. The check fails closed on a resolver error or empty
- * result.
+ * Generic endpoint admission rejects loopback and managed host aliases. The
+ * inference compatibility wrapper owns its narrower local exceptions. A
+ * public name that resolves to loopback is treated as a rebinding attempt and
+ * rejected. The check fails closed on a resolver error or empty result.
  *
  * See PR #6293 PRA-4 (GPT-5.5 advisor).
  */
@@ -260,10 +345,9 @@ export async function assertEndpointResolvesPublic(
   const { isLoopbackHostname, isPrivateHostname, isPrivateIp } =
     require("../private-networks") as typeof import("../private-networks");
 
-  let normalizedHostname: string;
+  const normalizedHostname = normalizeEndpointHostname(hostname);
   let trustedPrivateHosts: string[];
   try {
-    normalizedHostname = normalizeTrustedPrivateHost(hostname);
     trustedPrivateHosts = (options.trustedPrivateHosts ?? []).map(normalizeTrustedPrivateHost);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -271,15 +355,13 @@ export async function assertEndpointResolvesPublic(
   }
   const trustedPrivateHost = trustedPrivateHosts.includes(normalizedHostname);
 
-  // An explicit loopback host is a legitimate local inference server.
-  if (isLoopbackHostname(hostname)) return { ok: true, addresses: [] };
-
-  // NemoClaw's own OpenShell-managed aliases (inference.local, host.*.internal)
-  // resolve to the managed proxy/loopback by design and are trusted, not
-  // rebinding surfaces. Exempt like loopback — connect normally (no pinning) —
-  // and exempt BEFORE isPrivateHostname, which would otherwise reject their
-  // reserved .local/.internal suffixes (#6293).
-  if (isOpenShellManagedHost(hostname)) return { ok: true, addresses: [] };
+  if (isLoopbackHostname(hostname) || isOpenShellManagedHost(hostname)) {
+    return {
+      ok: false,
+      reason: `endpoint host "${hostname}" is a private/internal address`,
+      reasonCode: "rejected",
+    };
+  }
 
   // A literal private IP or reserved private name is refused without resolving.
   if (isPrivateHostname(hostname) && !trustedPrivateHost) {
@@ -299,7 +381,9 @@ export async function assertEndpointResolvesPublic(
       ? {
           ok: true,
           addresses: [],
-          trustedPrivateCapability: issueTrustedPrivateEndpointCapability([bare]),
+          trustedPrivateCapability: issueTrustedPrivateEndpointCapability(normalizedHostname, [
+            bare,
+          ]),
           trustedPrivateEndpoint: true,
         }
       : {
@@ -327,45 +411,44 @@ export async function assertEndpointResolvesPublic(
       reasonCode: "unresolved",
     };
   }
+  const resolvedAddresses: string[] = [];
   for (const { address } of addresses) {
-    // A resolved private address — including loopback reached via a public name
-    // (DNS rebinding) — is refused; the explicit-loopback case returned above.
-    if (isPrivateIp(address) && (!trustedPrivateHost || !isOperatorTrustablePrivateIp(address))) {
+    if (typeof address !== "string" || isIP(address) === 0) {
       return {
         ok: false,
-        reason: `endpoint host "${hostname}" resolves to private/internal address "${address}"`,
-        reasonCode: "private-answer",
-        offendingAddress: address,
+        reason: `endpoint host "${hostname}" returned a malformed DNS address`,
+        reasonCode: "rejected",
       };
     }
+    const normalizedAddress = normalizeIpLiteral(address);
+    // A resolved private address — including loopback reached via a public name
+    // (DNS rebinding) — is refused; the explicit-loopback case returned above.
+    if (
+      isPrivateIp(normalizedAddress) &&
+      (!trustedPrivateHost || !isOperatorTrustablePrivateIp(normalizedAddress))
+    ) {
+      return {
+        ok: false,
+        reason: `endpoint host "${hostname}" resolves to private/internal address "${normalizedAddress}"`,
+        reasonCode: "private-answer",
+        offendingAddress: normalizedAddress,
+      };
+    }
+    resolvedAddresses.push(normalizedAddress);
   }
-  const resolvedAddresses = addresses.map(({ address }) => address);
+  const canonicalAddresses = [...new Set(resolvedAddresses)].sort();
   const trustedPrivateAddresses = resolvedAddresses.filter((address) => isPrivateIp(address));
-  if (
-    trustedPrivateHost &&
-    trustedPrivateAddresses.length > 0 &&
-    trustedPrivateAddresses.length !== resolvedAddresses.length
-  ) {
-    const offendingAddress = resolvedAddresses.find(
-      (address) => !isOperatorTrustablePrivateIp(address),
-    );
-    return {
-      ok: false,
-      reason:
-        `endpoint host "${hostname}" resolves to mixed public and private addresses` +
-        (offendingAddress ? `, including untrusted answer "${offendingAddress}"` : ""),
-      reasonCode: "mixed-answer",
-      offendingAddress,
-    };
-  }
   return trustedPrivateHost && trustedPrivateAddresses.length > 0
     ? {
         ok: true,
-        addresses: resolvedAddresses,
-        trustedPrivateCapability: issueTrustedPrivateEndpointCapability(trustedPrivateAddresses),
+        addresses: canonicalAddresses,
+        trustedPrivateCapability: issueTrustedPrivateEndpointCapability(
+          normalizedHostname,
+          canonicalAddresses,
+        ),
         trustedPrivateEndpoint: true,
       }
-    : { ok: true, addresses: resolvedAddresses };
+    : { ok: true, addresses: canonicalAddresses };
 }
 
 /**
