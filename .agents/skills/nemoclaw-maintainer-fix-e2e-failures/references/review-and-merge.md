@@ -89,18 +89,24 @@ Re-read the PR after the write and require a new head before classifying the ref
 
 ## Final Merge Gate
 
-Immediately before approval, run the existing gate checker:
+Treat the gate checker and all transitive local imports as execution surfaces. Refresh `origin/main`. Before executing a checkout-local copy, compare the complete execution surface with refreshed `origin/main`, including staged, unstaged, and untracked files. If any surface differs, do not execute the checkout-local copy. Obtain explicit user approval for the exact changed surface, or invoke a separately reviewed trusted copy from a clean `origin/main` worktree.
+
+Immediately before approval, run that trusted gate checker as a preliminary gate:
 
 ```bash
 node --experimental-strip-types --no-warnings \
   .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
 ```
 
-Also read the effective rules for `main` immediately before the decision. Treat every active required-status and pull-request-review rule as authoritative even when it changed during the loop:
+Also read the effective rules for `main` as part of the preliminary gate. Treat every active required-status and pull-request-review rule as authoritative even when it changed during the loop:
 
 ```bash
 gh api --paginate "repos/NVIDIA/NemoClaw/rules/branches/main"
 ```
+
+Before approval, require every preliminary gate other than the still-missing independent approval to pass for the captured head and base. The reviewer then submits the approval.
+
+After the approval write, re-read the PR, head SHA, base SHA, review decision, required checks, and merge state. Rerun both the trusted gate checker and the effective-rules read. Require the post-approval checker to return `allPass: true` and every current effective rule to pass for the same head and base. If any relevant identity, rule, check, review, or merge state changed, restart the final gate.
 
 Require all of these conditions:
 
@@ -115,8 +121,6 @@ Require all of these conditions:
 - a current-head approval exists from a maintainer who is not a contributor to the PR;
 - the PR remains open, non-draft, mergeable, and current with `main`;
 - the fix is not obsolete.
-
-The reviewer submits the approval. After approval, re-read the PR, head SHA, base SHA, review decision, required checks, and merge state. Restart the gate if anything changed.
 
 ## Merge Without Bypass
 

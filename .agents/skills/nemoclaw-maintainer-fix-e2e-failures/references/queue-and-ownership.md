@@ -56,8 +56,9 @@ Search broadly enough to find a claim that used different wording:
 
 ```bash
 gh search prs --repo NVIDIA/NemoClaw --state open --match title,body \
-  "<validated-run-id-or-token>" \
-  --json number,title,author,url,isDraft,updatedAt
+  --json number,title,author,url,isDraft,updatedAt \
+  -- \
+  "<validated-run-id-or-token>"
 
 gh pr list --repo NVIDIA/NemoClaw --state open --limit 100 \
   --json number,title,body,author,assignees,headRefOid,isDraft,url
@@ -81,7 +82,7 @@ Scope: one root cause
 
 Follow the repository PR template. Include the contributor's `Signed-off-by:` declaration and require every commit to appear `Verified` before opening the draft.
 
-If no legitimate root-cause-only diagnostic or test can be added before the fix, mark the group `blocked` and do not edit product code. Record why the claim cannot yet exist and the required next actor. Do not add an empty documentation change or unrelated placeholder merely to create a claim.
+If no legitimate root-cause-only diagnostic or regression test can be added before the fix, mark the group `blocked` and do not edit product code. Record why the claim cannot yet exist and the required next actor. Do not add an empty documentation change or unrelated placeholder merely to create a claim.
 
 Do not treat an existing draft with an empty or unrelated placeholder diff as a valid claim. Before transferring ownership, the loop author closes its own invalid draft under the GitHub write-reconciliation rule, explains why, and preserves its local worktree for handoff. For another author's draft, do not mutate it. Record the noncompliant claim, owner, and required next actor as a blocker.
 

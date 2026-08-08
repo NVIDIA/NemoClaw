@@ -61,7 +61,7 @@ Before changing product code:
 2. Search open PR titles and bodies using the run ID, job ID, stable error signature, affected component, and likely fix area.
 3. Read plausible matches. A different job with the same cause is already owned; a similar symptom with a different cause is not.
 4. Create a branch from current `origin/main`.
-5. Add one diagnostic or regression test for the root cause when feasible. Do not manufacture an unrelated placeholder diff.
+5. Add one diagnostic or regression test for the root cause when feasible. If no legitimate root-cause-only diagnostic or regression test can be added before the fix, mark the group `blocked` and do not edit product code. Do not manufacture an unrelated placeholder diff.
 6. Immediately before creating the draft, re-read open PRs and shared coordination for the root-cause key, then recount the author's open PRs under the policy from refreshed `origin/main`. Treat both checks as one pre-write gate.
 7. If a matching claim exists or the new PR would exceed the limit, do not create it. Record the current owner or limit state and rescan.
 8. Otherwise, open a draft PR assigned to its author. Follow `nemoclaw-contributor-create-pr` for the template, verified commits, and DCO declaration.
