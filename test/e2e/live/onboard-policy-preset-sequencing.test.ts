@@ -8,6 +8,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { redactString } from "../fixtures/redaction.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 
 // Regression coverage for #6042: "interactive onboard wizard skips Policy
@@ -146,11 +147,18 @@ test("interactive onboard wizard reaches Policy presets in step order (#6042)", 
   progress.phase("confirm Policy presets is reached before completion");
   const policyIndex = result.output.indexOf("[8/8] Policy presets");
   const abortedIndex = result.output.search(/Onboarding did not finish/i);
+  const redactedTranscript = redactString(result.output, [apiKey]);
   expect(policyIndex, "Policy presets step must be observed").toBeGreaterThanOrEqual(0);
   expect(
     abortedIndex,
-    `onboarding must not abort after reaching Policy presets:\n${result.output}`,
+    `onboarding must not abort after reaching Policy presets; see onboard-transcript.txt:\n${redactedTranscript}`,
   ).not.toBeGreaterThanOrEqual(0);
-  expect(result.timedOut, `onboard command timed out:\n${result.output}`).toBe(false);
-  expect(result.exitCode, `onboard command exited non-zero:\n${result.output}`).toBe(0);
+  expect(
+    result.timedOut,
+    `onboard command timed out; see onboard-transcript.txt:\n${redactedTranscript}`,
+  ).toBe(false);
+  expect(
+    result.exitCode,
+    `onboard command exited non-zero; see onboard-transcript.txt:\n${redactedTranscript}`,
+  ).toBe(0);
 });
