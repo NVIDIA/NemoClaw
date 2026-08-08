@@ -300,6 +300,46 @@ describe("MCP tool discovery image contract", () => {
     }
   });
 
+  it("pins the MCP runtime esbuild binary for protected Linux arm64 builds", () => {
+    const archive = "linux-arm64-0.27.4.tgz";
+    const seedDirectory = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
+    );
+    const archiveParts = fs
+      .readdirSync(seedDirectory)
+      .filter((seedName) => seedName.startsWith(`${archive}.part-`))
+      .sort();
+    const lock = JSON.parse(
+      fs.readFileSync(
+        path.join(repoRoot, "tools/mcp-tool-discovery-runtime/package-lock.json"),
+        "utf8",
+      ),
+    );
+    const lockEntry = lock.packages["node_modules/@esbuild/linux-arm64"] as {
+      integrity: string;
+      resolved: string;
+    };
+    const seed = Buffer.concat(
+      archiveParts.map((seedName) => fs.readFileSync(path.join(seedDirectory, seedName))),
+    );
+
+    expect(archiveParts).toEqual([
+      `${archive}.part-000`,
+      `${archive}.part-001`,
+      `${archive}.part-002`,
+    ]);
+    expect(
+      archiveParts
+        .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
+        .every((size) => size <= 2_000_000),
+    ).toBe(true);
+    expect(`sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`).toBe(
+      lockEntry.integrity,
+    );
+    expect(path.basename(new URL(lockEntry.resolved).pathname)).toBe(archive);
+  });
+
   it.skipIf(process.platform === "win32")(
     "rejects a cache seed that does not match the lockfile integrity",
     () => {
