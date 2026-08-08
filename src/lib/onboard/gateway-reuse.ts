@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
-import { getGatewayReuseState, shouldSelectNamedGatewayForReuse } from "../state/gateway";
+import {
+  getGatewayReuseState,
+  type GatewayReuseState,
+  shouldSelectNamedGatewayForReuse,
+} from "../state/gateway";
+import * as dockerDriverGatewayLaunch from "./docker-driver-gateway-launch";
+import * as gatewayService from "./docker-driver-gateway-service";
+import type { PortProbeResult } from "./preflight";
 
 export type GatewayReuseSnapshot = {
   gatewayStatus: string;
@@ -21,6 +28,125 @@ export interface GatewayReuseDeps {
 export interface GatewayReuseHelpers {
   getGatewayReuseSnapshot(): GatewayReuseSnapshot;
   selectNamedGatewayForReuseIfNeeded(snapshot: GatewayReuseSnapshot): GatewayReuseSnapshot;
+}
+
+export interface DockerDriverGatewayReuseApplicationDeps {
+  gatewayName(): string;
+  getGatewayCompatContainerName(): string;
+  isDockerDriverGatewayEnabled(): boolean;
+  resolveOpenShellGatewayBinary(): string | null;
+  getDockerDriverGatewayEnv(versionOutput?: string | null): Record<string, string>;
+  runCaptureOpenshell(args: string[], opts?: { ignoreError?: boolean }): string;
+  getDockerDriverGatewayStateDir(): string;
+  resolveOpenShellSandboxBinary(): string | null;
+  getDockerDriverGatewayPid(): number | null;
+  isDockerDriverGatewayProcessAlive(): boolean;
+  getDockerDriverGatewayReuseDrift(
+    pid: number,
+    desiredEnv: Record<string, string>,
+    gatewayBin?: string | null,
+    trustedServicePid?: number | null,
+  ): { reason: string } | null;
+  checkGatewayPortAvailable(): Promise<PortProbeResult>;
+  getDockerDriverGatewayPortListenerPid(
+    portCheck: PortProbeResult,
+    opts?: { gatewayBin?: string | null },
+  ): number | null;
+  rememberDockerDriverGatewayPid(pid: number): void;
+  buildDockerDriverGatewayRuntimeIdentity?: typeof dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity;
+  resolveDriftGatewayBin?: typeof dockerDriverGatewayLaunch.resolveDriftGatewayBin;
+  getTrustedActiveOpenShellGatewayUserServicePid?: typeof gatewayService.getTrustedActiveOpenShellGatewayUserServicePid;
+  log?(message: string): void;
+}
+
+export interface DockerDriverGatewayReuseApplication {
+  refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
+}
+
+export function createDockerDriverGatewayReuseApplication(
+  deps: DockerDriverGatewayReuseApplicationDeps,
+): DockerDriverGatewayReuseApplication {
+  const buildRuntimeIdentity =
+    deps.buildDockerDriverGatewayRuntimeIdentity ??
+    dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity;
+  const resolveDriftGatewayBin =
+    deps.resolveDriftGatewayBin ?? dockerDriverGatewayLaunch.resolveDriftGatewayBin;
+  const getTrustedServicePid =
+    deps.getTrustedActiveOpenShellGatewayUserServicePid ??
+    gatewayService.getTrustedActiveOpenShellGatewayUserServicePid;
+  const log = deps.log ?? console.log;
+
+  async function refreshDockerDriverGatewayReuseState(
+    state: GatewayReuseState,
+  ): Promise<GatewayReuseState> {
+    if (!deps.isDockerDriverGatewayEnabled() || state !== "healthy") return state;
+
+    const gatewayBin = deps.resolveOpenShellGatewayBinary();
+    const baseDesiredEnv = deps.getDockerDriverGatewayEnv(
+      deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
+    );
+    const runtimeIdentity = gatewayBin
+      ? buildRuntimeIdentity({
+          gatewayBin,
+          gatewayEnv: baseDesiredEnv,
+          stateDir: deps.getDockerDriverGatewayStateDir(),
+          sandboxBin: deps.resolveOpenShellSandboxBinary(),
+          gatewayName: deps.gatewayName(),
+          compatContainerName: deps.getGatewayCompatContainerName(),
+        })
+      : null;
+    const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
+    const driftBin = resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
+    const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+    const managedServicePid = getTrustedServicePid();
+    const pid = deps.getDockerDriverGatewayPid();
+    if (pid !== null && deps.isDockerDriverGatewayProcessAlive()) {
+      const drift = deps.getDockerDriverGatewayReuseDrift(
+        pid,
+        desiredEnv,
+        driftBin,
+        managedServicePid,
+      );
+      if (drift) {
+        log(
+          `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
+        );
+        return "stale";
+      }
+      return state;
+    }
+
+    const portCheck = await deps.checkGatewayPortAvailable();
+    const dockerGatewayPid = deps.getDockerDriverGatewayPortListenerPid(portCheck, {
+      gatewayBin: identityBin,
+    });
+    if (dockerGatewayPid !== null) {
+      const drift = deps.getDockerDriverGatewayReuseDrift(
+        dockerGatewayPid,
+        desiredEnv,
+        driftBin,
+        managedServicePid,
+      );
+      if (dockerGatewayPid !== managedServicePid) {
+        deps.rememberDockerDriverGatewayPid(dockerGatewayPid);
+      }
+      if (drift) {
+        log(
+          `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
+        );
+        return "stale";
+      }
+      return "healthy";
+    }
+
+    // OpenShell status already proved the selected gateway is reachable. Preserve it when
+    // the port probe cannot identify an owner, instead of deleting a potentially live gateway.
+    if (!portCheck.ok && !portCheck.pid) return "healthy";
+
+    return "stale";
+  }
+
+  return { refreshDockerDriverGatewayReuseState };
 }
 
 export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseHelpers {
