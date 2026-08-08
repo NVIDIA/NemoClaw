@@ -136,7 +136,54 @@ describe("managed llama.cpp selection", () => {
   });
 
   it("selects the generic Linux amd64 NVIDIA GPU preset from the same declarative recipe", () => {
-    const { catalog, report } = fixture(GENERIC_PRESET_ID);
+    const { catalog } = fixture(GENERIC_PRESET_ID);
+    const now = new Date();
+    const report = createHostReadinessReport(
+      {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        now: () => now,
+      },
+      {
+        now: () => now,
+        architecture: "x64",
+        assess: () => ({
+          platform: "linux",
+          isWsl: false,
+          runtime: "docker",
+          dockerInstalled: true,
+          dockerRunning: true,
+          dockerReachable: true,
+          nodeInstalled: true,
+          openshellInstalled: true,
+          dockerCgroupVersion: "v2",
+          dockerDefaultCgroupnsMode: "private",
+          dockerStorageDriver: "overlay2",
+          dockerUsesContainerdSnapshotter: false,
+          dockerCpus: 16,
+          dockerMemTotalBytes: 64 * 1024 ** 3,
+          isContainerRuntimeUnderProvisioned: false,
+          hasNestedOverlayConflict: false,
+          requiresHostCgroupnsFix: false,
+          isUnsupportedRuntime: false,
+          isHeadlessLikely: true,
+          hasNvidiaGpu: true,
+          dockerCdiSpecDirs: ["/etc/cdi"],
+          cdiNvidiaGpuSpecMissing: false,
+          cdiNvidiaGpuSpecStale: false,
+          cdiNvidiaGpuSpecNeedsRepair: false,
+          nvidiaContainerToolkitInstalled: true,
+          notes: [],
+        }),
+        collectPlatformIdentity: () => ({
+          nvidiaPlatform: "linux",
+          productName: "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        }),
+        detectGpu: () => ({ count: 1 }),
+        detectHostGpuPlatform: () => "linux",
+        detectNvidiaDriverVersion: () => "580.65.06",
+      },
+    );
 
     const resolved = resolveManagedLlamaCppSelection(
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },

@@ -68,7 +68,7 @@ spec:
           id: host.os.architecture
           comparison:
             operator: equals
-            value: amd64
+            value: x64
       - readiness:
           scope: everyNode
           kind: observation
