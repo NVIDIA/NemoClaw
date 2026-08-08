@@ -1994,7 +1994,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_PROVIDER: "install-llama-cpp"
       NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-llama-cpp-generic-gpu"
+      NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

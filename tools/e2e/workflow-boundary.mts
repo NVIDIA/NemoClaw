@@ -1197,6 +1197,7 @@ function validateLlamaCppGenericGpuJob(errors: string[], jobs: WorkflowRecord): 
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
     NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
     NEMOCLAW_PROVIDER: "install-llama-cpp",
+    NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu",
   };
   for (const [name, expected] of Object.entries(expectedEnv)) {
     if (jobEnv[name] !== expected) errors.push(`${jobName} job must set ${name} to ${expected}`);

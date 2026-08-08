@@ -8,7 +8,7 @@ import path from "node:path";
 import { validateStartupLog } from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
-import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { managedInferenceDigest } from "../../../src/lib/inference/serving/catalog-integrity.ts";
@@ -32,7 +32,8 @@ import {
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llama-cpp-generic-gpu";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
+validateSandboxName(SANDBOX_NAME);
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const selected: NodeJS.ProcessEnv = {
