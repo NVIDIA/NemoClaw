@@ -1,0 +1,168 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { ChildProcessProgress } from "../fixtures/observed-child-process.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+
+// Drives an interactive CLI through a real PTY, the same technique
+// `test/helpers/installer-express-prompt-pty-harness.ts` uses for the
+// installer's express prompt. The real onboard wizard behaves differently
+// under a piped, non-TTY stdin than under a real terminal (raw-mode
+// keypress selectors, `isTTY`-gated prompts), so a faithful regression test
+// for interactive-only behavior must drive a real PTY rather than pipe
+// stdin.
+//
+// Rules fire independently and out of order: a rule whose trigger never
+// appears (for example, a first-run license notice already accepted on a
+// prior run) must not block a later rule from firing when its own trigger
+// appears.
+//
+// The child process itself is launched through the shared
+// `spawnObservedChild` boundary (the suite's single audited asynchronous
+// child-process call) so it still tracks a content-free progress activity
+// and canonical lifecycle checkpoints; this module attaches its own
+// listeners on top to capture output and match rule triggers.
+
+export interface InteractiveCommandRule {
+  readonly trigger: string;
+  readonly response: string;
+}
+
+export interface InteractiveCommandResult {
+  readonly exitCode: number;
+  readonly output: string;
+  readonly firedTriggers: readonly string[];
+  readonly timedOut: boolean;
+}
+
+export interface DriveInteractiveCommandOptions {
+  readonly activityLabel: string;
+  readonly cmd: readonly [string, ...string[]];
+  readonly cwd?: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly progress: ChildProcessProgress;
+  readonly rules: readonly InteractiveCommandRule[];
+  readonly timeoutMs: number;
+}
+
+// Runs inside a Python child so it can fork a real pseudo-terminal;
+// Node has no built-in PTY primitive and this repo does not depend on
+// node-pty. The child's own deadline is generous; the Node-side timer
+// below is the enforced hard bound and SIGKILLs the whole process tree.
+const PTY_DRIVER_SCRIPT = `
+import json, os, pty, select, signal, sys, time
+
+payload = json.loads(sys.argv[1])
+cmd = payload["cmd"]
+rules = payload["rules"]
+timeout_s = payload["timeoutSeconds"]
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(cmd[0], cmd)
+
+output = bytearray()
+os.set_blocking(fd, False)
+deadline = time.monotonic() + timeout_s
+fired = [False] * len(rules)
+exit_code = None
+while time.monotonic() < deadline:
+    ready, _, _ = select.select([fd], [], [], 0.2)
+    if ready:
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        output.extend(chunk)
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.flush()
+    text = output.decode("utf-8", errors="ignore")
+    for i, rule in enumerate(rules):
+        if fired[i]:
+            continue
+        if rule["trigger"] in text:
+            os.write(fd, rule["response"].encode())
+            sys.stderr.write("FIRED\\t" + rule["trigger"] + "\\n")
+            fired[i] = True
+    waited = os.waitpid(pid, os.WNOHANG)
+    if waited[0] == pid:
+        exit_code = os.waitstatus_to_exitcode(waited[1])
+        break
+if exit_code is None:
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    os.waitpid(pid, 0)
+    sys.stderr.write("DRIVER_TIMEOUT\\n")
+    sys.exit(124)
+sys.exit(exit_code)
+`;
+
+function resolvePython(): string {
+  return process.env.NEMOCLAW_E2E_PYTHON3_BIN || "python3";
+}
+
+export function driveInteractiveCommand(
+  options: DriveInteractiveCommandOptions,
+): Promise<InteractiveCommandResult> {
+  const payload = JSON.stringify({
+    cmd: options.cmd,
+    rules: options.rules.map((rule) => ({ trigger: rule.trigger, response: rule.response })),
+    // Comfortably longer than the Node-side hard timeout below so the
+    // driver's own bookkeeping never races the enforced bound.
+    timeoutSeconds: Math.ceil(options.timeoutMs / 1000) + 30,
+  });
+  // Kept directly in this function's body, not inside the Promise executor
+  // below, so the sole audited async child-process boundary stays attached
+  // to a named, reviewed callsite.
+  const child = spawnObservedChild(resolvePython(), ["-c", PTY_DRIVER_SCRIPT, payload], {
+    activityLabel: options.activityLabel,
+    progress: options.progress,
+    spawn: { cwd: options.cwd, env: options.env },
+  });
+
+  return new Promise((resolve, reject) => {
+    let output = "";
+    const firedTriggers: string[] = [];
+    let timedOut = false;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, options.timeoutMs);
+
+    // Additional listeners alongside spawnObservedChild's own content-free
+    // observer; this module needs the real transcript to match rule
+    // triggers and to report ordered step evidence.
+    child.stdout?.on("data", (chunk: Buffer) => {
+      output += chunk.toString("utf-8");
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString("utf-8").split("\n")) {
+        const fired = line.match(/^FIRED\t(.*)$/);
+        if (fired) firedTriggers.push(fired[1]);
+      }
+    });
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        exitCode: timedOut ? 124 : (code ?? 1),
+        output,
+        firedTriggers,
+        timedOut,
+      });
+    });
+  });
+}
