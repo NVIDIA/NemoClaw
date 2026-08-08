@@ -194,9 +194,14 @@ function defaultSleep(milliseconds: number): void {
 }
 
 function commandDetail(result: CommandResult): string {
-  if (result.error)
-    return (result.error as NodeJS.ErrnoException).code ?? "command execution error";
-  return `exit ${String(result.status)}`;
+  const output = String(result.stderr ?? result.stdout ?? "")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .slice(0, 2_048);
+  const status = result.error
+    ? ((result.error as NodeJS.ErrnoException).code ?? "command execution error")
+    : `exit ${String(result.status)}`;
+  return output ? `${status}: ${output}` : status;
 }
 
 function requireCommand(result: CommandResult, action: string): void {
