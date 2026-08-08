@@ -840,12 +840,12 @@ export function recoverPortableDemoSandboxLifecycle(
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
   const backfillRequired = requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
-  if (backfillRequired) {
+  if (backfillRequired || receipt.schemaVersion === 2) {
     const authority = qualifiedPodmanAuthority(commandEnv, deps);
     const migrationInspection = discoverPodmanContainer(sandboxName, authority.podman);
     requireReceiptOwnedInspection(receipt, migrationInspection);
     authority.assertRuntimeAuthority();
-    receipt = backfillLegacyReceiptGeneration(receipt, stateDir, true, deps);
+    receipt = backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
   }
   const podmanEnv = localPodmanEnvironment(commandEnv);
   const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));

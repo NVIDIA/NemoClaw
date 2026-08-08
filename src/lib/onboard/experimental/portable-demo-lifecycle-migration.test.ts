@@ -170,6 +170,42 @@ describe("portable lifecycle legacy generation migration", () => {
     expect(registry.getSandbox("alpha")?.lifecycleGeneration).toBe(CONTAINER_ID);
   });
 
+  it("finishes a schema-2 receipt upgrade after its registry claim already committed (#8584)", async () => {
+    const stateDir = legacyStateDir();
+    const { backfill, registry } = await legacyRegistryEntry(stateDir);
+    expect(backfill(CONTAINER_ID)).toBe(true);
+    backfill.mockClear();
+    const podman = createPodman();
+
+    expect(
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        {
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: CONTAINER_ID,
+          openshellDriver: "docker",
+        },
+        {
+          ...migrationDeps(stateDir, podman, backfill),
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "200" } : { status: 0 },
+        },
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(backfill).not.toHaveBeenCalled();
+    expect(podman).toHaveBeenCalledWith(
+      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
+      expect.any(Object),
+    );
+    expect(
+      JSON.parse(
+        fs.readFileSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir), "utf8"),
+      ),
+    ).toMatchObject({ schemaVersion: 3, registryGeneration: CONTAINER_ID });
+    expect(registry.getSandbox("alpha")?.lifecycleGeneration).toBe(CONTAINER_ID);
+  });
+
   it("does not claim an ambiguous legacy portable identity (#8584)", () => {
     const stateDir = legacyStateDir();
     const backfill = vi.fn(() => true);
