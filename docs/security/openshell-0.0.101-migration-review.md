@@ -23,7 +23,9 @@ The source decision is **conditionally compatible**. No reviewed upstream change
 NemoClaw code or configuration change, but v0.0.101 does change upstream credential-storage
 behavior, and source compatibility is not release acceptance. The final `#8598` identity and trust
 handoff has been consumed below and passes independent exact-commit review. Acceptance remains
-blocked until both of the following are true:
+conditional until both of the following are true. This completed review belongs to the
+parent epic `#8590`; that epic also retains its later selector, qualification, and final-candidate
+gates.
 
 1. issue `#8600` lands the base-trusted qualification descriptor, orchestration workflow, and
    fail-closed receipt checks; and
@@ -390,5 +392,6 @@ and only one child issue:
   socket, mount, privilege, or network route appears in the resulting runtime. OpenShell's in-tree
   default encrypted database credential driver is active and remains subject to exact `#8602`
   lifecycle and child-visibility evidence.
-- All evidence is exact-head, exact-version, successful, non-skipped, and bound by a base-trusted
-  receipt. An unresolved critical or high finding blocks the upgrade.
+- Every required evidence result is bound to the commit under review and exact version, concludes
+  successfully without skipping, and is authenticated by a base-trusted receipt. An unresolved
+  critical or high finding blocks the upgrade.

@@ -178,6 +178,7 @@ describe("OpenShell 0.0.101 migration review", () => {
     expect(review).toContain("selected release's complete trusted set");
     expect(review).toContain("Both findings are closed with no new blocker");
     expect(review).toContain("this prerequisite is satisfied");
+    expect(review).toContain("parent epic `#8590`");
     for (const identity of RELEASE_IDENTITIES) expect(review).toContain(identity);
 
     const ranges = parseRangeTable();
