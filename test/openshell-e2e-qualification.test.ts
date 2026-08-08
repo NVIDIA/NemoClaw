@@ -133,12 +133,10 @@ function createBaseRoot(): string {
 
 function fullApi(files = [prFile("scripts/install-openshell.sh")]): GitHubReader {
   let pullReads = 0;
-  return {
-    async getBytes() {
-      throw new Error("receipt loader is injected in tests");
-    },
-    async getJson(apiPath) {
-      if (apiPath === `repos/${REPOSITORY}/pulls/8583`) {
+  const routes: Array<[(apiPath: string) => boolean, () => unknown]> = [
+    [
+      (apiPath) => apiPath === `repos/${REPOSITORY}/pulls/8583`,
+      () => {
         pullReads += 1;
         return {
           base: { repo: { full_name: REPOSITORY }, sha: BASE_SHA },
@@ -147,32 +145,35 @@ function fullApi(files = [prFile("scripts/install-openshell.sh")]): GitHubReader
           state: "open",
           pullReads,
         };
-      }
-      if (apiPath.includes("/pulls/8583/files?")) return files;
-      if (apiPath === `repos/${REPOSITORY}/actions/workflows/e2e.yaml`) {
-        return { id: WORKFLOW_ID, path: ".github/workflows/e2e.yaml", state: "active" };
-      }
-      if (apiPath.includes("/actions/workflows/e2e.yaml/runs?")) {
-        return {
-          total_count: 1,
-          workflow_runs: [workflowRun(RUN_ID)],
-        };
-      }
-      if (apiPath.includes(`/actions/runs/${RUN_ID}/artifacts?`)) {
-        return {
-          artifacts: [
-            {
-              archive_download_url: `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip`,
-              expired: false,
-              id: ARTIFACT_ID,
-              name: `e2e-dispatch-${RUN_ID}-1`,
-              workflow_run: { head_sha: BASE_SHA, id: RUN_ID },
-            },
-          ],
-          total_count: 1,
-        };
-      }
-      if (apiPath.includes(`/actions/runs/${RUN_ID}/jobs?`)) {
+      },
+    ],
+    [(apiPath) => apiPath.includes("/pulls/8583/files?"), () => files],
+    [
+      (apiPath) => apiPath === `repos/${REPOSITORY}/actions/workflows/e2e.yaml`,
+      () => ({ id: WORKFLOW_ID, path: ".github/workflows/e2e.yaml", state: "active" }),
+    ],
+    [
+      (apiPath) => apiPath.includes("/actions/workflows/e2e.yaml/runs?"),
+      () => ({ total_count: 1, workflow_runs: [workflowRun(RUN_ID)] }),
+    ],
+    [
+      (apiPath) => apiPath.includes(`/actions/runs/${RUN_ID}/artifacts?`),
+      () => ({
+        artifacts: [
+          {
+            archive_download_url: `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip`,
+            expired: false,
+            id: ARTIFACT_ID,
+            name: `e2e-dispatch-${RUN_ID}-1`,
+            workflow_run: { head_sha: BASE_SHA, id: RUN_ID },
+          },
+        ],
+        total_count: 1,
+      }),
+    ],
+    [
+      (apiPath) => apiPath.includes(`/actions/runs/${RUN_ID}/jobs?`),
+      () => {
         const jobs = requiredJobs().map((job) => ({
           conclusion: job.conclusion,
           html_url: job.url,
@@ -183,8 +184,11 @@ function fullApi(files = [prFile("scripts/install-openshell.sh")]): GitHubReader
           status: job.status,
         }));
         return { jobs, total_count: jobs.length };
-      }
-      if (apiPath.includes(`/commits/${HEAD_SHA}/check-runs?`)) {
+      },
+    ],
+    [
+      (apiPath) => apiPath.includes(`/commits/${HEAD_SHA}/check-runs?`),
+      () => {
         const names = [REQUIRED_PROOF_CHECKS.managed, REQUIRED_PROOF_CHECKS.rootless];
         return {
           check_runs: names.map((name, index) => ({
@@ -197,8 +201,17 @@ function fullApi(files = [prFile("scripts/install-openshell.sh")]): GitHubReader
           })),
           total_count: names.length,
         };
-      }
-      throw new Error(`unexpected API request: ${apiPath}`);
+      },
+    ],
+  ];
+  return {
+    async getBytes() {
+      throw new Error("receipt loader is injected in tests");
+    },
+    async getJson(apiPath) {
+      const route = routes.find(([matches]) => matches(apiPath));
+      expect(route, `unexpected API request: ${apiPath}`).toBeDefined();
+      return route![1]();
     },
   };
 }
@@ -208,27 +221,25 @@ function apiWithWorkflowRuns(runs: ReturnType<typeof workflowRun>[]): GitHubRead
   return {
     getBytes: fallback.getBytes,
     async getJson(apiPath) {
-      if (apiPath.includes("/actions/workflows/e2e.yaml/runs?")) {
-        return { total_count: runs.length, workflow_runs: runs };
-      }
       const artifactRunId = /\/actions\/runs\/([0-9]+)\/artifacts\?/u.exec(apiPath)?.[1];
-      if (artifactRunId) {
-        const runId = Number(artifactRunId);
-        const artifactId = ARTIFACT_ID + runId - RUN_ID;
-        return {
-          artifacts: [
-            {
-              archive_download_url: `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`,
-              expired: false,
-              id: artifactId,
-              name: `e2e-dispatch-${runId}-1`,
-              workflow_run: { head_sha: BASE_SHA, id: runId },
-            },
-          ],
-          total_count: 1,
-        };
-      }
-      return fallback.getJson(apiPath);
+      const runId = Number(artifactRunId);
+      const artifactId = ARTIFACT_ID + runId - RUN_ID;
+      return apiPath.includes("/actions/workflows/e2e.yaml/runs?")
+        ? { total_count: runs.length, workflow_runs: runs }
+        : artifactRunId
+          ? {
+              artifacts: [
+                {
+                  archive_download_url: `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`,
+                  expired: false,
+                  id: artifactId,
+                  name: `e2e-dispatch-${runId}-1`,
+                  workflow_run: { head_sha: BASE_SHA, id: runId },
+                },
+              ],
+              total_count: 1,
+            }
+          : fallback.getJson(apiPath);
     },
   };
 }
@@ -562,6 +573,12 @@ describe("qualification orchestration", () => {
   it("rejects mismatched OpenShell target-version surfaces", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-version-mismatch-"));
     tempRoots.push(root);
+    const replacements = new Map<string, [string, string]>([
+      [
+        "nemoclaw-blueprint/blueprint.yaml",
+        ['max_openshell_version: "0.0.99"', 'max_openshell_version: "0.0.98"'],
+      ],
+    ]);
     for (const relativePath of [
       "scripts/install-openshell.sh",
       "scripts/brev-launchable-ci-cpu.sh",
@@ -569,14 +586,9 @@ describe("qualification orchestration", () => {
     ]) {
       const target = path.join(root, relativePath);
       fs.mkdirSync(path.dirname(target), { recursive: true });
-      let source = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
-      if (relativePath === "nemoclaw-blueprint/blueprint.yaml") {
-        source = source.replace(
-          'max_openshell_version: "0.0.99"',
-          'max_openshell_version: "0.0.98"',
-        );
-      }
-      fs.writeFileSync(target, source);
+      const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
+      const replacement = replacements.get(relativePath);
+      fs.writeFileSync(target, replacement ? source.replace(...replacement) : source);
     }
 
     expect(() => extractOpenShellVersion(root)).toThrow("OpenShell version surfaces disagree");

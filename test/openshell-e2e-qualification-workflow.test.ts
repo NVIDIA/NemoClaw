@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -21,13 +23,13 @@ type InstallerHashAction = CompositeAction & {
 
 function requiredActionStep(action: CompositeAction, name: string): WorkflowStep {
   const step = action.runs.steps.find((candidate) => candidate.name === name);
-  if (!step) throw new Error(`Missing action step: ${name}`);
+  assert(step, `Missing action step: ${name}`);
   return step;
 }
 
 function requiredWorkflowStep(job: WorkflowJob, name: string): WorkflowStep {
   const step = job.steps?.find((candidate) => candidate.name === name);
-  if (!step) throw new Error(`Missing workflow step: ${name}`);
+  assert(step, `Missing workflow step: ${name}`);
   return step;
 }
 
