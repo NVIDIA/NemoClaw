@@ -30,6 +30,11 @@ import {
   type ExperimentalOnboardProfile,
   PORTABLE_EXPERIMENTAL_PROFILE,
 } from "./docker-driver-platform";
+import {
+  type PortableInferenceSource,
+  PortableInferenceSourceError,
+  resolvePortableInferenceSource,
+} from "./experimental/portable-inference-source";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
@@ -76,6 +81,7 @@ export interface ResolveOnboardOptionsDeps {
 export interface RunOnboardCommandDeps extends ResolveOnboardOptionsDeps {
   flags: OnboardFlags;
   runOnboard: (options: OnboardCommandOptions) => Promise<void>;
+  resolvePortableInferenceSource?: (env: NodeJS.ProcessEnv) => PortableInferenceSource | null;
 }
 
 function fail(deps: ResolveOnboardOptionsDeps, message: string): never {
@@ -353,7 +359,10 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // not a crash: print the validation reason as a clean single-line CLI error
   // and exit nonzero instead of re-throwing it into a Node.js stack trace
   // (#7627). `fail` sets exit code 1.
-  if (error instanceof GatewayManagementDeclarationError) {
+  if (
+    error instanceof GatewayManagementDeclarationError ||
+    error instanceof PortableInferenceSourceError
+  ) {
     fail(deps, `  ${error.message}`);
   }
   // Gateway-authority refusals are reported, never rethrown. Recreation is not
@@ -376,17 +385,27 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
 function applyPortableEnvironment(
   options: OnboardCommandOptions,
   env: NodeJS.ProcessEnv,
+  resolveInferenceSource: (env: NodeJS.ProcessEnv) => PortableInferenceSource | null,
 ): () => void {
   if (!options.experimentalProfile) return () => {};
-  const portableEnvDefaults = {
-    [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile ?? undefined,
+  const hostedInference = resolveInferenceSource(env);
+  if (!hostedInference) {
+    throw new PortableInferenceSourceError(
+      "Portable hosted inference requires infrakey.txt on the desktop or an owner-only bootstrap credential at /run/nemoclaw/portable-bootstrap.",
+    );
+  }
+  const portableEnvDefaults: Record<string, string> = {
+    [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile,
     [TOOL_DISCLOSURE_ENV]: "direct",
-    NEMOCLAW_PROVIDER: "ollama",
-    NEMOCLAW_MODEL: "qwen3-vl:4b",
+    NEMOCLAW_PROVIDER: "custom",
+    NEMOCLAW_MODEL: hostedInference.model,
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
     NEMOCLAW_POLICY_MODE: "suggested",
     NEMOCLAW_POLICY_TIER: "personal",
-  } as const;
+    COMPATIBLE_API_KEY: hostedInference.apiKey,
+    NEMOCLAW_ENDPOINT_URL: hostedInference.baseUrl,
+    NEMOCLAW_PREFERRED_API: "openai-completions",
+  };
   const previousPortableEnv = new Map<string, string | undefined>();
   const restore = () => {
     for (const [key, value] of previousPortableEnv) {
@@ -428,6 +447,12 @@ function toolDisclosureEnvironmentOverride(
   return flags["tool-disclosure"] !== undefined ? options.toolDisclosure : null;
 }
 
+function portableInferenceSourceResolver(
+  deps: RunOnboardCommandDeps,
+): (env: NodeJS.ProcessEnv) => PortableInferenceSource | null {
+  return deps.resolvePortableInferenceSource ?? resolvePortableInferenceSource;
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   const env = deps.env ?? process.env;
@@ -435,7 +460,11 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   let restoreServingProfileEnvironment = () => {};
   const previousAgentsManifest = env.NEMOCLAW_EXTRA_AGENTS_JSON;
   try {
-    restorePortableEnvironment = applyPortableEnvironment(options, env);
+    restorePortableEnvironment = applyPortableEnvironment(
+      options,
+      env,
+      portableInferenceSourceResolver(deps),
+    );
     restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
     if (options.noOllamaAutostart) env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
     // Keep direct callers and the legacy monolithic onboard path on the same
