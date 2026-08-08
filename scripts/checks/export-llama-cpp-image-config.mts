@@ -10,7 +10,7 @@ import YAML from "yaml";
 
 import {
   LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
-  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
@@ -486,7 +486,8 @@ export function loadLlamaCppImageConfig(
       fullOffload: true,
       vendor: "nvidia",
     }) ||
-    JSON.stringify(qualification?.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
+    JSON.stringify(qualification?.probes) !==
+      JSON.stringify(LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES)
   ) {
     throw new Error("invalid llama.cpp image publication contract");
   }

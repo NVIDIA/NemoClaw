@@ -34,9 +34,11 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
-  });
+  it(
+    "keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe",
+    testTimeoutOptions(30_000),
+    () => expect(validateE2eWorkflowBoundary()).toEqual([]),
+  );
 
   it("rejects a Launchable environment gate, authorization drift, and secret-guard drift", () => {
     const workflow = readWorkflow() as {

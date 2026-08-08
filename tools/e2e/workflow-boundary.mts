@@ -1182,6 +1182,41 @@ function validateInferenceRoutingJob(errors: string[], jobs: WorkflowRecord): vo
   requireRunDoesNotContain(errors, run, "inference-routing-provider-smoke.test.ts");
 }
 
+function validateLlamaCppGenericGpuJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "llama-cpp-generic-gpu";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+  if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
+    errors.push(`${jobName} job must use the reviewed NVIDIA GPU runner`);
+  }
+  const jobEnv = asRecord(job.env);
+  const expectedEnv = {
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+    NEMOCLAW_PROVIDER: "install-llama-cpp",
+    NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu",
+  };
+  for (const [name, expected] of Object.entries(expectedEnv)) {
+    if (jobEnv[name] !== expected) errors.push(`${jobName} job must set ${name} to ${expected}`);
+  }
+  if (Object.hasOwn(jobEnv, "NEMOCLAW_MODEL")) {
+    errors.push(`${jobName} job must leave NEMOCLAW_MODEL unset so YAML remains authoritative`);
+  }
+  if (asRecord(asRecord(jobs["gpu-e2e"]).env).E2E_LLAMA_CPP_DEDICATED_LANE !== "1") {
+    errors.push("gpu-e2e must disable the pre-merge llama.cpp compatibility bridge");
+  }
+  const run = requireJobStep(
+    errors,
+    jobName,
+    asSteps(job.steps),
+    "Run generic NVIDIA GPU llama.cpp live test",
+  );
+  requireRunContains(errors, run, "test/e2e/live/llama-cpp-generic-gpu.test.ts");
+}
+
 function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
   return asSteps(job.steps).some(
     (step) => asRecord(step.env).NVIDIA_INFERENCE_API_KEY !== undefined,
@@ -4941,6 +4976,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
   validateInferenceRoutingJob(errors, jobs);
   validateCloudInferenceJob(errors, jobs);
+  validateLlamaCppGenericGpuJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);

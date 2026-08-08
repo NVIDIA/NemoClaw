@@ -40,7 +40,7 @@ const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "4f3920e0dab09978e0d60d53c97e345cc562ada690deec9b071d3dc471c80840";
+  "14fb4de8dffd0cfd3f0dd3177f03e806c8912247bac4f5919a570c0f6b4c0ca2";
 const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
@@ -72,6 +72,7 @@ const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "jetson-nvmap-gpu",
   "kimi-inference-compat",
   "live",
+  "llama-cpp-generic-gpu",
   "mcp-bridge",
   "mcp-bridge-dev",
   "messaging-compatible-endpoint",

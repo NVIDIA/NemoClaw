@@ -10,9 +10,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertAgentExecutionSucceeded,
+  buildLlamaCppCompatibilityTargetEnv,
   env,
   hasExactReadyPhase,
   openClawModelConfigProjectionScript,
+  shouldBootstrapLlamaCppGenericGpuTarget,
 } from "../live/gpu-e2e-helpers.ts";
 
 const GPU_MODEL = "qwen3.5:9b";
@@ -116,6 +118,45 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
+  it("bootstraps the new llama.cpp target through the trusted pre-merge GPU lane", () => {
+    expect(
+      shouldBootstrapLlamaCppGenericGpuTarget({
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the Ollama GPU lane independent once the dedicated llama.cpp lane exists", () => {
+    expect(
+      shouldBootstrapLlamaCppGenericGpuTarget({
+        E2E_LLAMA_CPP_DEDICATED_LANE: "1",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      }),
+    ).toBe(false);
+  });
+
+  it("does not bootstrap the llama.cpp target outside exact-head live E2E", () => {
+    expect(shouldBootstrapLlamaCppGenericGpuTarget({ NEMOCLAW_RUN_LIVE_E2E: "1" })).toBe(false);
+  });
+
+  it("keeps live collection enabled in the sanitized compatibility child", () => {
+    const childEnv = buildLlamaCppCompatibilityTargetEnv({
+      NEMOCLAW_E2E_CORRELATION_ID: "11111111-1111-4111-8111-111111111111",
+      NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      NEMOCLAW_E2E_SHARD: "default",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+      UNRELATED_PARENT_VALUE: "must-not-leak",
+    });
+
+    expect(childEnv.NEMOCLAW_E2E_CORRELATION_ID).toBe("11111111-1111-4111-8111-111111111111");
+    expect(childEnv.NEMOCLAW_E2E_EXPECTED_SHA).toBe("a".repeat(40));
+    expect(childEnv.NEMOCLAW_E2E_SHARD).toBe("default");
+    expect(childEnv.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(childEnv.UNRELATED_PARENT_VALUE).toBeUndefined();
+  });
+
   it("forwards the workflow-owned Ollama model pull timeout", () => {
     expect(env({}, { NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400" }).NEMOCLAW_OLLAMA_PULL_TIMEOUT).toBe(
       "2400",
