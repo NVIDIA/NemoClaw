@@ -47,6 +47,7 @@ export const E2E_JOB_CONTRACT = {
     "shields-config",
     "snapshot-commands",
     "spark-install",
+    "whatsapp-qr-compact",
   ],
   prepareTrustedBuild: ["managed-image-protected-runtime"],
   cliArtifactConsumers: [

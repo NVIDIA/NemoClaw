@@ -805,9 +805,13 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
   });
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
-    const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
-    const buildOpenClawPlatforms = baseImages.jobs["build-openclaw-platforms"] as WorkflowJob;
-    const guard = requiredStep(buildOpenClawPlatforms, "Validate production Docker build args");
+    const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(
+      ".github/actions/build-base-image-platform/action.yaml",
+    );
+    const guard = requiredStep(
+      { steps: action.runs.steps },
+      "Validate production Docker build args",
+    );
 
     for (const [input, expectedOutput] of [
       ["", "openclaw_build_arg=\n"],

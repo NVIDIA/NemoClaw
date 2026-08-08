@@ -14,6 +14,7 @@ import {
   validateCliArtifactRestoreAction,
   validateCliArtifactWorkflowBoundary,
 } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
+import { E2E_JOB_CONTRACT } from "../../../tools/e2e/workflow-contract-registry.mts";
 import {
   type CompositeAction,
   readRepoText,
@@ -937,5 +938,18 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
       "security-posture must verify and restore the exact CLI artifact exactly once",
     );
+  });
+
+  it("rejects CLI artifact consumer registry drift", () => {
+    const consumers = E2E_JOB_CONTRACT.cliArtifactConsumers as unknown as string[];
+    const removed = consumers.pop();
+    expect(removed).toBeDefined();
+    try {
+      expect(validateCliArtifactWorkflowBoundary(workflowFixture())).toContain(
+        "CLI artifact consumer job names must match the required list",
+      );
+    } finally {
+      consumers.push(removed!);
+    }
   });
 });

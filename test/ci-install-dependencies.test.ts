@@ -28,7 +28,7 @@ describe("shared CI dependency installer", () => {
     const result = spawnSync("bash", [".github/actions/ci-install-dependencies.sh"], {
       cwd: join(import.meta.dirname, ".."),
       encoding: "utf8",
-      env: { ...process.env, NPM_TRACE: trace, PATH: `${bin}:${process.env.PATH}` },
+      env: { ...process.env, NPM_TRACE: trace, PATH: `${bin}:${process.env.PATH || ""}` },
     });
 
     expect(result.status, result.stderr).toBe(0);
