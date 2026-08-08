@@ -14,6 +14,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,7 +26,7 @@ export interface SandboxSession {
   sandboxName: string;
   /** PID of the SSH process on the host. */
   pid: number;
-  /** SSH target host (typically openshell-<sandboxName>). */
+  /** SSH target host (current `.default` or legacy upgrade-window alias). */
   sshHost: string;
 }
 
@@ -97,9 +98,11 @@ export function parseForwardList(output: string | null | undefined): ForwardEntr
 /**
  * Parse process list output to find SSH processes targeting a specific sandbox.
  *
- * SSH connections to sandboxes use the host pattern `openshell-<sandboxName>`.
- * We match the full SSH host as a complete word to avoid false positives when
- * one sandbox name is a prefix of another (e.g., `dev` vs `dev-staging`).
+ * Current SSH connections use `openshell-<sandboxName>.default`. During the
+ * supported v0.0.85 to v0.0.99 upgrade window, an already-running connection
+ * may still target the legacy `openshell-<sandboxName>` alias. We recognize
+ * both as complete tokens to avoid false positives when one sandbox name is a
+ * prefix of another (e.g., `dev` vs `dev-staging`).
  *
  * Input format: one line per process — `<PID> <full command line>`
  * (compatible with both `pgrep -a` on Linux and `ps -axo pid,command`)
@@ -111,11 +114,10 @@ export function parseSshProcesses(
   if (!pgrepOutput || typeof pgrepOutput !== "string") return [];
   if (!sandboxName) return [];
 
-  const sshHost = `openshell-${sandboxName}`;
-  // Match sshHost as a complete word — preceded by whitespace/start and followed
-  // by whitespace/end. This prevents `openshell-dev` from matching inside
-  // `openshell-dev-staging`.
-  const hostPattern = new RegExp(`(?:^|\\s)${escapeRegExp(sshHost)}(?:\\s|$)`);
+  const sshHosts = [openshellSandboxSshHost(sandboxName), `openshell-${sandboxName}`] as const;
+  const hostPatterns = sshHosts.map(
+    (sshHost) => [sshHost, new RegExp(`(?:^|\\s)${escapeRegExp(sshHost)}(?:\\s|$)`)] as const,
+  );
   const sessions: SandboxSession[] = [];
   const lines = pgrepOutput.split("\n").filter(Boolean);
 
@@ -125,7 +127,8 @@ export function parseSshProcesses(
 
     const pid = Number.parseInt(pidMatch[1], 10);
 
-    if (hostPattern.test(pidMatch[2])) {
+    const sshHost = hostPatterns.find(([, pattern]) => pattern.test(pidMatch[2]))?.[0];
+    if (sshHost) {
       sessions.push({ sandboxName, pid, sshHost });
     }
   }

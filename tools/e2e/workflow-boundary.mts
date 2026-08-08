@@ -4271,6 +4271,8 @@ function validateTrustedE2eDispatchReceipt(
   const expectedDispatchReceiptEnv = {
     ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
+    BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
+    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
     CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DISPATCH_JOBS: "${{ inputs.jobs }}",
     DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
@@ -4278,17 +4280,28 @@ function validateTrustedE2eDispatchReceipt(
     EVENT_NAME: "${{ github.event_name }}",
     INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
+    REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
   if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
     errors.push(
-      "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
+      "trusted E2E dispatch receipt must bind only the authenticated repository, PR, candidate, workflow, run, and dispatch identities",
     );
   }
+  if (dispatchReceipt?.shell !== "bash") {
+    errors.push("trusted E2E dispatch receipt must use bash");
+  }
   for (const fragment of [
-    'kind: "nemoclaw-e2e-dispatch-v1"',
+    'kind: "nemoclaw-e2e-dispatch-v2"',
+    "repository: $repository",
+    'prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end)',
+    "candidateRepository: $candidateRepository",
     "candidateSha: $candidateSha",
+    "baseSha: $baseSha",
+    "workflowSha: $workflowSha",
     "eventName: $eventName",
     "workflowRunId: $workflowRunId",
     "workflowRunAttempt: $workflowRunAttempt",
@@ -4301,6 +4314,52 @@ function validateTrustedE2eDispatchReceipt(
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
   ]) {
     requireRunContains(errors, dispatchReceipt, fragment);
+  }
+
+  const dispatchUpload = requireStep(errors, generateSteps, "Upload trusted E2E dispatch receipt");
+  if (dispatchUpload?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+    errors.push("trusted E2E dispatch receipt upload must run for workflow dispatches only");
+  }
+  if (dispatchUpload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {
+    errors.push("trusted E2E dispatch receipt upload must use the reviewed pinned action");
+  }
+  if (
+    !isDeepStrictEqual(asRecord(dispatchUpload?.with), {
+      name: "e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json",
+    })
+  ) {
+    errors.push("trusted E2E dispatch receipt upload must preserve its immutable run identity");
+  }
+
+  const authentication = namedStep(generateSteps, "Authenticate manual PR dispatch");
+  const candidateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  const authenticationIndex = authentication ? generateSteps.indexOf(authentication) : -1;
+  const receiptIndex = dispatchReceipt ? generateSteps.indexOf(dispatchReceipt) : -1;
+  const uploadIndex = dispatchUpload ? generateSteps.indexOf(dispatchUpload) : -1;
+  const checkoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
+  const trustedPrefix = [
+    "Build trusted controller target matrix",
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Upload trusted E2E dispatch receipt",
+  ];
+  if (
+    !isDeepStrictEqual(
+      generateSteps.slice(0, trustedPrefix.length).map((step) => step.name),
+      trustedPrefix,
+    ) ||
+    authenticationIndex < 0 ||
+    receiptIndex !== authenticationIndex + 1 ||
+    uploadIndex !== receiptIndex + 1 ||
+    checkoutIndex <= uploadIndex
+  ) {
+    errors.push(
+      "trusted E2E dispatch receipt must be created and uploaded immediately after authentication and before candidate execution",
+    );
   }
 }
 
@@ -4428,12 +4487,29 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     .join(",");
   const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  const defaultTestMappings = [
+    {
+      file: "test/onboard-managed-image-buildless-e2e.test.ts",
+      id: "onboard-managed-image-buildless-e2e",
+      project: "integration",
+    },
+    {
+      file: "test/vllm-docker-storage.test.ts",
+      id: "vllm-docker-storage",
+      project: "integration",
+    },
+  ]
+    .map(({ file, id, project }) => `{"id":"${id}","file":"${file}","project":"${project}"}`)
+    .join(",");
   requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
+  requireRunContains(errors, controllerMatrix, `test_matrix='[${defaultTestMappings}]'`);
   const trustedControllerMatrixScript = [
     "set -euo pipefail",
+    "test_matrix='[]'",
     'case "${JOBS}:${TARGETS}" in',
     ":)",
     `matrix='[${defaultMappings}]'`,
+    `test_matrix='[${defaultTestMappings}]'`,
     ";;",
     "managed-image-protected-runtime:)",
     "matrix='[]'",
@@ -4453,6 +4529,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     ";;",
     "esac",
     `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+    `printf 'test_matrix=%s\\n' "\${test_matrix}" >> "\${GITHUB_OUTPUT}"`,
   ];
   const controllerMatrixLines = controllerMatrixScript
     .split("\n")
@@ -4495,6 +4572,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateEnv.CONTROLLER_MATRIX !== "${{ steps.controller_matrix.outputs.matrix }}") {
     errors.push("matrix generation step must receive the trusted controller matrix");
   }
+  if (generateEnv.CONTROLLER_TEST_MATRIX !== "${{ steps.controller_matrix.outputs.test_matrix }}") {
+    errors.push("matrix generation step must receive the trusted controller test matrix");
+  }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
   }
@@ -4508,6 +4588,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, generate, "GITHUB_OUTPUT");
   requireRunContains(errors, generate, "expected_controller_matrix=");
   requireRunContains(errors, generate, "actual_controller_matrix=");
+  requireRunContains(errors, generate, "expected_controller_test_matrix=");
+  requireRunContains(errors, generate, "actual_controller_test_matrix=");
   requireRunContains(errors, generate, ': > "${GITHUB_OUTPUT}"');
   requireRunContains(
     errors,
