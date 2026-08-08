@@ -696,7 +696,7 @@ export function installPortableDemoSandboxLifecycle(
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
   };
   requireCommand(
-    podman(["update", "--restart=unless-stopped", inspection.containerId]),
+    podman(["update", "--restart=always", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
   writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
@@ -736,7 +736,7 @@ export function recoverPortableDemoSandboxLifecycle(
       );
     }
     requireCommand(
-      podman(["update", "--restart=unless-stopped", replacement.containerId]),
+      podman(["update", "--restart=always", replacement.containerId]),
       `Restoring the portable restart policy for sandbox '${sandboxName}'`,
     );
     receipt = { ...receipt, containerId: replacement.containerId };
