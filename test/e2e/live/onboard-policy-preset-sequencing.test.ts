@@ -4,7 +4,6 @@
 import { randomBytes } from "node:crypto";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
@@ -61,20 +60,8 @@ test("interactive onboard wizard reaches Policy presets in step order (#6042)", 
       "confirm Policy presets is reached before completion",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, skip }) => {
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-onboard-policy-order",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required to drive a real interactive onboard: ${resultText(docker)}`,
-      );
-    }
-    skip("Docker is required to drive a real interactive onboard");
-  }
+}, async ({ artifacts, cleanup, docker, host, progress }) => {
+  await docker.requireDocker();
 
   progress.phase("start the local compatible-endpoint fake server");
   const apiKey = `e2e-6042-${randomBytes(16).toString("hex")}`;
