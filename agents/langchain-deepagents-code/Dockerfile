@@ -15,6 +15,7 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 WORKDIR /opt/mcp-tool-discovery-runtime
 COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/npm-ci-locked.sh tools/mcp-tool-discovery-runtime/*.ts ./
+COPY tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed/ ./npm-cache-seed/
 # hadolint ignore=DL4006
 RUN --network=default set -eu; \
     if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
@@ -25,6 +26,7 @@ RUN --network=default set -eu; \
       export NODE_EXTRA_CA_CERTS=/tmp/nemoclaw-corporate-ca.pem; \
     fi; \
     ./install-reviewed-runtime.sh \
+    && rm -rf ./npm-cache-seed \
     && rm -f /tmp/nemoclaw-corporate-ca.pem \
     && rm -f ./install-reviewed-runtime.sh ./npm-ci-locked.sh
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \

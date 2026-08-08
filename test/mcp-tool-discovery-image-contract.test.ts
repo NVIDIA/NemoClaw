@@ -383,6 +383,10 @@ describe("MCP tool discovery image contract", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
     expect(dockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed/ ./npm-cache-seed/",
+    );
+    expect(dockerfile).toContain("rm -rf ./npm-cache-seed");
+    expect(dockerfile).toContain(
       `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
     );
     expect(dockerfile).toContain("tools/mcp-tool-discovery-runtime/npm-ci-locked.sh");
