@@ -361,9 +361,16 @@ describe("Hermes final image layout", () => {
       "--agent hermes --phase managed-image-capability-union",
     );
     expect(finalStage).toContain("UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels");
+    expect(dockerfile).toContain("FROM scratch AS hermes-managed-teams-0-wheels");
     expect(dockerfile).toContain(
-      "FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-wheels",
+      "FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels",
     );
+    expect(dockerfile).toContain(
+      "FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS hermes-managed-teams-wheels",
+    );
+    expect(
+      indexOfRequired(dockerfile, "ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0"),
+    ).toBeLessThan(indexOfRequired(dockerfile, "FROM node:22-trixie-slim@sha256:"));
     for (const wheelSha256 of [
       "db16f714ec658b592929c6386a29792e90bb73840732f8ae65a198cda1fea96c",
       "0072ffe68863a4c62818a4e631a186f092a4f09dfda74d1d4713415bac5d202d",

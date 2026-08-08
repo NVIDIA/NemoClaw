@@ -8,6 +8,7 @@
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96
 ARG NEMOCLAW_CORPORATE_CA_B64=
+ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
 ARG NEMOCLAW_CORPORATE_CA_B64
@@ -170,8 +171,15 @@ FROM hermes-managed-teams-common-wheels AS hermes-managed-teams-arm64-wheels
 
 ADD --chmod=0444 --checksum=sha256:e05da5bc73a3e026f962a223672002934c0f415064b6e2c3db0b255e46c7b521 https://files.pythonhosted.org/packages/32/ab/b1e1826aacc37d07ba0101230de7b5cbbb5ac6364b78ca3957f0a90d6a51/dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl /dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
 
+FROM scratch AS hermes-managed-teams-0-wheels
+
 # hadolint ignore=DL3006
-FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-wheels
+FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels
+
+# Select the empty stage for ordinary custom-plan builds so their dependency
+# graph never resolves the managed-image-only PyPI wheel sources above.
+# hadolint ignore=DL3006
+FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS hermes-managed-teams-wheels
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
