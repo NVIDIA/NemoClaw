@@ -714,6 +714,16 @@ function assertApiKeyIdentity(
   }
 }
 
+function assertApiKeyFileIdentity(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  expected: StableFileIdentity,
+): void {
+  // Receipt publication may change the parent timestamp after Docker has bound the exact key inode.
+  if (!sameFileIdentity(apiKeyIdentity(options), expected)) {
+    throw new Error("Docker llama.cpp API-key file changed during lifecycle mutation.");
+  }
+}
+
 function qualifyEngine(options: DockerLlamaCppManagedLifecycleOptions): PersistedEngineAuthority {
   if (
     options.engine.operation !== "host-local-inference" ||
@@ -1421,7 +1431,7 @@ export function createDockerLlamaCppManagedLifecycle(
       if (apiKeyIdentitySha256(activeKeyIdentity) !== inspected.journal.apiKeyIdentitySha256) {
         throw new Error("Docker llama.cpp API-key identity differs from its create journal.");
       }
-      assertApiKeyIdentity(options, activeKeyIdentity, inspected.journal.apiKeyRootIdentitySha256);
+      assertApiKeyFileIdentity(options, activeKeyIdentity);
       assertModelFilesystemAuthority(options);
       if (inspected.container.running) {
         privateBridge.assertRunning(
@@ -1486,11 +1496,7 @@ export function createDockerLlamaCppManagedLifecycle(
           throw new Error("Docker llama.cpp API-key identity differs from its create journal.");
         }
         assertModelFilesystemAuthority(options);
-        assertApiKeyIdentity(
-          options,
-          activeKeyIdentity,
-          authorized.journal.apiKeyRootIdentitySha256,
-        );
+        assertApiKeyFileIdentity(options, activeKeyIdentity);
         const inspected = inspectAuthorized(receipt);
         if (!inspected.container.running) {
           throw new Error("Docker llama.cpp cannot preserve a stopped runtime.");
@@ -1505,11 +1511,7 @@ export function createDockerLlamaCppManagedLifecycle(
           execution,
         );
         assertModelFilesystemAuthority(options);
-        assertApiKeyIdentity(
-          options,
-          activeKeyIdentity,
-          authorized.journal.apiKeyRootIdentitySha256,
-        );
+        assertApiKeyFileIdentity(options, activeKeyIdentity);
         requireExactNetwork(
           options,
           requireJournalNetworkId(inspected.journal),
@@ -1620,11 +1622,7 @@ export function createDockerLlamaCppManagedLifecycle(
           throw new Error("Docker llama.cpp API-key identity differs from its create journal.");
         }
         assertModelFilesystemAuthority(options);
-        assertApiKeyIdentity(
-          options,
-          activeKeyIdentity,
-          authorized.journal.apiKeyRootIdentitySha256,
-        );
+        assertApiKeyFileIdentity(options, activeKeyIdentity);
         let inspected = inspectAuthorized(receipt);
         if (!inspected.container.running) {
           if (!AT_REST.has(inspected.container.status)) {
@@ -1655,11 +1653,7 @@ export function createDockerLlamaCppManagedLifecycle(
           execution,
         );
         assertModelFilesystemAuthority(options);
-        assertApiKeyIdentity(
-          options,
-          activeKeyIdentity,
-          authorized.journal.apiKeyRootIdentitySha256,
-        );
+        assertApiKeyFileIdentity(options, activeKeyIdentity);
         requireExactNetwork(
           options,
           requireJournalNetworkId(authorized.journal),
@@ -1932,7 +1926,7 @@ export function createDockerLlamaCppManagedLifecycle(
               throw new Error("Docker llama.cpp API-key identity differs from its create journal.");
             }
             assertModelFilesystemAuthority(options);
-            assertApiKeyIdentity(options, activeKeyIdentity, journal.apiKeyRootIdentitySha256);
+            assertApiKeyFileIdentity(options, activeKeyIdentity);
             const inspected = inspectAuthorized(receipt, false);
             if (!inspected.container.running) {
               throw new Error("Docker llama.cpp receipt publication requires a running runtime.");
@@ -1947,7 +1941,7 @@ export function createDockerLlamaCppManagedLifecycle(
               execution,
             );
             assertModelFilesystemAuthority(options);
-            assertApiKeyIdentity(options, activeKeyIdentity, journal.apiKeyRootIdentitySha256);
+            assertApiKeyFileIdentity(options, activeKeyIdentity);
             requireExactNetwork(options, requireJournalNetworkId(journal), journal.transactionId);
             options.journalStore.assertExecution(lease);
             writePreparedReceipt(writer, journal);

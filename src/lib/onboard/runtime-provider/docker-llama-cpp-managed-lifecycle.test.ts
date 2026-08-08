@@ -1098,6 +1098,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       switch (committed) {
         case null:
           committed = serializedReceipt;
+          fs.writeFileSync(path.join(apiKeyRoot, "receipt.json"), serializedReceipt);
           throw new Error("writer outcome unknown");
         default:
           invariant(committed === serializedReceipt, "different receipt");
@@ -1424,7 +1425,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const receipt = lifecycle.start(receiptWriter());
     fixture.driftHardening();
     expect(() => lifecycle.runtime.inspectManaged(receipt)).toThrow("exact journal authority");
-
     for (const mutate of [
       (candidate: DockerFixture) => candidate.driftGpuRequest(undefined, 1),
       (candidate: DockerFixture) => candidate.driftGpuRequest("nvidia", 2),
@@ -1441,7 +1441,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       );
     }
   });
-
   it("rejects model and API-key filesystem identity drift during exact inspection", () => {
     const modelFixture = dockerFixture();
     const modelLifecycle = controller(modelFixture);
@@ -1450,32 +1449,33 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(() => modelLifecycle.runtime.inspectManaged(modelReceipt)).toThrow(
       "filesystem identity",
     );
-
     fs.writeFileSync(modelPath, MODEL_CONTENT, { mode: 0o600 });
     const keyFixture = dockerFixture();
     const keyLifecycle = controller(keyFixture);
-    const keyReceipt = keyLifecycle.start(receiptWriter());
+    const keyReceipt = keyLifecycle.start(
+      receiptWriter((serializedReceipt) => {
+        fs.writeFileSync(path.join(apiKeyRoot, "receipt.json"), serializedReceipt, { mode: 0o600 });
+        return serializedReceipt;
+      }),
+    );
+    expect(() => keyLifecycle.runtime.inspectManaged(keyReceipt)).not.toThrow();
     fs.writeFileSync(apiKeyPath, "replacement-test-key\n", { mode: 0o600 });
     expect(() => keyLifecycle.runtime.inspectManaged(keyReceipt)).toThrow("API-key identity");
   });
-
   it("rejects a same-size GGUF replacement when inspection reconstructs current identity", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const persistedAuthority = authorityStore();
     const initial = createLifecycle(options(fixture, store, bindings(), persistedAuthority));
     const receipt = initial.start(receiptWriter());
-
     fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
     const currentIdentityInspector = createLifecycle(
       options(fixture, store, bindings(), persistedAuthority),
     );
-
     expect(() => currentIdentityInspector.runtime.inspectManaged(receipt)).toThrow(
       "durable create journal",
     );
   });
-
   it("fails closed on crafted absent destroy authority and status-one daemon errors (#8395)", () => {
     const fixture = dockerFixture();
     const store = journalStore();
