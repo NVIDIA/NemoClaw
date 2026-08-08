@@ -32,13 +32,17 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `wechat-runtime-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` invokes the reviewed `.github/actions/ci-wechat-runtime-audit` implementation.
-  Pull requests resolve it from the base SHA.
-  Because PR #6739's base predates the action, that PR alone can bootstrap the action from signed immutable commit `HOYALIM/NemoClaw@0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2`; every other PR fails closed if its base lacks the action.
-  Main uses the merged action.
-  The action uses Node `22.19.0` and npm `10.9.4`, materializes the committed graph with scripts disabled, fails on any low-or-higher production advisory, verifies registry signatures, uploads the reports, and exercises the exact reviewed archive through a copied writable cache while the trusted source remains read-only.
-  It retries `npm audit signatures` at most three times only when npm reports the exact `npm error Failed to download` transport failure.
-  Invalid or missing signatures fail after the first attempt.
-  Each failed attempt retains its output and npm debug logs.
+  The pull request workflow resolves the action from the PR base SHA.
+  Because PR #6739's base SHA predates the action, only that PR can use the pinned bootstrap action from signed immutable commit `HOYALIM/NemoClaw@0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2`.
+  Other PRs fail closed if their base lacks the action.
+  The `main.yaml` workflow uses the merged action.
+  The action uses Node `22.19.0` and npm `10.9.4`.
+  It materializes the committed graph with scripts disabled.
+  It rejects any low-or-higher production advisory, verifies registry signatures, and uploads the reports.
+  It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
+  The action retries `npm audit signatures` at most three times when a failed attempt contains `npm error Failed to download`.
+  For other nonzero results, including invalid or missing signatures, the action stops after the first attempt.
+  The report directory retains each attempt's output and any npm debug logs from failed attempts.
   Removal condition: delete the PR #6739 bootstrap checkout, its paired conditional audit step, and the bootstrap-specific test assertions in the first follow-up after this PR merges, before the next release tag; all later PRs must use the normal base-SHA action path.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --prefix agents/openclaw/wechat-runtime`.
 - Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.

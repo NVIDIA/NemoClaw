@@ -280,8 +280,8 @@ run_signature_audit() {
       cp -a "$trusted_cache/_logs/." "$signature_debug_dir/"
     fi
 
-    # Retry only npm's exact registry download failure. Invalid or missing
-    # signatures remain fail-closed and return after the first attempt.
+    # Retry only when npm output contains the registry download failure marker.
+    # Invalid or missing signatures fail closed after the first attempt.
     if ! grep -Fq "npm error Failed to download" "$attempt_report"; then
       return "$command_status"
     fi
