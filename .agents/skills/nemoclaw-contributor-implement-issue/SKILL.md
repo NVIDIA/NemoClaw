@@ -77,10 +77,10 @@ review, or maintainer workflows to replace routine implementation work.
 ## Implement and validate the slice
 
 Before editing, map each success criterion and applicable security control to its shortest stable
-evidence. Record the sibling paths checked for the same operation or failure class and the
-sensitive-workflow state outcomes the change must hold. Then make the direct change in the current
-behavior owner. Do not add speculative abstractions, configuration, compatibility, migration, or
-fallback behavior.
+evidence. Name the operation and failure class the change belongs to. Record the sibling paths
+checked for that operation or failure class and the sensitive-workflow state outcomes the change must
+hold. Then make the direct change in the current behavior owner. Do not add speculative abstractions,
+configuration, compatibility, migration, or fallback behavior.
 
 Add focused evidence as applicable:
 
@@ -105,10 +105,11 @@ security control and focused negative evidence that proves forbidden behavior re
 security control changed, state why and cite the reviewed trust boundaries.
 
 Confirm that allowed, denied, error, and boundary behavior remains coherent across failure, retry,
-cleanup, cached, resumed, and compatibility paths that apply. Re-check the recorded sibling paths and
-sensitive-workflow state outcomes against the completed diff, and report a sibling path that still
-needs the same change. Separate completed local evidence from CI, live E2E, hardware, publication,
-and other external gates.
+cleanup, cached, resumed, and compatibility paths that apply.
+Re-check the recorded operation and failure class, sibling paths, and sensitive-workflow state
+outcomes against the completed diff, and report a sibling path that still needs the same change.
+Separate completed local evidence from CI, live E2E, hardware, publication, and other external
+gates.
 
 ## Report the implementation handoff
 
@@ -135,7 +136,7 @@ Use this structure:
 ## Root cause and sensitive-workflow state
 - Operation and failure class:
 - Sibling paths checked: <path and whether it needs the same change>
-- Sensitive-workflow states: <applicable phases and outcomes, or "not applicable" with the reason>
+- Sensitive-workflow states: <applicable phases with separate result and action, each credential location, access, lifetime, and removal, or "not applicable" with the reason>
 
 ## Security considerations
 - Applicable categories and trust boundaries:

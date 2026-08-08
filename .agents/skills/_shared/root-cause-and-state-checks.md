@@ -37,3 +37,6 @@ For each credential, name its location, access, lifetime, and removal. For each 
 the result and required action separately. Classify the result as an infrastructure failure or
 inconclusive verification when applicable. Classify the action as rollback, retry, or stop. Ask the
 user before choosing a behavior that changes security, data safety, cost, or a supported contract.
+
+The [Security Rubric](security-rubric.md) owns the authorization boundary. For a public or external
+write, record its evidence that authorization is enforced for the exact resource and action.
