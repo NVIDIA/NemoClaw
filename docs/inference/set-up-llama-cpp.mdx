@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Set Up llama.cpp"
 sidebar-title: "Set Up llama.cpp"
-description: "Attach an existing llama.cpp server or use the experimental managed NVIDIA Nemotron recipe on DGX Spark."
-description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or the experimental declarative managed recipe on DGX Spark."
-keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "nemotron gguf"]
+description: "Attach an existing llama.cpp server or use the experimental managed NVIDIA Nemotron recipe on a matching NVIDIA GPU host."
+description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or the experimental declarative managed recipe on DGX Spark and Linux amd64 NVIDIA GPU hosts."
+keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "llama.cpp nvidia gpu", "managed llama.cpp", "nemotron gguf"]
 content:
   type: "how_to"
 ---
 NemoClaw provides two first-class llama.cpp paths.
-You can attach an authenticated server that you operate, or let NemoClaw materialize one repository-owned recipe on DGX Spark.
+You can attach an authenticated server that you operate, or let NemoClaw materialize one repository-owned recipe on a matching NVIDIA GPU host.
 Both paths are experimental and use OpenAI Chat Completions through `https://inference.local/v1`.
 
 ## Choose a llama.cpp Path
@@ -18,7 +18,7 @@ Both paths are experimental and use OpenAI Chat Completions through `https://inf
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
 | Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
-| Managed DGX Spark | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | The qualified Linux host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental NVIDIA Nemotron recipe without managing llama-server directly. |
+| Managed NVIDIA GPU | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | The matching Linux host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental NVIDIA Nemotron recipe without managing llama-server directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
@@ -75,10 +75,17 @@ $$nemoclaw my-assistant doctor
 If a compatible server does not satisfy the first-class fingerprint, use [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint).
 That path supports operator-selected endpoints and ports without claiming llama.cpp-specific identity or lifecycle ownership.
 
-## Install Managed llama.cpp on DGX Spark
+## Install Managed llama.cpp on an NVIDIA GPU Host
 
-Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
-The default recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
+Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one matching NVIDIA GPU host.
+The repository currently defines these experimental hardware presets:
+
+- One DGX Spark running Linux on Arm64.
+- One Linux `amd64` host with an NVIDIA GPU.
+
+Both hardware presets use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1`.
+That recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
+The Linux `amd64` preset does not define a generic GPU model default or a new recipe.
 
 <Note>
 This path is an experimental implementation.
@@ -87,10 +94,11 @@ It does not establish a supported agent, model, and runtime tuple until the prot
 
 Before you start, confirm these prerequisites:
 
-- Use a DGX Spark host with Linux on Arm64.
-- Confirm that Docker is operational on the host.
+- Use a DGX Spark with Linux on Arm64, or use a Linux `amd64` host.
+- Use Docker Engine, not Docker Desktop.
+- Provide at least one NVIDIA GPU.
 - Confirm that the NVIDIA Container Toolkit is operational.
-- Confirm that NVIDIA Container Device Interface support is healthy.
+- Confirm that NVIDIA Container Device Interface (CDI) support is healthy.
 - Use NVIDIA driver version `580.65.06` or later.
 - Stop any process that uses host port `8081`.
 - Allow capacity for the pinned images, the GGUF file, and same-filesystem download staging.
@@ -107,7 +115,7 @@ It creates an owner-only API key, a host-loopback listener on port `8081`, and a
 Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
 </Warning>
 
-Run interactive onboarding on the DGX Spark and select **NVIDIA Nemotron with managed llama.cpp (DGX Spark)**:
+Run interactive onboarding on a matching host and select **NVIDIA Nemotron with managed llama.cpp**:
 
 ```bash
 $$nemoclaw onboard
@@ -125,12 +133,16 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 When `NEMOCLAW_LLAMACPP_RECIPE` is unset, NemoClaw selects the one shipped managed llama.cpp recipe.
 Set the variable explicitly in automation so the selected recipe is visible in the invocation.
 Do not set `NEMOCLAW_MODEL` for this path.
+Host readiness selects exactly one explicit hardware preset for the recipe.
+NemoClaw stops before artifact acquisition when no preset matches or more than one preset matches.
+The recipe selects the exact model and digest-pinned runtime image for both hardware presets.
 The repository YAML recipe is authoritative for the exact model file, revision, digest, image, launch settings, resource limits, readiness probes, and disabled surfaces.
+The selected hardware preset supplies only the host requirements for that recipe.
 NemoClaw does not provide hidden model, port, image, or launch-flag overrides for the managed path.
 
 Onboarding performs these actions:
 
-- Resolves the recipe against a fresh DGX Spark readiness report.
+- Resolves the recipe against a fresh host-readiness report and requires exactly one matching hardware preset.
 - Reuses locally present pinned downloader, runtime, and probe images, and pulls only the missing digest-pinned images declared by the recipe.
 - Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
@@ -162,6 +174,20 @@ These checks do not establish agent and model qualification.
 `status` reports the recipe ID, model digest, image reference, endpoint, and lifecycle state without exposing the API key.
 `doctor` distinguishes identity, runtime, and route failures and provides a recovery hint.
 Refer to [CLI Commands](../../reference/commands) for complete command behavior.
+
+For Linux `amd64` release qualification, the `llama-cpp-generic-gpu` live end-to-end test provides separate candidate evidence.
+A passing exact-commit run must prove all of these results:
+
+- The host uses Linux `amd64`, Docker Engine, and an NVIDIA GPU.
+- The installer uses the exact provider and recipe shown above without `NEMOCLAW_MODEL`.
+- The receipt matches the selected preset, recipe, model digest, and runtime image.
+- llama.cpp offloads every model layer to the assigned GPU.
+- An unauthenticated host request receives HTTP `401`.
+- Authenticated host inference, routed sandbox inference, and one OpenClaw agent turn succeed.
+- Owned container and network cleanup completes after sandbox destruction.
+
+The configured test does not prove these results until its exact candidate run and artifacts pass review.
+Even a passing run keeps this path experimental and does not activate a supported agent, model, and runtime tuple.
 
 ## Recover the Managed Runtime
 

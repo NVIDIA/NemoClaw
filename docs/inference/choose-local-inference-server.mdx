@@ -25,7 +25,7 @@ OpenShell intercepts that traffic and forwards it to the local endpoint configur
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
 | Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
 | Existing llama.cpp | You already operate an authenticated llama.cpp server on loopback port `8081`. | Experimental. Always available for explicit selection and attaches only after cooperative fingerprinting succeeds. | `/v1/chat/completions`. |
-| Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Appears on a qualified DGX Spark host and supports explicit non-interactive selection. | `/v1/chat/completions`. |
+| Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Appears when a DGX Spark or Linux `amd64` NVIDIA GPU host matches an explicit hardware preset. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
 
@@ -36,7 +36,7 @@ OpenShell intercepts that traffic and forwards it to the local endpoint configur
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
 | Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Requires the dedicated installer flag on DGX Spark and does not appear in the provider menu. | `/v1/chat/completions`. |
 | Existing llama.cpp | You already operate an authenticated llama.cpp server on loopback port `8081`. | Experimental. Always available for explicit selection and attaches only after cooperative fingerprinting succeeds. | `/v1/chat/completions`. |
-| Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Appears on a qualified DGX Spark host and supports explicit non-interactive selection. | `/v1/chat/completions`. |
+| Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Appears when a DGX Spark or Linux `amd64` NVIDIA GPU host matches an explicit hardware preset. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
 
@@ -149,15 +149,17 @@ After a successful full uninstall, `docker container inspect nemoclaw-vllm` must
 
 ## Choose llama.cpp
 
-Choose llama.cpp when you already operate an authenticated server or want NemoClaw to materialize the experimental NVIDIA Nemotron recipe on DGX Spark.
+Choose llama.cpp when you already operate an authenticated server or want NemoClaw to materialize the experimental NVIDIA Nemotron recipe on a matching NVIDIA GPU host.
 The existing-server path owns only provider registration and routing.
 The managed path owns the exact YAML-selected model, launch, Docker lifecycle, diagnostics, and cleanup.
 
 Refer to [Set Up llama.cpp](set-up-llama-cpp).
 
-## Install Managed llama.cpp on DGX Spark
+<a id="install-managed-llamacpp-on-dgx-spark"></a>
 
-The managed procedure moved to [Set Up llama.cpp](set-up-llama-cpp#install-managed-llamacpp-on-dgx-spark).
+## Install Managed llama.cpp on an NVIDIA GPU Host
+
+The managed procedure moved to [Set Up llama.cpp](set-up-llama-cpp#install-managed-llamacpp-on-an-nvidia-gpu-host).
 
 ## Choose NVIDIA NIM
 

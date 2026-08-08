@@ -1,0 +1,445 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { validateStartupLog } from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/index.ts";
+import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { managedInferenceDigest } from "../../../src/lib/inference/serving/catalog-integrity.ts";
+import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
+import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
+import {
+  MANAGED_LLAMA_CPP_CONTAINER_NAME,
+  MANAGED_LLAMA_CPP_NETWORK_NAME,
+} from "../../../src/lib/inference/llama-cpp/managed-installer.ts";
+import {
+  loadManagedLlamaCppApiKey,
+  loadManagedLlamaCppOwner,
+  loadManagedLlamaCppReceipt,
+  managedLlamaCppStatePaths,
+} from "../../../src/lib/inference/llama-cpp/managed-state.ts";
+import {
+  assertAgentExecutionSucceeded,
+  chatContent,
+  hasExactReadyPhase,
+} from "./gpu-e2e-helpers.ts";
+
+const TIMEOUT_MS = 110 * 60_000;
+const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+const PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llama-cpp-generic-gpu";
+
+function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const selected: NodeJS.ProcessEnv = {
+    ...buildAvailabilityProbeEnv(process.env),
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_LLAMACPP_RECIPE: RECIPE_ID,
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_PROVIDER: "install-llama-cpp",
+    NEMOCLAW_RECREATE_SANDBOX: "1",
+    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    ...extra,
+  };
+  delete selected.NEMOCLAW_MODEL;
+  return selected;
+}
+
+test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real agent turn (#8144)", {
+  timeout: TIMEOUT_MS,
+  meta: {
+    e2ePhases: [
+      "validate exact source and generic NVIDIA GPU host",
+      "run the declarative managed llama.cpp installer",
+      "verify exact runtime identity and full GPU offload",
+      "verify authenticated host and sandbox inference",
+      "verify OpenClaw agent inference and owned cleanup",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  await artifacts.target.declare({
+    id: "llama-cpp-generic-gpu",
+    boundary:
+      "Linux amd64 host + Docker Engine + one NVIDIA GPU + install.sh managed llama.cpp + OpenShell sandbox route",
+    configurationAuthority:
+      "The repository-owned serving recipe and hardware preset supply every model, image, runtime, and serving value.",
+    credentialBoundary:
+      "The generated llama.cpp API key remains in owner-only host state and enters commands only through redacted process input.",
+  });
+
+  const cleanupEnv = env();
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-gateway",
+    env: cleanupEnv,
+    timeoutMs: 60_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-sandbox",
+    env: cleanupEnv,
+    timeoutMs: 180_000,
+  });
+
+  progress.phase("validate exact source and generic NVIDIA GPU host");
+  const expectedSha = process.env.NEMOCLAW_E2E_EXPECTED_SHA;
+  expect(expectedSha, "workflow must bind the exact candidate commit").toMatch(/^[a-f0-9]{40}$/u);
+  const candidateSha = await host.command("git", ["rev-parse", "HEAD"], {
+    artifactName: "candidate-commit",
+    cwd: REPO_ROOT,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(candidateSha.exitCode, resultText(candidateSha)).toBe(0);
+  expect(candidateSha.stdout.trim()).toBe(expectedSha);
+
+  const architecture = await host.command("uname", ["-m"], {
+    artifactName: "host-architecture",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(architecture.exitCode, resultText(architecture)).toBe(0);
+  expect(architecture.stdout.trim()).toBe("x86_64");
+  const docker = await host.command("docker", ["info", "--format", "{{json .}}"], {
+    artifactName: "docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(docker.exitCode, resultText(docker)).toBe(0);
+  expect(resultText(docker)).not.toMatch(/docker desktop/i);
+  const nvidia = await host.command(
+    "nvidia-smi",
+    ["--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"],
+    {
+      artifactName: "nvidia-smi",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(nvidia.exitCode, resultText(nvidia)).toBe(0);
+  expect(nvidia.stdout.trim()).toMatch(/^NVIDIA .+,[ ]*[0-9.]+,[ ]*[1-9][0-9]*$/u);
+
+  const catalog = loadManagedInferenceCatalog();
+  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID);
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === PRESET_ID);
+  if (!recipe || !isLlamaCppServingRecipe(recipe)) {
+    throw new Error("generic GPU E2E llama.cpp recipe is missing");
+  }
+  if (!preset) throw new Error("generic GPU E2E preset is missing");
+  const modelFile = recipe.spec.model.files[0];
+  if (!modelFile || !("sizeBytes" in modelFile)) {
+    throw new Error("generic GPU E2E GGUF identity is incomplete");
+  }
+
+  progress.phase("run the declarative managed llama.cpp installer");
+  const install = await host.command("bash", ["install.sh", "--non-interactive"], {
+    artifactName: "install-managed-llama-cpp",
+    cwd: REPO_ROOT,
+    env: env(),
+    timeoutMs: 75 * 60_000,
+  });
+  expect(install.exitCode, resultText(install)).toBe(0);
+  await artifacts.writeText("install-managed-llama-cpp.log", resultText(install));
+
+  progress.phase("verify exact runtime identity and full GPU offload");
+  const paths = managedLlamaCppStatePaths(os.homedir());
+  const modelCacheEntry = path.join(
+    os.homedir(),
+    ".cache",
+    "huggingface",
+    "hub",
+    `models--${recipe.spec.model.id.replaceAll("/", "--")}`,
+    "snapshots",
+    recipe.spec.model.revision,
+    modelFile.path,
+  );
+  const owner = loadManagedLlamaCppOwner(paths);
+  const receipt = loadManagedLlamaCppReceipt(paths);
+  expect(owner).not.toBeNull();
+  expect(receipt).not.toBeNull();
+  expect(fs.existsSync(modelCacheEntry), "verified GGUF cache entry is missing").toBe(true);
+  expect(owner).toMatchObject({
+    sandboxName: SANDBOX_NAME,
+    recipeId: RECIPE_ID,
+    presetDigest: managedInferenceDigest(preset),
+    recipeDigest: managedInferenceDigest(recipe),
+  });
+  expect(receipt).toMatchObject({
+    providerId: "docker",
+    service: "llama-cpp",
+    endpoint: {
+      host: "127.0.0.1",
+      networkName: MANAGED_LLAMA_CPP_NETWORK_NAME,
+      port: recipe.spec.serve.port,
+    },
+    runtime: {
+      kind: "container",
+      name: MANAGED_LLAMA_CPP_CONTAINER_NAME,
+      imageRef: recipe.spec.runtime.image,
+      model: {
+        digest: modelFile.digest,
+        recipeId: RECIPE_ID,
+        sizeBytes: modelFile.sizeBytes,
+      },
+    },
+  });
+
+  const inspect = await host.command(
+    "docker",
+    ["container", "inspect", MANAGED_LLAMA_CPP_CONTAINER_NAME],
+    {
+      artifactName: "managed-llama-cpp-container-inspect",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(inspect.exitCode, resultText(inspect)).toBe(0);
+  const logs = await host.command(
+    "docker",
+    ["logs", "--tail", "20000", MANAGED_LLAMA_CPP_CONTAINER_NAME],
+    {
+      artifactName: "managed-llama-cpp-container-logs",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(logs.exitCode, resultText(logs)).toBe(0);
+  const offload = validateStartupLog(resultText(logs));
+  expect(offload.offloadedLayers).toBe(offload.totalLayers);
+  const containerGpu = await host.command(
+    "docker",
+    [
+      "exec",
+      MANAGED_LLAMA_CPP_CONTAINER_NAME,
+      "nvidia-smi",
+      "--query-gpu=name,driver_version,memory.used",
+      "--format=csv,noheader,nounits",
+    ],
+    {
+      artifactName: "managed-llama-cpp-container-nvidia-smi",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(containerGpu.exitCode, resultText(containerGpu)).toBe(0);
+  expect(containerGpu.stdout.trim()).toMatch(/^NVIDIA .+,[ ]*[0-9.]+,[ ]*[1-9][0-9]*$/u);
+  const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
+    artifactName: "managed-llama-cpp-status",
+    env: env(),
+    timeoutMs: 120_000,
+  });
+  expect(status.exitCode, resultText(status)).toBe(0);
+  expect(resultText(status)).toContain("Managed llama.cpp: running");
+  expect(resultText(status)).toContain(RECIPE_ID);
+  const doctor = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor"], {
+    artifactName: "managed-llama-cpp-doctor",
+    env: env(),
+    timeoutMs: 120_000,
+  });
+  expect(doctor.exitCode, resultText(doctor)).toBe(0);
+
+  progress.phase("verify authenticated host and sandbox inference");
+  const apiKey = loadManagedLlamaCppApiKey(paths);
+  expect(apiKey, "managed llama.cpp API key is missing").toMatch(/^[a-f0-9]{64}$/u);
+  artifacts.addRedactionValues([apiKey!]);
+  const unauthorized = await host.command(
+    "curl",
+    [
+      "-sS",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/models`,
+    ],
+    {
+      artifactName: "llama-cpp-unauthorized",
+      env: env(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(unauthorized.exitCode, resultText(unauthorized)).toBe(0);
+  expect(unauthorized.stdout).toBe("401");
+
+  const health = await host.command(
+    "curl",
+    [
+      "-fsS",
+      "-H",
+      `Authorization: Bearer ${apiKey!}`,
+      `http://127.0.0.1:${String(recipe.spec.serve.port)}/health`,
+    ],
+    {
+      artifactName: "llama-cpp-health",
+      env: env(),
+      redactionValues: [apiKey!],
+      timeoutMs: 30_000,
+    },
+  );
+  expect(health.exitCode, resultText(health)).toBe(0);
+  expect(health.stdout).toMatch(/ok/i);
+
+  const models = await host.command(
+    "curl",
+    [
+      "-fsS",
+      "-H",
+      `Authorization: Bearer ${apiKey!}`,
+      `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/models`,
+    ],
+    {
+      artifactName: "llama-cpp-models",
+      env: env(),
+      redactionValues: [apiKey!],
+      timeoutMs: 30_000,
+    },
+  );
+  expect(models.exitCode, resultText(models)).toBe(0);
+  expect(models.stdout).toContain(recipe.spec.model.servedName);
+
+  const hostChat = await host.command(
+    "curl",
+    [
+      "-fsS",
+      "-H",
+      `Authorization: Bearer ${apiKey!}`,
+      "-H",
+      "Content-Type: application/json",
+      `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/chat/completions`,
+      "--data",
+      JSON.stringify({
+        model: recipe.spec.model.servedName,
+        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+        max_tokens: 32,
+      }),
+    ],
+    {
+      artifactName: "llama-cpp-host-chat",
+      env: env(),
+      redactionValues: [apiKey!],
+      timeoutMs: 5 * 60_000,
+    },
+  );
+  expect(hostChat.exitCode, resultText(hostChat)).toBe(0);
+  expect(chatContent(hostChat.stdout)).toMatch(/pong/i);
+
+  const sandboxChat = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `curl -fsS --max-time 300 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+        {
+          model: recipe.spec.model.servedName,
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          max_tokens: 32,
+        },
+      )}'`,
+    ),
+    { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 6 * 60_000 },
+  );
+  expect(sandboxChat.exitCode, resultText(sandboxChat)).toBe(0);
+  expect(chatContent(sandboxChat.stdout)).toMatch(/pong/i);
+
+  progress.phase("verify OpenClaw agent inference and owned cleanup");
+  const agent = await host.nemoclaw(
+    [
+      SANDBOX_NAME,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--session-id",
+      `e2e-llama-cpp-generic-gpu-${Date.now()}-${process.pid}`,
+      "-m",
+      "Reply with exactly one word: PONG",
+    ],
+    {
+      artifactName: "openclaw-agent-through-managed-llama-cpp",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    },
+  );
+  expect(agent.exitCode, resultText(agent)).toBe(0);
+  assertAgentExecutionSucceeded(agent.stdout, "inference", recipe.spec.model.servedName);
+
+  const readySandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+    artifactName: "openshell-sandbox-ready-after-agent",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
+  expect(hasExactReadyPhase(readySandbox.stdout)).toBe(true);
+
+  await artifacts.writeJson("qualification-evidence.json", {
+    candidateSha: expectedSha,
+    preset: { id: PRESET_ID, digest: owner!.presetDigest },
+    recipe: { id: RECIPE_ID, digest: owner!.recipeDigest },
+    model: {
+      id: recipe.spec.model.id,
+      digest: modelFile.digest,
+      servedName: recipe.spec.model.servedName,
+    },
+    runtime: { image: recipe.spec.runtime.image, provider: receipt!.providerId },
+    gpu: { host: nvidia.stdout.trim(), container: containerGpu.stdout.trim(), ...offload },
+    probes: {
+      unauthorizedStatus: 401,
+      health: "passed",
+      models: "passed",
+      status: "passed",
+      doctor: "passed",
+      hostChat: "passed",
+      sandboxChat: "passed",
+      openClawAgent: "passed",
+    },
+  });
+
+  const destroy = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "destroy-managed-llama-cpp-sandbox",
+    env: env(),
+    timeoutMs: 180_000,
+  });
+  expect(destroy.exitCode, resultText(destroy)).toBe(0);
+  const runtimeAbsent = await host.command(
+    "docker",
+    ["container", "inspect", MANAGED_LLAMA_CPP_CONTAINER_NAME],
+    {
+      artifactName: "managed-llama-cpp-container-absent",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(runtimeAbsent.exitCode).toBe(1);
+  const networkAbsent = await host.command(
+    "docker",
+    ["network", "inspect", MANAGED_LLAMA_CPP_NETWORK_NAME],
+    {
+      artifactName: "managed-llama-cpp-network-absent",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(networkAbsent.exitCode).toBe(1);
+  expect(fs.existsSync(paths.stateDir), "destroy must remove managed llama.cpp state").toBe(false);
+  expect(
+    fs.existsSync(modelCacheEntry),
+    "destroy must preserve the shared Hugging Face cache entry",
+  ).toBe(true);
+
+  await artifacts.target.complete({
+    id: "llama-cpp-generic-gpu",
+    status: "passed",
+    candidateSha: expectedSha,
+    fullGpuOffload: true,
+    model: recipe.spec.model.servedName,
+  });
+});

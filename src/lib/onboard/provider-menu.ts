@@ -121,7 +121,7 @@ export function buildInferenceProviderMenu(
   if (input.managedLlamaCppAvailable) {
     options.push({
       key: "install-llama-cpp",
-      label: "NVIDIA Nemotron with managed llama.cpp (DGX Spark)",
+      label: "NVIDIA Nemotron with managed llama.cpp",
     });
   }
 

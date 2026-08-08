@@ -13,6 +13,7 @@ import {
   env,
   hasExactReadyPhase,
   openClawModelConfigProjectionScript,
+  shouldBootstrapLlamaCppGenericGpuTarget,
 } from "../live/gpu-e2e-helpers.ts";
 
 const GPU_MODEL = "qwen3.5:9b";
@@ -116,6 +117,29 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
+  it("bootstraps the new llama.cpp target through the trusted pre-merge GPU lane", () => {
+    expect(
+      shouldBootstrapLlamaCppGenericGpuTarget({
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the Ollama GPU lane independent once the dedicated llama.cpp lane exists", () => {
+    expect(
+      shouldBootstrapLlamaCppGenericGpuTarget({
+        E2E_LLAMA_CPP_DEDICATED_LANE: "1",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      }),
+    ).toBe(false);
+  });
+
+  it("does not bootstrap the llama.cpp target outside exact-head live E2E", () => {
+    expect(shouldBootstrapLlamaCppGenericGpuTarget({ NEMOCLAW_RUN_LIVE_E2E: "1" })).toBe(false);
+  });
+
   it("forwards the workflow-owned Ollama model pull timeout", () => {
     expect(env({}, { NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400" }).NEMOCLAW_OLLAMA_PULL_TIMEOUT).toBe(
       "2400",
