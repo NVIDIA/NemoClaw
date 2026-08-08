@@ -28,15 +28,28 @@ describe("installer hash workflow", () => {
 
   // source-shape-contract: security -- Installer integrity verification must remain independent from unrelated full E2E completion
   it("keeps installer verification independent from full E2E qualification", () => {
+    const checkHashJob = workflow.jobs["check-hash"];
     const baseCheckout = requiredWorkflowStep(
-      workflow.jobs["check-hash"],
+      checkHashJob,
       "Checkout base-trusted installer hash action",
+    );
+    const bootstrapCheckout = requiredWorkflowStep(
+      checkHashJob,
+      "Checkout immutable installer hash bootstrap",
     );
 
     expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(checkHashJob["timeout-minutes"]).toBe(5);
     const sparseCheckout = baseCheckout.with?.["sparse-checkout"];
     assert(typeof sparseCheckout === "string");
     expect(sparseCheckout.trim().split("\n")).toEqual([
+      ".github/actions/ci-installer-hash-check",
+      "scripts/check-installer-hash.sh",
+      "scripts/checks/extract-installer-pins.mts",
+    ]);
+    const bootstrapSparseCheckout = bootstrapCheckout.with?.["sparse-checkout"];
+    assert(typeof bootstrapSparseCheckout === "string");
+    expect(bootstrapSparseCheckout.trim().split("\n")).toEqual([
       ".github/actions/ci-installer-hash-check",
       "scripts/check-installer-hash.sh",
       "scripts/checks/extract-installer-pins.mts",
