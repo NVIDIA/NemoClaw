@@ -65,18 +65,32 @@ for _ in {1..180}; do
   sleep 1
 done
 
-# The TUI may close the FIFO after the first interrupt. Ignore SIGPIPE while
-# sending interrupts so the driver can record a reply it already observed.
-trap '' PIPE
-printf '\003' >&3 2>/dev/null || true
-sleep 1
-printf '\003' >&3 2>/dev/null || true
-trap - PIPE
+if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
+  printf '%s\r' "$NEMOCLAW_LAUNCH_EXIT_COMMAND" >&3
+else
+  # Some TUIs have no exit command. They may close the FIFO after the first
+  # interrupt, so ignore SIGPIPE while sending the second one.
+  trap '' PIPE
+  printf '\003' >&3 2>/dev/null || true
+  sleep 1
+  printf '\003' >&3 2>/dev/null || true
+  trap - PIPE
+fi
 exec 3>&-
 
 if [[ "$reply_seen" != 1 ]]; then
   echo "launch did not produce the expected agent reply" >&2
   exit 1
+fi
+if wait "$session_pid"; then
+  launch_status=0
+else
+  launch_status=$?
+fi
+session_pid=""
+if [[ "$launch_status" != 0 ]]; then
+  echo "launch exited with status $launch_status" >&2
+  exit "$launch_status"
 fi
 printf '%s\n' "NEMOCLAW_LAUNCH_TURN_OK"
 `;
@@ -86,6 +100,7 @@ export interface LaunchAgentTurnOptions {
   cliCommand: string;
   cliEntrypoint?: string;
   env: NodeJS.ProcessEnv;
+  exitCommand?: string;
   host: HostCliClient;
   redactionValues: string[];
   sandboxName: string;
@@ -103,6 +118,7 @@ export async function runLaunchAgentTurn(
       ...options.env,
       NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
       NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
+      NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
       NEMOCLAW_LAUNCH_EXPECTED_REPLY: EXPECTED_REPLY,
       NEMOCLAW_LAUNCH_PROMPT: PROMPT,
       NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,

@@ -60,7 +60,7 @@ function engine(
   };
 }
 
-function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
+function reserveState(homeDir: string): void {
   const paths = managedLlamaCppStatePaths(homeDir);
   const catalog = loadManagedInferenceCatalog();
   const preset = catalog.presets.find(
@@ -79,6 +79,11 @@ function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
     recipeId: RECIPE_ID,
   });
   loadOrCreateManagedLlamaCppApiKey(paths);
+}
+
+function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
+  reserveState(homeDir);
+  const paths = managedLlamaCppStatePaths(homeDir);
   const engineAuthority = {
     schemaVersion: 1 as const,
     providerId: "docker",
@@ -143,6 +148,83 @@ function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
 }
 
 describe("managed llama.cpp status", () => {
+  it("reports reserved ownership without a receipt as preparing", () => {
+    const homeDir = temporaryHome();
+    reserveState(homeDir);
+
+    expect(inspectManagedLlamaCppStatus("spark-agent", { homeDir })).toEqual({
+      recipeId: RECIPE_ID,
+      modelDigest: null,
+      imageReference: null,
+      endpoint: "https://inference.local/v1",
+      state: "preparing",
+      detail: "ownership is reserved; no finalized runtime receipt is published",
+    });
+  });
+
+  it("reports the exact receipt-bound container as absent without further inspection", () => {
+    const inspectExact = vi.fn();
+    const probe = vi.fn();
+    const runtimeEngine = engine(
+      vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: `Error response from daemon: No such container: ${RUNTIME_ID}`,
+      })),
+    );
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", {
+        homeDir,
+        engine: runtimeEngine,
+        inspectExact,
+        probe,
+      }),
+    ).toMatchObject({ state: "absent", detail: "the exact managed container is absent" });
+    expect(inspectExact).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("reports an exact stopped runtime without probing readiness", () => {
+    const inspectExact = vi.fn(() => ({ running: false, receipt: {} as never }));
+    const probe = vi.fn();
+    const runtimeEngine = engine(vi.fn(() => ({ status: 0, stdout: "[]", stderr: "" })));
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", {
+        homeDir,
+        engine: runtimeEngine,
+        inspectExact,
+        probe,
+      }),
+    ).toMatchObject({ state: "stopped", detail: "exact managed container is stopped" });
+    expect(inspectExact).toHaveBeenCalledOnce();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("does not classify a different missing container as the receipt-bound absence", () => {
+    const runtimeEngine = engine(
+      vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: No such container: foreign-runtime",
+      })),
+    );
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", { homeDir, engine: runtimeEngine }),
+    ).toMatchObject({
+      state: "unknown",
+      detail: "Docker inspection failed",
+    });
+  });
+
   it("reports exact secret-free runtime identity and running state", () => {
     const inspectExact = vi.fn<NonNullable<ManagedLlamaCppStatusOptions["inspectExact"]>>(() => ({
       running: true,

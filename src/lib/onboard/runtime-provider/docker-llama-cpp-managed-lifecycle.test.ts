@@ -11,15 +11,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ContainerEngine } from "../../adapters/container-engine";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
-/* Test-only reconstruction of the exact immutable command for recovery fixtures. */
-import {
-  buildLlamaCppHostLocalServerArgv,
-  type LlamaCppHostLocalLaunchContract,
-} from "../../inference/llama-cpp/host-local-runtime";
+import { buildLlamaCppHostLocalServerArgv } from "../../inference/llama-cpp/host-local-runtime";
 import {
   createDockerLlamaCppManagedLifecycle,
   type DockerLlamaCppManagedLifecycleOptions,
 } from "./docker-llama-cpp-managed-lifecycle";
+import {
+  contract,
+  digest,
+  HOST_PORT,
+  IMAGE,
+  invariant,
+  MODEL_CONTENT,
+  MODEL_DIGEST,
+  MODEL_FILENAME,
+  NETWORK_ID,
+  PROBE_IMAGE,
+  RECEIPT_TARGET_SHA256,
+  REVISION,
+  RUNTIME_ID,
+  rawDigest,
+  TRANSACTION_ID,
+} from "./docker-llama-cpp-managed-lifecycle.test-support";
 import type {
   HostLocalCreateJournalExecutionLease,
   HostLocalCreateJournalRecord,
@@ -32,53 +45,11 @@ import {
 } from "./host-local-inference";
 import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
 
-const HOST_PORT = String(LLAMA_CPP_PORT);
-const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
-const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
-const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;
-const RUNTIME_ID = "e".repeat(64);
-const NETWORK_ID = "7".repeat(64);
-const TRANSACTION_ID = "9".repeat(64);
-const RECEIPT_TARGET_SHA256 = "8".repeat(64);
-const MODEL_CONTENT = Buffer.alloc(64, 0x61);
-const MODEL_FILENAME = "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
-const REVISION = "f".repeat(40);
 let temporaryRoot = "";
 let cacheRoot = "";
 let modelPath = "";
 let apiKeyRoot = "";
 let apiKeyPath = "";
-
-function canonical(value: unknown): unknown {
-  return Array.isArray(value)
-    ? value.map(canonical)
-    : value !== null && typeof value === "object"
-      ? Object.fromEntries(
-          Object.entries(value)
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([key, nested]) => [key, canonical(nested)]),
-        )
-      : value;
-}
-
-function invariant(condition: unknown, message: string): asserts condition {
-  switch (Boolean(condition)) {
-    case false:
-      throw new Error(message);
-  }
-}
-
-function digest(value: unknown): string {
-  return `sha256:${createHash("sha256")
-    .update(JSON.stringify(canonical(value)))
-    .digest("hex")}`;
-}
-
-function rawDigest(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(canonical(value)))
-    .digest("hex");
-}
 
 function receiptWriter(
   writeExact: (serializedReceipt: string) => string = (serializedReceipt) => serializedReceipt,
@@ -111,62 +82,6 @@ beforeEach(() => {
 });
 
 afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
-
-function contract(): LlamaCppHostLocalLaunchContract {
-  return {
-    model: {
-      servedName: "nvidia-nemotron-3-nano-30b-a3b",
-      file: {
-        digest: MODEL_DIGEST,
-        path: MODEL_FILENAME,
-        sizeBytes: MODEL_CONTENT.length,
-      },
-    },
-    policy: {
-      egress: "disabled",
-      modelDownloads: "disabled",
-      modelSource: "verified-local",
-    },
-    runtime: {
-      restartPolicy: "unless-stopped",
-      gpu: {
-        count: 1,
-        cpuFallback: "reject",
-        offload: "full",
-        vendor: "nvidia",
-      },
-      resources: {
-        memoryBytes: 51_539_607_552,
-        pidsLimit: 256,
-        writableStorageBytes: 1024,
-      },
-    },
-    serve: {
-      authentication: "bearer",
-      batchSize: 2048,
-      chatTemplate: "nemotron-v3-embedded",
-      contextSize: 262_144,
-      flashAttention: "enabled",
-      idleSleepSeconds: -1,
-      kvCache: { key: "f16", value: "f16" },
-      limits: { requestTimeoutSeconds: 900 },
-      microBatchSize: 512,
-      port: 8081,
-      protocol: "openai-completions",
-      slots: 1,
-      speculativeDecoding: "disabled",
-    },
-    surfaces: {
-      agentMode: "disabled",
-      mcpProxy: "disabled",
-      multimodalProjection: "disabled",
-      router: "disabled",
-      serverTools: "disabled",
-      slotInspection: "disabled",
-      ui: "disabled",
-    },
-  };
-}
 
 function plan(): LlamaCppGgufCachePlan {
   const payload = {
@@ -384,7 +299,9 @@ interface DockerFixture {
   readonly onAbsentNetworkInspect: (callback: () => void) => void;
   readonly onNetworkCreate: (callback: () => void) => void;
   readonly onStart: (callback: () => void) => void;
+  readonly onProbe: (callback: () => void) => void;
   readonly onCreate: (callback: () => void) => void;
+  readonly setContainerState: (running: boolean, status: string) => void;
   readonly seedNetwork: (journal: HostLocalCreateJournalRecord) => void;
   readonly seed: (journal: HostLocalCreateJournalRecord, running: boolean) => void;
 }
@@ -418,6 +335,7 @@ function dockerFixture(
   let absentNetworkInspectHook: (() => void) | undefined;
   let networkCreateHook: (() => void) | undefined;
   let startHook: (() => void) | undefined;
+  let probeHook: (() => void) | undefined;
   let createHook: (() => void) | undefined;
   let startedOnce = false;
   let container:
@@ -628,6 +546,7 @@ function dockerFixture(
         return { status: 0, stdout: RUNTIME_ID, stderr: "" };
       case "run":
         invariant(args[1] === "--rm", unexpected);
+        probeHook?.();
         return probeFails
           ? { status: 1, stdout: "", stderr: "not ready" }
           : { status: 0, stdout: "ok", stderr: "" };
@@ -672,7 +591,13 @@ function dockerFixture(
     onAbsentNetworkInspect: (callback) => (absentNetworkInspectHook = callback),
     onNetworkCreate: (callback) => (networkCreateHook = callback),
     onStart: (callback) => (startHook = callback),
+    onProbe: (callback) => (probeHook = callback),
     onCreate: (callback) => (createHook = callback),
+    setContainerState: (running, status) => {
+      invariant(container !== undefined, "cannot change an absent fixture container");
+      container.running = running;
+      container.status = status;
+    },
     seedNetwork: (journal) => {
       invariant(journal.networkId !== null, "seeded network identity is missing");
       networkId = journal.networkId;
@@ -824,6 +749,86 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(lifecycle.runtime.prepareDestroy(receipt)).toEqual(receipt);
     expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
+  });
+
+  it("resumes an already-running receipt without creating or starting resources (#8144)", () => {
+    const fixture = dockerFixture();
+    const lifecycle = controller(fixture);
+    const receipt = lifecycle.start(receiptWriter());
+    fixture.capture.mockClear();
+
+    expect(lifecycle.resume(receipt)).toEqual(receipt);
+    const calls = fixture.capture.mock.calls.map((call) => call[0]);
+    expect(calls).toContainEqual(expect.arrayContaining(["container", "inspect", RUNTIME_ID]));
+    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["start"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+  });
+
+  it("resumes only the receipt-bound stopped runtime and rechecks readiness (#8144)", () => {
+    const fixture = dockerFixture();
+    const lifecycle = controller(fixture);
+    const receipt = lifecycle.start(receiptWriter());
+    lifecycle.runtime.stopManaged(receipt);
+    fixture.capture.mockClear();
+
+    expect(lifecycle.resume(receipt)).toEqual(receipt);
+    const calls = fixture.capture.mock.calls.map((call) => call[0]);
+    expect(calls.filter((args) => args[0] === "start")).toEqual([["start", RUNTIME_ID]]);
+    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+  });
+
+  it("rejects a non-resumable exact runtime without lifecycle mutation (#8144)", () => {
+    const fixture = dockerFixture();
+    const lifecycle = controller(fixture);
+    const receipt = lifecycle.start(receiptWriter());
+    fixture.setContainerState(false, "paused");
+    fixture.capture.mockClear();
+
+    expect(() => lifecycle.resume(receipt)).toThrow("inconsistent runtime state");
+    const calls = fixture.capture.mock.calls.map((call) => call[0]);
+    expect(calls).not.toContainEqual(expect.arrayContaining(["start"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["run", "--rm"]));
+  });
+
+  it.each([
+    [
+      "model filesystem",
+      (fixture: DockerFixture) => fixture.onProbe(() => fs.appendFileSync(modelPath, "drift")),
+      /filesystem identity/u,
+    ],
+    [
+      "API-key",
+      (fixture: DockerFixture) =>
+        fixture.onProbe(() => fs.writeFileSync(apiKeyPath, "changed-test-only-secret\n")),
+      /API-key/u,
+    ],
+    [
+      "network",
+      (fixture: DockerFixture) => fixture.onProbe(() => fixture.setNetworkId("6".repeat(64))),
+      /network identity/u,
+    ],
+  ] as const)("fails closed on post-readiness %s drift without replacement (#8144)", (_kind, drift, expected) => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const lifecycle = controller(fixture, store);
+    const receipt = lifecycle.start(receiptWriter());
+    lifecycle.runtime.stopManaged(receipt);
+    drift(fixture);
+    fixture.capture.mockClear();
+
+    expect(() => lifecycle.resume(receipt)).toThrow(expected);
+    const calls = fixture.capture.mock.calls.map((call) => call[0]);
+    expect(calls.filter((args) => args[0] === "start")).toEqual([["start", RUNTIME_ID]]);
+    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
+    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+    expect(store.load(TRANSACTION_ID)).toMatchObject({ phase: "finalized", runtimeId: RUNTIME_ID });
   });
   it.each([
     ["configured", "8082", undefined, /bound host port/u],
