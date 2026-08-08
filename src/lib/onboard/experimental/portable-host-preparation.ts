@@ -171,6 +171,7 @@ function persistentStorageConfig(
   source: string,
   info: PodmanStorageInfo,
   durableGraphRoot: string,
+  durableImageStore: string,
 ): string {
   const lines = source.replace(/\r\n/gu, "\n").split("\n");
   const storageStart = lines.findIndex((line) => /^\s*\[storage\]\s*(?:#.*)?$/u.test(line));
@@ -184,9 +185,7 @@ function persistentStorageConfig(
   const values: Readonly<Record<string, string>> = {
     driver: JSON.stringify(info.driver),
     graphroot: JSON.stringify(durableGraphRoot),
-    ...(info.graphRoot === durableGraphRoot
-      ? {}
-      : { imagestore: JSON.stringify(info.graphRoot) }),
+    imagestore: JSON.stringify(durableImageStore),
     runroot: JSON.stringify(info.runRoot),
     transient_store: "false",
   };
@@ -208,27 +207,28 @@ function persistentStorageConfig(
   return `${lines.join("\n").replace(/\n*$/u, "")}\n`;
 }
 
+function configuredImageStore(source: string): string | null {
+  const storageStart = source.search(/^\s*\[storage\]\s*(?:#.*)?$/mu);
+  if (storageStart < 0) return null;
+  const storage = source.slice(storageStart);
+  const nextTable = storage.slice(1).search(/^\s*\[[^\]]+\]\s*(?:#.*)?$/mu);
+  const table = nextTable < 0 ? storage : storage.slice(0, nextTable + 1);
+  const match = /^\s*imagestore\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/mu.exec(table);
+  if (!match) return null;
+  try {
+    const value: unknown = JSON.parse(match[1]!);
+    return typeof value === "string" && path.isAbsolute(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function ensurePersistentPodmanStore(
   home: string,
   env: NodeJS.ProcessEnv,
   podman: NonNullable<PortableHostPreparationDeps["podman"]>,
 ): string | null {
   const before = readPodmanStorageInfo(podman, env);
-  const durableGraphRoot = path.join(home, ".nemoclaw", "portable-podman");
-  if (!before.transientStore && before.graphRoot === durableGraphRoot) return null;
-
-  const existingContainers = podman(["ps", "-a", "--format", "{{.Names}}"], env);
-  requireCommand(existingContainers, "Checking the current Podman container store");
-  const names = String(existingContainers.stdout ?? "")
-    .split(/\r?\n/u)
-    .map((name) => name.trim())
-    .filter(Boolean);
-  if (names.length > 0) {
-    throw new Error(
-      `The portable profile cannot migrate a non-empty Podman store safely (containers: ${names.join(", ")}). Uninstall those containers, then rerun the portable installer.`,
-    );
-  }
-
   const configHome = env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
   const target = path.join(configHome, "containers", "storage.conf");
   const sourceCandidates = [
@@ -243,7 +243,37 @@ function ensurePersistentPodmanStore(
     if (source !== null) break;
   }
   source ??= "[storage]\n";
-  writePrivateConfig(target, persistentStorageConfig(source, before, durableGraphRoot));
+  const currentImageStore = configuredImageStore(source) ?? before.graphRoot;
+  const durableGraphRoot = path.join(home, ".nemoclaw", "portable-podman-v2");
+  const durableImageStore =
+    currentImageStore === "/kiosk-persistent" ||
+    currentImageStore.startsWith("/kiosk-persistent/")
+      ? "/kiosk-persistent/nemoclaw-images-v2"
+      : path.join(home, ".nemoclaw", "portable-images-v2");
+  if (
+    !before.transientStore &&
+    before.graphRoot === durableGraphRoot &&
+    currentImageStore === durableImageStore
+  ) {
+    return null;
+  }
+
+  const existingContainers = podman(["ps", "-a", "--format", "{{.Names}}"], env);
+  requireCommand(existingContainers, "Checking the current Podman container store");
+  const names = String(existingContainers.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (names.length > 0) {
+    throw new Error(
+      `The portable profile cannot migrate a non-empty Podman store safely (containers: ${names.join(", ")}). Uninstall those containers, then rerun the portable installer.`,
+    );
+  }
+
+  writePrivateConfig(
+    target,
+    persistentStorageConfig(source, before, durableGraphRoot, durableImageStore),
+  );
   env.CONTAINERS_STORAGE_CONF = target;
 
   const after = readPodmanStorageInfo(podman, env);
@@ -254,7 +284,7 @@ function ensurePersistentPodmanStore(
     after.runRoot !== before.runRoot
   ) {
     throw new Error(
-      "The portable profile could not move Podman metadata into durable user storage while preserving its image store",
+      "The portable profile could not configure durable Podman metadata and isolated image storage",
     );
   }
   return target;
