@@ -57,6 +57,10 @@ describe("destroySandbox flow", () => {
     ).resolves.toBeUndefined();
 
     expectSuccessfulLiveDestroy(harness, exitSpy);
+    expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
+    );
   });
 
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
@@ -106,6 +110,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
 
     expectFailedDeletePreservesHostState(harness, exitSpy);
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {

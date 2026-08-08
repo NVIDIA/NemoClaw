@@ -79,6 +79,101 @@ function normalizedSocketPath(socketPath: string): string {
   return normalized;
 }
 
+export function hardenPodmanSocketDirectory(socketPath: string, configuredUid?: number): void {
+  const normalized = normalizedSocketPath(socketPath);
+  const uid = currentUid(configuredUid);
+  const lstat = (filePath: string): PodmanSocketStat => fs.lstatSync(filePath, { bigint: true });
+  const socketBefore = lstat(normalized);
+  if (!socketBefore.isSocket()) {
+    throw new Error("Podman socket authority path is not a Unix socket.");
+  }
+  const socketOwnerUid = integerIdentity(socketBefore.uid, "owner");
+  if (socketOwnerUid !== String(uid)) {
+    throw new Error(
+      `Podman socket authority is owned by uid ${socketOwnerUid}; expected current uid ${String(uid)}.`,
+    );
+  }
+  const socketMode = integerValue(socketBefore.mode, "mode");
+  if ((socketMode & 0o002n) !== 0n) {
+    throw new Error("Podman socket authority is writable by another user or group.");
+  }
+  const directoryChainBefore = captureDirectoryChain(normalized, uid, lstat);
+  const socketParentBefore = directoryChainBefore[0];
+  if (!socketParentBefore) {
+    throw new Error("Podman socket authority has no parent directory.");
+  }
+  const directory = path.dirname(normalized);
+  const descriptor = fs.openSync(
+    directory,
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isDirectory()) {
+      throw new Error("Podman socket directory is not a real directory.");
+    }
+    if (before.uid !== BigInt(uid)) {
+      throw new Error(
+        `Podman socket directory is owned by uid ${before.uid.toString(10)}; expected current uid ${String(uid)}.`,
+      );
+    }
+    if ((before.mode & 0o022n) !== 0n) {
+      throw new Error("Podman socket directory is writable by another user or group.");
+    }
+    if (
+      integerIdentity(before.dev, "directory device") !== socketParentBefore.device ||
+      integerIdentity(before.ino, "directory inode") !== socketParentBefore.inode ||
+      integerIdentity(before.uid, "directory owner") !== socketParentBefore.ownerUid ||
+      integerValue(before.mode, "directory mode").toString(10) !== socketParentBefore.mode
+    ) {
+      throw new Error("Podman socket directory changed before it was secured.");
+    }
+
+    fs.fchmodSync(descriptor, 0o700);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.uid !== before.uid ||
+      (after.mode & 0o777n) !== 0o700n
+    ) {
+      throw new Error("Podman socket directory changed while it was secured.");
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+
+  const authority = capturePodmanSocketAuthority(normalized, { lstat, uid });
+  const socketChanged =
+    authority.device !== integerIdentity(socketBefore.dev, "device") ||
+    authority.inode !== integerIdentity(socketBefore.ino, "inode") ||
+    authority.mode !== socketMode.toString(10) ||
+    authority.ownerUid !== socketOwnerUid;
+  const directoryChanged = authority.directoryChain.some((component, index) => {
+    const before = directoryChainBefore[index];
+    const componentMode = BigInt(component.mode);
+    const beforeMode = before ? BigInt(before.mode) : 0n;
+    return (
+      !before ||
+      component.device !== before.device ||
+      component.inode !== before.inode ||
+      component.ownerUid !== before.ownerUid ||
+      component.path !== before.path ||
+      (index === 0
+        ? (componentMode & ~0o777n) !== (beforeMode & ~0o777n) ||
+          (componentMode & 0o777n) !== 0o700n
+        : component.mode !== before.mode)
+    );
+  });
+  if (
+    socketChanged ||
+    authority.directoryChain.length !== directoryChainBefore.length ||
+    directoryChanged
+  ) {
+    throw new Error("Podman socket authority changed while its directory was secured.");
+  }
+}
+
 function captureDirectoryChain(
   socketPath: string,
   uid: number,
@@ -140,11 +235,17 @@ export function capturePodmanSocketAuthority(
     );
   }
   const mode = integerValue(stat.mode, "mode");
-  if ((mode & 0o022n) !== 0n) {
+  const directoryChain = captureDirectoryChain(normalized, uid, lstat);
+  const socketParent = directoryChain[0];
+  const parentMode = socketParent ? BigInt(socketParent.mode) : 0o777n;
+  // The rootless Podman systemd socket defaults to 0660. Group write stays
+  // inside the current-UID trust boundary when its owner-only parent prevents
+  // every other non-root user from reaching the socket.
+  if ((mode & 0o002n) !== 0n || ((mode & 0o020n) !== 0n && (parentMode & 0o077n) !== 0n)) {
     throw new Error("Podman socket authority is writable by another user or group.");
   }
   return Object.freeze({
-    directoryChain: captureDirectoryChain(normalized, uid, lstat),
+    directoryChain,
     device: integerIdentity(stat.dev, "device"),
     inode: integerIdentity(stat.ino, "inode"),
     mode: mode.toString(10),

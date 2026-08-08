@@ -56,10 +56,7 @@ const channelState: typeof import("./onboard/channel-state") = require("./onboar
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
-const {
-  bestEffortForwardStop,
-  stopForwardForSandboxOrThrow,
-} = require("./onboard/forward-cleanup");
+const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
@@ -77,7 +74,6 @@ const dockerGpuRoute: typeof import("./onboard/docker-gpu-route") = require("./o
 const sandboxGpuCreateFlow: typeof import("./onboard/sandbox-gpu-create-flow") = require("./onboard/sandbox-gpu-create-flow");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
-const gatewayService: typeof import("./onboard/docker-driver-gateway-service") = require("./onboard/docker-driver-gateway-service");
 const dockerDriverGatewayCutover: typeof import("./onboard/docker-driver-gateway-cutover") = require("./onboard/docker-driver-gateway-cutover");
 const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExceptOrFail } =
   require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
@@ -127,8 +123,6 @@ const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = requir
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
 const dockerDriverPlatform: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
 const { isLinuxDockerDriverGatewayEnabled } = dockerDriverPlatform;
-const portableDemoLifecycle: typeof import("./onboard/experimental/portable-demo-lifecycle") =
-  require("./onboard/experimental/portable-demo-lifecycle");
 const {
   reconcileGatewayGpuReuseForGpuIntent,
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
@@ -774,6 +768,25 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
     cliDisplayName,
   });
 
+const { refreshDockerDriverGatewayReuseState } =
+  gatewayReuse.createDockerDriverGatewayReuseApplication({
+    gatewayName: () => GATEWAY_NAME,
+    getGatewayCompatContainerName: () =>
+      gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
+    resolveOpenShellGatewayBinary,
+    getDockerDriverGatewayEnv,
+    runCaptureOpenshell,
+    getDockerDriverGatewayStateDir,
+    resolveOpenShellSandboxBinary,
+    getDockerDriverGatewayPid,
+    isDockerDriverGatewayProcessAlive,
+    getDockerDriverGatewayReuseDrift: getGatewayReuseDrift,
+    checkGatewayPortAvailable,
+    getDockerDriverGatewayPortListenerPid,
+    rememberDockerDriverGatewayPid,
+  });
+
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { getSandboxReuseState, getSandboxRecreateObservation } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME });
 
@@ -1226,66 +1239,6 @@ function retireLegacyGatewayForDockerDriverUpgrade(): void {
 
 function logDockerDriverGatewayRestart(reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
-}
-
-async function refreshDockerDriverGatewayReuseState(
-  gatewayReuseState: GatewayReuseState,
-): Promise<GatewayReuseState> {
-  if (!isLinuxDockerDriverGatewayEnabled() || gatewayReuseState !== "healthy") {
-    return gatewayReuseState;
-  }
-  const gatewayBin = resolveOpenShellGatewayBinary();
-  const baseDesiredEnv = getDockerDriverGatewayEnv(
-    runCaptureOpenshell(["--version"], { ignoreError: true }),
-  );
-  const runtimeIdentity = gatewayBin
-    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
-        gatewayBin,
-        gatewayEnv: baseDesiredEnv,
-        stateDir: getDockerDriverGatewayStateDir(),
-        sandboxBin: resolveOpenShellSandboxBinary(),
-        gatewayName: GATEWAY_NAME,
-        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
-      })
-    : null;
-  const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
-  const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
-  const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
-  const managedServicePid = gatewayService.getTrustedActiveOpenShellGatewayUserServicePid();
-  const pid = getDockerDriverGatewayPid();
-  if (pid !== null && isDockerDriverGatewayProcessAlive()) {
-    const drift = getGatewayReuseDrift(pid, desiredEnv, driftBin, managedServicePid);
-    if (drift) {
-      console.log(
-        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
-      );
-      return "stale";
-    }
-    return gatewayReuseState;
-  }
-
-  const portCheck = await checkGatewayPortAvailable();
-  const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck, {
-    gatewayBin: identityBin,
-  });
-  if (dockerGatewayPid !== null) {
-    const drift = getGatewayReuseDrift(dockerGatewayPid, desiredEnv, driftBin, managedServicePid);
-    if (dockerGatewayPid !== managedServicePid) rememberDockerDriverGatewayPid(dockerGatewayPid);
-    if (drift) {
-      console.log(
-        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
-      );
-      return "stale";
-    }
-    return "healthy";
-  }
-
-  // `openshell status` already proved the selected gateway is reachable. If
-  // the port probe cannot identify the owning PID, avoid tearing down a live
-  // gateway solely because the pid file is stale.
-  if (!portCheck.ok && !portCheck.pid) return "healthy";
-
-  return "stale";
 }
 
 function destroyGateway(
@@ -2188,30 +2141,6 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     runCaptureOpenshell,
   });
 
-function installPortableLifecycleAfterCommittedCreate(
-  sandboxName: string,
-  intendedSandboxStartupCommand: readonly string[],
-): number | null {
-  let dashboardPort: number | null = null;
-  try {
-    dashboardPort =
-      portableDemoLifecycle.installPortableDemoSandboxLifecycle(
-        sandboxName,
-        intendedSandboxStartupCommand,
-      ) ?? null;
-  } catch (error) {
-    const detail = redact(error instanceof Error ? error.message : String(error)).slice(0, 500);
-    if (dockerDriverPlatform.isPortableExperimentalProfile()) {
-      throw new Error(`Portable demo lifecycle setup did not complete: ${detail}`);
-    }
-    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
-  }
-  if (dockerDriverPlatform.isPortableExperimentalProfile() && dashboardPort === null) {
-    throw new Error("Portable demo lifecycle setup did not return a dashboard port");
-  }
-  return dashboardPort;
-}
-
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
 async function createSandboxWithBaseImageResolution(
@@ -2268,7 +2197,6 @@ async function createSandboxWithBaseImageResolution(
     resolvedCreateIntent,
   );
   const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
-  const manageDashboardForward = dashboardRuntime.shouldManageDashboardForwardForAgent(agent);
   const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
   let effectivePort = 0,
     chatUiUrl = "";
@@ -2311,10 +2239,7 @@ async function createSandboxWithBaseImageResolution(
       sandboxGpuConfig: effectiveSandboxGpuConfig,
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
-      manageDashboard: manageDashboardForward,
-      getSandbox: registry.getSandbox,
-      stopDashboardForward: (name, port) =>
-        stopForwardForSandboxOrThrow(runOpenshell, runCaptureOpenshell, port, name),
+      manageDashboard,
       ensureDashboardForward,
       hermesDashboardForwarding,
       updateReusedSandboxMetadata,
@@ -2655,6 +2580,7 @@ async function createSandboxWithBaseImageResolution(
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
+    lifecycleRegistrationFields,
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
@@ -2669,6 +2595,7 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
+      lifecycleRegistrationFields: recreateRuntime.registrationFields,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2688,8 +2615,6 @@ async function createSandboxWithBaseImageResolution(
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
 
-  // Clean up build context regardless of outcome.
-  // Use fs.rmSync instead of run() to avoid spawning a shell process.
   // Only deregister the 'exit' safety net when inline cleanup succeeded;
   // otherwise leave it armed so a later process.exit() still removes the
   // temp dir (which may hold source and env-arg API keys).
@@ -2723,20 +2648,16 @@ async function createSandboxWithBaseImageResolution(
       runtimePatch,
     );
   }
-  const portableDashboardPort = installPortableLifecycleAfterCommittedCreate(
-    sandboxName,
-    intendedSandboxStartupCommand,
-  );
-  let actualDashboardPort =
-    portableDashboardPort ??
-    (dockerDriverPlatform.isPortableExperimentalProfile() ? Number(effectiveDashboardPort) : 0);
+
+  let actualDashboardPort = 0;
   let finalHermesDashboardState = hermesDashboardState;
-  if (manageDashboardForward) {
+  if (manageDashboard) {
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
     });
-    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl)))
+    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
       chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+    }
     process.env.CHAT_UI_URL = chatUiUrl;
     finalHermesDashboardState = hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
     hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
@@ -2804,7 +2725,7 @@ async function createSandboxWithBaseImageResolution(
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
           dashboardForwardEnabled: manageDashboardForward,
-          ...recreateRuntime.registrationFields,
+          ...lifecycleRegistrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
@@ -4475,7 +4396,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
             getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
-          }, { diagnoseCustomOpenClawRuntime: verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(liveFinalFlowContext.fromDockerfile, agent?.name), verifyDashboardForward: dashboardRuntime.shouldManageDashboardForwardForAgent(agent) });
+          }, { diagnoseCustomOpenClawRuntime: verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(liveFinalFlowContext.fromDockerfile, agent?.name) });
         },
         formatVerificationDiagnostics: (result) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
