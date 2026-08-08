@@ -5,7 +5,7 @@ name: E2E / Regression Runner
 
 # Regression E2E holding pen.
 #
-# Jobs here are intentionally NOT part of the scheduled E2E workflow. They are
+# Jobs here are intentionally not part of the main-push E2E workflow. They are
 # failing-test-first coverage guards or high-signal regressions that should be
 # easy to dispatch while the owning fix is in flight. Periodically review this
 # workflow and promote stable/high-value jobs into .github/workflows/e2e.yaml.
