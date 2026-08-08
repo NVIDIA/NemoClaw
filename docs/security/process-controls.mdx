@@ -1,0 +1,237 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Process Controls"
+sidebar-title: "Process Controls"
+description: "Review NemoClaw process capabilities, resource limits, runtime identity, and image hardening."
+description-agent: "Explains NemoClaw process controls and their security trade-offs. Use when reviewing capability drops, process limits, runtime identity, or image hardening."
+keywords: ["nemoclaw process controls", "capability drops", "sandbox process limits"]
+content:
+  type: "concept"
+---
+NemoClaw limits the capabilities, user privileges, and resource quotas available to processes inside the sandbox.
+
+OpenShell enforces additional process-level controls not covered here, including seccomp BPF socket domain filters and a specific enforcement application order (namespace entry, privilege drop, Landlock, seccomp).
+Refer to the [Process Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#process-controls) section of the OpenShell Security Best Practices.
+
+## Capability Drops
+
+The entrypoint drops dangerous Linux capabilities from the bounding set at startup using `capsh`.
+This limits what capabilities any child process (gateway, sandbox, agent) can ever acquire.
+
+The managed images install `setpriv` from `util-linux` and require it when the entrypoint switches from root to the `sandbox` and `gateway` users.
+When `CAP_SETPCAP` is available, the same `setpriv` operation removes the remaining privilege-separation capabilities from the child process at the same time as the user change.
+
+The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
+When the additional `setpriv` bounding-set drop runs, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
+
+The extra bounding-set capability drop is best effort.
+If `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and retains the runtime-provided bounding set.
+The entrypoint still uses `setpriv` to change the user, group, and supplementary groups without the extra bounding-set drop.
+
+When a root entrypoint must change identity, it fails closed if `setpriv` is unavailable instead of starting an agent service as root.
+
+To make the drop fail-closed instead of best-effort, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment.
+The agent then refuses to start unless it verifies that the agent process tree's bounding set is free of dangerous capabilities.
+
+It does not boot on a host whose bounding set still holds them, typically one that cannot perform the drop because `CAP_SETPCAP` or `capsh` is missing and the container runtime did not provide a clean bounding set.
+
+This is opt-in because such hosts are common, including many cloud VMs, Docker Desktop, and WSL.
+Leaving it unset preserves the best-effort default.
+
+The check covers the agent process tree only.
+The container runtime spawns a `$$nemoclaw connect` shell outside that tree, so the check does not affect it (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
+
+<AgentOnly variant="openclaw">
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose.
+Refer to [Review Sandbox Hardening](../../manage-sandboxes/configure-sandboxes/review-sandbox-hardening).
+</AgentOnly>
+
+| Aspect | Detail |
+|---|---|
+| Default | The entrypoint drops dangerous capabilities at startup using `capsh`, then requires `setpriv` for user step-down. When `CAP_SETPCAP` is unavailable, the user step-down continues without the extra privilege-separation bounding-set drop and logs a warning. |
+| What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. In the standard NemoClaw onboarding flow, the entrypoint handles capability dropping automatically. |
+| Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. If `capsh` cannot run or `CAP_SETPCAP` is unavailable, the container retains more of the runtime-provided capability set. |
+| Recommendation | Run on an image that includes `capsh` and `setpriv` (NemoClaw-managed images include them). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
+
+## Gateway Process Isolation
+
+Gateway and agent UID isolation depends on the container process topology.
+A direct root-entrypoint container runs the gateway as the separate `gateway` user and the agent as the `sandbox` user.
+An OpenShell-managed container has OpenShell as PID 1 and launches nonroot `nemoclaw-start`, so the supervisor, gateway, and agent all use the `sandbox` UID.
+
+| Aspect | Detail |
+|---|---|
+| Default | Direct root entrypoints use `setpriv` for gateway UID isolation. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the nonroot entrypoint from changing users. |
+| What you can change | This is not a user-facing knob. The selected container topology determines whether the entrypoint can step down from root to the gateway UID. |
+| Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. The root managed controller prevents PID-reuse mistakes, but it cannot prove provenance against a malicious same-UID process or provide the direct root-entrypoint restart seal for mutable config. |
+| Recommendation | Use a direct root-entrypoint deployment when separate gateway and agent UIDs are required. Treat the managed controller as authenticated lifecycle and exact-target safety, not as a same-UID provenance boundary. |
+
+## No New Privileges
+
+The `no-new-privileges` flag prevents processes from gaining additional privileges through setuid binaries or capability inheritance.
+
+| Aspect | Detail |
+|---|---|
+| Default | OpenShell sets `PR_SET_NO_NEW_PRIVS` using `prctl()` inside the sandbox process as part of the seccomp filter setup. The NemoClaw Compose example also shows the equivalent `security_opt: no-new-privileges:true` setting. |
+| What you can change | OpenShell's seccomp path enforces this inside the sandbox. It is not a user-facing knob. |
+| Risk if relaxed | Without this flag, a compromised process could execute a setuid binary to escalate to root inside the container, then attempt container escape techniques. |
+| Recommendation | No action needed. OpenShell enforces this automatically when the sandbox network policy is active. In the OpenShell-managed topology, this flag also means the nonroot entrypoint and gateway remain under the sandbox UID. |
+
+## Process Limit
+
+A process limit caps the number of processes the sandbox user can spawn.
+The entrypoint sets both soft and hard limits using `ulimit -u 512`.
+This behavior is best effort.
+If the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
+
+| Aspect | Detail |
+|---|---|
+| Default | 512 processes (`ulimit -u 512`), best-effort. |
+| What you can change | Increase or decrease the limit with `--ulimit nproc=N:N` in `docker run` or the `ulimits` section in Compose. The runtime-level ulimit takes precedence over the entrypoint's setting. |
+| Risk if relaxed | Removing or raising the limit makes the sandbox vulnerable to fork-bomb attacks, where a runaway process spawns children until the host runs out of resources. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nproc limit`), the container runs without process limits. |
+| Recommendation | Keep the default at 512. If the agent runs workloads that spawn many child processes (such as parallel test runners), increase to 1024 and monitor host resource usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
+
+## Open File Descriptor Limit
+
+An open file descriptor limit caps the number of files, sockets, and pipes the sandbox user can hold open at once.
+The entrypoint sets both soft and hard limits using `ulimit -n 65536`.
+This behavior is best effort.
+If the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
+
+| Aspect | Detail |
+|---|---|
+| Default | 65536 open files, soft and hard (`ulimit -n 65536`), best-effort. |
+| What you can change | Increase or decrease the limit with `--ulimit nofile=N:N` in `docker run` or the `ulimits` section in Compose. The runtime-level ulimit takes precedence over the entrypoint's setting. |
+| Risk if relaxed | Without this cap, the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them, causing a denial of service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. For more information, refer to [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
+| Recommendation | Keep the default at 65536. If the agent legitimately keeps many connections or files open, raise it deliberately and monitor host file-descriptor usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
+
+<AgentOnly variant="deepagents">
+
+## Deep Agents Resource Limit Enforcement
+
+Managed Deep Agents uses stricter enforcement than the best-effort entrypoint behavior described above.
+The managed Deep Agents image applies the 512-process and 65,536-file-descriptor caps to the long-running sandbox entrypoint tree and to direct managed `dcode` launches.
+
+During Docker-driver onboarding, NemoClaw also configures the container with exact `nproc=512:512` and `nofile=65536:65536` limits so the managed entrypoint and fresh exec or connect processes start under the same hard caps.
+The container-level limits and managed startup command remain in effect when you stop and start the sandbox or restart the OpenShell gateway.
+
+It also applies and verifies the caps in Bash login and interactive shells because fresh `openshell sandbox exec` and connect shells do not inherit the dcode entrypoint child's lowered limits.
+
+For managed Deep Agents, successful verification requires both the soft and hard limits to equal 512 processes and 65,536 file descriptors; a lower inherited file-descriptor default such as 1,024 is not accepted as successful hardening.
+
+If the image-baked resource-limit helper is missing or the effective limits do not match policy after hardening, the Deep Agents entrypoint and direct managed launcher refuse to start.
+The entrypoint and launcher complete this verification before proxy setup or user-supplied commands run.
+
+A login or interactive shell remains available when the helper is missing or its limits cannot be verified, but it prints `[SECURITY] Sandbox resource limits were NOT hardened for this shell.`
+
+OpenShell creates those fresh exec and connect processes outside the entrypoint tree, so an image layer cannot make them inherit the entrypoint child's lowered limits.
+The shell compatibility exception can be removed when OpenShell guarantees that every exec and connect process starts under enforced caps or exposes a fail-closed resource-limit contract.
+
+For custom container launches outside NemoClaw's managed Docker-driver onboarding path, set hard `nproc` and `nofile` limits at the container runtime when you require fail-closed enforcement.
+
+## Deep Agents Thread Auto-Approval Capability
+
+Managed Deep Agents sandboxes separate the host-configured capability from the active approval state of each TUI thread.
+The default `disabled` mode keeps the TUI auto-approval choice and `dcode -y` unavailable.
+
+An operator can select `thread-opt-in` through a named transactional rebuild, but each thread still requires an explicit TUI choice or `dcode -y` invocation before tool calls run without further confirmation.
+
+NemoClaw stores the configured mode in a root-owned, mode `0444` image file rather than trusting runtime environment variables.
+A missing, malformed, symlinked, writable, unreadable, or incorrectly owned capability file resolves to `disabled`.
+Ambient `NEMOCLAW_DCODE_AUTO_APPROVAL*` values cannot enable the capability.
+
+When a thread activates auto-approval, the TUI shows the upstream active-state indicator and prints a warning.
+NemoClaw clears that active state for a new process, `/clear`, `/force-clear`, a thread switch or resume, and an agent switch.
+The host-side `status` command reports only the configured capability because it does not attest to the current state of a specific TUI thread.
+
+| Aspect | Detail |
+|---|---|
+| Default | `disabled`. Interactive tool calls keep their approval prompts, and thread auto-approval cannot be selected. |
+| What you can change | Use `--dcode-auto-approval thread-opt-in` during a named managed Deep Agents rebuild. Use `--dcode-auto-approval disabled` in another rebuild to revoke the capability. |
+| Risk if enabled | A prompt injection, untrusted repository, or mistaken plan can cause tool calls, including shell commands, to run without another human confirmation for the rest of the active thread. |
+| Remaining controls | OpenShell egress policy, credential isolation and rewriting, the managed inference route, managed MCP validation, filesystem and process controls, and the other managed runtime restrictions remain active. |
+| Recommendation | Keep `disabled` for sensitive or unfamiliar work. Enable `thread-opt-in` only for bounded tasks in a reviewed workspace, watch the active-state indicator, and start a new thread or rebuild with `disabled` when unattended tool execution is no longer acceptable. |
+
+<Warning>
+Treat `thread-opt-in` as permission for unattended shell execution inside the sandbox, not as a policy bypass.
+The sandbox boundary limits where commands run and what external resources they can reach, but it does not make an automatically approved command harmless to writable workspace data.
+</Warning>
+
+## Headless Deep Agents Approval Boundary
+
+Interactive `dcode` sessions keep destructive tools behind the Deep Agents Code approval UI.
+Headless `dcode -n` is an explicit automation boundary with no approval UI.
+
+The managed headless path automatically approves non-shell tool requests such as file writes and edits, while still disabling shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP files, nested remote sandboxes, remote async subagents, and alternate model routes.
+
+| Aspect | Detail |
+|---|---|
+| Default | Interactive `dcode` prompts for destructive tools. Headless `dcode -n` auto-approves non-shell tools and keeps shell execution disabled. |
+| What you can change | Choose interactive `dcode` when you need to review tool calls. Use `dcode -n` only for tasks where unattended file edits are acceptable. The interactive `thread-opt-in` capability does not change this headless boundary. |
+| Risk if relaxed | Treating headless mode like an interactive approval session can let file edits happen without a human prompt. |
+| Recommendation | Use the interactive TUI for sensitive repositories or destructive tasks. Reserve `dcode -n` for bounded automation with a reviewed workspace and policy. |
+
+</AgentOnly>
+
+## Non-Root User
+
+The sandbox runs agent processes as a dedicated `sandbox` user and group.
+The entrypoint starts as root for privilege separation, then drops to the `sandbox` user for all agent commands.
+
+| Aspect | Detail |
+|---|---|
+| Default | `run_as_user: sandbox`, `run_as_group: sandbox`. A separate `gateway` user runs the gateway process. |
+| What you can change | Change the `process` section in the policy file to run as a different user. |
+| Risk if relaxed | Running as `root` inside the container gives the agent access to modify any file in the container filesystem and increases the impact of container escape vulnerabilities. |
+| Recommendation | Never run as root. Keep the `sandbox` user. |
+
+## PATH Hardening
+
+The entrypoint locks the `PATH` environment variable to system directories, preventing the agent from injecting malicious binaries into command resolution.
+
+| Aspect | Detail |
+|---|---|
+| Default | The default sandbox entrypoint sets `PATH` to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` at startup. Agent-specific images may add locked read-only runtime directories, such as `/opt/venv/bin` for LangChain Deep Agents Code. |
+| What you can change | This is not a user-facing knob. The entrypoint enforces it. |
+| Risk if relaxed | Without PATH hardening, the agent could create an executable named `curl` or `git` in a writable directory earlier in the PATH, intercepting commands run by the entrypoint or other processes. |
+| Recommendation | No action needed. The entrypoint handles this automatically. |
+
+## Build Toolchain Removal
+
+The Dockerfile removes compilers and network probes from the runtime image.
+
+| Aspect | Detail |
+|---|---|
+| Default | The Dockerfile purges `gcc`, `gcc-12`, `g++`, `g++-12`, `cpp`, `cpp-12`, `make`, `netcat-openbsd`, `netcat-traditional`, and `ncat` from the sandbox image. |
+| What you can change | Modify the Dockerfile to keep these tools, or install them at runtime if package manager access is allowed. |
+| Risk if relaxed | A compiler lets the agent build arbitrary native code, including kernel exploits or custom network tools. `netcat` enables arbitrary TCP connections that bypass HTTP-level policy enforcement. |
+| Recommendation | Keep build tools removed. If the agent needs to compile code, run the build in a separate, purpose-built container and copy artifacts into the sandbox. |
+
+## Image Digest Pinning
+
+The blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
+A registry compromise or accidental force-push cannot silently swap the sandbox image.
+
+| Aspect | Detail |
+|---|---|
+| Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
+| What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
+| Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
+| Recommendation | Always reference the sandbox image by digest. If you build a custom image with the onboarding `--from` path, the digest constraint does not apply to your local build. |
+
+<AgentOnly variant="openclaw">
+
+## Auth Profile Permissions
+
+The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
+This prevents other users on the host from reading stored credentials.
+
+| Aspect | Detail |
+|---|---|
+| Default | `600` permissions applied recursively at startup and after migration restores. |
+| What you can change | This is not a user-facing knob. The entrypoint enforces it. |
+| Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
+| Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |
+
+</AgentOnly>
