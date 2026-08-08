@@ -407,6 +407,15 @@ function isMissingPodmanContainer(result: CommandResult): boolean {
   );
 }
 
+function isStaleRootlessPauseProcess(result: CommandResult): boolean {
+  if (result.status === 0 && !result.error) return false;
+  const detail = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
+  return (
+    /invalid internal status.*(?:podman )?system migrate/isu.test(detail) &&
+    /(?:common\.pid|pause process)/iu.test(detail)
+  );
+}
+
 interface PodmanContainerQuery {
   ids: string[];
   ok: boolean;
@@ -978,7 +987,17 @@ export function recoverPortableDemoSandboxLifecycle(
   deps.ensureGateway?.();
   const podmanEnv = localPodmanEnvironment(commandEnv);
   const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
-  const initialInspection = podman(["inspect", receipt.containerId]);
+  let initialInspection = podman(["inspect", receipt.containerId]);
+  if (isStaleRootlessPauseProcess(initialInspection)) {
+    requireCommand(
+      podman(["system", "migrate"]),
+      "Resetting the stale rootless Podman pause process",
+    );
+    (deps.log ?? console.log)(
+      "  Reset stale rootless Podman namespace state after the portable host resumed.",
+    );
+    initialInspection = podman(["inspect", receipt.containerId]);
+  }
   let inspection: PodmanContainerInspection;
   if (isMissingPodmanContainer(initialInspection)) {
     const previousContainerId = receipt.containerId;
