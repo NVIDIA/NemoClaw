@@ -169,7 +169,7 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
-        "Hermes producer must prove the no-CA final image uses default trust after the production image build",
+        "Hermes producer must verify that the final image uses default trust when no corporate CA is supplied.",
       ]),
     );
   });

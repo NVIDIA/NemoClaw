@@ -5,7 +5,7 @@
 
 Date: 2026-07-25
 
-Last updated: 2026-08-08
+Last updated: August 8, 2026
 
 ## Scope
 
@@ -107,8 +107,10 @@ The replacement helper:
 10. invokes npm and npx only after the fixed package is active.
 
 All managed base images apply the helper after the complete npm upgrade.
-Each final image reruns the idempotent helper against `/usr/local/lib/node_modules/npm`, so the final image stage owns the bundled npm dependency boundary.
-The image build does not scan the complete filesystem for other `tar` copies or retain a node-tar inventory artifact.
+Each final image reruns the idempotent helper against `/usr/local/lib/node_modules/npm`.
+The final image stage therefore owns the bundled npm dependency boundary.
+NemoClaw image builds and image workflows do not scan the complete image filesystem for other `node_modules/tar` packages.
+They do not create or retain a node-tar inventory artifact.
 
 ### Perl component versions
 

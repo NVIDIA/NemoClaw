@@ -459,7 +459,7 @@ function validateGuardedProductionBuild(
       stepIndex(job, action.name ?? "") >= stepIndex(job, HERMES_DEFAULT_TRUST_STEP_NAME)
     ) {
       errors.push(
-        "Hermes producer must prove the no-CA final image uses default trust after the production image build",
+        "Hermes producer must verify that the final image uses default trust when no corporate CA is supplied.",
       );
     }
     return;
