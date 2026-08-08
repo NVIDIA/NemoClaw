@@ -35,9 +35,7 @@ describe("installer hash workflow", () => {
 
     expect(workflow.permissions).toEqual({ contents: "read" });
     const sparseCheckout = baseCheckout.with?.["sparse-checkout"];
-    if (typeof sparseCheckout !== "string") {
-      throw new TypeError("Installer hash sparse checkout must be a string");
-    }
+    assert(typeof sparseCheckout === "string");
     expect(sparseCheckout.trim().split("\n")).toEqual([
       ".github/actions/ci-installer-hash-check",
       "scripts/check-installer-hash.sh",
