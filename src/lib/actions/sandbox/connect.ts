@@ -95,6 +95,24 @@ export type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
 
+type ConnectStageReporter = (stage: string) => void;
+
+const ignoreConnectStage: ConnectStageReporter = () => undefined;
+
+function createConnectStageReporter(): ConnectStageReporter {
+  const startedAt = Date.now();
+  let previousAt = startedAt;
+  return (stage) => {
+    const now = Date.now();
+    const elapsed = ((now - startedAt) / 1_000).toFixed(3);
+    const step = ((now - previousAt) / 1_000).toFixed(3);
+    previousAt = now;
+    console.log(
+      `  [connect ${new Date(now).toISOString()} elapsed=${elapsed}s step=${step}s] ${stage}`,
+    );
+  };
+}
+
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
@@ -1096,7 +1114,9 @@ function waitForSandboxReadyOrExit(
 async function runConnectEntryPreflight(
   sandboxName: string,
   { probeOnly }: { probeOnly: boolean },
+  reportStage: ConnectStageReporter = ignoreConnectStage,
 ): Promise<void> {
+  reportStage("validating registry and portable lifecycle");
   try {
     assertNoOpenShellGatewayEndpointOverride();
     const registered = registry.getSandbox(sandboxName);
@@ -1120,7 +1140,9 @@ async function runConnectEntryPreflight(
   // never select, install, or pull a model. Skip the express-vLLM model
   // preflight because it only steers installation and can reject recovery on
   // a stale NEMOCLAW_VLLM_MODEL.
+  reportStage("checking model preflight");
   if (!probeOnly) preflightVllmModelEnvOrExit();
+  reportStage("checking the live OpenShell sandbox and gateway");
   const live = await ensureLiveSandboxOrExit(sandboxName, {
     allowNonReadyPhase: true,
     gatewayRecovery: probeOnly ? "observe" : "recover",
@@ -1143,6 +1165,7 @@ async function runConnectEntryPreflight(
   ) {
     failConnectReadinessDockerRuntimeDown(sandboxName);
   }
+  reportStage("connect preflight complete");
 }
 
 /**
@@ -1155,10 +1178,12 @@ async function runConnectEntryPreflight(
  */
 export async function prepareInteractiveSession(
   sandboxName: string,
+  { reportStage = ignoreConnectStage }: { reportStage?: ConnectStageReporter } = {},
 ): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
-  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
+  await runConnectEntryPreflight(sandboxName, { probeOnly: false }, reportStage);
 
   // Version staleness check — warn but don't block
+  reportStage("checking sandbox version");
   try {
     const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
     if (versionCheck.isStale) {
@@ -1171,6 +1196,7 @@ export async function prepareInteractiveSession(
   }
 
   // Active session hint — inform if already connected in another terminal
+  reportStage("checking active sandbox sessions");
   try {
     const opsBinConnect = resolveOpenshell();
     if (opsBinConnect) {
@@ -1186,6 +1212,7 @@ export async function prepareInteractiveSession(
     /* non-fatal — don't block connect on session detection failure */
   }
 
+  reportStage("checking and recovering sandbox processes");
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
@@ -1200,6 +1227,7 @@ export async function prepareInteractiveSession(
 
   let sb: SandboxEntry | null = null;
 
+  reportStage("waiting for sandbox readiness");
   waitForSandboxReadyOrExit(sandboxName, {
     successLogs: ["  Sandbox is ready. Connecting..."],
   });
@@ -1208,6 +1236,7 @@ export async function prepareInteractiveSession(
   // When the user has multiple sandboxes with different providers, the
   // cluster-wide inference.local route may still point at the other provider.
   // After the sandbox is Ready, verify and recover the route before SSH.
+  reportStage("verifying inference route");
   const agent = agentRuntime.getSessionAgent(sandboxName);
   sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
   maybeEnsureHermesToolGatewayBroker(sb);
@@ -1220,7 +1249,9 @@ export async function prepareInteractiveSession(
   // deadline exhausted, multi-sandbox gateway contention). The same pass
   // is reachable without SSH via `doctor --fix` for dashboard-only users
   // (#4616). Uses the tight connect budget (#4504).
+  reportStage("approving pending session scopes");
   runConnectAutoPairApprovalPass(sandboxName);
+  reportStage("interactive session ready");
 
   return { agent, sb };
 }
@@ -1242,7 +1273,9 @@ export async function connectSandbox(
     return await runSandboxConnectProbe(sandboxName);
   }
 
-  const { agent, sb } = await prepareInteractiveSession(sandboxName);
+  const reportStage = createConnectStageReporter();
+  reportStage("connect started");
+  const { agent, sb } = await prepareInteractiveSession(sandboxName, { reportStage });
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
@@ -1273,6 +1306,7 @@ export async function connectSandbox(
     console.log("");
   }
   prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+  reportStage("opening the OpenShell interactive shell");
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
