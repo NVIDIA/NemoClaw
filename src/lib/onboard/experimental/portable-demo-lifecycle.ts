@@ -101,6 +101,7 @@ export interface PortableDemoLifecycleDeps {
     executableFd: number,
   ) => void;
   loadManagedOllama?: () => string | null;
+  ensureGateway?: () => void;
   sleep?: (milliseconds: number) => void;
   now?: () => number;
   log?: (message: string) => void;
@@ -432,13 +433,49 @@ function podmanQueryCount(result: PodmanContainerQuery): string {
   return result.ok ? String(result.ids.length) : "query-error";
 }
 
-function podmanStorageEvidence(podman: NonNullable<PortableDemoLifecycleDeps["podman"]>): string {
-  const result = podman(["info", "--format", "{{.Store.GraphRoot}}"]);
-  if (result.status !== 0 || result.error) return `graph-root=${commandDetail(result)}`;
-  const graphRoot = String(result.stdout ?? "")
-    .trim()
-    .replace(/\s+/gu, " ");
-  return `graph-root=${graphRoot || "empty"}`;
+function podmanIdentityResourceEvidence(
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  resource: "volume" | "secret",
+  sandboxId: string,
+): string {
+  const result = podman([resource, "ls", "--format", "{{.Name}}"]);
+  if (result.status !== 0 || result.error) {
+    return `${resource}-sandbox-id-matches=${commandDetail(result)}`;
+  }
+  const matches = String(result.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.includes(sandboxId)).length;
+  return `${resource}-sandbox-id-matches=${String(matches)}`;
+}
+
+function podmanStorageEvidence(
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+  sandboxId?: string,
+): string {
+  const result = podman([
+    "info",
+    "--format",
+    "{{.Store.TransientStore}}|{{.Store.GraphRoot}}|{{.Store.RunRoot}}",
+  ]);
+  let storage: string;
+  if (result.status !== 0 || result.error) {
+    storage = `storage-info=${commandDetail(result)}`;
+  } else {
+    const [transientStore = "empty", graphRoot = "empty", runRoot = "empty"] = String(
+      result.stdout ?? "",
+    )
+      .trim()
+      .split("|")
+      .map((value) => value.trim().replace(/\s+/gu, " "));
+    storage = `transient-store=${transientStore || "empty"}, graph-root=${graphRoot || "empty"}, run-root=${runRoot || "empty"}`;
+  }
+  if (!sandboxId) return storage;
+  return [
+    storage,
+    podmanIdentityResourceEvidence(podman, "volume", sandboxId),
+    podmanIdentityResourceEvidence(podman, "secret", sandboxId),
+  ].join(", ");
 }
 
 function discoverPodmanContainer(
@@ -475,7 +512,9 @@ function discoverPodmanContainer(
   const queriesSucceeded = queries.every((query) => query.ok);
   const idsAreCanonical = candidates.every((id) => CONTAINER_ID_PATTERN.test(id));
   if (!queriesSucceeded || candidates.length !== 1 || !idsAreCanonical) {
-    const recoveryEvidence = expectedSandboxId ? `; ${podmanStorageEvidence(podman)}` : "";
+    const recoveryEvidence = expectedSandboxId
+      ? `; ${podmanStorageEvidence(podman, expectedSandboxId)}`
+      : "";
     throw new Error(
       `Portable demo lifecycle requires one exact OpenShell-owned Podman container for sandbox '${sandboxName}'${expectedSandboxId ? ` with sandbox ID '${expectedSandboxId}'` : ""}; found ${String(candidates.length)} (matches=${queries.map(podmanQueryCount).join(",")})${recoveryEvidence}`,
     );
@@ -891,6 +930,9 @@ export function installPortableDemoSandboxLifecycle(
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
   writeReceipt(receipt, stateDir);
+  (deps.log ?? console.log)(
+    `  Portable demo lifecycle baseline: sandbox-id=${receipt.sandboxId}, container-id=${receipt.containerId}, ${podmanStorageEvidence(podman, receipt.sandboxId)}`,
+  );
   return registryGeneration;
 }
 

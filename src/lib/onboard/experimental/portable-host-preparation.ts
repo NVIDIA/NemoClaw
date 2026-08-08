@@ -17,6 +17,7 @@ const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
 const REGISTRY_COMMAND_TIMEOUT_MS = 300_000;
+const MAX_STORAGE_CONFIG_BYTES = 128 * 1024;
 const REGISTRY_FRAGMENT = `[[registry]]
 location = "${PORTABLE_LOCAL_REGISTRY}"
 insecure = true
@@ -35,6 +36,13 @@ Before=podman-restart.service
 `;
 
 type SpawnResult = ReturnType<typeof spawnSync>;
+
+interface PodmanStorageInfo {
+  transientStore: boolean;
+  driver: string;
+  graphRoot: string;
+  runRoot: string;
+}
 
 export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
@@ -108,6 +116,137 @@ function writePrivateConfig(filePath: string, value: string): void {
   } finally {
     file.close();
   }
+}
+
+function readStorageConfig(filePath: string): string | null {
+  let file;
+  try {
+    file = openRegularFileNoFollow(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    return file.readUtf8(MAX_STORAGE_CONFIG_BYTES);
+  } finally {
+    file.close();
+  }
+}
+
+function readPodmanStorageInfo(
+  podman: NonNullable<PortableHostPreparationDeps["podman"]>,
+  env: NodeJS.ProcessEnv,
+): PodmanStorageInfo {
+  const result = podman(
+    [
+      "info",
+      "--format",
+      "{{.Store.TransientStore}}|{{.Store.GraphDriverName}}|{{.Store.GraphRoot}}|{{.Store.RunRoot}}",
+    ],
+    env,
+  );
+  requireCommand(result, "Reading the rootless Podman storage mode");
+  const [transientStore, driver, graphRoot, runRoot, ...extra] = String(result.stdout ?? "")
+    .trim()
+    .split("|")
+    .map((value) => value.trim());
+  if (
+    extra.length > 0 ||
+    (transientStore !== "true" && transientStore !== "false") ||
+    !driver ||
+    !path.isAbsolute(graphRoot ?? "") ||
+    !path.isAbsolute(runRoot ?? "")
+  ) {
+    throw new Error("Reading the rootless Podman storage mode returned invalid data");
+  }
+  return {
+    transientStore: transientStore === "true",
+    driver,
+    graphRoot: graphRoot!,
+    runRoot: runRoot!,
+  };
+}
+
+function persistentStorageConfig(source: string, info: PodmanStorageInfo): string {
+  const lines = source.replace(/\r\n/gu, "\n").split("\n");
+  const storageStart = lines.findIndex((line) => /^\s*\[storage\]\s*(?:#.*)?$/u.test(line));
+  if (storageStart < 0) {
+    throw new Error("The active Podman storage configuration has no [storage] table");
+  }
+  const nextTable = lines.findIndex(
+    (line, index) => index > storageStart && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(line),
+  );
+  const storageEnd = nextTable < 0 ? lines.length : nextTable;
+  const values: Readonly<Record<string, string>> = {
+    driver: JSON.stringify(info.driver),
+    graphroot: JSON.stringify(info.graphRoot),
+    runroot: JSON.stringify(info.runRoot),
+    transient_store: "false",
+  };
+  const seen = new Set<string>();
+  for (let index = storageStart + 1; index < storageEnd; index += 1) {
+    const match = /^\s*(driver|graphroot|runroot|transient_store)\s*=/u.exec(lines[index] ?? "");
+    if (!match) continue;
+    const key = match[1]!;
+    lines[index] = `${key} = ${values[key]}`;
+    seen.add(key);
+  }
+  const missing = Object.keys(values)
+    .filter((key) => !seen.has(key))
+    .map((key) => `${key} = ${values[key]}`);
+  lines.splice(storageStart + 1, 0, ...missing);
+  return `${lines.join("\n").replace(/\n*$/u, "")}\n`;
+}
+
+function ensurePersistentPodmanStore(
+  home: string,
+  env: NodeJS.ProcessEnv,
+  podman: NonNullable<PortableHostPreparationDeps["podman"]>,
+): string | null {
+  const before = readPodmanStorageInfo(podman, env);
+  if (!before.transientStore) return null;
+
+  const existingContainers = podman(["ps", "-a", "--format", "{{.Names}}"], env);
+  requireCommand(existingContainers, "Checking the transient Podman container store");
+  const names = String(existingContainers.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (names.length > 0) {
+    throw new Error(
+      `The portable profile cannot migrate a non-empty transient Podman store safely (containers: ${names.join(", ")}). Uninstall those transient containers, then rerun the portable installer.`,
+    );
+  }
+
+  const configHome = env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
+  const target = path.join(configHome, "containers", "storage.conf");
+  const sourceCandidates = [
+    env.CONTAINERS_STORAGE_CONF?.trim(),
+    target,
+    "/etc/containers/storage.conf",
+    "/usr/share/containers/storage.conf",
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  let source: string | null = null;
+  for (const candidate of new Set(sourceCandidates)) {
+    source = readStorageConfig(candidate);
+    if (source !== null) break;
+  }
+  source ??= "[storage]\n";
+  writePrivateConfig(target, persistentStorageConfig(source, before));
+  env.CONTAINERS_STORAGE_CONF = target;
+
+  const after = readPodmanStorageInfo(podman, env);
+  if (
+    after.transientStore ||
+    after.driver !== before.driver ||
+    after.graphRoot !== before.graphRoot ||
+    after.runRoot !== before.runRoot
+  ) {
+    throw new Error(
+      "The portable profile could not switch Podman to persistent container metadata without changing its existing storage paths",
+    );
+  }
+  return target;
 }
 
 function writePortableRuntimeConfig(home: string, env: NodeJS.ProcessEnv): string {
@@ -203,6 +342,20 @@ export function preparePortableExperimentalHost(
   const home = deps.home ?? env.HOME ?? os.homedir();
   env.NETAVARK_FW = "iptables";
   env.CONTAINERS_CONF = writePortableRuntimeConfig(home, env);
+  const podman =
+    deps.podman ??
+    ((args, childEnv) =>
+      spawnSync("podman", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
+  const podmanEnv = localPodmanEnvironment(env);
+  const storageConf = ensurePersistentPodmanStore(home, podmanEnv, podman);
+  if (storageConf) {
+    env.CONTAINERS_STORAGE_CONF = storageConf;
+    podmanEnv.CONTAINERS_STORAGE_CONF = storageConf;
+  }
 
   const systemctl =
     deps.systemctl ??
@@ -223,6 +376,9 @@ export function preparePortableExperimentalHost(
         "set-environment",
         "NETAVARK_FW=iptables",
         `CONTAINERS_CONF=${env.CONTAINERS_CONF}`,
+        ...(env.CONTAINERS_STORAGE_CONF
+          ? [`CONTAINERS_STORAGE_CONF=${env.CONTAINERS_STORAGE_CONF}`]
+          : []),
       ],
       env,
     ),
@@ -241,15 +397,6 @@ export function preparePortableExperimentalHost(
     "Enabling rootless container restart after login",
   );
 
-  const podman =
-    deps.podman ??
-    ((args, childEnv) =>
-      spawnSync("podman", [...args], {
-        encoding: "utf-8",
-        env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
-      }));
-  const podmanEnv = localPodmanEnvironment(env);
   const dockerHost = resolvePodmanDockerHost(
     podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], podmanEnv),
   );
