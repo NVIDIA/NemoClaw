@@ -327,7 +327,11 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(skill).toContain("If the PR head changes, discard the exact-head review");
     expect(skill).toContain("Credit only the superseding fix");
-    expect(skill).toContain("Never change, retag, publish, or otherwise touch `v0.0.104`");
+    expect(skill).toContain(
+      "Never change, retag, publish, or otherwise touch a release, tag, or release artifact",
+    );
+    expect(skill).toContain("Route release work to the existing release workflow");
+    expect(skill).toContain("This explicitly includes `v0.0.104`");
     expect(skill).toContain("git show origin/main:.github/workflows/pr-limit.yaml");
     expect(skill).toContain("For a non-exempt author");
     expect(skill).toContain("would exceed the 10-open-PR limit");
@@ -412,7 +416,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "Next scan: <trigger, scheduled check, or none when operator-cancelled>",
     );
     expect(handoff).toContain("Manual duplicate E2E runs: none");
-    expect(handoff).toContain("v0.0.104 touched: no");
+    expect(handoff).toContain(
+      "Release, tag, or release artifact state touched: no (including `v0.0.104`)",
+    );
     expect(handoff).toContain("uses a descendant of the merge commit");
     expect(handoff).toContain("reaches the original failure phase for every affected target");
     expect(handoff).toContain("Local HEAD");
