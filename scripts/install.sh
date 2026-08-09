@@ -3042,16 +3042,18 @@ run_installer_host_preflight() {
     node -e '
       const preflightPath = process.argv[1];
       try {
-        const { assessHost, planHostRemediation } = require(preflightPath);
+        const { assessHost, planHostAdvisories } = require(preflightPath);
         const host = assessHost();
-        const actions = planHostRemediation(host);
-        const blockingActions = actions.filter((action) => action && action.blocking);
+        const actions = planHostAdvisories(host);
+        const blockingActions = actions.filter(
+          (action) => action && (action.severity === "blocking" || action.severity === "fatal")
+        );
         const infoLines = [];
         const actionLines = [];
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
-        if (host.notes && host.notes.includes("Running under WSL")) {
+        if (host.isWsl) {
           infoLines.push("Running under WSL");
         }
         for (const action of actions) {

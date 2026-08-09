@@ -3,6 +3,7 @@
 
 import { validateBuildIdentity } from "../core/version.js";
 import { redactForLog } from "../security/redact.js";
+import { sanitizeReadinessText } from "./sanitize.js";
 import type {
   EvidenceScalar,
   ReadinessCapability,
@@ -33,9 +34,10 @@ const ENVIRONMENT_DETAIL_KEYS = new Set([
 ]);
 
 function bounded(value: string, maxLength: number): string {
-  return String(redactForLog(value))
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1<REDACTED>@")
-    .slice(0, maxLength);
+  return sanitizeReadinessText(
+    String(redactForLog(value)).replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1<REDACTED>@"),
+    maxLength,
+  );
 }
 
 function scalar(value: EvidenceScalar): EvidenceScalar {

@@ -37,6 +37,11 @@
       "category": "compatibility"
     },
     {
+      "file": "src/lib/readiness/system.test.ts",
+      "test": "publishes a schema-valid host and gateway report with resolved references (#7411)",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
       "test": "matches the bundled local-inference host-gateway ports (#5744)",
       "category": "compatibility"

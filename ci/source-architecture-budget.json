@@ -13,7 +13,7 @@
       "src/lib/agent/defs.ts": 32,
       "src/lib/cli/branding.ts": 86,
       "src/lib/cli/nemoclaw-oclif-command.ts": 106,
-      "src/lib/cli/terminal-style.ts": 44,
+      "src/lib/cli/terminal-style.ts": 43,
       "src/lib/core/json-types.ts": 37,
       "src/lib/core/ports.ts": 87,
       "src/lib/core/shell-quote.ts": 26,

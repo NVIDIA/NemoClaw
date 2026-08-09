@@ -177,6 +177,73 @@ describe("gateway host runtime ownership", () => {
 
     expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
   });
+
+  it("adopts only a trusted standalone-to-packaged-service install transition (#7411)", () => {
+    let hasPackagedService = false;
+    const runtime = createGatewayHostRuntime(
+      createDeps({ hasOpenShellGatewayUserService: () => hasPackagedService }),
+    );
+    expect(runtime.getGatewayOwner()).toMatchObject({ source: "standalone" });
+
+    hasPackagedService = true;
+
+    const persistOwner = vi.fn();
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall(persistOwner)).toMatchObject({
+      source: "packaged-service",
+    });
+    expect(persistOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "packaged-service" }),
+    );
+    expect(runtime.getGatewayOwner()).toMatchObject({ source: "packaged-service" });
+  });
+
+  it("keeps the old binding when trusted-install persistence fails (#7411)", () => {
+    let hasPackagedService = false;
+    const runtime = createGatewayHostRuntime(
+      createDeps({ hasOpenShellGatewayUserService: () => hasPackagedService }),
+    );
+    runtime.getGatewayOwner();
+    hasPackagedService = true;
+
+    expect(() =>
+      runtime.adoptPackagedGatewayOwnerAfterTrustedInstall(() => {
+        throw new Error("checkpoint write failed");
+      }),
+    ).toThrow("checkpoint write failed");
+    expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
+  });
+
+  it("keeps normal owner revalidation strict after a packaged service appears (#7411)", () => {
+    let hasPackagedService = false;
+    const runtime = createGatewayHostRuntime(
+      createDeps({ hasOpenShellGatewayUserService: () => hasPackagedService }),
+    );
+    runtime.getGatewayOwner();
+    hasPackagedService = true;
+
+    expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
+  });
+
+  it("rejects trusted-install adoption when a declaration changes the authority (#7411)", () => {
+    const runtime = createGatewayHostRuntime(createDeps());
+    runtime.getGatewayOwner();
+    declareExternalSupervision();
+
+    expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
+      /authority changed during this run/,
+    );
+    expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
+  });
+
+  it("rejects trusted-install adoption without an existing owner binding (#7411)", () => {
+    const runtime = createGatewayHostRuntime(
+      createDeps({ hasOpenShellGatewayUserService: () => true }),
+    );
+
+    expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
+      /before this run has bound/,
+    );
+  });
 });
 
 describe("gateway host runtime attachment probe", () => {
@@ -354,10 +421,59 @@ describe("gateway host runtime attachment probe", () => {
     });
   });
 
+  it("does not combine a foreign health response with a later declared listener (#7411)", async () => {
+    declareExternalSupervision();
+    let healthProbeRan = false;
+    const getGatewayPortListenerRawScan = vi.fn(() => ({
+      pids: [healthProbeRan ? SYSTEMD_GATEWAY_PID : 4343],
+      complete: true,
+    }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        getGatewayPortListenerRawScan,
+        probeGatewayHttpReady: async () => {
+          healthProbeRan = true;
+          return true;
+        },
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.httpReady).toBe(true);
+    expect(probe.listenerPids).toEqual([SYSTEMD_GATEWAY_PID]);
+    expect(probe.listenerExecPath).toBeNull();
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
+      ok: false,
+      code: "unknown_listener",
+    });
+  });
+
   it("fails closed when a PID is reused while its identity is read (#6576)", async () => {
     declareExternalSupervision();
     const readProcStartTime = vi.fn().mockReturnValueOnce("710024").mockReturnValueOnce("710025");
     const runtime = createGatewayHostRuntime(createDeps({ readProcStartTime }));
+    const owner = runtime.getGatewayOwner();
+
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerExecPath).toBeNull();
+    expect(probe.listenerSupervisorMatch).toBeNull();
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
+      ok: false,
+      code: "unknown_listener",
+    });
+  });
+
+  it("fails closed when a listener execs another binary without changing PID (#7411)", async () => {
+    declareExternalSupervision();
+    const readProcExe = vi
+      .fn()
+      .mockReturnValueOnce(SYSTEMD_GATEWAY_EXEC)
+      .mockReturnValueOnce("/opt/platform/impostor-gateway")
+      .mockReturnValue(SYSTEMD_GATEWAY_EXEC);
+    const runtime = createGatewayHostRuntime(createDeps({ readProcExe }));
     const owner = runtime.getGatewayOwner();
 
     const probe = await runtime.probeGatewayAttachment(owner);
@@ -407,6 +523,27 @@ describe("gateway host runtime attachment probe", () => {
       ok: false,
       code: "supervisor_inactive",
     });
+  });
+
+  it("uses the caller-supplied credential-free supervisor probe environment (#7411)", async () => {
+    declareExternalSupervision();
+    const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "active\n", stderr: "" }));
+    const supervisorProbeEnv = {
+      PATH: "/usr/bin",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    };
+    const runtime = createGatewayHostRuntime(
+      createDeps({ spawnSyncImpl: spawnSyncImpl as never, supervisorProbeEnv }),
+    );
+
+    await runtime.probeGatewayAttachment(runtime.getGatewayOwner());
+
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "systemctl",
+      ["is-active", "openshell-gateway.service"],
+      expect.objectContaining({ env: supervisorProbeEnv }),
+    );
   });
 
   it("reads the authoritative gateway port lazily, not at construction (#6576)", () => {

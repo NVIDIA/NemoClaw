@@ -41,14 +41,26 @@ export interface PreflightStateOptions<
       sandbox: SandboxEntry | null,
       sessionGpuPassthrough: boolean | null | undefined,
     ): PreflightSandboxGpuOverrides;
+    /** Observe GPU state without running a container-backed proof. */
+    detectGpuForReadiness(): Gpu;
+    /** Resolve any runtime-backed GPU proof after readiness admission. */
     detectGpu(): Gpu;
     runPreflight(options: { optedOutGpuPassthrough?: boolean }): Promise<Gpu>;
     assessHost(): Host;
-    assertCdiNvidiaGpuSpecPresent(
+    assertOnboardHostReadiness(
       host: Host,
-      optedOutGpuPassthrough: boolean,
-      hostGpuPlatform?: string | null,
+      gpu: Gpu,
+      options: {
+        explicitlyOptedOutGpuPassthrough: boolean;
+        observedAt?: string;
+        now?: () => Date;
+        wslDockerDesktopGpuProofPassed?: boolean;
+        resuming: true;
+      },
     ): void;
+    /** Revalidate canonical gateway ownership before resume probe effects. */
+    assertGatewayReadiness(): Promise<void>;
+    now?: () => Date;
     /**
      * Resume backstop for #3508/#3630. Runs the same bridge+DNS fatal
      * gate that `preflight()` does, so a cached preflight step cannot
@@ -57,16 +69,13 @@ export interface PreflightStateOptions<
      * that haven't been updated yet.
      */
     assertDockerBridgeAndContainerDnsHealthy?(host: Host): void;
-    /**
-     * Resume backstop for unsupported container runtimes (e.g. Podman
-     * with the Linux Docker-driver gateway). Must run before the bridge/
-     * DNS backstop above so Podman hosts see the unsupported-runtime
-     * message instead of Docker-specific diagnostics.
-     */
-    rejectUnsupportedContainerRuntime?(host: Host): void;
     resolveSandboxGpuConfig(
       gpu: Gpu,
-      options: { flag: PreflightSandboxGpuFlag; device: string | null | undefined },
+      options: {
+        flag: PreflightSandboxGpuFlag;
+        device: string | null | undefined;
+        env?: NodeJS.ProcessEnv;
+      },
     ): Config;
     validateSandboxGpuPreflight(config: Config): void;
     skippedStepMessage(stepName: string, detail?: string | null): void;
@@ -95,6 +104,15 @@ export interface PreflightStateResult<Gpu, Config extends PreflightSandboxGpuCon
 
 function envHasSandboxGpuOverride(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_SANDBOX_GPU !== undefined || env.NEMOCLAW_SANDBOX_GPU_DEVICE !== undefined;
+}
+
+function resolvedWslDockerDesktopGpuProof(gpu: unknown): boolean | undefined {
+  if (gpu === null) return false;
+  if (!gpu || typeof gpu !== "object") return undefined;
+  return (gpu as { wslDockerDesktopGpuProofPassed?: boolean }).wslDockerDesktopGpuProofPassed ===
+    true
+    ? true
+    : undefined;
 }
 
 export async function handlePreflightState<
@@ -135,28 +153,54 @@ export async function handlePreflightState<
   let gpu: Gpu;
   if (resumePreflight) {
     deps.skippedStepMessage("preflight", "cached");
-    await deps.recordStateSkipped("preflight", { reason: "resume", validation: "gpu-cdi" });
-    gpu = deps.detectGpu();
-    const resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
+    await deps.recordStateSkipped("preflight", {
+      reason: "resume",
+      validation: "host-readiness",
+    });
+    const now = deps.now ?? (() => new Date());
+    // Collect host facts, then require a live gateway result immediately
+    // before any runtime-backed probe. A successful gateway collection is
+    // younger than its reuse window, so the preceding host facts are current
+    // at the effect edge too.
+    let hostObservedAt = now().toISOString();
+    let resumeHost = deps.assessHost();
+    gpu = deps.detectGpuForReadiness();
+    let resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
       flag: effectiveSandboxGpuFlag,
       device: effectiveSandboxGpuDevice,
+      env,
     });
+    await deps.assertGatewayReadiness();
+    deps.assertOnboardHostReadiness(resumeHost, gpu, {
+      explicitlyOptedOutGpuPassthrough: resumeSandboxGpuConfig.mode === "0",
+      observedAt: hostObservedAt,
+      now,
+      resuming: true,
+    });
+    // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
+    // behind both live readiness gates, and skip it entirely for CPU-only
+    // intent. Replace gateway and host facts after that effect before any
+    // later runtime probe.
+    if (resumeSandboxGpuConfig.mode !== "0") {
+      gpu = deps.detectGpu();
+      hostObservedAt = now().toISOString();
+      resumeHost = deps.assessHost();
+      resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
+        flag: effectiveSandboxGpuFlag,
+        device: effectiveSandboxGpuDevice,
+        env,
+      });
+      await deps.assertGatewayReadiness();
+      const wslDockerDesktopGpuProofPassed = resolvedWslDockerDesktopGpuProof(gpu);
+      deps.assertOnboardHostReadiness(resumeHost, gpu, {
+        explicitlyOptedOutGpuPassthrough: false,
+        observedAt: hostObservedAt,
+        now,
+        ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
+        resuming: true,
+      });
+    }
     deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
-    const resumeOptedOutGpuPassthrough =
-      noGpu ||
-      (!gpuRequested && session?.gpuPassthrough === false) ||
-      !resumeSandboxGpuConfig.sandboxGpuEnabled;
-    const resumeHost = deps.assessHost();
-    // Reject unsupported runtimes (Podman) BEFORE the CDI GPU-spec
-    // backstop and the Docker-specific bridge/DNS probes so Podman
-    // hosts always hit the unsupported-runtime message (#3630
-    // CodeRabbit).
-    deps.rejectUnsupportedContainerRuntime?.(resumeHost);
-    deps.assertCdiNvidiaGpuSpecPresent(
-      resumeHost,
-      resumeOptedOutGpuPassthrough,
-      resumeSandboxGpuConfig.hostGpuPlatform,
-    );
     // Resume backstop for #3508/#3630. Cached preflight does not capture
     // host Docker/DNS state, and a session written by an older NemoClaw
     // may have skipped the new bridge/DNS fatal checks.
@@ -170,6 +214,7 @@ export async function handlePreflightState<
   const sandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
     flag: effectiveSandboxGpuFlag,
     device: effectiveSandboxGpuDevice,
+    env,
   });
   const gpuPassthrough = sandboxGpuConfig.sandboxGpuEnabled;
   if (session && session.gpuPassthrough !== gpuPassthrough) {

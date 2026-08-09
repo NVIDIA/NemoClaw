@@ -6,13 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { writeNpmStub } from "./helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
   readShellConstant,
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "./helpers/installer-sourced-env";
-import { writeNpmStub } from "./helpers/installer-run-fixture";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
@@ -1200,27 +1200,27 @@ exports.getNvidiaCdiSpecPath = (host) =>
   String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
 exports.isWslDockerDesktopRuntime = (host) =>
   Boolean(host && host.isWsl && host.runtime === "docker-desktop");
-exports.planHostRemediation = (host) =>
+exports.planHostAdvisories = (host) =>
   host.cdiNvidiaGpuSpecMissing
     ? host.isWsl && host.runtime === "docker-desktop"
       ? [{
           title: "Use Docker Desktop WSL GPU compatibility path",
           reason: "missing nvidia.com/gpu CDI; using Docker --gpus",
           commands: ["verify Docker --gpus support from WSL"],
-          blocking: false,
+          severity: "info",
         }]
       : [{
           title: "Generate NVIDIA CDI device specs",
           reason: "missing nvidia.com/gpu",
           commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
-          blocking: true,
+          severity: "blocking",
         }]
     : host.cdiNvidiaGpuSpecStale && !host.nvidiaContainerToolkitInstalled
       ? [{
           title: "Install NVIDIA Container Toolkit and refresh CDI device specs",
           reason: "nvidia-container-toolkit missing",
           commands: ["sudo apt-get install -y nvidia-container-toolkit"],
-          blocking: true,
+          severity: "blocking",
         }]
     : [];
 `,
@@ -1444,7 +1444,7 @@ exit 0
     expect(sudoLog).toBe("");
   });
 
-  it("warns on Podman but still runs onboarding", () => {
+  it("leaves Podman rejection to canonical onboarding (#7411)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-podman-warning-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1516,7 +1516,7 @@ exit 0
     expect(result.status).toBe(0);
     expect(output).toMatch(/Host preflight found warnings\./);
     expect(output).toMatch(/Detected container runtime: podman/);
-    expect(output).toMatch(
+    expect(output).not.toMatch(
       /Podman may work in some environments, but it is not a supported runtime/,
     );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(

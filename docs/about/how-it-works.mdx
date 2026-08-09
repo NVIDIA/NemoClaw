@@ -123,15 +123,19 @@ This separation keeps host orchestration, agent-specific assets, and the sandbox
 
 ## Readiness and Sandbox Creation
 
-Run `$$nemoclaw host probe` when you need a read-only host readiness report before onboarding.
-The report describes host observations, capabilities, qualifications, findings, evidence, and CLI provenance without changing host state.
+Run `$$nemoclaw host probe` when you need a read-only system readiness report before onboarding.
+The report combines host and gateway observations, capabilities, qualifications, findings, evidence, and CLI provenance without changing system state.
+Onboarding consumes the same stable host and gateway entities and applies its explicit admission policy.
+It revalidates live facts after permitted preparation and when a saved onboarding session resumes.
 
 When you run `$$nemoclaw onboard`, the host CLI and blueprint runner complete these operations:
 
-1. NemoClaw resolves the blueprint, checks version compatibility, and verifies the digest.
-2. Onboarding validates the selected inference provider, credentials, agent settings, and platform requirements.
-3. The runner determines which gateway, provider, policy, sandbox, and integration resources to create or update.
-4. NemoClaw records progress so a supported interruption can resume or report a specific recovery action.
+1. NemoClaw resolves gateway lifecycle authority and rejects blocking system readiness results before managed resource effects.
+   A container-backed WSL GPU proof can run only after this admission check; explicit CPU-only intent skips it.
+2. NemoClaw resolves the blueprint, checks version compatibility, and verifies the digest.
+3. Onboarding validates the selected inference provider, credentials, agent settings, and platform requirements.
+4. The runner determines which gateway, provider, policy, sandbox, and integration resources to create or update.
+5. NemoClaw records progress so a supported interruption can resume or report a specific recovery action.
 
 After the sandbox starts, the selected agent uses its managed configuration and the controls supported by the host.
 
@@ -141,7 +145,7 @@ NemoClaw operates the sandbox and its manifest-declared state through host-side 
 
 | Operation | Result |
 |---|---|
-| Inspect | `host probe`, `status`, and `logs` report host, sandbox, agent-runtime, inference, and recovery information without replacing the sandbox. |
+| Inspect | `host probe`, `status`, and `logs` report system, sandbox, agent-runtime, inference, and recovery information without replacing the sandbox. |
 | Configure | Inference, policy, managed MCP, and supported agent-runtime integration commands update the applicable managed resources. |
 | Rebuild | Recreates the sandbox from the recorded configuration and restores supported agent state through a recorded transaction. |
 | Recover | Repairs a stopped or degraded agent runtime and its sandbox-scoped forwards when the recorded identities still match. |

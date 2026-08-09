@@ -15,18 +15,17 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { HOST_ADVISORY_CHECKS } from "../advisories/checks/host";
+import { ADVISORY_CHECKS } from "../advisories/registry";
 import { runAdvisories } from "../advisories/runner";
-import { failLine } from "../cli/terminal-style";
 import { DASHBOARD_PORT } from "../core/ports";
-import { isSupportedGatewayDockerHost } from "../domain/docker-host";
+import { isDockerDaemonReachable, isSupportedGatewayDockerHost } from "../domain/docker-host";
+import { resolveOpenshell } from "../readiness/openshell-resolver";
 import {
   MIN_RECOMMENDED_DOCKER_CPUS,
   MIN_RECOMMENDED_DOCKER_MEM_GIB,
 } from "./container-runtime-resources";
 import { assessNvidiaCdiHost } from "./docker-cdi";
 import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
-import { printRemediationActions } from "./remediation";
 import { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 export {
@@ -109,8 +108,6 @@ export type ContainerRuntime = "docker" | "docker-desktop" | "colima" | "podman"
 
 export type PackageManager = "apt" | "dnf" | "yum" | "brew" | "pacman" | "unknown";
 
-export type RemediationKind = "info" | "manual" | "auto" | "sudo";
-
 export interface HostAssessment {
   platform: NodeJS.Platform | string;
   isWsl: boolean;
@@ -130,6 +127,7 @@ export interface HostAssessment {
   dockerDefaultCgroupnsMode?: "host" | "private" | "unknown";
   dockerStorageDriver?: string;
   dockerUsesContainerdSnapshotter?: boolean;
+  dockerNvidiaRuntimeAvailable?: boolean;
   dockerCpus?: number;
   dockerMemTotalBytes?: number;
   isContainerRuntimeUnderProvisioned: boolean;
@@ -152,15 +150,6 @@ export interface HostAssessment {
   notes: string[];
 }
 
-export interface RemediationAction {
-  id: string;
-  title: string;
-  kind: RemediationKind;
-  reason: string;
-  commands: string[];
-  blocking: boolean;
-}
-
 export const DOCKER_DESKTOP_WSL_INTEGRATION_HINT =
   "If you use Docker Desktop from WSL, open Docker Desktop > Settings > Resources > WSL integration and enable integration for this distro.";
 
@@ -175,6 +164,7 @@ export interface AssessHostOpts {
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
+  resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
 }
@@ -190,6 +180,39 @@ function commandExists(commandName: string, runCaptureImpl: RunCaptureFn): boole
   } catch {
     return false;
   }
+}
+
+function isOpenshellAvailable(opts: AssessHostOpts, runCaptureImpl: RunCaptureFn): boolean {
+  if (opts.resolveOpenshellImpl) return opts.resolveOpenshellImpl() !== null;
+  // Preserve the explicit dependency-injection seam used by existing host
+  // assessment tests. Production callers use the secure resolver below.
+  if (opts.commandExistsImpl) return opts.commandExistsImpl("openshell");
+
+  // A caller-provided command transport may represent another host. Validate
+  // its `command -v` evidence through the same resolver without probing local
+  // fallback paths on behalf of that remote transport.
+  if (opts.runCaptureImpl) {
+    let commandVResult: string | null = null;
+    try {
+      commandVResult =
+        String(
+          runCaptureImpl(buildCommandVArgv("openshell"), {
+            ignoreError: true,
+          }) || "",
+        ).trim() || null;
+    } catch {
+      commandVResult = null;
+    }
+    return (
+      resolveOpenshell({
+        commandVResult,
+        checkExecutable: () => false,
+        home: "",
+      }) !== null
+    );
+  }
+
+  return resolveOpenshell() !== null;
 }
 
 function detectWsl(opts: {
@@ -322,62 +345,6 @@ function parseDockerInfoSummary(info = ""): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
-/**
- * Decide whether `docker info --format '{{json .}}'` output reflects an
- * actually responding daemon, not just the Docker CLI emitting a zero-value
- * client-side struct.
- *
- * NemoClaw #2348: when the daemon is unreachable (for example after
- * `colima stop`), Docker CLI can still exit 0 and print a JSON struct with
- * `ServerVersion: ""` plus `ServerErrors`. A naive non-empty-output check
- * misreads that as "daemon reachable".
- */
-function isDockerDaemonReachable(rawOutput = ""): boolean {
-  const text = String(rawOutput).trim();
-  if (!text) return false;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    // Backward-compatible fallback for callers that still inject plain-text
-    // docker info output, but do not let plain-text daemon connection errors
-    // recreate the false positive that this check is meant to prevent.
-    const lowered = text.toLowerCase();
-    return !(
-      lowered.includes("cannot connect to the docker daemon") ||
-      lowered.includes("error during connect") ||
-      lowered.includes("is the docker daemon running")
-    );
-  }
-
-  if (!parsed || typeof parsed !== "object") return false;
-  const obj = parsed as Record<string, unknown>;
-
-  // Explicit negative signal: Docker CLI fills ServerErrors when it could
-  // not reach the daemon, even when exit code is 0 under `--format`.
-  if (Array.isArray(obj.ServerErrors) && obj.ServerErrors.length > 0) {
-    return false;
-  }
-
-  // Canonical positive signal: Docker CLI and podman's docker-compat layer
-  // both populate ServerVersion from the running daemon.
-  if (typeof obj.ServerVersion === "string" && obj.ServerVersion.trim().length > 0) {
-    return true;
-  }
-
-  // podman-docker alias path: `docker info --format '{{json .}}'` actually
-  // runs `podman info`, whose native schema has no top-level ServerVersion
-  // but nests a `version.Version` instead.
-  const version = obj.version;
-  if (version && typeof version === "object") {
-    const v = (version as Record<string, unknown>).Version;
-    if (typeof v === "string" && v.trim().length > 0) return true;
-  }
-
-  return false;
-}
-
 export function parseDockerStorageDriver(info = ""): string | undefined {
   // JSON form (`docker info --format '{{json .}}'`) is the canonical caller
   // path inside this file, but accept the plain-text `Storage Driver: <name>`
@@ -395,6 +362,18 @@ export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
   // v1 plugin. Match either JSON or text form so we handle `--format '{{json
   // .}}'` output and plain `docker info` alike.
   return /io\.containerd\.snapshotter\.v1/.test(info);
+}
+
+export function parseDockerNvidiaRuntimeAvailable(info = ""): boolean | undefined {
+  const text = String(info || "").trim();
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text) as { Runtimes?: unknown };
+    if (!parsed.Runtimes || typeof parsed.Runtimes !== "object") return undefined;
+    return Object.hasOwn(parsed.Runtimes, "nvidia");
+  } catch {
+    return undefined;
+  }
 }
 
 export function parseDockerInfoCpus(info = ""): number | undefined {
@@ -604,19 +583,19 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerInstalled =
     opts.commandExistsImpl?.("docker") ?? commandExists("docker", runCaptureImpl);
   const nodeInstalled = opts.commandExistsImpl?.("node") ?? commandExists("node", runCaptureImpl);
-  const openshellInstalled =
-    opts.commandExistsImpl?.("openshell") ?? commandExists("openshell", runCaptureImpl);
+  const openshellInstalled = isOpenshellAvailable(opts, runCaptureImpl);
   const hasNvidiaGpu = opts.gpuProbeImpl?.() ?? detectNvidiaGpu(runCaptureImpl);
   const nvidiaContainerToolkitInstalled =
     opts.commandExistsImpl?.("nvidia-ctk") ?? commandExists("nvidia-ctk", runCaptureImpl);
   const packageManager = detectPackageManager(runCaptureImpl);
   const systemctlAvailable =
     opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
+  const dockerHostInvalid = !isSupportedGatewayDockerHost(env.DOCKER_HOST);
 
   let dockerInfoOutput = opts.dockerInfoOutput;
   let dockerReachable = false;
   let dockerRunning = false;
-  if (dockerInstalled && dockerInfoOutput === undefined) {
+  if (dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
     dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
       ignoreError: true,
     });
@@ -630,7 +609,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   // socket is reclassified below. Only probed when the daemon is reachable so a
   // down/absent Docker never pays for the extra call (#7320).
   let dockerVersionOutput = opts.dockerVersionOutput;
-  if (dockerReachable && dockerVersionOutput === undefined) {
+  if (dockerReachable && !dockerHostInvalid && dockerVersionOutput === undefined) {
     dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
       ignoreError: true,
     });
@@ -672,6 +651,9 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerUsesContainerdSnapshotter = dockerReachable
     ? parseDockerUsesContainerdSnapshotter(dockerInfoOutput)
     : false;
+  const dockerNvidiaRuntimeAvailable = dockerReachable
+    ? parseDockerNvidiaRuntimeAvailable(dockerInfoOutput)
+    : undefined;
   const dockerCpus = dockerReachable ? parseDockerInfoCpus(dockerInfoOutput) : undefined;
   const dockerMemTotalBytes = dockerReachable
     ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
@@ -734,7 +716,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     systemctlAvailable,
     dockerServiceActive,
     dockerServiceEnabled,
-    dockerHostInvalid: !isSupportedGatewayDockerHost(env.DOCKER_HOST),
+    dockerHostInvalid,
     dockerInstalled,
     dockerRunning,
     dockerReachable,
@@ -745,6 +727,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerDefaultCgroupnsMode,
     dockerStorageDriver,
     dockerUsesContainerdSnapshotter,
+    dockerNvidiaRuntimeAvailable,
     dockerCpus,
     dockerMemTotalBytes,
     isContainerRuntimeUnderProvisioned,
@@ -772,65 +755,14 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   return assessment;
 }
 
-/**
- * Decide whether onboarding must enforce a present-and-configured NVIDIA CDI
- * spec (i.e. block on a missing/stale spec). The fix for #5489 makes
- * `assessHost().hasNvidiaGpu` true via an lspci hardware probe when the driver
- * is unloaded, which is what flags `cdiNvidiaGpuSpecMissing`. The onboard gate
- * must enforce based on whether the operator *explicitly* opted out of GPU
- * passthrough — NOT on whether sandbox GPU was *auto*-disabled because
- * `nvidia-smi` is unavailable. Auto-disable was the bypass that let onboard skip
- * the toolkit/CDI remediation in #5489; an explicit `--no-gpu` still skips it so
- * a host with an unusable GPU can still onboard CPU-only.
- */
-export function shouldEnforceCdiNvidiaGpuSpec(opts: {
-  cdiNvidiaGpuSpecMissing: boolean;
-  cdiNvidiaGpuSpecNeedsRepair: boolean;
-  explicitlyOptedOutGpuPassthrough: boolean;
-}): boolean {
-  if (opts.explicitlyOptedOutGpuPassthrough) return false;
-  return opts.cdiNvidiaGpuSpecNeedsRepair || opts.cdiNvidiaGpuSpecMissing;
-}
-
-export function assertCdiNvidiaGpuSpecPresent(
-  host: HostAssessment,
-  explicitlyOptedOutGpuPassthrough: boolean,
-  hostGpuPlatform: string | null | undefined = null,
-  exitProcess: (code: number) => never = (code) => process.exit(code),
-): void {
-  if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
-  if (
-    !shouldEnforceCdiNvidiaGpuSpec({
-      cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
-      cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair ?? false,
-      explicitlyOptedOutGpuPassthrough,
-    })
-  )
-    return;
-  console.error(
-    failLine(
-      "Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
-    ),
-  );
-  printRemediationActions(planHostRemediation(host));
-  exitProcess(1);
-}
-
-export function planHostAdvisories(assessment: HostAssessment) {
-  return runAdvisories(HOST_ADVISORY_CHECKS, assessment, {
+export function planHostAdvisories(
+  assessment: HostAssessment,
+  options: { resuming?: boolean } = {},
+) {
+  return runAdvisories(ADVISORY_CHECKS, assessment, {
     phase: "preflight.host",
+    resuming: options.resuming,
   }).advisories;
-}
-
-export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {
-  return planHostAdvisories(assessment).map((advisory) => ({
-    id: advisory.id,
-    title: advisory.title,
-    kind: advisory.kind ?? "manual",
-    reason: advisory.reason,
-    commands: [...(advisory.commands ?? [])],
-    blocking: advisory.severity === "fatal" || advisory.severity === "blocking",
-  }));
 }
 
 // ── Port availability ────────────────────────────────────────────

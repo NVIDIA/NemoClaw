@@ -187,6 +187,23 @@ describe("public readiness presentation (#7412)", () => {
     expect(String(publicReport.evidence[0]?.details?.stderr).length).toBeLessThanOrEqual(1024);
   });
 
+  it("neutralizes terminal and bidirectional controls across the public report", () => {
+    const unsafe = "trusted\n\u001b[31mforged\u202efailure";
+    const publicReport = createPublicReadinessReport(
+      report({
+        observations: [{ id: "host.identity", state: "present", value: unsafe }],
+        findings: [{ id: "host.finding", severity: "warning", summary: unsafe }],
+        evidence: [{ id: "host.evidence", summary: unsafe, details: { productName: unsafe } }],
+      }),
+    );
+    const serialized = JSON.stringify(publicReport);
+
+    expect(serialized).toContain("trusted\\\\u000a\\\\u001b[31mforged\\\\u202efailure");
+    expect(serialized).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
+  });
+
   it("excludes camel-cased and suffixed process environment keys", () => {
     const publicReport = createPublicReadinessReport(
       report({

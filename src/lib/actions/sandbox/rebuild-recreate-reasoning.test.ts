@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
 import * as shields from "../../shields";
+import { decisionSelected } from "../../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
+import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
@@ -15,6 +18,17 @@ import { type RebuildRecreatePhaseInput, runRebuildRecreatePhase } from "./rebui
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 const SANDBOX_NAME = "rebuild-reasoning-effort";
+
+const GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  mode: "nemoclaw-managed",
+  source: "standalone",
+  endpoint: null,
+  stateDir: null,
+  supervisor: null,
+  requiredCapabilities: [],
+};
 
 const durableConfig: RebuildDurableConfig = {
   dcodeAutoApprovalMode: "disabled",
@@ -69,12 +83,14 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   observabilityRequestedExplicitly: false,
   policyTier: null,
   baseImageResolutionHint: null,
+  rebuildGatewayAuthority: GATEWAY_AUTHORITY,
 };
 
 const recreateJournal: RebuildRecreateJournal = {
   id: "11111111-1111-4111-8111-111111111111",
   acceptedTarget: false,
   sourceConfirmedAbsent: true,
+  gatewayAuthority: GATEWAY_AUTHORITY,
   targetGeneration: "22222222-2222-4222-8222-222222222222",
   targetIntentFingerprint: "rebuild-reasoning-target",
   markDeleting: vi.fn(),
@@ -126,6 +142,28 @@ describe("rebuild recreate compatible-endpoint reasoning handoff (#7940)", () =>
     previousReasoning = process.env.NEMOCLAW_REASONING;
     previousReasoningEffort = process.env.NEMOCLAW_REASONING_EFFORT;
     session = onboardSession.createSession({ sandboxName: SANDBOX_NAME });
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session),
+      sandboxIdentity: decisionSelected({ name: SANDBOX_NAME, agent: "openclaw" }),
+      gatewayAuthority: decisionSelected(GATEWAY_AUTHORITY),
+      sandboxRecreate: {
+        version: 1,
+        id: recreateJournal.id,
+        revision: 3,
+        sandboxName: SANDBOX_NAME,
+        gatewayName: GATEWAY_AUTHORITY.gatewayName,
+        gatewayPort: GATEWAY_AUTHORITY.gatewayPort,
+        sourceRegistryFingerprint: "source-registry",
+        sourceLiveIdentityFingerprint: null,
+        sourceWorkload: null,
+        targetIntentFingerprint: recreateJournal.targetIntentFingerprint,
+        targetGeneration: recreateJournal.targetGeneration,
+        targetLiveIdentityFingerprint: null,
+        phase: "deleted",
+        startedAt: "2026-08-07T00:00:00.000Z",
+        updatedAt: "2026-08-07T00:00:01.000Z",
+      },
+    };
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(shields, "clearShieldsState").mockImplementation(() => undefined);

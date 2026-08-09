@@ -508,5 +508,16 @@ export function projectPlatformQualification(
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });
   }
+  if (
+    !platformSupported &&
+    !findings.some(({ severity }) => severity === "blocking" || severity === "fatal")
+  ) {
+    findings.push({
+      id: "host.platform.unsupported",
+      severity: "blocking",
+      summary: "The detected host platform and container runtime are not supported.",
+      capabilityIds: ["host.platform.supported"],
+    });
+  }
   return { capabilities, qualifications, findings, evidence };
 }

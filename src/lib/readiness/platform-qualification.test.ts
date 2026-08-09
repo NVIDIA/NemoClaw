@@ -182,6 +182,18 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.supported")).toBe(expected ? "present" : "absent");
   });
 
+  it.each([
+    ["Intel macOS", { platform: "darwin", architecture: "x64", runtime: "docker-desktop" }],
+    ["native Docker in WSL", { isWsl: true, runtime: "docker" }],
+  ] as const)("blocks unsupported platform combination: %s", (_scenario, overrides) => {
+    const result = projectPlatformQualification(input(overrides));
+
+    expect(capability(result, "host.platform.supported")).toBe("absent");
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.platform.unsupported", severity: "blocking" }),
+    );
+  });
+
   it("qualifies DGX Spark while retaining product identity as bounded evidence", () => {
     const result = projectPlatformQualification(
       input({

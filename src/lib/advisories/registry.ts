@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { HOST_ADVISORY_CHECKS } from "./checks/host";
 import type { AdvisoryCheck } from "./types";
 
 /** Creates an explicit, immutable advisory registry with globally unique IDs. */
@@ -16,4 +17,4 @@ export function defineAdvisoryRegistry<Context>(
 }
 
 /** Checks are imported and registered explicitly as migration slices land (#3213). */
-export const ADVISORY_CHECKS = defineAdvisoryRegistry<unknown>([]);
+export const ADVISORY_CHECKS = defineAdvisoryRegistry(HOST_ADVISORY_CHECKS);
