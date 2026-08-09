@@ -994,6 +994,36 @@ describe("production pinned peer transport", () => {
     ).toEqual({ check: "rails" });
   });
 
+  it("groups the verified DGX Spark dual-controller rail pair as one QSFP port (#8520)", () => {
+    const observed = host("local");
+    const local = host("local", {
+      rails: [
+        {
+          ...observed.rails[0]!,
+          pciAddress: "0000:01:00.0",
+          physicalPortId: "pci-0000:01:00",
+        },
+        {
+          ...observed.rails[1]!,
+          pciAddress: "0002:01:00.0",
+          physicalPortId: "pci-0002:01:00",
+        },
+      ],
+    });
+
+    const base = fixture();
+    const deps: ManagedClusterDiscoveryDeps = {
+      ...base.deps,
+      probeHost: (candidate) => (candidate === base.localTransport ? local : host("peer")),
+    };
+
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
+
+    expect(detected.topology).toMatchObject({ status: "qualified" });
+  });
+
   it("uses strict SSH and a fixed argv executor without interpolated shell", () => {
     const calls: Array<{
       file: string;

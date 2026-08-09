@@ -645,7 +645,14 @@ function qualifyHost(
     };
   }
   const qualified: QualifiedRail[] = [];
-  for (const [index, rail] of cx7.entries()) {
+  const observedPciAddresses = new Set(cx7.map(({ pciAddress }) => pciAddress.toLowerCase()));
+  const normalizedCx7 =
+    observedPciAddresses.size === 2 &&
+    observedPciAddresses.has("0000:01:00.0") &&
+    observedPciAddresses.has("0002:01:00.0")
+      ? cx7.map((rail) => ({ ...rail, physicalPortId: "dgx-spark-qsfp-near-rj45" }))
+      : cx7;
+  for (const [index, rail] of normalizedCx7.entries()) {
     if (
       !/\bACTIVE\b/i.test(rail.state) ||
       rail.operState.toLowerCase() !== "up" ||

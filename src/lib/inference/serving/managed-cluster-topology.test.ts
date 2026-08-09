@@ -476,6 +476,17 @@ describe("managed DGX Spark cluster topology qualification", () => {
     });
   });
 
+  it("reports the observed physical-port identities when rails do not share a port", () => {
+    const input = qualificationInput();
+    input.local.rails[1]!.physicalPortId = "cx7-right-head";
+
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code: "fabric-multiple",
+      message: "The candidate logical rails belong to more than one physical port: cx7-left-head, cx7-right-head.",
+    });
+  });
+
   it("rejects a peer whose SSH binding state is not trusted", () => {
     const input = qualificationInput();
     input.peers[0]!.sshBinding.state = "untrusted";
