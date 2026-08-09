@@ -1,0 +1,171 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: OpenShell 0.0.101 PR Gate
+
+run-name: >-
+  ${{ format('OpenShell draft gate PR #{0} head {1} base {2}',
+  github.event.pull_request.number, github.event.pull_request.head.sha,
+  github.event.pull_request.base.sha) }}
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  classify:
+    name: Classify trusted qualification scope
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      required: ${{ steps.classify.outputs.required }}
+      same-repository: ${{ steps.classify.outputs.same-repository }}
+    steps:
+      - name: Set up base-trusted qualification runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Checkout base-trusted qualification verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-openshell-qualification
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/checks/openshell-qualification-bootstrap-contract.mts
+            scripts/checks/openshell-qualification-io.mts
+            scripts/checks/openshell-qualification-paths.mts
+            scripts/checks/verify-openshell-qualification-pr-gate.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Classify pull request from base-trusted code
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          .trusted-openshell-qualification/scripts/checks/verify-openshell-qualification-pr-gate.mts
+          classify
+          --repository "$REPOSITORY"
+          --pr-number "$PR_NUMBER"
+          --candidate-sha "$CANDIDATE_SHA"
+          --base-sha "$BASE_SHA"
+          --output "$GITHUB_OUTPUT"
+
+  verify-draft:
+    name: Verify inert draft transition
+    needs: classify
+    if: >-
+      needs.classify.result == 'success' &&
+      needs.classify.outputs.required == 'true' &&
+      needs.classify.outputs.same-repository == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up base-trusted qualification runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Checkout base-trusted draft verifier and data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-openshell-qualification
+          persist-credentials: false
+          sparse-checkout: |
+            ci/openshell-0.0.101-qualification-v1.json
+            nemoclaw-blueprint/blueprint.yaml
+            scripts/checks/openshell-qualification-bootstrap-contract.mts
+            scripts/checks/openshell-qualification-io.mts
+            scripts/checks/openshell-qualification-paths.mts
+            scripts/checks/verify-openshell-qualification-pr-gate.mts
+          sparse-checkout-cone-mode: false
+
+      # This checkout contains declarative data only. Base-trusted code reads
+      # it through the draft schema and never executes candidate content.
+      - name: Checkout candidate qualification data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .candidate-openshell-qualification
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+          sparse-checkout: |
+            ci/openshell-0.0.101-qualification-v1.json
+            nemoclaw-blueprint/blueprint.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Verify draft through base-trusted code
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          .trusted-openshell-qualification/scripts/checks/verify-openshell-qualification-pr-gate.mts
+          verify-draft
+          --repository "$REPOSITORY"
+          --pr-number "$PR_NUMBER"
+          --candidate-sha "$CANDIDATE_SHA"
+          --base-sha "$BASE_SHA"
+          --base-root "$GITHUB_WORKSPACE/.trusted-openshell-qualification"
+          --candidate-root "$GITHUB_WORKSPACE/.candidate-openshell-qualification"
+
+  openshell-qualification:
+    name: openshell-qualification
+    if: always()
+    needs: [classify, verify-draft]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Report qualification decision
+        env:
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          REQUIRED: ${{ needs.classify.outputs.required }}
+          SAME_REPOSITORY: ${{ needs.classify.outputs.same-repository }}
+          VERIFY_DRAFT_RESULT: ${{ needs.verify-draft.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CLASSIFY_RESULT" != "success" ]]; then
+            echo "::error::Base-trusted OpenShell qualification classification failed."
+            exit 1
+          fi
+          if [[ "$REQUIRED" == "false" ]]; then
+            echo "OpenShell 0.0.101 qualification is not applicable to this pull request."
+            exit 0
+          fi
+          if [[ "$REQUIRED" != "true" ]]; then
+            echo "::error::The base-trusted qualification decision is missing or malformed."
+            exit 1
+          fi
+          if [[ "$SAME_REPOSITORY" == "false" ]]; then
+            echo "::error::Qualification-sensitive fork pull requests fail closed."
+            exit 1
+          fi
+          if [[ "$SAME_REPOSITORY" != "true" ]]; then
+            echo "::error::The base-trusted repository decision is missing or malformed."
+            exit 1
+          fi
+          if [[ "$VERIFY_DRAFT_RESULT" != "success" ]]; then
+            echo "::error::The base-trusted inert draft transition was not verified."
+            exit 1
+          fi
+          echo "The base-trusted inert OpenShell qualification draft transition is verified."
