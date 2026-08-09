@@ -351,8 +351,8 @@ describe("pull request and main workflow contracts", () => {
     ),
   };
 
-  // source-shape-contract: security -- Base-SHA action execution prevents pull-request code from authorizing installer hashes
-  it("executes installer hash checks only from the PR base revision", () => {
+  // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
+  it("executes installer hash checks only from the PR base SHA", () => {
     expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
 
     const headCheckout = structuredClone(installerHashWorkflow);

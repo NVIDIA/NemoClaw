@@ -41,13 +41,6 @@ type Workflow = {
 };
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const BOOTSTRAP_SHA = "0c7dd29394d2c4db660c4d09f3654c0789e200d0";
-// Removal condition: delete the PR-6830 fork bootstrap after this PR merges and
-// the base branch contains the schema-v2 reviewed npm audit action.
-const BOOTSTRAP_IF =
-  "${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && github.event.pull_request.number == 6830 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}";
-const REJECT_UNAVAILABLE_IF =
-  "${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && (github.event.pull_request.number != 6830 || github.event.pull_request.head.repo.full_name != 'HOYALIM/NemoClaw') }}";
 const DOMEXCEPTION_INTEGRITY =
   "sha512-tlc/FcYIv5i8RYsl2iDil4A0gOihaas1R5jPcIC4Zw3GhjKsVilw90aHcVlhZPTBLGBzd379S+VcnsDjd9ChiA==";
 
