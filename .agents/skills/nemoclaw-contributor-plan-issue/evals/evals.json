@@ -13,6 +13,18 @@
     ]
   },
   {
+    "id": "positive-bare-plan-trigger",
+    "question": "plan issue https://github.com/NVIDIA/NemoClaw/issues/8378",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The documented bare trigger loads the planning workflow and returns the exact structured report rather than free-form prose or implementation code.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Starts with `# Issue #8378:` and preserves every required level-two report heading through `## GitHub writes`.",
+      "Reports `Not authorized; plan only` under GitHub writes.",
+      "Does not emit implementation code, a Safety Considerations substitute, or a Next Steps substitute."
+    ]
+  },
+  {
     "id": "negative-implementation",
     "question": "Implement NVIDIA/NemoClaw issue #8378 and add the tests. Do not spend time writing a plan.",
     "expected_skill": null,

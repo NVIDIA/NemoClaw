@@ -12,6 +12,14 @@ Produce an evidence-based issue plan before implementation starts. Refine the re
 an accepted issue or accepted design decision. Divide delivery into independently valuable capability
 slices. Do not edit source, implement a slice, push a branch, or publish a pull request in this workflow.
 
+## Required response contract
+
+For every successful issue-planning invocation, including the bare trigger `plan issue <issue-url>`,
+the final response must use the exact report structure in [Report the plan](#report-the-plan).
+Do not replace its headings with free-form prose, implementation code, "Safety Considerations," or
+"Next Steps." Complete research first, then render the report once. Start the final response with
+`# Issue #<number>: <title>` and include every applicable section through `## GitHub writes`.
+
 ## Route the request
 
 Use this workflow for an explicit request to plan, refine, scope, divide, or define acceptance for
@@ -108,7 +116,8 @@ implementation or pull request publication.
 
 ## Report the plan
 
-Use this structure:
+Use this structure exactly. Keep the headings unchanged so users and automated checks can identify
+the planning result reliably:
 
 ```markdown
 # Issue #<number>: <title>

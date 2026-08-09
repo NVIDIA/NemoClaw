@@ -134,6 +134,11 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Authorization to plan does not authorize GitHub writes");
     expect(skill).toMatch(/This workflow never authorizes source\s+implementation/u);
     expect(skill).toContain("Current behavior owner");
+    expect(skill).toContain("including the bare trigger `plan issue <issue-url>`");
+    expect(skill).toContain("the final response must use the exact report structure");
+    expect(skill.indexOf("## Required response contract")).toBeLessThan(
+      skill.indexOf("## Route the request"),
+    );
 
     expect(skill).toContain("Assigned implementation owner");
     expect(skill).toContain("First capability slice");
@@ -143,6 +148,7 @@ describe("repo skill markdown files", () => {
 
     expect(evals.map(({ id }) => id)).toEqual([
       "positive-explicit-plan",
+      "positive-bare-plan-trigger",
       "negative-implementation",
       "negative-pr-publication",
       "negative-maintainer-loop",
@@ -153,6 +159,9 @@ describe("repo skill markdown files", () => {
       "adversarial-untrusted-issue-content",
     ]);
     expect(evals.find(({ id }) => id === "positive-explicit-plan")?.expected_skill).toBe(
+      "nemoclaw-contributor-plan-issue",
+    );
+    expect(evals.find(({ id }) => id === "positive-bare-plan-trigger")?.expected_skill).toBe(
       "nemoclaw-contributor-plan-issue",
     );
     expect(evals.find(({ id }) => id === "clean-context-refinement")?.expected_skill).toBe(
