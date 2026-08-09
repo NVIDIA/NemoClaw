@@ -102,6 +102,11 @@ RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtim
     && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$discovery_unsafe" \
+    && test -f /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
+    && test ! -L /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
+    && chown root:root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
+    && chmod 0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
+    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs)" = '0:0:444' \
     && install -d -o root -g root -m 0755 /run/nemoclaw
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
