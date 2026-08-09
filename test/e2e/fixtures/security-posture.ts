@@ -200,14 +200,19 @@ def child_supervisor_census():
             if observed > MAX_PROC_ENTRIES:
                 raise RuntimeError("process census exceeded its checked bound")
             try:
-                selected_argv = argv_for(Path(entry.path))
+                selected_path = Path(entry.path)
+                _, _, selected_start_time = stat_identity(
+                    (selected_path / "stat").read_text(encoding="utf-8")
+                )
+                selected_argv = argv_for(selected_path)
             except (FileNotFoundError, ProcessLookupError):
                 continue
             if is_nemoclaw_start_supervisor(selected_argv):
                 process = stable_process(entry.name)
                 stable_argv = tuple(item.encode("utf-8") for item in process["argv"])
                 if (
-                    stable_argv != selected_argv
+                    process["startTime"] != selected_start_time
+                    or stable_argv != selected_argv
                     or not is_nemoclaw_start_supervisor(stable_argv)
                     or process["executable"] not in SYSTEM_BASH_EXECUTABLES
                 ):

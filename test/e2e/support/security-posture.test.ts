@@ -96,7 +96,6 @@ exec(compile(probe, "<security-posture-split-process>", "exec"), {"__name__": "_
 
 type ControlledCensus = {
   children: ProcessSecurityIdentity[];
-  order?: number[];
   selectedChildren?: ProcessSecurityIdentity[];
 };
 
@@ -227,36 +226,21 @@ function runSplitProcessProbeWithCensuses(censuses: ControlledCensus[]) {
     writeProcProcess(procRoot, report.supervisor);
     const controlledCensuses = censuses.map((census, index) => {
       const snapshotRoot = path.join(procRoot, "snapshots", String(index));
-      const stableByPid = new Map(census.children.map((process) => [process.pid, process]));
-      const selectedByPid = new Map(
-        (census.selectedChildren ?? census.children).map((process) => [process.pid, process]),
-      );
-      const order = census.order ?? [1, ...census.children.map(({ pid }) => pid)];
-      return order.map((pid) => {
-        if (pid === 1) {
-          return {
-            pid,
-            selectedPath: path.join(procRoot, "1"),
-            stablePath: path.join(procRoot, "1"),
-          };
-        }
-        const stable = stableByPid.get(pid);
-        const selected = selectedByPid.get(pid);
-        if (!stable || !selected) throw new Error(`missing controlled process ${pid}`);
-        const stableRoot = path.join(snapshotRoot, "stable");
+      const stableRoot = path.join(snapshotRoot, "stable");
+      const selectedRoot = path.join(snapshotRoot, "selected");
+      const selectedChildren = census.selectedChildren ?? census.children;
+      const children = census.children.map((stable, childIndex) => {
+        const selected = selectedChildren[childIndex]!;
         writeProcProcess(stableRoot, stable);
-        let selectedPath = path.join(stableRoot, String(pid));
-        if (selected !== stable) {
-          const selectedRoot = path.join(snapshotRoot, "selected");
-          writeProcProcess(selectedRoot, selected);
-          selectedPath = path.join(selectedRoot, String(pid));
-        }
+        writeProcProcess(selectedRoot, selected);
         return {
-          pid,
-          selectedPath,
-          stablePath: path.join(stableRoot, String(pid)),
+          pid: stable.pid,
+          selectedPath: path.join(selectedRoot, String(stable.pid)),
+          stablePath: path.join(stableRoot, String(stable.pid)),
         };
       });
+      const supervisorPath = path.join(procRoot, "1");
+      return [{ pid: 1, selectedPath: supervisorPath, stablePath: supervisorPath }, ...children];
     });
     return spawnSync(
       "python3",
@@ -321,7 +305,7 @@ describe("security posture fixture", () => {
     const descendant = validNemoclawStartProcess({ pid: 43, ppid: 42, startTime: "203" });
     const result = runSplitProcessProbeWithCensuses([
       { children: [direct, descendant] },
-      { children: [direct, descendant], order: [43, 1, 42] },
+      { children: [descendant, direct] },
     ]);
 
     expect(result.error, "python3 is required to run the embedded probe").toBeUndefined();
@@ -346,7 +330,7 @@ describe("security posture fixture", () => {
     const result = runSplitProcessProbeWithCensuses([
       { children: [direct, firstDescendant] },
       { children: [direct, finalDescendant] },
-      { children: [direct, finalDescendant], order: [44, 42, 1] },
+      { children: [finalDescendant, direct] },
     ]);
 
     expect(result.error, "python3 is required to run the embedded probe").toBeUndefined();
@@ -429,6 +413,19 @@ describe("security posture fixture", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/process changed after census selection/u);
     expect(result.stderr).not.toContain("DO_NOT_LOG");
+  });
+
+  it("rejects same-command PID reuse after census selection", () => {
+    const selected = validNemoclawStartProcess({ startTime: "202" });
+    selected.status.capEff = "0000000000000001";
+    const reused = validNemoclawStartProcess({ startTime: "303" });
+    const result = runSplitProcessProbeWithCensuses([
+      { children: [reused], selectedChildren: [selected] },
+    ]);
+
+    expect(result.error, "python3 is required to run the embedded probe").toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/process changed after census selection/u);
   });
 
   it("rejects a retained census that grows beyond the observed process bound", () => {
