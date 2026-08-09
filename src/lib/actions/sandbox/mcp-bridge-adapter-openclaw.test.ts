@@ -84,6 +84,7 @@ describe("OpenClaw mcporter MCP adapter", () => {
       const fakeMcporter = path.join(temp, "mcporter");
       const configState = path.join(temp, "config.json");
       const homeConfigState = path.join(temp, "xdg", "mcporter", "mcporter.json");
+      const defaultXdgConfigState = path.join(temp, "home", ".config", "mcporter", "mcporter.json");
       const legacyConfigState = path.join(temp, "legacy", "mcporter.json");
       const argvLog = path.join(temp, "argv.jsonl");
       const removeMarker = path.join(temp, "removed");
@@ -151,6 +152,20 @@ describe("OpenClaw mcporter MCP adapter", () => {
             FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
           },
         });
+      const runWithoutXdg = (command: string) => {
+        const env = {
+          ...process.env,
+          HOME: path.join(temp, "home"),
+          PATH: `${temp}:${process.env.PATH ?? ""}`,
+          FAKE_MCPORTER_ARGV_LOG: argvLog,
+          FAKE_MCPORTER_PROJECT_CONFIG: configState,
+          FAKE_MCPORTER_HOME_CONFIG: defaultXdgConfigState,
+          FAKE_MCPORTER_LEGACY_CONFIG: legacyConfigState,
+          FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
+        };
+        delete env.XDG_CONFIG_HOME;
+        return spawnSync("/bin/sh", ["-c", command], { encoding: "utf8", env });
+      };
       const normalizedHeaders = {
         Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
         accept: "application/json, text/event-stream",
@@ -220,6 +235,25 @@ describe("OpenClaw mcporter MCP adapter", () => {
       expect(run(buildOpenClawMcporterInspectCommand(baseEntry, false)).stdout.trim()).toBe(
         "absent",
       );
+
+      fs.mkdirSync(path.dirname(defaultXdgConfigState), { recursive: true });
+      fs.writeFileSync(
+        defaultXdgConfigState,
+        JSON.stringify({
+          name: "github",
+          transport: "http",
+          baseUrl: "https://api.githubcopilot.com/mcp/",
+          headers: normalizedHeaders,
+        }),
+      );
+      expect(runWithoutXdg(buildOpenClawMcporterRegisterCommand(baseEntry, true)).status).toBe(0);
+      const defaultXdgRemove = runWithoutXdg(buildOpenClawMcporterRemoveCommand(baseEntry));
+      expect(defaultXdgRemove.status).toBe(0);
+      expect(fs.existsSync(configState)).toBe(false);
+      expect(fs.existsSync(defaultXdgConfigState)).toBe(false);
+      expect(
+        runWithoutXdg(buildOpenClawMcporterInspectCommand(baseEntry, false)).stdout.trim(),
+      ).toBe("absent");
 
       fs.writeFileSync(
         configState,
