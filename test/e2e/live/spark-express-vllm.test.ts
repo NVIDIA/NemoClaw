@@ -137,10 +137,21 @@ async function removeExactSandbox(
   sandboxId: string,
 ): Promise<void> {
   const current = await inspectSandbox(host, sandboxName, "cleanup-spark-express-sandbox-inspect");
-  if (current.kind === "absent") return;
+  return current.kind === "absent"
+    ? undefined
+    : removePresentExactSandbox(host, sandbox, sandboxName, sandboxId, current.id);
+}
+
+async function removePresentExactSandbox(
+  host: HostCliClient,
+  sandbox: Parameters<typeof cleanupSandbox>[1],
+  sandboxName: string,
+  sandboxId: string,
+  currentSandboxId: string,
+): Promise<void> {
   expect(
-    current.id,
-    `Refusing to remove replacement sandbox ${sandboxName}; expected ${sandboxId}, got ${current.id}`,
+    currentSandboxId,
+    `Refusing to remove replacement sandbox ${sandboxName}; expected ${sandboxId}, got ${currentSandboxId}`,
   ).toBe(sandboxId);
   await cleanupSandbox(host, sandbox, sandboxName, { strict: true });
   const list = await host.command("openshell", ["sandbox", "list", "--names"], {
@@ -327,9 +338,9 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
     "spark-express-vllm-sandbox-inspect",
   );
   createdSandboxId = sandboxInspection.kind === "present" ? sandboxInspection.id : null;
-  if (onboard.exitCode !== 0) {
-    await captureOnboardFailureDiagnostics(host, SANDBOX_NAME);
-  }
+  await (onboard.exitCode !== 0
+    ? captureOnboardFailureDiagnostics(host, SANDBOX_NAME)
+    : Promise.resolve());
 
   progress.phase("verify catalog-owned vLLM runtime configuration");
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
