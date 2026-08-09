@@ -1122,25 +1122,28 @@ def _openclaw_port(reader: ProcReader, supervisor: ProcessIdentity) -> int:
     return port
 
 
-def _hermes_api_port() -> int:
-    """Read the per-sandbox port the OpenAI-compatible API is exposed on.
+def _hermes_api_port(reader: ProcReader, supervisor: ProcessIdentity) -> int:
+    """Resolve the public API port from the managed supervisor environment.
 
-    The entrypoint publishes the allocated port as a read-only marker so the
-    probe targets the port this sandbox's relay actually listens on. The marker
-    is root-owned under privilege separation, where the sandbox user cannot
-    rewrite it. In the same-uid topology the gateway already runs as the sandbox
-    user, so that user owns the marker and the probe target is only as trusted
-    as the sandbox user. A sandbox whose image predates the marker has none and
-    keeps the original port.
+    The host fixes this environment when it creates the sandbox. Reading it
+    through the pinned supervisor identity binds lifecycle health to a source
+    the same-UID sandbox user cannot replace with a filesystem entry.
     """
+    environment = _parse_environment(
+        reader.read_stable_file(supervisor, "environ", MAX_ENV_BYTES)
+    )
+    raw = environment.get("NEMOCLAW_HERMES_API_PORT", "").strip()
+    if not raw:
+        return 8642
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
     try:
-        raw = Path("/run/nemoclaw/hermes-api-port").read_text(encoding="utf-8").strip()
-    except OSError:
-        return 8642
-    if not raw.isdigit():
-        return 8642
-    port = int(raw)
-    return port if 1024 <= port <= 65535 else 8642
+        port = int(raw, 10)
+    except ValueError as exc:
+        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH") from exc
+    if port < 8642 or port > 8652:
+        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
+    return port
 
 
 def _agent_spec(
@@ -1150,7 +1153,7 @@ def _agent_spec(
         return AgentSpec(
             name="hermes",
             port=18642,
-            readiness_checks=((_hermes_api_port(), "/health"),),
+            readiness_checks=((_hermes_api_port(reader, supervisor), "/health"),),
         )
     return AgentSpec(name="openclaw", port=_openclaw_port(reader, supervisor))
 

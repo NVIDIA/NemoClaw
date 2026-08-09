@@ -23,8 +23,15 @@ describe("readHermesApiPort", () => {
     expect(readHermesApiPort({})).toBe(8642);
   });
 
-  it("rejects a value outside the valid port range", () => {
-    expect(() => readHermesApiPort({ [HERMES_API_PORT_ENV]: "80" })).toThrow(/must be an integer/);
+  it.each([
+    "8641",
+    "8653",
+    "9000",
+    "²",
+  ])("rejects %s outside the allocated Hermes API-port range", (value) => {
+    expect(() => readHermesApiPort({ [HERMES_API_PORT_ENV]: value })).toThrow(
+      /integer from 8642 through 8652/,
+    );
   });
 });
 
@@ -60,6 +67,44 @@ describe("resolveOnboardHermesApiPort", () => {
     const env = { [HERMES_API_PORT_ENV]: "8650" };
     expect(resolveOnboardHermesApiPort("beta", { env, getSandbox: () => undefined })).toBe(8650);
     expect(env[HERMES_API_PORT_ENV]).toBe("8650");
+  });
+
+  it("rejects a conflicting existing-sandbox override before forward setup", () => {
+    const env = { [HERMES_API_PORT_ENV]: "8644" };
+    const findAvailablePort = vi.fn(() => 8645);
+
+    expect(() =>
+      resolveOnboardHermesApiPort("beta", {
+        env,
+        getSandbox: () => ({ hermesApiPort: 8643 }),
+        findAvailablePort,
+      }),
+    ).toThrow(/already uses recorded Hermes API port 8643.*--recreate-sandbox/);
+    expect(findAvailablePort).not.toHaveBeenCalled();
+  });
+
+  it("applies a conflicting override only at a create or registration boundary", () => {
+    const env = { [HERMES_API_PORT_ENV]: "8644" };
+
+    expect(
+      resolveOnboardHermesApiPort("beta", {
+        env,
+        getSandbox: () => ({ hermesApiPort: 8643 }),
+        allowRegisteredOverride: true,
+      }),
+    ).toBe(8644);
+    expect(env[HERMES_API_PORT_ENV]).toBe("8644");
+  });
+
+  it("accepts an explicit value that matches the registered port", () => {
+    const env = { [HERMES_API_PORT_ENV]: "8643" };
+
+    expect(
+      resolveOnboardHermesApiPort("beta", {
+        env,
+        getSandbox: () => ({ hermesApiPort: 8643 }),
+      }),
+    ).toBe(8643);
   });
 
   it("keeps a registered sandbox without a port on the default instead of allocating", () => {

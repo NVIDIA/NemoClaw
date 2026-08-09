@@ -190,6 +190,8 @@ export interface SandboxRuntimeEnvArgsInput {
   /** Host port this sandbox exposes its OpenAI-compatible API on. */
   hermesApiPort?: number | null;
   extraPlaceholderKeys: readonly string[];
+  /** Allow a create/recreate launch to replace a registered Hermes API port. */
+  allowHermesApiPortOverride?: boolean;
   observabilityEnabled?: boolean;
   sandboxName?: string;
   env: NodeJS.ProcessEnv;
@@ -229,7 +231,11 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
   if (agent?.name === "hermes" && input.sandboxName) {
     const apiPort =
       input.hermesApiPort ??
-      resolveOnboardHermesApiPort(input.sandboxName, { env, warn: console.warn });
+      resolveOnboardHermesApiPort(input.sandboxName, {
+        env,
+        warn: console.warn,
+        allowRegisteredOverride: input.allowHermesApiPortOverride,
+      });
     envArgs.push(formatEnvAssignment(HERMES_API_PORT_ENV, String(apiPort)));
   }
   appendHostProxyEnvArgs(envArgs, env, {
@@ -292,6 +298,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     extraPlaceholderKeys: input.extraPlaceholderKeys,
     observabilityEnabled: input.observabilityEnabled,
     sandboxName: input.sandboxName,
+    allowHermesApiPortOverride: true,
     env,
   });
 

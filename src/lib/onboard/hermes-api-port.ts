@@ -5,6 +5,7 @@ import {
   HERMES_API_PORT_RANGE_END,
   HERMES_API_PORT_RANGE_START,
   HERMES_OPENAI_API_PORT,
+  isHermesApiPort,
 } from "../core/ports";
 import * as registry from "../state/registry";
 import {
@@ -21,11 +22,12 @@ const HERMES_API_RANGE: HostPortRange = {
   start: HERMES_API_PORT_RANGE_START,
   end: HERMES_API_PORT_RANGE_END,
   label: "Hermes API",
-  remedy: `Free a sandbox or set ${HERMES_API_PORT_ENV}=<N> with a port outside this range.`,
+  remedy:
+    "Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.",
 };
 
 export function isValidHermesApiPort(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1024 && value <= 65535;
+  return typeof value === "number" && Number.isInteger(value) && isHermesApiPort(value);
 }
 
 /**
@@ -40,7 +42,7 @@ export function readHermesApiPort(env: NodeJS.ProcessEnv = process.env): number 
   const trimmed = raw.trim();
   if (!/^\d+$/.test(trimmed) || !isValidHermesApiPort(Number(trimmed))) {
     throw new Error(
-      `Invalid port: ${HERMES_API_PORT_ENV}="${raw}" must be an integer between 1024 and 65535`,
+      `Invalid port: ${HERMES_API_PORT_ENV}="${raw}" must be an integer from 8642 through 8652`,
     );
   }
   return Number(trimmed);
@@ -109,39 +111,49 @@ export function retargetHermesApiPortInUrl(url: string, apiPort: number): string
  * argument through the onboarding entrypoint. The ready summary instead reads
  * the registry, which is equivalent because registration precedes it.
  *
- * Precedence matches `resolveCreateSandboxDashboardPort`: an explicit operator
- * value wins, then the sandbox's registered value, then a fresh allocation.
+ * An existing sandbox keeps its recorded port unless the caller is the actual
+ * create/recreate or created-sandbox registration boundary. Other consumers
+ * reject a conflicting explicit value before they mutate a host forward. A
+ * registered sandbox without a port predates this feature and already runs on
+ * the default.
  *
- * Only a sandbox with no registry row can take a fresh allocation. A registered
- * sandbox without a port predates the per-sandbox port and already runs on the
- * default, so allocating for it would rebind the sandbox away from the port its
- * host forward still uses. Relaunch reaches this function through
- * `buildSandboxRuntimeEnvArgs`, where that divergence would otherwise be silent.
- *
- * A recreate keeps its source row, so a sandbox that predates the feature also
- * keeps the default across `--recreate-sandbox`. Destroy it and onboard again to
- * allocate one.
+ * A recreate keeps its source row, so its create and registration boundaries
+ * may apply an explicit value. Without an explicit value, it preserves the
+ * recorded port.
  */
 export function resolveOnboardHermesApiPort(
   sandboxName: string,
   options: {
     env?: NodeJS.ProcessEnv;
     getSandbox?: (name: string) => { hermesApiPort?: number | null } | undefined;
+    allowRegisteredOverride?: boolean;
     forwardListOutput?: string | null;
     findAvailablePort?: typeof findAvailableHermesApiPort;
     warn?: (message: string) => void;
   } = {},
 ): number {
   const env = options.env ?? process.env;
+  const hasRequestedPort = Boolean(env[HERMES_API_PORT_ENV]?.trim());
   const requested = readHermesApiPort(env);
   const publish = (port: number): number => {
     env[HERMES_API_PORT_ENV] = String(port);
     return port;
   };
-  if (env[HERMES_API_PORT_ENV]?.trim()) return publish(requested);
   const registered = (options.getSandbox ?? registry.getSandbox)(sandboxName);
-  if (isValidHermesApiPort(registered?.hermesApiPort)) return publish(registered.hermesApiPort);
-  if (registered) return publish(HERMES_OPENAI_API_PORT);
+  if (registered) {
+    const registeredPort = resolveSandboxHermesApiPort(registered);
+    if (
+      hasRequestedPort &&
+      requested !== registeredPort &&
+      options.allowRegisteredOverride !== true
+    ) {
+      throw new Error(
+        `${HERMES_API_PORT_ENV}=${requested} conflicts with sandbox "${sandboxName}", which already uses recorded Hermes API port ${registeredPort}. Rerun onboarding with --recreate-sandbox to apply a different port.`,
+      );
+    }
+    return publish(hasRequestedPort ? requested : registeredPort);
+  }
+  if (hasRequestedPort) return publish(requested);
   const port = (options.findAvailablePort ?? findAvailableHermesApiPort)(
     sandboxName,
     HERMES_OPENAI_API_PORT,

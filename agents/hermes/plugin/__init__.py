@@ -1036,22 +1036,24 @@ def _hermes_api_port():
     """Read the per-sandbox port the OpenAI-compatible API is exposed on.
 
     NemoClaw allocates this port per sandbox so two Hermes sandboxes can serve
-    inference on one host, and the entrypoint publishes it as a read-only
-    marker. The marker is root-owned under privilege separation, where the
-    sandbox user cannot rewrite it. In the same-uid topology the gateway already
-    runs as the sandbox user, so that user owns the marker and the reported port
-    is only as trusted as the sandbox user. A sandbox whose image predates the
-    marker has none and keeps the original port.
+    inference on one host. The plugin normally inherits the allocated value
+    from the managed supervisor. The root-separated topology also publishes a
+    root-owned marker for processes that do not inherit that environment.
     """
+    raw = os.environ.get("NEMOCLAW_HERMES_API_PORT", "").strip()
+    if not raw:
+        try:
+            with open("/run/nemoclaw/hermes-api-port") as f:
+                raw = f.read().strip()
+        except OSError:
+            return 8642
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        return 8642
     try:
-        with open("/run/nemoclaw/hermes-api-port") as f:
-            raw = f.read().strip()
-    except OSError:
+        port = int(raw)
+    except ValueError:
         return 8642
-    if not raw.isdigit():
-        return 8642
-    port = int(raw)
-    return port if 1024 <= port <= 65535 else 8642
+    return port if 8642 <= port <= 8652 else 8642
 
 
 def _get_sandbox_info():

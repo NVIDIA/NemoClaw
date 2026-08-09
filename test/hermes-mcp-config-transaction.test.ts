@@ -334,6 +334,7 @@ module.HERMES_DIR = sys.argv[3]
 module.CONFIG_PATH = os.path.join(module.HERMES_DIR, "config.yaml")
 module.os.geteuid = lambda: 1000
 module._assert_non_root_lifecycle_identity = lambda: None
+module._configure_gateway_public_port = lambda: None
 payload = {
     "server": "safe",
     "url": "https://mcp.example.test/mcp",
@@ -1156,6 +1157,7 @@ def trusted_gateway(pid):
     return True
 module._is_trusted_gateway_process = trusted_gateway
 module._gateway_has_managed_parent = lambda pid: True
+module._configure_gateway_public_port = lambda: None
 def signal_gateway(pid, sent_signal):
     observed["signal_uid"] = module.os.geteuid()
     observed["signal_pid"] = pid
@@ -1372,8 +1374,9 @@ module.os.geteuid = lambda: 1000
 module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
 module._gateway_has_managed_parent = lambda pid: True
+module._configure_gateway_public_port = lambda: None
 module.apply_transaction_and_reload = lambda action, payload: {
-    "ok": True, "changed": True, "reloaded": True
+    "ok": True, "changed": True, "reloaded": True,
 }
 result = module.execute("add", {
     "server": "fake",
@@ -1403,6 +1406,7 @@ module.os.geteuid = lambda: 1000
 module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
 module._gateway_has_managed_parent = lambda pid: True
+module._configure_gateway_public_port = lambda: None
 print(json.dumps(module.probe(), sort_keys=True))
 `);
 

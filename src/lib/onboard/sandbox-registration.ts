@@ -227,7 +227,11 @@ export function buildCreatedSandboxRegistryEntry(
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     hermesApiPort:
       input.agent?.name === "hermes"
-        ? (input.hermesApiPort ?? resolveOnboardHermesApiPort(input.sandboxName))
+        ? (input.hermesApiPort ??
+          resolveOnboardHermesApiPort(input.sandboxName, {
+            // Registration follows a successful create/recreate that applied this environment.
+            allowRegisteredOverride: true,
+          }))
         : undefined,
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,

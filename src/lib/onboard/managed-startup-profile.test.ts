@@ -976,7 +976,7 @@ describe("managed startup profile", () => {
   });
 
   it("reserves exactly the Hermes API port range the port module declares", () => {
-    for (const port of [HERMES_API_PORT_RANGE_START, HERMES_API_PORT_RANGE_END]) {
+    for (let port = HERMES_API_PORT_RANGE_START; port <= HERMES_API_PORT_RANGE_END; port += 1) {
       expect(() =>
         validateManagedStartupProfile({
           ...HERMES_PROFILE,

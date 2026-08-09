@@ -94,33 +94,92 @@ SENSITIVE_PAYLOAD_KEY_RE = re.compile(
 MAX_ERROR_MESSAGE_LENGTH = 512
 MAX_GATEWAY_PID_RECORD_BYTES = 4096
 MCP_RACE_RECOVERY_ATTEMPTS = 3
+MAX_GATEWAY_PUBLIC_PORT_RECORD_BYTES = 16
+MAX_SERVICE_MANAGER_ENVIRONMENT_BYTES = 64 * 1024
 GATEWAY_INTERNAL_PORT = 18642
 
 
-def _gateway_public_port() -> int:
-    """Resolve the per-sandbox port the socat relay exposes the API on.
-
-    NemoClaw allocates this port per sandbox so two Hermes sandboxes can serve
-    inference on one host. The value reaches the entrypoint through the
-    supervisor environment, which this one-shot exec does not inherit, so the
-    entrypoint publishes it as a read-only marker. This command runs only in the
-    same-uid topology, where the gateway already runs as the sandbox user, so
-    that user owns the marker and the relay probe is only as trusted as the
-    sandbox user; the root-separated path writes a root-owned marker for its own
-    readers. A sandbox whose image predates the marker has none and keeps the
-    original port.
-    """
+def _parse_gateway_public_port(raw: str) -> int:
+    """Parse one allocated Hermes API port."""
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        raise PermissionError("Hermes API port is malformed")
     try:
-        raw = Path(GATEWAY_PUBLIC_PORT_PATH).read_text(encoding="utf-8").strip()
-    except OSError:
-        return 8642
-    if not raw.isdigit():
-        return 8642
-    port = int(raw)
-    return port if 1024 <= port <= 65535 else 8642
+        port = int(raw, 10)
+    except ValueError as error:
+        raise PermissionError("Hermes API port is malformed") from error
+    if not 8642 <= port <= 8652:
+        raise PermissionError("Hermes API port is outside the allocated range")
+    return port
 
 
-GATEWAY_PUBLIC_PORT = _gateway_public_port()
+def _root_gateway_public_port_marker() -> int | None:
+    """Read the root-owned API-port marker without following links."""
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise PermissionError("Hermes API port marker cannot be opened safely")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow
+
+    try:
+        descriptor = os.open(GATEWAY_PUBLIC_PORT_PATH, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise PermissionError(
+            "Hermes API port marker cannot be opened safely"
+        ) from error
+
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != 0
+            or before.st_gid != 0
+            or stat.S_IMODE(before.st_mode) != 0o444
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > MAX_GATEWAY_PUBLIC_PORT_RECORD_BYTES
+        ):
+            raise PermissionError("Hermes API port marker is unsafe")
+        raw = os.read(descriptor, MAX_GATEWAY_PUBLIC_PORT_RECORD_BYTES + 1)
+        after = os.fstat(descriptor)
+        if (
+            len(raw) != before.st_size
+            or len(raw) > MAX_GATEWAY_PUBLIC_PORT_RECORD_BYTES
+            or (
+                before.st_dev,
+                before.st_ino,
+                before.st_mode,
+                before.st_uid,
+                before.st_gid,
+                before.st_nlink,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            )
+            != (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_uid,
+                after.st_gid,
+                after.st_nlink,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+        ):
+            raise PermissionError("Hermes API port marker changed while reading")
+    finally:
+        os.close(descriptor)
+
+    try:
+        decoded = raw.decode("ascii").strip()
+    except UnicodeDecodeError as error:
+        raise PermissionError("Hermes API port marker is malformed") from error
+    return _parse_gateway_public_port(decoded)
+
+
+GATEWAY_PUBLIC_PORT = 8642
 TRUSTED_HERMES_GATEWAY_LAUNCHERS = {
     b"/usr/local/bin/hermes.real",
     b"/usr/local/lib/nemoclaw/hermes",
@@ -981,6 +1040,73 @@ def _gateway_identity() -> tuple[int, object] | None:
     return numeric_pid, start_time
 
 
+def _read_service_manager_environment(pid: int) -> bytes:
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as environment_file:
+            raw = environment_file.read(MAX_SERVICE_MANAGER_ENVIRONMENT_BYTES + 1)
+    except FileNotFoundError as error:
+        raise PermissionError(
+            "Hermes service-manager environment is unavailable"
+        ) from error
+    if len(raw) > MAX_SERVICE_MANAGER_ENVIRONMENT_BYTES:
+        raise PermissionError("Hermes service-manager environment is too large")
+    return raw
+
+
+def _service_manager_gateway_public_port(
+    identity: tuple[int, object],
+) -> int:
+    gateway_pid = identity[0]
+    manager_pid = _process_parent_pid(gateway_pid)
+    if manager_pid is None or not _is_service_manager_process(manager_pid):
+        raise PermissionError(
+            "Hermes gateway is not running under the managed service lifecycle"
+        )
+
+    environment = _read_service_manager_environment(manager_pid)
+    if (
+        _gateway_identity() != identity
+        or _process_parent_pid(gateway_pid) != manager_pid
+        or not _is_service_manager_process(manager_pid)
+    ):
+        raise PermissionError("Hermes service-manager identity changed while reading")
+
+    prefix = b"NEMOCLAW_HERMES_API_PORT="
+    values = [
+        entry[len(prefix) :]
+        for entry in environment.split(b"\0")
+        if entry.startswith(prefix)
+    ]
+    if len(values) > 1:
+        raise PermissionError("Hermes service-manager API port is ambiguous")
+    if not values or not values[0]:
+        return 8642
+    try:
+        decoded = values[0].decode("ascii")
+    except UnicodeDecodeError as error:
+        raise PermissionError(
+            "Hermes service-manager API port is malformed"
+        ) from error
+    return _parse_gateway_public_port(decoded)
+
+
+def _resolve_gateway_public_port() -> int:
+    marker_port = _root_gateway_public_port_marker()
+    if marker_port is not None:
+        return marker_port
+    if os.geteuid() == 0:
+        raise PermissionError("Hermes root API port marker is unavailable")
+    identity = _gateway_identity()
+    if identity is None:
+        raise PermissionError("Hermes gateway identity is unavailable")
+    return _service_manager_gateway_public_port(identity)
+
+
+def _configure_gateway_public_port() -> None:
+    global GATEWAY_PUBLIC_PORT
+    GATEWAY_PUBLIC_PORT = _resolve_gateway_public_port()
+
+
 def _gateway_health_endpoint_ready(port: int, timeout_seconds: float = 2) -> bool:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout_seconds)
     try:
@@ -1148,6 +1274,7 @@ def probe() -> dict[str, object]:
     """Prove the packaged helper is available without mutating config."""
     if os.geteuid() != 0:
         _assert_non_root_lifecycle_identity()
+    _configure_gateway_public_port()
     return {"ok": True}
 
 
@@ -1155,6 +1282,7 @@ def execute(action: str, payload: dict[str, object]) -> dict[str, object]:
     _validate_payload(action, payload)
     if os.geteuid() != 0:
         _assert_non_root_lifecycle_identity()
+    _configure_gateway_public_port()
     return apply_transaction_and_reload(action, payload)
 
 
