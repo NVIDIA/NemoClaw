@@ -146,6 +146,43 @@ describe("docker-driver gateway runtime helpers", () => {
     );
   });
 
+  it("pins the portable gateway config to the prepared rootless Podman socket", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-runtime-"));
+    try {
+      withEnv(
+        {
+          DOCKER_HOST: "unix:///run/user/1001/podman/podman.sock",
+          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+        },
+        () => {
+          const { helpers } = makeHelpers();
+          const env = helpers.getDockerDriverGatewayEnv(null, "linux");
+          expect(env.OPENSHELL_PODMAN_SOCKET).toBe("/run/user/1001/podman/podman.sock");
+          expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).toContain(
+            'socket_path = "/run/user/1001/podman/podman.sock"',
+          );
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a portable gateway without a prepared absolute Podman socket", () => {
+    withEnv(
+      {
+        DOCKER_HOST: undefined,
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      },
+      () => {
+        expect(() => makeHelpers().helpers.getDockerDriverGatewayEnv(null, "linux")).toThrow(
+          "requires the prepared absolute rootless Podman socket",
+        );
+      },
+    );
+  });
+
   it("clears custom state-dir PID and marker files when the recorded PID is not the gateway", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
     const pid = 9_876_543;

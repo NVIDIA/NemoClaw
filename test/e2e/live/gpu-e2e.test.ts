@@ -9,6 +9,7 @@ import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
   assertNvidiaAvailable,
+  buildLlamaCppCompatibilityTargetEnv,
   CLI,
   chatContent,
   cleanupGpu,
@@ -25,9 +26,55 @@ import {
   readTokenFileChecked,
   restartProxy,
   SANDBOX_NAME,
+  shouldBootstrapLlamaCppGenericGpuTarget,
 } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 75 * 60_000;
+const bootstrapLlamaCppTarget = shouldBootstrapLlamaCppGenericGpuTarget();
+type SkipTest = (reason?: string) => never;
+const skipOllamaForLlamaCppCompatibility: (skip: SkipTest) => void = bootstrapLlamaCppTarget
+  ? (skip) => skip("dedicated llama.cpp target owns this pre-merge GPU run")
+  : () => undefined;
+
+// Manual PR E2E executes trusted main workflow YAML, so the new dedicated job
+// cannot select its candidate test until this change lands. The existing GPU
+// lane invokes that test for this revision only; the landed workflow marker
+// keeps later PRs on the two independent dedicated lanes.
+const llamaCppCompatibilityTest = bootstrapLlamaCppTarget ? test : test.skip;
+
+llamaCppCompatibilityTest(
+  "trusted pre-merge GPU lane exercises the dedicated managed llama.cpp target",
+  {
+    timeout: 85 * 60_000,
+    meta: {
+      e2ePhases: [
+        "prepare the trusted pre-merge GPU bridge",
+        "run the dedicated managed llama.cpp live target",
+      ],
+    },
+  },
+  async ({ host, progress }) => {
+    progress.phase("prepare the trusted pre-merge GPU bridge");
+    progress.phase("run the dedicated managed llama.cpp live target");
+    const result = await host.command(
+      "npx",
+      [
+        "tsx",
+        "tools/e2e/live-vitest-invocation.mts",
+        "run",
+        "--test-path",
+        "test/e2e/live/llama-cpp-generic-gpu.test.ts",
+      ],
+      {
+        artifactName: "llama-cpp-generic-gpu-compatibility-target",
+        cwd: REPO_ROOT,
+        env: buildLlamaCppCompatibilityTargetEnv(process.env),
+        timeoutMs: 84 * 60_000,
+      },
+    );
+    expect(result.exitCode, resultText(result)).toBe(0);
+  },
+);
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -112,6 +159,7 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  skipOllamaForLlamaCppCompatibility(skip);
   await artifacts.target.declare({
     id: "gpu-e2e",
     boundary:

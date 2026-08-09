@@ -195,7 +195,7 @@ function createFixture({
 
   // ── Fake openshell ────────────────────────────────────────────
   const sshConfig = [
-    `Host openshell-${sandboxName}`,
+    `Host openshell-${sandboxName}.default`,
     "  HostName 127.0.0.1",
     "  Port 2222",
     "  User sandbox",

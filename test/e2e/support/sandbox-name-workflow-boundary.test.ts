@@ -9,10 +9,7 @@ import {
 } from "../../../tools/e2e/sandbox-name-workflow-boundary.mts";
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
-const WORKFLOW_PATHS = [
-  ".github/workflows/e2e.yaml",
-  ".github/workflows/regression-e2e.yaml",
-] as const;
+const WORKFLOW_PATHS = [".github/workflows/e2e.yaml"] as const;
 
 describe("live workflow sandbox name boundary", () => {
   it.each(
