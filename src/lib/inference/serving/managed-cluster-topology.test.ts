@@ -483,7 +483,8 @@ describe("managed DGX Spark cluster topology qualification", () => {
     expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code: "fabric-multiple",
-      message: "The candidate logical rails belong to more than one physical port: cx7-left-head, cx7-right-head.",
+      message:
+        "The candidate logical rails belong to more than one physical port: cx7-left-head, cx7-right-head.",
     });
   });
 
