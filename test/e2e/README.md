@@ -705,8 +705,14 @@ npm run test:e2e-phases:check
 
 `spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
 It requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
-The test fails closed when that container name already exists.
-It preserves the Hugging Face cache but deletes its dedicated sandbox and only the exact container ID created during the run.
+The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
+The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
+It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
+Separate installer tests own those earlier boundaries.
+The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
+It preserves the shared Hugging Face cache and removes only the exact sandbox and managed container that the run created.
+If onboarding exits nonzero, the target captures the managed-container log tail and sandbox status before cleanup.
+The standard E2E artifacts retain bounded command output.
 
 Run the target from a clean candidate checkout on the Spark host:
 
@@ -714,12 +720,12 @@ Run the target from a clean candidate checkout on the Spark host:
 E2E_JOB=1 \
 E2E_TARGET_ID=spark-express-vllm \
 NEMOCLAW_RUN_LIVE_E2E=1 \
-NEMOCLAW_SANDBOX_NAME=e2e-spark-express-vllm \
+NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm \
 npx tsx tools/e2e/live-vitest-invocation.mts run \
   --test-path test/e2e/live/spark-express-vllm.test.ts
 ```
 
-The passing target proves that Express option 2 selects the fixed vLLM preset and recipe, the managed container carries exact catalog provenance and the exact catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
+A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries exact catalog provenance and the exact catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.

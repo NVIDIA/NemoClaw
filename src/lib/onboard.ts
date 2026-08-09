@@ -66,6 +66,7 @@ const {
 const {
   buildSandboxConfigSyncScript,
   runSandboxConfigSync,
+  sandboxConfigSyncArgs,
   writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
@@ -3606,7 +3607,7 @@ function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, mode
   runSandboxConfigSync(sandboxName, {
     getSelectionConfig: () => getProviderSelectionConfig(provider, model),
     runConnectScript: (name, scriptContent) => {
-      run(openshellArgv(["sandbox", "connect", name]), {
+      run(openshellArgv(sandboxConfigSyncArgs(name)), {
         stdio: ["pipe", "ignore", "inherit"],
         input: scriptContent,
       });

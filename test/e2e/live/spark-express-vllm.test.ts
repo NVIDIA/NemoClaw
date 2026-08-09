@@ -17,16 +17,21 @@ import {
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { type CommandExitResult, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import {
+  assertLocalDockerEnvironment,
+  classifyDockerContainerInspection,
+  listedSandboxNames,
+} from "../support/spark-express-vllm-safety.ts";
 import {
   cleanupSandbox,
   expectOpenAiChatThroughSandbox,
   requireLivePrerequisites,
 } from "./inference-routing-helpers.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-express-vllm";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
 const VLLM_CONTAINER = "nemoclaw-vllm";
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const ONBOARD_TIMEOUT_MS = 55 * 60_000;
@@ -46,7 +51,7 @@ interface VllmContainerInspection {
     readonly PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
     readonly ShmSize: number;
   };
-  readonly Mounts: Array<{ Destination: string; Type: string }>;
+  readonly Mounts: Array<{ Destination: string; RW: boolean; Type: string }>;
 }
 
 function e2eEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -97,9 +102,37 @@ async function assertVllmContainerAbsent(host: HostCliClient): Promise<void> {
     timeoutMs: 30_000,
   });
   expect(
-    result.exitCode,
+    classifyDockerContainerInspection(result),
     `Refusing to replace a pre-existing ${VLLM_CONTAINER} container.\n${resultText(result)}`,
-  ).not.toBe(0);
+  ).toBe("absent");
+}
+
+async function assertSandboxAbsent(host: HostCliClient, sandboxName: string): Promise<void> {
+  const result = await host.command("openshell", ["sandbox", "list", "--names"], {
+    artifactName: "preflight-spark-express-sandbox-list",
+    env: e2eEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(
+    listedSandboxNames(result).has(sandboxName),
+    `Refusing to replace a pre-existing ${sandboxName} sandbox.\n${resultText(result)}`,
+  ).toBe(false);
+}
+
+async function captureOnboardFailureDiagnostics(
+  host: HostCliClient,
+  sandboxName: string,
+): Promise<void> {
+  await host.command("docker", ["logs", "--tail", "300", VLLM_CONTAINER], {
+    artifactName: "failure-spark-express-vllm-container-logs",
+    env: e2eEnv(),
+    timeoutMs: 30_000,
+  });
+  await host.command("openshell", ["sandbox", "status", sandboxName], {
+    artifactName: "failure-spark-express-sandbox-status",
+    env: e2eEnv(),
+    timeoutMs: 30_000,
+  });
 }
 
 async function removeExactVllmContainer(
@@ -146,6 +179,8 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  validateSandboxName(SANDBOX_NAME);
+  assertLocalDockerEnvironment(process.env);
   const plan = vllmProfilePlan();
   const baseProfile = detectVllmProfile({ platform: "spark" });
   assert(baseProfile, "the DGX Spark vLLM base profile is unavailable");
@@ -200,16 +235,20 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
   expect(nvidia.exitCode, resultText(nvidia)).toBe(0);
 
   let createdContainerId: string | null = null;
+  let ownsSandboxName = false;
   cleanup.add(`remove ${VLLM_CONTAINER}`, () =>
     createdContainerId
       ? removeExactVllmContainer(host, createdContainerId, "cleanup-spark-express-vllm-container")
       : Promise.resolve(),
   );
   cleanup.add(`remove sandbox ${SANDBOX_NAME}`, () =>
-    cleanupSandbox(host, sandbox, SANDBOX_NAME, { strict: true }),
+    ownsSandboxName
+      ? cleanupSandbox(host, sandbox, SANDBOX_NAME, { strict: true })
+      : Promise.resolve(),
   );
-  await cleanupSandbox(host, sandbox, SANDBOX_NAME);
   await assertVllmContainerAbsent(host);
+  await assertSandboxAbsent(host, SANDBOX_NAME);
+  ownsSandboxName = true;
 
   progress.phase("select Spark Express option 2 and onboard through the local-model profile");
   const onboard = await host.command(
@@ -242,13 +281,17 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
     },
   );
 
-  progress.phase("verify catalog-owned vLLM runtime configuration");
   const inspectionResult = await host.command("docker", ["inspect", VLLM_CONTAINER], {
     artifactName: "spark-express-vllm-container-inspect",
     env: e2eEnv(),
     timeoutMs: 30_000,
   });
   createdContainerId = capturedVllmContainerId(inspectionResult);
+  if (onboard.exitCode !== 0) {
+    await captureOnboardFailureDiagnostics(host, SANDBOX_NAME);
+  }
+
+  progress.phase("verify catalog-owned vLLM runtime configuration");
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);
   const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
@@ -277,7 +320,8 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
   expect(inspection.Mounts).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        Destination: plan.recipe.spec.runtime.modelCache.target,
+        Destination: `${plan.recipe.spec.runtime.modelCache.target}/hub`,
+        RW: false,
         Type: "bind",
       }),
     ]),

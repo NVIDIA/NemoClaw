@@ -55,7 +55,7 @@ describe("installer express install prompt (sourced)", () => {
 source "$INSTALLER_UNDER_TEST" >/dev/null
 classify_dgx_station_release() {
   if [[ -z "$EXPRESS_DGX_RELEASE_PATH" ]]; then
-    bash "$STATION_PREPARE" --classify-dgx-release
+    printf "generic-ubuntu"
     return
   fi
   bash -c '
@@ -207,7 +207,10 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
       /Express install will configure Qwen3\.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile/,
     );
     expect(output).toMatch(/The serving catalog owns the model, image, port, and vLLM arguments/);
-    expect(output).toMatch(/dedicated local-model onboarder rejects model and runtime overrides/);
+    expect(output).toMatch(/installer rejects provider and model overrides/);
+    expect(output).toMatch(
+      /dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides/,
+    );
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm/,
     );

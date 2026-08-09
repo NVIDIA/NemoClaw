@@ -232,6 +232,7 @@ An inconclusive Docker image-storage check retains its existing automatic-contin
 <Note>
 The model-cache guard applies when the selected registered recipe declares a pinned snapshot size.
 NemoClaw creates `~/.cache/huggingface` as the host user and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
+The long-lived vLLM container mounts only the Hugging Face hub cache read-only and uses offline mode, so it cannot change host-cache ownership.
 Hugging Face credentials are forwarded only to that temporary downloader, not retained by the long-lived vLLM container.
 
 A legacy root-owned or otherwise unwritable required model-cache path stops before the image pull and prints a scoped ownership-repair command; NemoClaw never changes its ownership automatically.
@@ -262,7 +263,8 @@ It offers the fixed local vLLM profile as option 2.
 When you select option 2, the serving catalog supplies the pinned model, runtime image, port, and serve arguments.
 The installer rejects provider and model overrides for that fixed profile, and the dedicated onboarder rejects vLLM model, port, and serve-argument overrides before it starts the managed container.
 Explicit `NEMOCLAW_MODEL` or `NEMOCLAW_VLLM_MODEL` intent retains the customizable managed-vLLM path and skips the fixed-profile choice.
-Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-local-model-profile) for fixed-profile installation and verification.
+If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reuses the recorded fixed profile instead of returning to automatic serving-profile selection.
+Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.
 Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit distributed-profile selection, profile requirements, and cleanup behavior.
 
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
