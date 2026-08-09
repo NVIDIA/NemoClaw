@@ -13,6 +13,7 @@ import { type CommandEntry, onboardScriptMocksPath } from "./helpers/onboard-spl
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
+  vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
 describe("onboard helpers", () => {
@@ -1189,6 +1190,9 @@ const { createSandbox } = require(${onboardPath});
     const credentialsPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
+    const dockerExecPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -1203,6 +1207,12 @@ const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
+const dockerExec = require(${dockerExecPath});
+dockerExec.dockerSpawn = () => {
+  const child = new EventEmitter();
+  process.nextTick(() => child.emit("close", 0));
+  return child;
+};
 const fs = require("node:fs");
 
 const commands = [];

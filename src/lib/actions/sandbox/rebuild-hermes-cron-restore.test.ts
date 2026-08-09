@@ -29,13 +29,18 @@ vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
 
 import {
   beginHermesCronRestore,
+  completeHermesCronRestoreAfterGatewayReplacement,
+  HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+  isHermesCronRestoreDrainMarkerRollbackFailure,
+  observeHermesCronReplacement,
+  prepareHermesCronRestoreRecovery,
   recoverHermesCronRestore,
-  releaseHermesCronRestore,
   runHermesCronRestoreTransaction,
   validateHermesCronRestore,
 } from "./rebuild-hermes-post-restore";
 
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
+const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
 
 function writeJson(target: string, payload: unknown): void {
   mkdirSync(path.dirname(target), { recursive: true });
@@ -47,7 +52,7 @@ function writeScript(target: string): void {
   writeFileSync(target, "print('ok')\n", { mode: 0o600 });
 }
 
-type ReceiptAction = "begin" | "validate" | "release" | "recover";
+type ReceiptAction = "begin" | "validate" | "observe" | "complete" | "recover";
 
 function receipt(
   action: ReceiptAction,
@@ -69,11 +74,19 @@ function receipt(
       profiles: 1,
       script_jobs: 1,
     },
-    release: {
+    observe: {
       active_agents: 0,
+      disposition: "replacement-observed",
+      operator_drain_active: false,
+    },
+    complete: {
+      active_agents: 0,
+      active_jobs: 1,
       disposition: "dispatch-reactivated",
       operator_drain_active: false,
       preserved_drain: false,
+      profiles: 1,
+      script_jobs: 1,
     },
     recover: {
       active_agents: 0,
@@ -97,6 +110,20 @@ function receipt(
   })}`;
 }
 
+function completionFailure(stderr: string): unknown {
+  processMocks.dockerSpawnSync.mockReturnValue({ status: 1, stdout: "", stderr });
+  try {
+    completeHermesCronRestoreAfterGatewayReplacement(
+      "alpha",
+      { pid: 41, start_time: 902, drain_token: "restore-token" },
+      { pid: 77, start_time: 903, drain_token: "restore-token" },
+    );
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Hermes cron completion unexpectedly succeeded");
+}
+
 function notRequiredRecoveryReceipt(overrides: Record<string, unknown> = {}): string {
   return `${RECEIPT_PREFIX}${JSON.stringify({
     version: 1,
@@ -108,6 +135,19 @@ function notRequiredRecoveryReceipt(overrides: Record<string, unknown> = {}): st
     disposition: "not-required",
     operator_drain_active: false,
     preserved_drain: false,
+    ...overrides,
+  })}`;
+}
+
+function preparationReceipt(
+  disposition: "gate-prepared" | "not-required",
+  overrides: Record<string, unknown> = {},
+): string {
+  return `${RECEIPT_PREFIX}${JSON.stringify({
+    version: 1,
+    action: "prepare-recover",
+    drain_acquired: disposition === "gate-prepared",
+    disposition,
     ...overrides,
   })}`;
 }
@@ -174,22 +214,17 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it("binds validation and release to the begin receipt identity", () => {
+  it("binds validation to the begin receipt identity", () => {
     processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => {
-      const action = argv.includes("validate")
-        ? "validate"
-        : argv.includes("release")
-          ? "release"
-          : "begin";
+      const action = argv.includes("validate") ? "validate" : "begin";
       return { status: 0, stdout: receipt(action), stderr: "" };
     });
 
     const identity = beginHermesCronRestore("alpha");
     validateHermesCronRestore("alpha", identity);
-    releaseHermesCronRestore("alpha", identity);
 
     expect(identity).toEqual({ pid: 41, start_time: 902, drain_token: "restore-token" });
-    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledTimes(3);
+    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledTimes(2);
     expect(processMocks.privilegedSandboxExecArgv.mock.calls[1]?.[1]).toEqual([
       "/opt/hermes/.venv/bin/python",
       "-I",
@@ -202,7 +237,6 @@ describe("Hermes cron rebuild restore contract", () => {
       "--drain-token",
       "restore-token",
     ]);
-    expect(processMocks.privilegedSandboxExecArgv.mock.calls[2]?.[1]).toContain("release");
   });
 
   it("passes an untrusted drain token as one argv value", () => {
@@ -220,18 +254,6 @@ describe("Hermes cron rebuild restore contract", () => {
     expect(validateArgv?.at(-1)).toBe(untrustedToken);
   });
 
-  it("rejects a control receipt that changes gateway identity", () => {
-    processMocks.dockerSpawnSync.mockReturnValue({
-      status: 0,
-      stdout: receipt("release", 42, 902),
-      stderr: "",
-    });
-
-    expect(() => releaseHermesCronRestore("alpha", { pid: 41, start_time: 902 })).toThrow(
-      "changed gateway identity",
-    );
-  });
-
   it("keeps dispatch drained when state restore is incomplete", () => {
     processMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
@@ -246,29 +268,190 @@ describe("Hermes cron rebuild restore contract", () => {
     expect(processMocks.privilegedSandboxExecArgv.mock.calls[0]?.[1]).toContain("begin");
   });
 
-  it("orders drain, restore, validation, and release", () => {
+  it("keeps dispatch held after restore validation until gateway replacement (#8472)", () => {
     const events: string[] = [];
     processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => {
-      const action = argv.includes("validate")
-        ? "validate"
-        : argv.includes("release")
-          ? "release"
-          : "begin";
+      const action = argv.includes("validate") ? "validate" : "begin";
       events.push(action);
       return { status: 0, stdout: receipt(action), stderr: "" };
     });
 
-    runHermesCronRestoreTransaction(
+    const transaction = runHermesCronRestoreTransaction(
       "alpha",
       () => {
         events.push("restore");
-        return { restoreSucceeded: true };
+        return { restoreSucceeded: true, restored: "state" };
       },
       (state) => events.push(state),
     );
 
-    expect(events).toEqual(["begin", "acquired", "restore", "validate", "release", "released"]);
+    expect(events).toEqual(["begin", "acquired", "restore", "validate"]);
+    expect(transaction).toEqual({
+      identity: { drain_token: "restore-token", pid: 41, start_time: 902 },
+      result: { restoreSucceeded: true, restored: "state" },
+    });
   });
+
+  it("completes the held gate against the replacement gateway identity (#8472)", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: receipt("complete", 77, 903),
+      stderr: "",
+    });
+
+    expect(
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+          drain_token: "restore-token",
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toEqual({ pid: 77, start_time: 903, drain_token: "restore-token" });
+    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
+      "alpha",
+      [
+        "/opt/hermes/.venv/bin/python",
+        "-I",
+        "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+        "complete",
+        "--pid",
+        "41",
+        "--start-time",
+        "902",
+        "--drain-token",
+        "restore-token",
+        "--replacement-pid",
+        "77",
+        "--replacement-start-time",
+        "903",
+      ],
+      false,
+      true,
+    );
+  });
+
+  it("rejects completion that did not bind to a replacement identity (#8472)", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: receipt("complete"),
+      stderr: "",
+    });
+
+    expect(() =>
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+          drain_token: "restore-token",
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toThrow("changed the verified replacement gateway identity");
+  });
+
+  it("rejects completion without the held drain token before transport (#8472)", () => {
+    expect(() =>
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toThrow("requires the held drain token");
+    expect(processMocks.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it("rejects completion when the replacement carries a different drain token (#8472)", () => {
+    expect(() =>
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        { pid: 41, start_time: 902, drain_token: "restore-token" },
+        { pid: 77, start_time: 903, drain_token: "different-token" },
+      ),
+    ).toThrow("changed the held drain token");
+    expect(processMocks.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
+  it("classifies the structured drain-marker rollback failure (#8472)", () => {
+    const message = "Hermes cron restore drain release failed and its marker could not be restored";
+    const failure = completionFailure(
+      [
+        `HERMES_CRON_RESTORE_ERROR: ${message}`,
+        `${CONTROL_ERROR_PREFIX}${JSON.stringify({
+          code: HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+          message,
+        })}`,
+      ].join("\n"),
+    );
+
+    expect(isHermesCronRestoreDrainMarkerRollbackFailure(failure)).toBe(true);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(message);
+  });
+
+  it("does not classify matching prose without the structured failure code (#8472)", () => {
+    const message = "Hermes cron restore drain release failed and its marker could not be restored";
+    const failure = completionFailure(`HERMES_CRON_RESTORE_ERROR: ${message}`);
+
+    expect(isHermesCronRestoreDrainMarkerRollbackFailure(failure)).toBe(false);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(message);
+  });
+
+  it("rejects completion while replacement agents are still active (#8472)", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: receipt("complete", 77, 903, "restore-token", { active_agents: 1 }),
+      stderr: "",
+    });
+
+    expect(() =>
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        {
+          pid: 41,
+          start_time: 902,
+          drain_token: "restore-token",
+        },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toThrow("receipt failed validation");
+  });
+
+  it("observes the replacement identity without releasing the held gate (#8472)", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: receipt("observe", 77, 903),
+      stderr: "",
+    });
+
+    expect(
+      observeHermesCronReplacement("alpha", {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      }),
+    ).toEqual({ pid: 77, start_time: 903, drain_token: "restore-token" });
+    expect(processMocks.privilegedSandboxExecArgv.mock.calls[0]?.[1]).toEqual([
+      "/opt/hermes/.venv/bin/python",
+      "-I",
+      "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+      "observe",
+      "--pid",
+      "41",
+      "--start-time",
+      "902",
+      "--drain-token",
+      "restore-token",
+    ]);
+  });
+
   it.each([
     ["dispatch-reactivated", false],
     ["operator-drain-preserved", true],
@@ -297,18 +480,78 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it("composes the recovery transport budget from every controller phase (#7806)", () => {
-    processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => ({
+  it.each([
+    "gate-prepared",
+    "not-required",
+  ] as const)("returns the %s pre-repair disposition", (disposition) => {
+    processMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
-      stdout: receipt(argv.includes("recover") ? "recover" : "begin"),
+      stdout: preparationReceipt(disposition),
       stderr: "",
-    }));
+    });
+
+    expect(prepareHermesCronRestoreRecovery("alpha")).toBe(disposition);
+    expect(processMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
+      "alpha",
+      [
+        "/opt/hermes/.venv/bin/python",
+        "-I",
+        "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+        "prepare-recover",
+      ],
+      false,
+      true,
+    );
+  });
+
+  it("rejects an inconsistent pre-repair receipt", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: preparationReceipt("gate-prepared", { drain_acquired: false }),
+      stderr: "",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "prepare-recover receipt failed validation",
+    );
+  });
+
+  it.each([
+    `/opt/hermes/.venv/bin/python: can't open file '/usr/local/lib/nemoclaw/hermes-cron-restore-control.py': [Errno 2] No such file or directory`,
+    "hermes-cron-restore-control.py: error: argument action: invalid choice: 'prepare-recover'",
+  ])("keeps pre-repair compatible with a legacy Hermes sandbox: %s", (stderr) => {
+    processMocks.dockerSpawnSync.mockReturnValue({ status: 2, stdout: "", stderr });
+
+    expect(prepareHermesCronRestoreRecovery("alpha")).toBe("unsupported");
+  });
+
+  it("does not hide a current controller pre-repair failure", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "NemoClaw cron restore release recovery record metadata is unsafe",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "Hermes cron prepare-recover failed: NemoClaw cron restore release recovery record metadata is unsafe",
+    );
+  });
+
+  it("composes the recovery transport budget from every controller phase (#7806)", () => {
+    processMocks.dockerSpawnSync.mockImplementation((argv: string[]) => {
+      const stdout = argv.includes("prepare-recover")
+        ? preparationReceipt("not-required")
+        : receipt(argv.includes("recover") ? "recover" : "begin");
+      return { status: 0, stdout, stderr: "" };
+    });
 
     beginHermesCronRestore("alpha");
+    prepareHermesCronRestoreRecovery("alpha");
     recoverHermesCronRestore("alpha");
 
     expect(processMocks.dockerSpawnSync.mock.calls[0]?.[1]).toMatchObject({ timeout: 70_000 });
-    expect(processMocks.dockerSpawnSync.mock.calls[1]?.[1]).toMatchObject({ timeout: 130_000 });
+    expect(processMocks.dockerSpawnSync.mock.calls[1]?.[1]).toMatchObject({ timeout: 25_000 });
+    expect(processMocks.dockerSpawnSync.mock.calls[2]?.[1]).toMatchObject({ timeout: 130_000 });
   });
 
   it("returns not-required when no NemoClaw recovery gate exists", () => {

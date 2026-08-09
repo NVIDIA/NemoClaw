@@ -484,6 +484,9 @@ describe("Hermes final image layout", () => {
     expect(finalStage).toContain(
       "&& check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \\",
     );
+    expect(finalStage).toContain(
+      "&& check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \\",
+    );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
     expect(finalStage).toContain("&& check_absent /sandbox/.hermes/managed-policy.json \\");
     expect(finalStage).toContain("RUN chown root:root /sandbox/.nemoclaw \\");

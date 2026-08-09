@@ -3,20 +3,31 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privileged-exec";
+import type { GatewayRestartResult } from "./gateway-restart";
 import * as processRecovery from "./process-recovery";
 
 const HERMES_CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
+const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
+export const HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE = "drain-marker-rollback-failed";
 const BEGIN_TIMEOUT_MS = 70_000;
 const CONTROL_TIMEOUT_MS = 25_000;
 const RECOVERY_TIMEOUT_MS = BEGIN_TIMEOUT_MS + CONTROL_TIMEOUT_MS * 2 + 10_000;
 const HERMES_GATEWAY_RECHECK_ATTEMPTS = 2;
 
-type HermesCronRestoreAction = "begin" | "validate" | "release" | "recover";
+type HermesCronRestoreAction =
+  | "begin"
+  | "validate"
+  | "observe"
+  | "complete"
+  | "prepare-recover"
+  | "recover";
+type HermesCronRestoreReceiptAction = Exclude<HermesCronRestoreAction, "prepare-recover">;
 type HermesCronRestoreDisposition =
   | "drain-acquired"
   | "restore-validated"
+  | "replacement-observed"
   | "dispatch-reactivated"
   | "operator-drain-preserved"
   | "not-required";
@@ -37,16 +48,23 @@ interface HermesCronRestoreReceipt {
   preserved_drain?: boolean;
 }
 
-type HermesCronRestoreIdentity = Pick<
+export type HermesCronRestoreIdentity = Pick<
   HermesCronRestoreReceipt,
   "pid" | "start_time" | "drain_token"
 >;
+
+export interface PendingHermesCronRestore<T> {
+  result: T;
+  identity: HermesCronRestoreIdentity;
+}
 
 export type HermesCronRestoreRecoveryOutcome =
   | "dispatch-reactivated"
   | "operator-drain-preserved"
   | "not-required"
   | "unsupported";
+
+export type HermesCronRestorePreparationOutcome = "gate-prepared" | "not-required" | "unsupported";
 
 export class HermesCronRestoreIncompleteError extends Error {
   constructor() {
@@ -75,37 +93,123 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     options: { quiet: boolean },
   ) => GatewayRecoveryObservation;
+  restartSandboxGateway?: (
+    sandboxName: string,
+    options: { quiet: boolean },
+  ) => GatewayRestartResult;
+  observeHermesCronReplacement?: (
+    sandboxName: string,
+    originalIdentity: HermesCronRestoreIdentity,
+  ) => HermesCronRestoreIdentity;
+}
+
+export interface HermesPostRestoreGatewayVerification {
+  state: HermesPostRestoreGatewayState;
+  replacementIdentity?: HermesCronRestoreIdentity;
 }
 
 /**
- * Re-prove Hermes gateway health after workspace state restoration.
+ * Bind the running Hermes gateway to the state this rebuild just restored.
  *
- * Inner onboarding verifies the fresh image before rebuild restores the prior
- * state. That restore can still stop or wedge the gateway, so its earlier
- * readiness message is not authoritative for rebuild completion.
+ * Recreation starts the gateway, and the restore replaces its durable state
+ * afterwards. An adapter that reads that state once at startup keeps the
+ * pre-restore result for the life of the process — the WhatsApp bridge reads
+ * its paired session that way — so the gateway can be alive and healthy while
+ * still serving the state the rebuild replaced. A liveness check cannot see
+ * that difference, so restart first and let the check report on the process
+ * that restart produced. `relaunchManagedSupervisorSession` already restarts
+ * after its own restore for the same reason.
+ *
+ * A gated rebuild keeps the root-owned cron drain active while this function
+ * replaces and verifies the gateway. The caller then completes the held
+ * transaction against the replacement process before dispatch can resume.
  */
 export function ensureHermesGatewayAfterStateRestore(
   sandboxName: string,
   agentName: string,
   deps: HermesPostRestoreGatewayDeps = {},
 ): HermesPostRestoreGatewayState {
-  if (agentName !== "hermes") return "not-applicable";
+  return ensureHermesGatewayAfterStateRestoreImpl(sandboxName, agentName, deps).state;
+}
+
+export function ensureHermesGatewayAfterStateRestoreForCronGate(
+  sandboxName: string,
+  agentName: string,
+  originalIdentity: HermesCronRestoreIdentity,
+  deps: HermesPostRestoreGatewayDeps = {},
+): HermesPostRestoreGatewayVerification {
+  return ensureHermesGatewayAfterStateRestoreImpl(sandboxName, agentName, deps, originalIdentity);
+}
+
+function sameGatewayIdentity(
+  left: HermesCronRestoreIdentity,
+  right: HermesCronRestoreIdentity,
+): boolean {
+  return left.pid === right.pid && left.start_time === right.start_time;
+}
+
+function ensureHermesGatewayAfterStateRestoreImpl(
+  sandboxName: string,
+  agentName: string,
+  deps: HermesPostRestoreGatewayDeps,
+  originalIdentity?: HermesCronRestoreIdentity,
+): HermesPostRestoreGatewayVerification {
+  if (agentName !== "hermes") return { state: "not-applicable" };
+  const restart = deps.restartSandboxGateway ?? processRecovery.restartSandboxGateway;
+  const restarted = restart(sandboxName, { quiet: true }).ok;
   const checkAndRecover =
     deps.checkAndRecoverSandboxProcesses ?? processRecovery.checkAndRecoverSandboxProcesses;
-  for (let attempt = 1; attempt <= HERMES_GATEWAY_RECHECK_ATTEMPTS; attempt += 1) {
+  const observeReplacement = deps.observeHermesCronReplacement ?? observeHermesCronReplacement;
+  const maxAttempts = originalIdentity
+    ? HERMES_GATEWAY_RECHECK_ATTEMPTS + 1
+    : HERMES_GATEWAY_RECHECK_ATTEMPTS;
+  let recovered = false;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let identityBeforeHealth: HermesCronRestoreIdentity | undefined;
+    if (originalIdentity) {
+      try {
+        identityBeforeHealth = observeReplacement(sandboxName, originalIdentity);
+      } catch {
+        // The recovery check may still create the replacement process. A
+        // later iteration must observe it both before and after health.
+      }
+    }
     const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, { quiet: true });
     if (
       observation.forwardRecoveryFailed === true ||
       observation.secretBoundaryRefused === true ||
       observation.mcpReconciliationRefused === true
     ) {
-      return "unverified";
+      return { state: "unverified" };
     }
     if (!observation.checked) continue;
-    if (observation.wasRunning === true) return "healthy";
-    if (observation.recovered) return "recovered";
+    // Recovery replaces the process, so a recovered gateway reads the restored
+    // state whatever the restart reported. A gateway that stayed up through a
+    // failed restart is still serving what it read before the restore, which is
+    // the state this step exists to replace.
+    if (observation.recovered) {
+      if (!originalIdentity) return { state: "recovered" };
+      recovered = true;
+      continue;
+    }
+    if ((!restarted && !recovered) || observation.wasRunning !== true) continue;
+    if (!originalIdentity) return { state: recovered ? "recovered" : "healthy" };
+    if (!identityBeforeHealth) continue;
+    let identityAfterHealth: HermesCronRestoreIdentity;
+    try {
+      identityAfterHealth = observeReplacement(sandboxName, originalIdentity);
+    } catch {
+      return { state: "unverified" };
+    }
+    if (!sameGatewayIdentity(identityBeforeHealth, identityAfterHealth)) {
+      return { state: "unverified" };
+    }
+    return {
+      state: recovered ? "recovered" : "healthy",
+      replacementIdentity: identityAfterHealth,
+    };
   }
-  return "unverified";
+  return { state: "unverified" };
 }
 
 export function printHermesGatewayRestoreRecovery(
@@ -115,7 +219,7 @@ export function printHermesGatewayRestoreRecovery(
 ): void {
   if (state !== "unverified") return;
   writeLine(
-    `    Hermes gateway health was not verified after state restore — run \`${CLI_NAME} ${sandboxName} recover\` before relying on this sandbox`,
+    `    Hermes gateway health was not verified after state restore — it can still be serving the state this rebuild replaced; run \`${CLI_NAME} ${sandboxName} gateway restart\`, then \`${CLI_NAME} ${sandboxName} recover\` if that fails`,
   );
 }
 
@@ -146,7 +250,7 @@ function isReleaseDispositionValid(payload: Record<string, unknown>): boolean {
 
 function parseCronRestoreReceipt(
   stdout: string,
-  expectedAction: HermesCronRestoreAction,
+  expectedAction: HermesCronRestoreReceiptAction,
 ): HermesCronRestoreReceipt {
   const receiptLines = stdout.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
   if (receiptLines.length !== 1) {
@@ -211,15 +315,28 @@ function parseCronRestoreReceipt(
           "script_jobs",
         ]);
       break;
-    case "release":
+    case "observe":
+      actionValid =
+        receipt.drain_acquired === true &&
+        receipt.disposition === "replacement-observed" &&
+        receipt.active_agents === 0 &&
+        hasExactReceiptFields(receipt, [...baseFields, ...tokenFields, "active_agents"]);
+      break;
+    case "complete":
       actionValid =
         receipt.drain_acquired === true &&
         receipt.active_agents === 0 &&
+        isNonNegativeInteger(receipt.profiles) &&
+        isNonNegativeInteger(receipt.active_jobs) &&
+        isNonNegativeInteger(receipt.script_jobs) &&
         isReleaseDispositionValid(receipt) &&
         hasExactReceiptFields(receipt, [
           ...baseFields,
           ...tokenFields,
           "active_agents",
+          "profiles",
+          "active_jobs",
+          "script_jobs",
           "preserved_drain",
         ]);
       break;
@@ -255,35 +372,117 @@ function parseCronRestoreReceipt(
   return receipt as unknown as HermesCronRestoreReceipt;
 }
 
-class HermesCronRestoreControlFailure extends Error {
-  constructor(
-    action: HermesCronRestoreAction,
-    readonly stderr: string,
+function parseCronRestorePreparationReceipt(stdout: string): HermesCronRestorePreparationOutcome {
+  const receiptLines = stdout.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
+  if (receiptLines.length !== 1) {
+    throw new Error("Hermes cron prepare-recover returned an invalid receipt");
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(receiptLines[0].slice(RECEIPT_PREFIX.length));
+  } catch {
+    throw new Error("Hermes cron prepare-recover returned malformed JSON");
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Hermes cron prepare-recover receipt failed validation");
+  }
+  const receipt = payload as Record<string, unknown>;
+  const validDisposition =
+    (receipt.drain_acquired === true && receipt.disposition === "gate-prepared") ||
+    (receipt.drain_acquired === false && receipt.disposition === "not-required");
+  if (
+    receipt.version !== 1 ||
+    receipt.action !== "prepare-recover" ||
+    !validDisposition ||
+    !hasExactReceiptFields(receipt, ["version", "action", "drain_acquired", "disposition"])
   ) {
-    const detail = stderr.trim().split(/\r?\n/u).at(-1);
+    throw new Error("Hermes cron prepare-recover receipt failed validation");
+  }
+  return receipt.disposition as "gate-prepared" | "not-required";
+}
+
+function parseCronRestoreControlError(stderr: string): { code: string; message: string } | null {
+  const signalLines = stderr
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(CONTROL_ERROR_PREFIX));
+  if (signalLines.length !== 1) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(signalLines[0].slice(CONTROL_ERROR_PREFIX.length));
+  } catch {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const signal = payload as Record<string, unknown>;
+  if (
+    !hasExactReceiptFields(signal, ["code", "message"]) ||
+    typeof signal.code !== "string" ||
+    signal.code.length === 0 ||
+    typeof signal.message !== "string" ||
+    signal.message.length === 0
+  ) {
+    return null;
+  }
+  return { code: signal.code, message: signal.message };
+}
+
+class HermesCronRestoreControlFailure extends Error {
+  readonly action: HermesCronRestoreAction;
+  readonly stderr: string;
+  readonly controlCode?: string;
+
+  constructor(action: HermesCronRestoreAction, stderr: string) {
+    const controlError = parseCronRestoreControlError(stderr);
+    const detail =
+      controlError?.message ??
+      stderr
+        .trim()
+        .split(/\r?\n/u)
+        .filter((line) => !line.startsWith(CONTROL_ERROR_PREFIX))
+        .at(-1);
     super(`Hermes cron ${action} failed${detail ? `: ${detail}` : ""}`);
     this.name = "HermesCronRestoreControlFailure";
+    this.action = action;
+    this.stderr = stderr;
+    this.controlCode = controlError?.code;
   }
 }
 
-function runCronRestoreControl(
+export function isHermesCronRestoreDrainMarkerRollbackFailure(error: unknown): boolean {
+  return (
+    error instanceof HermesCronRestoreControlFailure &&
+    error.action === "complete" &&
+    error.controlCode === HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE
+  );
+}
+
+function executeCronRestoreControl(
   sandboxName: string,
   action: HermesCronRestoreAction,
   identity?: HermesCronRestoreIdentity,
-): HermesCronRestoreReceipt {
+  replacementIdentity?: HermesCronRestoreIdentity,
+): string {
   const command = [HERMES_PYTHON, "-I", HERMES_CRON_CONTROL, action];
   if (identity) {
     command.push("--pid", String(identity.pid), "--start-time", String(identity.start_time));
     if (identity.drain_token) command.push("--drain-token", identity.drain_token);
+  }
+  if (replacementIdentity) {
+    command.push(
+      "--replacement-pid",
+      String(replacementIdentity.pid),
+      "--replacement-start-time",
+      String(replacementIdentity.start_time),
+    );
   }
   let result: processRecovery.SandboxCommandResult | null;
   try {
     result = processRecovery.executePrivilegedSandboxCommand(
       sandboxName,
       command,
-      action === "begin"
+      action === "begin" || action === "observe"
         ? BEGIN_TIMEOUT_MS
-        : action === "recover"
+        : action === "recover" || action === "complete"
           ? RECOVERY_TIMEOUT_MS
           : CONTROL_TIMEOUT_MS,
     );
@@ -299,7 +498,19 @@ function runCronRestoreControl(
   if (result.status !== 0) {
     throw new HermesCronRestoreControlFailure(action, result.stderr);
   }
-  return parseCronRestoreReceipt(result.stdout, action);
+  return result.stdout;
+}
+
+function runCronRestoreControl(
+  sandboxName: string,
+  action: HermesCronRestoreReceiptAction,
+  identity?: HermesCronRestoreIdentity,
+  replacementIdentity?: HermesCronRestoreIdentity,
+): HermesCronRestoreReceipt {
+  return parseCronRestoreReceipt(
+    executeCronRestoreControl(sandboxName, action, identity, replacementIdentity),
+    action,
+  );
 }
 
 export function beginHermesCronRestore(sandboxName: string): HermesCronRestoreIdentity {
@@ -325,27 +536,87 @@ export function validateHermesCronRestore(
   }
 }
 
-export function releaseHermesCronRestore(
+export function completeHermesCronRestoreAfterGatewayReplacement(
   sandboxName: string,
-  identity: HermesCronRestoreIdentity,
-): void {
-  const receipt = runCronRestoreControl(sandboxName, "release", identity);
-  if (
-    receipt.pid !== identity.pid ||
-    receipt.start_time !== identity.start_time ||
-    receipt.drain_token !== identity.drain_token
-  ) {
-    throw new Error("Hermes cron release receipt changed gateway identity");
+  originalIdentity: HermesCronRestoreIdentity,
+  verifiedReplacementIdentity: HermesCronRestoreIdentity,
+): HermesCronRestoreIdentity {
+  if (!originalIdentity.drain_token) {
+    throw new Error("Hermes cron completion requires the held drain token");
   }
+  if (sameGatewayIdentity(originalIdentity, verifiedReplacementIdentity)) {
+    throw new Error("Hermes cron completion requires a replacement gateway identity");
+  }
+  if (verifiedReplacementIdentity.drain_token !== originalIdentity.drain_token) {
+    throw new Error("Hermes cron completion changed the held drain token");
+  }
+  const receipt = runCronRestoreControl(
+    sandboxName,
+    "complete",
+    originalIdentity,
+    verifiedReplacementIdentity,
+  );
+  if (
+    receipt.drain_token !== originalIdentity.drain_token ||
+    !sameGatewayIdentity(receipt, verifiedReplacementIdentity)
+  ) {
+    throw new Error("Hermes cron completion changed the verified replacement gateway identity");
+  }
+  return {
+    pid: receipt.pid,
+    start_time: receipt.start_time,
+    ...(receipt.drain_token ? { drain_token: receipt.drain_token } : {}),
+  };
 }
 
-function isLegacyCronRestoreControl(error: unknown): boolean {
+export function observeHermesCronReplacement(
+  sandboxName: string,
+  originalIdentity: HermesCronRestoreIdentity,
+): HermesCronRestoreIdentity {
+  if (!originalIdentity.drain_token) {
+    throw new Error("Hermes cron replacement observation requires the held drain token");
+  }
+  const receipt = runCronRestoreControl(sandboxName, "observe", originalIdentity);
+  if (
+    receipt.drain_token !== originalIdentity.drain_token ||
+    sameGatewayIdentity(receipt, originalIdentity)
+  ) {
+    throw new Error("Hermes cron observation did not bind to a replacement gateway identity");
+  }
+  return {
+    pid: receipt.pid,
+    start_time: receipt.start_time,
+    ...(receipt.drain_token ? { drain_token: receipt.drain_token } : {}),
+  };
+}
+
+function isLegacyCronRestoreControl(
+  error: unknown,
+  action: "prepare-recover" | "recover",
+): boolean {
   if (!(error instanceof HermesCronRestoreControlFailure)) return false;
+  const invalidAction =
+    action === "prepare-recover"
+      ? /argument action: invalid choice: ['"]prepare-recover['"]/u
+      : /argument action: invalid choice: ['"]recover['"]/u;
   return (
     /can't open file ['"]\/usr\/local\/lib\/nemoclaw\/hermes-cron-restore-control\.py['"]: \[Errno 2\] No such file or directory/u.test(
       error.stderr,
-    ) || /argument action: invalid choice: ['"]recover['"]/u.test(error.stderr)
+    ) || invalidAction.test(error.stderr)
   );
+}
+
+export function prepareHermesCronRestoreRecovery(
+  sandboxName: string,
+): HermesCronRestorePreparationOutcome {
+  let stdout: string;
+  try {
+    stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
+  } catch (error) {
+    if (isLegacyCronRestoreControl(error, "prepare-recover")) return "unsupported";
+    throw error;
+  }
+  return parseCronRestorePreparationReceipt(stdout);
 }
 
 export function recoverHermesCronRestore(sandboxName: string): HermesCronRestoreRecoveryOutcome {
@@ -353,7 +624,7 @@ export function recoverHermesCronRestore(sandboxName: string): HermesCronRestore
   try {
     receipt = runCronRestoreControl(sandboxName, "recover");
   } catch (error) {
-    if (isLegacyCronRestoreControl(error)) return "unsupported";
+    if (isLegacyCronRestoreControl(error, "recover")) return "unsupported";
     throw error;
   }
   if (
@@ -369,11 +640,8 @@ export function recoverHermesCronRestore(sandboxName: string): HermesCronRestore
 export function runHermesCronRestoreTransaction<T extends { restoreSucceeded: boolean }>(
   sandboxName: string,
   restore: () => T,
-  onGateTransition: (
-    state: "acquired" | "released",
-    identity: HermesCronRestoreIdentity,
-  ) => void = () => {},
-): T {
+  onGateTransition: (state: "acquired", identity: HermesCronRestoreIdentity) => void = () => {},
+): PendingHermesCronRestore<T> {
   const identity = beginHermesCronRestore(sandboxName);
   onGateTransition("acquired", identity);
   const result = restore();
@@ -381,7 +649,5 @@ export function runHermesCronRestoreTransaction<T extends { restoreSucceeded: bo
     throw new HermesCronRestoreIncompleteError();
   }
   validateHermesCronRestore(sandboxName, identity);
-  releaseHermesCronRestore(sandboxName, identity);
-  onGateTransition("released", identity);
-  return result;
+  return { result, identity };
 }
