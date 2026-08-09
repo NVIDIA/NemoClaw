@@ -1050,7 +1050,7 @@ describe("production pinned peer transport", () => {
       kind: "not-selected",
       code: "no-match",
       reason:
-        "The candidate logical rails belong to more than one physical port: pci-0000:02:00, pci-0002:02:00.",
+        "The candidate logical rails on node 11111111111111111111111111111111 belong to more than one physical port: pci-0000:02:00, pci-0002:02:00.",
     });
   });
 

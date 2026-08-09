@@ -358,7 +358,7 @@ function validateNodeRails(
   if (physicalPorts.size !== 1) {
     return {
       code: "fabric-multiple",
-      message: `The candidate logical rails belong to more than one physical port: ${[...physicalPorts].sort().join(", ")}.`,
+      message: `The candidate logical rails on node ${node.nodeId} belong to more than one physical port: ${[...physicalPorts].sort().join(", ")}.`,
     };
   }
 

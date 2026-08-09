@@ -476,16 +476,23 @@ describe("managed DGX Spark cluster topology qualification", () => {
     });
   });
 
-  it("reports the observed physical-port identities when rails do not share a port", () => {
+  it.each([
+    { target: "local" as const, nodeId: "spark-head", suffix: "head" },
+    { target: "peer" as const, nodeId: "spark-worker", suffix: "worker" },
+  ])("reports the $target node and sorted physical-port identities", ({
+    target,
+    nodeId,
+    suffix,
+  }) => {
     const input = qualificationInput();
-    input.local.rails[0]!.physicalPortId = "cx7-right-head";
-    input.local.rails[1]!.physicalPortId = "cx7-left-head";
+    const node = target === "local" ? input.local : input.peers[0]!;
+    node.rails[0]!.physicalPortId = `cx7-right-${suffix}`;
+    node.rails[1]!.physicalPortId = `cx7-left-${suffix}`;
 
     expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code: "fabric-multiple",
-      message:
-        "The candidate logical rails belong to more than one physical port: cx7-left-head, cx7-right-head.",
+      message: `The candidate logical rails on node ${nodeId} belong to more than one physical port: cx7-left-${suffix}, cx7-right-${suffix}.`,
     });
   });
 
