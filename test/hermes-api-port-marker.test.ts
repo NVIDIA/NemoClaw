@@ -126,14 +126,16 @@ function runHermesApiPortMarkerPublication(publicPort: number, setup: MarkerSetu
     { mode: 0o700 },
   );
 
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8" });
-  const marker = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, "utf-8").trim() : null;
-  const mode = marker === null ? null : (fs.statSync(markerPath).mode & 0o777).toString(8);
-  const target =
-    fixture.targetPath === null ? null : fs.readFileSync(fixture.targetPath, "utf-8").trim();
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-
-  return { result, marker, mode, target };
+  try {
+    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8" });
+    const marker = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, "utf-8").trim() : null;
+    const mode = marker === null ? null : (fs.statSync(markerPath).mode & 0o777).toString(8);
+    const target =
+      fixture.targetPath === null ? null : fs.readFileSync(fixture.targetPath, "utf-8").trim();
+    return { result, marker, mode, target };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 describe("agents/hermes/start.sh root-owned API port marker", () => {

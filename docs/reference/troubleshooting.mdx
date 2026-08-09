@@ -3166,8 +3166,7 @@ A second Hermes sandbox on the same host receives the next free API port, so che
 A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`.
 A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action.
 To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`.
-Rerunning onboarding with `--recreate-sandbox` and no variable also allocates a free port, because a recreate that is not resuming an interrupted session removes the registry row first.
-A recreate that resumes an interrupted session keeps the row, so the sandbox keeps `8642` unless you also set the variable.
+A recreate keeps the sandbox's registry row, so `--recreate-sandbox` without the variable keeps the recorded port.
 
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 

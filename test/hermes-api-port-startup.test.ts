@@ -42,7 +42,7 @@ function runHermesApiPortBootstrap(apiPort: string) {
 }
 
 describe("agents/hermes/start.sh API port allocation", () => {
-  it("accepts an allocated interior Hermes API port", () => {
+  it("accepts an allocated interior Hermes API port (#8543)", () => {
     const run = runHermesApiPortBootstrap("8645");
 
     expect(run.status).toBe(0);

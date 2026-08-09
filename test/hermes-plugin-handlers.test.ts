@@ -22,7 +22,7 @@ function runPython(script: string): string {
 }
 
 describe("Hermes NemoClaw plugin handlers", () => {
-  it("uses only allocated ASCII API ports from the supervisor or marker", () => {
+  it("uses only allocated ASCII API ports from the supervisor or marker (#8543)", () => {
     const output = runPython(`
 import importlib.util
 import io

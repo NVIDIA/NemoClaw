@@ -12,7 +12,7 @@ const TRANSACTION = path.resolve(
 );
 
 describe("Hermes MCP API port resolution", () => {
-  it("accepts only allocated ports from the stable service-manager environment", () => {
+  it("accepts only allocated ports from the stable service-manager environment (#8543)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -88,6 +88,149 @@ print(json.dumps({
       ],
       absent: 8642,
       identity_change: "Hermes service-manager identity changed while reading",
+    });
+  });
+
+  it("rejects a marker that the sandbox user could have shaped (#8543)", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import importlib.util, json, os, pathlib, shutil, sys, tempfile
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+root = pathlib.Path(tempfile.mkdtemp())
+module.GATEWAY_PUBLIC_PORT_PATH = str(root / "hermes-api-port")
+absent = module._root_gateway_public_port_marker()
+
+def stage_writable_mode(path):
+    path.write_bytes(b"8645")
+    path.chmod(0o644)
+
+def stage_extra_hard_link(path):
+    path.write_bytes(b"8645")
+    path.chmod(0o444)
+    os.link(path, path.parent / "extra-link")
+
+def stage_oversized_record(path):
+    path.write_bytes(b"8" * 64)
+    path.chmod(0o444)
+
+unsafe = []
+for index, stage in enumerate(
+    (stage_writable_mode, stage_extra_hard_link, stage_oversized_record)
+):
+    directory = root / f"case-{index}"
+    directory.mkdir()
+    marker = directory / "hermes-api-port"
+    stage(marker)
+    module.GATEWAY_PUBLIC_PORT_PATH = str(marker)
+    try:
+        module._root_gateway_public_port_marker()
+    except PermissionError as error:
+        unsafe.append(str(error))
+
+linked = root / "linked"
+linked.mkdir()
+target = linked / "hermes-api-port"
+target.write_bytes(b"8645")
+target.chmod(0o444)
+symlink = linked / "symlink"
+symlink.symlink_to(target)
+module.GATEWAY_PUBLIC_PORT_PATH = str(symlink)
+followed = ""
+try:
+    module._root_gateway_public_port_marker()
+except PermissionError as error:
+    followed = str(error)
+
+shutil.rmtree(root)
+
+print(json.dumps({
+    "absent": absent,
+    "unsafe": unsafe,
+    "followed": followed,
+}))
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      absent: null,
+      unsafe: [
+        "Hermes API port marker is unsafe",
+        "Hermes API port marker is unsafe",
+        "Hermes API port marker is unsafe",
+      ],
+      followed: "Hermes API port marker cannot be opened safely",
+    });
+  });
+
+  it("prefers the marker over the service-manager environment (#8543)", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+module._gateway_identity = lambda: (41, 333)
+module._service_manager_gateway_public_port = lambda identity: 8649
+
+module._root_gateway_public_port_marker = lambda: 8647
+marker_wins = module._resolve_gateway_public_port()
+
+module._root_gateway_public_port_marker = lambda: None
+real_geteuid = module.os.geteuid
+
+module.os.geteuid = lambda: 0
+root_without_marker = ""
+try:
+    module._resolve_gateway_public_port()
+except PermissionError as error:
+    root_without_marker = str(error)
+
+module.os.geteuid = lambda: 1000
+same_uid_fallback = module._resolve_gateway_public_port()
+
+module._gateway_identity = lambda: None
+without_identity = ""
+try:
+    module._resolve_gateway_public_port()
+except PermissionError as error:
+    without_identity = str(error)
+
+module.os.geteuid = real_geteuid
+
+print(json.dumps({
+    "marker_wins": marker_wins,
+    "root_without_marker": root_without_marker,
+    "same_uid_fallback": same_uid_fallback,
+    "without_identity": without_identity,
+}))
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      marker_wins: 8647,
+      root_without_marker: "Hermes root API port marker is unavailable",
+      same_uid_fallback: 8649,
+      without_identity: "Hermes gateway identity is unavailable",
     });
   });
 });

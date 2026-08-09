@@ -446,10 +446,11 @@ export function recoverMessagingHostForward(
  *
  * Manifest entries name the agent's default ports, not this sandbox's. Both
  * the dashboard port and the Hermes API port are per-sandbox host resources, so
- * a second sandbox owns neither manifest default. Resolve each entry against
- * the sandbox's registered ports before probing, or recovery demands a port
- * that belongs to a sibling sandbox and reports a failure the sandbox cannot
- * repair.
+ * a second sandbox owns neither manifest default. Skip the manifest dashboard
+ * entry, which `ensureSandboxPortForward` already recovers at this sandbox's
+ * dashboard port, and resolve the manifest API entry against the sandbox's
+ * recorded API port, or recovery demands a port that belongs to a sibling
+ * sandbox and reports a failure the sandbox cannot repair.
  */
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
