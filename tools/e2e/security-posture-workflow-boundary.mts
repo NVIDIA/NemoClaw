@@ -73,12 +73,12 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   const expectedMatrix = [
     {
       agent: "openclaw",
-      sandbox_name: "e2e-openclaw-security-posture",
+      sandbox_name: "e2e-oc-security",
       test_file: "test/e2e/live/full-e2e.test.ts",
     },
     {
       agent: "hermes",
-      sandbox_name: "e2e-hermes-security-posture",
+      sandbox_name: "e2e-hm-security",
       test_file: "test/e2e/live/hermes-e2e.test.ts",
     },
   ];
@@ -95,6 +95,7 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
     NEMOCLAW_AGENT: "${{ matrix.agent }}",
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
+    NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1",
     NEMOCLAW_E2E_SECURITY_POSTURE: "1",
     NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -106,6 +107,9 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   };
   for (const [name, value] of Object.entries(expectedEnv)) {
     if (jobEnv[name] !== value) errors.push(`${JOB_NAME} must set ${name}=${value}`);
+  }
+  if (Object.hasOwn(jobEnv, "NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT")) {
+    errors.push(`${JOB_NAME} must not set retired NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT`);
   }
   if (Object.hasOwn(jobEnv, "NVIDIA_INFERENCE_API_KEY")) {
     errors.push(`${JOB_NAME} must not expose the inference key at job scope`);

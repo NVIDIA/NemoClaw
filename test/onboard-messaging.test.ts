@@ -14,8 +14,8 @@ import YAML from "yaml";
 
 import {
   activeChannelsFromDockerfile,
-  encodeTestMessagingPlan,
-  inlineMessagingPlanHelper,
+  encodeMessagingPlanForChannels,
+  messagingPlanLiteral,
 } from "./helpers/messaging-plan-fixtures";
 import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 
@@ -498,10 +498,7 @@ const { createSandbox } = require(${onboardPath});
     const credentialsPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const messagingPlanB64 = encodeTestMessagingPlan([
-      { channelId: "discord", active: true },
-      { channelId: "slack", active: true },
-    ]);
+    const messagingPlanB64 = encodeMessagingPlanForChannels(["discord", "slack"]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -518,10 +515,9 @@ const fs = require("node:fs");
 
 const commands = [];
 const registerCalls = [];
-${inlineMessagingPlanHelper}
 registry.registerSandbox({
   name: "my-assistant",
-  messaging: { schemaVersion: 1, plan: makeMessagingPlan(["discord", "slack"]) },
+  messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["discord", "slack"])} },
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -584,7 +580,7 @@ const { createSandbox } = require(${onboardPath});
   delete process.env.SLACK_BOT_TOKEN;
   delete process.env.SLACK_APP_TOKEN;
   delete process.env.TELEGRAM_BOT_TOKEN;
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["discord", "slack"]))).toString("base64");
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["discord", "slack"])})).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"],
   );
@@ -663,7 +659,7 @@ const { createSandbox } = require(${onboardPath});
     const credentialsPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "telegram", active: false }]);
+    const messagingPlanB64 = encodeMessagingPlanForChannels(["telegram"], ["telegram"]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -680,10 +676,9 @@ const fs = require("node:fs");
 
 const commands = [];
 const registerCalls = [];
-${inlineMessagingPlanHelper}
 registry.registerSandbox({
   name: "my-assistant",
-  messaging: { schemaVersion: 1, plan: makeMessagingPlan(["telegram"], ["telegram"]) },
+  messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["telegram"], ["telegram"])} },
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -741,7 +736,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.TELEGRAM_BOT_TOKEN;
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["telegram"], ["telegram"]))).toString("base64");
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["telegram"], ["telegram"])})).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
   );
@@ -817,7 +812,7 @@ const { createSandbox } = require(${onboardPath});
       const credentialsPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
-      const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: true }]);
+      const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
@@ -834,7 +829,6 @@ const fs = require("node:fs");
 
 const commands = [];
 const registerCalls = [];
-${inlineMessagingPlanHelper}
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
@@ -894,7 +888,7 @@ const { createSandbox } = require(${onboardPath});
       delete process.env[key];
     }
   }
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["whatsapp"]))).toString("base64");
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["whatsapp"])})).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
   );
@@ -968,7 +962,7 @@ const { createSandbox } = require(${onboardPath});
       const credentialsPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
-      const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: false }]);
+      const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"], ["whatsapp"]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
@@ -983,10 +977,9 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 
-${inlineMessagingPlanHelper}
 registry.registerSandbox({
   name: "my-assistant",
-  messaging: { schemaVersion: 1, plan: makeMessagingPlan(["whatsapp"], ["whatsapp"]) },
+  messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["whatsapp"], ["whatsapp"])} },
 });
 
 const commands = [];
@@ -1050,7 +1043,7 @@ const { createSandbox } = require(${onboardPath});
       delete process.env[key];
     }
   }
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["whatsapp"], ["whatsapp"]))).toString("base64");
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["whatsapp"], ["whatsapp"])})).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
   );

@@ -615,7 +615,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   const version = run(gatewayBin, ["--version"]);
   expect(version.status, commandOutput(version)).toBe(0);
-  expect(commandOutput(version)).toContain(process.env.NEMOCLAW_CANDIDATE_VERSION || "0.0.85");
+  expect(commandOutput(version)).toContain(process.env.NEMOCLAW_CANDIDATE_VERSION || "0.0.99");
 
   await requireDockerDaemon({ dockerBin, host, skip });
 

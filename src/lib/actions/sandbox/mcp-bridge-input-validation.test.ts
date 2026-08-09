@@ -14,7 +14,7 @@ import {
   parseMcpAddArgs,
   resolveCredentialEnv,
 } from "./mcp-bridge";
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.85.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.99.json";
 
 describe("MCP CLI input validation", () => {
   it("parses server, URL, and env references", () => {

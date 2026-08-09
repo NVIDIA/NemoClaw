@@ -15,6 +15,10 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
 } from "../actions/sandbox/mcp-bridge-policy-render";
+import {
+  isOperatorTrustablePrivateIp,
+  replayTrustedPrivateEndpoint,
+} from "../security/trusted-private-endpoint";
 import type { SandboxEntry } from "../state/registry";
 import {
   assertLegacyMcpPolicyRestoreSafe,
@@ -28,11 +32,20 @@ function registeredPolicy(
   server: string,
   address: string,
 ): NonNullable<SandboxEntry["customPolicies"]>[number] {
+  const host = `${server}.example.com`;
+  const target = isOperatorTrustablePrivateIp(address)
+    ? (() => {
+        const replay = replayTrustedPrivateEndpoint(host, [address]);
+        return {
+          addresses: [...replay.addresses],
+          trustedPrivateCapability: replay.trustedPrivateCapability,
+          trustedPrivateHost: replay.host,
+        };
+      })()
+    : { addresses: [address] };
   return {
     name: buildMcpBridgePolicyName(server),
-    content: buildMcpBridgePolicyYaml(server, `https://${server}.example.com/mcp`, ADAPTER, [
-      address,
-    ]),
+    content: buildMcpBridgePolicyYaml(server, `https://${host}/mcp`, ADAPTER, target),
     sourcePath: MCP_BRIDGE_POLICY_SOURCE,
   };
 }

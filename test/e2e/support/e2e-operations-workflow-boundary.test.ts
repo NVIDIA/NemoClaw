@@ -13,6 +13,7 @@ import {
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
@@ -194,6 +195,39 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
+  it("does not activate generic GPU risk reporting for an automatic main push", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_E2E_EXPECTED_SHA =
+      "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "llama-cpp-generic-gpu job must set NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
+  it("retains generic GPU candidate identity for main and manual PR runs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA =
+      "${{ inputs.checkout_sha }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "llama-cpp-generic-gpu job must set NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+
+  it("rejects drift from the manual PR risk-signal identity inputs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+    workflow.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "E2E workflow must bind NEMOCLAW_E2E_EXPECTED_SHA",
+        "E2E workflow must bind NEMOCLAW_E2E_CORRELATION_ID",
+      ]),
+    );
+  });
+
   it("limits manual PR runs to empty selectors or protected managed-runtime qualification", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
@@ -306,9 +340,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         },
       );
       expect(controllerResult.status, controllerResult.stderr).toBe(0);
-      const controllerMatrix = readFileSync(output, "utf8")
-        .trim()
-        .replace(/^matrix=/u, "");
+      const controllerOutput = readFileSync(output, "utf8").split("\n");
+      const controllerMatrix = controllerOutput
+        .find((line) => line.startsWith("matrix="))!
+        .slice("matrix=".length);
+      const controllerTestMatrix = controllerOutput
+        .find((line) => line.startsWith("test_matrix="))!
+        .slice("test_matrix=".length);
 
       writeFileSync(output, "");
       const plannerResult = spawnSync(
@@ -320,6 +358,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             ...process.env,
             CHECKOUT_SHA: "a".repeat(40),
             CONTROLLER_MATRIX: controllerMatrix,
+            CONTROLLER_TEST_MATRIX: controllerTestMatrix,
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
@@ -341,6 +380,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           expect.objectContaining({ id: "ubuntu-policy-custom-missing-presets-negative" }),
           expect.objectContaining({ id: "ubuntu-repo-cloud-openclaw" }),
         ]),
+      );
+      const testMatrixLine = readFileSync(output, "utf8")
+        .split("\n")
+        .find((line) => line.startsWith("test_matrix="))!;
+      expect(JSON.parse(testMatrixLine.slice("test_matrix=".length))).toEqual(
+        JSON.parse(controllerTestMatrix),
       );
       expect(
         (generateMatrix as unknown as { outputs: Record<string, string> }).outputs.matrix,
@@ -380,7 +425,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe("matrix=[]\n");
+      expect(readFileSync(output, "utf8")).toBe("matrix=[]\ntest_matrix=[]\n");
 
       writeFileSync(output, "");
       const plannerResult = spawnSync(
@@ -392,6 +437,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             ...process.env,
             CHECKOUT_SHA: "a".repeat(40),
             CONTROLLER_MATRIX: "[]",
+            CONTROLLER_TEST_MATRIX: "[]",
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
@@ -402,6 +448,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       );
       expect(plannerResult.status, plannerResult.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toContain("matrix=[]\n");
+      expect(readFileSync(output, "utf8")).toContain("test_matrix=[]\n");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

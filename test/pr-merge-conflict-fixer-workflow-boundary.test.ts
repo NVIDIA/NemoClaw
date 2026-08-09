@@ -62,10 +62,9 @@ describe("PR merge conflict fixer workflow boundary", () => {
     expect(scan.permissions).toEqual({ contents: "read", "pull-requests": "read" });
     expect(resolve.permissions).toEqual({ contents: "read" });
     expect(publish.permissions).toEqual({ contents: "write", "pull-requests": "read" });
+    expect(scan["timeout-minutes"]).toBe(10);
     expect(resolve["timeout-minutes"]).toBe(30);
-    expect(
-      Object.values(jobs).filter((job) => record(job)["timeout-minutes"] !== undefined),
-    ).toHaveLength(1);
+    expect(publish["timeout-minutes"]).toBe(10);
   });
 
   it("loads each resolve command from the pushed main SHA (#6952)", () => {
@@ -117,6 +116,10 @@ describe("PR merge conflict fixer workflow boundary", () => {
     expect(record(resolve.env).PI_IMAGE).toBe(
       "ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd",
     );
+    const sandboxName = String(record(resolve.env).SANDBOX_NAME ?? "");
+    expect(sandboxName).toBe("pr-conflict");
+    expect(sandboxName.length).toBeLessThanOrEqual(19);
+    expect(sandboxName).toMatch(/^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/u);
     expect(workflowSource.match(/\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}/gu)).toEqual([
       "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}",
     ]);

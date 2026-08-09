@@ -98,19 +98,26 @@ def _rename_no_replace_at(src_fd: int, name: str, dst_fd: int) -> None:
     import ctypes
 
     libc = ctypes.CDLL(None, use_errno=True)
-    renameat2 = getattr(libc, "renameat2", None)
-    if renameat2 is None:
-        raise OSError(errno.ENOSYS, "renameat2 is unavailable")
-    renameat2.argtypes = [
+    if sys.platform == "darwin":
+        rename_no_replace = getattr(libc, "renameatx_np", None)
+        rename_flag = 0x00000004  # RENAME_EXCL from Darwin sys/stdio.h.
+        unavailable_message = "renameatx_np is unavailable"
+    else:
+        rename_no_replace = getattr(libc, "renameat2", None)
+        rename_flag = 1  # RENAME_NOREPLACE from Linux stdio.h.
+        unavailable_message = "renameat2 is unavailable"
+    if rename_no_replace is None:
+        raise OSError(errno.ENOSYS, unavailable_message)
+    rename_no_replace.argtypes = [
         ctypes.c_int,
         ctypes.c_char_p,
         ctypes.c_int,
         ctypes.c_char_p,
         ctypes.c_uint,
     ]
-    renameat2.restype = ctypes.c_int
+    rename_no_replace.restype = ctypes.c_int
     encoded = os.fsencode(name)
-    if renameat2(src_fd, encoded, dst_fd, encoded, 1) != 0:
+    if rename_no_replace(src_fd, encoded, dst_fd, encoded, rename_flag) != 0:
         error_number = ctypes.get_errno()
         raise OSError(error_number, os.strerror(error_number))
 
