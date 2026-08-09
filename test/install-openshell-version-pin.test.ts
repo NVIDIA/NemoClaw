@@ -22,9 +22,9 @@ test("selects the supported OpenShell version when newer releases exist (#3474)"
     path.join(binDir, "gh"),
     `#!/bin/sh
 printf '%s\\n' '${JSON.stringify([
-      { tagName: "v0.0.98" },
-      { tagName: "v0.0.100" },
       { tagName: "v0.0.99" },
+      { tagName: "v0.0.102" },
+      { tagName: "v0.0.101" },
     ])}'`,
   );
 
@@ -39,17 +39,17 @@ printf '%s\\n' '${JSON.stringify([
 const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
 const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
 const deps = {
-  getBlueprintMinOpenshellVersion: () => "0.0.99",
-  getBlueprintMaxOpenshellVersion: () => "0.0.99",
+  getBlueprintMinOpenshellVersion: () => "0.0.101",
+  getBlueprintMaxOpenshellVersion: () => "0.0.101",
   versionGte: version.versionGte,
 };
 const resolution = pin.resolveOpenshellInstallPin(deps);
 const replacement = pin.computeOpenshellInstallEnv(
-  { INSTALLED_OPENSHELL_VERSION: "0.0.98" },
+  { INSTALLED_OPENSHELL_VERSION: "0.0.99" },
   deps,
 );
 process.stdout.write(JSON.stringify({
-  installed: version.getInstalledOpenshellVersion("openshell 0.0.98"),
+  installed: version.getInstalledOpenshellVersion("openshell 0.0.99"),
   resolution,
   replacement: replacement.env,
 }));`,
@@ -64,13 +64,13 @@ process.stdout.write(JSON.stringify({
     );
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      installed: "0.0.98",
-      resolution: { kind: "pin", version: "0.0.99", latest: "0.0.100", reason: "max-cap" },
+      installed: "0.0.99",
+      resolution: { kind: "pin", version: "0.0.101", latest: "0.0.102", reason: "max-cap" },
       replacement: {
-        INSTALLED_OPENSHELL_VERSION: "0.0.98",
-        NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.99",
-        NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.99",
-        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.99",
+        INSTALLED_OPENSHELL_VERSION: "0.0.99",
+        NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.101",
+        NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.101",
+        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101",
       },
     });
   } finally {
@@ -79,9 +79,9 @@ process.stdout.write(JSON.stringify({
 });
 
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliLinuxX64: "35725a358e42ef7f0f0393035536da317706b0febcc459a2011e0555f6c2b71c",
-  gatewayLinuxX64: "640d204dc3c6bc28bffa1f3d870897fc23bbc5ec0151a6c642083e958455cb49",
-  sandboxLinuxX64: "84caed3dec4390e0938e89b38b1256d31e8970b4bfd85437bf92ed79f5b1ff05",
+  cliLinuxX64: "7d49ab2a5ff0b826bd2bdca5e0244010f832dfc6901c808ea8c8467004c26913",
+  gatewayLinuxX64: "eaeb094ccf7dcb1fe00c7e926e6aa9aaaefb89ecbef8343720628b0fd2d84654",
+  sandboxLinuxX64: "953b90eaa7d2fc1bb7bdf38eb0ada6fad7902b13f9f895ca20b89caeac483a9e",
 };
 
 type GhDownloadMode = "success" | "fail";
@@ -91,7 +91,7 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
-// the same pinned digest lines the real OpenShell v0.0.99 release uses. A fake
+// the same pinned digest lines the real OpenShell v0.0.101 release uses. A fake
 // sha256sum below keeps this test self-contained even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
@@ -328,11 +328,11 @@ function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void 
     fs.writeFileSync(downloadLog, "");
 
     createFakeUname(fakeBin);
-    createFakeStickyOpenshell(fakeBin, "0.0.100");
+    createFakeStickyOpenshell(fakeBin, "0.0.102");
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.0.99");
+    createFakeTar(fakeBin, "0.0.101");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
 
@@ -351,36 +351,36 @@ function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void 
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
-    // Assertion 2: download-log-contains-v0.0.99 — pinned release tag was
+    // Assertion 2: download-log-contains-v0.0.101 — pinned release tag was
     // requested from the release host.
     const downloads = fs.readFileSync(downloadLog, "utf-8");
-    expect(downloads).toContain("v0.0.99");
+    expect(downloads).toContain("v0.0.101");
 
-    // Assertion 3: download-log-excludes-v0.0.100 — the too-new sticky version
+    // Assertion 3: download-log-excludes-v0.0.102 — the too-new sticky version
     // is never re-fetched.
-    expect(downloads).not.toContain("v0.0.100");
+    expect(downloads).not.toContain("v0.0.102");
 
     if (options.ghDownloadMode === "fail") {
       // Assertion 3b: curl-fallback-observed — the installer must recover from
       // gh download failure by re-requesting the pinned assets via curl.
-      expect(downloads).toContain("gh download-fail v0.0.99");
+      expect(downloads).toContain("gh download-fail v0.0.101");
       expect(downloads).toContain("curl ");
     } else {
-      expect(downloads).toContain("gh download v0.0.99");
+      expect(downloads).toContain("gh download v0.0.101");
       expect(downloads).not.toContain("curl ");
     }
 
-    // Assertion 4: replaced-openshell-reports-0.0.99 — the binary on disk in
+    // Assertion 4: replaced-openshell-reports-0.0.101 — the binary on disk in
     // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-    // there and it is writable) was overwritten with the pinned 0.0.99 build.
+    // there and it is writable) was overwritten with the pinned 0.0.101 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
       killSignal: "SIGKILL",
       timeout: 30_000,
     });
     expect(replacedVersion.status).toBe(0);
-    expect(replacedVersion.stdout).toContain("0.0.99");
-    expect(replacedVersion.stdout).not.toContain("0.0.100");
+    expect(replacedVersion.stdout).toContain("0.0.101");
+    expect(replacedVersion.stdout).not.toContain("0.0.102");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

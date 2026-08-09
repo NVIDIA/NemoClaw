@@ -90,7 +90,7 @@ assert.equal(
 const NEMOCLAW_RELEASE_TAG = "v0.0.71";
 const NEMOCLAW_RELEASE_COMMIT = "e4b9111f5f0535c2fc3d6fbe8dc8dca101a6fdce";
 const NEMOCLAW_RELEASE_OPENSHELL_VERSION = "0.0.71";
-const CURRENT_OPENSHELL_VERSION = "0.0.99";
+const CURRENT_OPENSHELL_VERSION = "0.0.101";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
 const RELEASE_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
@@ -1196,7 +1196,7 @@ test("the current-lifecycle custom plugin survives restart and recreation withou
     boundary: "fresh-openclaw-sandbox-exec",
     regressionTargets: ["#6108", "#3513", "#3127"],
     contract: [
-      "the current CLI uses OpenShell 0.0.99 for current lifecycle coverage",
+      "the current CLI uses OpenShell 0.0.101 for current lifecycle coverage",
       "the CLI and Dockerfile use the same checkout source and a compatible sandbox base image",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
       "custom-plugin v1 survives restart and recreation installs v2",
