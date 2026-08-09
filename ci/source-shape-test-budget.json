@@ -457,6 +457,11 @@
       "category": "security"
     },
     {
+      "file": "test/sandbox-base-image-layout.test.ts",
+      "test": "keeps Dockerfile.base within the reviewed final-stage layer budget",
+      "category": "compatibility"
+    },
+    {
       "file": "test/source-architecture.test.ts",
       "test": "keeps removed step mutation APIs out of production source (#7703)",
       "category": "compatibility"
