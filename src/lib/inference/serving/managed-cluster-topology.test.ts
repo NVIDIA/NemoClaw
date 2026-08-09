@@ -478,7 +478,8 @@ describe("managed DGX Spark cluster topology qualification", () => {
 
   it("reports the observed physical-port identities when rails do not share a port", () => {
     const input = qualificationInput();
-    input.local.rails[1]!.physicalPortId = "cx7-right-head";
+    input.local.rails[0]!.physicalPortId = "cx7-right-head";
+    input.local.rails[1]!.physicalPortId = "cx7-left-head";
 
     expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
