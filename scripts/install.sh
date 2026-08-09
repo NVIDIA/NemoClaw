@@ -3464,11 +3464,25 @@ ensure_docker() {
 # local-registry configuration required by the OpenShell Podman driver.
 NEMOCLAW_PORTABLE_STORAGE_MARKER="# NEMOCLAW_MANAGED_PORTABLE_STORAGE=1"
 
+resolve_portable_rootless_runroot() {
+  if [[ "${XDG_RUNTIME_DIR:-}" == /* ]]; then
+    printf '%s/containers\n' "${XDG_RUNTIME_DIR%/}"
+    return 0
+  fi
+
+  local user_id=""
+  user_id="$(id -u)" \
+    || error "Could not resolve the current user ID for rootless Podman RunRoot."
+  [[ "$user_id" =~ ^[0-9]+$ ]] \
+    || error "The current user ID is invalid for rootless Podman RunRoot."
+  printf '/run/user/%s/containers\n' "$user_id"
+}
+
 configure_portable_persistent_storage() {
   local storage_conf="${HOME}/.config/containers/storage.conf"
   local storage_dir="${storage_conf%/*}"
   local graphroot="${HOME}/.local/share/containers/storage"
-  local runroot="${HOME}/.local/share/containers/runroot"
+  local runroot=""
   local candidate=""
   local backup=""
   local managed_existing=0
@@ -3480,10 +3494,17 @@ configure_portable_persistent_storage() {
       error "The portable experimental profile cannot encode HOME in containers/storage.conf."
       ;;
   esac
-  mkdir -p "$storage_dir" "$graphroot" "$runroot" \
-    || error "Could not create the persistent rootless Podman storage directories under HOME."
-  chmod 700 "$graphroot" "$runroot" \
-    || error "Could not secure the persistent rootless Podman storage directories under HOME."
+  runroot="$(resolve_portable_rootless_runroot)"
+  case "$runroot" in
+    *$'\n'* | *$'\r'* | *'"'* | *$'\\'*)
+      error "The portable experimental profile cannot encode RunRoot in containers/storage.conf."
+      ;;
+  esac
+
+  mkdir -p "$storage_dir" "$graphroot" \
+    || error "Could not create the persistent rootless Podman GraphRoot under HOME."
+  chmod 700 "$graphroot" \
+    || error "Could not secure the persistent rootless Podman GraphRoot under HOME."
   if [[ -L "$storage_conf" ]]; then
     error "Refusing to replace symlinked Podman storage configuration: $storage_conf"
   fi
@@ -3568,9 +3589,10 @@ prepare_portable_experimental_runtime_override() {
     || error "Could not enable the rootless Podman restart service."
 
   local expected_graphroot="${HOME}/.local/share/containers/storage"
-  local expected_runroot="${HOME}/.local/share/containers/runroot"
+  local expected_runroot=""
   local actual_graphroot=""
   local actual_runroot=""
+  expected_runroot="$(resolve_portable_rootless_runroot)"
   actual_graphroot="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)" \
     || error "Could not verify the persistent rootless Podman GraphRoot with 'podman info'."
   if [[ "$actual_graphroot" != "$expected_graphroot" ]]; then
