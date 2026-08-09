@@ -83,6 +83,8 @@ describe("OpenClaw mcporter MCP adapter", () => {
     try {
       const fakeMcporter = path.join(temp, "mcporter");
       const configState = path.join(temp, "config.json");
+      const homeConfigState = path.join(temp, "xdg", "mcporter", "mcporter.json");
+      const legacyConfigState = path.join(temp, "legacy", "mcporter.json");
       const argvLog = path.join(temp, "argv.jsonl");
       const removeMarker = path.join(temp, "removed");
       fs.writeFileSync(
@@ -90,26 +92,44 @@ describe("OpenClaw mcporter MCP adapter", () => {
         [
           "#!/usr/bin/env node",
           'const fs = require("node:fs");',
+          'const path = require("node:path");',
           "const args = process.argv.slice(2);",
           "fs.appendFileSync(process.env.FAKE_MCPORTER_ARGV_LOG, `${JSON.stringify(args)}\\n`);",
           'const configIndex = args.indexOf("config");',
-          "const subcommand = configIndex >= 0 ? args[configIndex + 1] : undefined;",
+          "let cursor = configIndex + 1;",
+          "let requestedConfig;",
+          'if (args[cursor] === "--config") { requestedConfig = args[cursor + 1]; cursor += 2; }',
+          "const subcommand = configIndex >= 0 ? args[cursor] : undefined;",
+          "const server = args[cursor + 1];",
+          "const value = (flag) => args[args.indexOf(flag) + 1];",
+          'const root = value("--root");',
+          'const projectRoot = path.join(root, "config");',
+          "const configPath = (requested) => {",
+          "  if (!requested) {",
+          "    if (fs.existsSync(process.env.FAKE_MCPORTER_PROJECT_CONFIG)) return process.env.FAKE_MCPORTER_PROJECT_CONFIG;",
+          "    if (fs.existsSync(process.env.FAKE_MCPORTER_HOME_CONFIG)) return process.env.FAKE_MCPORTER_HOME_CONFIG;",
+          "    return process.env.FAKE_MCPORTER_LEGACY_CONFIG;",
+          "  }",
+          '  if (requested.startsWith(projectRoot)) return requested.endsWith(".jsonc") ? `${process.env.FAKE_MCPORTER_PROJECT_CONFIG}c` : process.env.FAKE_MCPORTER_PROJECT_CONFIG;',
+          "  if (requested.startsWith(path.dirname(process.env.FAKE_MCPORTER_HOME_CONFIG))) return requested;",
+          '  return requested.endsWith(".jsonc") ? `${process.env.FAKE_MCPORTER_LEGACY_CONFIG}c` : process.env.FAKE_MCPORTER_LEGACY_CONFIG;',
+          "};",
+          "const selectedConfig = configPath(requestedConfig);",
           'if (subcommand === "get") {',
-          '  if (!fs.existsSync(process.env.FAKE_MCPORTER_CONFIG)) { console.error("not found"); process.exit(1); }',
-          '  process.stdout.write(fs.readFileSync(process.env.FAKE_MCPORTER_CONFIG, "utf8"));',
+          '  if (!fs.existsSync(selectedConfig)) { console.error("not found"); process.exit(1); }',
+          '  process.stdout.write(fs.readFileSync(selectedConfig, "utf8"));',
           "  process.exit(0);",
           "}",
           'if (subcommand === "add") {',
-          "  const value = (flag) => args[args.indexOf(flag) + 1];",
           '  const header = value("--header").split("=");',
-          "  fs.writeFileSync(process.env.FAKE_MCPORTER_CONFIG, JSON.stringify({",
-          '    name: args[configIndex + 2], transport: "http", baseUrl: value("--url"),',
+          "  fs.writeFileSync(process.env.FAKE_MCPORTER_PROJECT_CONFIG, JSON.stringify({",
+          '    name: server, transport: "http", baseUrl: value("--url"),',
           '    headers: { [header[0]]: header.slice(1).join("=") },',
           "  }));",
           "  process.exit(0);",
           "}",
           'if (subcommand === "remove") {',
-          "  fs.rmSync(process.env.FAKE_MCPORTER_CONFIG, { force: true });",
+          "  fs.rmSync(selectedConfig, { force: true });",
           '  fs.writeFileSync(process.env.FAKE_MCPORTER_REMOVE_MARKER, "removed");',
           "  process.exit(0);",
           "}",
@@ -123,8 +143,11 @@ describe("OpenClaw mcporter MCP adapter", () => {
           env: {
             ...process.env,
             PATH: `${temp}:${process.env.PATH ?? ""}`,
+            XDG_CONFIG_HOME: path.join(temp, "xdg"),
             FAKE_MCPORTER_ARGV_LOG: argvLog,
-            FAKE_MCPORTER_CONFIG: configState,
+            FAKE_MCPORTER_PROJECT_CONFIG: configState,
+            FAKE_MCPORTER_HOME_CONFIG: homeConfigState,
+            FAKE_MCPORTER_LEGACY_CONFIG: legacyConfigState,
             FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
           },
         });
@@ -176,6 +199,51 @@ describe("OpenClaw mcporter MCP adapter", () => {
       expect(fs.readFileSync(removeMarker, "utf8")).toBe("removed");
       expect(fs.existsSync(configState)).toBe(false);
 
+      fs.mkdirSync(path.dirname(homeConfigState), { recursive: true });
+      fs.writeFileSync(
+        homeConfigState,
+        JSON.stringify({
+          name: "github",
+          transport: "http",
+          baseUrl: "https://api.githubcopilot.com/mcp/",
+          headers: normalizedHeaders,
+        }),
+      );
+      expect(run(buildOpenClawMcporterRegisterCommand(baseEntry, true)).status).toBe(0);
+      expect(fs.existsSync(configState)).toBe(true);
+      expect(fs.existsSync(homeConfigState)).toBe(true);
+
+      const layeredRemove = run(buildOpenClawMcporterRemoveCommand(baseEntry));
+      expect(layeredRemove.status).toBe(0);
+      expect(fs.existsSync(configState)).toBe(false);
+      expect(fs.existsSync(homeConfigState)).toBe(false);
+      expect(run(buildOpenClawMcporterInspectCommand(baseEntry, false)).stdout.trim()).toBe(
+        "absent",
+      );
+
+      fs.writeFileSync(
+        configState,
+        JSON.stringify({
+          name: "github",
+          transport: "http",
+          baseUrl: "https://api.githubcopilot.com/mcp/",
+          headers: normalizedHeaders,
+        }),
+      );
+      fs.writeFileSync(
+        homeConfigState,
+        JSON.stringify({
+          name: "github",
+          transport: "http",
+          baseUrl: "https://user.example.test/mcp",
+          headers: normalizedHeaders,
+        }),
+      );
+      const driftedHome = run(buildOpenClawMcporterRemoveCommand(baseEntry));
+      expect(driftedHome.status).toBe(2);
+      expect(fs.existsSync(configState)).toBe(true);
+      expect(fs.existsSync(homeConfigState)).toBe(true);
+
       const observedArgs = fs
         .readFileSync(argvLog, "utf8")
         .trim()
@@ -194,22 +262,37 @@ describe("OpenClaw mcporter MCP adapter", () => {
         "--scope",
         "project",
       ]);
-      const configGets = observedArgs.filter((args) => args[2] === "config" && args[3] === "get");
+      const configGets = observedArgs.filter(
+        (args) => args.includes("config") && args.includes("get"),
+      );
       expect(configGets).not.toHaveLength(0);
       for (const args of configGets) {
-        expect(args).toEqual([
-          "--root",
-          OPENCLAW_MCPORTER_ROOT,
-          "config",
-          "get",
-          "github",
-          "--json",
-        ]);
+        expect(args.slice(0, 3)).toEqual(["--root", OPENCLAW_MCPORTER_ROOT, "config"]);
+        expect(args.at(-1)).toBe("--json");
       }
+      expect(configGets).toContainEqual([
+        "--root",
+        OPENCLAW_MCPORTER_ROOT,
+        "config",
+        "get",
+        "github",
+        "--json",
+      ]);
       expect(observedArgs).toContainEqual([
         "--root",
         OPENCLAW_MCPORTER_ROOT,
         "config",
+        "--config",
+        `${OPENCLAW_MCPORTER_ROOT}/config/mcporter.json`,
+        "remove",
+        "github",
+      ]);
+      expect(observedArgs).toContainEqual([
+        "--root",
+        OPENCLAW_MCPORTER_ROOT,
+        "config",
+        "--config",
+        homeConfigState,
         "remove",
         "github",
       ]);

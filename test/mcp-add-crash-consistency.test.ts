@@ -164,14 +164,17 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
   }
-  if (command.includes("config' 'remove") || command.includes('["config", "remove"')) {
+  if (
+    command.includes("config' 'remove") ||
+    (command.includes('spawnSync("mcporter"') && command.includes('"remove", expected.server'))
+  ) {
     fs.rmSync(marker("adapter"), { force: true });
     return { status: 0, stdout: "", stderr: "" };
   }
   if (
     crashAfter === "adapter-mismatch" &&
     marked("adapter") &&
-    command.includes('["config", "get"')
+    (command.includes('["config", "get"') || command.includes('"get", expected.server'))
   ) {
     return { status: 0, stdout: "mismatch\n", stderr: "" };
   }
@@ -289,7 +292,10 @@ policies.removePreset = () => {
 };
 
 processRecovery.executeSandboxCommand = (_sandbox, command) => {
-  if (command.includes('["config", "remove"')) {
+  if (
+    command.includes('["config", "remove"') ||
+    (command.includes('spawnSync("mcporter"') && command.includes('"remove", expected.server'))
+  ) {
     fs.rmSync(marker("adapter"), { force: true });
   }
   return { status: 0, stdout: "", stderr: "" };

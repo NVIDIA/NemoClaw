@@ -270,7 +270,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   throw new Error("unexpected OpenShell provider command: " + command);
 };
 processRecovery.executeSandboxCommand = (_sandboxName, command) => {
-  if (!command.includes('spawnSync("mcporter", ["config", "remove"')) {
+  if (!command.includes('spawnSync("mcporter"') || !command.includes('"remove", expected.server')) {
     throw new Error("unexpected sandbox command: " + command);
   }
   events.push("adapter:remove");

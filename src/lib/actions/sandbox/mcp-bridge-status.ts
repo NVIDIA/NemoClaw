@@ -7,6 +7,7 @@ import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
+  DEFAULT_OPENCLAW_CONFIG_DIR,
   openClawMcporterRoot,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
@@ -29,6 +30,7 @@ import {
 import {
   bridgeState,
   ensureSandboxGatewaySelected,
+  getAgentConfigDir,
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
@@ -113,7 +115,7 @@ function getAdapterRegistration(
       ? buildOpenClawMcporterInspectCommand(
           entry,
           false,
-          openClawMcporterRoot(loadAgent(entry.agent).configPaths.dir),
+          openClawMcporterRoot(getAgentConfigDir(entry.agent, DEFAULT_OPENCLAW_CONFIG_DIR)),
         )
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry)

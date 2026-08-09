@@ -11,6 +11,7 @@ import {
 import {
   authorizationValue,
   buildOpenClawMcporterInspectCommand,
+  DEFAULT_OPENCLAW_CONFIG_DIR,
   entryHeaders,
   mcporterHeaderMatcherSource,
   openClawMcporterRoot,
@@ -32,7 +33,9 @@ function mcporterArgs(root: string, ...args: string[]): string[] {
 
 /** Resolve the Mcporter project root owned by an MCP bridge entry's agent. */
 function mcporterRootForEntry(entry: McpBridgeEntry): string {
-  return openClawMcporterRoot(getAgentConfigDir(entry.agent));
+  return entry.agent
+    ? openClawMcporterRoot(getAgentConfigDir(entry.agent, DEFAULT_OPENCLAW_CONFIG_DIR))
+    : OPENCLAW_MCPORTER_ROOT;
 }
 
 function ensureMcporter(sandboxName: string): void {
@@ -81,25 +84,41 @@ export function buildOpenClawMcporterRemoveCommand(
   return [
     "node - <<'NODE'",
     'const { spawnSync } = require("node:child_process");',
+    'const os = require("node:os");',
+    'const path = require("node:path");',
     `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
-    'const get = spawnSync("mcporter", ["--root", expected.root, "config", "get", expected.server, "--json"], { encoding: "utf8" });',
-    "if (get.error) { console.error(get.error.message); process.exit(3); }",
-    'const getDetail = `${get.stderr || ""}\n${get.stdout || ""}`;',
-    "const absent = get.status !== 0 && /not\\s+found|does\\s+not\\s+exist|unknown\\s+server/i.test(getDetail);",
-    "if (absent) process.exit(0);",
-    "if (get.status !== 0) { console.error(getDetail.trim()); process.exit(3); }",
-    "let actual = null; try { actual = JSON.parse(get.stdout); } catch {}",
-    'const headers = actual && actual.headers && typeof actual.headers === "object" ? actual.headers : {};',
     mcporterHeaderMatcherSource(),
-    'const registered = !!actual && actual.name === expected.server && actual.transport === "http" && actual.baseUrl === expected.url && mcporterHeadersMatchExpected(headers, expected.headers);',
-    "if (!registered && !expected.force) { console.error(`Refusing to remove modified mcporter MCP server '${expected.server}'. Use --force to remove it.`); process.exit(2); }",
-    'const remove = spawnSync("mcporter", ["--root", expected.root, "config", "remove", expected.server], { encoding: "utf8" });',
-    "if (remove.stdout) process.stdout.write(remove.stdout);",
-    "if (remove.stderr) process.stderr.write(remove.stderr);",
-    "if (remove.error) { console.error(remove.error.message); process.exit(3); }",
-    'const removeDetail = `${remove.stderr || ""}\n${remove.stdout || ""}`;',
-    "if (remove.status !== 0 && /not\\s+found|does\\s+not\\s+exist|unknown\\s+server/i.test(removeDetail)) process.exit(0);",
-    "process.exit(remove.status === null ? 3 : remove.status);",
+    'const detail = (result) => `${result.stderr || ""}\n${result.stdout || ""}`;',
+    "const isAbsent = (result) => result.status !== 0 && /not\\s+found|does\\s+not\\s+exist|unknown\\s+server/i.test(detail(result));",
+    'const projectDir = path.join(expected.root, "config");',
+    'const xdgDir = path.isAbsolute(process.env.XDG_CONFIG_HOME || "") ? path.join(process.env.XDG_CONFIG_HOME, "mcporter") : null;',
+    'const legacyHomeDir = path.join(os.homedir(), ".mcporter");',
+    'const configPaths = [...new Set([projectDir, xdgDir, legacyHomeDir].filter(Boolean).flatMap((dir) => [path.join(dir, "mcporter.json"), path.join(dir, "mcporter.jsonc")]))];',
+    "const ownedPaths = [];",
+    "for (const configPath of configPaths) {",
+    '  const get = spawnSync("mcporter", ["--root", expected.root, "config", "--config", configPath, "get", expected.server, "--json"], { encoding: "utf8" });',
+    "  if (get.error) { console.error(get.error.message); process.exit(3); }",
+    "  if (isAbsent(get)) continue;",
+    "  if (get.status !== 0) { console.error(detail(get).trim()); process.exit(3); }",
+    "  let actual = null; try { actual = JSON.parse(get.stdout); } catch {}",
+    '  const headers = actual && actual.headers && typeof actual.headers === "object" ? actual.headers : {};',
+    '  const registered = !!actual && actual.name === expected.server && actual.transport === "http" && actual.baseUrl === expected.url && mcporterHeadersMatchExpected(headers, expected.headers);',
+    "  if (!registered && !expected.force) { console.error(`Refusing to remove modified mcporter MCP server '${expected.server}' from ${configPath}. Use --force to remove it.`); process.exit(2); }",
+    "  ownedPaths.push(configPath);",
+    "}",
+    "for (const configPath of ownedPaths) {",
+    '  const remove = spawnSync("mcporter", ["--root", expected.root, "config", "--config", configPath, "remove", expected.server], { encoding: "utf8" });',
+    "  if (remove.stdout) process.stdout.write(remove.stdout);",
+    "  if (remove.stderr) process.stderr.write(remove.stderr);",
+    "  if (remove.error) { console.error(remove.error.message); process.exit(3); }",
+    "  if (remove.status !== 0 && !isAbsent(remove)) process.exit(remove.status === null ? 3 : remove.status);",
+    "}",
+    'const effective = spawnSync("mcporter", ["--root", expected.root, "config", "get", expected.server, "--json"], { encoding: "utf8" });',
+    "if (effective.error) { console.error(effective.error.message); process.exit(3); }",
+    "if (isAbsent(effective)) process.exit(0);",
+    "if (effective.status !== 0) { console.error(detail(effective).trim()); process.exit(3); }",
+    "console.error(`mcporter MCP server '${expected.server}' still resolves after managed configuration cleanup.`);",
+    "process.exit(2);",
     "NODE",
   ].join("\n");
 }
