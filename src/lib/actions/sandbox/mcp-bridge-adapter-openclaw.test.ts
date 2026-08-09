@@ -18,6 +18,7 @@ import {
 import {
   buildOpenClawMcporterInspectCommand,
   mcporterHeadersMatchExpected,
+  openClawMcporterRoot,
 } from "./mcp-bridge-adapter-status";
 
 const baseEntry: McpBridgeEntry = {
@@ -193,9 +194,20 @@ describe("OpenClaw mcporter MCP adapter", () => {
         "--scope",
         "project",
       ]);
-      expect(
-        observedArgs.filter((args) => args[2] === "config" && args[3] === "get"),
-      ).not.toHaveLength(0);
+      const configGets = observedArgs.filter(
+        (args) => args[2] === "config" && args[3] === "get",
+      );
+      expect(configGets).not.toHaveLength(0);
+      for (const args of configGets) {
+        expect(args).toEqual([
+          "--root",
+          OPENCLAW_MCPORTER_ROOT,
+          "config",
+          "get",
+          "github",
+          "--json",
+        ]);
+      }
       expect(observedArgs).toContainEqual([
         "--root",
         OPENCLAW_MCPORTER_ROOT,
@@ -216,6 +228,21 @@ describe("OpenClaw mcporter MCP adapter", () => {
 
     expect(command).not.toContain("Authorization=");
     expect(command).toContain("'--url' 'https://api.githubcopilot.com/mcp/'");
+  });
+
+  it("targets a custom OpenClaw workspace for every mcporter lifecycle command", () => {
+    const root = openClawMcporterRoot("/sandbox/.custom-openclaw/");
+    const commands = [
+      buildOpenClawMcporterRegisterCommand(baseEntry, false, root),
+      buildOpenClawMcporterInspectCommand(baseEntry, true, root),
+      buildOpenClawMcporterRemoveCommand(baseEntry, false, root),
+    ];
+
+    expect(root).toBe("/sandbox/.custom-openclaw/workspace");
+    for (const command of commands) {
+      expect(command).toContain(root);
+      expect(command).not.toContain(OPENCLAW_MCPORTER_ROOT);
+    }
   });
 
   it("keeps the mcporter runtime pin visible for image tests", () => {

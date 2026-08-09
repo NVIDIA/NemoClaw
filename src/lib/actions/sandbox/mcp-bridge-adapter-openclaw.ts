@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { loadAgent } from "../../agent/defs";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
@@ -13,6 +14,7 @@ import {
   buildOpenClawMcporterInspectCommand,
   entryHeaders,
   mcporterHeaderMatcherSource,
+  openClawMcporterRoot,
   OPENCLAW_MCPORTER_ROOT,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
@@ -23,8 +25,12 @@ import { executeSandboxCommand } from "./process-recovery";
 export const MCPORTER_VERSION = "0.7.3";
 export { OPENCLAW_MCPORTER_ROOT } from "./mcp-bridge-adapter-status";
 
-function mcporterArgs(...args: string[]): string[] {
-  return ["mcporter", "--root", OPENCLAW_MCPORTER_ROOT, ...args];
+function mcporterArgs(root: string, ...args: string[]): string[] {
+  return ["mcporter", "--root", root, ...args];
+}
+
+function mcporterRootForEntry(entry: McpBridgeEntry): string {
+  return openClawMcporterRoot(loadAgent(entry.agent).configPaths.dir);
 }
 
 function ensureMcporter(sandboxName: string): void {
@@ -38,14 +44,15 @@ function ensureMcporter(sandboxName: string): void {
 export function buildOpenClawMcporterRegisterCommand(
   entry: McpBridgeEntry,
   replaceExisting = false,
+  root = OPENCLAW_MCPORTER_ROOT,
 ): string {
-  const args = mcporterArgs("config", "add", entry.server, "--url", entry.url);
+  const args = mcporterArgs(root, "config", "add", entry.server, "--url", entry.url);
   const authorization = authorizationValue(entry);
   if (authorization) args.push("--header", `Authorization=${authorization}`);
   args.push("--scope", "project");
   const addCommand = args.map(shellQuote).join(" ");
   if (replaceExisting) return addCommand;
-  const getCommand = mcporterArgs("config", "get", entry.server, "--json")
+  const getCommand = mcporterArgs(root, "config", "get", entry.server, "--json")
     .map(shellQuote)
     .join(" ");
   return [
@@ -57,13 +64,17 @@ export function buildOpenClawMcporterRegisterCommand(
   ].join("\n");
 }
 
-export function buildOpenClawMcporterRemoveCommand(entry: McpBridgeEntry, force = false): string {
+export function buildOpenClawMcporterRemoveCommand(
+  entry: McpBridgeEntry,
+  force = false,
+  root = OPENCLAW_MCPORTER_ROOT,
+): string {
   const payload = {
     server: entry.server,
     url: entry.url,
     headers: entryHeaders(entry),
     force,
-    root: OPENCLAW_MCPORTER_ROOT,
+    root,
   };
   return [
     "node - <<'NODE'",
@@ -95,10 +106,11 @@ export function inspectOpenClawAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
 ): AdapterRegistrationInspection {
+  const root = mcporterRootForEntry(entry);
   return inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
-    buildOpenClawMcporterInspectCommand(entry, false),
+    buildOpenClawMcporterInspectCommand(entry, false, root),
   );
 }
 
@@ -109,9 +121,10 @@ export function registerOpenClawAdapter(
   replaceExisting = false,
 ): void {
   ensureMcporter(sandboxName);
+  const root = mcporterRootForEntry(entry);
   const result = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterRegisterCommand(entry, replaceExisting),
+    buildOpenClawMcporterRegisterCommand(entry, replaceExisting, root),
   );
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
@@ -128,7 +141,7 @@ export function registerOpenClawAdapter(
   // from the URL and opaque OpenShell placeholder NemoClaw intended.
   const verification = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterInspectCommand(entry, true),
+    buildOpenClawMcporterInspectCommand(entry, true, root),
   );
   const verificationOutput = redactBridgeSecretsForDisplay(
     [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),
@@ -151,9 +164,10 @@ export function unregisterOpenClawAdapter(
   entry: McpBridgeEntry,
   options: AdapterMutationOptions = {},
 ): void {
+  const root = mcporterRootForEntry(entry);
   const result = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterRemoveCommand(entry, options.force === true),
+    buildOpenClawMcporterRemoveCommand(entry, options.force === true, root),
   );
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),

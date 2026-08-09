@@ -51,6 +51,7 @@ export {
   buildOpenClawMcporterInspectCommand,
   DEEPAGENTS_MCP_CONFIG_PATH,
   mcporterHeadersMatchExpected,
+  openClawMcporterRoot,
 } from "./mcp-bridge-adapter-status";
 
 export function inspectAgentAdapterRegistration(
