@@ -682,7 +682,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const input = createInput();
     input.lifecycleGeneration = "current-generation";
     const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => input.lifecycleGeneration ?? null);
+    deps.installPortableDemoLifecycle = vi.fn(
+      (_sandboxName, _startupCommand, _env, options) => options.registryGeneration ?? null,
+    );
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 

@@ -53,6 +53,12 @@ describe("Hermes rebuild fixture image ownership", () => {
     expect(() =>
       requireRebuildHermesReplacementLifecycleReceipt({
         ...receipt,
+        lifecycleGeneration: "5f63a0a3-e0f0-1e41-847b-8bc7c1f135ad",
+      }),
+    ).toThrow("lifecycle generation");
+    expect(() =>
+      requireRebuildHermesReplacementLifecycleReceipt({
+        ...receipt,
         lifecycleLiveIdentityFingerprint: "unproven",
       }),
     ).toThrow("live lifecycle identity");
