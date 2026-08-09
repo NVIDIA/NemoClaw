@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+
 export const SANDBOX_BUILD_CONTEXT_PREFIX = "nemoclaw-build-";
 export type SandboxBuildContextOrigin = "custom" | "generated";
 
@@ -19,6 +21,8 @@ export interface BuildContextStats {
 }
 
 type BuildContextStatsFilter = (entryPath: string) => boolean;
+
+const MAX_REVIEWED_RUNTIME_ARTIFACT_BYTES = 8 * 1024 * 1024;
 
 function createBuildContextDir(tmpDir: string = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(tmpDir, SANDBOX_BUILD_CONTEXT_PREFIX));
@@ -37,6 +41,27 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
   if (stat.isFile()) {
     const mode = stat.mode & 0o777;
     fs.chmodSync(rootDir, (mode & ~0o022) | 0o444 | (mode & 0o111 ? 0o111 : 0));
+  }
+}
+
+function copyReviewedRegularFileSync(
+  sourceRoot: string,
+  relativePath: string,
+  target: string,
+): void {
+  const source = path.join(sourceRoot, relativePath);
+  const opened = openRegularFileNoFollow(source);
+  try {
+    const bytes = opened.readBytes(MAX_REVIEWED_RUNTIME_ARTIFACT_BYTES);
+    const resolvedRoot = fs.realpathSync(sourceRoot);
+    const resolvedSource = fs.realpathSync(source);
+    if (path.relative(resolvedRoot, resolvedSource) !== path.normalize(relativePath)) {
+      throw new Error(`reviewed runtime artifact escapes its source directory: ${source}`);
+    }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes, { flag: "wx", mode: 0o644 });
+  } finally {
+    opened.close();
   }
 }
 
@@ -91,6 +116,16 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
       mode: fs.constants.COPYFILE_FICLONE,
       recursive: true,
     });
+  }
+  for (const relativePath of [
+    "managed-startup-image-runtime.bundle",
+    path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
+    path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
+    path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
+  ]) {
+    const reviewedRuntimeDir = path.join(sourceDir, "reviewed-runtime-bundle");
+    const target = path.join(stagedDir, "reviewed-runtime-bundle", relativePath);
+    copyReviewedRegularFileSync(reviewedRuntimeDir, relativePath, target);
   }
   normalizeReadModesForDockerCopy(path.join(buildCtx, "tools"));
 }
