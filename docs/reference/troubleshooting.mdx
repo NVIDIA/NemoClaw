@@ -893,6 +893,43 @@ To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNOR
 
 <AgentOnly variant="openclaw,hermes">
 
+### Managed Sandbox Image Build Requires Local BuildKit
+
+On a local Docker-driver gateway, NemoClaw builds each generated OpenClaw or Hermes sandbox image with host-side BuildKit.
+The generated Dockerfiles include BuildKit-only file-mode, per-step network, and mount controls.
+NemoClaw stops before sandbox creation in these cases:
+
+- The local build is disabled.
+- The staged build context fails trust validation.
+- Docker cannot start the build.
+- The build exits with an error.
+
+It does not send that generated Dockerfile to the OpenShell gateway's classic Docker API builder because that builder cannot enforce the same instructions.
+
+Keep the local prebuild enabled, and verify that the host Docker installation provides BuildKit:
+
+```bash
+unset NEMOCLAW_SANDBOX_PREBUILD
+docker info
+docker buildx version
+```
+
+Repair Docker access or the Docker Buildx plugin when either Docker command fails.
+Then rerun the original onboarding or rebuild command.
+For a resumable onboarding session, run:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+A passing recovery completes the local BuildKit build before sandbox creation starts.
+If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile.
+Rerun the command so NemoClaw creates a new private staged context.
+If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
+
+This requirement does not change user-supplied `--from` contexts, which continue to use the OpenShell gateway builder.
+It also preserves the gateway fallback when a generated LangChain Deep Agents Code image does not complete its local prebuild.
+
 ### Re-onboard fails because port 18789 is held by SSH
 
 After destroying a sandbox and gateway, the SSH port-forward process for the dashboard can be left running.
