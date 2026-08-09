@@ -3200,17 +3200,29 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash
-$$nemoclaw update [--check] [--fresh] [--yes|-y]
+$$nemoclaw update [--check] [--fresh] [--allow-downgrade] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything. |
-| `--fresh` | Reinstall the maintained build even when already up to date (clean re-clone of `~/.nemoclaw/source`); useful to repair a broken-but-current install. Does not reset onboarding state. |
+| `--fresh` | Reinstall the maintained build for a clean re-clone of `~/.nemoclaw/source`; useful to repair a broken install. Does not reset onboarding state. By default, runs only when the maintained build is the same version or newer than the installed version. |
+| `--allow-downgrade` | Allow `--fresh` to reinstall when the maintained build is older than the installed version or the versions cannot be ordered. This can downgrade the host installation. |
 | `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow. |
 
 `$$nemoclaw update` updates the host-side NemoClaw installation.
 The maintained installer flow follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
+Because of that, an install can be newer than the maintained tag.
+Without `--allow-downgrade`, `--fresh` runs only when the maintained build is the same version or newer than the installed version.
+When the maintained tag resolves, the command passes that repository revision to the installer, so a later tag change cannot select a different build for that update.
+It reports the reason and exits non-zero in these cases:
+
+- The installed version is newer than the maintained tag.
+- The versions cannot be ordered.
+- The maintained tag does not resolve to a version.
+
+NemoClaw cannot order a `git describe` version against a different prerelease on the same release line.
+Rerun with `--allow-downgrade` to reinstall regardless; `--yes` waives the confirmation prompt only and never accepts a downgrade on its own.
 It does not replace `$$nemoclaw upgrade-sandboxes`; use that command to inspect or rebuild existing sandboxes after the CLI has been updated.
 When the command is running from a source checkout, it reports that state and does not replace the checkout with a global package install.
 
