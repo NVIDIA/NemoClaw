@@ -173,45 +173,8 @@ jobs:
             .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
-      - name: Detect trusted installer integration action
-        id: trusted-installer-integration
-        shell: bash
-        run: |
-          if [ -f .trusted-ci-actions/.github/actions/ci-installer-integration/action.yaml ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run installer integration tests
-        if: ${{ steps.trusted-installer-integration.outputs.available == 'true' }}
         uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
-
-      - name: Setup Node.js for installer integration
-        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install installer integration dependencies
-        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
-        shell: bash
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install --ignore-scripts
-
-      - name: Build installer integration artifacts
-        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
-        shell: bash
-        run: |
-          npm run build:cli
-          cd nemoclaw && npm run build
-
-      - name: Run installer integration tests (bootstrap)
-        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
-        shell: bash
-        run: CI=true npx vitest run --project installer-integration
 
   wechat-runtime-audit:
     needs: changes
@@ -235,50 +198,8 @@ jobs:
             .github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh
           sparse-checkout-cone-mode: false
 
-      - name: Detect trusted WeChat runtime audit
-        id: trusted-wechat-audit
-        shell: bash
-        run: |
-          if [ -f .trusted-wechat-audit/.github/actions/ci-wechat-runtime-audit/action.yaml ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # One-time bootstrap for this PR only. The action is pinned to a signed,
-      # immutable commit that contains only the reviewed audit implementation.
-      # Every later PR must resolve the action from its base SHA above.
-      # Removal condition: delete this checkout and its paired audit step in the
-      # first follow-up after PR #6739 merges, before the next release tag.
-      - name: Checkout pinned bootstrap WeChat runtime audit
-        if: ${{ steps.trusted-wechat-audit.outputs.available != 'true' && github.event.pull_request.number == 6739 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: HOYALIM/NemoClaw
-          ref: 0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2
-          path: .trusted-wechat-audit-bootstrap
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-wechat-runtime-audit
-          sparse-checkout-cone-mode: false
-
-      - name: Reject unavailable trusted WeChat runtime audit
-        if: ${{ steps.trusted-wechat-audit.outputs.available != 'true' && (github.event.pull_request.number != 6739 || github.event.pull_request.head.repo.full_name != 'HOYALIM/NemoClaw') }}
-        shell: bash
-        run: |
-          echo "::error::Trusted base SHA does not contain ci-wechat-runtime-audit"
-          exit 1
-
       - name: Audit locked WeChat runtime graph
-        if: ${{ steps.trusted-wechat-audit.outputs.available == 'true' }}
         uses: ./.trusted-wechat-audit/.github/actions/ci-wechat-runtime-audit
-        with:
-          target-root: ${{ github.workspace }}
-          report-dir: artifacts/wechat-runtime-audit
-
-      - name: Audit locked WeChat runtime graph (pinned bootstrap)
-        if: ${{ steps.trusted-wechat-audit.outputs.available != 'true' && github.event.pull_request.number == 6739 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
-        uses: ./.trusted-wechat-audit-bootstrap/.github/actions/ci-wechat-runtime-audit
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/wechat-runtime-audit
@@ -319,60 +240,8 @@ jobs:
             scripts/lib/reviewed-npm-audit.mts
           sparse-checkout-cone-mode: false
 
-      - name: Detect trusted reviewed npm audit schema
-        id: trusted-reviewed-npm-audit
-        shell: bash
-        run: |
-          if grep -Fq 'NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT' \
-              .trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit/action.yaml \
-            && grep -Fq 'resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT)' \
-              .trusted-reviewed-npm-audit/scripts/audit-reviewed-npm-graph.mts \
-            && [ -f .trusted-reviewed-npm-audit/ci/npm-audit-exceptions.json ] \
-            && [ -f .trusted-reviewed-npm-audit/ci/reviewed-npm-audit.json ] \
-            && [ -f .trusted-reviewed-npm-audit/scripts/lib/openclaw-npm-remediation.mts ] \
-            && [ -f .trusted-reviewed-npm-audit/scripts/lib/reviewed-npm-audit.mts ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # One-time bootstrap for this PR only. The action, driver, and helper are
-      # pinned to its signed first commit; every later PR must use its base SHA.
-      - name: Checkout pinned bootstrap reviewed npm audit
-        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && github.event.pull_request.number == 6830 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: HOYALIM/NemoClaw
-          ref: 0c7dd29394d2c4db660c4d09f3654c0789e200d0
-          path: .trusted-reviewed-npm-audit-bootstrap
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-reviewed-npm-audit
-            ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-          sparse-checkout-cone-mode: false
-
-      - name: Reject unavailable trusted reviewed npm audit
-        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && (github.event.pull_request.number != 6830 || github.event.pull_request.head.repo.full_name != 'HOYALIM/NemoClaw') }}
-        shell: bash
-        run: |
-          echo "::error::Trusted base SHA does not contain the schema-2 reviewed npm audit"
-          exit 1
-
       - name: Audit reviewed production npm graphs
-        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available == 'true' }}
         uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
-        with:
-          target-root: ${{ github.workspace }}
-          report-dir: artifacts/reviewed-npm-audit
-
-      - name: Audit reviewed production npm graphs (pinned bootstrap)
-        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && github.event.pull_request.number == 6830 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
-        uses: ./.trusted-reviewed-npm-audit-bootstrap/.github/actions/ci-reviewed-npm-audit
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
@@ -409,86 +278,11 @@ jobs:
             .github/actions/ci-install-dependencies.sh
           sparse-checkout-cone-mode: false
 
-      - name: Detect trusted E2E support sharding
-        id: trusted-shard-capabilities
-        shell: bash
-        run: |
-          if grep -Fq -- '--project e2e-support' \
-            .trusted-ci-actions/.github/actions/ci-cli-coverage-shard/action.yaml; then
-            echo "e2e-support=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "e2e-support=false" >> "$GITHUB_OUTPUT"
-          fi
-          if grep -Fq -- 'name: Install pinned Pi search tools' \
-            .trusted-ci-actions/.github/actions/ci-cli-coverage-shard/action.yaml; then
-            echo "pi-search-tools=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "pi-search-tools=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # The PR action comes from the base commit. Provision Pi's search tools here until
-      # the trusted action contains the same pinned, version-verified contract.
-      - name: Install pinned Pi search tools (bootstrap)
-        if: ${{ steps.trusted-shard-capabilities.outputs.pi-search-tools != 'true' }}
-        shell: bash
-        env:
-          FD_FIND_VERSION: "9.0.0-1"
-          RIPGREP_VERSION: "14.1.0-1"
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            "fd-find=${FD_FIND_VERSION}" \
-            "ripgrep=${RIPGREP_VERSION}"
-
-          INSTALLED_FD_FIND_VERSION="$(dpkg-query -W -f='${Version}' fd-find)"
-          INSTALLED_RIPGREP_VERSION="$(dpkg-query -W -f='${Version}' ripgrep)"
-          if [ "$INSTALLED_FD_FIND_VERSION" != "$FD_FIND_VERSION" ]; then
-            echo "::error::fd-find package version $INSTALLED_FD_FIND_VERSION does not match $FD_FIND_VERSION"
-            exit 1
-          fi
-          if [ "$INSTALLED_RIPGREP_VERSION" != "$RIPGREP_VERSION" ]; then
-            echo "::error::ripgrep package version $INSTALLED_RIPGREP_VERSION does not match $RIPGREP_VERSION"
-            exit 1
-          fi
-
-          command -v fdfind >/dev/null
-          command -v rg >/dev/null
-          EXPECTED_FD_BINARY_VERSION="${FD_FIND_VERSION%%-*}"
-          EXPECTED_RG_BINARY_VERSION="${RIPGREP_VERSION%%-*}"
-          FD_BINARY_VERSION="$(fdfind --version)"
-          RG_BINARY_VERSION="$(rg --version)"
-          RG_BINARY_VERSION="${RG_BINARY_VERSION%%$'\n'*}"
-          if [ "$FD_BINARY_VERSION" != "fdfind $EXPECTED_FD_BINARY_VERSION" ]; then
-            echo "::error::fdfind binary version $FD_BINARY_VERSION does not match fdfind $EXPECTED_FD_BINARY_VERSION"
-            exit 1
-          fi
-          if [ "$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION" ]; then
-            echo "::error::rg binary version $RG_BINARY_VERSION does not match ripgrep $EXPECTED_RG_BINARY_VERSION"
-            exit 1
-          fi
-
       - name: Run CLI coverage shard
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
           shard-count: "8"
-
-      # The PR action comes from the base commit. Until that trusted action
-      # contains the E2E-support project, keep this PR and older-base PRs
-      # covered without executing a mutable replacement action.
-      - name: Validate changed live E2E mock parity (bootstrap)
-        if: ${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' && matrix.shard == 1 }}
-        run: npx tsx scripts/checks/e2e-mock-parity.mts --base HEAD^1 --head HEAD^2
-
-      - name: Run E2E support shard (bootstrap)
-        if: ${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' }}
-        env:
-          E2E_SUPPORT_SHARD: ${{ matrix.shard }}
-          E2E_SUPPORT_SHARD_COUNT: "8"
-        run: >-
-          npx vitest run --project e2e-support
-          --shard="${E2E_SUPPORT_SHARD}/${E2E_SUPPORT_SHARD_COUNT}"
 
   cli-tests:
     needs:

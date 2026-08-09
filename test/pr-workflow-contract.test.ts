@@ -71,11 +71,6 @@ const trustedPrActionPaths = {
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
-const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
-const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
-const installerHashBootstrapCreatedAt = "2026-07-02T19:35:41Z";
-const installerHashBootstrapExpiresAt = "2026-12-29T19:35:41Z";
-
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
@@ -289,7 +284,6 @@ describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
-  const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
@@ -312,86 +306,6 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
-
-  it("fails closed when the immutable installer hash bootstrap expiry is mutated", () => {
-    const expiryStep = requiredWorkflowStep(
-      installerHashWorkflow.jobs["check-hash"],
-      "Enforce immutable installer hash bootstrap expiry",
-    );
-    const expired = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "2000-12-27T23:26:13Z"),
-      },
-      {},
-    );
-    const malformedExpiry = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "not-a-canonical-utc-date"),
-      },
-      {},
-    );
-    const mutableRef = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapCommit, "main"),
-      },
-      {},
-    );
-    const valid = runWorkflowShellStep(expiryStep, {});
-
-    expect(valid.status).toBe(0);
-    expect(valid.stdout).toContain("remains valid");
-    expect(expired.status).not.toBe(0);
-    expect(expired.stderr).toContain("expired at 2000-12-27T23:26:13Z");
-    expect(expired.stderr).toContain("Remove the bootstrap fallback");
-    expect(malformedExpiry.status).not.toBe(0);
-    expect(malformedExpiry.stderr).toContain("expiry configuration is invalid");
-    expect(mutableRef.status).not.toBe(0);
-    expect(mutableRef.stderr).toContain("refusing the fallback");
-  });
-
-  it("fails closed when the immutable installer hash bootstrap tree differs", () => {
-    const treeStep = requiredWorkflowStep(
-      installerHashWorkflow.jobs["check-hash"],
-      "Verify immutable installer hash bootstrap tree",
-    );
-    const fakeBin = mkdtempSync(join(tmpdir(), "nemoclaw-bootstrap-git-"));
-    const fakeGit = join(fakeBin, "git");
-    writeFileSync(
-      fakeGit,
-      [
-        "#!/bin/sh",
-        'case "$*" in',
-        '  *"HEAD^{tree}"*) printf \'%s\\n\' "${FAKE_TREE}" ;;',
-        `  *) printf '%s\\n' ${installerHashBootstrapCommit} ;;`,
-        "esac",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    try {
-      const env = {
-        GITHUB_WORKSPACE: tmpdir(),
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      };
-      const valid = runWorkflowShellStep(treeStep, {
-        ...env,
-        FAKE_TREE: installerHashBootstrapTree,
-      });
-      const mismatch = runWorkflowShellStep(treeStep, {
-        ...env,
-        FAKE_TREE: "0000000000000000000000000000000000000000",
-      });
-
-      expect(valid.status).toBe(0);
-      expect(mismatch.status).not.toBe(0);
-      expect(mismatch.stderr).toContain("does not match the reviewed tree");
-    } finally {
-      rmSync(fakeBin, { recursive: true, force: true });
-    }
-  });
 
   it("validates CLI shard inputs before using them in shell commands", () => {
     const shardValidationStep = requiredStep(
