@@ -19,12 +19,12 @@ import {
   LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX,
   LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION,
   LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
-  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_IMAGE_REPOSITORY,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
   LLAMA_CPP_DGX_SPARK_RUNNER_PATTERN,
@@ -127,7 +127,7 @@ function disabledPlan() {
     },
     platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
     probeBounds: probeBounds(),
-    probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+    probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
     profile: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
     recipeRef: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
     required: true,
@@ -194,11 +194,35 @@ function receipt() {
       authentication: { httpStatus: 401, ok: true },
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize: 262144, ok: true, slots: 1 },
+      disabledSurfaces: {
+        corsProxyHttpStatus: 403,
+        multimodal: false,
+        ok: true,
+        propertiesMutationHttpStatus: 501,
+        routerHttpStatus: 404,
+        slotsHttpStatus: 501,
+        toolsHttpStatus: 403,
+        uiHttpStatus: 404,
+      },
       health: { httpStatus: 200, ok: true },
+      logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
+      metrics: {
+        httpStatus: 200,
+        ok: true,
+        requiredSeries: 11,
+        unauthenticatedHttpStatus: 401,
+      },
       models: {
         httpStatus: 200,
         model: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+        ok: true,
+      },
+      properties: {
+        httpStatus: 200,
+        metrics: true,
+        model: LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
+        modelPath: "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
         ok: true,
       },
       clientTimeout: {
@@ -266,7 +290,7 @@ function executionPlan() {
     qualification: {
       agentQualification: agentQualification(),
       probeBounds: probeBounds(),
-      probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+      probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
     },
     recipe: {
       capabilities: {
@@ -463,7 +487,7 @@ describe("llama.cpp DGX Spark qualification contract", () => {
     expect(() =>
       parseLlamaCppDgxSparkQualificationPlan({
         ...enabledPlan(),
-        probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES.filter((probe) => probe !== "tool-call"),
+        probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES.filter((probe) => probe !== "tool-call"),
       }),
     ).toThrow("qualification plan is invalid");
     expect(() =>
@@ -632,7 +656,7 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         ...value,
         qualification: {
           ...value.qualification,
-          probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES.slice(0, -1),
+          probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES.slice(0, -1),
         },
       }),
     ).toThrow("protocol probes are invalid");
@@ -859,6 +883,42 @@ describe("llama.cpp DGX Spark qualification contract", () => {
             ...receipt().probes,
             models: { ...receipt().probes.models, model: "/models/private.gguf" },
           },
+        },
+        evidenceIdentity(),
+      ),
+    ).toThrow("probes did not pass");
+    expect(() =>
+      parseLlamaCppDgxSparkQualificationReceipt(
+        {
+          ...receipt(),
+          probes: {
+            ...receipt().probes,
+            metrics: { ...receipt().probes.metrics, requiredSeries: 10 },
+          },
+        },
+        evidenceIdentity(),
+      ),
+    ).toThrow("probes did not pass");
+    expect(() =>
+      parseLlamaCppDgxSparkQualificationReceipt(
+        {
+          ...receipt(),
+          probes: {
+            ...receipt().probes,
+            disabledSurfaces: {
+              ...receipt().probes.disabledSurfaces,
+              toolsHttpStatus: 200,
+            },
+          },
+        },
+        evidenceIdentity(),
+      ),
+    ).toThrow("probes did not pass");
+    expect(() =>
+      parseLlamaCppDgxSparkQualificationReceipt(
+        {
+          ...receipt(),
+          probes: { ...receipt().probes, logRedaction: { ok: false } },
         },
         evidenceIdentity(),
       ),

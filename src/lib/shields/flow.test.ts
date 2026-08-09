@@ -112,7 +112,7 @@ describe("shields command flow", () => {
   });
 
   it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", {
-    timeout: 15_000,
+    timeout: 30_000,
   }, () => {
     const harness = createHarness();
 

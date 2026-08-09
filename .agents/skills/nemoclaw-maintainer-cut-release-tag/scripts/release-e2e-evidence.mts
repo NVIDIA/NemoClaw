@@ -87,6 +87,7 @@ type CliOptions = {
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const DEFAULT_WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
+const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_REPO_PATH_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+$/u;
 const MATRIX_EXPRESSION_PATTERN = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/gu;
 const OPT_IN_HARDWARE_JOB_IDS = new Set([
@@ -130,6 +131,50 @@ function requireEqual(actual: unknown, expected: unknown, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label} must equal ${JSON.stringify(expected)}`);
   }
+}
+
+function requireSha(value: JsonRecord, field: string, label: string): string {
+  const sha = stringField(value, field, label);
+  if (!SHA_PATTERN.test(sha)) {
+    throw new Error(`${label}.${field} must be a lowercase 40-character commit SHA`);
+  }
+  return sha;
+}
+
+function requireRepository(value: JsonRecord, field: string, label: string): string {
+  const repository = stringField(value, field, label);
+  if (!REPOSITORY_PATTERN.test(repository)) {
+    throw new Error(`${label}.${field} must be an owner/repository name`);
+  }
+  return repository;
+}
+
+function validateDispatchIdentity(
+  dispatch: JsonRecord,
+  candidateSha: string,
+  label: string,
+): string {
+  requireEqual(dispatch.candidateSha, candidateSha, `${label}.candidateSha`);
+  const kind = stringField(dispatch, "kind", label);
+  if (kind === "nemoclaw-e2e-dispatch-v1") return candidateSha;
+  if (kind !== "nemoclaw-e2e-dispatch-v2") {
+    throw new Error(
+      `${label}.kind must equal "nemoclaw-e2e-dispatch-v1" or "nemoclaw-e2e-dispatch-v2"`,
+    );
+  }
+
+  requireEqual(dispatch.repository, "NVIDIA/NemoClaw", `${label}.repository`);
+  const candidateRepository = requireRepository(dispatch, "candidateRepository", label);
+  const baseSha = requireSha(dispatch, "baseSha", label);
+  const workflowSha = requireSha(dispatch, "workflowSha", label);
+  if (dispatch.prNumber === null) {
+    requireEqual(candidateRepository, "NVIDIA/NemoClaw", `${label}.candidateRepository`);
+    requireEqual(baseSha, candidateSha, `${label}.baseSha`);
+    requireEqual(workflowSha, candidateSha, `${label}.workflowSha`);
+  } else {
+    numberField(dispatch, "prNumber", label);
+  }
+  return workflowSha;
 }
 
 function matrixRows(rawMatrix: unknown, jobId: string): JsonRecord[] {
@@ -395,7 +440,6 @@ export function buildReleaseE2eLedger(
   for (const [runIndex, evidence] of runs.entries()) {
     const label = `runs[${runIndex}]`;
     const run = record(evidence.run, `${label}.run`);
-    requireEqual(run.head_sha, preflight.candidateSha, `${label}.run.head_sha`);
     requireEqual(run.head_branch, "main", `${label}.run.head_branch`);
     requireEqual(run.event, "workflow_dispatch", `${label}.run.event`);
     requireEqual(run.path, ".github/workflows/e2e.yaml", `${label}.run.path`);
@@ -406,8 +450,12 @@ export function buildReleaseE2eLedger(
     const runUrl = stringField(run, "html_url", `${label}.run`);
 
     const dispatch = record(evidence.dispatch, `${label}.dispatch`);
-    requireEqual(dispatch.kind, "nemoclaw-e2e-dispatch-v1", `${label}.dispatch.kind`);
-    requireEqual(dispatch.candidateSha, preflight.candidateSha, `${label}.dispatch.candidateSha`);
+    const expectedWorkflowSha = validateDispatchIdentity(
+      dispatch,
+      preflight.candidateSha,
+      `${label}.dispatch`,
+    );
+    requireEqual(run.head_sha, expectedWorkflowSha, `${label}.run.head_sha`);
     requireEqual(dispatch.eventName, "workflow_dispatch", `${label}.dispatch.eventName`);
     requireEqual(dispatch.workflowRunId, String(runId), `${label}.dispatch.workflowRunId`);
     const receiptAttempt = numberField(dispatch, "workflowRunAttempt", `${label}.dispatch`);

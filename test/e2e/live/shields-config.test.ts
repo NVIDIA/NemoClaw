@@ -258,10 +258,23 @@ async function preCleanSandbox(
 }
 
 async function findSandboxContainer(host: HostCliClient): Promise<string> {
-  const result = await docker(host, ["ps", "--filter", `name=openshell-${SANDBOX_NAME}`, "-q"], {
-    artifactName: "docker-ps-sandbox-container",
-    timeoutMs: 30_000,
-  });
+  const result = await docker(
+    host,
+    [
+      "ps",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: "docker-ps-sandbox-container",
+      timeoutMs: 30_000,
+    },
+  );
   expect(result.exitCode, resultText(result)).toBe(0);
   const containerId = result.stdout.trim().split(/\s+/).filter(Boolean)[0] ?? "";
   expect(containerId, `could not find openshell container for ${SANDBOX_NAME}`).not.toBe("");
