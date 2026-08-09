@@ -31,7 +31,7 @@ spec:
         license: NVIDIA-Open-Model-License
     acquisition:
       ref: hugging-face-exact-file/v1
-      downloaderImage: nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2
+      downloaderImage: nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03
       authentication:
         mode: optional
         environment: HF_TOKEN
@@ -92,7 +92,7 @@ spec:
     contractRef: llama-cpp.server-readiness/v1
     timeoutSeconds: 1800
     expectedModel: nvidia-nemotron-3-nano-30b-a3b
-    probeImage: nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2
+    probeImage: nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03
     probes:
       models: true
       health: true

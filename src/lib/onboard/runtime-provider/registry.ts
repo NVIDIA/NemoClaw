@@ -6,6 +6,7 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
+  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
@@ -35,6 +36,7 @@ const BUNDLE_SURFACES = [
   "hostLocalInference",
   "lifecycle",
   "mutationAuthority",
+  "stateMutation",
   "bootstrap",
   "snapshot",
   "recovery",
@@ -408,6 +410,18 @@ function validateMutationAuthoritySurface(
   }
 }
 
+function validateStateMutationSurface(providerId: string, surface: Record<string, unknown>): void {
+  if (surface.supported !== true) return;
+  if (surface.contractVersion !== RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION) {
+    throw new RuntimeProviderRegistrationError(
+      `stateMutation for '${providerId}' has an unsupported contract version`,
+    );
+  }
+  for (const operation of ["acquire", "assertFenced", "activate", "recover"] as const) {
+    requireFunction(surface, operation, "stateMutation");
+  }
+}
+
 function validateBootstrapSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
     requireFunction(surface, "createAuthorityStore", "bootstrap");
@@ -504,6 +518,7 @@ function validateSupportedSurfaceSchemas(
   validateHostLocalInferenceSurface(providerId, surfaces.hostLocalInference);
   validateLifecycleSurface(providerId, surfaces.lifecycle);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
+  validateStateMutationSurface(providerId, surfaces.stateMutation);
   validateBootstrapSurface(surfaces.bootstrap);
   validateSnapshotSurface(providerId, surfaces.snapshot);
   validateRecoverySurface(surfaces.recovery);

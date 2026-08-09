@@ -5788,6 +5788,8 @@ fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
 
+echo "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" >&2
+
 # Empty-config recovery runs before integrity check so a #3118 truncation
 # (openshell inference set inside the sandbox) is restored from baseline
 # rather than failing the integrity hash for the empty file.
