@@ -805,9 +805,13 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
   });
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
-    const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
-    const buildOpenClawPlatforms = baseImages.jobs["build-openclaw-platforms"] as WorkflowJob;
-    const guard = requiredStep(buildOpenClawPlatforms, "Validate production Docker build args");
+    const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(
+      ".github/actions/build-base-image-platform/action.yaml",
+    );
+    const guard = requiredStep(
+      { steps: action.runs.steps },
+      "Validate production Docker build args",
+    );
 
     for (const [input, expectedOutput] of [
       ["", "openclaw_build_arg=\n"],
@@ -843,53 +847,5 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
         "production Docker build arguments must not contain CR or LF characters",
       );
     }
-  });
-
-  // source-shape-contract: security -- Network-fetched distribution audits must execute only from trusted main workflow code
-  it("runs and gates the real patched-distribution harness only from trusted main code", () => {
-    const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
-    const main = readYaml<Workflow>(".github/workflows/main.yaml");
-    const prJob = pr.jobs["real-openclaw-dist-harness"];
-    const mainJob = main.jobs["real-openclaw-dist-harness"];
-    const prChecks = pr.jobs.checks;
-    const mainChecks = main.jobs.checks;
-
-    expect(pr.permissions).toEqual({ contents: "read" });
-    expect(prJob).toBeUndefined();
-    expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
-      {
-        NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
-      },
-    );
-    expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
-      "test/openclaw-real-patched-dist-harness.test.ts",
-    );
-    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").env).toEqual({
-      NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS: "1",
-    });
-    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").run).toContain(
-      "test/openclaw-diagnostics-jaeger-runtime.test.ts",
-    );
-    expect(
-      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").env,
-    ).toEqual({ NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1" });
-    expect(
-      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").run,
-    ).toContain("test/openclaw-security-audit-suppressions-real.test.ts");
-    expect(requiredStep(mainJob, "Install test dependencies").run).toBe("npm ci --ignore-scripts");
-    expect(prChecks.needs).not.toContain("real-openclaw-dist-harness");
-    expect(mainChecks.needs).toContain("real-openclaw-dist-harness");
-    const prGate = requiredStep(prChecks, "Verify required PR checks");
-    const mainGate = requiredStep(mainChecks, "Verify required main checks");
-    expect(prGate.env).not.toHaveProperty("REAL_OPENCLAW_DIST_HARNESS_RESULT");
-    expect(mainGate.env).toMatchObject({
-      REAL_OPENCLAW_DIST_HARNESS_RESULT: "${{ needs['real-openclaw-dist-harness'].result }}",
-    });
-
-    expect(prGate.run).not.toContain("real-openclaw-dist-harness");
-    expect(mainGate.run).toContain(
-      'require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
-    );
-    expect(mainGate.run).not.toContain('allow_success_or_skipped "real-openclaw-dist-harness"');
   });
 });

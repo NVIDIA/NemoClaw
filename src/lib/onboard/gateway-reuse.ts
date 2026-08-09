@@ -156,7 +156,9 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
   function getGatewayReuseSnapshot(): GatewayReuseSnapshot {
     const gatewayName = currentGatewayName();
     const probeOptions = { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS };
-    const gatewayStatus = deps.runCaptureOpenshell(["status"], {
+    // OpenShell 0.0.99 omits the gateway name when connection setup fails, so
+    // bind the probe explicitly and carry that authority into classification.
+    const gatewayStatus = deps.runCaptureOpenshell(["status", "-g", gatewayName], {
       ...probeOptions,
       includeStderr: true,
     });
@@ -172,6 +174,7 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
         gatewayStatus,
         gwInfo,
         activeGatewayInfo,
+        gatewayName,
         gatewayName,
       ),
     };

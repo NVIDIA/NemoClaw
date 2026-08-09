@@ -22,7 +22,7 @@ describe("gateway reuse snapshot", () => {
 
     helpers.getGatewayReuseSnapshot();
 
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["status"], {
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(["status", "-g", "nemoclaw"], {
       ignoreError: true,
       includeStderr: true,
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
@@ -39,10 +39,9 @@ describe("gateway reuse snapshot", () => {
 
   it("classifies status stderr connection refusals as stale when gateway info is unavailable (#7087)", () => {
     const statusOutput = [
-      "Server Status",
-      "",
-      "  Gateway: nemoclaw",
-      "Error: Connection refused",
+      "Error:   × client error (Connect)",
+      "  ├─▶ tcp connect error",
+      "  ╰─▶ Connection refused (os error 61)",
     ].join("\n");
     const runCaptureOpenshell = vi.fn((args: string[], opts?: Record<string, unknown>) =>
       args[0] === "status" && opts?.includeStderr === true ? statusOutput : "",
@@ -72,7 +71,7 @@ describe("gateway reuse snapshot", () => {
       "Gateway endpoint: https://127.0.0.1:8080/",
     ].join("\n");
     const outputByCommand = new Map([
-      ["status", [statusStdout, statusStderr].join("\n")],
+      ["status -g", [statusStdout, statusStderr].join("\n")],
       ["gateway info", gatewayInfo],
     ]);
     const runCaptureOpenshell = vi.fn(

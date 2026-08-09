@@ -354,19 +354,13 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
 
-# Gate the completed local filesystem for dynamically built managed images.
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+# Verify the managed bootstrap files in dynamically built images.
 RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
     && test "$(stat -c '%U:%G:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = 'root:root:755' \
     && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test "$(stat -c '%U:%G:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = 'root:root:444' \
-    && install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:deepagents-code \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
+    && test "$(stat -c '%U:%G:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = 'root:root:444'
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006

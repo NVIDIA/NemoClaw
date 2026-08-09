@@ -12,12 +12,13 @@ runs:
       with:
         node-version: "22"
         cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          nemoclaw/package-lock.json
 
     - name: Install dependencies
       shell: bash
-      run: |
-        npm install --ignore-scripts
-        cd nemoclaw && npm install --ignore-scripts
+      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
 
     - name: Build TypeScript plugin
       shell: bash
