@@ -3337,7 +3337,8 @@ chmod 0444 /run/nemoclaw/hermes-root-lifecycle
 # the public relay read this marker instead. On this path it must stay
 # unwritable by the sandbox user, or the agent could redirect those probes at
 # another port. The same-uid path publishes the same marker with the identity
-# that runs the gateway there, which the sandbox user already holds.
+# that runs the gateway there, which the sandbox user already holds, so the
+# probe target is only as trusted as the sandbox user on that path.
 printf '%s\n' "$PUBLIC_PORT" >"$HERMES_API_PORT_MARKER"
 chown root:root "$HERMES_API_PORT_MARKER"
 chmod 0444 "$HERMES_API_PORT_MARKER"

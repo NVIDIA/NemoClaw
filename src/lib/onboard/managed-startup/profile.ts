@@ -876,8 +876,8 @@ function isHermesApiPort(port: number): boolean {
   return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
 }
 
-// A dashboard may use neither the internal API port nor any port in the range
-// each Hermes sandbox allocates its public API port from.
+// A dashboard must not use the internal API port, and must not use any port in
+// the range that each Hermes sandbox allocates its public API port from.
 function isHermesReservedApiPort(port: number): boolean {
   return port === HERMES_INTERNAL_API_PORT || isHermesApiPort(port);
 }

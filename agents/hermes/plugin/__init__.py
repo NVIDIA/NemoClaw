@@ -1039,8 +1039,9 @@ def _hermes_api_port():
     inference on one host, and the entrypoint publishes it as a read-only
     marker. The marker is root-owned under privilege separation, where the
     sandbox user cannot rewrite it. In the same-uid topology the gateway already
-    runs as the sandbox user, so that user owns the marker. A sandbox whose
-    image predates the marker has none and keeps the original port.
+    runs as the sandbox user, so that user owns the marker and the reported port
+    is only as trusted as the sandbox user. A sandbox whose image predates the
+    marker has none and keeps the original port.
     """
     try:
         with open("/run/nemoclaw/hermes-api-port") as f:
