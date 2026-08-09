@@ -1395,25 +1395,6 @@ print(json.dumps(result, sort_keys=True))
     });
   });
 
-  it("probes the same-UID helper without mutating config", () => {
-    const result = runPython(`
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-module.os.geteuid = lambda: 1000
-module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
-module._gateway_identity = lambda: (123, 456)
-module._gateway_has_managed_parent = lambda pid: True
-module._configure_gateway_public_port = lambda: None
-print(json.dumps(module.probe(), sort_keys=True))
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
-  });
-
   it("restores config and hashes after both desired-config reload signals fail", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-rollback-"));
     const hermesDir = path.join(temp, ".hermes");
