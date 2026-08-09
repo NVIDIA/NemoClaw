@@ -23,7 +23,12 @@ import {
 } from "./vllm-host-local-lifecycle";
 
 const networkMocks = vi.hoisted(() => ({
-  resolveBridgeHost: vi.fn(() => "172.18.0.1"),
+  resolveBridgeHost: vi.fn(
+    (
+      _capture: NonNullable<RecoverHostLocalManagedVllmOptions["dockerCapture"]>,
+      _dockerEnv?: Record<string, string>,
+    ) => "172.18.0.1",
+  ),
 }));
 
 vi.mock("./vllm-host-local-network", async (importOriginal) => ({

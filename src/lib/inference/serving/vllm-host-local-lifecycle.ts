@@ -273,7 +273,7 @@ function inspectHostLocalContainer(
   });
 }
 
-/** Recover only the exact authenticated, loopback-published host-local container. */
+/** Recover only the exact authenticated host-local container with bounded host bindings. */
 export function recoverHostLocalManagedVllmEndpoint(
   options: RecoverHostLocalManagedVllmOptions = {},
 ): { baseUrl: string; apiKey: string } | null {
