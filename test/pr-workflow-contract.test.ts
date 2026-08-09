@@ -311,7 +311,7 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
     ...steps.flatMap((step) => [
       ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
       step.if !== "github.event_name != 'pull_request'"
-        ? ["candidate-checkout installer hash action must not execute for pull requests"]
+        ? ["installer hash action from the latest PR commit must not execute for pull requests"]
         : []),
       ...(step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)
         ? [`unapproved installer hash executor: ${step.uses}`]
@@ -350,7 +350,7 @@ describe("pull request and main workflow contracts", () => {
   };
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
-  it("executes installer hash checks only from the PR base SHA", () => {
+  it("executes pull request installer hash checks only from the PR base SHA", () => {
     expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
 
     const headCheckout = structuredClone(installerHashWorkflow);
@@ -400,7 +400,7 @@ describe("pull request and main workflow contracts", () => {
     );
 
     expect(installerHashTrustViolations(prOnlyLocalExecutor)).toContain(
-      "candidate-checkout installer hash action must not execute for pull requests",
+      "installer hash action from the latest PR commit must not execute for pull requests",
     );
   });
 
