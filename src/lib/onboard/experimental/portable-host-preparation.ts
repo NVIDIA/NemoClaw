@@ -215,6 +215,10 @@ export function preparePortableExperimentalHost(
     systemctl(["--user", "enable", "--now", "podman.socket"], env),
     "Starting the rootless container socket",
   );
+  requireCommand(
+    systemctl(["--user", "enable", "podman-restart.service"], env),
+    "Enabling the rootless container restart service",
+  );
 
   const podman =
     deps.podman ??

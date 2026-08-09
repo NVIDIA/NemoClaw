@@ -48,12 +48,15 @@ import {
   recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
 import {
+  ensurePortableFastResumeForConnect,
   type PortableDemoLifecycleRecoveryResult,
   recoverPortableDemoSandboxLifecycle,
 } from "../../onboard/experimental/portable-demo-lifecycle";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+
+export { ensurePortableFastResumeForConnect };
 
 export type SandboxGatewayState = {
   state: string;

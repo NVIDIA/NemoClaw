@@ -3462,6 +3462,84 @@ ensure_docker() {
 # the Docker CLI, with DOCKER_HOST overriding its daemon to Podman's user
 # socket. The CLI's portable host preparation later applies the networking and
 # local-registry configuration required by the OpenShell Podman driver.
+NEMOCLAW_PORTABLE_STORAGE_MARKER="# NEMOCLAW_MANAGED_PORTABLE_STORAGE=1"
+
+configure_portable_persistent_storage() {
+  local storage_conf="${HOME}/.config/containers/storage.conf"
+  local storage_dir="${storage_conf%/*}"
+  local graphroot="${HOME}/.local/share/containers/storage"
+  local runroot="${HOME}/.local/share/containers/runroot"
+  local candidate=""
+  local backup=""
+
+  [[ "$HOME" == /* ]] \
+    || error "The portable experimental profile requires an absolute HOME path."
+  case "$HOME" in
+    *$'\n'* | *$'\r'* | *'"'* | *$'\\'*)
+      error "The portable experimental profile cannot encode HOME in containers/storage.conf."
+      ;;
+  esac
+
+  mkdir -p "$storage_dir" "$graphroot" "$runroot" \
+    || error "Could not create the persistent rootless Podman storage directories under HOME."
+  chmod 700 "$graphroot" "$runroot" \
+    || error "Could not secure the persistent rootless Podman storage directories under HOME."
+  if [[ -L "$storage_conf" ]]; then
+    error "Refusing to replace symlinked Podman storage configuration: $storage_conf"
+  fi
+
+  candidate="$(mktemp "${storage_conf}.nemoclaw-tmp.XXXXXX")" \
+    || error "Could not create a temporary Podman storage configuration."
+  if ! {
+    printf '%s\n' "$NEMOCLAW_PORTABLE_STORAGE_MARKER"
+    printf '%s\n' '[storage]'
+    printf 'graphroot = "%s"\n' "$graphroot"
+    printf 'runroot = "%s"\n' "$runroot"
+    printf '%s\n' 'driver = "overlay"'
+    printf '%s\n' 'transient_store = false'
+  } >"$candidate"; then
+    rm -f "$candidate"
+    error "Could not stage the persistent rootless Podman storage configuration."
+  fi
+  chmod 600 "$candidate" || {
+    rm -f "$candidate"
+    error "Could not secure the staged rootless Podman storage configuration."
+  }
+
+  if [[ -f "$storage_conf" ]] \
+    && grep -Fxq "$NEMOCLAW_PORTABLE_STORAGE_MARKER" "$storage_conf" \
+    && cmp -s "$candidate" "$storage_conf"; then
+    rm -f "$candidate"
+    chmod 600 "$storage_conf" \
+      || error "Could not enforce mode 0600 on the existing Podman storage configuration."
+    info "Reusing NemoClaw-managed persistent Podman storage configuration at $storage_conf."
+    return 0
+  fi
+
+  if [[ -e "$storage_conf" ]]; then
+    [[ -f "$storage_conf" ]] \
+      || {
+        rm -f "$candidate"
+        error "Refusing to replace non-regular Podman storage configuration: $storage_conf"
+      }
+    backup="$(mktemp "${storage_conf}.nemoclaw-backup.XXXXXX")" || {
+      rm -f "$candidate"
+      error "Could not allocate a backup path for the existing Podman storage configuration."
+    }
+    if ! cp -p "$storage_conf" "$backup" || ! chmod 600 "$backup"; then
+      rm -f "$candidate" "$backup"
+      error "Could not back up the existing Podman storage configuration."
+    fi
+    info "Backed up the existing Podman storage configuration to $backup."
+  fi
+
+  if ! mv "$candidate" "$storage_conf" || ! chmod 600 "$storage_conf"; then
+    rm -f "$candidate"
+    error "Could not install the persistent rootless Podman storage configuration at $storage_conf."
+  fi
+  info "Configured persistent rootless Podman storage at $storage_conf."
+}
+
 prepare_portable_experimental_runtime_override() {
   [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
   [[ "$(uname -s)" == "Linux" ]] \
@@ -3473,8 +3551,28 @@ prepare_portable_experimental_runtime_override() {
   command_exists systemctl \
     || error "The portable experimental profile requires systemctl --user to manage the rootless Podman socket."
 
+  configure_portable_persistent_storage
+  systemctl --user try-restart podman.service >/dev/null \
+    || error "Could not refresh the rootless Podman API service after configuring persistent storage."
   systemctl --user enable --now podman.socket >/dev/null \
     || error "Could not start the rootless Podman API socket with 'systemctl --user enable --now podman.socket'."
+  systemctl --user enable podman-restart.service >/dev/null \
+    || error "Could not enable the rootless Podman restart service."
+
+  local expected_graphroot="${HOME}/.local/share/containers/storage"
+  local expected_runroot="${HOME}/.local/share/containers/runroot"
+  local actual_graphroot=""
+  local actual_runroot=""
+  actual_graphroot="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)" \
+    || error "Could not verify the persistent rootless Podman GraphRoot with 'podman info'."
+  if [[ "$actual_graphroot" != "$expected_graphroot" ]]; then
+    error "Podman GraphRoot mismatch: expected $expected_graphroot, found ${actual_graphroot:-empty}."
+  fi
+  actual_runroot="$(podman info --format '{{.Store.RunRoot}}' 2>/dev/null)" \
+    || error "Could not verify the persistent rootless Podman RunRoot with 'podman info'."
+  if [[ "$actual_runroot" != "$expected_runroot" ]]; then
+    error "Podman RunRoot mismatch: expected $expected_runroot, found ${actual_runroot:-empty}."
+  fi
 
   local podman_socket=""
   podman_socket="$(podman info --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null)" \

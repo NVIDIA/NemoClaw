@@ -257,7 +257,7 @@ export async function runSandboxGpuCreateFlow(
     );
   } catch (error) {
     const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
-    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+    throw new Error(`Portable demo lifecycle setup did not complete: ${detail}`);
   }
 
   return {

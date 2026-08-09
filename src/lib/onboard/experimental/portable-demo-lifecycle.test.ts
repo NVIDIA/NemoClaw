@@ -9,9 +9,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import { recordUserLocalOllamaOwnership } from "./ollama-user-local-runtime";
 import {
+  ensurePortableFastResumeForConnect,
   installPortableDemoSandboxLifecycle,
+  type PortableDemoLifecycleDeps,
   portableDemoLifecycleInternals,
   recoverPortableDemoSandboxLifecycle,
+  runPortableResumeService,
 } from "./portable-demo-lifecycle";
 
 const CONTAINER_ID = "a".repeat(64);
@@ -107,12 +110,16 @@ function createPodman(
   };
 }
 
-function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman>["podman"]): void {
+function installReceipt(
+  stateDir: string,
+  podman: ReturnType<typeof createPodman>["podman"],
+  deps: PortableDemoLifecycleDeps = {},
+): void {
   installPortableDemoSandboxLifecycle(
     "alpha",
     STARTUP_ARGV,
     { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-    { platform: "linux", podman, stateDir },
+    { platform: "linux", podman, stateDir, systemctl: () => ({ status: 0 }), ...deps },
   );
 }
 
@@ -224,7 +231,7 @@ describe("portable demo sandbox lifecycle", () => {
     expect(runtime.podman).not.toHaveBeenCalled();
   });
 
-  it("records the exact OpenShell container and applies the unless-stopped restart policy (#8441)", () => {
+  it("records the exact OpenShell container and applies restart=always (#8441)", () => {
     const stateDir = temporaryStateDir();
     const { podman } = createPodman();
 
@@ -241,7 +248,7 @@ describe("portable demo sandbox lifecycle", () => {
       "--format",
       "{{.ID}}",
     ]);
-    expect(podman).toHaveBeenCalledWith(["update", "--restart=unless-stopped", CONTAINER_ID]);
+    expect(podman).toHaveBeenCalledWith(["update", "--restart=always", CONTAINER_ID]);
     const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(receipt).toEqual({
@@ -252,6 +259,96 @@ describe("portable demo sandbox lifecycle", () => {
       dashboardPort: 18789,
     });
     expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("persists the POC mode and enables a receipt-driven user resume service", () => {
+    const stateDir = temporaryStateDir();
+    const { podman } = createPodman();
+    const systemctl = vi.fn((_args: readonly string[]) => ({ status: 0 }));
+    const env = { HOME: stateDir };
+
+    installReceipt(stateDir, podman, {
+      env,
+      modulePath: "/opt/nemoclaw/dist/lib/onboard/experimental/portable-demo-lifecycle.js",
+      nodeBinary: "/usr/bin/node",
+      systemctl,
+    });
+
+    const configPath = portableDemoLifecycleInternals.fastResumeConfigPath(env);
+    expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toEqual({
+      schemaVersion: 1,
+      managedBy: portableDemoLifecycleInternals.FAST_RESUME_CONFIG_MARKER,
+      mode: "fast-resume-poc",
+      sandboxName: "alpha",
+      dashboardForwardRecovery: "disabled",
+    });
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+
+    const servicePath = portableDemoLifecycleInternals.portableResumeServicePath(env);
+    const service = fs.readFileSync(servicePath, "utf8");
+    expect(service).toContain("Requires=podman.socket");
+    expect(service).toContain("After=podman.socket");
+    expect(service).toContain(
+      "ExecStart=/usr/bin/node /opt/nemoclaw/dist/lib/onboard/experimental/portable-demo-lifecycle.js --resume-service",
+    );
+    expect(service).not.toContain("Environment=");
+    expect(fs.statSync(servicePath).mode & 0o777).toBe(0o600);
+    expect(systemctl.mock.calls.map(([args]) => args)).toEqual([
+      ["--user", "daemon-reload"],
+      ["--user", "enable", "--now", "nemoclaw-portable-resume.service"],
+    ]);
+  });
+
+  it("starts only the stopped receipt-bound container from the user resume service", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({ running: false });
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+    const systemctl = vi.fn((_args: readonly string[]) => ({ status: 0 }));
+
+    expect(
+      runPortableResumeService({
+        env: { HOME: stateDir },
+        platform: "linux",
+        podman: runtime.podman,
+        stateDir,
+        systemctl,
+      }),
+    ).toBe("started");
+
+    expect(systemctl).toHaveBeenCalledWith([
+      "--user",
+      "start",
+      "nemoclaw-openshell-gateway.service",
+    ]);
+    expect(runtime.podman).toHaveBeenCalledWith(["inspect", CONTAINER_ID]);
+    expect(runtime.podman).toHaveBeenCalledWith(["start", CONTAINER_ID]);
+    expect(runtime.podman).not.toHaveBeenCalledWith(expect.arrayContaining(["ps"]));
+  });
+
+  it("uses only socket, gateway, and the exact receipt container on fast connect", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({ running: false });
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+    const systemctl = vi.fn((_args: readonly string[]) => ({ status: 0 }));
+
+    expect(
+      ensurePortableFastResumeForConnect("alpha", {
+        env: { HOME: stateDir },
+        platform: "linux",
+        podman: runtime.podman,
+        stateDir,
+        systemctl,
+      }),
+    ).toEqual({ kind: "ready", containerStarted: true });
+
+    expect(systemctl.mock.calls.map(([args]) => args)).toEqual([
+      ["--user", "start", "podman.socket"],
+      ["--user", "start", "nemoclaw-openshell-gateway.service"],
+    ]);
+    expect(runtime.podman).toHaveBeenCalledWith(["start", CONTAINER_ID]);
+    expect(runtime.podman).not.toHaveBeenCalledWith(expect.arrayContaining(["ps"]));
   });
 
   it("does not persist proxy credentials from the create-time environment (#8441)", () => {
@@ -265,8 +362,8 @@ describe("portable demo sandbox lifecycle", () => {
         "HTTPS_PROXY=https://user:password@example.test",
         STARTUP_ARGV.at(-1)!,
       ],
-      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-      { platform: "linux", podman, stateDir },
+      { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      { platform: "linux", podman, stateDir, systemctl: () => ({ status: 0 }) },
     );
 
     const receipt = fs.readFileSync(
@@ -275,6 +372,18 @@ describe("portable demo sandbox lifecycle", () => {
     );
     expect(receipt).not.toContain("PROXY");
     expect(receipt).not.toContain("user:password");
+    const config = fs.readFileSync(
+      portableDemoLifecycleInternals.fastResumeConfigPath({ HOME: stateDir }),
+      "utf8",
+    );
+    const service = fs.readFileSync(
+      portableDemoLifecycleInternals.portableResumeServicePath({ HOME: stateDir }),
+      "utf8",
+    );
+    expect(config).not.toContain("PROXY");
+    expect(config).not.toContain("user:password");
+    expect(service).not.toContain("PROXY");
+    expect(service).not.toContain("user:password");
   });
 
   it("does not record lifecycle ownership when the restart policy update fails (#8441)", () => {

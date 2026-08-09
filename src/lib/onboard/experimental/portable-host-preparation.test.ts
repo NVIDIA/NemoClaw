@@ -74,6 +74,7 @@ describe("preparePortableExperimentalHost", () => {
       ],
       ["--user", "try-restart", "podman.service"],
       ["--user", "enable", "--now", "podman.socket"],
+      ["--user", "enable", "podman-restart.service"],
     ]);
     expect(podman).toHaveBeenCalledWith(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
     expect(docker.mock.calls[0]?.[0]).toEqual(["--version"]);

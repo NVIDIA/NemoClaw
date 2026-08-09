@@ -18,6 +18,13 @@ import {
 
 const RECEIPT_DIRECTORY = "portable-demo-lifecycle";
 const MAX_RECEIPT_BYTES = 4096;
+const FAST_RESUME_CONFIG_DIRECTORY = path.join("nemoclaw", "portable");
+const FAST_RESUME_CONFIG_FILE = "config.json";
+const FAST_RESUME_CONFIG_MARKER = "nemoclaw-portable-fast-resume-poc";
+const MAX_FAST_RESUME_CONFIG_BYTES = 2048;
+const PORTABLE_RESUME_SERVICE = "nemoclaw-portable-resume.service";
+const PORTABLE_RESUME_SERVICE_MARKER = "# NEMOCLAW_MANAGED_PORTABLE_RESUME=1";
+const MANAGED_OPENSHELL_GATEWAY_SERVICE = "nemoclaw-openshell-gateway.service";
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
@@ -54,6 +61,14 @@ interface PortableDemoLifecycleReceipt {
   dashboardPort: number;
 }
 
+interface PortableFastResumeConfig {
+  schemaVersion: 1;
+  managedBy: typeof FAST_RESUME_CONFIG_MARKER;
+  mode: "fast-resume-poc";
+  sandboxName: string;
+  dashboardForwardRecovery: "disabled";
+}
+
 interface PodmanContainerInspection {
   containerId: string;
   sandboxId: string;
@@ -66,6 +81,7 @@ export interface PortableDemoLifecycleDeps {
   env?: NodeJS.ProcessEnv;
   openshellBinary?: string;
   podman?: (args: readonly string[]) => CommandResult;
+  systemctl?: (args: readonly string[]) => CommandResult;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
   launchOpenshell?: (args: readonly string[]) => void;
   captureHost?: (command: string, args: readonly string[], timeoutMs: number) => CommandResult;
@@ -79,12 +95,18 @@ export interface PortableDemoLifecycleDeps {
   sleep?: (milliseconds: number) => void;
   now?: () => number;
   log?: (message: string) => void;
+  nodeBinary?: string;
+  modulePath?: string;
 }
 
 export type PortableDemoLifecycleRecoveryResult =
   | { kind: "not-installed" }
   | { kind: "already-running" }
   | { kind: "recovered" };
+
+export type PortableFastResumeResult =
+  | { kind: "not-configured" }
+  | { kind: "ready"; containerStarted: boolean };
 
 export interface PortableDemoLifecycleContext {
   agent?: string | null;
@@ -94,6 +116,15 @@ export interface PortableDemoLifecycleContext {
 
 function defaultPodman(args: readonly string[], env: NodeJS.ProcessEnv): CommandResult {
   return spawnSync("podman", [...args], {
+    encoding: "utf-8",
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: COMMAND_TIMEOUT_MS,
+  });
+}
+
+function defaultSystemctl(args: readonly string[], env: NodeJS.ProcessEnv): CommandResult {
+  return spawnSync("systemctl", [...args], {
     encoding: "utf-8",
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -171,15 +202,6 @@ function commandDetail(result: CommandResult): string {
   return `exit ${String(result.status)}`;
 }
 
-function podmanStartDetail(result: CommandResult): string {
-  const detail = commandDetail(result);
-  const stderr = String(result.stderr ?? "")
-    .replaceAll(/[\r\n\t]+/gu, " ")
-    .trim();
-  if (!stderr) return detail;
-  return `${detail}: ${stderr.slice(0, 2_000)}`;
-}
-
 function requireCommand(result: CommandResult, action: string): void {
   if (result.status === 0 && !result.error) return;
   throw new Error(`${action} failed: ${commandDetail(result)}`);
@@ -187,6 +209,126 @@ function requireCommand(result: CommandResult, action: string): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function defaultConfigHome(env: NodeJS.ProcessEnv): string {
+  const configured = env.XDG_CONFIG_HOME?.trim();
+  if (configured && path.isAbsolute(configured)) return path.normalize(configured);
+  return path.join(env.HOME ?? os.homedir(), ".config");
+}
+
+function fastResumeConfigPath(env: NodeJS.ProcessEnv): string {
+  return path.join(defaultConfigHome(env), FAST_RESUME_CONFIG_DIRECTORY, FAST_RESUME_CONFIG_FILE);
+}
+
+function portableResumeServicePath(env: NodeJS.ProcessEnv): string {
+  return path.join(defaultConfigHome(env), "systemd", "user", PORTABLE_RESUME_SERVICE);
+}
+
+function writeFastResumeConfig(config: PortableFastResumeConfig, env: NodeJS.ProcessEnv): void {
+  const filePath = fastResumeConfigPath(env);
+  ensureConfigDir(path.dirname(filePath));
+  let file;
+  try {
+    file = openRegularFileNoFollow(filePath, { writable: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    file = openRegularFileNoFollow(filePath, { create: true, mode: 0o600, writable: true });
+  }
+  try {
+    file.replaceUtf8(`${JSON.stringify(config, null, 2)}\n`, 0o600);
+  } finally {
+    file.close();
+  }
+}
+
+function parseFastResumeConfig(value: unknown): PortableFastResumeConfig {
+  if (!isRecord(value)) throw new Error("Portable fast-resume configuration is malformed");
+  const keys = Object.keys(value).sort();
+  if (keys.join(",") !== "dashboardForwardRecovery,managedBy,mode,sandboxName,schemaVersion") {
+    throw new Error("Portable fast-resume configuration fields are invalid");
+  }
+  if (
+    value.schemaVersion !== 1 ||
+    value.managedBy !== FAST_RESUME_CONFIG_MARKER ||
+    value.mode !== "fast-resume-poc" ||
+    typeof value.sandboxName !== "string" ||
+    !SANDBOX_ID_PATTERN.test(value.sandboxName) ||
+    value.dashboardForwardRecovery !== "disabled"
+  ) {
+    throw new Error("Portable fast-resume configuration values are invalid");
+  }
+  return value as unknown as PortableFastResumeConfig;
+}
+
+function loadFastResumeConfig(env: NodeJS.ProcessEnv): PortableFastResumeConfig | null {
+  let file;
+  try {
+    file = openRegularFileNoFollow(fastResumeConfigPath(env));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    return parseFastResumeConfig(JSON.parse(file.readUtf8(MAX_FAST_RESUME_CONFIG_BYTES)));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("Portable fast-resume configuration is malformed");
+    }
+    throw error;
+  } finally {
+    file.close();
+  }
+}
+
+function requireSystemdExecPath(value: string, label: string): string {
+  if (!path.isAbsolute(value) || /[%\s"'\\]/u.test(value)) {
+    throw new Error(`Portable resume service requires a safe absolute ${label} path`);
+  }
+  return path.normalize(value);
+}
+
+function portableResumeServiceContents(nodeBinary: string, modulePath: string): string {
+  const node = requireSystemdExecPath(nodeBinary, "Node.js");
+  const lifecycleModule = requireSystemdExecPath(modulePath, "lifecycle module");
+  return `# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+${PORTABLE_RESUME_SERVICE_MARKER}
+
+[Unit]
+Description=NemoClaw portable sandbox resume
+Requires=podman.socket
+After=podman.socket
+
+[Service]
+Type=oneshot
+ExecStart=${node} ${lifecycleModule} --resume-service
+UMask=0077
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+function writePortableResumeService(contents: string, env: NodeJS.ProcessEnv): void {
+  const filePath = portableResumeServicePath(env);
+  ensureConfigDir(path.dirname(filePath));
+  let file;
+  try {
+    file = openRegularFileNoFollow(filePath, { writable: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    file = openRegularFileNoFollow(filePath, { create: true, mode: 0o600, writable: true });
+  }
+  try {
+    const existing = file.readUtf8(MAX_FAST_RESUME_CONFIG_BYTES);
+    if (existing && !existing.split(/\r?\n/u).includes(PORTABLE_RESUME_SERVICE_MARKER)) {
+      throw new Error(`Refusing to replace foreign portable resume service: ${filePath}`);
+    }
+    file.replaceUtf8(contents, 0o600);
+  } finally {
+    file.close();
+  }
 }
 
 function receiptPath(sandboxName: string, stateDir: string): string {
@@ -336,6 +478,123 @@ function isMissingPodmanContainer(result: CommandResult): boolean {
   return /\b(?:no such (?:object|container)|no container with (?:name|id)|container .* not found)\b/iu.test(
     detail,
   );
+}
+
+type ReceiptContainerResumeResult = "already-running" | "missing" | "started";
+
+function ensureReceiptContainerRunning(
+  receipt: PortableDemoLifecycleReceipt,
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+): ReceiptContainerResumeResult {
+  const initialInspection = podman(["inspect", receipt.containerId]);
+  if (isMissingPodmanContainer(initialInspection)) return "missing";
+  let inspection = inspectPodmanContainer(
+    receipt.containerId,
+    receipt.sandboxName,
+    podman,
+    initialInspection,
+  );
+  if (inspection.sandboxId !== receipt.sandboxId) {
+    throw new Error(
+      `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
+    );
+  }
+  if (inspection.running) return "already-running";
+  requireCommand(
+    podman(["start", receipt.containerId]),
+    `Starting portable sandbox '${receipt.sandboxName}'`,
+  );
+  inspection = inspectPodmanContainer(receipt.containerId, receipt.sandboxName, podman);
+  if (!inspection.running) {
+    throw new Error(`Portable sandbox '${receipt.sandboxName}' did not enter the running state`);
+  }
+  return "started";
+}
+
+function installPortableFastResume(
+  sandboxName: string,
+  commandEnv: NodeJS.ProcessEnv,
+  deps: PortableDemoLifecycleDeps,
+): void {
+  const config: PortableFastResumeConfig = {
+    schemaVersion: 1,
+    managedBy: FAST_RESUME_CONFIG_MARKER,
+    mode: "fast-resume-poc",
+    sandboxName,
+    dashboardForwardRecovery: "disabled",
+  };
+  writeFastResumeConfig(config, commandEnv);
+  writePortableResumeService(
+    portableResumeServiceContents(
+      deps.nodeBinary ?? process.execPath,
+      deps.modulePath ?? __filename,
+    ),
+    commandEnv,
+  );
+  const systemctl = deps.systemctl ?? ((args) => defaultSystemctl(args, commandEnv));
+  requireCommand(
+    systemctl(["--user", "daemon-reload"]),
+    "Reloading the portable resume user service",
+  );
+  requireCommand(
+    systemctl(["--user", "enable", "--now", PORTABLE_RESUME_SERVICE]),
+    "Enabling the portable resume user service",
+  );
+}
+
+/** Start only the exact receipt-bound container selected by the portable POC configuration. */
+export function ensurePortableFastResumeForConnect(
+  sandboxName: string,
+  deps: PortableDemoLifecycleDeps = {},
+): PortableFastResumeResult {
+  const commandEnv = deps.env ?? process.env;
+  const config = loadFastResumeConfig(commandEnv);
+  if (!config || config.sandboxName !== sandboxName) return { kind: "not-configured" };
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable fast-resume configuration is only valid on Linux");
+  }
+  const systemctl = deps.systemctl ?? ((args) => defaultSystemctl(args, commandEnv));
+  requireCommand(
+    systemctl(["--user", "start", "podman.socket"]),
+    "Starting the rootless Podman socket",
+  );
+  requireCommand(
+    systemctl(["--user", "start", MANAGED_OPENSHELL_GATEWAY_SERVICE]),
+    "Starting the managed OpenShell gateway",
+  );
+  const receipt = loadReceipt(sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
+  if (!receipt) {
+    throw new Error(`Portable fast-resume receipt is missing for sandbox '${sandboxName}'`);
+  }
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  const resumed = ensureReceiptContainerRunning(receipt, podman);
+  if (resumed === "missing") {
+    throw new Error(
+      `Portable fast-resume container '${receipt.containerId}' no longer exists for sandbox '${sandboxName}'`,
+    );
+  }
+  return { kind: "ready", containerStarted: resumed === "started" };
+}
+
+/** Entrypoint used by the enabled portable resume user service. */
+export function runPortableResumeService(
+  deps: PortableDemoLifecycleDeps = {},
+): ReceiptContainerResumeResult | "not-configured" | "receipt-missing" {
+  const commandEnv = deps.env ?? process.env;
+  const config = loadFastResumeConfig(commandEnv);
+  if (!config) return "not-configured";
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable fast-resume configuration is only valid on Linux");
+  }
+  const systemctl = deps.systemctl ?? ((args) => defaultSystemctl(args, commandEnv));
+  requireCommand(
+    systemctl(["--user", "start", MANAGED_OPENSHELL_GATEWAY_SERVICE]),
+    "Starting the managed OpenShell gateway",
+  );
+  const receipt = loadReceipt(config.sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
+  if (!receipt) return "receipt-missing";
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  return ensureReceiptContainerRunning(receipt, podman);
 }
 
 function discoverPodmanContainer(
@@ -635,10 +894,11 @@ export function installPortableDemoSandboxLifecycle(
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
   };
   requireCommand(
-    podman(["update", "--restart=unless-stopped", inspection.containerId]),
+    podman(["update", "--restart=always", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
-  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(env));
+  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(commandEnv));
+  installPortableFastResume(sandboxName, commandEnv, deps);
 }
 
 /**
@@ -677,12 +937,10 @@ export function recoverPortableDemoSandboxLifecycle(
     );
   }
   if (!inspection.running) {
-    const started = podman(["start", receipt.containerId]);
-    if (started.status !== 0 || started.error) {
-      throw new Error(
-        `Starting portable sandbox '${sandboxName}' failed: ${podmanStartDetail(started)}`,
-      );
-    }
+    requireCommand(
+      podman(["start", receipt.containerId]),
+      `Starting portable sandbox '${sandboxName}'`,
+    );
     inspection = inspectPodmanContainer(receipt.containerId, sandboxName, podman);
     if (!inspection.running) {
       throw new Error(`Portable sandbox '${sandboxName}' did not enter the running state`);
@@ -784,4 +1042,22 @@ export function recoverPortableDemoSandboxLifecycle(
   return { kind: "recovered" };
 }
 
-export const portableDemoLifecycleInternals = { receiptPath };
+export const portableDemoLifecycleInternals = {
+  FAST_RESUME_CONFIG_MARKER,
+  MANAGED_OPENSHELL_GATEWAY_SERVICE,
+  PORTABLE_RESUME_SERVICE,
+  fastResumeConfigPath,
+  portableResumeServicePath,
+  receiptPath,
+};
+
+if (require.main === module && process.argv[2] === "--resume-service") {
+  try {
+    runPortableResumeService();
+  } catch (error) {
+    console.error(
+      `NemoClaw portable resume failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  }
+}
