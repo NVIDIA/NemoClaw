@@ -710,7 +710,7 @@ The target sources `scripts/install.sh` from the candidate checkout, calls the E
 It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
 Separate installer tests own those earlier boundaries.
 The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
-It preserves the shared Hugging Face cache and removes only the exact sandbox and managed container that the run created.
+It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
 

@@ -17,6 +17,12 @@ const lifecycle = vi.hoisted(() => ({
 const managedClusterRecovery = vi.hoisted(() => ({
   endpoint: vi.fn(),
 }));
+const hostLocalRecovery = vi.hoisted(() => ({
+  endpoint: vi.fn(),
+}));
+const managedBridge = vi.hoisted(() => ({
+  host: vi.fn(() => "172.18.0.1"),
+}));
 const managedKey = vi.hoisted(() => ({
   load: vi.fn(),
 }));
@@ -26,6 +32,11 @@ vi.mock("./vllm-station-cluster-lifecycle", () => ({
 }));
 vi.mock("./serving/managed-cluster-runtime-receipt", () => ({
   recoverInstalledManagedClusterVllmEndpoint: managedClusterRecovery.endpoint,
+}));
+vi.mock("./serving/vllm-host-local-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./serving/vllm-host-local-lifecycle")>()),
+  recoverHostLocalManagedVllmEndpoint: hostLocalRecovery.endpoint,
+  resolveManagedVllmBridgeHost: managedBridge.host,
 }));
 vi.mock("./vllm-api-key", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./vllm-api-key")>()),
@@ -95,6 +106,10 @@ beforeEach(() => {
   vi.stubEnv(LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV, undefined);
   managedClusterRecovery.endpoint.mockReset();
   managedClusterRecovery.endpoint.mockReturnValue(null);
+  hostLocalRecovery.endpoint.mockReset();
+  hostLocalRecovery.endpoint.mockReturnValue(null);
+  managedBridge.host.mockReset();
+  managedBridge.host.mockReturnValue("172.18.0.1");
   managedKey.load.mockReset();
   managedKey.load.mockReturnValue(API_KEY);
   lifecycle.baseUrl.mockReset();
@@ -240,6 +255,40 @@ describe("managed vLLM authentication", () => {
       baseUrl: `${BASE_URL}/v1`,
       apiKey: API_KEY,
     });
+  });
+
+  it("separates the host-local validation URL from the sandbox route (#8379)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    const recoverHostLocalManagedVllmEndpointImpl = vi.fn(() => ({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+    }));
+
+    expect(
+      getManagedVllmProviderBinding({
+        loadApiKeyImpl: () => API_KEY,
+        recoverHostLocalManagedVllmEndpointImpl,
+      }),
+    ).toEqual({
+      baseUrl: "http://host.openshell.internal:8000/v1",
+      validationBaseUrl: "http://127.0.0.1:8000/v1",
+      apiKey: API_KEY,
+    });
+  });
+
+  it("pins host-local reachability to the exact OpenShell bridge (#8379)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.endpoint.mockReturnValue({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+    });
+
+    const command = getLocalProviderContainerReachabilityCheck("vllm-local");
+
+    expect(command).toContain("host.openshell.internal:172.18.0.1");
+    expect(command).not.toContain("host.openshell.internal:host-gateway");
+    expect(command?.at(-1)).toBe("http://host.openshell.internal:8000/health");
+    expect(managedBridge.host).toHaveBeenCalledOnce();
   });
 
   it("uses /health only for unauthenticated availability checks", () => {

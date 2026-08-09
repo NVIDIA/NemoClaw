@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
+import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
 import { detectVllmProfile } from "../../../src/lib/inference/vllm.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
 import {
@@ -23,6 +24,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
+  inspectSandboxIdentity,
   listedSandboxNames,
 } from "../support/spark-express-vllm-safety.ts";
 import {
@@ -116,6 +118,39 @@ async function assertSandboxAbsent(host: HostCliClient, sandboxName: string): Pr
   expect(
     listedSandboxNames(result).has(sandboxName),
     `Refusing to replace a pre-existing ${sandboxName} sandbox.\n${resultText(result)}`,
+  ).toBe(false);
+}
+
+async function inspectSandbox(host: HostCliClient, sandboxName: string, artifactName: string) {
+  const result = await host.command("openshell", ["sandbox", "get", "-o", "json", sandboxName], {
+    artifactName,
+    env: e2eEnv(),
+    timeoutMs: 30_000,
+  });
+  return inspectSandboxIdentity(result, sandboxName);
+}
+
+async function removeExactSandbox(
+  host: HostCliClient,
+  sandbox: Parameters<typeof cleanupSandbox>[1],
+  sandboxName: string,
+  sandboxId: string,
+): Promise<void> {
+  const current = await inspectSandbox(host, sandboxName, "cleanup-spark-express-sandbox-inspect");
+  if (current.kind === "absent") return;
+  expect(
+    current.id,
+    `Refusing to remove replacement sandbox ${sandboxName}; expected ${sandboxId}, got ${current.id}`,
+  ).toBe(sandboxId);
+  await cleanupSandbox(host, sandbox, sandboxName, { strict: true });
+  const list = await host.command("openshell", ["sandbox", "list", "--names"], {
+    artifactName: "cleanup-spark-express-sandbox-list",
+    env: e2eEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(
+    listedSandboxNames(list).has(sandboxName),
+    `Sandbox ${sandboxName} still exists after cleanup.`,
   ).toBe(false);
 }
 
@@ -235,20 +270,19 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
   expect(nvidia.exitCode, resultText(nvidia)).toBe(0);
 
   let createdContainerId: string | null = null;
-  let ownsSandboxName = false;
+  let createdSandboxId: string | null = null;
   cleanup.add(`remove ${VLLM_CONTAINER}`, () =>
     createdContainerId
       ? removeExactVllmContainer(host, createdContainerId, "cleanup-spark-express-vllm-container")
       : Promise.resolve(),
   );
   cleanup.add(`remove sandbox ${SANDBOX_NAME}`, () =>
-    ownsSandboxName
-      ? cleanupSandbox(host, sandbox, SANDBOX_NAME, { strict: true })
+    createdSandboxId
+      ? removeExactSandbox(host, sandbox, SANDBOX_NAME, createdSandboxId)
       : Promise.resolve(),
   );
   await assertVllmContainerAbsent(host);
   await assertSandboxAbsent(host, SANDBOX_NAME);
-  ownsSandboxName = true;
 
   progress.phase("select Spark Express option 2 and onboard through the local-model profile");
   const onboard = await host.command(
@@ -287,12 +321,22 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
     timeoutMs: 30_000,
   });
   createdContainerId = capturedVllmContainerId(inspectionResult);
+  const sandboxInspection = await inspectSandbox(
+    host,
+    SANDBOX_NAME,
+    "spark-express-vllm-sandbox-inspect",
+  );
+  createdSandboxId = sandboxInspection.kind === "present" ? sandboxInspection.id : null;
   if (onboard.exitCode !== 0) {
     await captureOnboardFailureDiagnostics(host, SANDBOX_NAME);
   }
 
   progress.phase("verify catalog-owned vLLM runtime configuration");
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
+  expect(
+    createdSandboxId,
+    "onboarding did not create the expected sandbox identity",
+  ).not.toBeNull();
   expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);
   const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
   expect(inspection.Id).toBe(createdContainerId);
@@ -311,9 +355,19 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
   expect(inspection.HostConfig.NetworkMode).toBe(plan.recipe.spec.runtime.networkMode);
   expect(inspection.HostConfig.IpcMode).toBe(plan.recipe.spec.runtime.ipcMode);
   expect(inspection.HostConfig.ShmSize).toBe(plan.recipe.spec.runtime.sharedMemoryBytes);
-  expect(inspection.HostConfig.PortBindings["8000/tcp"]).toEqual([
-    { HostIp: "127.0.0.1", HostPort: "8000" },
-  ]);
+  const portBindings = inspection.HostConfig.PortBindings["8000/tcp"];
+  expect(portBindings).toHaveLength(2);
+  expect(portBindings).toContainEqual({ HostIp: "127.0.0.1", HostPort: "8000" });
+  expect(portBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        HostIp: expect.stringMatching(/^(?!127\.0\.0\.1$)(?!0\.0\.0\.0$).+/u),
+        HostPort: "8000",
+      }),
+    ]),
+  );
+  const bridgeBinding = portBindings.find(({ HostIp }) => HostIp !== "127.0.0.1");
+  expect(bridgeBinding?.HostIp).toBe(resolveManagedVllmBridgeHost());
   expect(inspection.HostConfig.DeviceRequests).toEqual(
     expect.arrayContaining([expect.objectContaining({ Count: -1, Capabilities: [["gpu"]] })]),
   );

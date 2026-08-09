@@ -24,6 +24,10 @@ Use a host firewall with default-deny inbound rules.
 Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
 
+An authenticated fixed profile publishes Docker port `8000` on exactly two host addresses: `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
+It never publishes that host port on `0.0.0.0` or `::`.
+The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
+
 The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
 Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for their isolation requirements.
 </Warning>
@@ -74,6 +78,8 @@ vllm serve /models/Hermes-3-Llama-3.1-8B \
 
 Use the parser required by your selected model instead of copying `hermes` for another model family.
 Without both `--enable-auto-tool-choice` and a matching parser, tool calls can appear as raw assistant text instead of structured `tool_calls`.
+The `--host` value in this operator-run example controls the listener inside that server process.
+For the authenticated fixed profile, evaluate host exposure from its published Docker port bindings as described in [Install a Fixed vLLM Profile](choose-local-inference-server#install-a-fixed-vllm-profile).
 
 ## Install or Start Managed vLLM
 
