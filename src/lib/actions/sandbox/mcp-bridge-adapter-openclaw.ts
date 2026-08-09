@@ -13,6 +13,7 @@ import {
   buildOpenClawMcporterInspectCommand,
   entryHeaders,
   mcporterHeaderMatcherSource,
+  OPENCLAW_MCPORTER_ROOT,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -20,6 +21,11 @@ import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { executeSandboxCommand } from "./process-recovery";
 
 export const MCPORTER_VERSION = "0.7.3";
+export { OPENCLAW_MCPORTER_ROOT } from "./mcp-bridge-adapter-status";
+
+function mcporterArgs(...args: string[]): string[] {
+  return ["mcporter", "--root", OPENCLAW_MCPORTER_ROOT, ...args];
+}
 
 function ensureMcporter(sandboxName: string): void {
   const check = executeSandboxCommand(sandboxName, "command -v mcporter");
@@ -33,13 +39,13 @@ export function buildOpenClawMcporterRegisterCommand(
   entry: McpBridgeEntry,
   replaceExisting = false,
 ): string {
-  const args = ["mcporter", "config", "add", entry.server, "--url", entry.url];
+  const args = mcporterArgs("config", "add", entry.server, "--url", entry.url);
   const authorization = authorizationValue(entry);
   if (authorization) args.push("--header", `Authorization=${authorization}`);
-  args.push("--scope", "home");
+  args.push("--scope", "project");
   const addCommand = args.map(shellQuote).join(" ");
   if (replaceExisting) return addCommand;
-  const getCommand = ["mcporter", "config", "get", entry.server, "--json"]
+  const getCommand = mcporterArgs("config", "get", entry.server, "--json")
     .map(shellQuote)
     .join(" ");
   return [
@@ -57,12 +63,13 @@ export function buildOpenClawMcporterRemoveCommand(entry: McpBridgeEntry, force 
     url: entry.url,
     headers: entryHeaders(entry),
     force,
+    root: OPENCLAW_MCPORTER_ROOT,
   };
   return [
     "node - <<'NODE'",
     'const { spawnSync } = require("node:child_process");',
     `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
-    'const get = spawnSync("mcporter", ["config", "get", expected.server, "--json"], { encoding: "utf8" });',
+    'const get = spawnSync("mcporter", ["--root", expected.root, "config", "get", expected.server, "--json"], { encoding: "utf8" });',
     "if (get.error) { console.error(get.error.message); process.exit(3); }",
     'const getDetail = `${get.stderr || ""}\n${get.stdout || ""}`;',
     "const absent = get.status !== 0 && /not\\s+found|does\\s+not\\s+exist|unknown\\s+server/i.test(getDetail);",
@@ -73,7 +80,7 @@ export function buildOpenClawMcporterRemoveCommand(entry: McpBridgeEntry, force 
     mcporterHeaderMatcherSource(),
     'const registered = !!actual && actual.name === expected.server && actual.transport === "http" && actual.baseUrl === expected.url && mcporterHeadersMatchExpected(headers, expected.headers);',
     "if (!registered && !expected.force) { console.error(`Refusing to remove modified mcporter MCP server '${expected.server}'. Use --force to remove it.`); process.exit(2); }",
-    'const remove = spawnSync("mcporter", ["config", "remove", expected.server], { encoding: "utf8" });',
+    'const remove = spawnSync("mcporter", ["--root", expected.root, "config", "remove", expected.server], { encoding: "utf8" });',
     "if (remove.stdout) process.stdout.write(remove.stdout);",
     "if (remove.stderr) process.stderr.write(remove.stderr);",
     "if (remove.error) { console.error(remove.error.message); process.exit(3); }",

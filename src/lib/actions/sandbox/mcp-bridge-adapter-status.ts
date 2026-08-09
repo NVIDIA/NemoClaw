@@ -11,6 +11,7 @@ import {
 // `.mcp.json` discovery is disabled in the managed image so user-authored MCP
 // state can never be layered over the validated registry projection.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+export const OPENCLAW_MCPORTER_ROOT = "/sandbox/.openclaw/workspace";
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
 
@@ -162,12 +163,13 @@ export function buildOpenClawMcporterInspectCommand(
     url: entry.url,
     headers: entryHeaders(entry),
     failOnMismatch,
+    root: OPENCLAW_MCPORTER_ROOT,
   };
   return [
     "node - <<'NODE'",
     'const { spawnSync } = require("node:child_process");',
     `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
-    'const result = spawnSync("mcporter", ["config", "get", expected.server, "--json"], { encoding: "utf8" });',
+    'const result = spawnSync("mcporter", ["--root", expected.root, "config", "get", expected.server, "--json"], { encoding: "utf8" });',
     "if (result.error) { console.error(result.error.message); process.exit(3); }",
     "if (result.status !== 0) {",
     '  const detail = `${result.stderr || ""}\n${result.stdout || ""}`;',

@@ -13,6 +13,7 @@ import {
   buildOpenClawMcporterRegisterCommand,
   buildOpenClawMcporterRemoveCommand,
   MCPORTER_VERSION,
+  OPENCLAW_MCPORTER_ROOT,
 } from "./mcp-bridge-adapter-openclaw";
 import {
   buildOpenClawMcporterInspectCommand,
@@ -34,12 +35,14 @@ describe("OpenClaw mcporter MCP adapter", () => {
   it("constructs a mcporter HTTP registration with OpenShell env placeholders", () => {
     const command = buildOpenClawMcporterRegisterCommand(baseEntry);
 
-    expect(command).toContain("'mcporter' 'config' 'add' 'github'");
+    expect(command).toContain(
+      `'mcporter' '--root' '${OPENCLAW_MCPORTER_ROOT}' 'config' 'add' 'github'`,
+    );
     expect(command).toContain("'--url' 'https://api.githubcopilot.com/mcp/'");
     expect(command).toContain(
       "'--header' 'Authorization=Bearer openshell:resolve:env:GITHUB_TOKEN'",
     );
-    expect(command).toContain("'--scope' 'home'");
+    expect(command).toContain("'--scope' 'project'");
     expect(command).toContain("already exists in mcporter config");
     expect(command).not.toContain("fake-secret");
   });
@@ -100,14 +103,14 @@ describe("OpenClaw mcporter MCP adapter", () => {
           "#!/usr/bin/env node",
           'const fs = require("node:fs");',
           'const headers = JSON.parse(process.env.FAKE_MCPORTER_HEADERS || "{}");',
-          'if (process.argv[3] === "get") {',
+          'if (process.argv.includes("get")) {',
           "  process.stdout.write(JSON.stringify({",
           '    name: "github", transport: "http",',
           '    baseUrl: "https://api.githubcopilot.com/mcp/", headers,',
           "  }));",
           "  process.exit(0);",
           "}",
-          'if (process.argv[3] === "remove") {',
+          'if (process.argv.includes("remove")) {',
           '  fs.writeFileSync(process.env.FAKE_MCPORTER_REMOVE_MARKER, "removed");',
           "  process.exit(0);",
           "}",
@@ -159,6 +162,18 @@ describe("OpenClaw mcporter MCP adapter", () => {
 
     expect(command).not.toContain("Authorization=");
     expect(command).toContain("'--url' 'https://api.githubcopilot.com/mcp/'");
+  });
+
+  it("reads and mutates the workspace config that takes precedence for OpenClaw (#8326)", () => {
+    const register = buildOpenClawMcporterRegisterCommand(baseEntry);
+    const inspect = buildOpenClawMcporterInspectCommand(baseEntry, true);
+    const remove = buildOpenClawMcporterRemoveCommand(baseEntry);
+
+    for (const command of [register, inspect, remove]) {
+      expect(command).toContain(OPENCLAW_MCPORTER_ROOT);
+    }
+    expect(register).toContain("'--scope' 'project'");
+    expect(register).not.toContain("'--scope' 'home'");
   });
 
   it("keeps the mcporter runtime pin visible for image tests", () => {
