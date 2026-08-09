@@ -3602,7 +3602,6 @@ const setupMessagingChannels = createSetupMessagingChannels({
 });
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
-
 function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void {
   runSandboxConfigSync(sandboxName, {
     getSelectionConfig: () => getProviderSelectionConfig(provider, model),
