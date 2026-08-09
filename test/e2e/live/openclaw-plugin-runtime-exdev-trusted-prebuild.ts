@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -129,6 +128,7 @@ export function registerTrustedPluginFixtureImageCleanup(options: {
 }): TrustedPluginFixtureImageCleanup {
   const images: Array<{ imageRef: string; version: "v1" | "v2" }> = [];
   options.cleanup.add("remove trusted EXDEV fixture images", async () => {
+    const failures: string[] = [];
     for (const image of [...images].reverse()) {
       const result = await options.host.command(
         "docker",
@@ -139,8 +139,14 @@ export function registerTrustedPluginFixtureImageCleanup(options: {
           timeoutMs: 60_000,
         },
       );
-      assert.equal(result.exitCode, 0, resultText(result));
+      if (result.exitCode !== 0) {
+        const detail =
+          resultText(result).trim() ||
+          (result.signal ? `signal=${result.signal}` : `exit=${result.exitCode ?? "unknown"}`);
+        failures.push(`${image.imageRef}: ${detail}`);
+      }
     }
+    assert.deepEqual(failures, [], "failed to remove trusted EXDEV fixture images");
   });
   return {
     track: (imageRef, version) => {

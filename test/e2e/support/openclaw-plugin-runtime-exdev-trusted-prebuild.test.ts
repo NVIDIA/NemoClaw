@@ -13,13 +13,13 @@ import {
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 
-function commandResult(): ShellProbeResult {
+function commandResult(exitCode = 0, stderr = ""): ShellProbeResult {
   return {
     artifacts: { result: "result.json", stderr: "stderr.txt", stdout: "stdout.txt" },
     command: ["docker", "image", "rm"],
-    exitCode: 0,
+    exitCode,
     signal: null,
-    stderr: "",
+    stderr,
     stdout: "",
     timedOut: false,
   };
@@ -81,6 +81,48 @@ describe("trusted EXDEV fixture image cleanup", () => {
       "docker",
       ["image", "rm", "--force", imageV2],
       expect.objectContaining({ artifactName: "cleanup-trusted-exdev-image-v2" }),
+    );
+  });
+
+  it("continues reclaiming images after a removal fails and reports the failure", async () => {
+    const cleanup = new CleanupRegistry();
+    let removal = 0;
+    const host = {
+      command: vi.fn(async () => {
+        removal += 1;
+        return removal === 1 ? commandResult(1, "removal denied") : commandResult();
+      }),
+    };
+    const images = registerTrustedPluginFixtureImageCleanup({
+      cleanup,
+      environment: { PATH: "/usr/bin" },
+      host,
+    });
+    const imageV1 = trustedExdevImageRef("cleanup-failure-v1");
+    const imageV2 = trustedExdevImageRef("cleanup-failure-v2");
+    images.track(imageV1, "v1");
+    images.track(imageV2, "v2");
+
+    const result = await cleanup.runAll();
+
+    expect(result.passed).toEqual([]);
+    expect(result.failures).toEqual([
+      {
+        message: expect.stringContaining(`${imageV2}: removal denied`),
+        name: "remove trusted EXDEV fixture images",
+      },
+    ]);
+    expect(host.command).toHaveBeenNthCalledWith(
+      1,
+      "docker",
+      ["image", "rm", "--force", imageV2],
+      expect.objectContaining({ artifactName: "cleanup-trusted-exdev-image-v2" }),
+    );
+    expect(host.command).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      ["image", "rm", "--force", imageV1],
+      expect.objectContaining({ artifactName: "cleanup-trusted-exdev-image-v1" }),
     );
   });
 });
