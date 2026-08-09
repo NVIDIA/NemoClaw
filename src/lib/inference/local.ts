@@ -1151,7 +1151,7 @@ export function validateLocalProvider(
   }
 
   // All retries exhausted — collect diagnostics
-  const diagnostic = collectContainerDiagnostic(provider, capture);
+  const diagnostic = collectContainerDiagnostic(containerCommand, capture);
 
   switch (provider) {
     case "vllm-local":
@@ -1192,22 +1192,24 @@ function getContainerCheckUrl(provider: string): string | null {
   }
 }
 
-function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): string {
-  const url = getContainerCheckUrl(provider);
-  if (!url) return "Managed vLLM state could not be inspected safely.";
-  const dockerCommand =
-    provider === "vllm-local" && url.endsWith("/health")
-      ? ["docker", "--context", "default"]
-      : ["docker"];
+function collectContainerDiagnostic(containerCommand: string[], capture: RunCaptureFn): string {
+  const url = containerCommand.at(-1);
+  const dockerRunIndex = containerCommand.indexOf("run");
+  const addHostIndex = containerCommand.indexOf("--add-host");
+  const hostAlias = containerCommand[addHostIndex + 1];
+  if (!url || dockerRunIndex < 1 || addHostIndex < 0 || !hostAlias) {
+    return `Docker command failed (invalid reachability command). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
+  }
+  const dockerCommand = containerCommand.slice(0, dockerRunIndex);
   try {
-    // Get HTTP status code
+    // Reuse the exact Docker context, host mapping, and URL from the failed check.
     const httpStatus = capture(
       [
         ...dockerCommand,
         "run",
         "--rm",
         "--add-host",
-        "host.openshell.internal:host-gateway",
+        hostAlias,
         CONTAINER_REACHABILITY_IMAGE,
         "-s",
         "-o",
@@ -1223,14 +1225,14 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
       { ignoreError: true },
     );
 
-    // Get /etc/hosts to see host-gateway resolution
+    // Confirm that Docker applied the same host mapping used by the failed check.
     const hostsOutput = capture(
       [
         ...dockerCommand,
         "run",
         "--rm",
         "--add-host",
-        "host.openshell.internal:host-gateway",
+        hostAlias,
         CONTAINER_REACHABILITY_IMAGE,
         "cat",
         "/etc/hosts",
@@ -1251,7 +1253,7 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
         .split(/\r?\n/)
         .find((l: string) => l.includes("host.openshell.internal"));
       if (gwLine) {
-        parts.push(`host-gateway resolved to: ${gwLine.trim().split(/\s+/)[0]}`);
+        parts.push(`host.openshell.internal resolved to: ${gwLine.trim().split(/\s+/)[0]}`);
       }
     }
     parts.push(
