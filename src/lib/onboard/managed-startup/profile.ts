@@ -4,11 +4,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import {
-  HERMES_API_PORT_RANGE_END,
-  HERMES_API_PORT_RANGE_START,
-  isHermesApiPort,
-} from "../../core/ports";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.
@@ -873,6 +868,13 @@ const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
 const REASONING_EFFORT_SET = new Set<string>(MANAGED_STARTUP_REASONING_EFFORTS);
 const HERMES_INTERNAL_API_PORT = 18_642;
+
+const HERMES_API_PORT_RANGE_START = 8642;
+const HERMES_API_PORT_RANGE_END = 8652;
+
+function isHermesApiPort(port: number): boolean {
+  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
+}
 
 // A dashboard may use neither the internal API port nor any port in the range
 // each Hermes sandbox allocates its public API port from.
