@@ -14,6 +14,7 @@ import {
   assertSecurityPosture,
   dockerRuntimeEndpointArgs,
   OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  type ProcessSecurityIdentity,
   parseOpenShellContainerId,
   parseSplitProcessSecurityReport,
   SPLIT_PROCESS_SECURITY_PROBE,
@@ -43,6 +44,40 @@ function repeatedId(id: number): string[] {
   return Array.from({ length: 4 }, () => String(id));
 }
 
+function validNemoclawStartProcess({
+  pid = 42,
+  ppid = 1,
+  sandboxGid = 1000,
+  sandboxUid = 1000,
+  startTime = "202",
+}: {
+  pid?: number;
+  ppid?: number;
+  sandboxGid?: number;
+  sandboxUid?: number;
+  startTime?: string;
+} = {}): ProcessSecurityIdentity {
+  return {
+    argv: ["/usr/bin/bash", "/usr/local/bin/nemoclaw-start"],
+    executable: "/usr/bin/bash",
+    pid,
+    ppid,
+    state: "S",
+    startTime,
+    status: {
+      capAmb: ZERO_CAPABILITIES,
+      capBnd: ZERO_CAPABILITIES,
+      capEff: ZERO_CAPABILITIES,
+      capInh: ZERO_CAPABILITIES,
+      capPrm: ZERO_CAPABILITIES,
+      gid: repeatedId(sandboxGid),
+      groups: [String(sandboxGid)],
+      noNewPrivs: "1",
+      uid: repeatedId(sandboxUid),
+    },
+  };
+}
+
 function validReport(): SplitProcessSecurityReport {
   return {
     observedProcEntries: 12,
@@ -62,34 +97,25 @@ function validReport(): SplitProcessSecurityReport {
         capInh: ZERO_CAPABILITIES,
         capPrm: OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
         gid: repeatedId(0),
-        groups: ["0"],
+        groups: ["0", "1000"],
         noNewPrivs: "1",
         uid: repeatedId(0),
       },
     },
     version: 1,
-    childSupervisors: [
-      {
-        argv: ["/usr/bin/bash", "/usr/local/bin/nemoclaw-start"],
-        executable: "/usr/bin/bash",
-        pid: 42,
-        ppid: 1,
-        state: "S",
-        startTime: "202",
-        status: {
-          capAmb: ZERO_CAPABILITIES,
-          capBnd: ZERO_CAPABILITIES,
-          capEff: ZERO_CAPABILITIES,
-          capInh: ZERO_CAPABILITIES,
-          capPrm: ZERO_CAPABILITIES,
-          gid: repeatedId(1000),
-          groups: ["1000"],
-          noNewPrivs: "1",
-          uid: repeatedId(1000),
-        },
-      },
-    ],
+    childSupervisors: [validNemoclawStartProcess()],
   };
+}
+
+function reportsWithEachNemoclawStartProcessFirst(): SplitProcessSecurityReport[] {
+  const directFirst = validReport();
+  const descendantFirst = validReport();
+  const direct = descendantFirst.childSupervisors[0]!;
+  descendantFirst.childSupervisors = [
+    validNemoclawStartProcess({ pid: 43, ppid: direct.pid, startTime: "203" }),
+    direct,
+  ];
+  return [directFirst, descendantFirst];
 }
 
 function successfulProbe(stdout = ""): ShellProbeResult {
@@ -191,6 +217,63 @@ describe("security posture fixture", () => {
     expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
   });
 
+  it("accepts the exact OpenShell supervisor groups in either report order", () => {
+    const report = validReport();
+    report.supervisor.status.groups.reverse();
+
+    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+  });
+
+  it.each([
+    {
+      agent: "OpenClaw",
+      observedProcEntries: 14,
+      processes: [
+        { pid: 453, ppid: 37, startTime: "58621" },
+        { pid: 463, ppid: 37, startTime: "58622" },
+        { pid: 473, ppid: 37, startTime: "58623" },
+        { pid: 37, ppid: 1, startTime: "58448" },
+      ],
+      sandboxGid: 998,
+    },
+    {
+      agent: "Hermes",
+      observedProcEntries: 16,
+      processes: [
+        { pid: 54_461, ppid: 38, startTime: "52022" },
+        { pid: 38, ppid: 1, startTime: "30812" },
+      ],
+      sandboxGid: 999,
+    },
+  ])("accepts the observed $agent process tree with one direct supervisor and secure descendants", ({
+    observedProcEntries,
+    processes,
+    sandboxGid,
+  }) => {
+    const report = validReport();
+    report.observedProcEntries = observedProcEntries;
+    report.sandboxUid = 998;
+    report.sandboxGid = sandboxGid;
+    report.supervisor.status.groups = ["0", String(sandboxGid)];
+    report.childSupervisors = processes.map(({ pid, ppid, startTime }) =>
+      validNemoclawStartProcess({ pid, ppid, sandboxGid, sandboxUid: 998, startTime }),
+    );
+
+    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+    expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
+  });
+
+  it("accepts a nested canonical descendant tree", () => {
+    const report = validReport();
+    report.childSupervisors = [
+      validNemoclawStartProcess({ pid: 44, ppid: 43, startTime: "204" }),
+      report.childSupervisors[0]!,
+      validNemoclawStartProcess({ pid: 43, ppid: 42, startTime: "203" }),
+    ];
+
+    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+  });
+
   it.each<ReportMutationCase>([
     {
       error: /expected pid=1 ppid=0/u,
@@ -228,11 +311,32 @@ describe("security posture fixture", () => {
       name: "group identity",
     },
     {
-      error: /supervisor Groups expected only 0/u,
+      error: /supervisor Groups expected exactly 0 1000/u,
+      mutate: (report) => {
+        report.supervisor.status.groups = ["0"];
+      },
+      name: "missing sandbox supplementary group",
+    },
+    {
+      error: /supervisor Groups expected exactly 0 1000/u,
       mutate: (report) => {
         report.supervisor.status.groups = ["0", "44"];
       },
-      name: "supplementary groups",
+      name: "wrong sandbox supplementary group",
+    },
+    {
+      error: /supervisor Groups expected exactly 0 1000/u,
+      mutate: (report) => {
+        report.supervisor.status.groups = ["0", "1000", "44"];
+      },
+      name: "extra supplementary group",
+    },
+    {
+      error: /supervisor Groups expected exactly 0 1000/u,
+      mutate: (report) => {
+        report.supervisor.status.groups = ["0", "0"];
+      },
+      name: "duplicate supplementary group",
     },
     {
       error: /supervisor\.state must be one of D, R, S/u,
@@ -291,25 +395,74 @@ describe("security posture fixture", () => {
   });
 
   it.each([
-    [0, /found 0/u],
-    [2, /found 2/u],
-  ])("rejects a census with %i nemoclaw-start child supervisors", (count, error) => {
+    {
+      directCount: 0,
+      mutate: (report: SplitProcessSecurityReport) => {
+        report.childSupervisors[0]!.ppid = 43;
+      },
+    },
+    {
+      directCount: 2,
+      mutate: (report: SplitProcessSecurityReport) => {
+        report.childSupervisors.push(
+          validNemoclawStartProcess({ pid: 43, ppid: 1, startTime: "203" }),
+        );
+      },
+    },
+  ])("rejects a census with $directCount direct nemoclaw-start child supervisors", ({
+    directCount,
+    mutate,
+  }) => {
     const report = validReport();
-    report.childSupervisors = Array.from(
-      { length: count },
-      () => validReport().childSupervisors[0]!,
-    );
+    mutate(report);
 
-    expect(() => validateSplitProcessSecurityReport(report)).toThrow(error);
+    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+      new RegExp(`found ${directCount}`, "u"),
+    );
+  });
+
+  it.each([
+    "202",
+    "303",
+  ])("rejects a repeated nemoclaw-start PID with reported start time %s", (startTime) => {
+    const report = validReport();
+    const duplicatePid = structuredClone(report.childSupervisors[0]!);
+    duplicatePid.startTime = startTime;
+    report.childSupervisors.push(duplicatePid);
+
+    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+      /PID 42 appeared more than once/u,
+    );
+  });
+
+  it.each([
+    {
+      name: "missing parent",
+      processes: [validNemoclawStartProcess({ pid: 43, ppid: 99, startTime: "203" })],
+    },
+    {
+      name: "parent cycle",
+      processes: [
+        validNemoclawStartProcess({ pid: 43, ppid: 44, startTime: "203" }),
+        validNemoclawStartProcess({ pid: 44, ppid: 43, startTime: "204" }),
+      ],
+    },
+  ])("rejects a canonical descendant with a $name", ({ processes }) => {
+    const report = validReport();
+    report.childSupervisors.push(...processes);
+
+    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+      /is not a descendant of the direct child supervisor/u,
+    );
   });
 
   it.each<ReportMutationCase>([
     {
-      error: /direct PID 1 child/u,
+      error: /must not replace the OpenShell supervisor at PID 1/u,
       mutate: (report) => {
-        report.childSupervisors[0]!.ppid = 10;
+        report.childSupervisors[0]!.pid = 1;
       },
-      name: "that is not a direct child of PID 1",
+      name: "at PID 1",
     },
     {
       error: /does not have the expected argv/u,
@@ -344,45 +497,46 @@ describe("security posture fixture", () => {
       name: "with a stopped or traced process state",
     },
     {
-      error: /child supervisor Uid expected 1000/u,
+      error: /nemoclaw-start process Uid expected 1000/u,
       mutate: (report) => {
         report.childSupervisors[0]!.status.uid = repeatedId(0);
       },
       name: "that runs as root",
     },
     {
-      error: /child supervisor Uid expected 1000/u,
+      error: /nemoclaw-start process Uid expected 1000/u,
       mutate: (report) => {
         report.childSupervisors[0]!.status.uid = repeatedId(1001);
       },
       name: "with a different non-root user",
     },
     {
-      error: /child supervisor Gid expected 1000/u,
+      error: /nemoclaw-start process Gid expected 1000/u,
       mutate: (report) => {
         report.childSupervisors[0]!.status.gid = repeatedId(1001);
       },
       name: "with a different non-root group",
     },
     {
-      error: /child supervisor Groups expected only 1000/u,
+      error: /nemoclaw-start process Groups expected exactly 1000/u,
       mutate: (report) => {
         report.childSupervisors[0]!.status.groups = ["0", "1000"];
       },
       name: "with a privileged supplementary group",
     },
     {
-      error: /child supervisor expected NoNewPrivs=1/u,
+      error: /nemoclaw-start process expected NoNewPrivs=1/u,
       mutate: (report) => {
         report.childSupervisors[0]!.status.noNewPrivs = "0";
       },
       name: "without NoNewPrivs",
     },
-  ])("rejects a nemoclaw-start child supervisor $name", ({ error, mutate }) => {
-    const report = validReport();
-    mutate(report);
+  ])("rejects every nemoclaw-start process $name", ({ error, mutate }) => {
+    for (const report of reportsWithEachNemoclawStartProcessFirst()) {
+      mutate(report);
 
-    expect(() => validateSplitProcessSecurityReport(report)).toThrow(error);
+      expect(() => validateSplitProcessSecurityReport(report)).toThrow(error);
+    }
   });
 
   it.each([
@@ -391,13 +545,14 @@ describe("security posture fixture", () => {
     "capEff",
     "capBnd",
     "capAmb",
-  ] as const)("rejects a nemoclaw-start child supervisor with a nonzero %s set", (field) => {
-    const report = validReport();
-    report.childSupervisors[0]!.status[field] = "0000000000000001";
+  ] as const)("rejects every nemoclaw-start process with a nonzero %s set", (field) => {
+    for (const report of reportsWithEachNemoclawStartProcessFirst()) {
+      report.childSupervisors[0]!.status[field] = "0000000000000001";
 
-    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
-      new RegExp(`child supervisor\\.${field} expected 0`, "u"),
-    );
+      expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+        new RegExp(`nemoclaw-start process\\.${field} expected 0`, "u"),
+      );
+    }
   });
 
   it("rejects malformed and overflowing split-process reports", () => {
@@ -475,6 +630,15 @@ describe("security posture fixture", () => {
     vi.stubEnv("DOCKER_TLS_VERIFY", "1");
     vi.stubEnv("DOCKER_CERT_PATH", "/tmp/untrusted-docker-certs");
     const report = validReport();
+    const directChildSupervisor = report.childSupervisors[0]!;
+    report.childSupervisors = [
+      validNemoclawStartProcess({
+        pid: 43,
+        ppid: directChildSupervisor.pid,
+        startTime: "203",
+      }),
+      directChildSupervisor,
+    ];
     const containerRow = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
     const command = vi
       .fn<HostCliClient["command"]>()
@@ -519,7 +683,7 @@ describe("security posture fixture", () => {
       rcFilesLocked: true,
       runtimeProxyEnvLocked: true,
       splitProcess: {
-        childSupervisor: report.childSupervisors[0],
+        childSupervisor: directChildSupervisor,
         supervisor: report.supervisor,
       },
       startupLogClean: true,
