@@ -23,6 +23,7 @@ interface PortableOverrideOptions {
   existingStorage?: string;
   runroot?: string;
   runs?: number;
+  xdgRuntimeDir?: string;
 }
 
 function runPortableOverride(options: PortableOverrideOptions = {}): {
@@ -45,6 +46,7 @@ function runPortableOverride(options: PortableOverrideOptions = {}): {
     export NEMOCLAW_EXPERIMENTAL_PROFILE
     command_exists() { return 0; }
     uname() { printf 'Linux\\n'; }
+    id() { printf '4242\\n'; }
     systemctl() {
       printf 'SYSTEMCTL=%s\\n' "$*" >&2
       printf 'SYSTEMCTL=%s\\n' "$*" >> "$NEMOCLAW_TEST_TRACE"
@@ -53,7 +55,7 @@ function runPortableOverride(options: PortableOverrideOptions = {}): {
       printf 'PODMAN=%s\\n' "$*" >> "$NEMOCLAW_TEST_TRACE"
       case "$*" in
         *Store.GraphRoot*) printf '%s\\n' "$HOME/.local/share/containers/storage" ;;
-        *Store.RunRoot*) printf '%s\\n' "\${NEMOCLAW_TEST_RUNROOT:-$HOME/.local/share/containers/runroot}" ;;
+        *Store.RunRoot*) printf '%s\\n' "\${NEMOCLAW_TEST_RUNROOT:-\${XDG_RUNTIME_DIR:-/run/user/4242}/containers}" ;;
         *RemoteSocket.Path*) printf '/run/user/4242/selected/podman.sock\\n' ;;
       esac
     }
@@ -73,6 +75,7 @@ function runPortableOverride(options: PortableOverrideOptions = {}): {
       HOME: home,
       NEMOCLAW_TEST_TRACE: tracePath,
       NEMOCLAW_TEST_RUNROOT: options.runroot ?? "",
+      XDG_RUNTIME_DIR: options.xdgRuntimeDir ?? "/run/user/4242",
     },
   });
   return {
@@ -96,12 +99,13 @@ describe("installer portable profile runtime override", () => {
       `# NEMOCLAW_MANAGED_PORTABLE_STORAGE=1
 [storage]
 graphroot = "${home}/.local/share/containers/storage"
-runroot = "${home}/.local/share/containers/runroot"
+runroot = "/run/user/4242/containers"
 driver = "overlay"
 transient_store = false
 `,
     );
     expect(fs.statSync(storagePath).mode & 0o777).toBe(0o600);
+    expect(fs.existsSync(path.join(home, ".local", "share", "containers", "runroot"))).toBe(false);
     expect(trace.indexOf("PODMAN=info --format {{.Store.GraphRoot}}")).toBeGreaterThan(
       trace.indexOf("SYSTEMCTL=--user enable podman-restart.service"),
     );
@@ -128,6 +132,25 @@ transient_store = false
     expect(fs.readdirSync(storageDirectory)).toEqual(["storage.conf"]);
   });
 
+  it("replaces the obsolete NemoClaw-managed persistent RunRoot configuration", () => {
+    const obsoleteStorage = `# NEMOCLAW_MANAGED_PORTABLE_STORAGE=1
+[storage]
+graphroot = "/home/kiosk/.local/share/containers/storage"
+runroot = "/home/kiosk/.local/share/containers/runroot"
+driver = "overlay"
+transient_store = false
+`;
+    const { home, result } = runPortableOverride({ existingStorage: obsoleteStorage });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "Replacing obsolete NemoClaw-managed Podman storage configuration",
+    );
+    expect(fs.readdirSync(path.join(home, ".config", "containers"))).toEqual(["storage.conf"]);
+    expect(
+      fs.readFileSync(path.join(home, ".config", "containers", "storage.conf"), "utf8"),
+    ).toContain('runroot = "/run/user/4242/containers"');
+  });
+
   it("backs up an unrelated storage configuration before installing the POC configuration", () => {
     const foreignStorage = '[storage]\ndriver = "vfs"\n';
     const { result } = runPortableOverride({ existingStorage: foreignStorage });
@@ -146,7 +169,7 @@ transient_store = false
   });
 
   it("fails immediately when Podman reports a different RunRoot", () => {
-    const { result, trace } = runPortableOverride({ runroot: "/run/user/4242/containers" });
+    const { result, trace } = runPortableOverride({ runroot: "/run/user/9999/containers" });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Podman RunRoot mismatch: expected");
     expect(trace).not.toContain("PODMAN=info --format {{.Host.RemoteSocket.Path}}");

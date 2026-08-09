@@ -3464,13 +3464,28 @@ ensure_docker() {
 # local-registry configuration required by the OpenShell Podman driver.
 NEMOCLAW_PORTABLE_STORAGE_MARKER="# NEMOCLAW_MANAGED_PORTABLE_STORAGE=1"
 
+resolve_portable_rootless_runroot() {
+  if [[ "${XDG_RUNTIME_DIR:-}" == /* ]]; then
+    printf '%s/containers\n' "${XDG_RUNTIME_DIR%/}"
+    return 0
+  fi
+
+  local user_id=""
+  user_id="$(id -u)" \
+    || error "Could not resolve the current user ID for rootless Podman RunRoot."
+  [[ "$user_id" =~ ^[0-9]+$ ]] \
+    || error "The current user ID is invalid for rootless Podman RunRoot."
+  printf '/run/user/%s/containers\n' "$user_id"
+}
+
 configure_portable_persistent_storage() {
   local storage_conf="${HOME}/.config/containers/storage.conf"
   local storage_dir="${storage_conf%/*}"
   local graphroot="${HOME}/.local/share/containers/storage"
-  local runroot="${HOME}/.local/share/containers/runroot"
+  local runroot=""
   local candidate=""
   local backup=""
+  local managed_existing=0
 
   [[ "$HOME" == /* ]] \
     || error "The portable experimental profile requires an absolute HOME path."
@@ -3479,11 +3494,17 @@ configure_portable_persistent_storage() {
       error "The portable experimental profile cannot encode HOME in containers/storage.conf."
       ;;
   esac
+  runroot="$(resolve_portable_rootless_runroot)"
+  case "$runroot" in
+    *$'\n'* | *$'\r'* | *'"'* | *$'\\'*)
+      error "The portable experimental profile cannot encode RunRoot in containers/storage.conf."
+      ;;
+  esac
 
-  mkdir -p "$storage_dir" "$graphroot" "$runroot" \
-    || error "Could not create the persistent rootless Podman storage directories under HOME."
-  chmod 700 "$graphroot" "$runroot" \
-    || error "Could not secure the persistent rootless Podman storage directories under HOME."
+  mkdir -p "$storage_dir" "$graphroot" \
+    || error "Could not create the persistent rootless Podman GraphRoot under HOME."
+  chmod 700 "$graphroot" \
+    || error "Could not secure the persistent rootless Podman GraphRoot under HOME."
   if [[ -L "$storage_conf" ]]; then
     error "Refusing to replace symlinked Podman storage configuration: $storage_conf"
   fi
@@ -3507,13 +3528,15 @@ configure_portable_persistent_storage() {
   }
 
   if [[ -f "$storage_conf" ]] \
-    && grep -Fxq "$NEMOCLAW_PORTABLE_STORAGE_MARKER" "$storage_conf" \
-    && cmp -s "$candidate" "$storage_conf"; then
-    rm -f "$candidate"
-    chmod 600 "$storage_conf" \
-      || error "Could not enforce mode 0600 on the existing Podman storage configuration."
-    info "Reusing NemoClaw-managed persistent Podman storage configuration at $storage_conf."
-    return 0
+    && grep -Fxq "$NEMOCLAW_PORTABLE_STORAGE_MARKER" "$storage_conf"; then
+    managed_existing=1
+    if cmp -s "$candidate" "$storage_conf"; then
+      rm -f "$candidate"
+      chmod 600 "$storage_conf" \
+        || error "Could not enforce mode 0600 on the existing Podman storage configuration."
+      info "Reusing NemoClaw-managed persistent Podman storage configuration at $storage_conf."
+      return 0
+    fi
   fi
 
   if [[ -e "$storage_conf" ]]; then
@@ -3522,15 +3545,19 @@ configure_portable_persistent_storage() {
         rm -f "$candidate"
         error "Refusing to replace non-regular Podman storage configuration: $storage_conf"
       }
-    backup="$(mktemp "${storage_conf}.nemoclaw-backup.XXXXXX")" || {
-      rm -f "$candidate"
-      error "Could not allocate a backup path for the existing Podman storage configuration."
-    }
-    if ! cp -p "$storage_conf" "$backup" || ! chmod 600 "$backup"; then
-      rm -f "$candidate" "$backup"
-      error "Could not back up the existing Podman storage configuration."
+    if [[ "$managed_existing" == "1" ]]; then
+      info "Replacing obsolete NemoClaw-managed Podman storage configuration at $storage_conf."
+    else
+      backup="$(mktemp "${storage_conf}.nemoclaw-backup.XXXXXX")" || {
+        rm -f "$candidate"
+        error "Could not allocate a backup path for the existing Podman storage configuration."
+      }
+      if ! cp -p "$storage_conf" "$backup" || ! chmod 600 "$backup"; then
+        rm -f "$candidate" "$backup"
+        error "Could not back up the existing Podman storage configuration."
+      fi
+      info "Backed up the existing Podman storage configuration to $backup."
     fi
-    info "Backed up the existing Podman storage configuration to $backup."
   fi
 
   if ! mv "$candidate" "$storage_conf" || ! chmod 600 "$storage_conf"; then
@@ -3560,9 +3587,10 @@ prepare_portable_experimental_runtime_override() {
     || error "Could not enable the rootless Podman restart service."
 
   local expected_graphroot="${HOME}/.local/share/containers/storage"
-  local expected_runroot="${HOME}/.local/share/containers/runroot"
+  local expected_runroot=""
   local actual_graphroot=""
   local actual_runroot=""
+  expected_runroot="$(resolve_portable_rootless_runroot)"
   actual_graphroot="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)" \
     || error "Could not verify the persistent rootless Podman GraphRoot with 'podman info'."
   if [[ "$actual_graphroot" != "$expected_graphroot" ]]; then
