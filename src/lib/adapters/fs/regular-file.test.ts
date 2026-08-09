@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { openRegularFileNoFollow } from "./regular-file";
 
@@ -66,6 +66,91 @@ describe("regular file adapter", () => {
       } finally {
         file.close();
       }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("reads bounded bytes without changing their representation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
+    const filePath = path.join(tmp, "runtime.bundle");
+    const expected = Buffer.from([0x00, 0xff, 0x7f, 0x0a]);
+    fs.writeFileSync(filePath, expected);
+
+    try {
+      const file = openRegularFileNoFollow(filePath);
+      try {
+        expect(file.readBytes(expected.length)).toEqual(expected);
+        expect(() => file.readBytes(expected.length - 1)).toThrow(RangeError);
+      } finally {
+        file.close();
+      }
+      expect(fs.readFileSync(filePath)).toEqual(expected);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a hard-linked regular file without changing either link", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
+    const filePath = path.join(tmp, "runtime.bundle");
+    const aliasPath = path.join(tmp, "runtime-alias.bundle");
+    const expected = Buffer.from("reviewed runtime\n");
+    fs.writeFileSync(filePath, expected);
+    fs.linkSync(filePath, aliasPath);
+
+    try {
+      expect(() => openRegularFileNoFollow(filePath)).toThrow(/changed during validation/);
+      expect(fs.readFileSync(filePath)).toEqual(expected);
+      expect(fs.readFileSync(aliasPath)).toEqual(expected);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a replaced path when reading bytes from its original descriptor", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
+    const filePath = path.join(tmp, "runtime.bundle");
+    const openedPath = path.join(tmp, "opened-runtime.bundle");
+    fs.writeFileSync(filePath, "reviewed\n");
+
+    try {
+      const file = openRegularFileNoFollow(filePath);
+      try {
+        fs.renameSync(filePath, openedPath);
+        fs.writeFileSync(filePath, "replacement\n");
+        expect(() => file.readBytes(64)).toThrow(/changed during validation/);
+      } finally {
+        file.close();
+      }
+      expect(fs.readFileSync(openedPath, "utf8")).toBe("reviewed\n");
+      expect(fs.readFileSync(filePath, "utf8")).toBe("replacement\n");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects descriptor metadata changes during a byte read", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
+    const filePath = path.join(tmp, "runtime.bundle");
+    const expected = Buffer.from("reviewed runtime\n");
+    fs.writeFileSync(filePath, expected, { mode: 0o644 });
+    fs.chmodSync(filePath, 0o644);
+
+    try {
+      const file = openRegularFileNoFollow(filePath);
+      const originalReadSync = fs.readSync.bind(fs);
+      const readSpy = vi.spyOn(fs, "readSync").mockImplementation(((...args: unknown[]) => {
+        fs.chmodSync(filePath, 0o600);
+        return Reflect.apply(originalReadSync, fs, args);
+      }) as typeof fs.readSync);
+      try {
+        expect(() => file.readBytes(expected.length)).toThrow(/changed while reading/);
+      } finally {
+        readSpy.mockRestore();
+        file.close();
+      }
+      expect(fs.readFileSync(filePath)).toEqual(expected);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
