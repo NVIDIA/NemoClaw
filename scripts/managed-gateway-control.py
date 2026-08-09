@@ -1125,11 +1125,13 @@ def _openclaw_port(reader: ProcReader, supervisor: ProcessIdentity) -> int:
 def _hermes_api_port() -> int:
     """Read the per-sandbox port the OpenAI-compatible API is exposed on.
 
-    The entrypoint publishes the allocated port as a root-owned read-only
-    marker so the probe targets the port this sandbox's relay actually listens
-    on instead of an unused port the sandbox user could bind. A sandbox whose
-    image predates the marker has none and keeps the original port, which the
-    sandbox user can bind.
+    The entrypoint publishes the allocated port as a read-only marker so the
+    probe targets the port this sandbox's relay actually listens on. The marker
+    is root-owned under privilege separation, where the sandbox user cannot
+    rewrite it. In the same-uid topology the gateway already runs as the sandbox
+    user, so that user owns the marker and the probe target is only as trusted
+    as the sandbox user. A sandbox whose image predates the marker has none and
+    keeps the original port.
     """
     try:
         raw = Path("/run/nemoclaw/hermes-api-port").read_text(encoding="utf-8").strip()

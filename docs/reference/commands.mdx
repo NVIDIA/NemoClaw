@@ -700,7 +700,8 @@ Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox.
 The value must be an integer from `1024` through `65535`.
 This flag takes precedence over `CHAT_UI_URL`, `NEMOCLAW_DASHBOARD_PORT`, the previous registry value, and the default port.
 
-For Hermes sandboxes, do not use a port from `8642`-`8652`; NemoClaw allocates each sandbox's OpenAI-compatible API port from that range and rejects every port in it as a dashboard port before sandbox creation.
+Do not use a port from `8642` through `8652` for any agent.
+NemoClaw allocates each Hermes sandbox's OpenAI-compatible API port from that range, so it rejects every port in the range as a dashboard port before sandbox creation.
 
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
@@ -1916,7 +1917,7 @@ nemohermes my-assistant dashboard-url --quiet
 ```
 
 The Hermes OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`.
-Use `openshell forward list` to see the host bind for the dashboard and API forwards.
+Run `openshell forward list` to read the host bind for the dashboard and API forwards.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -4164,7 +4165,8 @@ For OpenClaw, `NEMOCLAW_DASHBOARD_PORT` controls the OpenClaw dashboard forward.
 For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`.
 The OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`.
 If `8642` is already occupied by another sandbox, onboarding scans `8642` through `8652` and uses the next free API port.
-Set `NEMOCLAW_HERMES_API_PORT=<N>` to require a specific port.
+Set `NEMOCLAW_HERMES_API_PORT=<N>` before onboarding to require a specific port.
+The sandbox relay binds this port when the sandbox starts, so an existing sandbox keeps its recorded port until you rerun onboarding with `--recreate-sandbox`.
 Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want Hermes' optional in-browser TUI tab.
 
 | Variable | Default | Service |

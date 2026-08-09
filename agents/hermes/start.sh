@@ -174,9 +174,12 @@ fi
 # number it is exposed on here, so two sandboxes on one host need two values.
 # NemoClaw allocates the port and passes it in; the default keeps a sandbox
 # whose create environment carries no value on the original port.
+HERMES_DEFAULT_API_PORT=8642
+HERMES_RUNTIME_DIR=/run/nemoclaw
+HERMES_API_PORT_MARKER="${HERMES_RUNTIME_DIR}/hermes-api-port"
 _api_port_raw="${NEMOCLAW_HERMES_API_PORT:-}"
 if [ -z "$_api_port_raw" ]; then
-  PUBLIC_PORT=8642
+  PUBLIC_PORT="$HERMES_DEFAULT_API_PORT"
 else
   PUBLIC_PORT="$(printf '%s' "$_api_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   _api_port_valid=1
@@ -193,7 +196,7 @@ else
 fi
 
 if [ "$_dashboard_port" -eq "$PUBLIC_PORT" ]; then
-  echo "[SECURITY] Invalid Hermes dashboard port ${PUBLIC_PORT} - reserved for the Hermes OpenAI-compatible API" >&2
+  echo "[SECURITY] Invalid Hermes dashboard port ${_dashboard_port} - reserved for the Hermes OpenAI-compatible API" >&2
   exit 1
 fi
 
@@ -2909,6 +2912,21 @@ prepare_hermes_nonroot_runtime() {
   prepare_tirith_marker_retry || return 1
 }
 
+publish_hermes_api_port_marker_current_user() {
+  if mkdir -p "$HERMES_RUNTIME_DIR" 2>/dev/null \
+    && rm -f "$HERMES_API_PORT_MARKER" 2>/dev/null \
+    && printf '%s\n' "$PUBLIC_PORT" >"$HERMES_API_PORT_MARKER" 2>/dev/null \
+    && chmod 0444 "$HERMES_API_PORT_MARKER" 2>/dev/null; then
+    return 0
+  fi
+  if [ "$PUBLIC_PORT" -ne "$HERMES_DEFAULT_API_PORT" ]; then
+    echo "[SECURITY] Refusing Hermes startup because the allocated API port ${PUBLIC_PORT} could not be published at ${HERMES_API_PORT_MARKER}" >&2
+    return 1
+  fi
+  echo "[gateway] WARNING: could not publish ${HERMES_API_PORT_MARKER}; helpers fall back to port ${HERMES_DEFAULT_API_PORT}" >&2
+  return 0
+}
+
 prepare_hermes_root_runtime() {
   verify_hermes_config_integrity || return 1
   ensure_hermes_config_root_mode || return 1
@@ -3269,6 +3287,8 @@ if [ "$(id -u)" -ne 0 ]; then
 
   cleanup_stale_hermes_gateway_runtime
 
+  publish_hermes_api_port_marker_current_user || exit 1
+
   prepare_restricted_log /tmp/gateway.log "" 600
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
@@ -3314,11 +3334,13 @@ chmod 0444 /run/nemoclaw/hermes-root-lifecycle
 # SECURITY: publish the resolved API port as a root-owned read-only marker.
 # The port reaches this entrypoint through the supervisor's environment, which
 # a later one-shot `openshell sandbox exec` does not inherit. Helpers that probe
-# the public relay read this marker instead. It must stay unwritable by the
-# sandbox user, or the agent could redirect those probes at another port.
-printf '%s\n' "$PUBLIC_PORT" >/run/nemoclaw/hermes-api-port
-chown root:root /run/nemoclaw/hermes-api-port
-chmod 0444 /run/nemoclaw/hermes-api-port
+# the public relay read this marker instead. On this path it must stay
+# unwritable by the sandbox user, or the agent could redirect those probes at
+# another port. The same-uid path publishes the same marker with the identity
+# that runs the gateway there, which the sandbox user already holds.
+printf '%s\n' "$PUBLIC_PORT" >"$HERMES_API_PORT_MARKER"
+chown root:root "$HERMES_API_PORT_MARKER"
+chmod 0444 "$HERMES_API_PORT_MARKER"
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

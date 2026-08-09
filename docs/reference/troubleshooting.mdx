@@ -3165,7 +3165,8 @@ Recovery targets each sandbox's own ports.
 A second Hermes sandbox on the same host receives the next free API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging.
 A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`.
 A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action.
-To move a sandbox that predates the change onto its own port, run `nemohermes <name> destroy` and onboard it again, because NemoClaw allocates a port only for a sandbox that has no registry row.
+To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`.
+NemoClaw allocates a port automatically only for a sandbox that has no registry row, so `nemohermes <name> destroy` followed by onboarding is the alternative. That command deletes the sandbox and its state.
 
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 

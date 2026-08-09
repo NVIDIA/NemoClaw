@@ -55,7 +55,7 @@ beforeEach(() => {
 });
 
 describe("ensureDeclaredAgentForwardPortsHealthy", () => {
-  it("does not demand the manifest dashboard port from a sandbox that was allocated another (#8543)", async () => {
+  it("does not demand the manifest dashboard port from a sandbox that owns a different dashboard port (#8543)", async () => {
     mocks.getSandbox.mockReturnValue({
       agent: "hermes",
       dashboardPort: 18790,

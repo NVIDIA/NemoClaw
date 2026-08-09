@@ -103,10 +103,12 @@ def _gateway_public_port() -> int:
     NemoClaw allocates this port per sandbox so two Hermes sandboxes can serve
     inference on one host. The value reaches the entrypoint through the
     supervisor environment, which this one-shot exec does not inherit, so the
-    entrypoint publishes it as a root-owned read-only marker. Reading anything
-    the sandbox user can write would let the agent redirect the relay probe.
-    A sandbox whose image predates the marker has none and keeps the original
-    port, which the sandbox user can bind.
+    entrypoint publishes it as a read-only marker. This command runs only in the
+    same-uid topology, where the gateway already runs as the sandbox user, so
+    that user owns the marker and the relay probe is only as trusted as the
+    sandbox user; the root-separated path writes a root-owned marker for its own
+    readers. A sandbox whose image predates the marker has none and keeps the
+    original port.
     """
     try:
         raw = Path(GATEWAY_PUBLIC_PORT_PATH).read_text(encoding="utf-8").strip()

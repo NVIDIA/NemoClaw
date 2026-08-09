@@ -39,6 +39,7 @@ export function printAgentPassthroughHelp(): void {
   console.log("");
   console.log("  Hermes sandboxes are rejected with a");
   console.log("  redirect to the OpenAI-compatible API inside the sandbox.");
-  console.log("  The redirect names the port. `openshell forward list` shows the host binds.");
+  console.log("  The rejection message names the sandbox's API port.");
+  console.log("  Run `openshell forward list` to read its host bind.");
   console.log("");
 }
