@@ -289,15 +289,17 @@ Print the Hermes dashboard URL:
 $$nemoclaw headless-agent dashboard-url --quiet
 ```
 
-The Hermes OpenAI-compatible API uses the loopback forward on the sandbox's API port, `8642` for the first Hermes sandbox on a host.
+The Hermes OpenAI-compatible API uses the loopback forward on the sandbox's own API port, which onboarding allocates from `8642` through `8652`.
+Run `openshell forward list`, read the port on the `headless-agent` row, and set `API_PORT` to it.
 For a Hermes sandbox, `gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract.
-Use it as a bearer token, then clear the shell variable:
+Use it as a bearer token, then clear the shell variables:
 
 ```bash
+API_PORT=8642
 TOKEN=$($$nemoclaw headless-agent gateway-token --quiet)
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:8642/v1/models"
-unset TOKEN
+  "http://127.0.0.1:$API_PORT/v1/models"
+unset API_PORT TOKEN
 ```
 
 </AgentOnly>

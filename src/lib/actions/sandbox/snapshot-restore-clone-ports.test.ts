@@ -280,6 +280,42 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
+  it("aborts before deleting a --force destination when no Hermes API port is free (#8543)", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    hermesApiPortMocks.findAvailableHermesApiPort.mockImplementationOnce(() => {
+      throw new Error("All Hermes API ports in range 8642-8652 are occupied:");
+    });
+    f.getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "hermes",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      dashboardPort: 18790,
+      hermesApiPort: 8642,
+    }));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", force: true, yes: true }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(hermesApiPortMocks.findAvailableHermesApiPort).toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("are occupied");
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
   it("registers a clone of a source without a dashboard port with the field unset (#6746)", async () => {
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation(
