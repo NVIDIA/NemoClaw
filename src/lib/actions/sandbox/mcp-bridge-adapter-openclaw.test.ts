@@ -153,7 +153,7 @@ describe("OpenClaw mcporter MCP adapter", () => {
           },
         });
       const runWithoutXdg = (command: string) => {
-        const env = {
+        const env: NodeJS.ProcessEnv = {
           ...process.env,
           HOME: path.join(temp, "home"),
           PATH: `${temp}:${process.env.PATH ?? ""}`,
