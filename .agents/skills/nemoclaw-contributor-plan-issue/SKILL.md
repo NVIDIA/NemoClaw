@@ -18,7 +18,9 @@ For every successful issue-planning invocation, including the bare trigger `plan
 the final response must use the exact report structure in [Report the plan](#report-the-plan).
 Do not replace its headings with free-form prose, implementation code, "Safety Considerations," or
 "Next Steps." Complete research first, then render the report once. Start the final response with
-`# Issue #<number>: <title>` and include every applicable section through `## GitHub writes`.
+`# Issue #<number>: <title>` and include every defined top-level section through
+`## GitHub writes`. Keep an empty required section and report `none` or `none found`; only the
+acceptance categories may be omitted when they do not apply, with the reason stated.
 
 ## Route the request
 

@@ -136,9 +136,11 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Current behavior owner");
     expect(skill).toContain("including the bare trigger `plan issue <issue-url>`");
     expect(skill).toContain("the final response must use the exact report structure");
-    expect(skill.indexOf("## Required response contract")).toBeLessThan(
-      skill.indexOf("## Route the request"),
-    );
+    const responseContractIndex = skill.indexOf("## Required response contract");
+    const routeRequestIndex = skill.indexOf("## Route the request");
+    expect(responseContractIndex).toBeGreaterThanOrEqual(0);
+    expect(routeRequestIndex).toBeGreaterThanOrEqual(0);
+    expect(responseContractIndex).toBeLessThan(routeRequestIndex);
 
     expect(skill).toContain("Assigned implementation owner");
     expect(skill).toContain("First capability slice");
