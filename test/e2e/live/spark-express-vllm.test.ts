@@ -128,8 +128,8 @@ async function captureOnboardFailureDiagnostics(
     env: e2eEnv(),
     timeoutMs: 30_000,
   });
-  await host.command("openshell", ["sandbox", "status", sandboxName], {
-    artifactName: "failure-spark-express-sandbox-status",
+  await host.command("openshell", ["sandbox", "get", sandboxName], {
+    artifactName: "failure-spark-express-sandbox-get",
     env: e2eEnv(),
     timeoutMs: 30_000,
   });

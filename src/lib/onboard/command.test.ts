@@ -162,7 +162,7 @@ describe("onboard command options", () => {
       },
     );
 
-    expect(fresh.servingProfile).toBe("local-model-profile.vllm.spark.v1");
+    expect(fresh.servingProfile).toBeNull();
     expect(fresh.servingProfileProvenance?.preset.id).toBe("local-model-profile.vllm.spark.v1");
 
     const resumed = resolve(
@@ -465,6 +465,26 @@ describe("onboard command options", () => {
     });
 
     expect(observed).toBe(COMPATIBLE_NANO_PROFILE.id);
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("records an installer profile without activating the disabled generic preset", async () => {
+    const env: NodeJS.ProcessEnv = {
+      [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+      [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
+    };
+    await runOnboardCommand({
+      flags: {},
+      env,
+      runOnboard: async (options) => {
+        expect(options.servingProfile).toBeNull();
+        expect(options.servingProfileProvenance?.preset.id).toBe(
+          "local-model-profile.vllm.spark.v1",
+        );
+        expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+      },
+    });
+
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 

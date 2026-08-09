@@ -711,7 +711,7 @@ It does not run the hosted installer bootstrap, clone or ref selection, dependen
 Separate installer tests own those earlier boundaries.
 The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
 It preserves the shared Hugging Face cache and removes only the exact sandbox and managed container that the run created.
-If onboarding exits nonzero, the target captures the managed-container log tail and sandbox status before cleanup.
+If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
 
 Run the target from a clean candidate checkout on the Spark host:

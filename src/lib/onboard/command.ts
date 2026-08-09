@@ -268,6 +268,11 @@ function resolveServingProfileLifecycle(
   return resolveResumedServingProfile(requested, deps);
 }
 
+function activeServingProfileId(provenance: ServingProfileProvenance | null): string | null {
+  if (!provenance || provenance.preset.supportState === "disabled") return null;
+  return provenance.preset.id;
+}
+
 function resolveResumedServingProfile(
   requested: ServingProfileProvenance | null,
   deps: ResolveOnboardOptionsDeps,
@@ -361,7 +366,7 @@ export function resolveOnboardOptions(
     autoYes: withPortableDefault(flags.yes, experimentalProfile),
     noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
     experimentalProfile,
-    servingProfile: servingProfileProvenance?.preset.id ?? null,
+    servingProfile: activeServingProfileId(servingProfileProvenance),
     servingProfileProvenance,
   };
 }
