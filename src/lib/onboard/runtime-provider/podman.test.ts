@@ -13,7 +13,10 @@ import {
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "./podman-lifecycle";
 import {
   createRuntimeProviderBundleRegistry,
@@ -66,6 +69,8 @@ function hostDoctorEngine(authorityId = AUTHORITY_ID): ContainerEngine {
 
 function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): ContainerEngine {
   let running = false;
+  const sandboxId = `id-${sandboxName}`;
+  const containerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
   return {
     operation: "sandbox-lifecycle",
     engineId: "podman",
@@ -77,7 +82,7 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Conta
         case "ps":
           return {
             status: 0,
-            stdout: `${CONTAINER_ID}\t${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}\n`,
+            stdout: `${CONTAINER_ID}\n`,
             stderr: "",
           };
         case "container":
@@ -86,13 +91,14 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Conta
             stdout: JSON.stringify([
               {
                 Id: CONTAINER_ID,
-                Name: `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`,
+                Name: containerName,
                 Config: {
                   Labels: {
                     [PODMAN_MANAGED_LABEL]: "true",
-                    [PODMAN_SANDBOX_ID_LABEL]: `id-${sandboxName}`,
+                    [PODMAN_SANDBOX_ID_LABEL]: sandboxId,
                     [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
-                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: "default",
+                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
+                    [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
                   },
                 },
                 State: {

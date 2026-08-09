@@ -341,10 +341,10 @@ test/e2e/
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute
   budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
   root-required contracts on shard 1 only.
-  `macos-e2e.yaml`, `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E
-  targets directly for their platform coverage.
-  Repository-hosted targets, including `ollama-auth-proxy`, are selected
-  through `.github/workflows/e2e.yaml`.
+  `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
+  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets
+  directly. `.github/workflows/e2e.yaml` selects free-standing jobs, including
+  `whatsapp-qr-compact` and `ollama-auth-proxy`.
 - The `staging-brev-launchable` job validates the exact baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.

@@ -318,8 +318,8 @@ describe("assessHost", () => {
       env: {},
       dockerInfoOutput: "Podman Engine",
       commandExistsImpl: (name: string) => name === "docker",
+      runCaptureImpl: () => "",
     });
-
     expect(result.runtime).toBe("podman");
     expect(result.isUnsupportedRuntime).toBe(true);
     expect(result.dockerReachable).toBe(true);
@@ -331,8 +331,8 @@ describe("assessHost", () => {
       env: {},
       dockerInfoOutput: "Podman Engine",
       commandExistsImpl: (name: string) => name === "docker",
+      runCaptureImpl: () => "",
     });
-
     expect(result.runtime).toBe("podman");
     expect(result.isUnsupportedRuntime).toBe(true);
     expect(result.dockerReachable).toBe(true);

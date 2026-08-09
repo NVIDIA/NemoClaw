@@ -23,6 +23,15 @@
       ]
     },
     {
+      "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
+      "fast": [
+        "src/lib/inference/llama-cpp/managed-selection.test.ts",
+        "src/lib/inference/llama-cpp/managed-installer.test.ts",
+        "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/e2e/support/e2e-workflow.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",

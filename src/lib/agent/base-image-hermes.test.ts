@@ -52,9 +52,13 @@ describe("agent base image provisioning", () => {
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96",
     );
 
+    const messagingInstallIndex = dockerfile.indexOf("RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE");
+    const managedInstallIndex = dockerfile.indexOf(
+      "RUN --network=none --mount=from=hermes-managed-teams-wheels",
+    );
     const installLayer = dockerRunCommandBetween(
       dockerfile,
-      "RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE",
+      "RUN --network=none --mount=from=hermes-managed-teams-wheels",
       "WORKDIR /sandbox",
     ).replace(/\s+/gu, " ");
     const versionGuard =
@@ -62,6 +66,8 @@ describe("agent base image provisioning", () => {
     const versionGuardIndex = installLayer.indexOf(versionGuard);
     const finalConditionalEnd = [...installLayer.matchAll(/\bfi\b/gu)].at(-1)?.index ?? -1;
 
+    expect(messagingInstallIndex).toBeGreaterThanOrEqual(0);
+    expect(managedInstallIndex).toBeGreaterThan(messagingInstallIndex);
     expect(versionGuardIndex).toBeGreaterThan(finalConditionalEnd);
     expect(installLayer).not.toContain("'aiohttp': '3.14.1'");
     expect(installLayer).not.toContain("'cryptography': '48.0.1'");
