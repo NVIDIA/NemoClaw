@@ -13,7 +13,7 @@ import {
   PREPARE_E2E_NO_BUILD_JOBS,
   PREPARE_E2E_TRUSTED_BUILD_JOBS,
 } from "./prepare-e2e-workflow-boundary.mts";
-import { E2E_ACTION_PROVENANCE, E2E_JOB_CONTRACT } from "./workflow-contract-registry.mts";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 export const CLI_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
@@ -40,7 +40,6 @@ const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
   "14fb4de8dffd0cfd3f0dd3177f03e806c8912247bac4f5919a570c0f6b4c0ca2";
-const CLI_ARTIFACT_CONSUMER_JOB_NAMES = E2E_JOB_CONTRACT.cliArtifactConsumers;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -424,11 +423,8 @@ export function validateCliArtifactWorkflowBoundary(
   }
 
   const actualConsumerJobNames = [...consumerJobNames].sort();
-  if (!isDeepStrictEqual(actualConsumerJobNames, CLI_ARTIFACT_CONSUMER_JOB_NAMES)) {
-    errors.push("CLI artifact consumer job names must match the required list");
-  }
   const consumers = Object.fromEntries(
-    CLI_ARTIFACT_CONSUMER_JOB_NAMES.map((jobName) => [
+    actualConsumerJobNames.map((jobName) => [
       jobName,
       jobSettingsAndStepsThroughRestore(record(jobs[jobName])),
     ]),

@@ -14,7 +14,6 @@ import {
   validateCliArtifactRestoreAction,
   validateCliArtifactWorkflowBoundary,
 } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
-import { E2E_JOB_CONTRACT } from "../../../tools/e2e/workflow-contract-registry.mts";
 import {
   type CompositeAction,
   readRepoText,
@@ -940,16 +939,12 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("rejects a missing CLI artifact consumer in the shared job contract", () => {
-    const consumers = E2E_JOB_CONTRACT.cliArtifactConsumers as unknown as string[];
-    const removed = consumers.pop();
-    expect(removed).toBeDefined();
-    try {
-      expect(validateCliArtifactWorkflowBoundary(workflowFixture())).toContain(
-        "CLI artifact consumer job names must match the required list",
-      );
-    } finally {
-      consumers.push(removed!);
-    }
+  it("rejects an added CLI artifact consumer outside the reviewed workflow contract", () => {
+    const workflow = workflowFixture();
+    workflow.jobs["added-consumer"] = structuredClone(workflow.jobs["cloud-inference"]);
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract",
+    );
   });
 });

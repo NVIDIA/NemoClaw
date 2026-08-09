@@ -12,7 +12,8 @@ import {
   CLI_ARTIFACT_UPLOAD_ACTION,
 } from "./cli-artifact-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
-import { E2E_ACTION_PROVENANCE } from "./workflow-contract-registry.mts";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
+
 export { E2E_ACTION_PROVENANCE };
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
