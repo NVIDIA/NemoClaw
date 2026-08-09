@@ -102,6 +102,8 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
     delete process.env.NEMOCLAW_SANDBOX_NAME;
     if (options.acceptThirdPartySoftware) {
       process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
+    } else {
+      delete process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE;
     }
   });
   afterEach(() => {
