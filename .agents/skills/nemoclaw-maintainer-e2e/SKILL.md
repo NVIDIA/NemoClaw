@@ -49,12 +49,11 @@ set -euo pipefail
 PR_NUMBER=123
 git fetch --prune origin main
 WORKFLOW_SHA="$(git rev-parse origin/main)"
-PR_JSON="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
-  --json number,state,headRefOid,baseRefOid,headRepository)"
-test "$(jq -r .state <<<"$PR_JSON")" = OPEN
-HEAD_SHA="$(jq -r .headRefOid <<<"$PR_JSON")"
-BASE_SHA="$(jq -r .baseRefOid <<<"$PR_JSON")"
-HEAD_REPOSITORY="$(jq -r .headRepository.nameWithOwner <<<"$PR_JSON")"
+PR_JSON="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+test "$(jq -r .state <<<"$PR_JSON")" = open
+HEAD_SHA="$(jq -r .head.sha <<<"$PR_JSON")"
+BASE_SHA="$(jq -r .base.sha <<<"$PR_JSON")"
+HEAD_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -135,12 +134,11 @@ jq -e --arg sha "$WORKFLOW_SHA" '
   .status == "completed" and
   .conclusion == "success"
 ' <<<"$RUN_JSON" >/dev/null
-CURRENT_PR="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
-  --json state,headRefOid,baseRefOid,headRepository)"
-test "$(jq -r .state <<<"$CURRENT_PR")" = OPEN
-test "$(jq -r .headRefOid <<<"$CURRENT_PR")" = "$HEAD_SHA"
-test "$(jq -r .baseRefOid <<<"$CURRENT_PR")" = "$BASE_SHA"
-test "$(jq -r .headRepository.nameWithOwner <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
+CURRENT_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+test "$(jq -r .state <<<"$CURRENT_PR")" = open
+test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
+test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
+test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
 ```
 
 Return the PR number, head repository, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.

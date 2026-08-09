@@ -11,6 +11,7 @@ import { ConflictFixerError, prepareMerge, requireSha } from "./merge.mts";
 
 export type PullRequest = {
   base: { ref: string };
+  draft: boolean;
   head: {
     ref: string;
     repo: { full_name: string } | null;
@@ -61,6 +62,7 @@ export function eligibleSameRepositoryPullRequests(
   return pullRequests.filter(
     (pullRequest) =>
       pullRequest.state === "open" &&
+      !pullRequest.draft &&
       pullRequest.base.ref === "main" &&
       pullRequest.head.repo?.full_name === repository,
   );

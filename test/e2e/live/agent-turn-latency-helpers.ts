@@ -12,10 +12,19 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+
+// The injected E2E inference adapter (#5745) is the single source of the
+// model, provider, expected route, and credential this suite exercises;
+// this file must not rederive them from ad hoc NEMOCLAW_* env inspection.
+export type AgentTurnInference = Pick<
+  E2EInferenceAdapter,
+  "env" | "expectedRouteProvider" | "model" | "mode" | "provider" | "redactionValues"
+>;
 
 export { REPO_ROOT };
 
@@ -26,19 +35,6 @@ export const HERMES_SANDBOX =
   process.env.NEMOCLAW_HERMES_TURN_LATENCY_SANDBOX_NAME ?? "e2e-hm-turn-lat";
 validateSandboxName(OPENCLAW_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
-const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
-const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-ultra";
-const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
-export const MODEL =
-  process.env.NEMOCLAW_TURN_LATENCY_MODEL ??
-  process.env.NEMOCLAW_MODEL ??
-  process.env.NEMOCLAW_COMPAT_MODEL ??
-  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : DEFAULT_NVIDIA_MODEL);
-const PROVIDER =
-  process.env.NEMOCLAW_TURN_LATENCY_PROVIDER ?? (USE_COMPATIBLE_HOSTED ? "custom" : "build");
-export const EXPECTED_ROUTE_PROVIDER =
-  process.env.NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER ??
-  (PROVIDER === "custom" ? "compatible-endpoint" : "nvidia-prod");
 export const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MAX_SECONDS, 300);
 const INSTALL_ATTEMPTS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS, 2);
 const INSTALL_TIMEOUT_MS = 30 * 60_000;
@@ -52,30 +48,25 @@ function positiveInt(value: string | undefined, fallback: number): number {
 export function env(
   sandboxName: string,
   agent: "openclaw" | "hermes",
-  apiKey?: string,
+  inference: AgentTurnInference,
+  includeCredential = false,
 ): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {
+  const base: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_MODEL: MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_FRESH: "1",
-    NEMOCLAW_PROVIDER: PROVIDER,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: sandboxName,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  agent === "hermes" && (out.NEMOCLAW_AGENT = "hermes");
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
-  PROVIDER === "custom" &&
-    Object.assign(out, {
-      COMPATIBLE_API_KEY: apiKey,
-      NEMOCLAW_COMPAT_MODEL: MODEL,
-      NEMOCLAW_ENDPOINT_URL:
-        process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
-      NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
-    });
-  return out;
+  agent === "hermes" && (base.NEMOCLAW_AGENT = "hermes");
+  if (!includeCredential) {
+    base.NEMOCLAW_PROVIDER = inference.provider;
+    base.NEMOCLAW_MODEL = inference.model;
+    return base;
+  }
+  return inference.env(base);
 }
 
 export async function bestEffortPreclean(
@@ -347,7 +338,7 @@ export async function installSandbox(
   host: HostCliClient,
   sandboxName: string,
   agent: "openclaw" | "hermes",
-  apiKey: string,
+  inference: AgentTurnInference,
   cleanupBeforeRetry?: () => Promise<void>,
   progress?: AgentTurnProgress,
 ): Promise<ShellProbeResult> {
@@ -366,9 +357,9 @@ export async function installSandbox(
         {
           artifactName: `${agent}-install-attempt-${attempt}`,
           cwd: REPO_ROOT,
-          env: env(sandboxName, agent, apiKey),
+          env: env(sandboxName, agent, inference, true),
           onOutput: progress?.onOutput,
-          redactionValues: [apiKey],
+          redactionValues: inference.redactionValues(),
           timeoutMs: INSTALL_TIMEOUT_MS,
         },
       );
@@ -419,6 +410,7 @@ export async function installSandbox(
 export async function cleanupTurnSandboxes(
   host: HostCliClient,
   sandbox: SandboxClient,
+  inference: AgentTurnInference,
   progress?: AgentTurnProgress,
 ): Promise<void> {
   for (const [name, agent] of [
@@ -427,7 +419,7 @@ export async function cleanupTurnSandboxes(
   ] as const) {
     await runBestEffortCleanupStep(
       `destroy ${agent} sandbox`,
-      () => cleanupTurnSandbox(host, name, agent, progress),
+      () => cleanupTurnSandbox(host, name, agent, inference, progress),
       progress,
     );
     await runBestEffortCleanupStep(
@@ -435,7 +427,7 @@ export async function cleanupTurnSandboxes(
       () =>
         sandbox.openshell(["sandbox", "delete", name], {
           artifactName: `cleanup-${agent}-delete`,
-          env: env(name, agent),
+          env: env(name, agent, inference),
           onOutput: progress?.onOutput,
           timeoutMs: 60_000,
         }),
@@ -470,11 +462,12 @@ export async function cleanupTurnSandbox(
   host: HostCliClient,
   name: string,
   agent: "openclaw" | "hermes",
+  inference: AgentTurnInference,
   progress?: Pick<TestProgress, "onOutput">,
 ): Promise<void> {
   const result = await host.command("node", [CLI, name, "destroy", "--yes"], {
     artifactName: `cleanup-${agent}-destroy`,
-    env: env(name, agent),
+    env: env(name, agent, inference),
     onOutput: progress?.onOutput,
     timeoutMs: 120_000,
   });
@@ -492,12 +485,13 @@ export async function route(
   sandbox: SandboxClient,
   sandboxName: string,
   agent: "openclaw" | "hermes",
+  inference: AgentTurnInference,
   artifactName: string,
   progress?: Pick<TestProgress, "onOutput">,
 ): Promise<ShellProbeResult> {
   return await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
     artifactName,
-    env: env(sandboxName, agent),
+    env: env(sandboxName, agent, inference),
     onOutput: progress?.onOutput,
     timeoutMs: 30_000,
   });
@@ -505,7 +499,7 @@ export async function route(
 
 export async function openclawTurn(
   sandbox: SandboxClient,
-  apiKey: string,
+  inference: AgentTurnInference,
   progress?: Pick<TestProgress, "onOutput">,
 ): Promise<{ result: ShellProbeResult; elapsedMs: number }> {
   const started = process.hrtime.bigint();
@@ -516,9 +510,9 @@ export async function openclawTurn(
     ),
     {
       artifactName: "openclaw-agent-turn",
-      env: env(OPENCLAW_SANDBOX, "openclaw"),
+      env: env(OPENCLAW_SANDBOX, "openclaw", inference),
       onOutput: progress?.onOutput,
-      redactionValues: [apiKey],
+      redactionValues: inference.redactionValues(),
       timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
     },
   );
@@ -527,6 +521,7 @@ export async function openclawTurn(
 
 export async function waitHermesHealth(
   sandbox: SandboxClient,
+  inference: AgentTurnInference,
   progress?: Pick<TestProgress, "onOutput">,
 ): Promise<ShellProbeResult> {
   return await sandbox.execShell(
@@ -536,7 +531,7 @@ export async function waitHermesHealth(
     ),
     {
       artifactName: "hermes-health",
-      env: env(HERMES_SANDBOX, "hermes"),
+      env: env(HERMES_SANDBOX, "hermes", inference),
       onOutput: progress?.onOutput,
       timeoutMs: 90_000,
     },
