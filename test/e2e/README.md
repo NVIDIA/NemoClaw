@@ -300,6 +300,11 @@ stock policy-source bytes, and the distinct-device and source-side `EXDEV`
 checks. The duplicate v3 rebuild is removed from this job. The
 `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
+The current-checkout fixture locally prebuilds its repository-controlled v1
+and v2 Dockerfiles with BuildKit, then hands only those local image references
+to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
+trust boundary and are never host-prebuilt by this fixture.
+
 The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
 Push-run timing for the reduced lifecycle has not yet been measured.
 

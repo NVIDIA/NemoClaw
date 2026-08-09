@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
+import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_MCP_FEATURES,
@@ -40,6 +41,13 @@ import {
   currentLifecycleCommands,
   type WeatherFixtureVersion,
 } from "./openclaw-plugin-runtime-exdev-lifecycle.ts";
+import {
+  buildTrustedPluginFixtureImage,
+  createOpenShellTrustedImageWrapper,
+  DELEGATED_CAPABILITY_COMMENT_PREFIX,
+  registerTrustedPluginFixtureImageCleanup,
+  trustedExdevImageRef,
+} from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
   createOpenShellDriverConfigTestWrapper,
   type OpenShellComponents,
@@ -111,8 +119,6 @@ const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
     mounts: [EXDEV_TMPFS_MOUNT_CONFIG],
   },
 });
-const DELEGATED_CAPABILITY_COMMENT_PREFIX =
-  "# TEST-ONLY delegated-capability marker from validated canonical OpenShell: ";
 const STOCK_OPENCLAW_POLICY_PATHS = [
   path.join(REPO_ROOT, "agents", "openclaw", "policy-permissive.yaml"),
   path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
@@ -282,7 +288,7 @@ function runWrapper(wrapper: string, args: readonly string[]): string[] {
   return result.stdout.trimEnd().split("\n");
 }
 
-test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox create", {
+test("OpenShell wrapper injects the reviewed tmpfs config and selected fixture image", {
   meta: {
     e2ePhases: [
       "create fake OpenShell delegates",
@@ -304,9 +310,22 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
     });
   }
   const components = resolvePinnedOpenShellComponents(delegate);
-  const wrapper = createOpenShellTmpfsWrapper(components.cli);
+  const wrapper = createOpenShellTrustedImageWrapper({
+    driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
+    realOpenshellPath: components.cli,
+  });
   try {
+    const imageRef = trustedExdevImageRef("wrapper-contract-v1");
     progress.phase("inspect wrapper capabilities and environment");
+    const missingImage = spawnSync(
+      wrapper.executable,
+      ["sandbox", "create", "--from", "/tmp/staged/Dockerfile"],
+      { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+    );
+    expect(missingImage.status).toBe(64);
+    expect(missingImage.stderr).toContain("rejected the selected image ref");
+    expect(() => wrapper.selectImage("docker.io/untrusted:latest")).toThrow();
+    wrapper.selectImage(imageRef);
     const wrapperSource = fs.readFileSync(wrapper.executable, "utf8");
     expect(
       wrapperSource
@@ -345,6 +364,8 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
       runWrapper(wrapper.executable, [
         "sandbox",
         "create",
+        "--from",
+        "/tmp/staged/Dockerfile",
         "--name",
         "demo",
         "--",
@@ -357,6 +378,8 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
       "create",
       "--driver-config-json",
       EXDEV_TMPFS_DRIVER_CONFIG,
+      "--from",
+      imageRef,
       "--name",
       "demo",
       "--",
@@ -373,7 +396,7 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
     progress.phase("reject duplicate driver config and remove the fixture");
     const duplicateConfig = spawnSync(
       wrapper.executable,
-      ["sandbox", "create", "--driver-config-json", "{}"],
+      ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--driver-config-json", "{}"],
       { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
     );
     expect(duplicateConfig.status).toBe(64);
@@ -1177,6 +1200,7 @@ test("the current-lifecycle custom plugin survives restart and recreation withou
       "the CLI and Dockerfile use the same checkout source and a compatible sandbox base image",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
       "custom-plugin v1 survives restart and recreation installs v2",
+      "the repository-controlled fixture is prebuilt with local BuildKit and handed to OpenShell as a local image",
       "workspace state survives onboarding recreation",
       `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT} without changing production policies`,
       "stock OpenClaw policy source bytes remain unchanged through onboard and recreation",
@@ -1204,6 +1228,12 @@ test("the current-lifecycle custom plugin survives restart and recreation withou
     "bin/nemoclaw.js missing — run npm run build:cli before this live target",
   ).toBe(true);
 
+  // Cleanup is LIFO: delete the sandbox before reclaiming its exact image tags.
+  const trustedFixtureImages = registerTrustedPluginFixtureImageCleanup({
+    cleanup,
+    environment: liveEnv(),
+    host,
+  });
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-openshell-delete-openclaw-plugin-exdev",
@@ -1252,7 +1282,10 @@ test("the current-lifecycle custom plugin survives restart and recreation withou
     }),
     "current pinned OpenShell components must pass coherence preflight before delegation",
   ).toBe(true);
-  const openshellWrapper = createOpenShellTmpfsWrapper(pinnedOpenshell.cli);
+  const openshellWrapper = createOpenShellTrustedImageWrapper({
+    driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
+    realOpenshellPath: pinnedOpenshell.cli,
+  });
   cleanup.add("remove current EXDEV OpenShell PATH wrapper", openshellWrapper.remove);
   expect(
     hasRequiredOpenshellMessagingFeatures({
@@ -1272,6 +1305,31 @@ test("the current-lifecycle custom plugin survives restart and recreation withou
   });
 
   progress.phase("build and onboard plugin v1");
+  const baseImageResolution = pullAndResolveBaseImageDigest({
+    forceRefresh: true,
+    requireOpenshellSandboxAbi: true,
+  });
+  assert(
+    baseImageResolution,
+    "current CLI must resolve an OpenShell-compatible sandbox base image",
+  );
+  await artifacts.writeJson("trusted-exdev-base-image.json", {
+    digest: baseImageResolution.digest,
+    ref: baseImageResolution.ref,
+    source: baseImageResolution.source,
+  });
+  const pluginImageV1 = await buildTrustedPluginFixtureImage({
+    artifacts,
+    baseImageRef: baseImageResolution.ref,
+    cleanup,
+    context: customPluginContext,
+    deploymentEnv,
+    environment: liveEnv(),
+    images: trustedFixtureImages,
+    sandboxName: SANDBOX_NAME,
+    version: "v1",
+  });
+  openshellWrapper.selectImage(pluginImageV1);
   const onboard = await host.command(
     lifecycleCommands.onboard.command,
     lifecycleCommands.onboard.args,
@@ -1324,6 +1382,18 @@ test("the current-lifecycle custom plugin survives restart and recreation withou
   // extension instead of replacing it with the backed-up v1 directory.
   progress.phase("recreate the sandbox with plugin v2");
   writeCustomPluginVersion(customPluginContext.versionSourcePath, "v2");
+  const pluginImageV2 = await buildTrustedPluginFixtureImage({
+    artifacts,
+    baseImageRef: baseImageResolution.ref,
+    cleanup,
+    context: customPluginContext,
+    deploymentEnv,
+    environment: liveEnv(),
+    images: trustedFixtureImages,
+    sandboxName: SANDBOX_NAME,
+    version: "v2",
+  });
+  openshellWrapper.selectImage(pluginImageV2);
   const recreate = await host.command(
     lifecycleCommands.recreate.command,
     lifecycleCommands.recreate.args,
