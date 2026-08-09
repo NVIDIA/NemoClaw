@@ -37,6 +37,39 @@ describe("ensureAgentDashboardForward", () => {
     });
   });
 
+  it("forwards the sandbox's allocated API port instead of the manifest default (#8543)", () => {
+    const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "http://127.0.0.1:18789") => {
+      const parsed = new URL(chatUiUrl);
+      return Number(parsed.port);
+    });
+
+    expect(
+      ensureAgentDashboardForward({
+        sandboxName: "hm",
+        agent: {
+          forwardPort: 18789,
+          forward_ports: [18789, 8642],
+        },
+        ensureDashboardForward,
+        hermesApiPort: 8643,
+        preserveForwardPorts: [3978],
+      }),
+    ).toBe(18789);
+
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
+      preserveSandboxPorts: [18789, 8643, 3978],
+    });
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8643", {
+      preserveSandboxPorts: [18789, 8643, 3978],
+      allowPortReallocation: false,
+    });
+    expect(ensureDashboardForward).not.toHaveBeenCalledWith(
+      "hm",
+      "http://127.0.0.1:8642",
+      expect.anything(),
+    );
+  });
+
   it("keeps an explicit effective port and omits the replaced manifest default (#6277)", () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);

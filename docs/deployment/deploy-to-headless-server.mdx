@@ -299,7 +299,8 @@ API_PORT=8642
 TOKEN=$($$nemoclaw headless-agent gateway-token --quiet)
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:$API_PORT/v1/models"
-unset API_PORT TOKEN
+unset API_PORT
+unset TOKEN
 ```
 
 </AgentOnly>
