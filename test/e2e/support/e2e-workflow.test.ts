@@ -138,6 +138,17 @@ describe("e2e workflow boundary", () => {
     ).toEqual({ runLaunchableE2e: false });
   });
 
+  it("rejects WhatsApp compact QR selector drift", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { if?: string }>;
+    };
+    workflow.jobs["whatsapp-qr-compact"]!.if = "${{ github.event_name != 'workflow_dispatch' }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "whatsapp-qr-compact job must use the shared jobs selector condition",
+    );
+  });
+
   it("rejects a full dispatch with changed input, correlation, or selector contracts (#7487)", () => {
     const workflow = readWorkflow() as {
       "run-name": string;
