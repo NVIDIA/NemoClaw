@@ -281,45 +281,43 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
 }
 
 function installerHashTrustViolations(workflow: CiWorkflow): string[] {
-  const violations: string[] = [];
   const steps = workflow.jobs["check-hash"]?.steps ?? [];
   const baseCheckout = steps.find(
     (step) => step.name === "Checkout base-trusted installer hash action",
   );
-  if (!baseCheckout) {
-    violations.push("missing base-trusted installer hash checkout");
-  } else {
-    if (baseCheckout.uses !== trustedCheckoutAction) {
-      violations.push("base-trusted installer hash checkout must use the pinned checkout action");
-    }
-    if (baseCheckout.with?.ref !== "${{ github.event.pull_request.base.sha }}") {
-      violations.push("base-trusted installer hash checkout must use the PR base SHA");
-    }
-    if (baseCheckout.with?.path !== ".trusted-installer-hash") {
-      violations.push("base-trusted installer hash checkout must use the trusted action path");
-    }
-  }
-
   const prCheck = steps.find(
     (step) => step.name === "Verify pull request installer hashes from base-trusted code",
   );
-  if (
-    prCheck?.if !== "github.event_name == 'pull_request'" ||
-    prCheck.uses !== "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
-  ) {
-    violations.push("pull request installer hashes must use only the base-trusted action");
-  }
-
   const allowedExecutors = new Set([
     "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
     "./.github/actions/ci-installer-hash-check",
   ]);
-  for (const step of steps) {
-    if (step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)) {
-      violations.push(`unapproved installer hash executor: ${step.uses}`);
-    }
-  }
-  return violations;
+
+  return [
+    ...(baseCheckout ? [] : ["missing base-trusted installer hash checkout"]),
+    ...(baseCheckout?.uses === trustedCheckoutAction
+      ? []
+      : ["base-trusted installer hash checkout must use the pinned checkout action"]),
+    ...(baseCheckout?.with?.ref === "${{ github.event.pull_request.base.sha }}"
+      ? []
+      : ["base-trusted installer hash checkout must use the PR base SHA"]),
+    ...(baseCheckout?.with?.path === ".trusted-installer-hash"
+      ? []
+      : ["base-trusted installer hash checkout must use the trusted action path"]),
+    ...(prCheck?.if === "github.event_name == 'pull_request'" &&
+    prCheck.uses === "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
+      ? []
+      : ["pull request installer hashes must use only the base-trusted action"]),
+    ...steps.flatMap((step) => [
+      ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
+      step.if !== "github.event_name != 'pull_request'"
+        ? ["candidate-checkout installer hash action must not execute for pull requests"]
+        : []),
+      ...(step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)
+        ? [`unapproved installer hash executor: ${step.uses}`]
+        : []),
+    ]),
+  ];
 }
 
 describe("pull request and main workflow contracts", () => {
@@ -381,6 +379,13 @@ describe("pull request and main workflow contracts", () => {
       uses: "./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
     });
 
+    const prOnlyLocalExecutor = structuredClone(installerHashWorkflow);
+    prOnlyLocalExecutor.jobs["check-hash"].steps?.push({
+      name: "Run local installer hash action for pull requests",
+      if: "github.event_name == 'pull_request'",
+      uses: "./.github/actions/ci-installer-hash-check",
+    });
+
     expect(installerHashTrustViolations(headCheckout)).toContain(
       "base-trusted installer hash checkout must use the PR base SHA",
     );
@@ -392,6 +397,10 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(installerHashTrustViolations(bootstrapExecutor)).toContain(
       "unapproved installer hash executor: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    );
+
+    expect(installerHashTrustViolations(prOnlyLocalExecutor)).toContain(
+      "candidate-checkout installer hash action must not execute for pull requests",
     );
   });
 
