@@ -52,7 +52,11 @@ export interface DriveInteractiveCommandOptions {
 const PTY_DRIVER_SCRIPT = `
 import json, os, pty, select, signal, sys, time
 
-payload = json.loads(sys.argv[1])
+# Read from stdin, not argv: the payload embeds every scripted response,
+# including any credential a rule supplies (e.g. an onboard API key), and a
+# process argument stays visible to anything that can list the command
+# line for as long as the child runs.
+payload = json.loads(sys.stdin.read())
 cmd = payload["cmd"]
 rules = payload["rules"]
 timeout_s = payload["timeoutSeconds"]
@@ -72,8 +76,14 @@ while time.monotonic() < deadline:
         try:
             chunk = os.read(fd, 65536)
         except OSError:
-            break
+            chunk = b""
         if not chunk:
+            # PTY close (EOF, or EIO on Linux) after the child has already
+            # exited normally must not fall through to the timeout branch
+            # below: reap it here and record its real exit code so a
+            # successful run is never misreported as DRIVER_TIMEOUT.
+            _, status = os.waitpid(pid, 0)
+            exit_code = os.waitstatus_to_exitcode(status)
             break
         output.extend(chunk)
         sys.stdout.buffer.write(chunk)
@@ -117,12 +127,19 @@ export function driveInteractiveCommand(
   });
   // Kept directly in this function's body, not inside the Promise executor
   // below, so the sole audited async child-process boundary stays attached
-  // to a named, reviewed callsite.
-  const child = spawnObservedChild(resolvePython(), ["-c", PTY_DRIVER_SCRIPT, payload], {
+  // to a named, reviewed callsite. `detached: true` makes the Python driver
+  // the leader of its own process group/session, so its pty.fork()'d
+  // onboard child (which inherits that group) can be reaped as a unit on
+  // timeout instead of surviving as an orphan.
+  const child = spawnObservedChild(resolvePython(), ["-c", PTY_DRIVER_SCRIPT], {
     activityLabel: options.activityLabel,
     progress: options.progress,
-    spawn: { cwd: options.cwd, env: options.env },
+    spawn: { cwd: options.cwd, env: options.env, detached: true },
   });
+  // Written to stdin rather than passed as a process argument: the payload
+  // carries every scripted response, including any credential a rule
+  // supplies (see PTY_DRIVER_SCRIPT's matching comment).
+  child.stdin?.end(payload);
 
   return new Promise((resolve, reject) => {
     let output = "";
@@ -132,6 +149,15 @@ export function driveInteractiveCommand(
 
     const timer = setTimeout(() => {
       timedOut = true;
+      // Kill the whole process group (negative pid), not just the driver
+      // pid: the driver's forked onboard child shares that group and would
+      // otherwise keep running past this test.
+      try {
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // Group may already be gone (driver exited between the deadline
+        // check and this signal); fall back to the direct pid below.
+      }
       child.kill("SIGKILL");
     }, options.timeoutMs);
 

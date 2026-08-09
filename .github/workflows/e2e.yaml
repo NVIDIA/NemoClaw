@@ -4916,6 +4916,72 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  onboard-policy-preset-sequencing:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',onboard-policy-preset-sequencing,') || contains(format(',{0},', inputs.targets), ',onboard-policy-preset-sequencing,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "onboard-policy-preset-sequencing"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/onboard-policy-preset-sequencing
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      # #6042 regression: the interactive onboard wizard must reach Policy
+      # presets in order. This drives a real PTY, so this job (unlike
+      # cloud-onboard/double-onboard) must NOT set NEMOCLAW_NON_INTERACTIVE=1
+      # -- doing so would force the wizard non-interactive and defeat the
+      # test. Hermetic mock-provider journey; no NVIDIA credential needed.
+      - name: Run onboard-policy-preset-sequencing live Vitest test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/onboard-policy-preset-sequencing.test.ts
+
+      - name: Upload onboard-policy-preset-sequencing Vitest artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   jetson-nvmap-gpu:
     needs: generate-matrix
     # The opt-in flag prevents assignment to an unavailable Jetson runner.
@@ -7403,6 +7469,7 @@ jobs:
         messaging-providers,
         bootstrap-install-smoke,
         double-onboard,
+        onboard-policy-preset-sequencing,
         jetson-nvmap-gpu,
         concurrent-gateway-ports,
         full-e2e,

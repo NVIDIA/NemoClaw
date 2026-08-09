@@ -2720,6 +2720,102 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/double-onboard.test.ts");
 }
+
+function validateOnboardPolicyPresetSequencingJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "onboard-policy-preset-sequencing";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing onboard-policy-preset-sequencing job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("onboard-policy-preset-sequencing job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "onboard-policy-preset-sequencing");
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
+    errors.push("onboard-policy-preset-sequencing job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("onboard-policy-preset-sequencing job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/live/onboard-policy-preset-sequencing"
+  ) {
+    errors.push(
+      "onboard-policy-preset-sequencing job must write artifacts under e2e-artifacts/live/onboard-policy-preset-sequencing",
+    );
+  }
+  // The regression drives a real interactive PTY session; forcing
+  // non-interactive mode here (as cloud-onboard and double-onboard do) would
+  // defeat the whole test.
+  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== undefined) {
+    errors.push(
+      "onboard-policy-preset-sequencing job must not set NEMOCLAW_NON_INTERACTIVE; the test requires real interactive mode",
+    );
+  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "onboard-policy-preset-sequencing job",
+    jobEnv,
+    "NVIDIA_INFERENCE_API_KEY",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "onboard-policy-preset-sequencing job",
+    jobEnv,
+    "DOCKERHUB_TOKEN",
+  );
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `onboard-policy-preset-sequencing step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "DOCKERHUB_TOKEN",
+      );
+    }
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `onboard-policy-preset-sequencing step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+      asRecord(step.env),
+      "NVIDIA_INFERENCE_API_KEY",
+    );
+    if (stringValue(step.run).includes("NEMOCLAW_NON_INTERACTIVE")) {
+      errors.push(
+        `onboard-policy-preset-sequencing step '${step.name ?? step.uses ?? "<unnamed>"}' must not set NEMOCLAW_NON_INTERACTIVE`,
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("onboard-policy-preset-sequencing job missing checkout step");
+  requireFullShaAction(errors, checkout, "onboard-policy-preset-sequencing checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(
+      "onboard-policy-preset-sequencing checkout step must set persist-credentials=false",
+    );
+  }
+
+  const installTools = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installTools, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run onboard-policy-preset-sequencing live Vitest test",
+  );
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+  requireRunContains(errors, runVitest, "test/e2e/live/onboard-policy-preset-sequencing.test.ts");
+}
 function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "hermes-e2e";
   const job = asRecord(jobs[jobName]);
@@ -4965,6 +5061,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateCloudInferenceJob(errors, jobs);
   validateLlamaCppGenericGpuJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
+  validateOnboardPolicyPresetSequencingJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");

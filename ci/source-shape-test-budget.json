@@ -222,6 +222,16 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/onboard-policy-preset-sequencing-workflow-boundary.test.ts",
+      "test": "rejects onboard-policy-preset-sequencing forced back into non-interactive mode",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/onboard-policy-preset-sequencing-workflow-boundary.test.ts",
+      "test": "selects onboard-policy-preset-sequencing.test.ts with interactive mode enabled",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
       "test": "runs as a credential-free exact-head PR workflow",
       "category": "security"
