@@ -19,9 +19,10 @@ before those targets run; local runners must provide it themselves.
   attempts, requests at most two failed-job reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
-- Platform workflows such as macOS, WSL, sandbox image, and regression E2E
-  call their target E2E tests directly. The Ollama auth proxy target is
-  selected through `.github/workflows/e2e.yaml`.
+- `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
+  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets directly.
+  `.github/workflows/e2e.yaml` selects free-standing jobs, including
+  `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
 
@@ -30,10 +31,10 @@ before those targets run; local runners must provide it themselves.
 The candidate CLI comes from the source commit that an E2E run tests.
 The `generate-matrix` job builds it once.
 The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
-The workflow has 62 artifact-using job definitions.
-Each selected job execution restores the artifact instead of running `npm run build:cli`.
-Each selected job still runs the pinned preparation action to install Node.js and project dependencies.
-It sets `build-cli: "false"` so the preparation action does not rebuild the CLI.
+The boundary validator derives artifact consumers from jobs that use the pinned preparation action.
+It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
+Each selected consumer restores the artifact instead of running `npm run build:cli`.
+Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
 The `managed-image-protected-runtime` qualification does not use this artifact.
 It builds the CLI from the trusted workflow checkout and never executes or restores the candidate CLI.
 

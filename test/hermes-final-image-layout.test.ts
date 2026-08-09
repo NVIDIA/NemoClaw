@@ -166,14 +166,18 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
-function hasBuildKitRunMount(dockerfile: string): boolean {
+function buildKitRunMountOptions(dockerfile: string): string[] {
   return dockerfile
     .replace(/\\\r?\n[ \t]*/gu, " ")
     .split(/\r?\n/u)
-    .some((instruction) => {
+    .flatMap((instruction) => {
       const runOptionPrefix = instruction.match(/^\s*RUN((?:\s+--\S+)*)/iu)?.[1] ?? "";
-      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix);
+      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix) ? [runOptionPrefix.trim()] : [];
     });
+}
+
+function hasBuildKitRunMount(dockerfile: string): boolean {
+  return buildKitRunMountOptions(dockerfile).length > 0;
 }
 
 function runFinalLayout({
@@ -314,7 +318,9 @@ describe("Hermes final image layout", () => {
     const wrapperCopy = "COPY --from=hermes-wrapper-payload / /";
 
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(hasBuildKitRunMount(dockerfile)).toBe(false);
+    expect(buildKitRunMountOptions(dockerfile)).toEqual([
+      "--network=none --mount=from=hermes-managed-teams-wheels,target=/opt/nemoclaw-hermes-teams-wheels,ro",
+    ]);
     expectManagedBootstrapNativeImageContract(dockerfile);
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
@@ -345,6 +351,28 @@ describe("Hermes final image layout", () => {
       finalStage,
       "--agent hermes --phase managed-image-capability-union",
     );
+    expect(finalStage).toContain("UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels");
+    expect(dockerfile).toContain("FROM scratch AS hermes-managed-teams-0-wheels");
+    expect(dockerfile).toContain(
+      "FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels",
+    );
+    expect(dockerfile).toContain(
+      "FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS hermes-managed-teams-wheels",
+    );
+    expect(
+      indexOfRequired(dockerfile, "ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0"),
+    ).toBeLessThan(indexOfRequired(dockerfile, "FROM scratch AS mcp-tool-discovery-runtime"));
+    for (const wheelSha256 of [
+      "db16f714ec658b592929c6386a29792e90bb73840732f8ae65a198cda1fea96c",
+      "0072ffe68863a4c62818a4e631a186f092a4f09dfda74d1d4713415bac5d202d",
+      "e2b0257d9b8782830df61eb6aa993a1ddc0349daddd845739da45d2a29a0c44b",
+      "c61057695b9f1a97de9b6f54f0c66206903f56c22427b0bca31e0fc34da49311",
+      "dd17e95a7c71bce75e8108113438ba7c4a086b3bcad4f57a8c09b7af3d753c2d",
+      "10e481880b307a6a438c1cc7b0a1fa8754247239ef5a2e8fe82bd8a1e76e7682",
+      "e05da5bc73a3e026f962a223672002934c0f415064b6e2c3db0b255e46c7b521",
+    ]) {
+      expect(dockerfile).toContain(`--checksum=sha256:${wheelSha256}`);
+    }
     const cronRestoreDrainPatch = indexOfRequired(
       finalStage,
       "ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=",
@@ -397,9 +425,11 @@ describe("Hermes final image layout", () => {
     expect(managedRuntimeDirectory).toBeLessThan(runtimeModeReplay);
     expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+    );
+    expect(dockerfile).not.toContain(
       "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
     );
-    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
     expect(wrapper).toBeLessThan(pythonCheck);
     expect(modeNormalize).toBeGreaterThan(darwinCompatibility);

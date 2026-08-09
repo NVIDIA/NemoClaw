@@ -938,4 +938,13 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       "security-posture must verify and restore the exact CLI artifact exactly once",
     );
   });
+
+  it("rejects an added CLI artifact consumer outside the reviewed workflow contract", () => {
+    const workflow = workflowFixture();
+    workflow.jobs["added-consumer"] = structuredClone(workflow.jobs["cloud-inference"]);
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract",
+    );
+  });
 });

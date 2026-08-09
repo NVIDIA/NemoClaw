@@ -62,10 +62,9 @@ describe("PR merge conflict fixer workflow boundary", () => {
     expect(scan.permissions).toEqual({ contents: "read", "pull-requests": "read" });
     expect(resolve.permissions).toEqual({ contents: "read" });
     expect(publish.permissions).toEqual({ contents: "write", "pull-requests": "read" });
+    expect(scan["timeout-minutes"]).toBe(10);
     expect(resolve["timeout-minutes"]).toBe(30);
-    expect(
-      Object.values(jobs).filter((job) => record(job)["timeout-minutes"] !== undefined),
-    ).toHaveLength(1);
+    expect(publish["timeout-minutes"]).toBe(10);
   });
 
   it("loads each resolve command from the pushed main SHA (#6952)", () => {

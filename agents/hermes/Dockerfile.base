@@ -288,13 +288,15 @@ RUN test -x /usr/bin/setpriv \
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # gateway is a member of the sandbox group so it can read Hermes config files
 # and write Hermes runtime state while config files remain non-group-writable.
-RUN groupadd -r sandbox \
-    && groupadd -r gateway \
-    && useradd -r -g gateway -G sandbox -d /sandbox -s /usr/sbin/nologin gateway \
-    && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+RUN groupadd -r -g 999 sandbox \
+    && groupadd -r -g 998 gateway \
+    && useradd -r -u 999 -g gateway -G sandbox -d /sandbox -s /usr/sbin/nologin gateway \
+    && useradd -r -u 998 -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -a -G sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
+    && chown -R sandbox:sandbox /sandbox \
+    && test "$(id -u sandbox):$(id -g sandbox)" = "998:999" \
+    && test "$(getent passwd sandbox)" = "sandbox:x:998:999::/sandbox:/bin/bash"
 
 # Create .hermes with mutable integration dirs plus a scoped runtime dir.
 # Hermes v0.14 writes some top-level state with O_EXCL, so the gateway group can
