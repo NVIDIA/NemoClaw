@@ -131,8 +131,8 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       message: "Malformed managed startup env wrapper",
     },
     {
-      name: "rejects several managed names in the leading assignment run",
-      argv: ["env", "NEMOCLAW_DASHBOARD_PORT=9000", "OPENCLAW_HOME=/sandbox", "/bin/sh", "-c", ":"],
+      name: "rejects a managed name after an unmanaged assignment",
+      argv: ["env", "FOO=bar", "OPENCLAW_HOME=/sandbox", "/bin/sh", "-c", ":"],
       message: "Malformed managed startup env wrapper",
     },
     {

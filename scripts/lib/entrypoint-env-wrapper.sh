@@ -62,9 +62,10 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_STARTUP_PROFILE_B64|"
 
   # Locate only the exact self-wrapper grammar. A normal explicit command such
-  # as `env FOO=bar printenv` carries no managed variable name in its leading
-  # assignment run, so it remains a user command and is not interpreted by this
-  # root entrypoint normalization.
+  # as `env FOO=bar printenv` carries no managed name in its leading assignment
+  # run. This root entrypoint normalization therefore leaves it unchanged.
+  # NEMOCLAW_STARTUP_PROFILE_B64 and NEMOCLAW_CORPORATE_CA_B64 are rejected in
+  # any argument position by the terminator-missing branch below.
   for ((_nemoclaw_index = 1; _nemoclaw_index < ${#_nemoclaw_original_argv[@]}; _nemoclaw_index += 1)); do
     _nemoclaw_token="${_nemoclaw_original_argv[$_nemoclaw_index]}"
     case "$_nemoclaw_token" in
@@ -79,11 +80,11 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
 
   if [ "$_nemoclaw_self_index" -lt 0 ]; then
     # A managed handoff must never silently degrade into an unmanaged command
-    # because the self-wrapper was absent or malformed. This normalization
-    # rejects NEMOCLAW_STARTUP_PROFILE_B64 and NEMOCLAW_CORPORATE_CA_B64 in any
+    # because the self-wrapper was absent or malformed. This branch rejects
+    # NEMOCLAW_STARTUP_PROFILE_B64 and NEMOCLAW_CORPORATE_CA_B64 in any
     # argument position. Any other managed name indicates a degraded handoff
-    # only when it appears in the leading assignment run. A user command tail
-    # that only looks like an assignment therefore stays a user command.
+    # only when it appears in the leading assignment run. A sequence whose
+    # tail alone assigns any other managed name stays a user command.
     _nemoclaw_break_index="$_nemoclaw_index"
     for _nemoclaw_token in "${_nemoclaw_original_argv[@]:1}"; do
       case "$_nemoclaw_token" in
