@@ -201,7 +201,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 runCaptureOpenshell: deps.runCaptureOpenshell,
                 isSandboxReady,
                 getSandboxFailurePhase,
-                stableReadyPolls: 1,
+                stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
                 sleep: deps.sleep,
               });
               if (!readiness.ready) {

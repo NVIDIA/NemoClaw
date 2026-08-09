@@ -2,9 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { waitUntil } from "../core/wait";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
-import { applyReusedSandboxDashboardState, createSandboxReuseHelpers } from "./sandbox-reuse";
+import {
+  applyReusedSandboxDashboardState,
+  createSandboxReuseHelpers,
+  type SandboxReuseDeps,
+} from "./sandbox-reuse";
+
+type SandboxCaptureResult = ReturnType<SandboxReuseDeps["captureOpenshell"]>;
+
+function successfulCapture(stdout: string): SandboxCaptureResult {
+  return { status: 0, output: stdout, stdout, stderr: "" };
+}
+
+function failedCapture(
+  stderr: string,
+  overrides: Partial<SandboxCaptureResult> = {},
+): SandboxCaptureResult {
+  return { status: 1, output: stderr, stdout: "", stderr, ...overrides };
+}
 
 describe("applyReusedSandboxDashboardState", () => {
   afterEach(() => {
@@ -198,14 +217,13 @@ describe("applyReusedSandboxDashboardState", () => {
 
 describe("createSandboxReuseHelpers", () => {
   it("observes state and a stable OpenShell identity together for recreate recovery", () => {
-    const runCaptureOpenshell = vi.fn((args: string[]) =>
-      args[1] === "get"
-        ? "Name: alpha\n\u001b[32mId: openshell-source-id\u001b[0m\nState: Ready\n"
-        : "alpha Ready\n",
-    );
+    const getOutput = "Name: alpha\n\u001b[32mId: openshell-source-id\u001b[0m\nState: Ready\n";
+    const runCaptureOpenshell = vi.fn(() => "alpha Ready\n");
+    const captureOpenshell = vi.fn(() => successfulCapture(getOutput));
     const getSandboxStateFromOutputs = vi.fn(() => "ready");
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell,
+      captureOpenshell,
       getSandboxStateFromOutputs,
     });
 
@@ -213,7 +231,13 @@ describe("createSandboxReuseHelpers", () => {
       state: "ready",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
     });
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(1, ["sandbox", "get", "alpha"], {
+    expect(captureOpenshell).toHaveBeenCalledWith(["sandbox", "get", "alpha"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+    });
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], {
       ignoreError: true,
     });
     expect(getSandboxStateFromOutputs).toHaveBeenCalledWith(
@@ -224,36 +248,178 @@ describe("createSandboxReuseHelpers", () => {
   });
 
   it("observes a resumed replacement on the gateway its journal records (#7734)", () => {
-    const runCaptureOpenshell = vi.fn((args: string[]) =>
-      args[1] === "get" ? "Name: alpha\nId: openshell-source-id\nState: Ready\n" : "alpha Ready\n",
+    const captureOpenshell = vi.fn(() =>
+      successfulCapture("Name: alpha\nId: openshell-source-id\nState: Ready\n"),
     );
+    const runCaptureOpenshell = vi.fn(() => "alpha Ready\n");
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell,
+      captureOpenshell,
       getSandboxStateFromOutputs: vi.fn(() => "ready"),
       getGatewayName: () => "nemoclaw",
     });
 
     helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090");
 
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(
-      1,
+    expect(captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"],
-      { ignoreError: true },
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+      },
     );
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(
-      2,
-      ["sandbox", "list", "-g", "nemoclaw-9090"],
-      { ignoreError: true },
-    );
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list", "-g", "nemoclaw-9090"], {
+      ignoreError: true,
+    });
   });
 
   it("preserves an unknown reuse state but rejects it for recreate recovery", () => {
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell: vi.fn(() => ""),
+      captureOpenshell: vi.fn(() => successfulCapture("Name: alpha\nId: source-id\n")),
       getSandboxStateFromOutputs: vi.fn(() => "unknown"),
     });
 
     expect(helpers.getSandboxReuseState("alpha")).toBe("unknown");
     expect(() => helpers.getSandboxRecreateObservation("alpha")).toThrow(/state 'unknown'/);
+  });
+
+  it("does not treat a gateway lookup failure as recreate source absence", () => {
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(() => ""),
+      captureOpenshell: vi.fn(() =>
+        failedCapture('status: NotFound, message: "gateway not found"'),
+      ),
+      getSandboxStateFromOutputs: vi.fn(() => "missing"),
+    });
+
+    expect(() => helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090")).toThrow(
+      /neither a live sandbox nor explicit absence/,
+    );
+  });
+
+  it("retains ignored stderr so final recreate confirmation can prove explicit absence", () => {
+    const captureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) =>
+      failedCapture("Error: sandbox alpha not found"),
+    );
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(() => ""),
+      captureOpenshell,
+      getSandboxStateFromOutputs: vi.fn(() => "missing"),
+    });
+
+    expect(helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090")).toEqual({
+      state: "missing",
+      liveIdentityFingerprint: null,
+    });
+    expect(captureOpenshell.mock.calls[0]?.[1]).toMatchObject({
+      includeStderr: true,
+      includeStreams: true,
+    });
+  });
+
+  it.each([
+    [
+      "timeout",
+      failedCapture("Error: sandbox alpha not found", {
+        status: null,
+        error: Object.assign(new Error("spawnSync openshell ETIMEDOUT"), { code: "ETIMEDOUT" }),
+        signal: "SIGTERM",
+      }),
+    ],
+    [
+      "signal",
+      failedCapture("Error: sandbox alpha not found", {
+        status: null,
+        signal: "SIGKILL",
+      }),
+    ],
+  ])("does not accept partial NotFound output from a %s as recreate absence", (_label, probe) => {
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(() => ""),
+      captureOpenshell: vi.fn(() => probe),
+      getSandboxStateFromOutputs: vi.fn(() => "missing"),
+    });
+
+    expect(() => helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090")).toThrow(
+      /neither a live sandbox nor explicit absence/,
+    );
+  });
+
+  it("waits for explicit sandbox absence on the journaled gateway", () => {
+    let currentMs = 0;
+    const probes = [
+      successfulCapture("Name: alpha\nId: source-id\nPhase: Ready\n"),
+      successfulCapture("Name: alpha\nId: source-id\nPhase: Terminating\n"),
+      failedCapture("Error: sandbox alpha not found"),
+    ];
+    const captureOpenshell = vi.fn(
+      (_args: string[], _options?: Record<string, unknown>) =>
+        probes.shift() ?? successfulCapture(""),
+    );
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(() => ""),
+      captureOpenshell,
+      getSandboxStateFromOutputs: vi.fn(() => "ready"),
+      now: () => currentMs,
+      sleep: (milliseconds) => {
+        currentMs += milliseconds;
+      },
+      waitUntil,
+    });
+    const note = vi.fn();
+
+    expect(helpers.waitForSandboxRecreateDeleteAbsence("alpha", "nemoclaw-9090", note)).toBe(true);
+    expect(captureOpenshell).toHaveBeenCalledTimes(3);
+    for (const [args, options] of captureOpenshell.mock.calls) {
+      expect(args).toEqual(["sandbox", "get", "-g", "nemoclaw-9090", "alpha"]);
+      expect(options).toMatchObject({
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+      });
+      const timeout = Number(options?.timeout);
+      expect(timeout).toBeGreaterThan(0);
+      expect(timeout).toBeLessThanOrEqual(SANDBOX_RECREATE_PROBE_TIMEOUT_MS);
+    }
+    expect(note).toHaveBeenLastCalledWith("  Delete convergence probe 3: state=absent");
+  });
+
+  it("bounds delete convergence without accepting timeout or gateway errors as absence", () => {
+    let currentMs = 0;
+    const failures = [
+      failedCapture("Error: sandbox alpha not found", {
+        status: null,
+        error: Object.assign(new Error("spawnSync openshell ETIMEDOUT"), { code: "ETIMEDOUT" }),
+        signal: "SIGTERM",
+      }),
+      failedCapture('status: NotFound, message: "gateway not found"'),
+      failedCapture("gateway transport unavailable"),
+    ];
+    let attempt = 0;
+    const captureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => {
+      const output = failures[attempt % failures.length] ?? successfulCapture("");
+      attempt += 1;
+      return output;
+    });
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(() => ""),
+      captureOpenshell,
+      getSandboxStateFromOutputs: vi.fn(() => "unknown"),
+      now: () => currentMs,
+      sleep: (milliseconds) => {
+        currentMs += milliseconds;
+      },
+      waitUntil,
+    });
+
+    expect(helpers.waitForSandboxRecreateDeleteAbsence("alpha", "nemoclaw-9090", vi.fn())).toBe(
+      false,
+    );
+    expect(captureOpenshell.mock.calls.length).toBeGreaterThan(1);
+    expect(captureOpenshell.mock.calls.length).toBeLessThanOrEqual(20);
+    expect(currentMs).toBeLessThanOrEqual(SANDBOX_RECREATE_PROBE_TIMEOUT_MS);
   });
 });

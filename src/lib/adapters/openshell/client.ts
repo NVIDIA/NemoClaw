@@ -13,6 +13,11 @@ import {
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
+export {
+  openshellSandboxSshHost,
+  resolveOpenshellSandboxSshHost,
+} from "./sandbox-ssh-host";
+
 export type OpenshellSpawnSync = (
   command: string,
   args: readonly string[],
@@ -244,9 +249,10 @@ export function captureOpenshellCommand(
     return handleSpawnError(binary, args, result.error, opts);
   }
   return {
-    status: result.status ?? 1,
+    status: result.status ?? (result.signal ? null : 1),
     output: captureOutput(result, opts),
     ...maybeCapturedStreams(result.stdout || "", result.stderr || "", opts),
+    ...(result.signal ? { signal: result.signal } : {}),
   };
 }
 

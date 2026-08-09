@@ -385,10 +385,11 @@ function llamaCppReadinessComparisonMatches(
   if (role !== "architecture" || actual.operator !== "equals") {
     return canonicalReadinessComparison(actual) === canonicalReadinessComparison(expected);
   }
+  const architecture = actual.value === "x64" ? "amd64" : actual.value;
   return (
-    typeof actual.value === "string" &&
+    typeof architecture === "string" &&
     recipe.spec.runtime.platforms.includes(
-      `linux/${actual.value}` as LlamaCppServingRecipe["spec"]["runtime"]["platforms"][number],
+      `linux/${architecture}` as LlamaCppServingRecipe["spec"]["runtime"]["platforms"][number],
     )
   );
 }
