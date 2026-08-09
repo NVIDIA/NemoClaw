@@ -4,7 +4,11 @@
 import YAML from "yaml";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import { parseMcpUrl, validateMcpServerName } from "./mcp-bridge-validation";
+import {
+  type McpBridgeTargetValidation,
+  parseMcpUrlWithValidatedTarget,
+} from "./mcp-bridge-url-validation";
+import { validateMcpServerName } from "./mcp-bridge-validation";
 
 export const MCP_BRIDGE_POLICY_MAX_BODY_BYTES = 131_072;
 export const MCP_BRIDGE_ALLOWED_METHODS = [
@@ -78,23 +82,17 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   }
 }
 
-function allowedIpsForEndpoint(
-  resolvedAddresses: readonly string[] | undefined,
-): string[] | undefined {
-  // OpenShell resolves this hostname for every new connection, validates every
-  // current answer against allowed_ips, and connects to that validated list.
-  return resolvedAddresses && resolvedAddresses.length > 0 ? [...resolvedAddresses] : undefined;
-}
-
 export function buildMcpBridgePolicyYaml(
   server: string,
   url: string,
   adapter: AgentMcpAdapter,
-  resolvedAddresses?: readonly string[],
+  target: McpBridgeTargetValidation,
 ): string {
-  const parsed = parseMcpUrl(url);
+  const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
-  const allowedIps = allowedIpsForEndpoint(resolvedAddresses);
+  // OpenShell resolves this hostname for every new connection, validates every
+  // current answer against allowed_ips, and connects to that validated list.
+  const allowedIps = [...target.addresses];
   return YAML.stringify({
     preset: {
       name: buildMcpBridgePolicyName(server),
@@ -110,7 +108,7 @@ export function buildMcpBridgePolicyYaml(
             path: endpointPath(parsed),
             protocol: "mcp",
             enforcement: "enforce",
-            ...(allowedIps ? { allowed_ips: allowedIps } : {}),
+            allowed_ips: allowedIps,
             mcp: {
               max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
               strict_tool_names: true,

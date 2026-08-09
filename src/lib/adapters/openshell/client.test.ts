@@ -243,6 +243,21 @@ describe("openshell helpers", () => {
     });
   });
 
+  it("preserves a capture signal even when spawnSync reports no Error", () => {
+    const result = captureOpenshellCommand("openshell", ["sandbox", "get", "alpha"], {
+      ignoreError: true,
+      spawnSyncImpl: stubSpawnSync({
+        status: null,
+        stdout: "partial\n",
+        stderr: "terminated\n",
+        signal: "SIGTERM",
+      }),
+      exit: exitWithCode,
+    });
+
+    expect(result).toEqual({ status: null, output: "partial", signal: "SIGTERM" });
+  });
+
   it("returns ignored capture buffer failures with partial streams", () => {
     const result = captureOpenshellCommand("openshell", ["sandbox", "exec"], {
       ignoreError: true,

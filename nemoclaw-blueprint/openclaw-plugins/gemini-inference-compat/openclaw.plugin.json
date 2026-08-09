@@ -1,0 +1,18 @@
+{
+  "id": "nemoclaw-gemini-inference-compat",
+  "name": "NemoClaw Gemini Inference Compatibility",
+  "version": "0.1.0",
+  "description": "Classifies the managed inference.local route as a Google Generative AI endpoint for Gemini 3.x tool-call compatibility.",
+  "providers": ["inference"],
+  "providerEndpoints": [
+    {
+      "endpointClass": "google-generative-ai",
+      "baseUrls": ["https://inference.local/v1"]
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

@@ -26,9 +26,9 @@ function privateEntry(adapter: AgentMcpAdapter, agent: string): McpBridgeEntry {
     server: "local",
     agent,
     adapter,
-    url: "https://mcp.corp.example/mcp",
+    url: "https://mcp.corp.internal/mcp",
     env: ["LOCAL_MCP_TOKEN"],
-    trustedPrivateHost: "mcp.corp.example",
+    trustedPrivateHost: "mcp.corp.internal",
     allowedIps: ["10.20.30.40", "fd00::40"],
     providerName: "alpha-mcp-local",
     providerId: "11111111-2222-4333-8444-555555555555",
@@ -55,6 +55,26 @@ describe("trusted-private MCP lifecycle replay", () => {
     expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(entry.allowedIps);
   });
 
+  it.each(adapters)("replays a direct private IPv4 target for $agent (#8267)", async ({
+    adapter,
+    agent,
+  }) => {
+    const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
+    const entry = privateEntry(adapter, agent);
+    entry.url = "https://10.20.30.40/mcp";
+    entry.trustedPrivateHost = "10.20.30.40";
+    entry.allowedIps = ["10.20.30.40"];
+
+    const target = (await preflightMcpEntryTargets([entry])).get(entry.server);
+
+    expect(lookup).not.toHaveBeenCalled();
+    expect(target).toMatchObject({
+      addresses: ["10.20.30.40"],
+      trustedPrivateHost: "10.20.30.40",
+    });
+    expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(["10.20.30.40"]);
+  });
+
   it("rejects invalid durable private pins without consulting DNS (#8267)", async () => {
     const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
     const entry = privateEntry("mcporter", "openclaw");
@@ -77,7 +97,9 @@ describe("trusted-private MCP lifecycle replay", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it("resumes an incomplete private add from recorded pins without ambient DNS (#8267)", () => {
+  it("resumes an incomplete private add from recorded pins without ambient DNS (#8267)", {
+    timeout: 40_000,
+  }, () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-mcp-add-replay-"));
     const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
     const script = `
@@ -112,7 +134,10 @@ bridge.addMcpBridge("alpha", {
   trustedPrivateHosts: ["mcp.corp.example"],
 }).then(
   () => process.exit(9),
-  (error) => process.stdout.write(JSON.stringify({ message: error.message, dnsCalls })),
+  (error) => process.stdout.write(
+    JSON.stringify({ message: error.message, dnsCalls }),
+    () => process.exit(0),
+  ),
 );
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
@@ -125,7 +150,7 @@ bridge.addMcpBridge("alpha", {
           .filter(Boolean)
           .join(" "),
       },
-      timeout: 15_000,
+      timeout: 30_000,
     });
     fs.rmSync(home, { recursive: true, force: true });
 

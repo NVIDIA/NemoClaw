@@ -3,9 +3,9 @@
 
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture } from "../../adapters/docker/run";
+import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
-import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
 export type DockerHealthState = "healthy" | "unhealthy" | "starting" | "none" | "unknown";
 
