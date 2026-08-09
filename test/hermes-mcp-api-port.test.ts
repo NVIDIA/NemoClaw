@@ -120,6 +120,17 @@ def stage_oversized_record(path):
     path.write_bytes(b"8" * 64)
     path.chmod(0o444)
 
+class RootOwnedStat:
+    def __init__(self, real):
+        self._real = real
+        self.st_uid = 0
+        self.st_gid = 0
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+real_fstat = module.os.fstat
+
 unsafe = []
 for index, stage in enumerate(
     (stage_writable_mode, stage_extra_hard_link, stage_oversized_record)
@@ -129,10 +140,25 @@ for index, stage in enumerate(
     marker = directory / "hermes-api-port"
     stage(marker)
     module.GATEWAY_PUBLIC_PORT_PATH = str(marker)
+    module.os.fstat = lambda descriptor: RootOwnedStat(real_fstat(descriptor))
     try:
         module._root_gateway_public_port_marker()
     except PermissionError as error:
         unsafe.append(str(error))
+    finally:
+        module.os.fstat = real_fstat
+
+accepted = root / "accepted"
+accepted.mkdir()
+sound_marker = accepted / "hermes-api-port"
+sound_marker.write_bytes(b"8645")
+sound_marker.chmod(0o444)
+module.GATEWAY_PUBLIC_PORT_PATH = str(sound_marker)
+module.os.fstat = lambda descriptor: RootOwnedStat(real_fstat(descriptor))
+try:
+    sound = module._root_gateway_public_port_marker()
+finally:
+    module.os.fstat = real_fstat
 
 linked = root / "linked"
 linked.mkdir()
@@ -152,6 +178,7 @@ shutil.rmtree(root)
 
 print(json.dumps({
     "absent": absent,
+    "sound": sound,
     "unsafe": unsafe,
     "followed": followed,
 }))
@@ -164,6 +191,7 @@ print(json.dumps({
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       absent: null,
+      sound: 8645,
       unsafe: [
         "Hermes API port marker is unsafe",
         "Hermes API port marker is unsafe",
@@ -232,5 +260,32 @@ print(json.dumps({
       same_uid_fallback: 8649,
       without_identity: "Hermes gateway identity is unavailable",
     });
+  });
+
+  it("fails the probe with exit code 2 when the port cannot be resolved (#8543)", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import importlib.util, pathlib, sys, tempfile
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+module.GATEWAY_PUBLIC_PORT_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "absent-marker")
+module.os.geteuid = lambda: 0
+sys.argv = ["mcp-config-transaction.py", "probe"]
+raise SystemExit(module.main())
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr.trim()).toBe("Hermes root API port marker is unavailable");
+    expect(result.stdout).toBe("");
   });
 });

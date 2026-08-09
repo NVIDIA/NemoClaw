@@ -100,33 +100,33 @@ function setupPublicationFailure(
 
 function runHermesApiPortMarkerPublication(publicPort: number, setup: MarkerSetupFn) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-api-port-marker-"));
-  const runtimeParent = path.join(tmpDir, "run");
-  const runtimeDir = path.join(runtimeParent, "nemoclaw");
-  const markerPath = path.join(runtimeDir, "hermes-api-port");
-  const targetPath = path.join(tmpDir, "attacker-target");
-  const fixture = setup(runtimeParent, runtimeDir, markerPath, targetPath);
-
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -uo pipefail",
-      "HERMES_DEFAULT_API_PORT=8642",
-      "HERMES_API_PORT_RANGE_END=8652",
-      `HERMES_RUNTIME_DIR=${shellQuote(runtimeDir)}`,
-      `HERMES_API_PORT_MARKER=${shellQuote(markerPath)}`,
-      `PUBLIC_PORT=${publicPort}`,
-      ...fixture.shellPrelude,
-      extractShellFunction(src, "prepare_hermes_root_runtime_dir"),
-      extractShellFunction(src, "publish_hermes_root_runtime_marker"),
-      'publish_hermes_root_runtime_marker hermes-api-port "$PUBLIC_PORT"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
   try {
+    const runtimeParent = path.join(tmpDir, "run");
+    const runtimeDir = path.join(runtimeParent, "nemoclaw");
+    const markerPath = path.join(runtimeDir, "hermes-api-port");
+    const targetPath = path.join(tmpDir, "attacker-target");
+    const fixture = setup(runtimeParent, runtimeDir, markerPath, targetPath);
+
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -uo pipefail",
+        "HERMES_DEFAULT_API_PORT=8642",
+        "HERMES_API_PORT_RANGE_END=8652",
+        `HERMES_RUNTIME_DIR=${shellQuote(runtimeDir)}`,
+        `HERMES_API_PORT_MARKER=${shellQuote(markerPath)}`,
+        `PUBLIC_PORT=${publicPort}`,
+        ...fixture.shellPrelude,
+        extractShellFunction(src, "prepare_hermes_root_runtime_dir"),
+        extractShellFunction(src, "publish_hermes_root_runtime_marker"),
+        'publish_hermes_root_runtime_marker hermes-api-port "$PUBLIC_PORT"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
     const result = spawnSync("bash", [scriptPath], { encoding: "utf-8" });
     const marker = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, "utf-8").trim() : null;
     const mode = marker === null ? null : (fs.statSync(markerPath).mode & 0o777).toString(8);
