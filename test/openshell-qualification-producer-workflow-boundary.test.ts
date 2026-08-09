@@ -8,20 +8,12 @@ import {
   qualificationProducerRuntimePaths,
   validateQualificationProducerWorkflow,
 } from "../scripts/checks/verify-openshell-qualification-producer-workflow.mts";
-
-type JsonRecord = Record<string, unknown>;
-
-function record(value: unknown): JsonRecord {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("test fixture value is not an object");
-  }
-  return value as JsonRecord;
-}
-
-function array(value: unknown): unknown[] {
-  if (!Array.isArray(value)) throw new Error("test fixture value is not an array");
-  return value;
-}
+import {
+  array,
+  type JsonRecord,
+  record,
+  requiredStep,
+} from "./helpers/openshell-qualification-producer-workflow-test-support.js";
 
 function cloneWorkflow(): JsonRecord {
   return record(structuredClone(loadQualificationProducerWorkflow()));
@@ -36,9 +28,7 @@ function steps(workflow: JsonRecord): JsonRecord[] {
 }
 
 function step(workflow: JsonRecord, index: number): JsonRecord {
-  const selected = steps(workflow)[index];
-  if (!selected) throw new Error(`missing test fixture step ${index}`);
-  return selected;
+  return requiredStep(steps(workflow), index);
 }
 
 const mutations: ReadonlyArray<{

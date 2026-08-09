@@ -21,7 +21,11 @@ import { artifactZip } from "./helpers/artifact-zip";
 import {
   releaseQualificationEnv as env,
   type ReleaseQualificationFixture as Fixture,
+  mutateReleaseQualificationAuthority,
+  removeReleaseTagIfPresent,
   runReleaseQualificationCommand as run,
+  stageReleaseQualificationContract,
+  stageUnlistedQualificationValidatorImport,
   writeReleasePlan as writePlan,
 } from "./helpers/release-qualification-gate-fixture";
 import { testTimeout } from "./helpers/timeouts";
@@ -213,10 +217,7 @@ function createFixture(
     "checks",
     "openshell-qualification-contract.mts",
   );
-  if (contractMode) {
-    fs.mkdirSync(path.dirname(contractPath), { recursive: true });
-    fs.writeFileSync(contractPath, `${JSON.stringify(contract, null, 2)}\n`);
-  }
+  stageReleaseQualificationContract(contractPath, contract, contractMode);
   for (const authorityPath of QUALIFICATION_FROZEN_AUTHORITY_PATHS) {
     const sourcePath = path.join(REPO_ROOT, authorityPath);
     const destinationPath = path.join(work, authorityPath);
@@ -227,25 +228,11 @@ function createFixture(
   const sourceWorkflowPath = path.join(work, SOURCE_WORKFLOW);
   fs.mkdirSync(path.dirname(sourceWorkflowPath), { recursive: true });
   fs.writeFileSync(sourceWorkflowPath, "name: Exact qualification source proof\n");
-  if (options.unlistedValidatorImport) {
-    const helperPath = path.join(
-      work,
-      "scripts",
-      "checks",
-      "openshell-qualification-unlisted-helper.mts",
-    );
-    fs.writeFileSync(
-      helperPath,
-      [
-        "// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
-        "// SPDX-License-Identifier: Apache-2.0",
-        "",
-        "export const unlistedQualificationHelper = true;",
-        "",
-      ].join("\n"),
-    );
-    fs.appendFileSync(validatorPath, '\nimport "./openshell-qualification-unlisted-helper.mts";\n');
-  }
+  stageUnlistedQualificationValidatorImport(
+    work,
+    validatorPath,
+    options.unlistedValidatorImport === true,
+  );
   run(work, ["git", "add", "--all"]);
   run(work, ["git", "commit", "-m", "add qualification gate"]);
   const baseSha = run(work, ["git", "rev-parse", "HEAD"]).trim();
@@ -815,7 +802,7 @@ describe("release final qualification gate (#8590)", () => {
         }).status,
       ).not.toBe(0);
     } finally {
-      if (releaseTagExists(fixture)) run(fixture.work, ["git", "tag", "-d", "v0.0.2"]);
+      removeReleaseTagIfPresent(fixture.work, "v0.0.2");
     }
   });
 
@@ -1057,25 +1044,7 @@ describe("release final qualification gate (#8590)", () => {
     "rejects a %s authority mutation before receipt authentication (#8600)",
     (_label, authorityPath, mutation, expectedError) => {
       const fixture = createFixture();
-      const absolutePath = path.join(fixture.work, authorityPath);
-      if (mutation === "mode") {
-        fs.chmodSync(absolutePath, fs.statSync(absolutePath).mode | 0o100);
-        run(fixture.work, ["git", "add", authorityPath]);
-      } else if (mutation === "symlink") {
-        fs.rmSync(absolutePath);
-        fs.symlinkSync("README.md", absolutePath);
-        run(fixture.work, ["git", "add", authorityPath]);
-      } else {
-        fs.rmSync(absolutePath);
-        run(fixture.work, [
-          "git",
-          "update-index",
-          "--add",
-          "--cacheinfo",
-          `160000,${fixture.baseSha},${authorityPath}`,
-        ]);
-        fs.mkdirSync(absolutePath);
-      }
+      mutateReleaseQualificationAuthority(fixture, authorityPath, mutation);
       run(fixture.work, ["git", "commit", "-m", `${mutation} ${path.basename(authorityPath)}`]);
       run(fixture.work, ["git", "push", "origin", "main"]);
       fixture.targetSha = run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();

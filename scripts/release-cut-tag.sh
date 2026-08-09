@@ -416,7 +416,9 @@ if [[ "$PREFLIGHT_ONLY" == true ]]; then
     if git show-ref --verify --quiet "$preflight_ref"; then
       git update-ref -d "$preflight_ref"
     fi
-    cleanup_qualification_runtime
+    if [[ "$contract_in_target" == true ]]; then
+      cleanup_qualification_runtime
+    fi
   }
   trap cleanup_preflight_state EXIT
 

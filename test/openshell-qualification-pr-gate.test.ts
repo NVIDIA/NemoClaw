@@ -82,18 +82,16 @@ function treeReader(options: {
       type: "blob",
     })),
   });
+  const responses = new Map([
+    [`repos/${REPOSITORY}/git/trees/${BASE_SHA}?recursive=1`, tree(false)],
+    [`repos/${REPOSITORY}/git/trees/${CANDIDATE_SHA}?recursive=1`, tree(true)],
+  ]);
   return {
     async getBytes() {
       return Buffer.alloc(0);
     },
     async getJson(apiPath) {
-      if (apiPath === `repos/${REPOSITORY}/git/trees/${BASE_SHA}?recursive=1`) {
-        return tree(false);
-      }
-      if (apiPath === `repos/${REPOSITORY}/git/trees/${CANDIDATE_SHA}?recursive=1`) {
-        return tree(true);
-      }
-      throw new Error(`unexpected API path: ${apiPath}`);
+      return responses.get(apiPath) ?? Promise.reject(new Error(`unexpected API path: ${apiPath}`));
     },
   };
 }

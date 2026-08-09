@@ -20,6 +20,7 @@ const requiredChecks = [
   "changes",
   "commit-lint",
   "dco-check",
+  "openshell-qualification",
   "E2E / PR Gate",
 ].map((name) => ({
   name,
