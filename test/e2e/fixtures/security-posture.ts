@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { privilegedSandboxExecArgv } from "../../../src/lib/sandbox/privileged-exec.ts";
+import { buildSubprocessEnv } from "../../../src/lib/subprocess-env.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "./clients/sandbox.ts";
@@ -8,36 +10,235 @@ import type { ShellProbeResult } from "./shell-probe.ts";
 
 export type SecurityPostureAgent = "hermes" | "openclaw";
 
+export interface ProcessSecurityStatus {
+  capAmb: string;
+  capBnd: string;
+  capEff: string;
+  capInh: string;
+  capPrm: string;
+  gid: string[];
+  groups: string[];
+  noNewPrivs: string;
+  uid: string[];
+}
+
+export interface ProcessSecurityIdentity {
+  argv: string[];
+  executable: string;
+  pid: number;
+  ppid: number;
+  state: string;
+  startTime: string;
+  status: ProcessSecurityStatus;
+}
+
+export interface SplitProcessSecurityReport {
+  observedProcEntries: number;
+  sandboxGid: number;
+  sandboxUid: number;
+  supervisor: ProcessSecurityIdentity;
+  version: 1;
+  childSupervisors: ProcessSecurityIdentity[];
+}
+
 export interface SecurityPostureSummary {
   configureGuard: true;
-  entrypoint: {
-    capBnd: string;
-    capEff: string | null;
-    dangerousBoundingCapabilities: string[];
-    dangerousEffectiveCapabilities: string[];
-    noNewPrivs: string | null;
-    uid: string;
-  };
   hostNonRoot: true;
   rcFilesLocked: true;
   runtimeProxyEnvLocked: true;
+  splitProcess: {
+    childSupervisor: ProcessSecurityIdentity;
+    supervisor: ProcessSecurityIdentity;
+  };
   startupLogClean: true;
 }
 
 export interface SecurityPostureExpectations {
-  droppedBoundingCapabilities: boolean;
   enabled: boolean;
-  noNewPrivileges: boolean;
-  nonRootEntrypoint: boolean;
+  openshellSplitProcess: boolean;
 }
 
-const DANGEROUS_CAPABILITIES = [
-  [21, "CAP_SYS_ADMIN"],
-  [19, "CAP_SYS_PTRACE"],
-  [13, "CAP_NET_RAW"],
-  [10, "CAP_NET_BIND_SERVICE"],
-  [1, "CAP_DAC_OVERRIDE"],
+export interface SecurityPostureDependencies {
+  privilegedExecArgv?: typeof privilegedSandboxExecArgv;
+}
+
+const OPENSHELL_DEFAULT_WORKSPACE = "default";
+const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
+const OPENSHELL_SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox";
+const OPENSHELL_SUPERVISOR_ARGV = [
+  OPENSHELL_SUPERVISOR_EXECUTABLE,
+  "--workdir",
+  "/sandbox",
 ] as const;
+const SYSTEM_BASH_EXECUTABLES = ["/bin/bash", "/usr/bin/bash"] as const;
+const NEMOCLAW_START_SUPERVISOR_PATHS = [
+  "nemoclaw-start",
+  "/usr/local/bin/nemoclaw-start",
+] as const;
+const BASH_ARGV0 = ["bash", ...SYSTEM_BASH_EXECUTABLES] as const;
+const LIVE_PROCESS_STATES = ["D", "R", "S"] as const;
+const SAFE_OPENSHELL_IDENTITY_COMPONENT = /^[a-z0-9][a-z0-9_.-]*$/u;
+const MAX_PROC_ENTRIES = 32_768;
+// OpenShell 0.0.99 and 0.0.101 grant the OpenShell supervisor the Docker default
+// capabilities plus NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
+// resulting Linux capability mask so additions and removals both require an
+// explicit security review.
+export const OPENSHELL_SUPERVISOR_CAPABILITY_MASK = "00000004a82c35fb";
+
+export const SPLIT_PROCESS_SECURITY_PROBE = String.raw`import grp
+import json
+import os
+from pathlib import Path
+import pwd
+
+PROC_ROOT = Path("/proc")
+MAX_PROC_ENTRIES = ${MAX_PROC_ENTRIES}
+OPENSHELL_SUPERVISOR_ARGV = tuple(item.encode("utf-8") for item in ${JSON.stringify(OPENSHELL_SUPERVISOR_ARGV)})
+OPENSHELL_SUPERVISOR_EXECUTABLE = ${JSON.stringify(OPENSHELL_SUPERVISOR_EXECUTABLE)}
+NEMOCLAW_START_SUPERVISOR = tuple(item.encode("utf-8") for item in ${JSON.stringify(NEMOCLAW_START_SUPERVISOR_PATHS)})
+BASH = tuple(item.encode("utf-8") for item in ${JSON.stringify(BASH_ARGV0)})
+SYSTEM_BASH_EXECUTABLES = set(${JSON.stringify(SYSTEM_BASH_EXECUTABLES)})
+LIVE_PROCESS_STATES = set(${JSON.stringify(LIVE_PROCESS_STATES)})
+
+def argv_for(path):
+    raw = (path / "cmdline").read_bytes()
+    if not raw:
+        return ()
+    if not raw.endswith(b"\0"):
+        raise RuntimeError("process command line is not terminated")
+    return tuple(raw[:-1].split(b"\0"))
+
+def is_nemoclaw_start_supervisor(argv):
+    return (
+        (len(argv) == 1 and argv[0] in NEMOCLAW_START_SUPERVISOR)
+        or (
+            len(argv) == 2
+            and argv[0] in BASH
+            and argv[1] in NEMOCLAW_START_SUPERVISOR
+        )
+    )
+
+def stat_identity(raw):
+    suffix = raw.rsplit(") ", 1)
+    if len(suffix) != 2:
+        raise RuntimeError("malformed proc stat record")
+    fields = suffix[1].split()
+    if len(fields) < 20:
+        raise RuntimeError("incomplete proc stat record")
+    return fields[0], int(fields[1], 10), fields[19]
+
+def selected_status(raw):
+    values = {}
+    for line in raw.splitlines():
+        name, separator, value = line.partition(":")
+        if separator:
+            values[name] = value.strip().split()
+    return {
+        "uid": values.get("Uid", []),
+        "gid": values.get("Gid", []),
+        "groups": values.get("Groups", []),
+        "capInh": (values.get("CapInh") or [""])[0],
+        "capPrm": (values.get("CapPrm") or [""])[0],
+        "capEff": (values.get("CapEff") or [""])[0],
+        "capBnd": (values.get("CapBnd") or [""])[0],
+        "capAmb": (values.get("CapAmb") or [""])[0],
+        "noNewPrivs": (values.get("NoNewPrivs") or [""])[0],
+    }
+
+def stable_process(pid):
+    path = PROC_ROOT / str(pid)
+    before = path.stat(follow_symlinks=False)
+    first_state, first_ppid, first_start_time = stat_identity(
+        (path / "stat").read_text(encoding="utf-8")
+    )
+    first_status = selected_status((path / "status").read_text(encoding="utf-8"))
+    first_argv = argv_for(path)
+    first_executable = os.readlink(path / "exe")
+    second_state, second_ppid, second_start_time = stat_identity(
+        (path / "stat").read_text(encoding="utf-8")
+    )
+    second_status = selected_status((path / "status").read_text(encoding="utf-8"))
+    second_argv = argv_for(path)
+    second_executable = os.readlink(path / "exe")
+    after = path.stat(follow_symlinks=False)
+    if first_state not in LIVE_PROCESS_STATES or second_state not in LIVE_PROCESS_STATES:
+        raise RuntimeError(f"process {pid} is not live")
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or first_ppid != second_ppid
+        or first_start_time != second_start_time
+        or first_status != second_status
+        or first_argv != second_argv
+        or first_executable != second_executable
+    ):
+        raise RuntimeError(f"process {pid} changed during inspection")
+    return {
+        "pid": int(pid),
+        "ppid": second_ppid,
+        "state": second_state,
+        "startTime": second_start_time,
+        "argv": [item.decode("utf-8", "strict") for item in first_argv],
+        "executable": first_executable,
+        "status": first_status,
+    }
+
+def child_supervisor_census():
+    observed = 0
+    matches = []
+    with os.scandir(PROC_ROOT) as entries:
+        for entry in entries:
+            if not entry.name.isascii() or not entry.name.isdigit():
+                continue
+            observed += 1
+            if observed > MAX_PROC_ENTRIES:
+                raise RuntimeError("process census exceeded its checked bound")
+            try:
+                argv = argv_for(Path(entry.path))
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            if is_nemoclaw_start_supervisor(argv):
+                matches.append(stable_process(entry.name))
+    return observed, matches
+
+def stable_security_identity(process):
+    return {name: value for name, value in process.items() if name != "state"}
+
+sandbox_user = pwd.getpwnam("sandbox")
+sandbox_group = grp.getgrnam("sandbox")
+sandbox_uid = sandbox_user.pw_uid
+sandbox_gid = sandbox_group.gr_gid
+if sandbox_user.pw_gid != sandbox_gid:
+    raise RuntimeError("sandbox user and group identities disagree")
+supervisor_before = stable_process(1)
+observed_first, child_supervisors_first = child_supervisor_census()
+observed_second, child_supervisors_second = child_supervisor_census()
+supervisor_after = stable_process(1)
+if stable_security_identity(supervisor_before) != stable_security_identity(supervisor_after):
+    raise RuntimeError("OpenShell supervisor changed during inspection")
+if [stable_security_identity(item) for item in child_supervisors_first] != [
+    stable_security_identity(item) for item in child_supervisors_second
+]:
+    raise RuntimeError("nemoclaw-start child supervisor census changed during inspection")
+if (
+    tuple(supervisor_before["argv"]) != tuple(item.decode("ascii") for item in OPENSHELL_SUPERVISOR_ARGV)
+    or supervisor_before["executable"] != OPENSHELL_SUPERVISOR_EXECUTABLE
+):
+    raise RuntimeError("unexpected OpenShell supervisor command")
+if any(
+    item["executable"] not in SYSTEM_BASH_EXECUTABLES
+    for item in child_supervisors_first
+):
+    raise RuntimeError("unexpected nemoclaw-start child supervisor executable")
+print(json.dumps({
+    "version": 1,
+    "observedProcEntries": max(observed_first, observed_second),
+    "sandboxUid": sandbox_uid,
+    "sandboxGid": sandbox_gid,
+    "supervisor": supervisor_before,
+    "childSupervisors": child_supervisors_first,
+}, sort_keys=True))`;
 
 function truthy(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
@@ -50,6 +251,20 @@ function probeEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function subprocessEnvironmentIdentity(env: NodeJS.ProcessEnv): string {
+  return JSON.stringify(
+    Object.entries(env)
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function requireStablePrivilegedDockerEnvironment(expectedIdentity: string): void {
+  if (subprocessEnvironmentIdentity(buildSubprocessEnv()) !== expectedIdentity) {
+    throw new Error("privileged Docker environment changed during security posture inspection");
+  }
+}
+
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -60,17 +275,272 @@ function requireSuccess(label: string, result: ShellProbeResult): void {
   }
 }
 
-function statusField(status: string, field: string): string | null {
-  const match = status.match(new RegExp(`^${field}:\\s+([^\\s]+)`, "m"));
-  return match?.[1] ?? null;
+function requiredRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
 }
 
-export function dangerousCapabilities(capabilityHex: string | null): string[] {
-  if (!capabilityHex || !/^[0-9a-f]+$/iu.test(capabilityHex)) return [];
-  const value = BigInt(`0x${capabilityHex}`);
-  return DANGEROUS_CAPABILITIES.filter(([bit]) => (value & (1n << BigInt(bit))) !== 0n).map(
-    ([, name]) => name,
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a nonempty string`);
+  }
+  return value;
+}
+
+function requiredInteger(value: unknown, label: string, minimum: number): number {
+  if (!Number.isSafeInteger(value) || Number(value) < minimum) {
+    throw new Error(`${label} must be a safe integer greater than or equal to ${minimum}`);
+  }
+  return Number(value);
+}
+
+function requiredStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+  return value as string[];
+}
+
+function processStatus(value: unknown, label: string): ProcessSecurityStatus {
+  const status = requiredRecord(value, label);
+  return {
+    capAmb: requiredString(status.capAmb, `${label}.capAmb`),
+    capBnd: requiredString(status.capBnd, `${label}.capBnd`),
+    capEff: requiredString(status.capEff, `${label}.capEff`),
+    capInh: requiredString(status.capInh, `${label}.capInh`),
+    capPrm: requiredString(status.capPrm, `${label}.capPrm`),
+    gid: requiredStringArray(status.gid, `${label}.gid`),
+    groups: requiredStringArray(status.groups, `${label}.groups`),
+    noNewPrivs: requiredString(status.noNewPrivs, `${label}.noNewPrivs`),
+    uid: requiredStringArray(status.uid, `${label}.uid`),
+  };
+}
+
+function processIdentity(value: unknown, label: string): ProcessSecurityIdentity {
+  const process = requiredRecord(value, label);
+  const identity = {
+    argv: requiredStringArray(process.argv, `${label}.argv`),
+    executable: requiredString(process.executable, `${label}.executable`),
+    pid: requiredInteger(process.pid, `${label}.pid`, 1),
+    ppid: requiredInteger(process.ppid, `${label}.ppid`, 0),
+    state: requiredString(process.state, `${label}.state`),
+    startTime: requiredString(process.startTime, `${label}.startTime`),
+    status: processStatus(process.status, `${label}.status`),
+  };
+  if (!/^\d+$/u.test(identity.startTime)) throw new Error(`${label}.startTime must be numeric`);
+  if (identity.argv.length === 0 || identity.argv.some((argument) => argument.length === 0)) {
+    throw new Error(`${label}.argv must contain only nonempty arguments`);
+  }
+  if (!(LIVE_PROCESS_STATES as readonly string[]).includes(identity.state)) {
+    throw new Error(`${label}.state must be one of ${LIVE_PROCESS_STATES.join(", ")}`);
+  }
+  return identity;
+}
+
+function requireCapabilityHex(value: string, label: string): void {
+  if (!/^[0-9a-f]{16}$/u.test(value)) {
+    throw new Error(`${label} must be a 16-digit lowercase capability mask`);
+  }
+}
+
+function requireZeroCapabilities(status: ProcessSecurityStatus, label: string): void {
+  for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
+    const value = status[field];
+    requireCapabilityHex(value, `${label}.${field}`);
+    if (!/^[0]+$/u.test(value)) {
+      throw new Error(`${label}.${field} expected 0, got ${value}`);
+    }
+  }
+}
+
+function requireExactIds(values: string[], expected: number, label: string): void {
+  const exact = String(expected);
+  if (values.length !== 4 || values.some((value) => value !== exact)) {
+    throw new Error(
+      `${label} expected ${exact} in all four identity slots, got ${values.join(" ")}`,
+    );
+  }
+}
+
+function requireExactSupplementaryGroups(values: string[], expected: number, label: string): void {
+  const exact = String(expected);
+  if (values.length !== 1 || values[0] !== exact) {
+    throw new Error(`${label} expected only ${exact}, got ${values.join(" ")}`);
+  }
+}
+
+function canonicalNemoclawStartSupervisorArgv(argv: string[]): boolean {
+  if (
+    argv.length === 1 &&
+    (NEMOCLAW_START_SUPERVISOR_PATHS as readonly string[]).includes(argv[0] ?? "")
+  ) {
+    return true;
+  }
+  return (
+    argv.length === 2 &&
+    (BASH_ARGV0 as readonly string[]).includes(argv[0] ?? "") &&
+    (NEMOCLAW_START_SUPERVISOR_PATHS as readonly string[]).includes(argv[1] ?? "")
   );
+}
+
+function validateSupervisor(process: ProcessSecurityIdentity): void {
+  if (process.pid !== 1 || process.ppid !== 0) {
+    throw new Error(
+      `OpenShell supervisor expected pid=1 ppid=0, got ${process.pid}/${process.ppid}`,
+    );
+  }
+  if (
+    process.executable !== OPENSHELL_SUPERVISOR_EXECUTABLE ||
+    process.argv.length !== OPENSHELL_SUPERVISOR_ARGV.length ||
+    process.argv.some((argument, index) => argument !== OPENSHELL_SUPERVISOR_ARGV[index])
+  ) {
+    throw new Error("PID 1 does not have the expected OpenShell supervisor command");
+  }
+  requireExactIds(process.status.uid, 0, "OpenShell supervisor Uid");
+  requireExactIds(process.status.gid, 0, "OpenShell supervisor Gid");
+  requireExactSupplementaryGroups(process.status.groups, 0, "OpenShell supervisor Groups");
+  for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
+    requireCapabilityHex(process.status[field], `OpenShell supervisor ${field}`);
+  }
+  if (process.status.capInh !== "0000000000000000") {
+    throw new Error(`OpenShell supervisor CapInh drifted to ${process.status.capInh}`);
+  }
+  for (const field of ["capPrm", "capEff", "capBnd"] as const) {
+    if (process.status[field] !== OPENSHELL_SUPERVISOR_CAPABILITY_MASK) {
+      throw new Error(
+        `OpenShell supervisor ${field} expected ${OPENSHELL_SUPERVISOR_CAPABILITY_MASK}, got ${process.status[field]}`,
+      );
+    }
+  }
+  if (process.status.capAmb !== "0000000000000000") {
+    throw new Error(`OpenShell supervisor CapAmb drifted to ${process.status.capAmb}`);
+  }
+  if (process.status.noNewPrivs !== "1") {
+    throw new Error(`OpenShell supervisor expected NoNewPrivs=1, got ${process.status.noNewPrivs}`);
+  }
+}
+
+function validateNemoclawStartSupervisor(
+  process: ProcessSecurityIdentity,
+  sandboxUid: number,
+  sandboxGid: number,
+): void {
+  if (process.pid === 1 || process.ppid !== 1) {
+    throw new Error(
+      `nemoclaw-start child supervisor expected a direct PID 1 child, got pid=${process.pid} ppid=${process.ppid}`,
+    );
+  }
+  if (!canonicalNemoclawStartSupervisorArgv(process.argv)) {
+    throw new Error("nemoclaw-start child supervisor does not have the expected argv");
+  }
+  if (!(SYSTEM_BASH_EXECUTABLES as readonly string[]).includes(process.executable)) {
+    throw new Error(
+      `nemoclaw-start child supervisor expected the system Bash executable, got ${process.executable}`,
+    );
+  }
+  requireExactIds(process.status.uid, sandboxUid, "nemoclaw-start child supervisor Uid");
+  requireExactIds(process.status.gid, sandboxGid, "nemoclaw-start child supervisor Gid");
+  requireExactSupplementaryGroups(
+    process.status.groups,
+    sandboxGid,
+    "nemoclaw-start child supervisor Groups",
+  );
+  requireZeroCapabilities(process.status, "nemoclaw-start child supervisor");
+  if (process.status.noNewPrivs !== "1") {
+    throw new Error(
+      `nemoclaw-start child supervisor expected NoNewPrivs=1, got ${process.status.noNewPrivs}`,
+    );
+  }
+}
+
+export function validateSplitProcessSecurityReport(value: unknown): SplitProcessSecurityReport {
+  const report = requiredRecord(value, "split-process security report");
+  if (report.version !== 1) throw new Error("split-process security report version must be 1");
+  const observedProcEntries = requiredInteger(
+    report.observedProcEntries,
+    "split-process security report observedProcEntries",
+    1,
+  );
+  if (observedProcEntries > MAX_PROC_ENTRIES) {
+    throw new Error(`split-process security report exceeded ${MAX_PROC_ENTRIES} process entries`);
+  }
+  const sandboxUid = requiredInteger(report.sandboxUid, "sandbox uid", 1);
+  const sandboxGid = requiredInteger(report.sandboxGid, "sandbox gid", 1);
+  const supervisor = processIdentity(report.supervisor, "supervisor");
+  if (!Array.isArray(report.childSupervisors)) {
+    throw new Error("split-process security report childSupervisors must be an array");
+  }
+  const childSupervisors = report.childSupervisors.map((entry, index) =>
+    processIdentity(entry, `childSupervisors[${index}]`),
+  );
+  if (childSupervisors.length !== 1) {
+    throw new Error(
+      `expected exactly one nemoclaw-start child supervisor, found ${childSupervisors.length}`,
+    );
+  }
+  validateSupervisor(supervisor);
+  validateNemoclawStartSupervisor(childSupervisors[0]!, sandboxUid, sandboxGid);
+  return {
+    childSupervisors,
+    observedProcEntries,
+    sandboxGid,
+    sandboxUid,
+    supervisor,
+    version: 1,
+  };
+}
+
+export function parseSplitProcessSecurityReport(output: string): SplitProcessSecurityReport {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output.trim());
+  } catch (error) {
+    throw new Error("split-process security probe emitted invalid JSON", { cause: error });
+  }
+  return validateSplitProcessSecurityReport(parsed);
+}
+
+export function parseOpenShellContainerId(output: string, sandboxName: string): string {
+  const rows = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (rows.length !== 1) {
+    throw new Error(
+      `expected exactly one running OpenShell Docker container for ${sandboxName}, found ${rows.length}`,
+    );
+  }
+  const [id, name, sandboxId, sandboxWorkspace, ...unexpected] = rows[0]!.split("\t");
+  const expectedName = `openshell-${OPENSHELL_DEFAULT_WORKSPACE}--${sandboxName}-${sandboxId}`;
+  if (
+    !id ||
+    !/^[0-9a-f]{64}$/u.test(id) ||
+    !name ||
+    !sandboxId ||
+    !SAFE_OPENSHELL_IDENTITY_COMPONENT.test(sandboxId) ||
+    sandboxWorkspace !== OPENSHELL_DEFAULT_WORKSPACE ||
+    unexpected.length > 0 ||
+    name !== expectedName
+  ) {
+    throw new Error(`unexpected OpenShell Docker container identity for ${sandboxName}`);
+  }
+  return id;
+}
+
+export function dockerRuntimeEndpointArgs(privilegedExecArgs: readonly string[]): string[] {
+  if (privilegedExecArgs[0] === "exec") return [];
+  const dockerHost = privilegedExecArgs[1];
+  if (
+    privilegedExecArgs[0] !== "--host" ||
+    !dockerHost ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(dockerHost) ||
+    privilegedExecArgs[2] !== "exec"
+  ) {
+    throw new Error("privileged Docker execution did not identify a supported runtime endpoint");
+  }
+  return ["--host", dockerHost];
 }
 
 export function securityPostureEnabled(): boolean {
@@ -82,10 +552,8 @@ export function securityPostureExpectations(
 ): SecurityPostureExpectations {
   const enabled = truthy(env.NEMOCLAW_E2E_SECURITY_POSTURE);
   return {
-    droppedBoundingCapabilities: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS),
     enabled,
-    noNewPrivileges: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS),
-    nonRootEntrypoint: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT),
+    openshellSplitProcess: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS),
   };
 }
 
@@ -93,10 +561,8 @@ export function securityPostureModeEnv(): NodeJS.ProcessEnv {
   const expectations = securityPostureExpectations();
   if (!expectations.enabled) return {};
   return {
-    NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS: expectations.droppedBoundingCapabilities ? "1" : "0",
-    NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT: expectations.nonRootEntrypoint ? "1" : "0",
     NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
-    NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS: expectations.noNewPrivileges ? "1" : "0",
+    NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: expectations.openshellSplitProcess ? "1" : "0",
     NEMOCLAW_E2E_SECURITY_POSTURE: "1",
   };
 }
@@ -106,8 +572,12 @@ export async function assertSecurityPosture(
   sandbox: SandboxClient,
   sandboxName: string,
   agent: SecurityPostureAgent,
+  dependencies: SecurityPostureDependencies = {},
 ): Promise<SecurityPostureSummary> {
   const expectations = securityPostureExpectations();
+  if (!expectations.openshellSplitProcess) {
+    throw new Error("security-posture mode requires NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS=1");
+  }
   const hostUser = await host.command(
     "sh",
     ["-lc", 'uid="$(id -u)"; gid="$(id -g)"; echo "uid=$uid gid=$gid"; test "$uid" -ne 0'],
@@ -119,38 +589,66 @@ export async function assertSecurityPosture(
   );
   requireSuccess("non-root host user", hostUser);
 
-  const entrypoint = await sandbox.execShell(
+  const privilegedExecArgv = dependencies.privilegedExecArgv ?? privilegedSandboxExecArgv;
+  const splitProcessProbeCommand = ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE];
+  const privilegedDockerEnv = buildSubprocessEnv();
+  const privilegedDockerEnvironmentIdentity = subprocessEnvironmentIdentity(privilegedDockerEnv);
+  const initialPrivilegedExecArgs = privilegedExecArgv(
     sandboxName,
-    trustedSandboxShellScript(
-      'grep -E "^(Uid|Gid|CapBnd|CapEff|NoNewPrivs):" /proc/1/status; ' +
-        "test -n \"$(awk '/^Uid:/ { print $2; exit }' /proc/1/status)\"; " +
-        "test -n \"$(awk '/^CapBnd:/ { print $2; exit }' /proc/1/status)\"",
-    ),
+    splitProcessProbeCommand,
+    false,
+    true,
+  );
+  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
+  const dockerEndpointArgs = dockerRuntimeEndpointArgs(initialPrivilegedExecArgs);
+
+  const containers = await host.command(
+    "docker",
+    [
+      ...dockerEndpointArgs,
+      "ps",
+      "--no-trunc",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--format",
+      `{{.ID}}\t{{.Names}}\t{{.Label "${OPENSHELL_SANDBOX_ID_LABEL}"}}\t{{.Label "${OPENSHELL_SANDBOX_WORKSPACE_LABEL}"}}`,
+    ],
     {
-      artifactName: "security-posture-entrypoint-status",
-      env: probeEnv(),
+      artifactName: "security-posture-container-identity",
+      env: privilegedDockerEnv,
       timeoutMs: 30_000,
     },
   );
-  requireSuccess("entrypoint security status", entrypoint);
-  const uid = statusField(entrypoint.stdout, "Uid");
-  const capBnd = statusField(entrypoint.stdout, "CapBnd");
-  const capEff = statusField(entrypoint.stdout, "CapEff");
-  const noNewPrivs = statusField(entrypoint.stdout, "NoNewPrivs");
-  if (!uid || !capBnd) throw new Error(`entrypoint status is incomplete:\n${entrypoint.stdout}`);
-  const dangerousBoundingCapabilities = dangerousCapabilities(capBnd);
-  const dangerousEffectiveCapabilities = dangerousCapabilities(capEff);
-  if (expectations.nonRootEntrypoint && uid === "0") {
-    throw new Error(`entrypoint PID 1 expected a non-root uid, got ${uid}`);
+  requireSuccess("OpenShell Docker container discovery", containers);
+  const containerId = parseOpenShellContainerId(containers.stdout, sandboxName);
+  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
+  const finalPrivilegedExecArgs = privilegedExecArgv(
+    sandboxName,
+    splitProcessProbeCommand,
+    false,
+    true,
+    containerId,
+  );
+  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
+  const finalDockerEndpointArgs = dockerRuntimeEndpointArgs(finalPrivilegedExecArgs);
+  if (
+    finalDockerEndpointArgs.length !== dockerEndpointArgs.length ||
+    finalDockerEndpointArgs.some((argument, index) => argument !== dockerEndpointArgs[index])
+  ) {
+    throw new Error("container runtime endpoint changed before privileged inspection");
   }
-  if (expectations.droppedBoundingCapabilities && dangerousBoundingCapabilities.length > 0) {
-    throw new Error(
-      `entrypoint PID 1 retained bounding capabilities: ${dangerousBoundingCapabilities.join(", ")}`,
-    );
-  }
-  if (expectations.noNewPrivileges && noNewPrivs !== "1") {
-    throw new Error(`entrypoint PID 1 expected NoNewPrivs=1, got ${noNewPrivs ?? "<missing>"}`);
-  }
+  const splitProcessProbe = await host.command("docker", finalPrivilegedExecArgs, {
+    artifactName: "security-posture-split-processes",
+    env: privilegedDockerEnv,
+    timeoutMs: 30_000,
+  });
+  requireSuccess(
+    "OpenShell and nemoclaw-start child supervisor security posture",
+    splitProcessProbe,
+  );
+  const splitProcess = parseSplitProcessSecurityReport(splitProcessProbe.stdout);
 
   const rcFiles = await sandbox.execShell(
     sandboxName,
@@ -257,17 +755,13 @@ tail -n 20 "$log"
 
   return {
     configureGuard: true,
-    entrypoint: {
-      capBnd,
-      capEff,
-      dangerousBoundingCapabilities,
-      dangerousEffectiveCapabilities,
-      noNewPrivs,
-      uid,
-    },
     hostNonRoot: true,
     rcFilesLocked: true,
     runtimeProxyEnvLocked: true,
+    splitProcess: {
+      childSupervisor: splitProcess.childSupervisors[0]!,
+      supervisor: splitProcess.supervisor,
+    },
     startupLogClean: true,
   };
 }

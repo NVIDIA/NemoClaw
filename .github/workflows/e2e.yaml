@@ -5177,11 +5177,9 @@ jobs:
       matrix:
         include:
           - agent: openclaw
-            expect_non_root_entrypoint: "1"
             sandbox_name: e2e-oc-security
             test_file: test/e2e/live/full-e2e.test.ts
           - agent: hermes
-            expect_non_root_entrypoint: "0"
             sandbox_name: e2e-hm-security
             test_file: test/e2e/live/hermes-e2e.test.ts
     env:
@@ -5193,10 +5191,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT: ${{ matrix.expect_non_root_entrypoint }}
-      # Legacy-parity contract: enforce a non-root host user. PID 1 must stay
-      # root long enough to step down child processes, so its uid, bounding
-      # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
+      NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1"
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
       NEMOCLAW_E2E_SECURITY_POSTURE: "1"
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
