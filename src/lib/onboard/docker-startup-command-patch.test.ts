@@ -29,7 +29,7 @@ function inspectFixture(): DockerContainerInspect {
         "openshell.ai/sandbox-name": "alpha",
       },
       Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-      Cmd: [],
+      Cmd: ["--workdir", "/sandbox"],
       User: "0",
       WorkingDir: "/workspace",
     },
@@ -90,6 +90,11 @@ describe("Docker startup-command patch", () => {
     );
     expect(cloneArgs).toContain(`sha256:${"c".repeat(64)}`);
     expect(cloneArgs).not.toContain("openshell/sandbox:abc");
+    expect(cloneArgs.slice(cloneArgs.indexOf(`sha256:${"c".repeat(64)}`))).toEqual([
+      `sha256:${"c".repeat(64)}`,
+      "--workdir",
+      "/sandbox",
+    ]);
     expect(dockerCapture).toHaveBeenCalledWith(
       expect.arrayContaining(["ps", "-a", "--no-trunc"]),
       expect.objectContaining({ ignoreError: true }),

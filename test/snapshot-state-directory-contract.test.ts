@@ -77,7 +77,7 @@ function writeFakeOpenshell(binDir: string): string {
     `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "sandbox" && args[1] === "ssh-config") {
-  process.stdout.write("Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n");
+  process.stdout.write(\`Host openshell-\${args.at(-1)}\\n  HostName 127.0.0.1\\n  User sandbox\\n\`);
   process.exit(0);
 }
 process.exit(0);

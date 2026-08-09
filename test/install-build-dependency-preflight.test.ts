@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeExecutable } from "./helpers/installer-sourced-env";
+import { writeNpmStub } from "./helpers/installer-run-fixture";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 
@@ -18,20 +19,6 @@ if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then exec ${JSON.stringify(process.execPath)} "$@"; fi
 if [ "$1" = "-e" ]; then exec ${JSON.stringify(process.execPath)} "$@"; fi
 exit 99`,
-  );
-}
-
-function writeNpmStub(fakeBin: string, installSnippet = "exit 0") {
-  writeExecutable(
-    path.join(fakeBin, "npm"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
-if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
-if [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
-  ${installSnippet}
-fi
-echo "unexpected npm invocation: $*" >&2; exit 98`,
   );
 }
 
@@ -81,7 +68,7 @@ function runWithoutStrings(env: Record<string, string> = {}) {
   writeDockerOkStub(fakeBin);
   env.NEMOCLAW_DEFER_OPENSHELL_INSTALL === "1" &&
     (() => {
-      writeNpmStub(fakeBin, 'echo "npm stub stop" >&2; exit 91');
+      writeNpmStub(fakeBin, { installSnippet: 'echo "npm stub stop" >&2; exit 91' });
       env.NPM_PREFIX = path.join(tmp, "prefix");
     })();
   return spawnSync("bash", [INSTALLER], {

@@ -24,6 +24,10 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")
     .replace(/\\\s*\n/g, " ")
+    .replace(
+      "--network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro ",
+      "",
+    )
     .trim();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
   const log = path.join(tmp, "calls.log");
@@ -41,10 +45,15 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
       "set -euo pipefail",
       `call_log=${JSON.stringify(log)}`,
       'openclaw() { printf "%s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"; }',
-      command.replaceAll(
-        "/scripts/lib/reviewed-npm-archive.mts",
-        path.join(ROOT, "scripts", "lib", "reviewed-npm-archive.mts"),
-      ),
+      command
+        .replace(
+          "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
+          "unset NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR;",
+        )
+        .replaceAll(
+          "/scripts/lib/reviewed-npm-archive.mts",
+          path.join(ROOT, "scripts", "lib", "reviewed-npm-archive.mts"),
+        ),
     ].join("\n");
     const scriptPath = path.join(tmp, "run.sh");
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });

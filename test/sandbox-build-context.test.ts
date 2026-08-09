@@ -40,7 +40,12 @@ describe("sandbox build context staging", () => {
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
     );
-    for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
+    for (const runtimeName of [
+      "managed-image-messaging-runtime",
+      "mcporter-runtime",
+      "openclaw-runtime",
+      "wechat-runtime",
+    ]) {
       for (const fileName of ["package.json", "package-lock.json"]) {
         writeFixture(
           path.join("agents", "openclaw", runtimeName, fileName),
@@ -48,6 +53,15 @@ describe("sandbox build context staging", () => {
         );
       }
     }
+    writeFixture(
+      path.join(
+        "agents",
+        "openclaw",
+        "managed-image-messaging-runtime",
+        "npm-cache-seed",
+        ".gitkeep",
+      ),
+    );
     for (const fileName of [
       "package.json",
       "package-lock.json",
@@ -64,6 +78,9 @@ describe("sandbox build context staging", () => {
         "fixture\n",
         ["install-reviewed-runtime.sh", "npm-ci-locked.sh"].includes(fileName) ? 0o755 : 0o644,
       );
+    }
+    for (const seedDirectory of ["mcp-runtime-npm-cache-seed", "npm-cache-seed"]) {
+      writeFixture(path.join("tools", "mcp-tool-discovery-runtime", seedDirectory, ".gitkeep"));
     }
     for (const fileName of [
       "package.json",
@@ -119,7 +136,7 @@ describe("sandbox build context staging", () => {
     writeFixture(
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
-    writeFixture(path.join("scripts", "checks", "node-tar-image-scan.mts"));
+    writeFixture(path.join("scripts", "checks", "materialize-locked-npm-cache-seed.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
@@ -154,6 +171,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-managed-transport-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
+    writeFixture(path.join("scripts", "openclaw", "patch-gateway-daemon-dialback.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
@@ -162,6 +180,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "upgrade-bundled-npm.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
     writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"), "fixture\n", 0o700);
+    writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "openclaw-npm-remediation.mts"), "fixture\n", 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts"), 0o700);
@@ -246,11 +265,59 @@ describe("sandbox build context staging", () => {
         (fs.statSync(path.join(runtimeDir, "package-lock.json")).mode & 0o777).toString(8),
       ).toBe("644");
     }
+
+    const managedRuntimeDir = path.join(
+      buildCtx,
+      "agents",
+      "openclaw",
+      "managed-image-messaging-runtime",
+    );
+    expect(fs.readdirSync(managedRuntimeDir).sort()).toEqual([
+      "npm-cache-seed",
+      "package-lock.json",
+      "package.json",
+    ]);
+    for (const fileName of ["package.json", "package-lock.json"]) {
+      expect(fs.readFileSync(path.join(managedRuntimeDir, fileName), "utf8")).toBe(
+        fs.readFileSync(
+          path.join(sourceRoot, "agents", "openclaw", "managed-image-messaging-runtime", fileName),
+          "utf8",
+        ),
+      );
+    }
+    expect(
+      fs.readFileSync(path.join(managedRuntimeDir, "npm-cache-seed", ".gitkeep"), "utf8"),
+    ).toBe(
+      fs.readFileSync(
+        path.join(
+          sourceRoot,
+          "agents",
+          "openclaw",
+          "managed-image-messaging-runtime",
+          "npm-cache-seed",
+          ".gitkeep",
+        ),
+        "utf8",
+      ),
+    );
   }
 
   function expectStagedMcpToolDiscoveryRuntime(buildCtx: string, sourceRoot: string) {
     const runtimeDir = path.join(buildCtx, "tools", "mcp-tool-discovery-runtime");
     expect(fs.readdirSync(runtimeDir).sort()).toEqual([
+      "build-runtime.ts",
+      "install-reviewed-runtime.sh",
+      "mcp-runtime-npm-cache-seed",
+      "mcp-tool-discovery.ts",
+      "npm-cache-seed",
+      "npm-ci-locked.sh",
+      "package-lock.json",
+      "package.json",
+      "streamable-http-client.test.ts",
+      "tool-discovery-core.ts",
+      "tsconfig.json",
+    ]);
+    for (const fileName of [
       "build-runtime.ts",
       "install-reviewed-runtime.sh",
       "mcp-tool-discovery.ts",
@@ -260,8 +327,7 @@ describe("sandbox build context staging", () => {
       "streamable-http-client.test.ts",
       "tool-discovery-core.ts",
       "tsconfig.json",
-    ]);
-    for (const fileName of fs.readdirSync(runtimeDir)) {
+    ]) {
       expect(fs.readFileSync(path.join(runtimeDir, fileName), "utf8")).toBe(
         fs.readFileSync(
           path.join(sourceRoot, "tools", "mcp-tool-discovery-runtime", fileName),
@@ -270,6 +336,21 @@ describe("sandbox build context staging", () => {
       );
       expect((fs.statSync(path.join(runtimeDir, fileName)).mode & 0o777).toString(8)).toBe(
         ["install-reviewed-runtime.sh", "npm-ci-locked.sh"].includes(fileName) ? "755" : "644",
+      );
+    }
+    for (const seedDirectory of ["mcp-runtime-npm-cache-seed", "npm-cache-seed"]) {
+      const sourceSeedDirectory = path.join(
+        sourceRoot,
+        "tools",
+        "mcp-tool-discovery-runtime",
+        seedDirectory,
+      );
+      const stagedSeedDirectory = path.join(runtimeDir, seedDirectory);
+      const sourceEntries = fs.readdirSync(sourceSeedDirectory).sort();
+      expect(sourceEntries.length).toBeGreaterThan(0);
+      expect(fs.readdirSync(stagedSeedDirectory).sort()).toEqual(sourceEntries);
+      expect(fs.readFileSync(path.join(stagedSeedDirectory, sourceEntries[0]))).toEqual(
+        fs.readFileSync(path.join(sourceSeedDirectory, sourceEntries[0])),
       );
     }
   }
@@ -301,10 +382,12 @@ describe("sandbox build context staging", () => {
     const stagedScripts = path.join(buildCtx, "scripts");
     const stagedLib = path.join(stagedScripts, "lib");
     const stagedHelper = path.join(stagedLib, "reviewed-npm-archive.mts");
+    const stagedSeed = path.join(stagedLib, "seed-reviewed-npm-cache.mts");
 
     expect((fs.statSync(stagedScripts).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedLib).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedHelper).mode & 0o777).toString(8)).toBe("755");
+    expect((fs.statSync(stagedSeed).mode & 0o777).toString(8)).toBe("755");
   }
 
   function expectStagedGroupWritablePayloadModes(buildCtx: string) {
@@ -655,6 +738,11 @@ describe("sandbox build context staging", () => {
       ).toBe(true);
       expect(
         fs.existsSync(
+          path.join(buildCtx, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
           path.join(buildCtx, "scripts", "patch-openclaw-shared-state-permissions.mts"),
         ),
       ).toBe(true);
@@ -666,9 +754,6 @@ describe("sandbox build context staging", () => {
         fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-bundled-npm-ip-address.mts")),
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "checks", "node-tar-image-scan.mts")),
-      ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),
       ).toBe(false);

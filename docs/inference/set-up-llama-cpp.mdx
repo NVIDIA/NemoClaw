@@ -1,0 +1,213 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up llama.cpp"
+sidebar-title: "Set Up llama.cpp"
+description: "Attach an existing llama.cpp server or use the experimental managed NVIDIA Nemotron recipe on DGX Spark."
+description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or the experimental declarative managed recipe on DGX Spark."
+keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "nemotron gguf"]
+content:
+  type: "how_to"
+---
+NemoClaw provides two first-class llama.cpp paths.
+You can attach an authenticated server that you operate, or let NemoClaw materialize one repository-owned recipe on DGX Spark.
+Both paths are experimental and use OpenAI Chat Completions through `https://inference.local/v1`.
+
+## Choose a llama.cpp Path
+
+| Path | NemoClaw manages | You manage | Use it when |
+|---|---|---|---|
+| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
+| Managed DGX Spark | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | The qualified Linux host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental NVIDIA Nemotron recipe without managing llama-server directly. |
+
+Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
+NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
+Managed llama.cpp instead runs one exact GGUF recipe with one request slot and no general launch-flag overrides.
+Refer to [Choose a Local Inference Server](choose-local-inference-server) for the complete comparison.
+
+## Attach an Existing llama.cpp Server
+
+Use this path when you operate `llama-server` and want NemoClaw to register its authenticated endpoint without owning its process or model.
+The server must satisfy all of these requirements:
+
+- Listen over HTTP on `127.0.0.1:8081` and expose its OpenAI-compatible API under `/v1`.
+- Require the same native bearer key supplied through `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`.
+- Expose bounded native llama.cpp evidence through `/v1/models`, `/health`, `/props`, and either `/metrics` or the native metrics-not-supported response.
+- Report a stable, non-path served model alias.
+- Return native llama.cpp model metadata without conflicting model entries.
+
+Configure the server with its own supported mechanism before you run NemoClaw.
+Enable metrics when available, and use an API-key file instead of placing the key in process arguments when your llama.cpp build supports those options.
+If the server exposes multiple models, identify the exact served alias through `NEMOCLAW_MODEL`.
+
+For interactive onboarding, run:
+
+```bash
+$$nemoclaw onboard
+```
+
+Select **Local llama.cpp** and provide the native API key.
+Interactive attachment succeeds only when the server exposes exactly one native model.
+If the server exposes multiple models, use non-interactive onboarding and set `NEMOCLAW_MODEL` to the exact served alias.
+
+For non-interactive onboarding, export `NEMOCLAW_LLAMACPP_LOCAL_TOKEN` from your secret manager and run:
+
+```bash
+: "${NEMOCLAW_LLAMACPP_LOCAL_TOKEN:?Export the native llama.cpp API key first}"
+NEMOCLAW_PROVIDER=llama-cpp \
+NEMOCLAW_MODEL="<served-model-alias>" \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+NemoClaw reads `NEMOCLAW_LLAMACPP_LOCAL_TOKEN` from the environment for this command.
+You can omit `NEMOCLAW_MODEL` only when the server exposes exactly one native model.
+It refuses unauthenticated, ambiguous, non-native, conflicting, or differently addressed servers instead of guessing their identity.
+It does not start, stop, upgrade, or remove an attached server.
+
+Verify the registered route:
+
+```bash
+$$nemoclaw my-assistant status
+$$nemoclaw my-assistant doctor
+```
+
+If a compatible server does not satisfy the first-class fingerprint, use [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint).
+That path supports operator-selected endpoints and ports without claiming llama.cpp-specific identity or lifecycle ownership.
+
+## Install Managed llama.cpp on DGX Spark
+
+Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
+The default recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
+
+<Note>
+This path is an experimental implementation.
+It does not establish a supported agent, model, and runtime tuple until the protected qualification and activation gates pass.
+</Note>
+
+Before you start, confirm these prerequisites:
+
+- Use a DGX Spark host with Linux on Arm64.
+- Confirm that Docker is operational on the host.
+- Confirm that the NVIDIA Container Toolkit is operational.
+- Confirm that NVIDIA Container Device Interface support is healthy.
+- Use NVIDIA driver version `580.65.06` or later.
+- Stop any process that uses host port `8081`.
+- Allow capacity for the pinned images, the GGUF file, and same-filesystem download staging.
+- Export `HF_TOKEN` only when the YAML-declared Hugging Face source requires authentication.
+
+NemoClaw uses `HF_TOKEN` only while it acquires the model.
+It does not write the value to managed llama.cpp state, the receipt, the serving container environment, or the sandbox registry.
+Run `unset HF_TOKEN` after onboarding when no other process needs it.
+
+<Warning>
+When the exact artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
+It reuses locally present pinned images and a cached GGUF only after their exact identities verify.
+It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
+Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
+</Warning>
+
+Run interactive onboarding on the DGX Spark and select **NVIDIA Nemotron with managed llama.cpp (DGX Spark)**:
+
+```bash
+$$nemoclaw onboard
+```
+
+For non-interactive onboarding, select the repository-owned recipe explicitly:
+
+```bash
+NEMOCLAW_PROVIDER=install-llama-cpp \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+When `NEMOCLAW_LLAMACPP_RECIPE` is unset, NemoClaw selects the one shipped managed llama.cpp recipe.
+Set the variable explicitly in automation so the selected recipe is visible in the invocation.
+Do not set `NEMOCLAW_MODEL` for this path.
+The repository YAML recipe is authoritative for the exact model file, revision, digest, image, launch settings, resource limits, readiness probes, and disabled surfaces.
+NemoClaw does not provide hidden model, port, image, or launch-flag overrides for the managed path.
+
+Onboarding performs these actions:
+
+- Resolves the recipe against a fresh DGX Spark readiness report.
+- Reuses locally present pinned downloader, runtime, and probe images, and pulls only the missing digest-pinned images declared by the recipe.
+- Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
+- Verifies the GGUF size and SHA-256 digest before it starts the runtime.
+- Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
+- Publishes port `8081` on `127.0.0.1` and connects the container to a Docker internal network.
+- Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
+
+The runtime cannot download a model and has no egress on its internal Docker network.
+The recipe disables the Web UI, slot inspection, server tools, agent mode, Model Context Protocol proxy, router, and multimodal projection.
+The API key enters the container through an owner-only read-only file, not a process argument.
+
+Podman and Kubernetes do not provide the required host-local-inference capability for this path.
+Selecting either runtime fails before model acquisition or runtime mutation and never falls back to Docker.
+
+## Verify the Managed Runtime
+
+Run the managed runtime, route, and host-port checks:
+
+```bash
+$$nemoclaw my-assistant status
+$$nemoclaw my-assistant doctor
+docker port nemoclaw-llama-cpp
+```
+
+Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `reachable`, and `doctor` exits with status `0`.
+The Docker port output must contain `127.0.0.1:8081`.
+These checks do not establish agent and model qualification.
+
+`status` reports the recipe ID, model digest, image reference, endpoint, and lifecycle state without exposing the API key.
+`doctor` distinguishes identity, runtime, and route failures and provides a recovery hint.
+Refer to [CLI Commands](../../reference/commands) for complete command behavior.
+
+## Recover the Managed Runtime
+
+If onboarding stops, rerun the same provider and recipe selection.
+NemoClaw resumes only the exact persisted Docker authority, image, recipe, model digest, network, and runtime identity.
+It reconciles an unfinished create journal before it starts a new runtime.
+Phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.
+
+If `status` reports `stopped` or `preparing`, rerun the same onboarding selection to resume the runtime.
+If it reports `absent`, `conflict`, or `unknown`, inspect the reported identity or Docker-authority error before retrying.
+Do not remove a same-name container or network unless its labels and identifiers match the persisted ownership state.
+
+The model remains in the shared Hugging Face cache during recovery.
+NemoClaw reuses it only after the YAML-declared revision, file, size, digest, and filesystem identity verify.
+Refer to [Host Files and State](../../reference/host-files-and-state) before changing managed state or cached artifacts.
+
+## Upgrade or Roll Back
+
+NemoClaw does not independently upgrade an attached llama.cpp server.
+Upgrade or roll back that server and its model through the operator-owned process, then rerun onboarding so NemoClaw validates the endpoint again.
+
+The managed path does not provide an in-place model, image, recipe upgrade, downgrade, or rollback command.
+The installed runtime remains bound to the exact repository YAML authority recorded during onboarding.
+Do not edit the ownership, receipt, or recipe-digest state to force a migration.
+
+If an updated NemoClaw release changes that authority, resume fails closed and preserves the existing state.
+NemoClaw does not currently define a managed llama.cpp migration procedure for that case.
+Follow release-specific migration guidance when it becomes available.
+
+## Remove the Managed Runtime
+
+Run:
+
+```bash
+$$nemoclaw my-assistant destroy
+```
+
+After OpenShell confirms sandbox deletion, the command removes the exact managed llama.cpp container, internal network, API key, and gateway-scoped ownership state.
+It preserves `~/.cache/huggingface/` because other applications can use that cache.
+If exact cleanup fails, NemoClaw preserves the sandbox registry entry and ownership state for a retry.
+
+For full NemoClaw removal, run `$$nemoclaw uninstall`.
+Full uninstall applies the same exact-ownership checks and preserves the shared Hugging Face cache.
+
+## Related Topics
+
+- [Choose a Local Inference Server](choose-local-inference-server) to compare llama.cpp with Ollama, vLLM, and NVIDIA NIM.
+- [Verify the Inference Route](../validate-inference/verify-inference-route) after onboarding.
+- [Configure Inference Timeouts](../manage-inference/configure-inference-timeouts) for slow local models.
