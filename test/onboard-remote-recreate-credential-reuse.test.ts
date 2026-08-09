@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { describe, it } from "vitest";
 
+import {
+  createOnboardProcessWorkspace,
+  runOnboardProcess,
+  workspaceEnv,
+} from "./helpers/onboard-child-process-harness";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
@@ -18,21 +21,19 @@ describe("onboard recovered remote-provider credential reuse", () => {
     "re-applies an exact compatible route without exporting or directly validating its gateway credential",
     testTimeoutOptions(90_000),
     () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-recreate-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const home = path.join(tmpDir, "home");
-      const scriptPath = path.join(tmpDir, "remote-recreate.cjs");
-      const curlLogPath = path.join(tmpDir, "curl-probes.log");
-      const openshellLogPath = path.join(tmpDir, "openshell.log");
+      const workspace = createOnboardProcessWorkspace("nemoclaw-remote-recreate-", {
+        separateHome: true,
+      });
+      const scriptPath = workspace.path("remote-recreate.cjs");
+      const curlLogPath = workspace.path("curl-probes.log");
+      const openshellLogPath = workspace.path("openshell.log");
       const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
       const registryPath = JSON.stringify(
         path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
       );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.mkdirSync(home, { recursive: true });
-      fs.writeFileSync(
-        path.join(fakeBin, "openshell"),
+      workspace.writeExecutable(
+        "openshell",
         `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$OPENSHELL_FAKE_COMMAND_LOG"
 if [ "$1" = "inference" ] && [ "$2" = "get" ]; then
@@ -57,15 +58,13 @@ EOF
 fi
 exit 0
 `,
-        { mode: 0o755 },
       );
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
+      workspace.writeExecutable(
+        "curl",
         `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$OPENSHELL_FAKE_CURL_LOG"
 exit 1
 `,
-        { mode: 0o755 },
       );
       fs.writeFileSync(
         scriptPath,
@@ -140,26 +139,25 @@ const { setupNim, setupInference } = require(${onboardPath});
 `,
       );
 
-      try {
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: home,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
-            VITEST: "false",
-            NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
-            NEMOCLAW_TEST_NO_SLEEP: "1",
-            OPENSHELL_FAKE_CURL_LOG: curlLogPath,
-            OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
-            COMPATIBLE_API_KEY: "",
-            NVIDIA_INFERENCE_API_KEY: "",
-            NVIDIA_API_KEY: "",
-          },
-          timeout: 80_000,
+      const scenarioEnv = (overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv =>
+        workspaceEnv(workspace, {
+          VITEST: "false",
+          NEMOCLAW_OPENSHELL_BIN: path.join(workspace.binDir, "openshell"),
+          NEMOCLAW_TEST_NO_SLEEP: "1",
+          OPENSHELL_FAKE_CURL_LOG: curlLogPath,
+          OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
+          COMPATIBLE_API_KEY: "",
+          NVIDIA_INFERENCE_API_KEY: "",
+          NVIDIA_API_KEY: "",
+          ...overrides,
         });
-        const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+
+      try {
+        const result = runOnboardProcess([scriptPath], {
+          env: scenarioEnv(),
+          timeoutMs: 80_000,
+        });
+        const output = result.output;
 
         assert.equal(result.status, 0, output);
         assert.match(output, /Reusing existing gateway credential for 'compatible-endpoint'/);
@@ -193,27 +191,14 @@ const { setupNim, setupInference } = require(${onboardPath});
         assert.ok(!openshellLog.includes("--credential"), openshellLog);
 
         fs.writeFileSync(openshellLogPath, "");
-        const overrideResult = spawnSync(process.execPath, [scriptPath], {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: home,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
-            VITEST: "false",
-            NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
-            NEMOCLAW_TEST_NO_SLEEP: "1",
+        const overrideResult = runOnboardProcess([scriptPath], {
+          env: scenarioEnv({
             NEMOCLAW_TEST_KEEP_MODEL_OVERRIDE: "1",
             NEMOCLAW_MODEL: "different/model-override",
-            OPENSHELL_FAKE_CURL_LOG: curlLogPath,
-            OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
-            COMPATIBLE_API_KEY: "",
-            NVIDIA_INFERENCE_API_KEY: "",
-            NVIDIA_API_KEY: "",
-          },
-          timeout: 80_000,
+          }),
+          timeoutMs: 80_000,
         });
-        const overrideOutput = `${overrideResult.stdout || ""}\n${overrideResult.stderr || ""}`;
+        const overrideOutput = overrideResult.output;
         assert.notEqual(overrideResult.status, 0, overrideOutput);
         assert.match(overrideOutput, /recovered model is missing or invalid/);
         const overrideOpenshellLog = fs.readFileSync(openshellLogPath, "utf8");
@@ -223,26 +208,11 @@ const { setupNim, setupInference } = require(${onboardPath});
         );
 
         fs.writeFileSync(openshellLogPath, "");
-        const unauthorizedResult = spawnSync(process.execPath, [scriptPath], {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: home,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
-            VITEST: "false",
-            NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
-            NEMOCLAW_TEST_NO_SLEEP: "1",
-            NEMOCLAW_TEST_OMIT_REUSE_AUTHORIZATION: "1",
-            OPENSHELL_FAKE_CURL_LOG: curlLogPath,
-            OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
-            COMPATIBLE_API_KEY: "",
-            NVIDIA_INFERENCE_API_KEY: "",
-            NVIDIA_API_KEY: "",
-          },
-          timeout: 80_000,
+        const unauthorizedResult = runOnboardProcess([scriptPath], {
+          env: scenarioEnv({ NEMOCLAW_TEST_OMIT_REUSE_AUTHORIZATION: "1" }),
+          timeoutMs: 80_000,
         });
-        const unauthorizedOutput = `${unauthorizedResult.stdout || ""}\n${unauthorizedResult.stderr || ""}`;
+        const unauthorizedOutput = unauthorizedResult.output;
         assert.notEqual(unauthorizedResult.status, 0, unauthorizedOutput);
         assert.match(unauthorizedOutput, /A host credential is required to configure provider/);
         const unauthorizedOpenshellLog = fs.readFileSync(openshellLogPath, "utf8");
@@ -253,26 +223,11 @@ const { setupNim, setupInference } = require(${onboardPath});
         );
 
         fs.writeFileSync(openshellLogPath, "");
-        const conflictingEndpointResult = spawnSync(process.execPath, [scriptPath], {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: home,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
-            VITEST: "false",
-            NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
-            NEMOCLAW_TEST_NO_SLEEP: "1",
-            NEMOCLAW_TEST_CONFLICTING_ENDPOINT: "1",
-            OPENSHELL_FAKE_CURL_LOG: curlLogPath,
-            OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
-            COMPATIBLE_API_KEY: "",
-            NVIDIA_INFERENCE_API_KEY: "",
-            NVIDIA_API_KEY: "",
-          },
-          timeout: 80_000,
+        const conflictingEndpointResult = runOnboardProcess([scriptPath], {
+          env: scenarioEnv({ NEMOCLAW_TEST_CONFLICTING_ENDPOINT: "1" }),
+          timeoutMs: 80_000,
         });
-        const conflictingEndpointOutput = `${conflictingEndpointResult.stdout || ""}\n${conflictingEndpointResult.stderr || ""}`;
+        const conflictingEndpointOutput = conflictingEndpointResult.output;
         assert.notEqual(conflictingEndpointResult.status, 0, conflictingEndpointOutput);
         assert.match(
           conflictingEndpointOutput,
@@ -290,7 +245,7 @@ const { setupNim, setupInference } = require(${onboardPath});
           `endpoint drift must fail before provider or route mutation: ${conflictingEndpointOpenshellLog}`,
         );
       } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        workspace.remove();
       }
     },
   );

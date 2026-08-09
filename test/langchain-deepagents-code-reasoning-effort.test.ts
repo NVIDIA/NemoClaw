@@ -87,6 +87,37 @@ print("managed-reasoning-effort-unset-ok")
     expect(output).toContain("managed-reasoning-effort-unset-ok");
   });
 
+  it("composes the Ultra template argument with managed reasoning effort (#7441)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    writeManagedReasoningEffort(tempDir, "high\n");
+
+    const output = runValidation(
+      tempDir,
+      `
+from deepagents_code import config
+
+assert config._get_provider_kwargs(
+    "openai",
+    model_name="nvidia/nemotron-3-ultra-550b-a55b",
+) == {
+    **${BASE_OPENAI_KWARGS},
+    "extra_body": {
+        "reasoning_effort": "high",
+        "chat_template_kwargs": {"force_nonempty_content": True},
+    },
+}
+assert config._get_provider_kwargs(
+    "openrouter",
+    model_name="nvidia/nemotron-3-ultra-550b-a55b",
+) == ${BASE_OPENROUTER_KWARGS}
+print("managed-ultra-reasoning-effort-ok")
+`,
+    );
+
+    expect(output).toContain("managed-ultra-reasoning-effort-ok");
+  });
+
   it("falls back to the endpoint default for a missing capability file (#7938)", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);

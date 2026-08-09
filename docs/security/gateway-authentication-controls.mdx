@@ -1,0 +1,206 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Gateway and Secret Controls"
+sidebar-title: "Gateway and Secrets"
+description: "Review runtime-specific gateway access and the shared secret-redaction and memory-scanning controls."
+description-agent: "Explains runtime-specific gateway access and shared secret-handling controls. Use when reviewing dashboard exposure, device pairing, secret redaction, or memory scanning."
+keywords: ["nemoclaw gateway security", "dashboard security", "secret redaction"]
+content:
+  type: "concept"
+---
+NemoClaw applies gateway access controls when the selected agent runtime exposes an in-sandbox gateway or dashboard.
+CLI secret redaction and runtime-specific memory guidance apply across guide variants.
+
+<AgentOnly variant="deepagents">
+LangChain Deep Agents Code has no in-sandbox agent gateway or dashboard, so device pairing, bind, and dashboard controls do not apply.
+The shared secret-handling controls below still apply.
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
+NemoClaw hardens these defaults at image build time.
+
+## Device Authentication
+
+Device authentication requires each connecting device to go through a pairing flow before it can interact with the gateway.
+
+| Aspect | Detail |
+|---|---|
+| Default | The base Dockerfile enables device authentication for loopback dashboards. Standard onboarding currently applies a managed compatibility opt-out for immediate dashboard access. NemoClaw also disables device authentication for non-loopback `CHAT_UI_URL` values. |
+| What you can change | Outside managed onboarding, set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` only as a deliberate build-time opt-out. The setting and its managed-vs-operator provenance are baked into `openclaw.json` audit metadata and the config is verified by hash at startup. |
+| Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
+| Recommendation | Prefer loopback access or SSH port forwarding so device authentication stays enabled. If a browser-only remote dashboard requires the compatibility setting, use HTTPS and restrict who can reach the dashboard. |
+
+## Gateway Bind Address
+
+NemoClaw binds the OpenShell gateway to loopback by default.
+
+| Aspect | Detail |
+|---|---|
+| Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
+| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` during onboarding and on later `connect` calls for remote dashboard/API access. Recreate a local-only sandbox before changing it to a remote bind. |
+| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway. NemoClaw rejects wildcard Docker-driver gateway binds while gateway JWT auth is active. |
+| Recommendation | Keep the gateway loopback default and expose only the dashboard forward when remote access is needed. |
+
+## Gateway Compatibility Container
+
+On Linux hosts whose glibc is older than the OpenShell gateway binary requires, NemoClaw can run `openshell-gateway` in a Docker compatibility container so the Docker-driver gateway still starts. This path requires the explicit opt-in `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`.
+
+| Aspect | Detail |
+|---|---|
+| Default | NemoClaw does not auto-enable the compatibility container on ABI mismatch. If `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` is set, the container keeps the main gateway listener on `127.0.0.1`, uses host networking so OpenShell computes the same Docker bridge callback addresses as a host-side gateway, mounts the Docker socket read-only, drops Linux capabilities, sets `no-new-privileges`, and publishes no extra Docker ports. |
+| What you can change | Opt in with `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`, keep the path disabled with `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=0`, or run on a host/OpenShell build combination where the gateway binary launches directly. |
+| Risk if relaxed | The Docker socket remains a privileged host API even when bind-mounted read-only. Treat this mode as equivalent to trusting the host user that can drive Docker, and do not enable it on untrusted shared hosts. |
+| Recommendation | Prefer a host with glibc 2.39 or newer, which OpenShell 0.0.99 supports directly, and use the compatibility container only as an explicit local bridge on an older trusted host. |
+
+Refer to [OpenShell Gateway Compatibility Review](../openshell-0.0.72-compatibility-review) for the unchanged compatibility-container source-of-truth boundaries.
+
+## Insecure Auth Derivation
+
+The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS authentication.
+
+| Aspect | Detail |
+|---|---|
+| Default | Derived from the `CHAT_UI_URL` scheme at build time. When the URL uses `http://` (local development), insecure auth is allowed. When it uses `https://` (remote or production), insecure auth is blocked. |
+| What you can change | This is derived automatically from `CHAT_UI_URL`. Set `CHAT_UI_URL` to an `https://` URL to enforce secure auth. |
+| Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
+| Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
+
+OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` findings and provenance-known loopback device-auth opt-out findings visible as accepted findings instead of counting them as unexplained active findings.
+
+Device-auth findings record whether the opt-out came from NemoClaw's managed onboarding compatibility behavior or an operator-provided `NEMOCLAW_DISABLE_DEVICE_AUTH=1`; an opt-out with missing provenance remains active.
+
+For audit reporting, NemoClaw treats a non-loopback `CHAT_UI_URL`, an onboard-time `NEMOCLAW_DASHBOARD_BIND=0.0.0.0`, or WSL's default all-interface dashboard forward as remote dashboard exposure.
+For an explicit `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` bind, use the same setting on later `connect` calls.
+
+If the sandbox was created without that explicit setting, NemoClaw refuses the remote forward until you recreate it with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`; this keeps the generated audit state aligned with the host exposure state.
+
+On WSL, the ready summary still uses a loopback URL, but the generated audit configuration leaves the device-auth and insecure-auth findings active.
+For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables device auth and enables OpenClaw's Host-header origin fallback because the browser's remote origin is not known at image-build time.
+
+Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
+
+In that state, NemoClaw does not add the loopback-only audit suppressions, so the resulting device-auth, insecure-auth, and Host-header fallback findings remain active.
+The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
+
+The audit also reports that suppressions are active so you can review the accepted risk.
+These suppressions change audit reporting only.
+They do not make either flag safe, weaken enforcement, or suppress unrelated findings.
+
+Review the accepted findings and their recorded reasons:
+
+```bash
+openclaw security audit --json | jq '.suppressedFindings'
+```
+
+Remove the underlying risky condition when dashboard compatibility no longer requires it.
+
+Remove these suppressions only after the pinned OpenClaw audit contract test proves that OpenClaw natively classifies intentional loopback development HTTP without them, or after NemoClaw onboarding defaults `CHAT_UI_URL` to `https://localhost` with a generated local certificate.
+
+Regression contracts: `test/generate-openclaw-config-security-audit.test.ts` locks generated suppression scope, `test/openclaw-security-audit-suppressions-real.test.ts` locks the pinned OpenClaw check IDs and details, and `test/e2e/live/dashboard-remote-bind.test.ts` proves a clean-host remote bind leaves all three risky findings active.
+
+The preceding removal condition applies to all three contracts.
+
+## Auto-Pair Client Allowlist
+
+The auto-pair watcher automatically approves device pairing requests from recognized clients, so you do not need to manually approve the Control UI.
+
+| Aspect | Detail |
+|---|---|
+| Default | Startup auto-pairing and `connect`-time approval share one policy. NemoClaw approves devices only when `clientId` is `cli`, `openclaw-cli`, or `openclaw-control-ui`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. An allowlisted `clientMode` alone is never sufficient; all other clients or scopes are rejected and logged. |
+| What you can change | This is not a user-facing knob. The allowlist is defined by NemoClaw's OpenClaw device-approval helper. |
+| Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
+| Recommendation | No action needed. NemoClaw handles this automatically at startup and during `connect` for late scope upgrades. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+
+### Approve Administrative Scopes Manually
+
+NemoClaw automatically approves only the `operator.pairing`, `operator.read`, and `operator.write` scopes.
+It never automatically approves `operator.admin`.
+Operations that require that scope, such as creating a cron job, need your explicit approval.
+
+From the host, open the prepared connect shell:
+
+```bash
+$$nemoclaw <name> connect
+```
+
+In that shell, run the administrative command once to create the pending request, and note the exact `requestId` in the failure.
+Then inspect the pending requests:
+
+```bash
+openclaw devices list --json
+```
+
+Find that exact `requestId`, and verify that its client, device, and requested scopes match the operation you just attempted.
+Approve that request by its `requestId`:
+
+```bash
+openclaw devices approve <requestId>
+```
+
+Retry the original administrative command after the approval succeeds.
+
+<Warning>
+Approve only the exact `requestId` emitted by your command and only the client, device, and scopes you expect.
+Do not approve an unexpected client or an unrelated `operator.admin` request.
+</Warning>
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes exposes an OpenAI-compatible API on the forwarded Hermes port and can optionally expose the native Hermes dashboard.
+Do not publish those endpoints on shared or public networks unless you put them behind your own access controls.
+
+NemoClaw still keeps provider credentials in OpenShell and routes model traffic through `inference.local`.
+Generated Hermes runtime files use OpenShell resolver placeholders for managed-tool and messaging credentials.
+
+Hermes startup rejects raw secret-shaped values in sandbox-visible environment or config fields, while allowing empty values, migration sentinels, OpenShell resolver placeholders, and expected Slack placeholder forms.
+
+</AgentOnly>
+
+## CLI Secret Redaction
+
+The CLI automatically redacts secret patterns (API keys, bearer tokens, provider credentials) from command output and error messages before logging them.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The runner redacts secrets from stdout, stderr, and thrown error messages. |
+| What you can change | This is not a user-facing knob. The CLI enforces it on all command output paths. |
+| Risk if relaxed | Without redaction, secrets could appear in terminal scrollback, log files, or debug output shared in bug reports. |
+| Recommendation | No action needed. If you share NemoClaw debug output, verify that no secrets appear in the collected diagnostics. |
+
+<AgentOnly variant="openclaw">
+
+## Memory Secret Scanner
+
+The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
+The scanner intercepts `Write`, `Edit`, and similar tool calls targeting memory and workspace paths before they reach disk.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
+| What it covers | Three path classifiers, all enforced through `isMemoryPath()`, plus credential-shaped text such as provider API keys, OpenAI project keys with `sk-proj-` prefixes, and Slack app-level `xapp-` tokens. The path classifiers are: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
+| What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
+| Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
+| Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+## Memory Secret Scanner
+
+Hermes does not use the OpenClaw NemoClaw plugin memory scanner.
+Keep secrets in environment variables or OpenShell providers, and avoid writing raw credentials to Hermes state files or workspace content.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+## Memory Secret Scanner
+
+Deep Agents does not use the OpenClaw NemoClaw plugin memory scanner.
+The managed `dcode` launchers reject credential-shaped environment values and upstream auth files before startup, but Deep Agents memory and skill files remain user-authored content.
+Keep secrets in OpenShell providers and avoid writing raw credentials to `/sandbox/.deepagents`, project `.deepagents/`, or skill files.
+
+</AgentOnly>

@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { testTimeout } from "../../helpers/timeouts";
 import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
@@ -24,6 +23,7 @@ import {
 } from "../../../tools/e2e/report-e2e-results.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import { testTimeout } from "../../helpers/timeouts";
 import { requireFixture } from "./require-fixture";
 
 function readWorkflow(): Record<string, unknown> {
@@ -83,6 +83,7 @@ function executeGenerateMatrixWithPlannerOutput(
   options: {
     checkoutSha?: string;
     controllerMatrix?: string;
+    controllerTestMatrix?: string;
     jobs?: string;
     targets?: string;
   } = {},
@@ -117,6 +118,7 @@ function executeGenerateMatrixWithPlannerOutput(
           ...process.env,
           CHECKOUT_SHA: options.checkoutSha ?? "",
           CONTROLLER_MATRIX: options.controllerMatrix ?? "",
+          CONTROLLER_TEST_MATRIX: options.controllerTestMatrix ?? "[]",
           FAKE_E2E_PLAN: JSON.stringify(plan),
           GITHUB_OUTPUT: outputPath,
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
@@ -764,7 +766,7 @@ it("reports one total wall clock span when matrix job names start with their job
       {
         completed_at: "2026-07-15T04:56:38Z",
         conclusion: "success",
-        name: "hermes-inference-switch (anthropic, e2e-hermes-anthropic-inference-switch, compatible-anthropic-e...",
+        name: "hermes-inference-switch (anthropic, e2e-hm-inf-switch, compatible-anthropic-e...",
         started_at: "2026-07-15T04:49:26Z",
         status: "completed",
       },

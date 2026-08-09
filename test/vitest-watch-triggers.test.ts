@@ -69,7 +69,6 @@ const OPAQUE_INPUTS = [
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/code-scanning.yaml",
-  ".github/workflows/approve-maintainer-pr-workflow-runs.yaml",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
@@ -139,6 +138,12 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/validate-managed-base-index.test.ts",
     ]);
+    expect(triggeredBy("scripts/checks/retry-docker-imagetools-inspect.sh")).toEqual([
+      "test/retry-docker-imagetools-inspect.test.ts",
+      "test/validate-managed-base-index.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",
       "test/e2e/support/sanitize-trace-timing.test.ts",
@@ -153,9 +158,6 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
-    ]);
-    expect(triggeredBy(".github/workflows/approve-maintainer-pr-workflow-runs.yaml")).toEqual([
-      "test/maintainer-pr-workflow-approval.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",
@@ -209,7 +211,6 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/unrelated.py")).toEqual([]);
     expect(triggeredBy("test/e2e/lib/unrelated.sh")).toEqual([]);
     expect(triggeredBy("agents/hermes/hermes-wrapper.py")).toEqual([]);
-    expect(triggeredBy(".github/workflows/regression-e2e.yaml")).toEqual([]);
   });
 
   it("normalizes Windows-style paths before matching (#6692)", () => {
