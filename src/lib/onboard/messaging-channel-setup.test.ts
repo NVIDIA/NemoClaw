@@ -9,10 +9,10 @@ import {
   MessagingSetupApplier,
   type SandboxMessagingPlan,
 } from "../messaging";
-import { resolveMessagingPlanAuthority } from "../messaging/plan-authority";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
+import { resolveMessagingPlanAuthority } from "../messaging/plan-authority";
 import * as registry from "../state/registry";
 import {
   detectMessagingChannelsFromEnv,
@@ -671,7 +671,7 @@ describe("setupMessagingChannels", () => {
       manifests("googlechat"),
       {
         interactive: false,
-        sandboxName: "e2e-channels-stop-start-openclaw",
+        sandboxName: "e2e-oc-ch-cycle",
       },
     );
 

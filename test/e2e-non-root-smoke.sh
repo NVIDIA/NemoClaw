@@ -58,6 +58,16 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
+# ── Test 0: Stock Dockerfile OCI metadata defaults to sandbox (#7882) ──
+
+info "0. Stock Dockerfile image defaults to the sandbox user"
+IMAGE_USER="$(docker image inspect --format '{{.Config.User}}' "$IMAGE" 2>/dev/null || true)"
+if [ "$IMAGE_USER" = "sandbox" ]; then
+  pass "image Config.User is sandbox"
+else
+  fail "expected image Config.User=sandbox, got '${IMAGE_USER:-<empty>}'"
+fi
+
 # Helper: run the entrypoint under --security-opt no-new-privileges with
 # a final command of the caller's choice. The command is captured by
 # nemoclaw-start as NEMOCLAW_CMD and exec'd after entrypoint setup.
@@ -88,6 +98,19 @@ if [ "$NNP" = "1" ]; then
   pass "kernel confirms NoNewPrivs=1"
 else
   fail "expected NoNewPrivs=1 inside container, got '${NNP:-<empty>}'"
+fi
+
+# ── Test 3: Direct runtimes can opt into the root entrypoint path ──
+
+info "3. Explicit root override selects the root entrypoint path"
+ROOT_OUT=$(docker run --rm --user root "$IMAGE" \
+  sh -c 'test "$(id -u)" = "$(id -u sandbox)" && echo ROOT_OVERRIDE_OK' 2>&1 || true)
+if echo "$ROOT_OUT" | grep -qF "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" \
+  && echo "$ROOT_OUT" | grep -qF "ROOT_OVERRIDE_OK"; then
+  pass "root override selected root entrypoint mode and ran the command as sandbox"
+else
+  fail "root override did not select the root entrypoint path"
+  echo "$ROOT_OUT" | tail -20 | sed 's/^/  /'
 fi
 
 # ── Summary ─────────────────────────────────────────────────────

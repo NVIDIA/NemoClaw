@@ -9,7 +9,9 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 # Run Maintainer E2E
 
 Use `.github/workflows/e2e.yaml` from trusted `main`.
-Every push to `main` selects every workflow E2E. A selected job can remain queued until its configured runner is available. No E2E job is excluded from trusted `main` push selection. Pre-tag evidence still requires the full `workflow_dispatch` mode described below.
+Every push to `main` selects the default workflow E2E jobs.
+Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flags.
+Pre-tag evidence still requires the full `workflow_dispatch` mode described below.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
 ## Manual PR E2E
@@ -47,12 +49,11 @@ set -euo pipefail
 PR_NUMBER=123
 git fetch --prune origin main
 WORKFLOW_SHA="$(git rev-parse origin/main)"
-PR_JSON="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
-  --json number,state,headRefOid,baseRefOid,headRepository)"
-test "$(jq -r .state <<<"$PR_JSON")" = OPEN
-HEAD_SHA="$(jq -r .headRefOid <<<"$PR_JSON")"
-BASE_SHA="$(jq -r .baseRefOid <<<"$PR_JSON")"
-HEAD_REPOSITORY="$(jq -r .headRepository.nameWithOwner <<<"$PR_JSON")"
+PR_JSON="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+test "$(jq -r .state <<<"$PR_JSON")" = open
+HEAD_SHA="$(jq -r .head.sha <<<"$PR_JSON")"
+BASE_SHA="$(jq -r .base.sha <<<"$PR_JSON")"
+HEAD_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -63,9 +64,10 @@ Require a review reason containing 10 to 500 printable characters.
 Choose exactly one mode:
 
 - For a PR revision run, leave `E2E_JOBS` empty. The run selects:
-  - every free-standing workflow E2E except `Exact staging Brev Launchable`;
+  - every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
   - every shared credential-free test; and
   - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
+  The run skips `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` unless their separate runner-queue flags are `true`.
 - For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 
 Leave `targets` empty and keep Launchable disabled:
@@ -78,13 +80,18 @@ case "$E2E_JOBS" in
 esac
 REVIEW_REASON='Reviewed the PR head commit for credentialed E2E.'
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+INFERENCE_MODE=mock
+ALLOW_JETSON_RUNNER_QUEUE=false
+ALLOW_DGX_SPARK_RUNNER_QUEUE=false
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
   -f targets= \
   -f "jobs=${E2E_JOBS}" \
-  -f inference_mode=mock \
+  -f "inference_mode=${INFERENCE_MODE}" \
   -f include_staging_brev_launchable=false \
+  -f "allow_jetson_runner_queue=${ALLOW_JETSON_RUNNER_QUEUE}" \
+  -f "allow_dgx_spark_runner_queue=${ALLOW_DGX_SPARK_RUNNER_QUEUE}" \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${HEAD_SHA}" \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
@@ -94,7 +101,8 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
-The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the open PR, repository, head SHA, base SHA, workflow SHA, review reason, and selected mode.
+The trusted pre-checkout step requires current `maintain` or `admin` permission.
+It validates the actor, open PR, repository, head SHA, base SHA, workflow SHA, review reason, and allowed jobs, targets, and Launchable combination.
 A second validation after checkout rejects a changed PR identity before preparation.
 
 Find and verify the correlated run with bounded GitHub reads:
@@ -126,12 +134,11 @@ jq -e --arg sha "$WORKFLOW_SHA" '
   .status == "completed" and
   .conclusion == "success"
 ' <<<"$RUN_JSON" >/dev/null
-CURRENT_PR="$(gh pr view "$PR_NUMBER" --repo NVIDIA/NemoClaw \
-  --json state,headRefOid,baseRefOid,headRepository)"
-test "$(jq -r .state <<<"$CURRENT_PR")" = OPEN
-test "$(jq -r .headRefOid <<<"$CURRENT_PR")" = "$HEAD_SHA"
-test "$(jq -r .baseRefOid <<<"$CURRENT_PR")" = "$BASE_SHA"
-test "$(jq -r .headRepository.nameWithOwner <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
+CURRENT_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+test "$(jq -r .state <<<"$CURRENT_PR")" = open
+test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
+test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
+test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
 ```
 
 Return the PR number, head repository, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
@@ -152,9 +159,10 @@ A generic E2E request must not authorize the Brev Launchable path.
 Do not infer full mode from words such as “all” or “complete.”
 Ask for clarification only when the request contains conflicting mode phrases.
 
-Ordinary mode selects every workflow E2E except `Exact staging Brev Launchable`.
+Ordinary mode selects every default-selected workflow E2E except `Exact staging Brev Launchable`.
 Launchable mode runs only `Exact staging Brev Launchable`.
-Full mode selects every workflow E2E, including `Exact staging Brev Launchable`, in the same workflow run.
+Full mode adds `Exact staging Brev Launchable` to the default E2E selection in the same workflow run.
+The documented invocations for all three modes keep both hardware runner-queue flags set to `false`.
 
 ## Resolve the Candidate
 
@@ -191,6 +199,8 @@ gh workflow run .github/workflows/e2e.yaml \
   -f jobs= \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=false \
+  -f allow_jetson_runner_queue=false \
+  -f allow_dgx_spark_runner_queue=false \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
@@ -204,6 +214,8 @@ gh workflow run .github/workflows/e2e.yaml \
   -f jobs=staging-brev-launchable \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=false \
+  -f allow_jetson_runner_queue=false \
+  -f allow_dgx_spark_runner_queue=false \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
@@ -217,16 +229,29 @@ gh workflow run .github/workflows/e2e.yaml \
   -f jobs= \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=true \
+  -f allow_jetson_runner_queue=false \
+  -f allow_dgx_spark_runner_queue=false \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
 Do not set `jobs=staging-brev-launchable` for full mode.
-Empty `jobs` and `targets` select every workflow E2E except `Exact staging Brev Launchable`.
-The boolean input adds the Launchable E2E job to that same run.
+Empty `jobs` and `targets` select every default-selected workflow E2E except `Exact staging Brev Launchable`.
+The `include_staging_brev_launchable` input adds the Launchable E2E job to that same run.
 The trusted `main` workflow verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That role check is the authorization.
-Every push and every empty-selector manual run selects `llama-cpp-dgx-spark-qualification`. If GitHub pauses the job for the `approve-dgx-spark-image-qualification` environment, an authorized environment reviewer must approve it before qualification starts. `Exact staging Brev Launchable` does not require environment approval.
+A user permitted to dispatch this workflow may set
+`allow_jetson_runner_queue=true` to add `jetson-nvmap-gpu` to an empty-selector
+manual run or enable its explicit selection. Set it only after a repository
+administrator confirms an online Jetson runner in the authoritative runner
+inventory.
+A permitted dispatcher may set `allow_dgx_spark_runner_queue=true` to add
+`llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` to an
+empty-selector manual run or enable explicit qualification selection. Set it
+only after a repository administrator confirms an online DGX Spark runner in
+the authoritative runner inventory.
+If GitHub pauses the qualification job for the `approve-dgx-spark-image-qualification` environment, an authorized environment reviewer must approve it before qualification starts.
+`Exact staging Brev Launchable` does not require environment approval.
 
 Find the run by its unique title:
 
@@ -324,7 +349,7 @@ node --experimental-strip-types --no-warnings \
 The validator requires:
 
 - the workflow run to succeed for the selected SHA;
-- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, and the selected successful Launchable job attempt;
+- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, `allowJetsonRunnerQueue: false`, `allowDgxSparkRunnerQueue: false`, and the selected successful Launchable job attempt;
 - `Exact staging Brev Launchable` to conclude `success` in the selected current or earlier attempt of the same workflow run;
 - `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
 - the booted repository to be unmodified;
@@ -351,7 +376,7 @@ If the release candidate SHA changes, discard the earlier full run and dispatch 
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
-The trusted `dispatch.json` receipt proves that full mode used empty selectors and included `Exact staging Brev Launchable`.
+The trusted `dispatch.json` receipt proves that full mode used empty selectors, included `Exact staging Brev Launchable`, and disabled both optional hardware paths.
 The release evidence ledger proves the result of each workflow E2E.
 Do not ask for the release confirmation phrase in this skill.
 
