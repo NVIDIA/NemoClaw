@@ -1,17 +1,69 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-
+import { dockerSpawnSync } from "../src/lib/adapters/docker/exec";
+import { createAgentSandbox } from "../src/lib/agent/base-image";
+import type { AgentDefinition } from "../src/lib/agent/defs";
+import { isWsl } from "../src/lib/platform";
 import {
   collectBuildContextStats,
   normalizeReadModesForDockerCopy,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
 } from "../src/lib/sandbox/build-context";
+
+interface BuildxCommand {
+  command: string;
+  args: string[];
+}
+
+function resolveBuildxCommand(): BuildxCommand | null {
+  return (
+    [
+      { command: "docker", args: ["buildx"] },
+      { command: "docker-buildx", args: [] },
+    ].find((candidate) => {
+      const args = [...candidate.args, "version"];
+      const result =
+        candidate.command === "docker"
+          ? dockerSpawnSync(args, { encoding: "utf8" })
+          : spawnSync(candidate.command, args, { encoding: "utf8" });
+      return result.status === 0;
+    }) ?? null
+  );
+}
+
+const SUPPORTED_BUILDX_HOST = process.platform === "linux" && !isWsl();
+const BUILDX_COMMAND = SUPPORTED_BUILDX_HOST ? resolveBuildxCommand() : null;
+const DOCKER_CAPABLE_LINUX_CI = process.env.CI === "true" && SUPPORTED_BUILDX_HOST;
+
+function buildTarget(
+  buildx: BuildxCommand,
+  stagedDockerfile: string,
+  buildCtx: string,
+  target: string,
+  outputDir: string,
+) {
+  const args = [
+    ...buildx.args,
+    "build",
+    "--progress=plain",
+    `--target=${target}`,
+    `--output=type=local,dest=${outputDir}`,
+    "--file",
+    stagedDockerfile,
+    buildCtx,
+  ];
+  const options = { encoding: "utf8" as const, maxBuffer: 20 * 1024 * 1024 };
+  return buildx.command === "docker"
+    ? dockerSpawnSync(args, options)
+    : spawnSync(buildx.command, args, options);
+}
 
 describe("sandbox build context staging", () => {
   function runtimeManifestFixture(runtimeName: string, fileName: string) {
@@ -82,6 +134,25 @@ describe("sandbox build context staging", () => {
     for (const seedDirectory of ["mcp-runtime-npm-cache-seed", "npm-cache-seed"]) {
       writeFixture(path.join("tools", "mcp-tool-discovery-runtime", seedDirectory, ".gitkeep"));
     }
+    for (const relativePath of [
+      "managed-startup-image-runtime.bundle",
+      path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
+      path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
+      path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
+    ]) {
+      writeFixture(
+        path.join("tools", "mcp-tool-discovery-runtime", "reviewed-runtime-bundle", relativePath),
+        `reviewed fixture: ${relativePath}\n`,
+      );
+    }
+    writeFixture(
+      path.join(
+        "tools",
+        "mcp-tool-discovery-runtime",
+        "reviewed-runtime-bundle",
+        "unreviewed-runtime.bundle",
+      ),
+    );
     for (const fileName of [
       "package.json",
       "package-lock.json",
@@ -313,6 +384,7 @@ describe("sandbox build context staging", () => {
       "npm-ci-locked.sh",
       "package-lock.json",
       "package.json",
+      "reviewed-runtime-bundle",
       "streamable-http-client.test.ts",
       "tool-discovery-core.ts",
       "tsconfig.json",
@@ -352,6 +424,36 @@ describe("sandbox build context staging", () => {
       expect(fs.readFileSync(path.join(stagedSeedDirectory, sourceEntries[0]))).toEqual(
         fs.readFileSync(path.join(sourceSeedDirectory, sourceEntries[0])),
       );
+    }
+
+    const reviewedRuntimeDir = path.join(runtimeDir, "reviewed-runtime-bundle");
+    expect(fs.readdirSync(reviewedRuntimeDir).sort()).toEqual([
+      "managed-startup-image-runtime.bundle",
+      "mcp-tool-discovery",
+    ]);
+    const reviewedRuntimeFiles = [
+      "managed-startup-image-runtime.bundle",
+      path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
+      path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
+      path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
+    ];
+    expect(fs.readdirSync(path.join(reviewedRuntimeDir, "mcp-tool-discovery")).sort()).toEqual([
+      "BUNDLED_PACKAGES.json",
+      "THIRD_PARTY_LICENSES.txt",
+      "mcp-tool-discovery.bundle",
+    ]);
+    for (const relativePath of reviewedRuntimeFiles) {
+      const stagedPath = path.join(reviewedRuntimeDir, relativePath);
+      const sourcePath = path.join(
+        sourceRoot,
+        "tools",
+        "mcp-tool-discovery-runtime",
+        "reviewed-runtime-bundle",
+        relativePath,
+      );
+      expect(fs.lstatSync(stagedPath).isFile(), relativePath).toBe(true);
+      expect(fs.readFileSync(stagedPath), relativePath).toEqual(fs.readFileSync(sourcePath));
+      expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
     }
   }
 
@@ -600,6 +702,51 @@ describe("sandbox build context staging", () => {
     }
   });
 
+  it("rejects a symlinked reviewed runtime artifact", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-symlink-"));
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-runtime-outside-"));
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const outsideTarget = path.join(outsideDir, "outside-license.txt");
+      const outsideContents = "outside target must remain unchanged\n";
+      fs.writeFileSync(outsideTarget, outsideContents);
+      const reviewedArtifact = path.join(
+        sourceRoot,
+        "tools",
+        "mcp-tool-discovery-runtime",
+        "reviewed-runtime-bundle",
+        "mcp-tool-discovery",
+        "THIRD_PARTY_LICENSES.txt",
+      );
+      fs.rmSync(reviewedArtifact);
+      fs.symlinkSync(outsideTarget, reviewedArtifact);
+
+      expect(() => stageOptimizedSandboxBuildContext(sourceRoot, tmpDir)).toThrow();
+      expect(fs.readFileSync(outsideTarget, "utf8")).toBe(outsideContents);
+      const stagedDirectories = fs.readdirSync(tmpDir);
+      expect(stagedDirectories).toHaveLength(1);
+      expect(
+        fs.existsSync(
+          path.join(
+            tmpDir,
+            stagedDirectories[0],
+            "tools",
+            "mcp-tool-discovery-runtime",
+            "reviewed-runtime-bundle",
+            "mcp-tool-discovery",
+            "THIRD_PARTY_LICENSES.txt",
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   it("optimized staging excludes blueprint .venv and extra scripts while preserving required files", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
@@ -767,6 +914,112 @@ describe("sandbox build context staging", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it.runIf(DOCKER_CAPABLE_LINUX_CI)("provides Buildx on Docker-capable Linux CI", () => {
+    expect(BUILDX_COMMAND).not.toBeNull();
+  });
+
+  it.skipIf(!SUPPORTED_BUILDX_HOST || BUILDX_COMMAND === null)(
+    "generated build contexts import reviewed runtime artifacts through BuildKit",
+    {
+      timeout: 120_000,
+    },
+    () => {
+      const buildx = BUILDX_COMMAND as BuildxCommand;
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-runtime-build-"));
+      const reviewedRuntimeSource = path.join(
+        repoRoot,
+        "tools",
+        "mcp-tool-discovery-runtime",
+        "reviewed-runtime-bundle",
+      );
+      const hermesAgent = {
+        name: "hermes",
+        displayName: "Hermes",
+        dockerfileBasePath: null,
+        dockerfilePath: path.join(repoRoot, "agents", "hermes", "Dockerfile"),
+      } as AgentDefinition;
+      const hermesBuild = createAgentSandbox(hermesAgent, { rootDir: repoRoot });
+
+      try {
+        for (const [name, staged] of [
+          ["openclaw", stageOptimizedSandboxBuildContext(repoRoot, tmpDir)],
+          ["hermes", hermesBuild],
+        ] as const) {
+          const { buildCtx, stagedDockerfile } = staged;
+          const mcpOutput = path.join(tmpDir, `${name}-mcp-output`);
+          const mcpBuild = buildTarget(
+            buildx,
+            stagedDockerfile,
+            buildCtx,
+            "mcp-tool-discovery-runtime",
+            mcpOutput,
+          );
+          expect(mcpBuild.status, `${mcpBuild.stdout}\n${mcpBuild.stderr}`).toBe(0);
+
+          for (const [sourceRelativePath, outputRelativePath] of [
+            [
+              path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
+              path.join("opt", "mcp-tool-discovery-runtime", "dist", "BUNDLED_PACKAGES.json"),
+            ],
+            [
+              path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
+              path.join("opt", "mcp-tool-discovery-runtime", "dist", "THIRD_PARTY_LICENSES.txt"),
+            ],
+            [
+              path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
+              path.join("opt", "mcp-tool-discovery-runtime", "dist", "mcp-tool-discovery.mjs"),
+            ],
+          ] as const) {
+            expect(fs.readFileSync(path.join(mcpOutput, outputRelativePath))).toEqual(
+              fs.readFileSync(path.join(reviewedRuntimeSource, sourceRelativePath)),
+            );
+          }
+
+          const startupOutput = path.join(tmpDir, `${name}-startup-output`);
+          const startupBuild = buildTarget(
+            buildx,
+            stagedDockerfile,
+            buildCtx,
+            "managed-startup-runtime-builder",
+            startupOutput,
+          );
+          expect(startupBuild.status, `${startupBuild.stdout}\n${startupBuild.stderr}`).toBe(0);
+          expect(
+            fs.readFileSync(path.join(startupOutput, "out", "managed-startup-image-runtime.cjs")),
+          ).toEqual(
+            fs.readFileSync(
+              path.join(reviewedRuntimeSource, "managed-startup-image-runtime.bundle"),
+            ),
+          );
+        }
+
+        const incomplete = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+        fs.rmSync(
+          path.join(
+            incomplete.buildCtx,
+            "tools",
+            "mcp-tool-discovery-runtime",
+            "reviewed-runtime-bundle",
+            "mcp-tool-discovery",
+            "THIRD_PARTY_LICENSES.txt",
+          ),
+        );
+        const incompleteBuild = buildTarget(
+          buildx,
+          incomplete.stagedDockerfile,
+          incomplete.buildCtx,
+          "mcp-tool-discovery-runtime",
+          path.join(tmpDir, "incomplete-output"),
+        );
+        expect(incompleteBuild.status).not.toBe(0);
+      } finally {
+        fs.rmSync(hermesBuild.buildCtx, { recursive: true, force: true });
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("build context stats honor filters without descending into excluded directories", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-stats-"));
