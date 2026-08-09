@@ -136,7 +136,7 @@ function parseInferenceRouteBinding(output: string): InferenceRouteBinding | nul
   let model = "";
   let timeoutSeconds: number | undefined;
   for (const line of lines) {
-    if (/^Gateway inference:\s*$/i.test(line)) {
+    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
       inGatewayInference = true;
       continue;
     }
@@ -155,12 +155,14 @@ function parseInferenceRouteBinding(output: string): InferenceRouteBinding | nul
 
 function isUnconfiguredInferenceRoute(output: string): boolean {
   const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
-  const headingIndex = lines.findIndex((line) => /^Gateway inference:\s*$/i.test(line));
+  const headingIndex = lines.findIndex((line) => /^(?:Gateway )?Inference:\s*$/i.test(line));
   if (headingIndex < 0) return false;
-  const routeLines = lines
-    .slice(headingIndex + 1)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const routeLines: string[] = [];
+  for (const line of lines.slice(headingIndex + 1)) {
+    if (/^\S.*:$/.test(line)) break;
+    const trimmed = line.trim();
+    if (trimmed) routeLines.push(trimmed);
+  }
   return routeLines.length === 1 && routeLines[0]?.toLowerCase() === "not configured";
 }
 

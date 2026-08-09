@@ -86,7 +86,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       output:
         "NAME              CREATED              PHASE\nnpmtest           now                  Error\n",
     }));
-    const dockerCapture = vi.fn(() => "openshell-npmtest-e487d1bd\n");
+    const dockerCapture = vi.fn(() => "openshell-default--npmtest-e487d1bd\n");
 
     const snapshot = collectLiveSandboxProbeSnapshot({
       captureOpenshell,
@@ -99,7 +99,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       timeout: 1_000,
     });
     expect(dockerCapture).toHaveBeenCalledWith(
-      ["ps", "--filter", "name=openshell-npmtest-", "--format", "{{.Names}}"],
+      ["ps", "--filter", "name=openshell-", "--format", "{{.Names}}"],
       {
         timeout: 1_000,
       },

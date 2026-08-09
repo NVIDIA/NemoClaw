@@ -22,11 +22,7 @@ import { negativeOverlayOutcome } from "./overlayfs-autofix-outcome.ts";
 // not reproduce that kernel-specific failure).
 
 const TEST_SANDBOX_PREFIX = "e2e-overlayfs";
-const SANDBOX_NAME =
-  process.env.NEMOCLAW_SANDBOX_NAME ??
-  [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
-    .filter(Boolean)
-    .join("-");
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 const TEST_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 1_500) * 1_000;
 const NEGATIVE_TIMEOUT_SECONDS = Number(process.env.NEMOCLAW_OVERLAYFS_E2E_NEGATIVE_TIMEOUT ?? 300);
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
