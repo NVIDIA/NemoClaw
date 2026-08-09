@@ -680,21 +680,15 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
   it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
     const input = createInput();
-    input.lifecycleRegistrationFields = {
-      lifecycleGeneration: "current-generation",
-      lifecycleLiveIdentityFingerprint: "current-fingerprint",
-    };
+    input.lifecycleGeneration = "current-generation";
     const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(
-      () => input.lifecycleRegistrationFields?.lifecycleGeneration ?? null,
-    );
+    deps.installPortableDemoLifecycle = vi.fn(() => input.lifecycleGeneration ?? null);
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
-      lifecycleRegistrationFields: {
-        lifecycleGeneration: "current-generation",
-        lifecycleLiveIdentityFingerprint: "current-fingerprint",
-      },
-      route: "native",
+    const result = await runSandboxGpuCreateFlow(input, deps);
+
+    expect(result.route).toBe("native");
+    expect(result.lifecycleRegistrationFields).toEqual({
+      lifecycleGeneration: "current-generation",
     });
 
     expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(

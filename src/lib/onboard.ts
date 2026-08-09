@@ -177,7 +177,6 @@ const {
   dockerInspect,
   dockerRemoveVolumesByPrefix,
   dockerRm,
-  dockerRmi,
   dockerStop,
 } = docker;
 const gatewayDrift: typeof import("./adapters/openshell/gateway-drift") = require("./adapters/openshell/gateway-drift");
@@ -2530,20 +2529,6 @@ async function createSandboxWithBaseImageResolution(
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, sandboxName], { ignoreError: true }); if (!waitForSandboxRecreateDeleteAbsence(sandboxName, recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, note)) throw new Error(`Cannot continue sandbox '${sandboxName}' recreation: OpenShell did not confirm explicit source absence after delete.`); }
     recreateRuntime.confirmDeleted();
-    const replacementReusesPreviousImage =
-      replacementWorkload.source.kind === "managed-image" &&
-      replacementWorkload.source.reference === previousEntry?.imageTag;
-    if (
-      previousEntry?.imageTag &&
-      previousEntry.workload?.shared !== true &&
-      !replacementReusesPreviousImage
-    ) {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      const rmiResult = dockerRmi(previousEntry.imageTag, { ignoreError: true, suppressOutput: true });
-      if (rmiResult.status !== 0) {
-        console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
-      }
-    }
     sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
   const preparedSandboxWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
@@ -2595,7 +2580,7 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
-      lifecycleRegistrationFields: recreateRuntime.registrationFields,
+      lifecycleGeneration: recreateRuntime.targetGeneration,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2725,6 +2710,7 @@ async function createSandboxWithBaseImageResolution(
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
           ...lifecycleRegistrationFields,
+          ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
