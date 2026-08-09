@@ -20,14 +20,13 @@ runs:
       with:
         node-version: "22.19.0"
 
-    - name: Pin production npm
+    - name: Download and verify production npm
       shell: bash
-      run: >-
-        cd "$RUNNER_TEMP" &&
-        npm install --global npm@10.9.4
-        --userconfig /dev/null
-        --registry https://registry.npmjs.org/
-        --ignore-scripts --no-audit --no-fund
+      env:
+        NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4"
+        NEMOCLAW_REVIEWED_NPM_INTEGRITY: >-
+          sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==
+      run: '"$GITHUB_ACTION_PATH/../ci-reviewed-npm-audit/verify-and-install-npm.sh"'
 
     - name: Audit locked WeChat runtime graph
       shell: bash

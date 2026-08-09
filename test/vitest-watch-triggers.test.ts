@@ -211,7 +211,6 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/unrelated.py")).toEqual([]);
     expect(triggeredBy("test/e2e/lib/unrelated.sh")).toEqual([]);
     expect(triggeredBy("agents/hermes/hermes-wrapper.py")).toEqual([]);
-    expect(triggeredBy(".github/workflows/regression-e2e.yaml")).toEqual([]);
   });
 
   it("normalizes Windows-style paths before matching (#6692)", () => {

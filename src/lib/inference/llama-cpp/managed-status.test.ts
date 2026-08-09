@@ -31,6 +31,7 @@ const RUNTIME_ID = "2".repeat(64);
 const SPEC_SHA256 = "3".repeat(64);
 const NETWORK_ID = "e".repeat(64);
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
 const IMAGE = `ghcr.io/nvidia/llama-cpp@sha256:${"4".repeat(64)}`;
 const temporaryDirectories: string[] = [];
 
@@ -60,19 +61,23 @@ function engine(
   };
 }
 
-function reserveState(homeDir: string): void {
+function reserveState(homeDir: string, presetId?: string, presetDigest?: string): void {
   const paths = managedLlamaCppStatePaths(homeDir);
   const catalog = loadManagedInferenceCatalog();
   const preset = catalog.presets.find(
-    ({ spec }) => spec.plan.backend === "install-llama-cpp" && spec.plan.recipeRef === RECIPE_ID,
+    ({ metadata, spec }) =>
+      spec.plan.backend === "install-llama-cpp" &&
+      spec.plan.recipeRef === RECIPE_ID &&
+      (presetId === undefined || metadata.id === presetId),
   )!;
   reserveManagedLlamaCppOwner(paths, {
     schemaVersion: 1,
     sandboxName: "spark-agent",
     catalogDigest: catalog.catalogDigest,
-    presetDigest: catalog.sources.find(
-      ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
-    )!.digest,
+    presetDigest:
+      presetDigest ??
+      catalog.sources.find(({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id)!
+        .digest,
     recipeDigest: catalog.sources.find(
       ({ kind, id }) => kind === "ServingRecipe" && id === RECIPE_ID,
     )!.digest,
@@ -160,6 +165,34 @@ describe("managed llama.cpp status", () => {
       state: "preparing",
       detail: "ownership is reserved; no finalized runtime receipt is published",
     });
+  });
+
+  it("revalidates the selected preset when multiple presets share one recipe (#8144)", () => {
+    const homeDir = temporaryHome();
+    reserveState(homeDir, GENERIC_PRESET_ID);
+
+    expect(inspectManagedLlamaCppStatus("spark-agent", { homeDir })).toEqual({
+      recipeId: RECIPE_ID,
+      modelDigest: null,
+      imageReference: null,
+      endpoint: "https://inference.local/v1",
+      state: "preparing",
+      detail: "ownership is reserved; no finalized runtime receipt is published",
+    });
+  });
+
+  it("rejects an unrecognized preset digest before Docker inspection (#8144)", () => {
+    const homeDir = temporaryHome();
+    reserveState(homeDir, GENERIC_PRESET_ID, `sha256:${"f".repeat(64)}`);
+    const capture = vi.fn();
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", { homeDir, engine: engine(capture) }),
+    ).toMatchObject({
+      state: "unknown",
+      detail: "Managed llama.cpp recipe authority changed; rerun onboarding.",
+    });
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("reports the exact receipt-bound container as absent without further inspection", () => {

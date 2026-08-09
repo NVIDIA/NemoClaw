@@ -230,16 +230,16 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   }, 15_000);
 
-  it("rejects a GPU rebuild that can reach the network on a cache miss", () => {
+  it("rejects a GPU rebuild that omits the exact hosted cache import", () => {
     const value = workflow();
     const build = namedStep(value, "Build exact all-agent protected runtime images");
     build.run = String(build.run).replace(
-      '--offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
+      '--cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
       "",
     );
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include --offline-cache \"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE\"",
+      "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include --cache-from \"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE\"",
     );
   });
 
