@@ -102,8 +102,14 @@ exec ${JSON.stringify(process.execPath)} "$@"
       output: "",
     },
     {
-      name: "non-integer port",
+      name: "non-number port",
       registry: JSON.stringify({ sandboxes: { hermes: { hermesApiPort: "8645" } } }),
+      status: 1,
+      output: "",
+    },
+    {
+      name: "fractional numeric port",
+      registry: JSON.stringify({ sandboxes: { hermes: { hermesApiPort: 8645.5 } } }),
       status: 1,
       output: "",
     },

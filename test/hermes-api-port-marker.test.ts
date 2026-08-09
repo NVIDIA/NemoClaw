@@ -36,6 +36,19 @@ function setupWritableRuntime(
   return { shellPrelude: trustedRuntimePrelude, targetPath: null };
 }
 
+function setupUntrustedRuntime(
+  _runtimeParent: string,
+  runtimeDir: string,
+  _markerPath: string,
+  _targetPath: string,
+): MarkerSetup {
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  return {
+    shellPrelude: ['stat() { printf "%s\\n" "1000:1000:755"; }', "chown() { return 0; }"],
+    targetPath: null,
+  };
+}
+
 function setupStaleMarker(
   _runtimeParent: string,
   runtimeDir: string,
@@ -145,6 +158,14 @@ describe("agents/hermes/start.sh root-owned API port marker", () => {
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.marker).toBe("8645");
     expect(run.target).toBe("attacker-target");
+  });
+
+  it("refuses a runtime directory outside the root-owned trust boundary (#8543)", () => {
+    const run = runHermesApiPortMarkerPublication(8645, setupUntrustedRuntime);
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain("must be root-owned with mode 0755");
+    expect(run.marker).toBeNull();
   });
 
   it("refuses a runtime path that cannot become a trusted directory (#8543)", () => {
