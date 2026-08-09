@@ -364,10 +364,15 @@ function requireExactIds(values: string[], expected: number, label: string): voi
   }
 }
 
-function requireExactSupplementaryGroups(values: string[], expected: number, label: string): void {
-  const exact = String(expected);
-  if (values.length !== 1 || values[0] !== exact) {
-    throw new Error(`${label} expected only ${exact}, got ${values.join(" ")}`);
+function requireExactSupplementaryGroups(
+  values: string[],
+  expected: readonly number[],
+  label: string,
+): void {
+  const exact = expected.map(String).sort();
+  const actual = [...values].sort();
+  if (actual.length !== exact.length || actual.some((value, index) => value !== exact[index])) {
+    throw new Error(`${label} expected exactly ${exact.join(" ")}, got ${values.join(" ")}`);
   }
 }
 
@@ -385,7 +390,7 @@ function canonicalNemoclawStartSupervisorArgv(argv: string[]): boolean {
   );
 }
 
-function validateSupervisor(process: ProcessSecurityIdentity): void {
+function validateSupervisor(process: ProcessSecurityIdentity, sandboxGid: number): void {
   if (process.pid !== 1 || process.ppid !== 0) {
     throw new Error(
       `OpenShell supervisor expected pid=1 ppid=0, got ${process.pid}/${process.ppid}`,
@@ -400,7 +405,11 @@ function validateSupervisor(process: ProcessSecurityIdentity): void {
   }
   requireExactIds(process.status.uid, 0, "OpenShell supervisor Uid");
   requireExactIds(process.status.gid, 0, "OpenShell supervisor Gid");
-  requireExactSupplementaryGroups(process.status.groups, 0, "OpenShell supervisor Groups");
+  requireExactSupplementaryGroups(
+    process.status.groups,
+    [0, sandboxGid],
+    "OpenShell supervisor Groups",
+  );
   for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
     requireCapabilityHex(process.status[field], `OpenShell supervisor ${field}`);
   }
@@ -422,37 +431,76 @@ function validateSupervisor(process: ProcessSecurityIdentity): void {
   }
 }
 
-function validateNemoclawStartSupervisor(
+function validateNemoclawStartProcess(
   process: ProcessSecurityIdentity,
   sandboxUid: number,
   sandboxGid: number,
 ): void {
-  if (process.pid === 1 || process.ppid !== 1) {
-    throw new Error(
-      `nemoclaw-start child supervisor expected a direct PID 1 child, got pid=${process.pid} ppid=${process.ppid}`,
-    );
+  if (process.pid === 1) {
+    throw new Error("nemoclaw-start process must not replace the OpenShell supervisor at PID 1");
   }
   if (!canonicalNemoclawStartSupervisorArgv(process.argv)) {
-    throw new Error("nemoclaw-start child supervisor does not have the expected argv");
+    throw new Error("nemoclaw-start process does not have the expected argv");
   }
   if (!(SYSTEM_BASH_EXECUTABLES as readonly string[]).includes(process.executable)) {
     throw new Error(
-      `nemoclaw-start child supervisor expected the system Bash executable, got ${process.executable}`,
+      `nemoclaw-start process expected the system Bash executable, got ${process.executable}`,
     );
   }
-  requireExactIds(process.status.uid, sandboxUid, "nemoclaw-start child supervisor Uid");
-  requireExactIds(process.status.gid, sandboxGid, "nemoclaw-start child supervisor Gid");
+  requireExactIds(process.status.uid, sandboxUid, "nemoclaw-start process Uid");
+  requireExactIds(process.status.gid, sandboxGid, "nemoclaw-start process Gid");
   requireExactSupplementaryGroups(
     process.status.groups,
-    sandboxGid,
-    "nemoclaw-start child supervisor Groups",
+    [sandboxGid],
+    "nemoclaw-start process Groups",
   );
-  requireZeroCapabilities(process.status, "nemoclaw-start child supervisor");
+  requireZeroCapabilities(process.status, "nemoclaw-start process");
   if (process.status.noNewPrivs !== "1") {
     throw new Error(
-      `nemoclaw-start child supervisor expected NoNewPrivs=1, got ${process.status.noNewPrivs}`,
+      `nemoclaw-start process expected NoNewPrivs=1, got ${process.status.noNewPrivs}`,
     );
   }
+}
+
+function selectNemoclawStartSupervisor(
+  processes: ProcessSecurityIdentity[],
+): ProcessSecurityIdentity {
+  const byPid = new Map<number, ProcessSecurityIdentity>();
+  for (const process of processes) {
+    if (byPid.has(process.pid)) {
+      throw new Error(`nemoclaw-start process PID ${process.pid} appeared more than once`);
+    }
+    byPid.set(process.pid, process);
+  }
+
+  const direct = processes.filter((process) => process.ppid === 1);
+  if (direct.length !== 1) {
+    throw new Error(
+      `expected exactly one direct nemoclaw-start child supervisor, found ${direct.length}`,
+    );
+  }
+  const supervisor = direct[0]!;
+  for (const process of processes) {
+    if (process === supervisor) continue;
+    const visited = new Set<number>([process.pid]);
+    let current = process;
+    while (current.ppid !== 1) {
+      const parent = byPid.get(current.ppid);
+      if (!parent || visited.has(parent.pid)) {
+        throw new Error(
+          `nemoclaw-start process PID ${process.pid} is not a descendant of the direct child supervisor`,
+        );
+      }
+      visited.add(parent.pid);
+      current = parent;
+    }
+    if (current !== supervisor) {
+      throw new Error(
+        `nemoclaw-start process PID ${process.pid} is not a descendant of the direct child supervisor`,
+      );
+    }
+  }
+  return supervisor;
 }
 
 export function validateSplitProcessSecurityReport(value: unknown): SplitProcessSecurityReport {
@@ -475,13 +523,11 @@ export function validateSplitProcessSecurityReport(value: unknown): SplitProcess
   const childSupervisors = report.childSupervisors.map((entry, index) =>
     processIdentity(entry, `childSupervisors[${index}]`),
   );
-  if (childSupervisors.length !== 1) {
-    throw new Error(
-      `expected exactly one nemoclaw-start child supervisor, found ${childSupervisors.length}`,
-    );
+  validateSupervisor(supervisor, sandboxGid);
+  for (const process of childSupervisors) {
+    validateNemoclawStartProcess(process, sandboxUid, sandboxGid);
   }
-  validateSupervisor(supervisor);
-  validateNemoclawStartSupervisor(childSupervisors[0]!, sandboxUid, sandboxGid);
+  selectNemoclawStartSupervisor(childSupervisors);
   return {
     childSupervisors,
     observedProcEntries,
@@ -759,7 +805,7 @@ tail -n 20 "$log"
     rcFilesLocked: true,
     runtimeProxyEnvLocked: true,
     splitProcess: {
-      childSupervisor: splitProcess.childSupervisors[0]!,
+      childSupervisor: selectNemoclawStartSupervisor(splitProcess.childSupervisors),
       supervisor: splitProcess.supervisor,
     },
     startupLogClean: true,
