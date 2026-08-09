@@ -316,11 +316,16 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
   it("keeps the image cache trusted and deletes the sandbox-writable copy", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     for (const fragment of [
-      "chown -R root:root /usr/local/lib/nemoclaw/wechat-runtime",
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts",
-      "--lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
-      "--cache /usr/local/share/nemoclaw/wechat-npm-cache",
+      "AS wechat-npm-cache",
+      "COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/",
+      "RUN --network=none",
+      "node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts",
+      "--lockfile /opt/wechat-runtime/package-lock.json",
+      "--cache /out/wechat-npm-cache",
       "--registry-origin https://registry.npmjs.org/",
+      "chown -R root:root /out/wechat-npm-cache",
+      "chmod -R a+rX,go-w /out/wechat-npm-cache",
+      "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
       "trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache",
       'install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"',
       'cp -R "$trusted_cache"/. "$install_cache"/',
@@ -331,12 +336,9 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
       expect(dockerfile).toContain(fragment);
     }
     const cacheVerification = dockerfile.indexOf(
-      "--lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
+      "--lockfile /opt/wechat-runtime/package-lock.json",
     );
-    const cacheLockdown = dockerfile.indexOf(
-      "chown -R root:root /usr/local/lib/nemoclaw/wechat-runtime",
-      cacheVerification,
-    );
+    const cacheLockdown = dockerfile.indexOf("chown -R root:root /out/wechat-npm-cache");
     expect(cacheVerification).toBeGreaterThan(-1);
     expect(cacheLockdown).toBeGreaterThan(cacheVerification);
   });

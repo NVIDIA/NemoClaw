@@ -98,6 +98,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ fromJSON(needs.get-pr-info.outputs.pr-info).head.sha }}
       NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ fromJSON(needs.get-pr-info.outputs.pr-info).head.sha }}
       NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: install-llama-cpp

@@ -276,12 +276,14 @@ RUN test -x /usr/bin/setpriv \
 # This replaces the previous EACCES-swallow approach for control-UI config
 # mutations — see #2681. UIDs stay distinct (security separation preserved);
 # the shared group only governs the mutable-default state directory.
-RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
-    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+RUN groupadd -r -g 999 gateway && useradd -r -u 999 -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
+    && groupadd -r -g 998 sandbox && useradd -r -u 998 -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -aG sandbox gateway \
     && usermod -aG sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
+    && chown -R sandbox:sandbox /sandbox \
+    && test "$(id -u sandbox):$(id -g sandbox)" = "998:998" \
+    && test "$(getent passwd sandbox)" = "sandbox:x:998:998::/sandbox:/bin/bash"
 
 # Create .openclaw with all state subdirs directly (mutable by default).
 # No separate .openclaw-data or symlink bridge — the production Dockerfile

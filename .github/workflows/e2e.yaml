@@ -1989,7 +1989,8 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-generic-gpu
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_PROVIDER: "install-llama-cpp"
@@ -2646,21 +2647,25 @@ jobs:
   # Every main push runs this lane after managed-image startup succeeds. Manual
   # PR qualification requires the exact candidate activation contract. Its
   # hosted amd64 prerequisite exports the exact candidate build cache.
-  # exact candidate build cache; this GPU lane imports it and rebuilds with
-  # BuildKit networking disabled so a cache miss fails closed.
+  # This GPU lane imports the exact candidate build cache and its complete
+  # locked npm cache seed, then rebuilds with BuildKit networking disabled.
   # invalidState: Cold managed-image builds on the protected GPU runner can
   # stall in npm and terminate with "Exit handler never called!" before any
   # GPU, Ollama, NIM, or vLLM assertion executes.
-  # sourceBoundary: The hosted amd64 lane builds the same exact candidate and
-  # exports only BuildKit cache records; the GPU lane verifies that complete
-  # all-agent cache and rebuilds with network access disabled.
-  # whyNotSourceFix: The root cause is unverified. Protected run 31012875592
-  # failed twice during npm install before qualification while hosted builds of
-  # the same candidate passed; the protected runner infrastructure is not owned
-  # by this change. Evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/31012875592
-  # regressionTest: The build-script behavior test proves required cache paths
-  # and metadata, symlink rejection, and exact --cache-from/--network none
-  # Docker arguments; workflow boundary tests pin the producer/consumer handoff.
+  # sourceBoundary: The hosted amd64 lane builds the exact candidate. It adds
+  # every reachable Linux x64 glibc registry archive from the candidate
+  # lockfile to the same-run cache artifact. The GPU lane verifies the manifest,
+  # lock digest, archive set, and
+  # each SHA-512 integrity before the candidate build can consume the seed.
+  # BuildKit records can accelerate the rebuild, while the seed makes a missing
+  # npm layer reproducible without weakening the fail-closed network boundary.
+  # whyNotBuildCacheOnly: Protected runs 31156103003, 31158136234, and
+  # 31159822518 proved that network-key drift and incomplete local cache exports
+  # can miss the npm layer before runtime qualification.
+  # regressionTest: The materializer and build-script behavior tests reject an
+  # incomplete, substituted, unexpected, or symlinked archive handoff and pin
+  # exact --cache-from/--network none arguments. Workflow boundary tests pin the
+  # same-run cache artifact.
   # lifecycleDecision: PR #8261 owns removal after three consecutive protected
   # GPU cold builds of all three images reach GPU, Ollama, NIM, and vLLM
   # assertions without the hosted cache.
@@ -2883,7 +2888,7 @@ jobs:
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
-            --offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
+            --cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"

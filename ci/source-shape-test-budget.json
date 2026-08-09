@@ -68,7 +68,7 @@
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "trusts the corporate CA before the DCode discovery runtime npm install",
+      "test": "copies the reviewed DCode discovery runtime without registry access",
       "category": "security"
     },
     {
@@ -290,6 +290,11 @@
       "file": "test/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins reviewed packages and audits their lock outside image builds (#8253)",
       "category": "security"
+    },
+    {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins dependency-materialization RUN cache identity",
+      "category": "compatibility"
     },
     {
       "file": "test/mcp-openshell-workflow.test.ts",
