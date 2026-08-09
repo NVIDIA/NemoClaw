@@ -23,6 +23,8 @@ on:
       - ".github/workflows/base-image.yaml"
       - ".github/workflows/managed-images.yaml"
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/actions/build-base-image-platform/**"
+      - ".github/actions/publish-base-image-manifest/**"
       - ".dockerignore"
       # Complete managed-image inputs. Keep these reviewed families synchronized
       # with tools/e2e/base-image-publication.mts.
@@ -136,96 +138,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
+          persist-credentials: false
+
+      - name: Build and publish platform digest
+        uses: ./.github/actions/build-base-image-platform
+        with:
+          agent: ${{ matrix.agent }}
+          arch: ${{ matrix.arch }}
+          platform: ${{ matrix.platform }}
+          dockerfile: ${{ matrix.dockerfile }}
+          image: ${{ matrix.image }}
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
-          tags: |
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          openclaw-version: ${{ inputs.openclaw_version }}
+          metadata-tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=tag
             type=sha,prefix=,format=short
 
-      - name: Validate production Docker build args
-        id: production-build-args
-        env:
-          AGENT: ${{ matrix.agent }}
-          OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
-        run: |
-          set -euo pipefail
-          build_args=()
-          openclaw_build_arg=""
-          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
-            openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
-            build_args+=(--build-arg "$openclaw_build_arg")
-          fi
-          if [ "${#build_args[@]}" -gt 0 ]; then
-            scripts/check-production-build-args.sh "${build_args[@]}"
-          else
-            scripts/check-production-build-args.sh
-          fi
-          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
-            if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
-              echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
-              exit 1
-            fi
-            if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
-              echo "ERROR: OpenClaw version must be a whole decimal dotted version (for example, 2026.6.10)." >&2
-              exit 1
-            fi
-          fi
-          printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push platform digest
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }},mode=max
-          build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
-
-      - name: Export platform digest
-        env:
-          ARCH: ${{ matrix.arch }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
-            echo "ERROR: unsupported platform architecture: $ARCH" >&2
-            exit 1
-          fi
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"
-
-      - name: Upload platform digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
 
   # The complete Perl suite approaches the image-job timeout under QEMU arm64 emulation.
   # Build each sibling image on native architecture runners and publish only immutable platform digests.
@@ -258,92 +190,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
+          persist-credentials: false
+
+      - name: Build and publish platform digest
+        uses: ./.github/actions/build-base-image-platform
+        with:
+          agent: ${{ matrix.agent }}
+          arch: ${{ matrix.arch }}
+          platform: ${{ matrix.platform }}
+          dockerfile: ${{ matrix.dockerfile }}
+          image: ${{ matrix.image }}
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
-
-      - name: Validate production Docker build args
-        id: production-build-args
-        env:
-          AGENT: ${{ matrix.agent }}
-          OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
-        run: |
-          set -euo pipefail
-          build_args=()
-          openclaw_build_arg=""
-          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
-            openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
-            build_args+=(--build-arg "$openclaw_build_arg")
-          fi
-          if [ "${#build_args[@]}" -gt 0 ]; then
-            scripts/check-production-build-args.sh "${build_args[@]}"
-          else
-            scripts/check-production-build-args.sh
-          fi
-          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
-            if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
-              echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
-              exit 1
-            fi
-            if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
-              echo "ERROR: OpenClaw version must be a whole decimal dotted version (for example, 2026.6.10)." >&2
-              exit 1
-            fi
-          fi
-          printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push platform digest
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }},mode=max
-          build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
-
-      - name: Export platform digest
-        env:
-          ARCH: ${{ matrix.arch }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
-            echo "ERROR: unsupported platform architecture: $ARCH" >&2
-            exit 1
-          fi
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"
-
-      - name: Upload platform digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
 
   build-dcode-platforms:
     name: Build ${{ matrix.display_name }} base image (${{ matrix.arch }})
@@ -373,92 +234,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
+          persist-credentials: false
+
+      - name: Build and publish platform digest
+        uses: ./.github/actions/build-base-image-platform
+        with:
+          agent: ${{ matrix.agent }}
+          arch: ${{ matrix.arch }}
+          platform: ${{ matrix.platform }}
+          dockerfile: ${{ matrix.dockerfile }}
+          image: ${{ matrix.image }}
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
-
-      - name: Validate production Docker build args
-        id: production-build-args
-        env:
-          AGENT: ${{ matrix.agent }}
-          OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
-        run: |
-          set -euo pipefail
-          build_args=()
-          openclaw_build_arg=""
-          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
-            openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
-            build_args+=(--build-arg "$openclaw_build_arg")
-          fi
-          if [ "${#build_args[@]}" -gt 0 ]; then
-            scripts/check-production-build-args.sh "${build_args[@]}"
-          else
-            scripts/check-production-build-args.sh
-          fi
-          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
-            if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
-              echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
-              exit 1
-            fi
-            if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
-              echo "ERROR: OpenClaw version must be a whole decimal dotted version (for example, 2026.6.10)." >&2
-              exit 1
-            fi
-          fi
-          printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push platform digest
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }},mode=max
-          build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
-
-      - name: Export platform digest
-        env:
-          ARCH: ${{ matrix.arch }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
-            echo "ERROR: unsupported platform architecture: $ARCH" >&2
-            exit 1
-          fi
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"
-
-      - name: Upload platform digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
 
   build-and-push-hermes:
     name: Build and push Hermes base image
@@ -474,160 +264,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download platform digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Publish validated multi-platform manifest
+        uses: ./.github/actions/publish-base-image-manifest
         with:
-          pattern: hermes-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
-          path: ${{ runner.temp }}/digests
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
+          agent: hermes
+          display-name: Hermes
+          image: nvidia/nemoclaw/hermes-sandbox-base
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short
-
-      - name: Create and verify multi-platform manifest
-        id: manifest
-        env:
-          AGENT: hermes
-          IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          digest_files=("$RUNNER_TEMP"/digests/*)
-          if [ "${#digest_files[@]}" -ne 2 ]; then
-            echo "ERROR: expected exactly two platform digests, found ${#digest_files[@]}." >&2
-            exit 1
-          fi
-
-          declare -A seen_arches=()
-          declare -A source_digests=()
-          sources=()
-          for digest_file in "${digest_files[@]}"; do
-            digest_artifact="$(basename "$digest_file")"
-            if [[ ! "$digest_artifact" =~ ^(amd64|arm64)-([0-9a-f]{64})$ ]]; then
-              echo "ERROR: invalid platform digest artifact: $digest_artifact" >&2
-              exit 1
-            fi
-            expected_arch="${BASH_REMATCH[1]}"
-            digest="${BASH_REMATCH[2]}"
-            if [ -n "${seen_arches[$expected_arch]:-}" ]; then
-              echo "ERROR: duplicate platform digest for linux/$expected_arch." >&2
-              exit 1
-            fi
-            source="$IMAGE@sha256:$digest"
-            source_platform="$(
-              scripts/checks/retry-docker-imagetools-inspect.sh "$source" \
-                --format '{{.Image.OS}}/{{.Image.Architecture}}'
-            )"
-            if [ "$source_platform" != "linux/$expected_arch" ]; then
-              echo "ERROR: digest for linux/$expected_arch resolves to $source_platform." >&2
-              exit 1
-            fi
-            seen_arches["$expected_arch"]=1
-            source_digests["linux/$expected_arch"]="sha256:$digest"
-            sources+=("$source")
-          done
-          if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
-            echo "ERROR: expected one validated digest for linux/amd64 and linux/arm64." >&2
-            exit 1
-          fi
-
-          mapfile -t tags <<< "$TAGS"
-          tag_args=()
-          for tag in "${tags[@]}"; do
-            if [ -n "$tag" ]; then
-              tag_args+=(--tag "$tag")
-            fi
-          done
-          if [ "${#tag_args[@]}" -eq 0 ]; then
-            echo "ERROR: metadata did not produce any publication tags." >&2
-            exit 1
-          fi
-
-          candidate_tag="$IMAGE:base-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          candidate_metadata="$RUNNER_TEMP/$AGENT-base-candidate-metadata.json"
-          docker buildx imagetools create \
-            --tag "$candidate_tag" \
-            --metadata-file "$candidate_metadata" \
-            "${sources[@]}"
-          digest="$(jq -er '.["containerimage.descriptor"].digest' "$candidate_metadata")"
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: expected one staged Hermes base digest." >&2
-            exit 1
-          fi
-          reference="$IMAGE@$digest"
-          actual_platforms="$(
-            scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw \
-              | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
-              | sort -u \
-              | paste -sd, -
-          )"
-          if [ "$actual_platforms" != "amd64,arm64" ]; then
-            echo "ERROR: staged manifest has unexpected platforms: $actual_platforms" >&2
-            exit 1
-          fi
-          platform_digests_json="$(
-            scripts/checks/validate-managed-base-index.sh \
-              "$reference" \
-              "${source_digests[linux/amd64]}" \
-              "${source_digests[linux/arm64]}"
-          )"
-          declare -A platform_digests=()
-          for platform in linux/amd64 linux/arm64; do
-            platform_digests["$platform"]="$(
-              jq -er --arg platform "$platform" '.[$platform]' <<< "$platform_digests_json"
-            )"
-          done
-
-          scripts/export-managed-base-image-contract.sh \
-            "$AGENT" \
-            "$IMAGE" \
-            "$digest" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}" \
-            "$GITHUB_SHA" \
-            "$GITHUB_RUN_ID" \
-            "$GITHUB_RUN_ATTEMPT" \
-            "$RUNNER_TEMP/managed-base-contract/contract.json"
-
-          publication_metadata="$RUNNER_TEMP/$AGENT-base-publication-metadata.json"
-          docker buildx imagetools create \
-            "${tag_args[@]}" \
-            --metadata-file "$publication_metadata" \
-            "$reference"
-          published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$publication_metadata")"
-          if [ "$published_digest" != "$digest" ]; then
-            echo "ERROR: published Hermes base digest differs from the validated candidate." >&2
-            exit 1
-          fi
-          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Upload managed base image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-hermes
-          path: ${{ runner.temp }}/managed-base-contract/contract.json
-          if-no-files-found: error
-          retention-days: 1
 
   build-and-push-dcode:
     name: Build and push Deep Agents Code base image
@@ -643,160 +289,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download platform digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Publish validated multi-platform manifest
+        uses: ./.github/actions/publish-base-image-manifest
         with:
-          pattern: langchain-deepagents-code-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
-          path: ${{ runner.temp }}/digests
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
+          agent: langchain-deepagents-code
+          display-name: Deep Agents Code
+          image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short
-
-      - name: Create and verify multi-platform manifest
-        id: manifest
-        env:
-          AGENT: langchain-deepagents-code
-          IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          digest_files=("$RUNNER_TEMP"/digests/*)
-          if [ "${#digest_files[@]}" -ne 2 ]; then
-            echo "ERROR: expected exactly two platform digests, found ${#digest_files[@]}." >&2
-            exit 1
-          fi
-
-          declare -A seen_arches=()
-          declare -A source_digests=()
-          sources=()
-          for digest_file in "${digest_files[@]}"; do
-            digest_artifact="$(basename "$digest_file")"
-            if [[ ! "$digest_artifact" =~ ^(amd64|arm64)-([0-9a-f]{64})$ ]]; then
-              echo "ERROR: invalid platform digest artifact: $digest_artifact" >&2
-              exit 1
-            fi
-            expected_arch="${BASH_REMATCH[1]}"
-            digest="${BASH_REMATCH[2]}"
-            if [ -n "${seen_arches[$expected_arch]:-}" ]; then
-              echo "ERROR: duplicate platform digest for linux/$expected_arch." >&2
-              exit 1
-            fi
-            source="$IMAGE@sha256:$digest"
-            source_platform="$(
-              scripts/checks/retry-docker-imagetools-inspect.sh "$source" \
-                --format '{{.Image.OS}}/{{.Image.Architecture}}'
-            )"
-            if [ "$source_platform" != "linux/$expected_arch" ]; then
-              echo "ERROR: digest for linux/$expected_arch resolves to $source_platform." >&2
-              exit 1
-            fi
-            seen_arches["$expected_arch"]=1
-            source_digests["linux/$expected_arch"]="sha256:$digest"
-            sources+=("$source")
-          done
-          if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
-            echo "ERROR: expected one validated digest for linux/amd64 and linux/arm64." >&2
-            exit 1
-          fi
-
-          mapfile -t tags <<< "$TAGS"
-          tag_args=()
-          for tag in "${tags[@]}"; do
-            if [ -n "$tag" ]; then
-              tag_args+=(--tag "$tag")
-            fi
-          done
-          if [ "${#tag_args[@]}" -eq 0 ]; then
-            echo "ERROR: metadata did not produce any publication tags." >&2
-            exit 1
-          fi
-
-          candidate_tag="$IMAGE:base-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          candidate_metadata="$RUNNER_TEMP/$AGENT-base-candidate-metadata.json"
-          docker buildx imagetools create \
-            --tag "$candidate_tag" \
-            --metadata-file "$candidate_metadata" \
-            "${sources[@]}"
-          digest="$(jq -er '.["containerimage.descriptor"].digest' "$candidate_metadata")"
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: expected one staged Deep Agents Code base digest." >&2
-            exit 1
-          fi
-          reference="$IMAGE@$digest"
-          actual_platforms="$(
-            scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw \
-              | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
-              | sort -u \
-              | paste -sd, -
-          )"
-          if [ "$actual_platforms" != "amd64,arm64" ]; then
-            echo "ERROR: staged manifest has unexpected platforms: $actual_platforms" >&2
-            exit 1
-          fi
-          platform_digests_json="$(
-            scripts/checks/validate-managed-base-index.sh \
-              "$reference" \
-              "${source_digests[linux/amd64]}" \
-              "${source_digests[linux/arm64]}"
-          )"
-          declare -A platform_digests=()
-          for platform in linux/amd64 linux/arm64; do
-            platform_digests["$platform"]="$(
-              jq -er --arg platform "$platform" '.[$platform]' <<< "$platform_digests_json"
-            )"
-          done
-
-          scripts/export-managed-base-image-contract.sh \
-            "$AGENT" \
-            "$IMAGE" \
-            "$digest" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}" \
-            "$GITHUB_SHA" \
-            "$GITHUB_RUN_ID" \
-            "$GITHUB_RUN_ATTEMPT" \
-            "$RUNNER_TEMP/managed-base-contract/contract.json"
-
-          publication_metadata="$RUNNER_TEMP/$AGENT-base-publication-metadata.json"
-          docker buildx imagetools create \
-            "${tag_args[@]}" \
-            --metadata-file "$publication_metadata" \
-            "$reference"
-          published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$publication_metadata")"
-          if [ "$published_digest" != "$digest" ]; then
-            echo "ERROR: published Deep Agents Code base digest differs from the validated candidate." >&2
-            exit 1
-          fi
-          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Upload managed base image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-langchain-deepagents-code
-          path: ${{ runner.temp }}/managed-base-contract/contract.json
-          if-no-files-found: error
-          retention-days: 1
 
   # Preserve the established required-check name while making tag publication
   # contingent on both native platform builds succeeding.
@@ -814,160 +316,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download platform digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Publish validated multi-platform manifest
+        uses: ./.github/actions/publish-base-image-manifest
         with:
-          pattern: openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
-          path: ${{ runner.temp }}/digests
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
+          agent: openclaw
+          display-name: OpenClaw
+          image: nvidia/nemoclaw/sandbox-base
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short
-
-      - name: Create and verify multi-platform manifest
-        id: manifest
-        env:
-          AGENT: openclaw
-          IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          digest_files=("$RUNNER_TEMP"/digests/*)
-          if [ "${#digest_files[@]}" -ne 2 ]; then
-            echo "ERROR: expected exactly two platform digests, found ${#digest_files[@]}." >&2
-            exit 1
-          fi
-
-          declare -A seen_arches=()
-          declare -A source_digests=()
-          sources=()
-          for digest_file in "${digest_files[@]}"; do
-            digest_artifact="$(basename "$digest_file")"
-            if [[ ! "$digest_artifact" =~ ^(amd64|arm64)-([0-9a-f]{64})$ ]]; then
-              echo "ERROR: invalid platform digest artifact: $digest_artifact" >&2
-              exit 1
-            fi
-            expected_arch="${BASH_REMATCH[1]}"
-            digest="${BASH_REMATCH[2]}"
-            if [ -n "${seen_arches[$expected_arch]:-}" ]; then
-              echo "ERROR: duplicate platform digest for linux/$expected_arch." >&2
-              exit 1
-            fi
-            source="$IMAGE@sha256:$digest"
-            source_platform="$(
-              scripts/checks/retry-docker-imagetools-inspect.sh "$source" \
-                --format '{{.Image.OS}}/{{.Image.Architecture}}'
-            )"
-            if [ "$source_platform" != "linux/$expected_arch" ]; then
-              echo "ERROR: digest for linux/$expected_arch resolves to $source_platform." >&2
-              exit 1
-            fi
-            seen_arches["$expected_arch"]=1
-            source_digests["linux/$expected_arch"]="sha256:$digest"
-            sources+=("$source")
-          done
-          if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
-            echo "ERROR: expected one validated digest for linux/amd64 and linux/arm64." >&2
-            exit 1
-          fi
-
-          mapfile -t tags <<< "$TAGS"
-          tag_args=()
-          for tag in "${tags[@]}"; do
-            if [ -n "$tag" ]; then
-              tag_args+=(--tag "$tag")
-            fi
-          done
-          if [ "${#tag_args[@]}" -eq 0 ]; then
-            echo "ERROR: metadata did not produce any publication tags." >&2
-            exit 1
-          fi
-
-          candidate_tag="$IMAGE:base-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          candidate_metadata="$RUNNER_TEMP/$AGENT-base-candidate-metadata.json"
-          docker buildx imagetools create \
-            --tag "$candidate_tag" \
-            --metadata-file "$candidate_metadata" \
-            "${sources[@]}"
-          digest="$(jq -er '.["containerimage.descriptor"].digest' "$candidate_metadata")"
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: expected one staged OpenClaw base digest." >&2
-            exit 1
-          fi
-          reference="$IMAGE@$digest"
-          actual_platforms="$(
-            scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw \
-              | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
-              | sort -u \
-              | paste -sd, -
-          )"
-          if [ "$actual_platforms" != "amd64,arm64" ]; then
-            echo "ERROR: staged manifest has unexpected platforms: $actual_platforms" >&2
-            exit 1
-          fi
-          platform_digests_json="$(
-            scripts/checks/validate-managed-base-index.sh \
-              "$reference" \
-              "${source_digests[linux/amd64]}" \
-              "${source_digests[linux/arm64]}"
-          )"
-          declare -A platform_digests=()
-          for platform in linux/amd64 linux/arm64; do
-            platform_digests["$platform"]="$(
-              jq -er --arg platform "$platform" '.[$platform]' <<< "$platform_digests_json"
-            )"
-          done
-
-          scripts/export-managed-base-image-contract.sh \
-            "$AGENT" \
-            "$IMAGE" \
-            "$digest" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}" \
-            "$GITHUB_SHA" \
-            "$GITHUB_RUN_ID" \
-            "$GITHUB_RUN_ATTEMPT" \
-            "$RUNNER_TEMP/managed-base-contract/contract.json"
-
-          publication_metadata="$RUNNER_TEMP/$AGENT-base-publication-metadata.json"
-          docker buildx imagetools create \
-            "${tag_args[@]}" \
-            --metadata-file "$publication_metadata" \
-            "$reference"
-          published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$publication_metadata")"
-          if [ "$published_digest" != "$digest" ]; then
-            echo "ERROR: published OpenClaw base digest differs from the validated candidate." >&2
-            exit 1
-          fi
-          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Upload managed base image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-openclaw
-          path: ${{ runner.temp }}/managed-base-contract/contract.json
-          if-no-files-found: error
-          retention-days: 1
 
   # Consume the three exact base-image contracts in this run. The reusable
   # publisher promotes no mutable cohort alias until every agent and platform

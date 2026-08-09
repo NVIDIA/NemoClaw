@@ -251,8 +251,8 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.m
 RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-RUN groupadd -r sandbox \
-    && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+RUN groupadd -r -g 999 sandbox \
+    && useradd -r -u 999 -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -a -G sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
@@ -265,7 +265,9 @@ RUN groupadd -r sandbox \
     && printf '1\n' > /sandbox/.deepagents/.state/onboarding_complete \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \
-    && chmod 770 /sandbox/.deepagents/.state /sandbox/.deepagents/skills
+    && chmod 770 /sandbox/.deepagents/.state /sandbox/.deepagents/skills \
+    && test "$(id -u sandbox):$(id -g sandbox)" = "999:999" \
+    && test "$(getent passwd sandbox)" = "sandbox:x:999:999::/sandbox:/bin/bash"
 
 # Pre-create shell init files for the sandbox user. OpenShell/NemoClaw writes
 # /tmp/nemoclaw-proxy-env.sh at startup so interactive sessions and dcode share

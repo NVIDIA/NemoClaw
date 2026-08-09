@@ -102,7 +102,7 @@ describe("growth-guardrails workflow trust boundary", () => {
           "      - name: Check out the trusted base revision",
           "      - name: Execute an untrusted action\n        uses: attacker/payload@main\n\n      - name: Check out the trusted base revision",
         ),
-      /must contain exactly 7 approved steps, not 8/,
+      /must contain exactly 6 approved steps, not 7/,
     ],
     [
       "a non-approved shell field",

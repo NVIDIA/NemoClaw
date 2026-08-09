@@ -177,11 +177,15 @@ export function spawnDetachedNodeAdapter(options: {
   env: Record<string, string>;
   buildEnv: (extraEnv?: Record<string, string>) => NodeJS.ProcessEnv;
 }): ChildProcess {
-  const child = spawn(process.execPath, [options.scriptPath], {
-    detached: true,
-    stdio: "ignore",
-    env: options.buildEnv(options.env),
-  });
+  const child = spawn(
+    process.execPath,
+    ["--experimental-strip-types", "--no-warnings", options.scriptPath],
+    {
+      detached: true,
+      stdio: "ignore",
+      env: options.buildEnv(options.env),
+    },
+  );
   child.unref();
   return child;
 }

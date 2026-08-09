@@ -48,7 +48,12 @@ function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
     path.join(sourceAgentDir, "state-lock-plan.json"),
     path.join(stagedAgentDir, "state-lock-plan.json"),
   );
-  for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
+  for (const runtimeName of [
+    "managed-image-messaging-runtime",
+    "mcporter-runtime",
+    "openclaw-runtime",
+    "wechat-runtime",
+  ]) {
     const sourceDir = path.join(sourceAgentDir, runtimeName);
     const stagedDir = path.join(stagedAgentDir, runtimeName);
     fs.mkdirSync(stagedDir, { recursive: true });
@@ -56,6 +61,11 @@ function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
       fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
     }
   }
+  fs.cpSync(
+    path.join(sourceAgentDir, "managed-image-messaging-runtime", "npm-cache-seed"),
+    path.join(stagedAgentDir, "managed-image-messaging-runtime", "npm-cache-seed"),
+    { mode: fs.constants.COPYFILE_FICLONE, recursive: true },
+  );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "agents"));
 }
 
@@ -75,6 +85,12 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     "tool-discovery-core.ts",
   ]) {
     fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
+  }
+  for (const seedDirectory of ["mcp-runtime-npm-cache-seed", "npm-cache-seed"]) {
+    fs.cpSync(path.join(sourceDir, seedDirectory), path.join(stagedDir, seedDirectory), {
+      mode: fs.constants.COPYFILE_FICLONE,
+      recursive: true,
+    });
   }
   normalizeReadModesForDockerCopy(path.join(buildCtx, "tools"));
 }
@@ -224,6 +240,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "materialize-locked-npm-cache-seed.mts"),
+    path.join(stagedScriptsDir, "checks", "materialize-locked-npm-cache-seed.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
@@ -381,6 +401,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "seed-reviewed-npm-cache.mts"),
+    path.join(stagedScriptsDir, "lib", "seed-reviewed-npm-cache.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-audit.mts"),

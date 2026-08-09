@@ -15,6 +15,7 @@ jobs:
   scan:
     name: Scan conflicting PRs
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
@@ -111,6 +112,8 @@ jobs:
         with:
           name: pr-conflict-resolution-${{ matrix.item.pr_number }}-${{ matrix.item.head_sha }}-${{ matrix.item.base_sha }}
           path: ${{ env.ARTIFACT_DIR }}/resolution.patch
+          if-no-files-found: error
+          retention-days: 1
 
   publish:
     name: Publish PR #${{ matrix.item.pr_number }}
@@ -119,6 +122,7 @@ jobs:
       - resolve
     if: ${{ always() && needs.scan.outputs.count != '0' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: read
