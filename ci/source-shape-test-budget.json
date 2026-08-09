@@ -447,6 +447,12 @@
       "category": "security"
     },
     {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "executes installer hash checks only from the PR base revision",
+      "category": "security"
+    },
+
+    {
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps migrated provider identities and implementations behind the one bundle composition",
       "category": "compatibility"

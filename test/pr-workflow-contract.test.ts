@@ -280,10 +280,54 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
   });
 }
 
+function installerHashTrustViolations(workflow: CiWorkflow): string[] {
+  const violations: string[] = [];
+  const steps = workflow.jobs["check-hash"]?.steps ?? [];
+  const baseCheckout = steps.find(
+    (step) => step.name === "Checkout base-trusted installer hash action",
+  );
+  if (!baseCheckout) {
+    violations.push("missing base-trusted installer hash checkout");
+  } else {
+    if (baseCheckout.uses !== trustedCheckoutAction) {
+      violations.push("base-trusted installer hash checkout must use the pinned checkout action");
+    }
+    if (baseCheckout.with?.ref !== "${{ github.event.pull_request.base.sha }}") {
+      violations.push("base-trusted installer hash checkout must use the PR base SHA");
+    }
+    if (baseCheckout.with?.path !== ".trusted-installer-hash") {
+      violations.push("base-trusted installer hash checkout must use the trusted action path");
+    }
+  }
+
+  const prCheck = steps.find(
+    (step) => step.name === "Verify pull request installer hashes from base-trusted code",
+  );
+  if (
+    prCheck?.if !== "github.event_name == 'pull_request'" ||
+    prCheck.uses !== "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
+  ) {
+    violations.push("pull request installer hashes must use only the base-trusted action");
+  }
+
+  const allowedExecutors = new Set([
+    "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
+    "./.github/actions/ci-installer-hash-check",
+  ]);
+  for (const step of steps) {
+    if (step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)) {
+      violations.push(`unapproved installer hash executor: ${step.uses}`);
+    }
+  }
+  return violations;
+}
+
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
+  const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
@@ -306,6 +350,50 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
+
+  // source-shape-contract: security -- Base-SHA action execution prevents pull-request code from authorizing installer hashes
+  it("executes installer hash checks only from the PR base revision", () => {
+    expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
+
+    const headCheckout = structuredClone(installerHashWorkflow);
+    requiredWorkflowStep(
+      headCheckout.jobs["check-hash"],
+      "Checkout base-trusted installer hash action",
+    ).with = {
+      ref: "${{ github.event.pull_request.head.sha }}",
+      path: ".trusted-installer-hash",
+    };
+
+    const missingBaseCheckout = structuredClone(installerHashWorkflow);
+    missingBaseCheckout.jobs["check-hash"].steps = missingBaseCheckout.jobs[
+      "check-hash"
+    ].steps?.filter((step) => step.name !== "Checkout base-trusted installer hash action");
+
+    const mutableExecutor = structuredClone(installerHashWorkflow);
+    requiredWorkflowStep(
+      mutableExecutor.jobs["check-hash"],
+      "Verify pull request installer hashes from base-trusted code",
+    ).uses = "./.github/actions/ci-installer-hash-check";
+
+    const bootstrapExecutor = structuredClone(installerHashWorkflow);
+    bootstrapExecutor.jobs["check-hash"].steps?.push({
+      name: "Run installer hash bootstrap",
+      uses: "./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    });
+
+    expect(installerHashTrustViolations(headCheckout)).toContain(
+      "base-trusted installer hash checkout must use the PR base SHA",
+    );
+    expect(installerHashTrustViolations(missingBaseCheckout)).toContain(
+      "missing base-trusted installer hash checkout",
+    );
+    expect(installerHashTrustViolations(mutableExecutor)).toContain(
+      "pull request installer hashes must use only the base-trusted action",
+    );
+    expect(installerHashTrustViolations(bootstrapExecutor)).toContain(
+      "unapproved installer hash executor: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    );
+  });
 
   it("validates CLI shard inputs before using them in shell commands", () => {
     const shardValidationStep = requiredStep(
