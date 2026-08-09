@@ -93,8 +93,9 @@ export interface ManagedStartupSharedTransactionOptions {
   /** Test seam. Production always retains the root:root defaults. */
   readonly trustedGid?: number;
   /**
-   * Copied-receipt helper seam. The host copy is mounted read-only at a fixed
-   * path, so ownership may reflect the Docker CLI user instead of container root.
+   * Immutable copied-receipt helper seam. The host copy is mounted read-only
+   * at a fixed path, so ownership may reflect the Docker CLI user instead of
+   * container root.
    */
   readonly readOnlyReceipt?: boolean;
   /** One-attempt identity for managed bootstrap; null for legacy root application. */
@@ -775,9 +776,9 @@ function requireReadOnlyReceiptMount(target: string, options: ResolvedOptions): 
   } catch (error) {
     if (descriptor !== undefined) fs.closeSync(descriptor);
     if ((error as NodeJS.ErrnoException).code === "EROFS") return;
-    fail("rollback receipt must be mounted on a read-only filesystem");
+    fail("copied receipt must be mounted on a read-only filesystem");
   }
-  fail("rollback receipt mount is writable");
+  fail("copied receipt mount is writable");
 }
 
 function loadManifest(options: ResolvedOptions): TransactionManifest | null {
