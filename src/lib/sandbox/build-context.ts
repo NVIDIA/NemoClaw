@@ -242,10 +242,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "checks", "node-tar-image-scan.mts"),
-    path.join(stagedScriptsDir, "checks", "node-tar-image-scan.mts"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "checks", "materialize-locked-npm-cache-seed.mts"),
     path.join(stagedScriptsDir, "checks", "materialize-locked-npm-cache-seed.mts"),
   );

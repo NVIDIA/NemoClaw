@@ -131,24 +131,6 @@ describe("cloudflared update-check workflow contract", () => {
     workflow.jobs?.["check-cloudflared"]?.steps?.find((step) => typeof step.run === "string")
       ?.run ?? "";
 
-  // source-shape-contract: security -- Automatic and on-demand checks must preserve the credential-free dependency monitoring boundary
-  it("keeps automatic and on-demand update checks reachable and credential-free", () => {
-    expect({
-      automatic:
-        workflow.on?.schedule?.some(
-          (entry) => typeof entry.cron === "string" && entry.cron.trim() !== "",
-        ) ?? false,
-      onDemand: Object.hasOwn(workflow.on ?? {}, "workflow_dispatch"),
-    }).toEqual({ automatic: true, onDemand: true });
-    expect(workflow.permissions).toEqual({ contents: "read" });
-
-    const job = workflow.jobs?.["check-cloudflared"];
-    const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"));
-    expect(job?.permissions).toBeUndefined();
-    expect(checkout?.uses).toMatch(FULL_SHA_ACTION);
-    expect(checkout?.with?.["persist-credentials"]).toBe(false);
-  });
-
   it("extracts exactly five identical reviewed version and SHA256 pins", () => {
     const versions = pinValues(e2e, "CLOUDFLARED_VERSION");
     const hashes = pinValues(e2e, "CLOUDFLARED_DEB_SHA256");

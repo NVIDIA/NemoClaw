@@ -129,9 +129,6 @@ COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py
 COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
 
-FROM scratch AS hermes-scan-payload
-
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
 
 # Fetch the exact managed Teams capability wheels outside RUN instructions so
 # both the standard build and the protected --network none rebuild install the
@@ -1156,9 +1153,6 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
 
-# Gate the completed local filesystem too; CI repeats this scan in an isolated
-# container and retains evidence keyed to the final image ID.
-COPY --from=hermes-scan-payload / /
 
 # These executables are git-tracked 0755 but check out group-writable (0775)
 # under umask 002, and COPY carries that source mode into the image. Normalize
@@ -1167,7 +1161,6 @@ COPY --from=hermes-scan-payload / /
 RUN chmod 755 \
         /usr/local/lib/nemoclaw/hermes-wrapper.py \
         /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
-        /scripts/checks/node-tar-image-scan.mts \
     && chmod 444 /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
 
 RUN check_metadata() { \
@@ -1211,13 +1204,7 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
-    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \
-    && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root 755' \
-    && install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:hermes \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
+    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
