@@ -71,11 +71,6 @@ const trustedPrActionPaths = {
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
-const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
-const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
-const installerHashBootstrapCreatedAt = "2026-07-02T19:35:41Z";
-const installerHashBootstrapExpiresAt = "2026-12-29T19:35:41Z";
-
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
@@ -285,11 +280,52 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
   });
 }
 
+function installerHashTrustViolations(workflow: CiWorkflow): string[] {
+  const steps = workflow.jobs["check-hash"]?.steps ?? [];
+  const baseCheckout = steps.find(
+    (step) => step.name === "Checkout base-trusted installer hash action",
+  );
+  const prCheck = steps.find(
+    (step) => step.name === "Verify pull request installer hashes from base-trusted code",
+  );
+  const allowedExecutors = new Set([
+    "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
+    "./.github/actions/ci-installer-hash-check",
+  ]);
+
+  return [
+    ...(baseCheckout ? [] : ["missing base-trusted installer hash checkout"]),
+    ...(baseCheckout?.uses === trustedCheckoutAction
+      ? []
+      : ["base-trusted installer hash checkout must use the pinned checkout action"]),
+    ...(baseCheckout?.with?.ref === "${{ github.event.pull_request.base.sha }}"
+      ? []
+      : ["base-trusted installer hash checkout must use the PR base SHA"]),
+    ...(baseCheckout?.with?.path === ".trusted-installer-hash"
+      ? []
+      : ["base-trusted installer hash checkout must use the trusted action path"]),
+    ...(prCheck?.if === "github.event_name == 'pull_request'" &&
+    prCheck.uses === "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
+      ? []
+      : ["pull request installer hashes must use only the base-trusted action"]),
+    ...steps.flatMap((step) => [
+      ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
+      step.if !== "github.event_name != 'pull_request'"
+        ? ["installer hash action from the latest PR commit must not execute for pull requests"]
+        : []),
+      ...(step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)
+        ? [`unapproved installer hash executor: ${step.uses}`]
+        : []),
+    ]),
+  ];
+}
+
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
@@ -313,84 +349,59 @@ describe("pull request and main workflow contracts", () => {
     ),
   };
 
-  it("fails closed when the immutable installer hash bootstrap expiry is mutated", () => {
-    const expiryStep = requiredWorkflowStep(
-      installerHashWorkflow.jobs["check-hash"],
-      "Enforce immutable installer hash bootstrap expiry",
-    );
-    const expired = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "2000-12-27T23:26:13Z"),
-      },
-      {},
-    );
-    const malformedExpiry = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "not-a-canonical-utc-date"),
-      },
-      {},
-    );
-    const mutableRef = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapCommit, "main"),
-      },
-      {},
-    );
-    const valid = runWorkflowShellStep(expiryStep, {});
+  // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
+  it("executes pull request installer hash checks only from the PR base SHA", () => {
+    expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
 
-    expect(valid.status).toBe(0);
-    expect(valid.stdout).toContain("remains valid");
-    expect(expired.status).not.toBe(0);
-    expect(expired.stderr).toContain("expired at 2000-12-27T23:26:13Z");
-    expect(expired.stderr).toContain("Remove the bootstrap fallback");
-    expect(malformedExpiry.status).not.toBe(0);
-    expect(malformedExpiry.stderr).toContain("expiry configuration is invalid");
-    expect(mutableRef.status).not.toBe(0);
-    expect(mutableRef.stderr).toContain("refusing the fallback");
-  });
+    const headCheckout = structuredClone(installerHashWorkflow);
+    requiredWorkflowStep(
+      headCheckout.jobs["check-hash"],
+      "Checkout base-trusted installer hash action",
+    ).with = {
+      ref: "${{ github.event.pull_request.head.sha }}",
+      path: ".trusted-installer-hash",
+    };
 
-  it("fails closed when the immutable installer hash bootstrap tree differs", () => {
-    const treeStep = requiredWorkflowStep(
-      installerHashWorkflow.jobs["check-hash"],
-      "Verify immutable installer hash bootstrap tree",
+    const missingBaseCheckout = structuredClone(installerHashWorkflow);
+    missingBaseCheckout.jobs["check-hash"].steps = missingBaseCheckout.jobs[
+      "check-hash"
+    ].steps?.filter((step) => step.name !== "Checkout base-trusted installer hash action");
+
+    const mutableExecutor = structuredClone(installerHashWorkflow);
+    requiredWorkflowStep(
+      mutableExecutor.jobs["check-hash"],
+      "Verify pull request installer hashes from base-trusted code",
+    ).uses = "./.github/actions/ci-installer-hash-check";
+
+    const bootstrapExecutor = structuredClone(installerHashWorkflow);
+    bootstrapExecutor.jobs["check-hash"].steps?.push({
+      name: "Run installer hash bootstrap",
+      uses: "./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    });
+
+    const prOnlyLocalExecutor = structuredClone(installerHashWorkflow);
+    prOnlyLocalExecutor.jobs["check-hash"].steps?.push({
+      name: "Run local installer hash action for pull requests",
+      if: "github.event_name == 'pull_request'",
+      uses: "./.github/actions/ci-installer-hash-check",
+    });
+
+    expect(installerHashTrustViolations(headCheckout)).toContain(
+      "base-trusted installer hash checkout must use the PR base SHA",
     );
-    const fakeBin = mkdtempSync(join(tmpdir(), "nemoclaw-bootstrap-git-"));
-    const fakeGit = join(fakeBin, "git");
-    writeFileSync(
-      fakeGit,
-      [
-        "#!/bin/sh",
-        'case "$*" in',
-        '  *"HEAD^{tree}"*) printf \'%s\\n\' "${FAKE_TREE}" ;;',
-        `  *) printf '%s\\n' ${installerHashBootstrapCommit} ;;`,
-        "esac",
-      ].join("\n"),
-      { mode: 0o755 },
+    expect(installerHashTrustViolations(missingBaseCheckout)).toContain(
+      "missing base-trusted installer hash checkout",
+    );
+    expect(installerHashTrustViolations(mutableExecutor)).toContain(
+      "pull request installer hashes must use only the base-trusted action",
+    );
+    expect(installerHashTrustViolations(bootstrapExecutor)).toContain(
+      "unapproved installer hash executor: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
     );
 
-    try {
-      const env = {
-        GITHUB_WORKSPACE: tmpdir(),
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      };
-      const valid = runWorkflowShellStep(treeStep, {
-        ...env,
-        FAKE_TREE: installerHashBootstrapTree,
-      });
-      const mismatch = runWorkflowShellStep(treeStep, {
-        ...env,
-        FAKE_TREE: "0000000000000000000000000000000000000000",
-      });
-
-      expect(valid.status).toBe(0);
-      expect(mismatch.status).not.toBe(0);
-      expect(mismatch.stderr).toContain("does not match the reviewed tree");
-    } finally {
-      rmSync(fakeBin, { recursive: true, force: true });
-    }
+    expect(installerHashTrustViolations(prOnlyLocalExecutor)).toContain(
+      "installer hash action from the latest PR commit must not execute for pull requests",
+    );
   });
 
   it("validates CLI shard inputs before using them in shell commands", () => {

@@ -66,25 +66,12 @@ jobs:
             scripts/shellcheck-json1-to-sarif.mts
           sparse-checkout-cone-mode: false
 
-      - name: Detect trusted ShellCheck converter
-        id: converter
-        run: |
-          set -euo pipefail
-          if [ -f trusted-shellcheck-converter/scripts/shellcheck-json1-to-sarif.mts ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "Trusted base revision does not yet contain the ShellCheck converter; conversion and upload begin after this helper lands on the base branch."
-          fi
-
       - name: Setup Node.js
-        if: steps.converter.outputs.present == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.19.0
 
       - name: Install ShellCheck
-        if: steps.converter.outputs.present == 'true'
         run: |
           set -euo pipefail
           probe="$RUNNER_TEMP/shellcheck-json1-probe.sh"
@@ -117,7 +104,6 @@ jobs:
 
       - name: Collect shell files
         id: shell-files
-        if: steps.converter.outputs.present == 'true'
         working-directory: source
         run: |
           git ls-files -z -- '*.sh' 'install.sh' 'uninstall.sh' | sort -zu > "$GITHUB_WORKSPACE/shell-files.txt"
@@ -128,7 +114,7 @@ jobs:
           fi
 
       - name: Generate ShellCheck SARIF
-        if: steps.converter.outputs.present == 'true' && steps.shell-files.outputs.has_files == 'true'
+        if: steps.shell-files.outputs.has_files == 'true'
         working-directory: source
         run: |
           # Ubuntu's packaged ShellCheck may not support --format=sarif.
@@ -170,7 +156,7 @@ jobs:
 
       - name: Check SARIF has runs
         id: sarif-runs
-        if: steps.converter.outputs.present == 'true' && steps.shell-files.outputs.has_files == 'true'
+        if: steps.shell-files.outputs.has_files == 'true'
         run: |
           run_count="$(jq '.runs | length' shellcheck.sarif)"
           if [ "$run_count" -gt 0 ]; then
@@ -181,7 +167,7 @@ jobs:
           fi
 
       - name: Upload ShellCheck SARIF
-        if: steps.converter.outputs.present == 'true' && steps.shell-files.outputs.has_files == 'true' && steps.sarif-runs.outputs.has_runs == 'true'
+        if: steps.shell-files.outputs.has_files == 'true' && steps.sarif-runs.outputs.has_runs == 'true'
         uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
         with:
           sarif_file: shellcheck.sarif
