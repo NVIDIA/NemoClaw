@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--offline-cache <absolute-dir>]" >&2
+  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir>]" >&2
   exit 2
 }
 
@@ -18,7 +18,7 @@ hermes_base=""
 dcode_base=""
 source_root="$PWD"
 cache_to=""
-offline_cache=""
+cache_from=""
 while (($# > 0)); do
   case "$1" in
     --cache-to)
@@ -51,9 +51,9 @@ while (($# > 0)); do
       openclaw_base="$2"
       shift 2
       ;;
-    --offline-cache)
+    --cache-from)
       (($# >= 2)) || usage
-      offline_cache="$2"
+      cache_from="$2"
       shift 2
       ;;
     --hermes-base)
@@ -81,11 +81,34 @@ done
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || usage
 [[ "$cohort" =~ ^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] || usage
 [[ "$platform" == "linux/amd64" || "$platform" == "linux/arm64" ]] || usage
+case "$platform" in
+  linux/amd64) npm_target_cpu="x64" ;;
+  linux/arm64) npm_target_cpu="arm64" ;;
+esac
+npm_target_os="linux"
+npm_target_libc="glibc"
 [[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
+seed_helper="$source_root/scripts/checks/materialize-locked-npm-cache-seed.mts"
+source_lockfile="$source_root/nemoclaw/package-lock.json"
+source_seed_dir="$source_root/tools/mcp-tool-discovery-runtime/npm-cache-seed"
+source_mcp_lockfile="$source_root/tools/mcp-tool-discovery-runtime/package-lock.json"
+source_mcp_seed_dir="$source_root/tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed"
+source_messaging_lockfile="$source_root/agents/openclaw/managed-image-messaging-runtime/package-lock.json"
+source_messaging_seed_dir="$source_root/agents/openclaw/managed-image-messaging-runtime/npm-cache-seed"
+[[ -f "$seed_helper" && ! -L "$seed_helper" ]] || usage
+[[ -f "$source_lockfile" && ! -L "$source_lockfile" ]] || usage
+[[ -d "$source_seed_dir" && ! -L "$source_seed_dir" ]] || usage
+[[ -z "$(find "$source_seed_dir" -type l -print -quit)" ]] || usage
+[[ -f "$source_mcp_lockfile" && ! -L "$source_mcp_lockfile" ]] || usage
+[[ -d "$source_mcp_seed_dir" && ! -L "$source_mcp_seed_dir" ]] || usage
+[[ -z "$(find "$source_mcp_seed_dir" -type l -print -quit)" ]] || usage
+[[ -f "$source_messaging_lockfile" && ! -L "$source_messaging_lockfile" ]] || usage
+[[ -d "$source_messaging_seed_dir" && ! -L "$source_messaging_seed_dir" ]] || usage
+[[ -z "$(find "$source_messaging_seed_dir" -type l -print -quit)" ]] || usage
 if [[ -n "$cache_to" ]]; then
   [[ "$cache_to" == /* && "$cache_to" != *$'\n'* && ! -L "$cache_to" ]] || usage
   mkdir -p -- "$cache_to"
@@ -96,23 +119,47 @@ if [[ -n "$cache_to" ]]; then
     exit 1
   }
 fi
-if [[ -n "$offline_cache" ]]; then
-  [[ "$offline_cache" == /* && "$offline_cache" != *$'\n'* && -d "$offline_cache" && ! -L "$offline_cache" ]] || usage
-  offline_cache="$(cd -- "$offline_cache" && pwd -P)"
-  [[ -z "$(find "$offline_cache" -type l -print -quit)" ]] || {
-    echo "ERROR: protected managed-image offline cache contains a symlink" >&2
+if [[ -n "$cache_from" ]]; then
+  [[ "$cache_from" == /* && "$cache_from" != *$'\n'* && -d "$cache_from" && ! -L "$cache_from" ]] || usage
+  cache_from="$(cd -- "$cache_from" && pwd -P)"
+  [[ -z "$(find "$cache_from" -type l -print -quit)" ]] || {
+    echo "ERROR: protected managed-image imported cache contains a symlink" >&2
     exit 1
   }
   for agent in openclaw hermes langchain-deepagents-code; do
-    cache_source="$offline_cache/$agent"
+    cache_source="$cache_from/$agent"
     [[ -d "$cache_source/blobs/sha256" && -f "$cache_source/index.json" ]] || {
-      echo "ERROR: protected managed-image offline cache is incomplete for ${agent}" >&2
+      echo "ERROR: protected managed-image imported cache is incomplete for ${agent}" >&2
       exit 1
     }
   done
+  [[ -d "$cache_from/npm-cache-seed" && ! -L "$cache_from/npm-cache-seed" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked npm cache seed" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/npm-cache-seed/manifest.json" && ! -L "$cache_from/npm-cache-seed/manifest.json" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked npm cache seed manifest" >&2
+    exit 1
+  }
+  [[ -d "$cache_from/mcp-runtime-npm-cache-seed" && ! -L "$cache_from/mcp-runtime-npm-cache-seed" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked MCP runtime npm cache seed" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/mcp-runtime-npm-cache-seed/manifest.json" && ! -L "$cache_from/mcp-runtime-npm-cache-seed/manifest.json" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked MCP runtime npm cache seed manifest" >&2
+    exit 1
+  }
+  [[ -d "$cache_from/messaging-npm-cache-seed" && ! -L "$cache_from/messaging-npm-cache-seed" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/messaging-npm-cache-seed/manifest.json" && ! -L "$cache_from/messaging-npm-cache-seed/manifest.json" ]] || {
+    echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed manifest" >&2
+    exit 1
+  }
 fi
 
-for command in docker jq sha256sum; do
+for command in docker jq node sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "ERROR: protected managed-image build requires $command" >&2
     exit 1
@@ -120,7 +167,72 @@ for command in docker jq sha256sum; do
 done
 
 work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
-trap 'rm -rf "$work_dir"' EXIT
+seed_overlay_active=0
+seed_backup="$work_dir/npm-cache-seed-original"
+mcp_seed_overlay_active=0
+mcp_seed_backup="$work_dir/mcp-runtime-npm-cache-seed-original"
+messaging_seed_overlay_active=0
+messaging_seed_backup="$work_dir/messaging-npm-cache-seed-original"
+restore_worktree() {
+  if [[ "$seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_seed_dir"
+    cp -pR -- "$seed_backup" "$source_seed_dir"
+  fi
+  if [[ "$mcp_seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_mcp_seed_dir"
+    cp -pR -- "$mcp_seed_backup" "$source_mcp_seed_dir"
+  fi
+  if [[ "$messaging_seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_messaging_seed_dir"
+    cp -pR -- "$messaging_seed_backup" "$source_messaging_seed_dir"
+  fi
+  rm -rf -- "$work_dir"
+}
+trap restore_worktree EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ -n "$cache_from" ]]; then
+  imported_seed="$work_dir/npm-cache-seed-import"
+  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+    --lockfile "$source_lockfile" \
+    --seed "$cache_from/npm-cache-seed" \
+    --output "$imported_seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  cp -pR -- "$source_seed_dir" "$seed_backup"
+  seed_overlay_active=1
+  rm -rf -- "$source_seed_dir"
+  cp -pR -- "$imported_seed" "$source_seed_dir"
+
+  imported_mcp_seed="$work_dir/mcp-runtime-npm-cache-seed-import"
+  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+    --lockfile "$source_mcp_lockfile" \
+    --seed "$cache_from/mcp-runtime-npm-cache-seed" \
+    --output "$imported_mcp_seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  cp -pR -- "$source_mcp_seed_dir" "$mcp_seed_backup"
+  mcp_seed_overlay_active=1
+  rm -rf -- "$source_mcp_seed_dir"
+  cp -pR -- "$imported_mcp_seed" "$source_mcp_seed_dir"
+
+  imported_messaging_seed="$work_dir/messaging-npm-cache-seed-import"
+  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+    --lockfile "$source_messaging_lockfile" \
+    --seed "$cache_from/messaging-npm-cache-seed" \
+    --output "$imported_messaging_seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  cp -pR -- "$source_messaging_seed_dir" "$messaging_seed_backup"
+  messaging_seed_overlay_active=1
+  rm -rf -- "$source_messaging_seed_dir"
+  cp -pR -- "$imported_messaging_seed" "$source_messaging_seed_dir"
+fi
+
 contracts="$work_dir/contracts.jsonl"
 : >"$contracts"
 
@@ -139,9 +251,17 @@ build_agent() {
     local cache_destination="$cache_to/$agent"
     cache_args+=(--cache-to "type=local,dest=${cache_destination},mode=max")
   fi
-  if [[ -n "$offline_cache" ]]; then
-    local cache_source="$offline_cache/$agent"
-    cache_args+=(--cache-from "type=local,src=${cache_source}" --network none)
+  if [[ -n "$cache_from" ]]; then
+    local cache_source="$cache_from/$agent"
+    cache_args+=(--network none)
+    if [[ "$agent" == "openclaw" ]]; then
+      # The exported cache is produced before the locked npm seeds are overlaid.
+      # Do not import its layer graph: some BuildKit versions still reuse
+      # empty-seed COPY results when --no-cache and --cache-from are combined.
+      cache_args+=(--no-cache)
+    else
+      cache_args+=(--cache-from "type=local,src=${cache_source}")
+    fi
   fi
 
   local base_digest="${base_reference##*@}"
@@ -255,6 +375,27 @@ build_agent \
   langchain-deepagents-code \
   agents/langchain-deepagents-code/Dockerfile \
   "$dcode_base"
+
+if [[ -n "$cache_to" ]]; then
+  node --experimental-strip-types --no-warnings "$seed_helper" export \
+    --lockfile "$source_lockfile" \
+    --output "$cache_to/npm-cache-seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  node --experimental-strip-types --no-warnings "$seed_helper" export \
+    --lockfile "$source_mcp_lockfile" \
+    --output "$cache_to/mcp-runtime-npm-cache-seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+  node --experimental-strip-types --no-warnings "$seed_helper" export \
+    --lockfile "$source_messaging_lockfile" \
+    --output "$cache_to/messaging-npm-cache-seed" \
+    --os "$npm_target_os" \
+    --cpu "$npm_target_cpu" \
+    --libc "$npm_target_libc"
+fi
 
 mkdir -p "$(dirname "$output")"
 jq -se \

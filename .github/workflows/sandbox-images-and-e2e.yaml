@@ -114,6 +114,7 @@ jobs:
           name: sandbox-test-image
           path: /tmp/sandbox-test-image.tar.gz
           retention-days: 1
+          if-no-files-found: error
 
       - name: Upload isolation image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -121,6 +122,7 @@ jobs:
           name: isolation-image
           path: /tmp/isolation-image.tar.gz
           retention-days: 1
+          if-no-files-found: error
 
       - name: Clean up Docker auth
         if: always()
@@ -237,6 +239,7 @@ jobs:
           name: hermes-isolation-image
           path: /tmp/hermes-isolation-image.tar.gz
           retention-days: 1
+          if-no-files-found: error
 
       - name: Record resources after Hermes image build
         if: always()

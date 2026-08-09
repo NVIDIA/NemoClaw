@@ -46,6 +46,7 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
+  vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 describe("onboard messaging", () => {
   it("creates providers for messaging tokens and attaches them to the sandbox", {
@@ -513,7 +514,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 
-const commands = [];
+const commands = []; let dockerfileContent;
 const registerCalls = [];
 registry.registerSandbox({
   name: "my-assistant",
@@ -556,15 +557,15 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
-  const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
+  const dockerfileMatch = command.match(/(?:--from|-f) ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
     try {
-      entry.dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
+      entry.dockerfileContent = dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
     } catch (error) {
       entry.dockerfileReadError = String(error);
     }
   }
-  commands.push(entry);
+  commands.push({ ...entry, dockerfileContent: entry.dockerfileContent ?? dockerfileContent });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -628,7 +629,6 @@ const { createSandbox } = require(${onboardPath});
     assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
     assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
     assert.match(createCommand.command, /--provider my-assistant-slack-app/);
-
     assert.deepEqual(activeChannelsFromDockerfile(createCommand.dockerfileContent), [
       "discord",
       "slack",
@@ -674,7 +674,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 
-const commands = [];
+const commands = []; let dockerfileContent;
 const registerCalls = [];
 registry.registerSandbox({
   name: "my-assistant",
@@ -715,15 +715,15 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
-  const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
+  const dockerfileMatch = command.match(/(?:--from|-f) ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
     try {
-      entry.dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
+      entry.dockerfileContent = dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
     } catch (error) {
       entry.dockerfileReadError = String(error);
     }
   }
-  commands.push(entry);
+  commands.push({ ...entry, dockerfileContent: entry.dockerfileContent ?? dockerfileContent });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -827,7 +827,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 
-const commands = [];
+const commands = []; let dockerfileContent;
 const registerCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -863,15 +863,15 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
-  const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
+  const dockerfileMatch = command.match(/(?:--from|-f) ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
     try {
-      entry.dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
+      entry.dockerfileContent = dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
     } catch (error) {
       entry.dockerfileReadError = String(error);
     }
   }
-  commands.push(entry);
+  commands.push({ ...entry, dockerfileContent: entry.dockerfileContent ?? dockerfileContent });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -982,7 +982,7 @@ registry.registerSandbox({
   messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["whatsapp"], ["whatsapp"])} },
 });
 
-const commands = [];
+const commands = []; let dockerfileContent;
 const registerCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -1018,15 +1018,15 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
-  const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
+  const dockerfileMatch = command.match(/(?:--from|-f) ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
     try {
-      entry.dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
+      entry.dockerfileContent = dockerfileContent = fs.readFileSync(dockerfileMatch[1], "utf-8");
     } catch (error) {
       entry.dockerfileReadError = String(error);
     }
   }
-  commands.push(entry);
+  commands.push({ ...entry, dockerfileContent: entry.dockerfileContent ?? dockerfileContent });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);

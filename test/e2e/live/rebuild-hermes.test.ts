@@ -1216,6 +1216,13 @@ test(STALE_BASE_REBUILD
   expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
   expect(rebuildOutput).not.toMatch(/provider credential not found/i);
+  // The gateway starts during recreation and reads its durable state before the
+  // restore replaces it, so rebuild must hand back a process that started after
+  // the restore. Either post-restore path reports one; a live gateway that was
+  // only checked reports neither.
+  expect(rebuildOutput, "rebuild must report a Hermes gateway bound to the restored state").toMatch(
+    /Hermes gateway (?:restarted and verified|recovered) after state restore/u,
+  );
   await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-6-post-rebuild");
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();
