@@ -22,6 +22,7 @@ import {
   IDENTITY,
   NEW_ID,
   OLD_ID,
+  parseFixtureDockerUlimits,
   SUPPORTED_AGENTS,
 } from "./docker-test-fixture";
 
@@ -32,6 +33,15 @@ function expectEventBefore(events: readonly string[], before: string, after: str
 }
 
 describe("Docker managed bootstrap adapter", () => {
+  it("parses signed Docker ulimits only before the image boundary", () => {
+    expect(
+      parseFixtureDockerUlimits(
+        ["create", "--ulimit", "memlock=-1:-1", "image", "--ulimit", "workload=1:2"],
+        3,
+      ),
+    ).toEqual([{ Name: "memlock", Soft: -1, Hard: -1 }]);
+  });
+
   it("captures the live OpenShell idle supervisor with a separately persisted bootstrap identity", async () => {
     const fake = fixture();
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
@@ -142,8 +152,12 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
-  it("accepts Docker-normalized required ulimit objects before cutover", async () => {
+  it("preserves signed and accepts Docker-normalized required ulimits before cutover", async () => {
     const fake = fixture();
+    fake.original!.HostConfig!.Ulimits = [
+      { Name: "nofile", Soft: 65_536, Hard: 65_536 },
+      { Name: "memlock", Soft: -1, Hard: -1 },
+    ];
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request } = authority();
     const discovered = await adapter.discoverHeldWorkload({
@@ -168,6 +182,7 @@ describe("Docker managed bootstrap adapter", () => {
     ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
     expect(fake.replacement?.HostConfig?.Ulimits).toEqual([
       { Name: "nofile", Soft: 65_536, Hard: 65_536 },
+      { Name: "memlock", Soft: -1, Hard: -1 },
       { Name: "nproc", Soft: 512, Hard: 512 },
     ]);
   });

@@ -33,12 +33,13 @@ export interface ProcessSecurityIdentity {
 }
 
 export interface SplitProcessSecurityReport {
+  childSupervisors: ProcessSecurityIdentity[];
+  observedChildSupervisors: ProcessSecurityIdentity[];
   observedProcEntries: number;
   sandboxGid: number;
   sandboxUid: number;
   supervisor: ProcessSecurityIdentity;
-  version: 1;
-  childSupervisors: ProcessSecurityIdentity[];
+  version: 2;
 }
 
 export interface SecurityPostureSummary {
@@ -80,6 +81,8 @@ const BASH_ARGV0 = ["bash", ...SYSTEM_BASH_EXECUTABLES] as const;
 const LIVE_PROCESS_STATES = ["D", "R", "S"] as const;
 const SAFE_OPENSHELL_IDENTITY_COMPONENT = /^[a-z0-9][a-z0-9_.-]*$/u;
 const MAX_PROC_ENTRIES = 32_768;
+const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
+const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
 // OpenShell 0.0.99 and 0.0.101 grant the OpenShell supervisor the Docker default
 // capabilities plus NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
 // resulting Linux capability mask so additions and removals both require an
@@ -94,6 +97,8 @@ import pwd
 
 PROC_ROOT = Path("/proc")
 MAX_PROC_ENTRIES = ${MAX_PROC_ENTRIES}
+MAX_CENSUS_STABILITY_ATTEMPTS = ${MAX_CENSUS_STABILITY_ATTEMPTS}
+MAX_CENSUS_DIAGNOSTIC_IDENTITIES = ${MAX_CENSUS_DIAGNOSTIC_IDENTITIES}
 OPENSHELL_SUPERVISOR_ARGV = tuple(item.encode("utf-8") for item in ${JSON.stringify(OPENSHELL_SUPERVISOR_ARGV)})
 OPENSHELL_SUPERVISOR_EXECUTABLE = ${JSON.stringify(OPENSHELL_SUPERVISOR_EXECUTABLE)}
 NEMOCLAW_START_SUPERVISOR = tuple(item.encode("utf-8") for item in ${JSON.stringify(NEMOCLAW_START_SUPERVISOR_PATHS)})
@@ -148,7 +153,7 @@ def selected_status(raw):
 
 def stable_process(pid):
     path = PROC_ROOT / str(pid)
-    before = path.stat(follow_symlinks=False)
+    before = os.stat(path, follow_symlinks=False)
     first_state, first_ppid, first_start_time = stat_identity(
         (path / "stat").read_text(encoding="utf-8")
     )
@@ -161,7 +166,7 @@ def stable_process(pid):
     second_status = selected_status((path / "status").read_text(encoding="utf-8"))
     second_argv = argv_for(path)
     second_executable = os.readlink(path / "exe")
-    after = path.stat(follow_symlinks=False)
+    after = os.stat(path, follow_symlinks=False)
     if first_state not in LIVE_PROCESS_STATES or second_state not in LIVE_PROCESS_STATES:
         raise RuntimeError(f"process {pid} is not live")
     if (
@@ -195,15 +200,129 @@ def child_supervisor_census():
             if observed > MAX_PROC_ENTRIES:
                 raise RuntimeError("process census exceeded its checked bound")
             try:
-                argv = argv_for(Path(entry.path))
+                selected_path = Path(entry.path)
+                _, _, selected_start_time = stat_identity(
+                    (selected_path / "stat").read_text(encoding="utf-8")
+                )
+                selected_argv = argv_for(selected_path)
             except (FileNotFoundError, ProcessLookupError):
                 continue
-            if is_nemoclaw_start_supervisor(argv):
-                matches.append(stable_process(entry.name))
+            if is_nemoclaw_start_supervisor(selected_argv):
+                process = stable_process(entry.name)
+                stable_argv = tuple(item.encode("utf-8") for item in process["argv"])
+                if (
+                    process["startTime"] != selected_start_time
+                    or stable_argv != selected_argv
+                    or not is_nemoclaw_start_supervisor(stable_argv)
+                    or process["executable"] not in SYSTEM_BASH_EXECUTABLES
+                ):
+                    raise RuntimeError(
+                        "nemoclaw-start process changed after census selection"
+                    )
+                matches.append(process)
     return observed, matches
 
 def stable_security_identity(process):
     return {name: value for name, value in process.items() if name != "state"}
+
+def process_identity_key(process):
+    return process["pid"], int(process["startTime"])
+
+def canonical_security_identities(processes):
+    return sorted(
+        (stable_security_identity(process) for process in processes),
+        key=process_identity_key,
+    )
+
+def diagnostic_census(processes):
+    identities = sorted(
+        (
+            {
+                "pid": process["pid"],
+                "ppid": process["ppid"],
+                "startTime": process["startTime"],
+            }
+            for process in processes
+        ),
+        key=process_identity_key,
+    )
+    return {
+        "count": len(identities),
+        "identities": identities[:MAX_CENSUS_DIAGNOSTIC_IDENTITIES],
+        "truncated": len(identities) > MAX_CENSUS_DIAGNOSTIC_IDENTITIES,
+    }
+
+def changed_identity_fields(first, second):
+    return [
+        name
+        for name in ("ppid", "startTime", "argv", "executable", "status")
+        if first[name] != second[name]
+    ]
+
+def remember_observed_processes(observed, observed_start_times, processes):
+    for process in processes:
+        key = process_identity_key(process)
+        previous_start_time = observed_start_times.get(process["pid"])
+        if previous_start_time is not None and previous_start_time != process["startTime"]:
+            raise RuntimeError(
+                f"nemoclaw-start process PID {process['pid']} was reused during census acquisition"
+            )
+        previous = observed.get(key)
+        if (
+            previous is not None
+            and stable_security_identity(previous) != stable_security_identity(process)
+        ):
+            raise RuntimeError(
+                "nemoclaw-start process identity changed across census attempts: "
+                f"pid={process['pid']} "
+                f"fields={','.join(changed_identity_fields(previous, process))}"
+            )
+        observed[key] = process
+        observed_start_times[process["pid"]] = process["startTime"]
+        if len(observed) > MAX_PROC_ENTRIES:
+            raise RuntimeError("retained process census exceeded its checked bound")
+
+def require_retained_process_bound(observed, observed_proc_entries):
+    if len(observed) > observed_proc_entries:
+        raise RuntimeError("retained process census exceeded the observed process bound")
+
+def acquire_stable_child_supervisor_census():
+    observed_proc_entries, first_processes = child_supervisor_census()
+    observed_processes = {}
+    observed_start_times = {}
+    remember_observed_processes(
+        observed_processes,
+        observed_start_times,
+        first_processes,
+    )
+    require_retained_process_bound(observed_processes, observed_proc_entries)
+    first_identities = canonical_security_identities(first_processes)
+    for attempt in range(2, MAX_CENSUS_STABILITY_ATTEMPTS + 1):
+        next_observed_proc_entries, second_processes = child_supervisor_census()
+        observed_proc_entries = max(observed_proc_entries, next_observed_proc_entries)
+        remember_observed_processes(
+            observed_processes,
+            observed_start_times,
+            second_processes,
+        )
+        require_retained_process_bound(observed_processes, observed_proc_entries)
+        second_identities = canonical_security_identities(second_processes)
+        if first_identities == second_identities:
+            return (
+                observed_proc_entries,
+                sorted(second_processes, key=process_identity_key),
+                sorted(observed_processes.values(), key=process_identity_key),
+            )
+        if attempt == MAX_CENSUS_STABILITY_ATTEMPTS:
+            raise RuntimeError(
+                "nemoclaw-start child supervisor census did not stabilize "
+                f"after {MAX_CENSUS_STABILITY_ATTEMPTS} attempts: "
+                f"first={json.dumps(diagnostic_census(first_processes), sort_keys=True)} "
+                f"second={json.dumps(diagnostic_census(second_processes), sort_keys=True)}"
+            )
+        first_processes = second_processes
+        first_identities = second_identities
+    raise RuntimeError("nemoclaw-start child supervisor census did not run")
 
 sandbox_user = pwd.getpwnam("sandbox")
 sandbox_group = grp.getgrnam("sandbox")
@@ -212,15 +331,14 @@ sandbox_gid = sandbox_group.gr_gid
 if sandbox_user.pw_gid != sandbox_gid:
     raise RuntimeError("sandbox user and group identities disagree")
 supervisor_before = stable_process(1)
-observed_first, child_supervisors_first = child_supervisor_census()
-observed_second, child_supervisors_second = child_supervisor_census()
+(
+    observed_proc_entries,
+    child_supervisors,
+    observed_child_supervisors,
+) = acquire_stable_child_supervisor_census()
 supervisor_after = stable_process(1)
 if stable_security_identity(supervisor_before) != stable_security_identity(supervisor_after):
     raise RuntimeError("OpenShell supervisor changed during inspection")
-if [stable_security_identity(item) for item in child_supervisors_first] != [
-    stable_security_identity(item) for item in child_supervisors_second
-]:
-    raise RuntimeError("nemoclaw-start child supervisor census changed during inspection")
 if (
     tuple(supervisor_before["argv"]) != tuple(item.decode("ascii") for item in OPENSHELL_SUPERVISOR_ARGV)
     or supervisor_before["executable"] != OPENSHELL_SUPERVISOR_EXECUTABLE
@@ -228,16 +346,17 @@ if (
     raise RuntimeError("unexpected OpenShell supervisor command")
 if any(
     item["executable"] not in SYSTEM_BASH_EXECUTABLES
-    for item in child_supervisors_first
+    for item in observed_child_supervisors
 ):
     raise RuntimeError("unexpected nemoclaw-start child supervisor executable")
 print(json.dumps({
-    "version": 1,
-    "observedProcEntries": max(observed_first, observed_second),
+    "version": 2,
+    "observedProcEntries": observed_proc_entries,
     "sandboxUid": sandbox_uid,
     "sandboxGid": sandbox_gid,
     "supervisor": supervisor_before,
-    "childSupervisors": child_supervisors_first,
+    "childSupervisors": child_supervisors,
+    "observedChildSupervisors": observed_child_supervisors,
 }, sort_keys=True))`;
 
 function truthy(value: string | undefined): boolean {
@@ -364,10 +483,15 @@ function requireExactIds(values: string[], expected: number, label: string): voi
   }
 }
 
-function requireExactSupplementaryGroups(values: string[], expected: number, label: string): void {
-  const exact = String(expected);
-  if (values.length !== 1 || values[0] !== exact) {
-    throw new Error(`${label} expected only ${exact}, got ${values.join(" ")}`);
+function requireExactSupplementaryGroups(
+  values: string[],
+  expected: readonly number[],
+  label: string,
+): void {
+  const exact = expected.map(String).sort();
+  const actual = [...values].sort();
+  if (actual.length !== exact.length || actual.some((value, index) => value !== exact[index])) {
+    throw new Error(`${label} expected exactly ${exact.join(" ")}, got ${values.join(" ")}`);
   }
 }
 
@@ -385,7 +509,7 @@ function canonicalNemoclawStartSupervisorArgv(argv: string[]): boolean {
   );
 }
 
-function validateSupervisor(process: ProcessSecurityIdentity): void {
+function validateSupervisor(process: ProcessSecurityIdentity, sandboxGid: number): void {
   if (process.pid !== 1 || process.ppid !== 0) {
     throw new Error(
       `OpenShell supervisor expected pid=1 ppid=0, got ${process.pid}/${process.ppid}`,
@@ -400,7 +524,11 @@ function validateSupervisor(process: ProcessSecurityIdentity): void {
   }
   requireExactIds(process.status.uid, 0, "OpenShell supervisor Uid");
   requireExactIds(process.status.gid, 0, "OpenShell supervisor Gid");
-  requireExactSupplementaryGroups(process.status.groups, 0, "OpenShell supervisor Groups");
+  requireExactSupplementaryGroups(
+    process.status.groups,
+    [0, sandboxGid],
+    "OpenShell supervisor Groups",
+  );
   for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
     requireCapabilityHex(process.status[field], `OpenShell supervisor ${field}`);
   }
@@ -422,42 +550,100 @@ function validateSupervisor(process: ProcessSecurityIdentity): void {
   }
 }
 
-function validateNemoclawStartSupervisor(
+function validateNemoclawStartProcess(
   process: ProcessSecurityIdentity,
   sandboxUid: number,
   sandboxGid: number,
 ): void {
-  if (process.pid === 1 || process.ppid !== 1) {
-    throw new Error(
-      `nemoclaw-start child supervisor expected a direct PID 1 child, got pid=${process.pid} ppid=${process.ppid}`,
-    );
+  if (process.pid === 1) {
+    throw new Error("nemoclaw-start process must not replace the OpenShell supervisor at PID 1");
   }
   if (!canonicalNemoclawStartSupervisorArgv(process.argv)) {
-    throw new Error("nemoclaw-start child supervisor does not have the expected argv");
+    throw new Error("nemoclaw-start process does not have the expected argv");
   }
   if (!(SYSTEM_BASH_EXECUTABLES as readonly string[]).includes(process.executable)) {
     throw new Error(
-      `nemoclaw-start child supervisor expected the system Bash executable, got ${process.executable}`,
+      `nemoclaw-start process expected the system Bash executable, got ${process.executable}`,
     );
   }
-  requireExactIds(process.status.uid, sandboxUid, "nemoclaw-start child supervisor Uid");
-  requireExactIds(process.status.gid, sandboxGid, "nemoclaw-start child supervisor Gid");
+  requireExactIds(process.status.uid, sandboxUid, "nemoclaw-start process Uid");
+  requireExactIds(process.status.gid, sandboxGid, "nemoclaw-start process Gid");
   requireExactSupplementaryGroups(
     process.status.groups,
-    sandboxGid,
-    "nemoclaw-start child supervisor Groups",
+    [sandboxGid],
+    "nemoclaw-start process Groups",
   );
-  requireZeroCapabilities(process.status, "nemoclaw-start child supervisor");
+  requireZeroCapabilities(process.status, "nemoclaw-start process");
   if (process.status.noNewPrivs !== "1") {
     throw new Error(
-      `nemoclaw-start child supervisor expected NoNewPrivs=1, got ${process.status.noNewPrivs}`,
+      `nemoclaw-start process expected NoNewPrivs=1, got ${process.status.noNewPrivs}`,
     );
   }
 }
 
+function selectNemoclawStartSupervisor(
+  processes: ProcessSecurityIdentity[],
+): ProcessSecurityIdentity {
+  const byPid = new Map<number, ProcessSecurityIdentity>();
+  for (const process of processes) {
+    if (byPid.has(process.pid)) {
+      throw new Error(`nemoclaw-start process PID ${process.pid} appeared more than once`);
+    }
+    byPid.set(process.pid, process);
+  }
+
+  const direct = processes.filter((process) => process.ppid === 1);
+  if (direct.length !== 1) {
+    throw new Error(
+      `expected exactly one direct nemoclaw-start child supervisor, found ${direct.length}`,
+    );
+  }
+  const supervisor = direct[0]!;
+  for (const process of processes) {
+    if (process === supervisor) continue;
+    const visited = new Set<number>([process.pid]);
+    let current = process;
+    while (current.ppid !== 1) {
+      const parent = byPid.get(current.ppid);
+      if (!parent || visited.has(parent.pid)) {
+        throw new Error(
+          `nemoclaw-start process PID ${process.pid} is not a descendant of the direct child supervisor`,
+        );
+      }
+      visited.add(parent.pid);
+      current = parent;
+    }
+    if (current !== supervisor) {
+      throw new Error(
+        `nemoclaw-start process PID ${process.pid} is not a descendant of the direct child supervisor`,
+      );
+    }
+  }
+  return supervisor;
+}
+
+function stableProcessIdentityKey(process: ProcessSecurityIdentity): string {
+  return JSON.stringify({
+    argv: process.argv,
+    executable: process.executable,
+    pid: process.pid,
+    ppid: process.ppid,
+    startTime: process.startTime,
+    status: process.status,
+  });
+}
+
+function processIdentityArray(value: unknown, label: string): ProcessSecurityIdentity[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  if (value.length > MAX_PROC_ENTRIES) {
+    throw new Error(`${label} exceeded ${MAX_PROC_ENTRIES} process entries`);
+  }
+  return value.map((entry, index) => processIdentity(entry, `${label}[${index}]`));
+}
+
 export function validateSplitProcessSecurityReport(value: unknown): SplitProcessSecurityReport {
   const report = requiredRecord(value, "split-process security report");
-  if (report.version !== 1) throw new Error("split-process security report version must be 1");
+  if (report.version !== 2) throw new Error("split-process security report version must be 2");
   const observedProcEntries = requiredInteger(
     report.observedProcEntries,
     "split-process security report observedProcEntries",
@@ -469,26 +655,49 @@ export function validateSplitProcessSecurityReport(value: unknown): SplitProcess
   const sandboxUid = requiredInteger(report.sandboxUid, "sandbox uid", 1);
   const sandboxGid = requiredInteger(report.sandboxGid, "sandbox gid", 1);
   const supervisor = processIdentity(report.supervisor, "supervisor");
-  if (!Array.isArray(report.childSupervisors)) {
-    throw new Error("split-process security report childSupervisors must be an array");
-  }
-  const childSupervisors = report.childSupervisors.map((entry, index) =>
-    processIdentity(entry, `childSupervisors[${index}]`),
+  const childSupervisors = processIdentityArray(
+    report.childSupervisors,
+    "split-process security report childSupervisors",
   );
-  if (childSupervisors.length !== 1) {
+  const observedChildSupervisors = processIdentityArray(
+    report.observedChildSupervisors,
+    "split-process security report observedChildSupervisors",
+  );
+  if (observedChildSupervisors.length > observedProcEntries) {
     throw new Error(
-      `expected exactly one nemoclaw-start child supervisor, found ${childSupervisors.length}`,
+      "split-process security report retained more child supervisors than observed processes",
     );
   }
-  validateSupervisor(supervisor);
-  validateNemoclawStartSupervisor(childSupervisors[0]!, sandboxUid, sandboxGid);
+  validateSupervisor(supervisor, sandboxGid);
+  for (const process of childSupervisors) {
+    validateNemoclawStartProcess(process, sandboxUid, sandboxGid);
+  }
+  selectNemoclawStartSupervisor(childSupervisors);
+  const observedByPid = new Map<number, ProcessSecurityIdentity>();
+  const observedIdentityKeys = new Set<string>();
+  for (const process of observedChildSupervisors) {
+    validateNemoclawStartProcess(process, sandboxUid, sandboxGid);
+    if (observedByPid.has(process.pid)) {
+      throw new Error(`observed nemoclaw-start process PID ${process.pid} appeared more than once`);
+    }
+    observedByPid.set(process.pid, process);
+    observedIdentityKeys.add(stableProcessIdentityKey(process));
+  }
+  for (const process of childSupervisors) {
+    if (!observedIdentityKeys.has(stableProcessIdentityKey(process))) {
+      throw new Error(
+        `final nemoclaw-start process PID ${process.pid} was absent from the observed census`,
+      );
+    }
+  }
   return {
     childSupervisors,
+    observedChildSupervisors,
     observedProcEntries,
     sandboxGid,
     sandboxUid,
     supervisor,
-    version: 1,
+    version: 2,
   };
 }
 
@@ -759,7 +968,7 @@ tail -n 20 "$log"
     rcFilesLocked: true,
     runtimeProxyEnvLocked: true,
     splitProcess: {
-      childSupervisor: splitProcess.childSupervisors[0]!,
+      childSupervisor: selectNemoclawStartSupervisor(splitProcess.childSupervisors),
       supervisor: splitProcess.supervisor,
     },
     startupLogClean: true,

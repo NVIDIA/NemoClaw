@@ -105,8 +105,10 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   });
 
   progress.phase("validate exact source and generic NVIDIA GPU host");
-  const expectedSha = process.env.NEMOCLAW_E2E_EXPECTED_SHA;
-  expect(expectedSha, "workflow must bind the exact candidate commit").toMatch(/^[a-f0-9]{40}$/u);
+  const qualificationHeadSha = process.env.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA;
+  expect(qualificationHeadSha, "workflow must bind the exact candidate commit").toMatch(
+    /^[a-f0-9]{40}$/u,
+  );
   const candidateSha = await host.command("git", ["rev-parse", "HEAD"], {
     artifactName: "candidate-commit",
     cwd: REPO_ROOT,
@@ -114,7 +116,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
     timeoutMs: 30_000,
   });
   expect(candidateSha.exitCode, resultText(candidateSha)).toBe(0);
-  expect(candidateSha.stdout.trim()).toBe(expectedSha);
+  expect(candidateSha.stdout.trim()).toBe(qualificationHeadSha);
 
   const architecture = await host.command("uname", ["-m"], {
     artifactName: "host-architecture",
@@ -419,7 +421,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   expect(hasExactReadyPhase(readySandbox.stdout)).toBe(true);
 
   await artifacts.writeJson("qualification-evidence.json", {
-    candidateSha: expectedSha,
+    candidateSha: qualificationHeadSha,
     preset: { id: PRESET_ID, digest: owner!.presetDigest },
     recipe: { id: RECIPE_ID, digest: owner!.recipeDigest },
     model: {
@@ -482,7 +484,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   await artifacts.target.complete({
     id: "llama-cpp-generic-gpu",
     status: "passed",
-    candidateSha: expectedSha,
+    candidateSha: qualificationHeadSha,
     fullGpuOffload: true,
     model: recipe.spec.model.servedName,
   });

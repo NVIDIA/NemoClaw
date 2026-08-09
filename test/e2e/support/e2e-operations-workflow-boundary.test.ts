@@ -13,6 +13,7 @@ import {
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
@@ -190,6 +191,39 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         'Manual PR authentication must retain "$WORKFLOW_EVENT" == "workflow_dispatch"',
         'Manual PR authentication must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
         'Manual PR checkout validation must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+      ]),
+    );
+  });
+
+  it("does not activate generic GPU risk reporting for an automatic main push", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_E2E_EXPECTED_SHA =
+      "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "llama-cpp-generic-gpu job must set NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
+  it("retains generic GPU candidate identity for main and manual PR runs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA =
+      "${{ inputs.checkout_sha }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "llama-cpp-generic-gpu job must set NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+
+  it("rejects drift from the manual PR risk-signal identity inputs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+    workflow.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "E2E workflow must bind NEMOCLAW_E2E_EXPECTED_SHA",
+        "E2E workflow must bind NEMOCLAW_E2E_CORRELATION_ID",
       ]),
     );
   });

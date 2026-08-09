@@ -603,14 +603,15 @@ check_not_contains() {
   esac
 }
 
-codex_acp_block="$(sed -n '/# Pre-install the codex-acp package/,/# Upgrade OpenClaw if the base image is stale./p' Dockerfile)"
-check_contains "$codex_acp_block" "CODEX_ACP_TARBALL='${CODEX_ACP_TARBALL}'" "codex-acp tarball"
-check_contains "$codex_acp_block" '/scripts/lib/reviewed-npm-archive.mts' "codex-acp shared helper"
-check_contains "$codex_acp_block" '--package-spec "$CODEX_ACP_SPEC" --integrity "$CODEX_ACP_0_11_1_INTEGRITY"' "codex-acp reviewed identity"
-check_contains "$codex_acp_block" '--tarball-url "$CODEX_ACP_TARBALL"' "codex-acp reviewed tarball"
-check_contains "$codex_acp_block" '"$CODEX_ACP_PACK_PATH"' "codex-acp local install path"
-check_contains "$codex_acp_block" 'CODEX_ACP_PACK_DIR="$(dirname "$CODEX_ACP_PACK_PATH")"' "codex-acp pack directory"
-check_contains "$codex_acp_block" 'rm -rf "$CODEX_ACP_PACK_DIR"' "codex-acp cleanup"
+codex_acp_block="$(sed -n '/AS codex-acp-runtime/,/AS wechat-npm-cache/p' Dockerfile)"
+check_contains "$(cat Dockerfile)" '${CODEX_ACP_TARBALL}' "codex-acp tarball"
+check_contains "$(cat Dockerfile)" 'sha256:b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8' "codex-acp immutable archive"
+check_contains "$codex_acp_block" 'ARG CODEX_ACP_0_11_1_INTEGRITY' "codex-acp reviewed identity"
+check_contains "$codex_acp_block" 'ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY' "codex-acp amd64 identity"
+check_contains "$codex_acp_block" 'ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY' "codex-acp arm64 identity"
+check_contains "$codex_acp_block" 'RUN --network=none' "codex-acp offline install"
+check_contains "$codex_acp_block" 'npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts' "codex-acp local install path"
+check_contains "$codex_acp_block" 'rm -rf /tmp/codex-acp' "codex-acp cleanup"
 check_not_contains "$codex_acp_block" 'pack_reviewed_npm_tarball' "codex-acp inline pack helper"
 
 for dockerfile in Dockerfile Dockerfile.base; do
@@ -651,12 +652,14 @@ check_contains "$(cat Dockerfile)" "stat -c '%u:%g:%a'" "runtime provenance meta
 check_contains "$(cat Dockerfile)" '0:0:444' "runtime provenance exact metadata"
 check_contains "$(cat Dockerfile)" 'rm -rf "$OPENCLAW_PROVENANCE_PATH"' "runtime provenance consumption"
 
-wechat_cache_block="$(sed -n '/# Reviewed-archive invariants (#5896): after npm materializes the exact lock/,/# Pre-install the codex-acp package/p' Dockerfile)"
-check_contains "$wechat_cache_block" '/scripts/lib/reviewed-npm-archive.mts' "WeChat cache shared helper"
-check_contains "$wechat_cache_block" '--lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json' "WeChat cache reviewed lock"
-check_contains "$wechat_cache_block" '--cache /usr/local/share/nemoclaw/wechat-npm-cache' "WeChat cache boundary"
+wechat_cache_block="$(sed -n '/AS wechat-npm-cache/,/# Group repository-owned files/p' Dockerfile)"
+check_contains "$wechat_cache_block" 'reviewed-npm-archive.mts' "WeChat cache shared helper"
+check_contains "$wechat_cache_block" 'seed-reviewed-npm-cache.mts' "WeChat cache offline seed"
+check_contains "$wechat_cache_block" '--lockfile /opt/wechat-runtime/package-lock.json' "WeChat cache reviewed lock"
+check_contains "$wechat_cache_block" '--cache /out/wechat-npm-cache' "WeChat cache boundary"
 check_contains "$wechat_cache_block" '--registry-origin https://registry.npmjs.org/' "WeChat reviewed registry"
 check_contains "$wechat_cache_block" 'NPM_CONFIG_OFFLINE=true' "WeChat cache offline verification"
+check_contains "$wechat_cache_block" 'RUN --network=none' "WeChat cache offline materialization"
 
 optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
@@ -664,12 +667,14 @@ check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integri
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
 check_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
 check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.7.1")' "diagnostics remediation identity"
-check_contains "$optional_plugin_block" '--working-directory "$plugin_root"' "diagnostics remediation workspace"
+check_contains "$optional_plugin_block" '--working-directory "$plugin_work_root"' "diagnostics remediation workspace"
 check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
-check_contains "$optional_plugin_block" 'plugin_root="$(dirname "$plugin_archive")"' "optional plugin cleanup root"
+check_contains "$optional_plugin_block" 'plugin_source_root="$(dirname "$plugin_archive")"' "optional plugin source root"
+check_contains "$optional_plugin_block" 'plugin_work_root="$(mktemp -d /tmp/nemoclaw-openclaw-plugin.XXXXXX)"' "optional plugin writable workspace"
 check_contains "$optional_plugin_block" 'plugin_install_archive="$plugin_archive"' "optional plugin default archive"
 check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_install_archive}"' "optional plugin npm-pack install"
-check_contains "$optional_plugin_block" 'rm -rf "$plugin_root"' "optional plugin cleanup"
+check_contains "$optional_plugin_block" 'rm -rf "$plugin_work_root"' "optional plugin workspace cleanup"
+check_contains "$optional_plugin_block" 'if [ -z "\${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi' "optional plugin fallback source cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
 	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"
@@ -758,7 +763,8 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       },
     );
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.status, result.stdout).toBe(0);
   });
 
   it("records the fail-closed messaging plugin provenance boundary", () => {
