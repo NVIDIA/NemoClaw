@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { loadAgent } from "../../agent/defs";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
@@ -20,6 +19,7 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { getAgentConfigDir } from "./mcp-bridge-state";
 import { executeSandboxCommand } from "./process-recovery";
 
 export const MCPORTER_VERSION = "0.7.3";
@@ -30,7 +30,7 @@ function mcporterArgs(root: string, ...args: string[]): string[] {
 }
 
 function mcporterRootForEntry(entry: McpBridgeEntry): string {
-  return openClawMcporterRoot(loadAgent(entry.agent).configPaths.dir);
+  return openClawMcporterRoot(getAgentConfigDir(entry.agent));
 }
 
 function ensureMcporter(sandboxName: string): void {

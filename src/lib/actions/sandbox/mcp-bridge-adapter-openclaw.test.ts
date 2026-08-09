@@ -194,9 +194,7 @@ describe("OpenClaw mcporter MCP adapter", () => {
         "--scope",
         "project",
       ]);
-      const configGets = observedArgs.filter(
-        (args) => args[2] === "config" && args[3] === "get",
-      );
+      const configGets = observedArgs.filter((args) => args[2] === "config" && args[3] === "get");
       expect(configGets).not.toHaveLength(0);
       for (const args of configGets) {
         expect(args).toEqual([

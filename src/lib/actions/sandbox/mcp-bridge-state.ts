@@ -33,6 +33,10 @@ export function getSandboxAgent(sandbox: SandboxEntry): AgentDefinition {
   return loadAgent(getSandboxAgentName(sandbox));
 }
 
+export function getAgentConfigDir(agentName: string): string {
+  return loadAgent(agentName).configPaths.dir;
+}
+
 function unsupportedMessage(agent: AgentDefinition): string {
   const reason = agent.mcpCapability.reason
     ? ` ${agent.mcpCapability.reason}`
