@@ -19,9 +19,10 @@ before those targets run; local runners must provide it themselves.
   attempts, requests at most two failed-job reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
-- Platform workflows such as macOS, WSL, sandbox image, and regression E2E
-  call their target E2E tests directly. The Ollama auth proxy target is
-  selected through `.github/workflows/e2e.yaml`.
+- `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
+  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets directly.
+  `.github/workflows/e2e.yaml` selects free-standing jobs, including
+  `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
 

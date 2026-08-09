@@ -138,7 +138,7 @@ describe("e2e workflow boundary", () => {
     ).toEqual({ runLaunchableE2e: false });
   });
 
-  it("rejects WhatsApp compact QR selector drift", () => {
+  it("rejects a WhatsApp compact QR job that omits the jobs and targets dispatch conditions", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { if?: string }>;
     };

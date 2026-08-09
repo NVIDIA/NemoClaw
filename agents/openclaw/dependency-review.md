@@ -37,7 +37,7 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   Other PRs fail closed if their base lacks the action.
   The `main.yaml` workflow uses the merged action.
   The action uses Node.js `22.19.0`.
-  It downloads `npm@10.9.4` and verifies the SRI value committed in the action.
+  It downloads `npm@10.9.4` and verifies the archive against the committed Subresource Integrity (SRI) value.
   It installs the verified archive in npm offline mode with lifecycle scripts disabled.
   It materializes the committed graph with scripts disabled.
   The action rejects any low-or-higher production advisory and verifies registry signatures.
