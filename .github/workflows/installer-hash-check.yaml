@@ -41,8 +41,8 @@ jobs:
         with:
           node-version: 22.19.0
 
-      # The PR checkout supplies data only. The checker and pin parser execute
-      # from the base-trusted checkout below.
+      # The checkout of the latest PR commit supplies data only. The checker and
+      # pin parser execute from the checkout of the PR base SHA below.
       - name: Checkout pull request head
         if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

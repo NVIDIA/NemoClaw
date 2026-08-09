@@ -33,7 +33,7 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `wechat-runtime-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` invokes the reviewed `.github/actions/ci-wechat-runtime-audit` implementation.
   The pull request workflow resolves the action from the PR base SHA.
-  If the base SHA does not contain the action, the workflow fails.
+  If the PR base SHA does not contain the action, the pull request workflow fails.
   The `main.yaml` workflow uses the merged action.
   The action uses Node.js `22.19.0`.
   It downloads `npm@10.9.4` and verifies the archive against the committed Subresource Integrity (SRI) value.
