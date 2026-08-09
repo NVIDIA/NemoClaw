@@ -14,25 +14,36 @@ const MUTABLE_CONFIG_NORMALIZER_WATCHDOG = [
 ] as const;
 
 function runPrivileged(sandboxName: string, cmd: string[], timeout = 15000): void {
-  dockerExec.dockerExecFileSync(
-    privilegedExecModule.privilegedSandboxExecArgv(sandboxName, cmd, false, true),
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout,
+  privilegedExecModule.withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "mutable config permission repair",
+    () => {
+      dockerExec.dockerExecFileSync(
+        privilegedExecModule.privilegedSandboxExecArgv(sandboxName, cmd, false, true),
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout,
+        },
+      );
     },
   );
 }
 
 function privilegedExecCapture(sandboxName: string, cmd: string[], timeout = 15000): string {
-  return dockerExec
-    .dockerExecFileSync(
-      privilegedExecModule.privilegedSandboxExecArgv(sandboxName, cmd, false, true),
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      },
-    )
-    .trim();
+  return privilegedExecModule.withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "mutable config identity lookup",
+    () =>
+      dockerExec
+        .dockerExecFileSync(
+          privilegedExecModule.privilegedSandboxExecArgv(sandboxName, cmd, false, true),
+          {
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout,
+          },
+        )
+        .trim(),
+  );
 }
 
 function sandboxIdentityId(sandboxName: string, flag: "-u" | "-g"): string {

@@ -41,6 +41,7 @@ import {
   RuntimeProviderRegistrationError,
   RuntimeProviderSelectionError,
   requireRuntimeProviderHostLocalInferenceOperation,
+  requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
 } from "./registry";
 
@@ -125,6 +126,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         "hostLocalInference",
         "lifecycle",
         "mutationAuthority",
+        "stateMutation",
         "bootstrap",
         "snapshot",
         "recovery",
@@ -134,6 +136,10 @@ describe("RuntimeProviderBundle registry contract", () => {
         expect(bundle[surface].providerId, `${providerId}.${surface}`).toBe(providerId);
       }
       expect(bundle.bootstrap).toMatchObject({ supported: providerId === "docker" });
+      expect(bundle.stateMutation).toMatchObject({
+        supported: providerId === "docker",
+        ...(providerId === "docker" ? { contractVersion: 2 } : {}),
+      });
       expect(bundle.snapshot).toMatchObject(
         providerId === "docker"
           ? {
@@ -159,6 +165,12 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.hostLocalInference).toMatchObject({
       supported: false,
     });
+    expect(
+      requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!),
+    ).toMatchObject({ providerId: "docker", supported: true, contractVersion: 2 });
+    expect(() =>
+      requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!),
+    ).toThrow(/no state-mutation implementation/u);
   });
 
   it("registers the production Docker bootstrap surface through the same bundle registry", () => {
@@ -321,6 +333,7 @@ describe("RuntimeProviderBundle registry contract", () => {
       "hostLocalInference",
       "lifecycle",
       "mutationAuthority",
+      "stateMutation",
       "bootstrap",
       "snapshot",
       "recovery",
@@ -404,7 +417,7 @@ describe("RuntimeProviderBundle registry contract", () => {
       (bundle: RuntimeProviderBundle) => ({
         ...bundle.stateMutation,
         supported: true,
-        contractVersion: 1,
+        contractVersion: 2,
       }),
     ],
     [
@@ -457,6 +470,34 @@ describe("RuntimeProviderBundle registry contract", () => {
         ["mxc", replaceSurface(bundle, surface, mutate(bundle))],
       ]),
     ).toThrow(RuntimeProviderRegistrationError);
+  });
+
+  it.each([
+    "publish",
+    "rollback",
+    "release",
+  ] as const)("rejects state-mutation v2 without %s", (operation) => {
+    const bundle = mxcBundle();
+    const supported = {
+      providerId: "mxc",
+      supported: true,
+      contractVersion: 2,
+      acquire: vi.fn(),
+      assertFenced: vi.fn(),
+      publish: vi.fn(),
+      rollback: vi.fn(),
+      activate: vi.fn(),
+      release: vi.fn(),
+      recover: vi.fn(),
+    };
+    const incomplete = { ...supported } as Record<string, unknown>;
+    Reflect.deleteProperty(incomplete, operation);
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "stateMutation", incomplete)],
+      ]),
+    ).toThrow(new RegExp(`stateMutation\\.${operation} must be a function`, "u"));
   });
 
   it("rejects a lifecycle surface without provider-owned post-start verification", () => {

@@ -485,7 +485,7 @@ describe("shields — unit logic", () => {
       );
     }
 
-    it("shieldsStatus attempts inline recovery for expired marker when timer PID is dead", async () => {
+    it("shieldsStatus attempts inline recovery for an expired timer marker", async () => {
       const sandboxName = "openclaw";
       const configPath = "/sandbox/.openclaw/openclaw.json";
       const hashPath = "/sandbox/.openclaw/.config-hash";
@@ -547,9 +547,9 @@ describe("shields — unit logic", () => {
 
       shieldsStatus(sandboxName);
 
-      expect(processKillSpy).toHaveBeenCalledWith(4242, 0);
+      expect(processKillSpy).not.toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalledWith(
-        "  Warning: auto-restore timer marker is expired and the timer process is not the recorded shields timer; attempting inline restore.",
+        "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore.",
       );
       expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
     });
@@ -706,7 +706,7 @@ describe("shields — unit logic", () => {
       expect(createTempDirectory).not.toHaveBeenCalled();
     });
 
-    it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {
+    it("shieldsStatus warns and stays DOWN when the restrictive snapshot is missing", async () => {
       const sandboxName = "openclaw";
       const missingSnapshotPath = path.join(stateDir(), "missing-snapshot.yaml");
       writeState(sandboxName, {
@@ -742,10 +742,7 @@ describe("shields — unit logic", () => {
 
       expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
       expect(errorSpy).toHaveBeenCalledWith(
-        "  Recovery warning: inline auto-restore failed; shields remain DOWN.",
-      );
-      expect(errorSpy).toHaveBeenCalledWith(
-        `  Recovery warning: run \`nemoclaw ${sandboxName} shields up\` manually.`,
+        "  Recovery warning: DOWN state has no usable timer authority or restrictive policy snapshot.",
       );
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
@@ -853,7 +850,7 @@ describe("shields — unit logic", () => {
       shieldsStatus(sandboxName);
 
       expect(errorSpy).toHaveBeenCalledWith(
-        "  Warning: auto-restore timer marker is expired and the timer process is not the recorded shields timer; attempting inline restore.",
+        "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore.",
       );
       expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
     });

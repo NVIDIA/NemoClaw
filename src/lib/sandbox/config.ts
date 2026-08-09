@@ -51,6 +51,7 @@ const {
 const {
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
+  withPrivilegedSandboxExecutionLease,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
 const {
   buildHermesUpstreamHeader,
@@ -182,25 +183,44 @@ function privilegedSandboxExec(
   opts: { input?: string | Buffer; timeout?: number } = {},
 ): string {
   const hasInput = opts.input !== undefined;
-  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, hasInput, true), {
-    input: opts.input,
-    stdio: hasInput ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
-    timeout: opts.timeout ?? 30000,
-  });
+  return withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "sandbox config privileged execution",
+    () =>
+      dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, hasInput, true), {
+        input: opts.input,
+        stdio: hasInput ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+        timeout: opts.timeout ?? 30000,
+      }),
+  );
 }
 
 function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: string) {
   return {
     run: (cmd: string[], input?: string) => {
-      let argv: string[];
       try {
-        argv = privilegedSandboxExecArgv(
-          sandboxName,
-          cmd,
-          input !== undefined,
-          true,
-          expectedContainerId,
-        );
+        return withPrivilegedSandboxExecutionLease(sandboxName, "OpenClaw config guard", () => {
+          const argv = privilegedSandboxExecArgv(
+            sandboxName,
+            cmd,
+            input !== undefined,
+            true,
+            expectedContainerId,
+          );
+          const result = dockerSpawnSync(argv, {
+            encoding: "utf-8",
+            input,
+            timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
+            maxBuffer: 2 * 1024 * 1024,
+          });
+          return {
+            status: result.status,
+            signal: result.signal,
+            stdout: String(result.stdout ?? ""),
+            stderr: String(result.stderr ?? ""),
+            ...(result.error ? { error: result.error.message } : {}),
+          };
+        });
       } catch (error) {
         return {
           status: null,
@@ -210,19 +230,6 @@ function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: stri
           error: error instanceof Error ? error.message : String(error),
         };
       }
-      const result = dockerSpawnSync(argv, {
-        encoding: "utf-8",
-        input,
-        timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
-        maxBuffer: 2 * 1024 * 1024,
-      });
-      return {
-        status: result.status,
-        signal: result.signal,
-        stdout: String(result.stdout ?? ""),
-        stderr: String(result.stderr ?? ""),
-        ...(result.error ? { error: result.error.message } : {}),
-      };
     },
   };
 }
@@ -1520,8 +1527,8 @@ export {
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
-  rewriteConfigUrlsWithDnsPinning,
   restoreHermesDashboardConfig,
+  rewriteConfigUrlsWithDnsPinning,
   seedHermesDashboardConfig,
   setDotpath,
   validateConfigDotpath,

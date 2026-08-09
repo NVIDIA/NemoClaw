@@ -102,6 +102,11 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
     installMock(privilegedExecPath, {
       privilegedSandboxExecArgv: () => ["docker", "exec", "container-id"],
       resolveDirectSandboxContainer: () => "container-id",
+      withPrivilegedSandboxExecutionLease: <T>(
+        _sandboxName: string,
+        _operation: string,
+        callback: () => T,
+      ): T => callback(),
     });
     installMock(credentialStorePath, { prompt });
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });

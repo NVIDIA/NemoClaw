@@ -40,9 +40,11 @@ function withTimerBoundShieldsMutationLockOptions<T>(
   fn: () => T,
   lockOptions: ShieldsTransitionLockOptions,
   deps: TimerBoundLockDeps,
+  fallbackTakeoverToken?: string,
 ): T {
   for (let attempt = 0; attempt < MAX_TIMER_GENERATION_RETRIES; attempt += 1) {
     const token = deps.readToken(sandboxName);
+    const takeoverToken = token ?? fallbackTakeoverToken;
     const result = deps.withLock<Attempt<T>>(
       sandboxName,
       command,
@@ -52,12 +54,33 @@ function withTimerBoundShieldsMutationLockOptions<T>(
       },
       {
         ...lockOptions,
-        ...(token ? { takeoverToken: token } : {}),
+        ...(takeoverToken ? { takeoverToken } : {}),
       },
     );
     if (!result.retry) return result.value;
   }
   throw new Error(`Auto-restore timer generation kept changing while acquiring '${command}'`);
+}
+
+/**
+ * Bind a fresh timer generation before its marker exists, while still giving
+ * an already-published marker generation priority during recovery.
+ */
+export function withTimerBoundShieldsMutationLockFallback<T>(
+  sandboxName: string,
+  command: string,
+  fallbackTakeoverToken: string,
+  fn: () => T,
+  deps: TimerBoundLockDeps = defaultDeps,
+): T {
+  return withTimerBoundShieldsMutationLockOptions(
+    sandboxName,
+    command,
+    fn,
+    {},
+    deps,
+    fallbackTakeoverToken,
+  );
 }
 
 /**

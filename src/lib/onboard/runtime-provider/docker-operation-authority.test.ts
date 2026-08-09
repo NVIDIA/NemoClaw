@@ -1,0 +1,235 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
+import { createDockerLlamaCppOperationAuthority } from "./docker-llama-cpp-operation";
+import {
+  createDockerOperationAuthority,
+  dockerOperationBindingSha256,
+  dockerOperationCommandArguments,
+} from "./docker-operation-authority";
+
+const roots: string[] = [];
+
+function fakeDocker(output: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
+  roots.push(root);
+  const executable = path.join(root, "docker");
+  fs.writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, { mode: 0o700 });
+  return root;
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
+});
+
+function contextCapture(host: string): ReturnType<typeof vi.fn<ContainerEngineCommandCapture>> {
+  return vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
+    if (args.includes("inspect")) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          Endpoints: { docker: { Host: host, SkipTLSVerify: false } },
+          TLSMaterial: { docker: [] },
+        }),
+        stderr: "",
+      };
+    }
+    return { status: 0, stdout: "", stderr: "" };
+  });
+}
+
+describe("Docker operation authority", () => {
+  it("binds the requested operation and endpoint to every daemon command", () => {
+    const capture = contextCapture("ssh://nvidia@spark.example.test");
+    const authority = createDockerOperationAuthority(
+      "sandbox-lifecycle",
+      { DOCKER_CONFIG: "/tmp/nemoclaw-docker", DOCKER_CONTEXT: "spark" },
+      capture,
+    );
+
+    expect(authority.engine.operation).toBe("sandbox-lifecycle");
+    expect(authority.engine.capture(["info"]).status).toBe(0);
+    expect(path.isAbsolute(capture.mock.calls.at(-2)?.[0] ?? "")).toBe(true);
+    expect(capture.mock.calls.at(-2)?.[1]).toEqual([
+      "--config",
+      "/tmp/nemoclaw-docker",
+      "--context",
+      "spark",
+      "info",
+    ]);
+    expect(dockerOperationCommandArguments(authority, ["exec", "sandbox"])).toEqual([
+      "--config",
+      "/tmp/nemoclaw-docker",
+      "--context",
+      "spark",
+      "exec",
+      "sandbox",
+    ]);
+  });
+
+  it("includes operation, engine, and executable-qualified authority in the stable binding digest", () => {
+    const capture = contextCapture("ssh://nvidia@spark.example.test");
+    const lifecycle = createDockerOperationAuthority(
+      "sandbox-lifecycle",
+      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },
+      capture,
+    );
+    const cleanup = createDockerOperationAuthority(
+      "workload-cleanup",
+      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },
+      capture,
+    );
+
+    expect(lifecycle.engine.authorityId).toBe(cleanup.engine.authorityId);
+    expect(dockerOperationBindingSha256(lifecycle.engine)).not.toBe(
+      dockerOperationBindingSha256(cleanup.engine),
+    );
+    expect(dockerOperationBindingSha256(lifecycle.engine)).toBe(
+      createHash("sha256")
+        .update(
+          JSON.stringify({
+            operation: "sandbox-lifecycle",
+            engineId: "docker",
+            authorityId: lifecycle.engine.authorityId,
+          }),
+        )
+        .digest("hex"),
+    );
+  });
+
+  it("invokes one absolute qualified executable after process PATH drift", () => {
+    const first = fakeDocker("first");
+    const second = fakeDocker("second");
+    const authority = createDockerOperationAuthority("sandbox-lifecycle", {
+      PATH: first,
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+    });
+    vi.stubEnv("PATH", second);
+
+    expect(authority.engine.capture(["version"]).stdout).toBe("first\n");
+  });
+
+  it("streams through the same qualified executable after process PATH drift", async () => {
+    const first = fakeDocker("first-stream");
+    const second = fakeDocker("second-stream");
+    const authority = createDockerOperationAuthority("host-local-inference", {
+      PATH: first,
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+    });
+    vi.stubEnv("PATH", second);
+    const child = authority.spawn(["version"]);
+    const stdout: Buffer[] = [];
+    child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (status) => {
+        status === 0 ? resolve() : reject(new Error(`fake Docker exited ${String(status)}`));
+      });
+    });
+    expect(Buffer.concat(stdout).toString("utf8")).toBe("first-stream\n");
+  });
+
+  it("fails closed when the qualified executable identity changes", () => {
+    const executableRoot = fakeDocker("first");
+    const authority = createDockerOperationAuthority("sandbox-lifecycle", {
+      PATH: executableRoot,
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+    });
+    fs.writeFileSync(path.join(executableRoot, "docker"), "#!/bin/sh\nprintf 'changed\\n'\n", {
+      mode: 0o700,
+    });
+
+    expect(() => authority.engine.capture(["version"])).toThrow(
+      "Docker operation executable changed after qualification",
+    );
+  });
+
+  it("rejects plaintext remote TCP before issuing a daemon command", () => {
+    const capture = contextCapture("unix:///var/run/docker.sock");
+
+    expect(() =>
+      createDockerOperationAuthority(
+        "sandbox-lifecycle",
+        { HOME: "/tmp/nemoclaw-home", DOCKER_HOST: "tcp://spark.example.test:2375" },
+        capture,
+      ),
+    ).toThrow("requires verified TLS for remote Docker TCP endpoints");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before a daemon command when a qualified context endpoint drifts", () => {
+    let inspections = 0;
+    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
+      if (args.includes("inspect")) {
+        inspections += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            Endpoints: {
+              docker: {
+                Host: `ssh://nvidia@spark-${String(inspections)}.example.test`,
+                SkipTLSVerify: false,
+              },
+            },
+            TLSMaterial: { docker: [] },
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
+    const authority = createDockerOperationAuthority(
+      "sandbox-lifecycle",
+      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },
+      capture,
+    );
+
+    expect(() => authority.engine.capture(["info"])).toThrow(
+      "Docker context endpoint changed after qualification",
+    );
+    expect(capture.mock.calls.some(([, args]) => args.at(-1) === "info")).toBe(false);
+  });
+
+  it("preserves the managed llama.cpp error and streamed-command boundary", () => {
+    const capture = contextCapture("ssh://nvidia@spark.example.test");
+    const spawn = vi.fn(() => ({}) as never);
+    const authority = createDockerLlamaCppOperationAuthority(
+      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },
+      capture,
+      spawn,
+    );
+
+    authority.spawn(["run", "example.invalid/downloader"]);
+
+    expect(spawn).toHaveBeenCalledWith(
+      [
+        "--config",
+        "/tmp/nemoclaw-home/.docker",
+        "--context",
+        "spark",
+        "run",
+        "example.invalid/downloader",
+      ],
+      undefined,
+    );
+    expect(() =>
+      createDockerLlamaCppOperationAuthority({
+        HOME: "/tmp/nemoclaw-home",
+        DOCKER_HOST: "tcp://spark.example.test:2375",
+      }),
+    ).toThrow(/^Managed llama\.cpp requires verified TLS for remote Docker TCP endpoints\.$/u);
+  });
+});

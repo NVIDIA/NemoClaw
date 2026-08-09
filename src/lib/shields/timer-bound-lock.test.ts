@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   withTimerBoundShieldsMutationLock,
   withTimerBoundShieldsMutationLockAsync,
+  withTimerBoundShieldsMutationLockFallback,
 } from "./timer-bound-lock";
 
 describe("timer-bound shields mutation lock", () => {
@@ -45,6 +46,67 @@ describe("timer-bound shields mutation lock", () => {
       }),
     ).resolves.toBe(42);
     expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the fallback token when no timer marker exists", () => {
+    const fallbackToken = "b".repeat(32);
+    const callback = vi.fn(() => "done");
+    const withLock = vi.fn((_name, _command, fn, options) => {
+      expect(options).toEqual({ takeoverToken: fallbackToken });
+      return fn();
+    });
+
+    expect(
+      withTimerBoundShieldsMutationLockFallback("alpha", "shields down", fallbackToken, callback, {
+        readToken: () => undefined,
+        withLock,
+        withLockAsync: vi.fn(),
+      }),
+    ).toBe("done");
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives an existing timer marker token priority over the fallback", () => {
+    const fallbackToken = "b".repeat(32);
+    const markerToken = "c".repeat(32);
+    const callback = vi.fn(() => "done");
+    const withLock = vi.fn((_name, _command, fn, options) => {
+      expect(options).toEqual({ takeoverToken: markerToken });
+      return fn();
+    });
+
+    expect(
+      withTimerBoundShieldsMutationLockFallback("alpha", "shields down", fallbackToken, callback, {
+        readToken: () => markerToken,
+        withLock,
+        withLockAsync: vi.fn(),
+      }),
+    ).toBe("done");
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a marker generation change and preserves marker priority", () => {
+    const fallbackToken = "b".repeat(32);
+    const markerToken = "c".repeat(32);
+    const tokens = [undefined, markerToken, markerToken, markerToken];
+    const callback = vi.fn(() => "done");
+    const observedOptions: unknown[] = [];
+
+    expect(
+      withTimerBoundShieldsMutationLockFallback("alpha", "shields down", fallbackToken, callback, {
+        readToken: () => tokens.shift(),
+        withLock: (_name, _command, fn, options) => {
+          observedOptions.push(options);
+          return fn();
+        },
+        withLockAsync: vi.fn(),
+      }),
+    ).toBe("done");
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(observedOptions).toEqual([
+      { takeoverToken: fallbackToken },
+      { takeoverToken: markerToken },
+    ]);
   });
 
   it("fails closed when timer generations keep changing", () => {

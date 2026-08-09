@@ -1,0 +1,166 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  createFilePersistedEngineLifecycleStore,
+  PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
+  PERSISTED_ENGINE_STATE_MUTATION_INTENT_SCHEMA_VERSION,
+} from "../onboard/runtime-provider/persisted-engine-lifecycle";
+import { ShieldsTransitionLockManager } from "../shields/transition-lock";
+
+const roots: string[] = [];
+const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+const tsxLoaderPath = import.meta.resolve("tsx");
+
+function temporaryStateDir(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-exec-exclusion-"));
+  roots.push(root);
+  return root;
+}
+
+function childEnvironment(stateDir: string): NodeJS.ProcessEnv {
+  const isolatedHome = path.join(stateDir, "home");
+  fs.mkdirSync(isolatedHome, { recursive: true });
+  return {
+    ...process.env,
+    HOME: isolatedHome,
+    NEMOCLAW_TEST_BASE_HOME: isolatedHome,
+    NEMOCLAW_TEST_STATE_DIR: stateDir,
+    VITEST: "true",
+  };
+}
+
+async function waitForExit(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null) return child.exitCode;
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
+});
+
+describe("privileged direct-execution exclusion", () => {
+  it("drains an in-flight exec before provider fencing and rejects the next exec before spawn", async () => {
+    const stateDir = temporaryStateDir();
+    const readyPath = path.join(stateDir, "ordinary.ready");
+    const releasePath = path.join(stateDir, "ordinary.release");
+    const lateSpawnPath = path.join(stateDir, "late.spawned");
+    const helperPath = path.join(import.meta.dirname, "privileged-exec.ts");
+    const environment = childEnvironment(stateDir);
+    const holderScript = [
+      `const fs=require("node:fs")`,
+      `const {withPrivilegedSandboxExecutionLease}=require(${JSON.stringify(helperPath)})`,
+      `const [ready,release]=process.argv.slice(1)`,
+      `const waitBuffer=new Int32Array(new SharedArrayBuffer(4))`,
+      `withPrivilegedSandboxExecutionLease("alpha","ordinary exec in flight",()=>{fs.writeFileSync(ready,"ready");const deadline=Date.now()+10000;while(!fs.existsSync(release)){if(Date.now()>=deadline)throw new Error("release handshake timed out");Atomics.wait(waitBuffer,0,0,10)}})`,
+    ].join(";");
+    const holder = spawn(
+      process.execPath,
+      ["--import", tsxLoaderPath, "-e", holderScript, readyPath, releasePath],
+      { env: environment, stdio: ["ignore", "ignore", "pipe"] },
+    );
+    const holderStderr: Buffer[] = [];
+    holder.stderr?.on("data", (chunk: Buffer) => holderStderr.push(chunk));
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(fs.existsSync(readyPath)).toBe(true);
+        },
+        { interval: 10, timeout: 5_000 },
+      );
+
+      const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
+      let waitedForOrdinaryExec = false;
+      const providerLock = new ShieldsTransitionLockManager({
+        stateDir,
+        sleep: (milliseconds) => {
+          if (!waitedForOrdinaryExec) {
+            waitedForOrdinaryExec = true;
+            fs.writeFileSync(releasePath, "release");
+          }
+          Atomics.wait(waitBuffer, 0, 0, Math.min(milliseconds, 50));
+        },
+      });
+      const transactionId = "a".repeat(64);
+      const serializedPlan = '{"schemaVersion":1,"intent":"protection-transition"}';
+
+      providerLock.withShieldsTransitionLock(
+        "alpha",
+        "Docker runtime-provider state mutation acquire",
+        () => {
+          lifecycleStore.recordStateMutationIntent({
+            schemaVersion: PERSISTED_ENGINE_STATE_MUTATION_INTENT_SCHEMA_VERSION,
+            transactionId,
+            serializedPlan,
+            planSha256: createHash("sha256").update(serializedPlan, "utf8").digest("hex"),
+            projectionSha256: "d".repeat(64),
+            nonce: "e".repeat(64),
+          });
+          lifecycleStore.create({
+            schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
+            transactionId,
+            action: "state-mutation",
+            phase: "prepared",
+            sandboxName: "alpha",
+            resources: [{ role: "target", runtimeId: "runtime-alpha" }],
+            runtimeStateSha256: "b".repeat(64),
+            engineAuthority: {
+              schemaVersion: 1,
+              providerId: "docker",
+              operation: "sandbox-lifecycle",
+              engineId: "docker",
+              authorityId: "docker:test",
+              bindingSha256: "c".repeat(64),
+            },
+            resultSha256: null,
+          });
+          lifecycleStore.authorizeMutation(transactionId);
+          const lease = lifecycleStore.acquireMutationExecution(transactionId);
+          try {
+            lifecycleStore.establishStateMutationFence(lease);
+          } finally {
+            lifecycleStore.releaseMutationExecution(lease);
+          }
+        },
+        { pollIntervalMs: 10, waitTimeoutMs: 5_000 },
+      );
+
+      expect(waitedForOrdinaryExec).toBe(true);
+      expect(lifecycleStore.load(transactionId)?.phase).toBe("fence-established");
+      expect(await waitForExit(holder)).toBe(0);
+      expect(Buffer.concat(holderStderr).toString("utf8")).toBe("");
+
+      const lateScript = [
+        `const fs=require("node:fs")`,
+        `const {withPrivilegedSandboxExecutionLease}=require(${JSON.stringify(helperPath)})`,
+        `const marker=process.argv[1]`,
+        `try{withPrivilegedSandboxExecutionLease("alpha","late ordinary exec",()=>fs.writeFileSync(marker,"spawned"));process.exitCode=2}catch(error){process.stderr.write(error instanceof Error?error.message:String(error))}`,
+      ].join(";");
+      const late = spawnSync(
+        process.execPath,
+        ["--import", tsxLoaderPath, "-e", lateScript, lateSpawnPath],
+        { encoding: "utf8", env: environment },
+      );
+
+      expect(late.status, late.stderr).toBe(0);
+      expect(late.stderr).toMatch(/state mutation owns direct-container execution/i);
+      expect(fs.existsSync(lateSpawnPath)).toBe(false);
+    } finally {
+      if (!fs.existsSync(releasePath)) fs.writeFileSync(releasePath, "release");
+      if (holder.exitCode === null) holder.kill("SIGKILL");
+      await waitForExit(holder).catch(() => null);
+    }
+  }, 15_000);
+});

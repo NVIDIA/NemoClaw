@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
@@ -13,6 +15,16 @@ import {
 } from "../state/mcp-lifecycle-lock/shields-timer-authority";
 
 const DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
+const MAX_TIMER_AUTHORIZATION_PROOF_BYTES = 16 * 1024;
+
+interface TimerAuthorizationProof {
+  schemaVersion: 1;
+  pid: number;
+  sandboxName: string;
+  processToken: string;
+  timerProcessStartIdentity: string;
+  authoritySha256: string;
+}
 
 function processInspectionDeadline(deadline?: number): number {
   return deadline ?? processInspectionDeadlineAfter(DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS);
@@ -43,15 +55,173 @@ function readAutoRestoreTakeoverToken(sandboxName: string): string | undefined {
   return readShieldsTimerTakeoverToken(sandboxName);
 }
 
+function timerAuthoritySha256(marker: ShieldsTimerMarker): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: marker.pid,
+        sandboxName: marker.sandboxName,
+        snapshotPath: marker.snapshotPath,
+        restoreAt: marker.restoreAt,
+        processToken: marker.processToken ?? null,
+        timerProcessStartIdentity: marker.timerProcessStartIdentity ?? null,
+        allowLegacyHermesProtocol: marker.allowLegacyHermesProtocol === true,
+        agentName: marker.agentName ?? null,
+        configPath: marker.configPath ?? null,
+        configDir: marker.configDir ?? null,
+        leaseOwnerPid: marker.leaseOwnerPid ?? null,
+        leaseOwnerStartIdentity: marker.leaseOwnerStartIdentity ?? null,
+      }),
+    )
+    .digest("hex");
+}
+
+function timerAuthorizationProofPath(sandboxName: string, processToken: string): string {
+  if (!/^[0-9a-f]{32}$/.test(processToken)) {
+    throw new Error("Invalid timer authorization process token");
+  }
+  return path.join(
+    path.dirname(timerMarkerPath(sandboxName)),
+    `shields-timer-authorization-${sandboxName}-${processToken}.json`,
+  );
+}
+
+function isTimerAuthorizationProof(value: unknown): value is TimerAuthorizationProof {
+  if (typeof value !== "object" || value === null) return false;
+  const proof = value as Partial<TimerAuthorizationProof>;
+  return (
+    proof.schemaVersion === 1 &&
+    typeof proof.pid === "number" &&
+    Number.isInteger(proof.pid) &&
+    proof.pid > 0 &&
+    typeof proof.sandboxName === "string" &&
+    typeof proof.processToken === "string" &&
+    /^[0-9a-f]{32}$/.test(proof.processToken) &&
+    typeof proof.timerProcessStartIdentity === "string" &&
+    proof.timerProcessStartIdentity.length > 0 &&
+    typeof proof.authoritySha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(proof.authoritySha256)
+  );
+}
+
+function writeTimerAuthorizationProofForMarker(marker: ShieldsTimerMarker): void {
+  if (!marker.processToken || !marker.timerProcessStartIdentity) {
+    throw new Error("Timer marker is missing authorization proof identity");
+  }
+  const currentStartIdentity = readProcessStartIdentity(process.pid);
+  if (marker.pid !== process.pid || currentStartIdentity !== marker.timerProcessStartIdentity) {
+    throw new Error("Timer process cannot publish authorization for another process identity");
+  }
+  const proofPath = timerAuthorizationProofPath(marker.sandboxName, marker.processToken);
+  const tempPath = `${proofPath}.${String(process.pid)}.${Date.now().toString(16)}.tmp`;
+  const proof: TimerAuthorizationProof = {
+    schemaVersion: 1,
+    pid: marker.pid,
+    sandboxName: marker.sandboxName,
+    processToken: marker.processToken,
+    timerProcessStartIdentity: marker.timerProcessStartIdentity,
+    authoritySha256: timerAuthoritySha256(marker),
+  };
+  let fd: number | undefined;
+  try {
+    fs.mkdirSync(path.dirname(proofPath), { recursive: true, mode: 0o700 });
+    fd = fs.openSync(
+      tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(fd, JSON.stringify(proof));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tempPath, proofPath);
+    const directoryFd = fs.openSync(path.dirname(proofPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    fs.rmSync(tempPath, { force: true });
+  }
+}
+
+function hasExactTimerAuthorizationProof(marker: ShieldsTimerMarker): boolean {
+  if (!marker.processToken || !marker.timerProcessStartIdentity) return false;
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(
+      timerAuthorizationProofPath(marker.sandboxName, marker.processToken),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    const before = fs.fstatSync(fd);
+    if (
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      (before.mode & 0o777) !== 0o600 ||
+      before.size <= 0 ||
+      before.size > MAX_TIMER_AUTHORIZATION_PROOF_BYTES ||
+      (typeof process.getuid === "function" && before.uid !== process.getuid())
+    ) {
+      return false;
+    }
+    const raw = fs.readFileSync(fd, "utf-8");
+    const after = fs.fstatSync(fd);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs
+    ) {
+      return false;
+    }
+    const proof = JSON.parse(raw) as unknown;
+    return (
+      isTimerAuthorizationProof(proof) &&
+      proof.pid === marker.pid &&
+      proof.sandboxName === marker.sandboxName &&
+      proof.processToken === marker.processToken &&
+      proof.timerProcessStartIdentity === marker.timerProcessStartIdentity &&
+      proof.authoritySha256 === timerAuthoritySha256(marker)
+    );
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function removeTimerAuthorizationProof(
+  sandboxName: string,
+  processToken: string | undefined,
+): void {
+  if (!processToken || !/^[0-9a-f]{32}$/.test(processToken)) return;
+  try {
+    fs.rmSync(timerAuthorizationProofPath(sandboxName, processToken), { force: true });
+  } catch {
+    // Best effort. A proof cannot grant authority without its exact marker.
+  }
+}
+
 interface ClearTimerMarkerResult {
   cleared: boolean;
   warning?: string;
 }
 
 function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
+  const marker = readTimerMarker(sandboxName);
   const markerPath = timerMarkerPath(sandboxName);
   try {
     fs.unlinkSync(markerPath);
+    removeTimerAuthorizationProof(sandboxName, marker?.processToken);
+    const directoryFd = fs.openSync(path.dirname(markerPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
     return { cleared: true };
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
@@ -179,6 +349,15 @@ function verifyTimerMarkerIdentity(marker: ShieldsTimerMarker): {
   verified: boolean;
   warning?: string;
 } {
+  if (
+    marker.timerProcessStartIdentity !== undefined &&
+    readProcessStartIdentity(marker.pid) !== marker.timerProcessStartIdentity
+  ) {
+    return {
+      verified: false,
+      warning: `PID ${String(marker.pid)} start identity does not match the shields timer for sandbox '${marker.sandboxName}'; clearing marker without signaling.`,
+    };
+  }
   const commandLine = readProcessCommandLine(marker.pid);
   if (!commandLine) {
     return {
@@ -257,6 +436,7 @@ function killTimer(sandboxName: string): KillTimerResult {
 export type { ClearTimerMarkerResult, KillTimerResult, ShieldsTimerMarker as TimerMarker };
 export {
   clearTimerMarker,
+  hasExactTimerAuthorizationProof,
   isProcessAlive,
   killTimer,
   processInspectionDeadlineAfter,
@@ -265,6 +445,10 @@ export {
   readProcessStartIdentity,
   readProcessState,
   readTimerMarker,
+  removeTimerAuthorizationProof,
+  timerAuthoritySha256,
+  timerAuthorizationProofPath,
   timerMarkerPath,
   verifyTimerMarkerIdentity,
+  writeTimerAuthorizationProofForMarker,
 };

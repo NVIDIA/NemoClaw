@@ -85,6 +85,7 @@ function runConfigSetWithInput(input: string) {
     "install(" + PRIVILEGED_EXEC_PATH + ", {",
     '  privilegedSandboxExecArgv: () => ["docker", "exec", "container-id"],',
     '  resolveDirectSandboxContainer: () => "container-id",',
+    "  withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),",
     "});",
     "",
     'Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });',

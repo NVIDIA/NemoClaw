@@ -417,7 +417,15 @@ function validateStateMutationSurface(providerId: string, surface: Record<string
       `stateMutation for '${providerId}' has an unsupported contract version`,
     );
   }
-  for (const operation of ["acquire", "assertFenced", "activate", "recover"] as const) {
+  for (const operation of [
+    "acquire",
+    "assertFenced",
+    "publish",
+    "rollback",
+    "activate",
+    "release",
+    "recover",
+  ] as const) {
     requireFunction(surface, operation, "stateMutation");
   }
 }
@@ -632,6 +640,18 @@ export function requireRuntimeProviderMutationAuthority(
       `Runtime provider '${bundle.identity.id}' does not authorize '${operation}' mutation.`,
     );
   }
+}
+
+export function requireRuntimeProviderStateMutationSurface(
+  bundle: RuntimeProviderBundle,
+): Extract<RuntimeProviderBundle["stateMutation"], { readonly supported: true }> {
+  const surface = bundle.stateMutation;
+  if (surface.supported !== true) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' has no state-mutation implementation: ${surface.reason}`,
+    );
+  }
+  return surface;
 }
 
 export type RuntimeProviderDestructiveCleanupAuthority = {
