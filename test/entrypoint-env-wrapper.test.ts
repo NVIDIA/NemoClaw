@@ -84,7 +84,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.stdout).toContain("ARG=env\nARG=FOO=bar\nARG=printenv\nARG=FOO\n");
   });
 
-  it("leaves a user command tail that only looks like a managed assignment", () => {
+  it("leaves a user command tail that only looks like a managed assignment (#8595)", () => {
     const result = runNormalizer([
       "env",
       "FOO=bar",
@@ -140,7 +140,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       argv: ["env", "FOO=bar", "/bin/sh", "-c", "NEMOCLAW_CORPORATE_CA_B64=Y2E="],
       message: "Malformed managed startup env wrapper",
     },
-  ])("fails closed for malformed or unsafe root handoff: $name", ({ argv, message }) => {
+  ])("fails closed for malformed or unsafe root handoff: $name (#8595)", ({ argv, message }) => {
     const result = runNormalizer(argv);
 
     expect(result.status).toBe(1);
