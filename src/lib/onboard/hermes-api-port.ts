@@ -148,7 +148,7 @@ export function resolveOnboardHermesApiPort(
       options.allowRegisteredOverride !== true
     ) {
       throw new Error(
-        `${HERMES_API_PORT_ENV}=${requested} conflicts with sandbox "${sandboxName}", which already uses recorded Hermes API port ${registeredPort}. Rerun onboarding with --recreate-sandbox to apply a different port.`,
+        `${HERMES_API_PORT_ENV}=${requested} conflicts with sandbox "${sandboxName}", which serves its OpenAI-compatible API on port ${registeredPort}. Rerun onboarding with --recreate-sandbox to apply a different port.`,
       );
     }
     return publish(hasRequestedPort ? requested : registeredPort);

@@ -79,7 +79,7 @@ describe("resolveOnboardHermesApiPort", () => {
         getSandbox: () => ({ hermesApiPort: 8643 }),
         findAvailablePort,
       }),
-    ).toThrow(/already uses recorded Hermes API port 8643.*--recreate-sandbox/);
+    ).toThrow(/serves its OpenAI-compatible API on port 8643.*--recreate-sandbox/);
     expect(findAvailablePort).not.toHaveBeenCalled();
   });
 
