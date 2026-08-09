@@ -33,6 +33,7 @@ export function getSandboxAgent(sandbox: SandboxEntry): AgentDefinition {
   return loadAgent(getSandboxAgentName(sandbox));
 }
 
+/** Return the configured state directory for a registered agent. */
 export function getAgentConfigDir(agentName: string): string {
   return loadAgent(agentName).configPaths.dir;
 }

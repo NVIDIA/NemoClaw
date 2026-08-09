@@ -25,10 +25,12 @@ import { executeSandboxCommand } from "./process-recovery";
 export const MCPORTER_VERSION = "0.7.3";
 export { OPENCLAW_MCPORTER_ROOT } from "./mcp-bridge-adapter-status";
 
+/** Build a Mcporter argument vector bound to one project root. */
 function mcporterArgs(root: string, ...args: string[]): string[] {
   return ["mcporter", "--root", root, ...args];
 }
 
+/** Resolve the Mcporter project root owned by an MCP bridge entry's agent. */
 function mcporterRootForEntry(entry: McpBridgeEntry): string {
   return openClawMcporterRoot(getAgentConfigDir(entry.agent));
 }
