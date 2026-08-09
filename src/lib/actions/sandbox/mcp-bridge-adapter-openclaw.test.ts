@@ -251,9 +251,11 @@ describe("OpenClaw mcporter MCP adapter", () => {
       expect(defaultXdgRemove.status).toBe(0);
       expect(fs.existsSync(configState)).toBe(false);
       expect(fs.existsSync(defaultXdgConfigState)).toBe(false);
-      expect(
-        runWithoutXdg(buildOpenClawMcporterInspectCommand(baseEntry, false)).stdout.trim(),
-      ).toBe("absent");
+      const defaultXdgInspect = runWithoutXdg(
+        buildOpenClawMcporterInspectCommand(baseEntry, false),
+      );
+      expect(defaultXdgInspect.status).toBe(0);
+      expect(defaultXdgInspect.stdout.trim()).toBe("absent");
 
       fs.writeFileSync(
         configState,
