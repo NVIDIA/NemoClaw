@@ -21,6 +21,37 @@ const DEFAULT_GPU_E2E_MODEL = "qwen3.5:9b";
 validateSandboxName(SANDBOX_NAME);
 export const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
 
+export function shouldBootstrapLlamaCppGenericGpuTarget(
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    environment.NEMOCLAW_RUN_LIVE_E2E === "1" &&
+    /^[a-f0-9]{40}$/u.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "") &&
+    environment.E2E_LLAMA_CPP_DEDICATED_LANE !== "1"
+  );
+}
+
+export function buildLlamaCppCompatibilityTargetEnv(
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const forwarded = [
+    "NEMOCLAW_E2E_CORRELATION_ID",
+    "NEMOCLAW_E2E_EXPECTED_SHA",
+    "NEMOCLAW_E2E_SHARD",
+  ].reduce<NodeJS.ProcessEnv>(
+    (selected, key) => ({
+      ...selected,
+      ...(base[key] === undefined ? {} : { [key]: base[key] }),
+    }),
+    {},
+  );
+  return {
+    ...buildAvailabilityProbeEnv(base),
+    ...forwarded,
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+  };
+}
+
 function tcpPort(value: string | undefined, fallback: string): string {
   const raw = value ?? fallback;
   if (!/^[1-9][0-9]*$/u.test(raw)) throw new Error(`invalid TCP port: ${raw}`);
@@ -204,45 +235,14 @@ export async function cleanupOllama(
   host: HostCliClient,
   artifactName: string,
 ): Promise<ShellProbeResult> {
-  return await host.command("bash", ["-lc", ollamaCleanupScript()], {
-    artifactName,
-    env: env(),
-    timeoutMs: 30_000,
-  });
-}
-
-export function ollamaCleanupScript(): string {
-  return `set -euo pipefail
-sudo_prefix=()
-if [ "$(id -u)" -eq 0 ]; then
-  sudo_prefix=()
-elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-  sudo_prefix=(sudo -n)
-fi
-
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl --user stop ollama.service >/dev/null 2>&1 || true
-  if [ "$(id -u)" -eq 0 ] || [ "\${#sudo_prefix[@]}" -gt 0 ]; then
-    "\${sudo_prefix[@]}" systemctl stop ollama.service >/dev/null 2>&1 || true
-  fi
-fi
-pkill -f '[o]llama-auth-proxy' >/dev/null 2>&1 || true
-pkill -f '[o]llama serve' >/dev/null 2>&1 || true
-if [ "\${#sudo_prefix[@]}" -gt 0 ]; then
-  "\${sudo_prefix[@]}" pkill -f '[o]llama serve' >/dev/null 2>&1 || true
-fi
-
-for _ in $(seq 1 20); do
-  if ! pgrep -f '[o]llama serve' >/dev/null 2>&1 &&
-    ! curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
-    exit 0
-  fi
-  sleep 1
-done
-
-echo 'Ollama cleanup left a daemon process or listener on 127.0.0.1:11434' >&2
-pgrep -af '[o]llama serve' >&2 || true
-exit 1`;
+  return await host.command(
+    "bash",
+    [
+      "-lc",
+      "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f '[o]llama serve' 2>/dev/null || true; pkill -f '[o]llama-auth-proxy' 2>/dev/null || true",
+    ],
+    { artifactName, env: env(), timeoutMs: 30_000 },
+  );
 }
 
 export function assertNvidiaAvailable(

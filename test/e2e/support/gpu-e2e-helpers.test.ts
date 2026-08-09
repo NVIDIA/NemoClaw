@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -10,12 +10,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertAgentExecutionSucceeded,
+  buildLlamaCppCompatibilityTargetEnv,
   env,
   hasExactReadyPhase,
-  ollamaCleanupScript,
   openClawModelConfigProjectionScript,
+  shouldBootstrapLlamaCppGenericGpuTarget,
 } from "../live/gpu-e2e-helpers.ts";
-import { protectedOllamaStartScript } from "../live/managed-image-protected-runtime-helpers.ts";
 
 const GPU_MODEL = "qwen3.5:9b";
 
@@ -118,65 +118,43 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
-  it("stops the privileged Ollama service and proves the listener is gone", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-cleanup-"));
-    try {
-      const bin = path.join(root, "bin");
-      const calls = path.join(root, "calls.log");
-      mkdirSync(bin);
-      for (const [command, body] of [
-        ["sudo", 'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
-        ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
-        ["pkill", "exit 1\n"],
-        ["pgrep", "exit 1\n"],
-        ["curl", "exit 7\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
-
-      execFileSync("bash", ["-c", ollamaCleanupScript()], {
-        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
-      });
-      const commandLog = readFileSync(calls, "utf8");
-      expect(commandLog).toContain("systemctl --user stop ollama.service");
-      expect(commandLog).toContain("sudo -n systemctl stop ollama.service");
-      expect(commandLog).toContain("sudo -n pkill -f [o]llama serve");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+  it("bootstraps the new llama.cpp target through the trusted pre-merge GPU lane", () => {
+    expect(
+      shouldBootstrapLlamaCppGenericGpuTarget({
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      }),
+    ).toBe(true);
   });
 
-  it("restarts the protected Ollama daemon through its installed system service", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-"));
-    try {
-      const bin = path.join(root, "bin");
-      const calls = path.join(root, "calls.log");
-      const logPath = path.join(root, "ollama.log");
-      mkdirSync(bin);
-      const sudoPath = path.join(bin, "sudo");
-      writeFileSync(
-        sudoPath,
-        '#!/bin/sh\nprintf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "-n systemctl is-failed --quiet ollama.service") exit 1 ;;\n  *) exit 0 ;;\nesac\n',
-      );
-      chmodSync(sudoPath, 0o755);
-      const curlPath = path.join(bin, "curl");
-      writeFileSync(curlPath, "#!/bin/sh\nexit 0\n");
-      chmodSync(curlPath, 0o755);
-      const systemctlPath = path.join(bin, "systemctl");
-      writeFileSync(systemctlPath, "#!/bin/sh\nexit 0\n");
-      chmodSync(systemctlPath, 0o755);
+  it("keeps the Ollama GPU lane independent once the dedicated llama.cpp lane exists", () => {
+    expect(
+      shouldBootstrapLlamaCppGenericGpuTarget({
+        E2E_LLAMA_CPP_DEDICATED_LANE: "1",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      }),
+    ).toBe(false);
+  });
 
-      const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
-        encoding: "utf8",
-        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
-      });
-      expect(stdout).toBe("restart_mode=system\n");
-      expect(readFileSync(calls, "utf8")).toContain("sudo -n systemctl restart ollama.service");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+  it("does not bootstrap the llama.cpp target outside exact-head live E2E", () => {
+    expect(shouldBootstrapLlamaCppGenericGpuTarget({ NEMOCLAW_RUN_LIVE_E2E: "1" })).toBe(false);
+  });
+
+  it("keeps live collection enabled in the sanitized compatibility child", () => {
+    const childEnv = buildLlamaCppCompatibilityTargetEnv({
+      NEMOCLAW_E2E_CORRELATION_ID: "11111111-1111-4111-8111-111111111111",
+      NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      NEMOCLAW_E2E_SHARD: "default",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+      UNRELATED_PARENT_VALUE: "must-not-leak",
+    });
+
+    expect(childEnv.NEMOCLAW_E2E_CORRELATION_ID).toBe("11111111-1111-4111-8111-111111111111");
+    expect(childEnv.NEMOCLAW_E2E_EXPECTED_SHA).toBe("a".repeat(40));
+    expect(childEnv.NEMOCLAW_E2E_SHARD).toBe("default");
+    expect(childEnv.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(childEnv.UNRELATED_PARENT_VALUE).toBeUndefined();
   });
 
   it("forwards the workflow-owned Ollama model pull timeout", () => {

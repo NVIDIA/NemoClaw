@@ -59,6 +59,9 @@ spec:
       probes:
         - health
         - models
+        - properties
+        - metrics
+        - disabled-surfaces
         - synchronous-chat
         - streaming-chat
         - usage
@@ -70,6 +73,7 @@ spec:
         - malformed-request
         - cancellation
         - client-timeout
+        - log-redaction
       probeBounds:
         cancellationMaxTokens: 4096
         clientTimeoutMilliseconds: 250
