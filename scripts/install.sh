@@ -1139,11 +1139,6 @@ _PREEXISTING_SANDBOX_RECOVERY_RAN=false
 # preserved). The final summary must not claim those sandboxes were recovered.
 _PREEXISTING_SANDBOX_ORPHANED=false
 _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
-# OpenShell v0.0.99 routes sandbox and workspace identities through labels
-# capped at 19 characters. Keep this installer-only raw-registry preflight in
-# sync with NAME_MAX_LENGTH in nemoclaw/src/shared/sandbox-name.cts. The
-# current CLI cannot be prepared safely until legacy names are checked.
-_OPENSHELL_SANDBOX_NAME_MAX_LENGTH=19
 # #5735: set when automatic recovery/upgrade of pre-existing sandboxes
 # reported a failure. A failed/destructive rebuild must not be reported as a
 # clean install, so print_done downgrades the final banner when this is true.
@@ -2295,7 +2290,7 @@ verify_nemoclaw() {
 inspect_sandbox_registry_for_upgrade() {
   local reg_file="$1" field="$2" scope="${3:-legacy}" gateway_port
   gateway_port="$(resolve_nemoclaw_gateway_port)"
-  node - "$reg_file" "$field" "$gateway_port" "$scope" "$_OPENSHELL_SANDBOX_NAME_MAX_LENGTH" <<'NODE'
+  node - "$reg_file" "$field" "$gateway_port" "$scope" <<'NODE'
 const fs = require("node:fs");
 
 function isObjectRecord(value) {
@@ -2347,8 +2342,6 @@ try {
   process.exit(1);
 }
 if (process.argv[5] === "selected" && entries.length !== allEntries.length) process.exit(1);
-const maxNameLength = Number(process.argv[6]);
-if (!Number.isInteger(maxNameLength) || maxNameLength < 1) process.exit(1);
 // Keep this raw-registry predicate in sync with isRouteOnlySandboxReservation()
 // in src/lib/state/registry.ts.
 const sandboxes = entries.filter(
@@ -2357,18 +2350,6 @@ const sandboxes = entries.filter(
 
 if (process.argv[3] === "count") {
   process.stdout.write(String(sandboxes.length));
-  process.exit(0);
-}
-if (process.argv[3] === "incompatible-names") {
-  const compatiblePattern = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
-  const incompatible = sandboxes
-    .map(([name]) => name)
-    .filter(
-      (name) =>
-        name.length > maxNameLength || !compatiblePattern.test(name) || name.includes("--"),
-    )
-    .sort();
-  process.stdout.write(JSON.stringify(incompatible));
   process.exit(0);
 }
 if (process.argv[3] !== "ambiguous-names") process.exit(1);
@@ -2514,69 +2495,6 @@ legacy_ambiguous_sandbox_names_json() {
     scope="selected"
   fi
   inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names "$scope"
-}
-
-openshell_incompatible_sandbox_names_json() {
-  local reg_file="$1"
-  local scope="legacy"
-  if [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ] \
-    && [ "$reg_file" = "$(nemoclaw_state_dir)/sandboxes.json" ]; then
-    scope="selected"
-  fi
-  inspect_sandbox_registry_for_upgrade "$reg_file" incompatible-names "$scope"
-}
-
-require_openshell_compatible_sandbox_names() {
-  local reg_file="$1" incompatible_json="" incompatible_count="0"
-  if ! incompatible_json="$(openshell_incompatible_sandbox_names_json "$reg_file")"; then
-    error "Could not validate existing sandbox names for the OpenShell upgrade. Existing gateway and sandboxes were left unchanged."
-  fi
-  incompatible_count="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$incompatible_json")"
-  if [ "$incompatible_count" -eq 0 ] 2>/dev/null; then
-    return 0
-  fi
-
-  cat <<EOF
-
-  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.99:
-EOF
-  while IFS= read -r sandbox_name; do
-    [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
-  done < <(node -e '
-    const preview = (value) => {
-      const raw = String(value);
-      const prefix = raw.slice(0, 80);
-      let escaped = "\"";
-      for (let index = 0; index < prefix.length; index += 1) {
-        const codeUnit = prefix.charCodeAt(index);
-        if (codeUnit === 0x22) escaped += "\\\"";
-        else if (codeUnit === 0x5c) escaped += "\\\\";
-        else if (codeUnit >= 0x20 && codeUnit <= 0x7e) escaped += prefix[index];
-        else escaped += "\\u" + codeUnit.toString(16).padStart(4, "0");
-      }
-      return escaped + (raw.length > 80 ? "...\"" : "\"");
-    };
-    for (const name of JSON.parse(process.argv[1])) console.log(preview(name));
-  ' "$incompatible_json")
-  cat <<EOF
-
-  OpenShell 0.0.99 caps routed sandbox names at
-  ${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH} characters and rejects consecutive
-  hyphens. Current NemoClaw names must use 1-${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH}
-  lowercase letters, numbers, and single internal hyphens, starting with a
-  letter and ending with a letter or number. NemoClaw does not rename durable
-  sandbox identity automatically.
-
-  The installer stopped before preparing the current CLI, starting a new
-  backup, retiring the gateway, installing OpenShell, or recreating a sandbox.
-  Use the currently installed NemoClaw and OpenShell runtime to transfer the
-  required state into a replacement sandbox with a compatible name. After you
-  verify the replacement, destroy each incompatible sandbox and rerun the
-  installer. If you already retired the gateway manually, restore the prior
-  OpenShell runtime and gateway before migrating the sandbox state.
-
-EOF
-  error "OpenShell 0.0.99 upgrade blocked by incompatible existing sandbox names."
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -2811,7 +2729,6 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
-  require_openshell_compatible_sandbox_names "$reg_file"
   if ! command_exists openshell; then
     # NemoClaw v0.0.55's OpenShell 0.0.44 layout could install this binary
     # without persisting ~/.local/bin on PATH. Retain this fallback while direct
@@ -3545,6 +3462,90 @@ ensure_docker() {
 # the Docker CLI, with DOCKER_HOST overriding its daemon to Podman's user
 # socket. The CLI's portable host preparation later applies the networking and
 # local-registry configuration required by the OpenShell Podman driver.
+NEMOCLAW_PORTABLE_STORAGE_MARKER="# NEMOCLAW_MANAGED_PORTABLE_STORAGE=1"
+
+configure_portable_persistent_storage() {
+  local storage_conf="${HOME}/.config/containers/storage.conf"
+  local storage_dir="${storage_conf%/*}"
+  local graphroot="${HOME}/.local/share/containers/storage"
+  local runroot="${HOME}/.local/share/containers/runroot"
+  local candidate=""
+  local backup=""
+  local managed_existing=0
+
+  [[ "$HOME" == /* ]] \
+    || error "The portable experimental profile requires an absolute HOME path."
+  case "$HOME" in
+    *$'\n'* | *$'\r'* | *'"'* | *$'\\'*)
+      error "The portable experimental profile cannot encode HOME in containers/storage.conf."
+      ;;
+  esac
+  mkdir -p "$storage_dir" "$graphroot" "$runroot" \
+    || error "Could not create the persistent rootless Podman storage directories under HOME."
+  chmod 700 "$graphroot" "$runroot" \
+    || error "Could not secure the persistent rootless Podman storage directories under HOME."
+  if [[ -L "$storage_conf" ]]; then
+    error "Refusing to replace symlinked Podman storage configuration: $storage_conf"
+  fi
+
+  candidate="$(mktemp "${storage_conf}.nemoclaw-tmp.XXXXXX")" \
+    || error "Could not create a temporary Podman storage configuration."
+  if ! {
+    printf '%s\n' "$NEMOCLAW_PORTABLE_STORAGE_MARKER"
+    printf '%s\n' '[storage]'
+    printf 'graphroot = "%s"\n' "$graphroot"
+    printf 'runroot = "%s"\n' "$runroot"
+    printf '%s\n' 'driver = "overlay"'
+    printf '%s\n' 'transient_store = false'
+  } >"$candidate"; then
+    rm -f "$candidate"
+    error "Could not stage the persistent rootless Podman storage configuration."
+  fi
+  chmod 600 "$candidate" || {
+    rm -f "$candidate"
+    error "Could not secure the staged rootless Podman storage configuration."
+  }
+
+  if [[ -f "$storage_conf" ]] \
+    && grep -Fxq "$NEMOCLAW_PORTABLE_STORAGE_MARKER" "$storage_conf"; then
+    managed_existing=1
+    if cmp -s "$candidate" "$storage_conf"; then
+      rm -f "$candidate"
+      chmod 600 "$storage_conf" \
+        || error "Could not enforce mode 0600 on the existing Podman storage configuration."
+      info "Reusing NemoClaw-managed persistent Podman storage configuration at $storage_conf."
+      return 0
+    fi
+  fi
+
+  if [[ -e "$storage_conf" ]]; then
+    [[ -f "$storage_conf" ]] \
+      || {
+        rm -f "$candidate"
+        error "Refusing to replace non-regular Podman storage configuration: $storage_conf"
+      }
+    if [[ "$managed_existing" == "1" ]]; then
+      info "Replacing obsolete NemoClaw-managed Podman storage configuration at $storage_conf."
+    else
+      backup="$(mktemp "${storage_conf}.nemoclaw-backup.XXXXXX")" || {
+        rm -f "$candidate"
+        error "Could not allocate a backup path for the existing Podman storage configuration."
+      }
+      if ! cp -p "$storage_conf" "$backup" || ! chmod 600 "$backup"; then
+        rm -f "$candidate" "$backup"
+        error "Could not back up the existing Podman storage configuration."
+      fi
+      info "Backed up the existing Podman storage configuration to $backup."
+    fi
+  fi
+
+  if ! mv "$candidate" "$storage_conf" || ! chmod 600 "$storage_conf"; then
+    rm -f "$candidate"
+    error "Could not install the persistent rootless Podman storage configuration at $storage_conf."
+  fi
+  info "Configured persistent rootless Podman storage at $storage_conf."
+}
+
 prepare_portable_experimental_runtime_override() {
   [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
   [[ "$(uname -s)" == "Linux" ]] \
@@ -3556,8 +3557,30 @@ prepare_portable_experimental_runtime_override() {
   command_exists systemctl \
     || error "The portable experimental profile requires systemctl --user to manage the rootless Podman socket."
 
+  systemctl --user stop podman.socket >/dev/null \
+    || error "Could not stop the rootless Podman API socket before configuring persistent storage."
+  systemctl --user stop podman.service >/dev/null \
+    || error "Could not stop the rootless Podman API service before configuring persistent storage."
+  configure_portable_persistent_storage
   systemctl --user enable --now podman.socket >/dev/null \
     || error "Could not start the rootless Podman API socket with 'systemctl --user enable --now podman.socket'."
+  systemctl --user enable podman-restart.service >/dev/null \
+    || error "Could not enable the rootless Podman restart service."
+
+  local expected_graphroot="${HOME}/.local/share/containers/storage"
+  local expected_runroot="${HOME}/.local/share/containers/runroot"
+  local actual_graphroot=""
+  local actual_runroot=""
+  actual_graphroot="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)" \
+    || error "Could not verify the persistent rootless Podman GraphRoot with 'podman info'."
+  if [[ "$actual_graphroot" != "$expected_graphroot" ]]; then
+    error "Podman GraphRoot mismatch: expected $expected_graphroot, found ${actual_graphroot:-empty}."
+  fi
+  actual_runroot="$(podman info --format '{{.Store.RunRoot}}' 2>/dev/null)" \
+    || error "Could not verify the persistent rootless Podman RunRoot with 'podman info'."
+  if [[ "$actual_runroot" != "$expected_runroot" ]]; then
+    error "Podman RunRoot mismatch: expected $expected_runroot, found ${actual_runroot:-empty}."
+  fi
 
   local podman_socket=""
   podman_socket="$(podman info --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null)" \
@@ -3871,8 +3894,7 @@ validate_station_express_resume_agent() {
 
 validate_station_express_resume_sandbox() {
   local sandbox="${1:-}"
-  [[ ${#sandbox} -le $_OPENSHELL_SANDBOX_NAME_MAX_LENGTH ]] \
-    && [[ "$sandbox" != *--* ]] \
+  [[ ${#sandbox} -le 63 ]] \
     && { [[ "$sandbox" =~ ^[a-z]$ ]] || [[ "$sandbox" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]; }
 }
 

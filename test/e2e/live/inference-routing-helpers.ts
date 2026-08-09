@@ -68,7 +68,7 @@ function hasRawNodeStackTrace(text: string): boolean {
 }
 
 function inferenceSandboxName(prefix: string): string {
-  const name = `${prefix}-${process.pid.toString(36)}`;
+  const name = `${prefix}-${process.pid}`;
   validateSandboxName(name);
   return name;
 }

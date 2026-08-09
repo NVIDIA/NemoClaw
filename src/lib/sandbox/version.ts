@@ -15,7 +15,6 @@ import {
   parseVersionFromText,
 } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
-import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import { loadAgent } from "../agent/defs.js";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding.js";
@@ -146,7 +145,7 @@ export function probeAgentVersion(sandboxName: string, gatewayName?: string): st
         "ConnectTimeout=5",
         "-o",
         "LogLevel=ERROR",
-        openshellSandboxSshHost(sandboxName),
+        `openshell-${sandboxName}`,
         agent.versionCommand,
       ],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },

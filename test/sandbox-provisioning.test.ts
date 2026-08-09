@@ -306,7 +306,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     const command = dockerHealthCommandBetween(
       dockerfile,
       "# Health check: poll the gateway's /health endpoint",
-      "ENTRYPOINT",
+      "# Entrypoint runs as root",
     );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-probe-"));
 
@@ -378,7 +378,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       const rawCommand = dockerHealthCommandBetween(
         dockerfile,
         "# Health check: poll the gateway's /health endpoint",
-        "ENTRYPOINT",
+        "# Entrypoint runs as root",
       );
       const command = rawCommand
         .replaceAll("/tmp/gateway.log", logPath)
@@ -540,7 +540,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
         const command = dockerHealthCommandBetween(
           dockerfile,
           "# Health check: poll the gateway's /health endpoint",
-          "ENTRYPOINT",
+          "# Entrypoint runs as root",
         )
           .replaceAll("/tmp/gateway.log", logPath)
           .replaceAll("/tmp/nemoclaw-gateway-local", markerPath)
@@ -1036,7 +1036,7 @@ describe("Hermes sandbox provisioning", () => {
       "patch-hermes-langfuse-credentials.mts",
     );
     const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
-    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.99.json");
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.85.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const stateLockPlanPath = path.join(
       tmp,

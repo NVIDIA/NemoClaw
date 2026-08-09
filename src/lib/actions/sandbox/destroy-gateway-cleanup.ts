@@ -4,6 +4,7 @@
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
   type DockerSandboxContainerSnapshot,
+  dockerSandboxContainerNamePrefix,
   getLiveSandboxNames,
   hasNoLiveSandboxes,
   type LiveSandboxListSnapshot,
@@ -71,9 +72,18 @@ export function collectLiveSandboxProbeSnapshot(
   for (const sandboxName of getLiveSandboxNames(liveList)) {
     try {
       dockerContainersBySandboxName.set(sandboxName, {
-        output: dockerCapture(["ps", "--filter", "name=openshell-", "--format", "{{.Names}}"], {
-          timeout: timeoutMs,
-        }),
+        output: dockerCapture(
+          [
+            "ps",
+            "--filter",
+            `name=${dockerSandboxContainerNamePrefix(sandboxName)}`,
+            "--format",
+            "{{.Names}}",
+          ],
+          {
+            timeout: timeoutMs,
+          },
+        ),
       });
     } catch (error) {
       // SOURCE_OF_TRUTH: this host Docker CLI probe follows a terminal OpenShell

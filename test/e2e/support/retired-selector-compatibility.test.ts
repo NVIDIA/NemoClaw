@@ -14,6 +14,7 @@ import {
 } from "../../../tools/e2e/retired-selector-compatibility.mts";
 
 const EXPECTED_SHA = "a".repeat(40);
+const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const REPLACEMENT_FILES = [
   "src/lib/actions/sandbox/rebuild-flow-helpers.test.ts",
@@ -62,6 +63,7 @@ function environment(
     TARGETS: targets,
     NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
     NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+    NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
     NEMOCLAW_E2E_SHARD: "default",
   };
 }
@@ -125,6 +127,7 @@ describe("retired E2E selector compatibility", () => {
           shardId: "default",
           expectedSha: EXPECTED_SHA,
           testedSha: EXPECTED_SHA,
+          planHash: PLAN_HASH,
           correlationId: CORRELATION_ID,
           passed: 1,
           failed: 0,

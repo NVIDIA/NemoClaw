@@ -1097,8 +1097,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
-  const dashboardForwardEnabled =
-    registry.getSandbox(sandboxName)?.dashboardForwardEnabled !== false;
   if (running) {
     const enforcement = enforceHermesSecretBoundaryOnRunningGateway(
       sandboxName,
@@ -1122,9 +1120,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     // Gateway is alive but the host-side forward can still be dead or
     // owned by another sandbox. Probe and re-establish only when
     // necessary so the live-and-healthy path stays a no-op.
-    const forwardHealthy = dashboardForwardEnabled
-      ? isSandboxForwardHealthy(sandboxName, { isWsl: isWslOverride })
-      : true;
+    const forwardHealthy = isSandboxForwardHealthy(sandboxName, { isWsl: isWslOverride });
     if (forwardHealthy === false) {
       if (!quiet) {
         console.log("");
@@ -1460,15 +1456,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
-    const forwardRecovered = dashboardForwardEnabled
-      ? ensureSandboxPortForward(sandboxName, {
-          afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
-          beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
-          isWsl: isWslOverride,
-        })
-      : false;
-    const primaryForwardReady = !dashboardForwardEnabled || forwardRecovered;
-    if (!primaryForwardReady && relaunchedIdentityRejected) {
+    const forwardRecovered = ensureSandboxPortForward(sandboxName, {
+      afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
+      beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
+      isWsl: isWslOverride,
+    });
+    if (!forwardRecovered && relaunchedIdentityRejected) {
       return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
@@ -1492,18 +1485,16 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const auxiliaryFailureDetail = auxiliaryRecoveryFailureDetail(auxiliaryResults);
     if (!quiet) {
       console.log(`  ${G}✓${R} ${recoveryDisplayName} gateway restarted inside sandbox.`);
-      if (dashboardForwardEnabled) {
-        if (forwardRecovered) {
-          console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
-        } else {
-          console.error("  Failed to re-establish the dashboard port forward.");
-          console.error(
-            `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-          );
-        }
+      if (forwardRecovered) {
+        console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+      } else {
+        console.error("  Failed to re-establish the dashboard port forward.");
+        console.error(
+          `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
+        );
       }
     }
-    if (!primaryForwardReady) {
+    if (!forwardRecovered) {
       return withManagedControlCompletion({
         checked: true,
         wasRunning: false,

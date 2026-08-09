@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isTerminalAgent } from "../agent/runtime-manifest";
-import { isPortableExperimentalProfile } from "./docker-driver-platform";
 
 export type DashboardRuntimeAgent = {
   forwardPort?: number | null;
@@ -31,15 +30,4 @@ export function getAgentPrimaryForwardPort(agent: DashboardRuntimeAgent, fallbac
 export function shouldManageDashboardForAgent(agent: DashboardRuntimeAgent): boolean {
   if (!agent || !isTerminalAgent(agent)) return true;
   return getAgentDeclaredForwardPorts(agent).length > 0;
-}
-
-/**
- * The hidden portable profile keeps the gateway dashboard available inside the
- * sandbox, but its host does not need or retain a browser-facing tunnel.
- */
-export function shouldManageDashboardForwardForAgent(
-  agent: DashboardRuntimeAgent,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return shouldManageDashboardForAgent(agent) && !isPortableExperimentalProfile(env);
 }

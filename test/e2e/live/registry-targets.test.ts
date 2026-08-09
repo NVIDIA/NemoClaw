@@ -49,7 +49,7 @@ const REGISTRY_TARGET_PHASES = [
   "record target completion evidence",
 ] as const;
 
-for (const [targetIndex, target] of listTargets().entries()) {
+for (const target of listTargets()) {
   const support = liveTargetSupport(target);
   if (!support.supported) {
     if (SELECTED_TARGET_ID === target.id) {
@@ -118,9 +118,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         ? lifecycle.preparePostReboot()
         : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
-      const instance = await onboard.from(ready, {
-        sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
-      });
+      const instance = await onboard.from(ready, { sandboxName: `e2e-${target.id}` });
 
       // Lifecycle phase runs between onboard and state-validation.
       // Targets opt in by setting `environment.lifecycle` to a

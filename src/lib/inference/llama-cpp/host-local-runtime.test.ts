@@ -15,7 +15,6 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { LLAMA_CPP_PORT } from "./contract";
 import {
   buildLlamaCppHostLocalDockerArgv,
   type LlamaCppHostLocalLaunchContract,
@@ -135,7 +134,7 @@ describe("llama.cpp host-local runtime materializer", () => {
       `type=bind,source=${runtime.model.hostPath},target=/models/${input.model.file.path},readonly`,
       `type=bind,source=${runtime.apiKeyHostPath},target=/run/secrets/llama-cpp-api-key,readonly`,
     ]);
-    expect(valuesAfter(argv, "--publish")).toEqual([]);
+    expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
     expect(valuesAfter(argv, "--gpus")).toEqual(["driver=nvidia,count=1"]);
     expect(valuesAfter(argv, "--gpu-layers")).toEqual(["all"]);
     expect(valuesAfter(argv, "--ctx-size")).toEqual([String(input.serve.contextSize)]);
@@ -158,15 +157,6 @@ describe("llama.cpp host-local runtime materializer", () => {
     );
     expect(argv.join("\n")).not.toContain("HF_TOKEN");
     expect(argv.join("\n")).not.toContain("huggingface.co");
-  });
-
-  it("leaves fixed host-port bridging to the Docker lifecycle provider", () => {
-    const argv = buildLlamaCppHostLocalDockerArgv(contract(), {
-      ...bindings(),
-      hostPort: LLAMA_CPP_PORT,
-    });
-
-    expect(valuesAfter(argv, "--publish")).toEqual([]);
   });
 
   it("takes launch settings from the declared contract instead of code defaults (#8144)", () => {
@@ -206,6 +196,8 @@ describe("llama.cpp host-local runtime materializer", () => {
       "unless-stopped",
       "--user",
       "1001:1001",
+      "--publish",
+      "127.0.0.1::8081",
       "--read-only",
       "--cap-drop",
       "ALL",

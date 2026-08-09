@@ -42,9 +42,8 @@ describe("release gate workflow resource contracts", () => {
 
     expect(validateE2eWorkflow(workflow as unknown as Record<string, unknown>)).toEqual(
       expect.arrayContaining([
-        "trusted E2E dispatch receipt must bind only the authenticated repository, PR, candidate, workflow, run, and dispatch identities",
+        "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
         "generate-matrix upload-e2e-artifacts must preserve its explicit name/path contract",
-        "trusted E2E dispatch receipt upload must preserve its immutable run identity",
       ]),
     );
   });

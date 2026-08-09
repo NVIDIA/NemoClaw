@@ -73,6 +73,7 @@ import {
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
+  ensurePortableFastResumeForConnect,
   ensureLiveSandboxOrExit,
   printGatewayLifecycleHint,
   recoverPortableDemoSandboxLifecycleForConnect,
@@ -1110,21 +1111,7 @@ async function runConnectEntryPreflight(
       if (registry.getSandboxEntryInference(registered).kind === "configured") {
         assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
       }
-      const portableRecovery = recoverPortableDemoSandboxLifecycleForConnect(
-        sandboxName,
-        registered,
-        gatewayName,
-      );
-      if (
-        portableRecovery.kind !== "not-installed" &&
-        registered.dashboardForwardEnabled !== false
-      ) {
-        if (!registry.updateSandbox(sandboxName, { dashboardForwardEnabled: false })) {
-          throw new Error(
-            `Portable sandbox '${sandboxName}' could not persist its no-forward connect mode`,
-          );
-        }
-      }
+      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -1254,6 +1241,23 @@ export async function connectSandbox(
     // polls are already owner-scoped; this also catches registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
     return await runSandboxConnectProbe(sandboxName);
+  }
+
+  let portableFastResume: ReturnType<typeof ensurePortableFastResumeForConnect>;
+  try {
+    portableFastResume = ensurePortableFastResumeForConnect(sandboxName);
+  } catch (error) {
+    console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+  if (portableFastResume.kind === "ready") {
+    const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
+      stdio: "inherit",
+      cwd: ROOT,
+      env: { ...process.env },
+    });
+    exitWithConnectSpawnResult(sandboxName, result);
+    return;
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);

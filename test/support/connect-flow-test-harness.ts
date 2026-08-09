@@ -28,6 +28,7 @@ export type ConnectHarness = {
   checkAndRecoverSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
+  ensurePortableFastResumeSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
@@ -72,6 +73,9 @@ export type ConnectHarnessOptions = {
     mcpReconciliationReason?: string;
   };
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
+  portableFastResumeResult?:
+    | { kind: "not-configured" }
+    | { kind: "ready"; containerStarted: boolean };
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
@@ -134,6 +138,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     state: "present",
     output: "Name: alpha\nPhase: Ready\n",
   });
+  const ensurePortableFastResumeSpy = vi
+    .spyOn(gatewayState, "ensurePortableFastResumeForConnect")
+    .mockReturnValue(options.portableFastResumeResult ?? { kind: "not-configured" });
   vi.spyOn(gatewayFailureClassifier, "isDockerRuntimeDown").mockReturnValue(false);
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
@@ -271,6 +278,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     checkAndRecoverSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
+    ensurePortableFastResumeSpy,
     ensureLiveSandboxSpy,
     errorSpy,
     logSpy,

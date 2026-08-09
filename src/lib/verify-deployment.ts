@@ -129,8 +129,6 @@ export interface VerifyDeploymentOptions {
    * startup paths intentionally differ.
    */
   diagnoseCustomOpenClawRuntime?: boolean;
-  /** Skip host dashboard-forward verification when the sandbox intentionally has none. */
-  verifyDashboardForward?: boolean;
 }
 
 const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 5000, 7000, 10000];
@@ -526,22 +524,17 @@ export async function verifyDeployment(
   // 3. Dashboard reachable from host (port forward)
   // A port forward cannot repair an image that has no managed gateway runtime,
   // so avoid spending a second retry budget on the dependent dashboard probe.
-  const verifyDashboardForward = options.verifyDashboardForward !== false;
   const dashboardRetryDelays = customRuntimeHints ? [] : retryDelaysMs;
-  const dashboard = verifyDashboardForward
-    ? await verifyDashboardFromHost(chain, deps, dashboardRetryDelays, sleep)
-    : { reachable: false, detail: "host dashboard forward intentionally disabled" };
-  if (verifyDashboardForward) {
-    diagnostics.push({
-      link: "dashboard",
-      status: dashboard.reachable ? "ok" : "fail",
-      detail: dashboard.detail,
-      hint: dashboard.reachable
-        ? ""
-        : (customRuntimeHints?.dashboard ??
-          `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`),
-    });
-  }
+  const dashboard = await verifyDashboardFromHost(chain, deps, dashboardRetryDelays, sleep);
+  diagnostics.push({
+    link: "dashboard",
+    status: dashboard.reachable ? "ok" : "fail",
+    detail: dashboard.detail,
+    hint: dashboard.reachable
+      ? ""
+      : (customRuntimeHints?.dashboard ??
+        `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`),
+  });
 
   // 4. Inference route
   const inference = await verifyInferenceRoute(
@@ -588,10 +581,7 @@ export async function verifyDeployment(
     accessMethod,
   };
 
-  const healthy =
-    gateway.reachable &&
-    (!verifyDashboardForward || dashboard.reachable) &&
-    inference.status === "ok";
+  const healthy = gateway.reachable && dashboard.reachable && inference.status === "ok";
 
   return { healthy, verification, diagnostics };
 }
@@ -611,13 +601,8 @@ export function formatVerificationDiagnostics(result: VerifyDeploymentResult): s
   const RESET = "\x1b[0m";
 
   if (result.healthy) {
-    const dashboardVerified = result.diagnostics.some(
-      (diagnostic) => diagnostic.link === "dashboard",
-    );
     lines.push(
-      dashboardVerified
-        ? `  ${G}✓${RESET} Deployment verified — gateway, dashboard, and inference route are healthy.`
-        : `  ${G}✓${RESET} Deployment verified — gateway and inference route are healthy.`,
+      `  ${G}✓${RESET} Deployment verified — gateway, dashboard, and inference route are healthy.`,
     );
     if (result.verification.gatewayVersion) {
       lines.push(`    OpenClaw version: ${result.verification.gatewayVersion}`);

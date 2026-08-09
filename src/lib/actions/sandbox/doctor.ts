@@ -468,9 +468,7 @@ function collectRegisteredSandboxChecks(
   const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
   let dashboardPortRequired = true;
   try {
-    dashboardPortRequired =
-      sb.dashboardForwardEnabled !== false &&
-      shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
+    dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
   } catch {
     // Require dashboard metadata when the agent definition cannot be loaded.
   }

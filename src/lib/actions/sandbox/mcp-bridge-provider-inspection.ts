@@ -284,9 +284,7 @@ export async function preflightMcpEntryTargets(
         const recordedPins = entry.allowedIps ?? [];
         let replay;
         try {
-          replay = replayTrustedPrivateEndpoint(entry.trustedPrivateHost, recordedPins, {
-            requireAllPrivate: true,
-          });
+          replay = replayTrustedPrivateEndpoint(entry.trustedPrivateHost, recordedPins);
         } catch (error) {
           throw new McpBridgeError(
             `MCP server '${entry.server}' has invalid durable trusted-private intent: ${error instanceof Error ? error.message : String(error)}. Remove it with --force and add it again.`,

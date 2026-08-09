@@ -40,8 +40,12 @@ const DEFAULT_MODEL =
   process.env.NEMOCLAW_MODEL ??
   process.env.NEMOCLAW_COMPAT_MODEL ??
   "nvidia/nvidia/nemotron-3-ultra";
-const TEST_SANDBOX_PREFIX = "e2e-rebuild-oc";
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
+const TEST_SANDBOX_PREFIX = "e2e-rebuild-openclaw";
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ??
+  [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
+    .filter(Boolean)
+    .join("-");
 validateSandboxName(SANDBOX_NAME);
 if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
   throw new Error(

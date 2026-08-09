@@ -53,7 +53,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
-          name: "approval-pass-sb",
+          name: "approval-pass-sandbox",
           model: "claude-sonnet-4-20250514",
           provider: "anthropic-prod",
           gpuEnabled: false,
@@ -98,7 +98,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
-          name: "approval-pass-pol",
+          name: "approval-pass-policy",
           model: "claude-sonnet-4-20250514",
           provider: "anthropic-prod",
           gpuEnabled: false,
@@ -161,7 +161,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
   it("does not import approval policy from PYTHONPATH", testTimeoutOptions(20_000), () => {
     const { tmpDir, stateFile, sandboxName } = setupFixture(
       {
-        name: "approval-tmp-tamper",
+        name: "approval-pass-tmp-tamper",
         model: "claude-sonnet-4-20250514",
         provider: "anthropic-prod",
         gpuEnabled: false,
@@ -212,7 +212,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
-          name: "approval-tolerant",
+          name: "approval-pass-tolerant",
           model: "claude-sonnet-4-20250514",
           provider: "anthropic-prod",
           gpuEnabled: false,
@@ -259,7 +259,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       // SSH session.
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
-          name: "probe-approval-sb",
+          name: "probe-approval-sandbox",
           model: "claude-sonnet-4-20250514",
           provider: "anthropic-prod",
           gpuEnabled: false,
@@ -307,7 +307,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       // probe-only flow must still succeed.
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
-          name: "probe-approval-tol",
+          name: "probe-approval-tolerant",
           model: "claude-sonnet-4-20250514",
           provider: "anthropic-prod",
           gpuEnabled: false,
@@ -373,7 +373,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       // saw none of the triplet.
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
-          name: "probe-env-strip-sb",
+          name: "probe-env-strip-sandbox",
           model: "claude-sonnet-4-20250514",
           provider: "anthropic-prod",
           gpuEnabled: false,
@@ -412,7 +412,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
-          name: "approve-budget-sb",
+          name: "approve-budget-sandbox",
           model: "claude-sonnet-4-20250514",
           provider: "anthropic-prod",
           gpuEnabled: false,

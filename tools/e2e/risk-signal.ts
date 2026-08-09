@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import path from "node:path";
 
 export const RISK_SIGNAL_FILE = "risk-signal.json";
 
@@ -12,6 +11,7 @@ export type E2eRiskSignal = {
   shardId: string;
   expectedSha: string;
   testedSha: string;
+  planHash: string;
   correlationId: string;
   passed: number;
   failed: number;
@@ -27,6 +27,7 @@ export type RiskSignalEnvironment = {
   shardId: string;
   expectedSha: string;
   testedSha: string;
+  planHash: string;
   correlationId: string;
 };
 
@@ -36,6 +37,7 @@ export type RiskSignalCounts = Pick<
 >;
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
+const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const CORRELATION_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const JOB_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
@@ -61,6 +63,7 @@ export function configuredRiskSignalEnvironment(
     jobId: env.E2E_TARGET_ID ?? "",
     shardId: env.NEMOCLAW_E2E_SHARD ?? "",
     expectedSha: env.NEMOCLAW_E2E_EXPECTED_SHA,
+    planHash: env.NEMOCLAW_E2E_PLAN_HASH ?? "",
     correlationId: env.NEMOCLAW_E2E_CORRELATION_ID ?? "",
   };
   if (!values.artifactDir) throw new Error("risk signal requires E2E_ARTIFACT_DIR");
@@ -71,14 +74,13 @@ export function configuredRiskSignalEnvironment(
   if (!SHA_PATTERN.test(values.expectedSha)) {
     throw new Error("risk signal requires a 40-character lowercase expected SHA");
   }
+  if (!HASH_PATTERN.test(values.planHash)) {
+    throw new Error("risk signal requires a 64-character lowercase plan hash");
+  }
   if (!CORRELATION_PATTERN.test(values.correlationId)) {
     throw new Error("risk signal requires a lowercase UUIDv4 correlation id");
   }
-  const testedRoot = env.NEMOCLAW_E2E_TESTED_ROOT ?? env.GITHUB_WORKSPACE ?? process.cwd();
-  if (!path.isAbsolute(testedRoot)) {
-    throw new Error("risk signal requires an absolute tested root");
-  }
-  const testedSha = resolveHead(testedRoot);
+  const testedSha = resolveHead(env.GITHUB_WORKSPACE ?? process.cwd());
   if (!SHA_PATTERN.test(testedSha) || testedSha !== values.expectedSha) {
     throw new Error("risk signal checked-out HEAD does not match the expected SHA");
   }
@@ -95,6 +97,7 @@ export function buildRiskSignal(
     shardId: environment.shardId,
     expectedSha: environment.expectedSha,
     testedSha: environment.testedSha,
+    planHash: environment.planHash,
     correlationId: environment.correlationId,
     ...counts,
   };

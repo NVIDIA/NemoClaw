@@ -4,9 +4,10 @@
 import { isIP } from "node:net";
 import path from "node:path";
 import {
-  assertTrustedPrivateEndpointCapability,
+  isOperatorTrustablePrivateIp,
+  isTrustedPrivateEndpointCapability,
   type TrustedPrivateEndpointCapability,
-} from "../../security/trusted-private-endpoint";
+} from "../../inference/endpoint-ssrf-preflight";
 import { isCredentialShapedName } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 
@@ -22,7 +23,7 @@ export interface CurlProbeArgOptions {
   allowRedirects?: boolean;
   /** Addresses approved by the endpoint SSRF preflight. */
   pinnedAddresses?: readonly string[];
-  /** Non-forgeable proof of the exact pins admitted for a trusted private host. */
+  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
   trustedPrivateCapability?: TrustedPrivateEndpointCapability;
 }
 
@@ -201,26 +202,18 @@ function isPrivateResolveAddress(address: string): boolean {
   return isPrivateIp(address);
 }
 
+function isOperatorTrustablePrivateResolveAddress(address: string): boolean {
+  return isOperatorTrustablePrivateIp(address);
+}
+
 function getTrustedPrivateResolveAddresses(
-  target: URL,
-  opts: CurlProbeArgOptions,
+  capability: TrustedPrivateEndpointCapability | undefined,
 ): readonly string[] {
-  if (!opts.trustedPrivateCapability) return [];
-  if (opts.pinnedAddresses === undefined) {
-    throw new Error("curl probe trusted private capability requires pinnedAddresses");
+  if (!capability) return [];
+  if (!isTrustedPrivateEndpointCapability(capability)) {
+    throw new Error("curl probe trusted private capability was not issued by the SSRF preflight");
   }
-  const targetHost = normalizeHostname(target.hostname);
-  const authorityAddresses =
-    opts.pinnedAddresses.length > 0
-      ? opts.pinnedAddresses
-      : isIP(targetHost) !== 0
-        ? [targetHost]
-        : opts.pinnedAddresses;
-  return assertTrustedPrivateEndpointCapability(
-    target.hostname,
-    authorityAddresses,
-    opts.trustedPrivateCapability,
-  ).addresses;
+  return capability.addresses;
 }
 
 function assertResolveMatchesApprovedEndpoint(
@@ -237,7 +230,9 @@ function assertResolveMatchesApprovedEndpoint(
   const port = value.slice(firstSeparator + 1, secondSeparator);
   const addresses = parseResolveAddresses(value.slice(secondSeparator + 1));
   const approved = [...new Set(opts.pinnedAddresses ?? [])];
-  const trustedPrivate = [...getTrustedPrivateResolveAddresses(target, opts)];
+  const trustedPrivate = [
+    ...new Set(getTrustedPrivateResolveAddresses(opts.trustedPrivateCapability)),
+  ];
   if (approved.length === 0) {
     throw new Error("curl probe --resolve requires SSRF-preflight-approved pinnedAddresses");
   }
@@ -246,6 +241,18 @@ function assertResolveMatchesApprovedEndpoint(
   }
   if (addresses.length === 0 || addresses.some((address) => isIP(address) === 0)) {
     throw new Error("curl probe --resolve addresses must be numeric IP addresses");
+  }
+  if (
+    trustedPrivate.some(
+      (address) =>
+        isIP(address) === 0 ||
+        !isPrivateResolveAddress(address) ||
+        !isOperatorTrustablePrivateResolveAddress(address),
+    )
+  ) {
+    throw new Error(
+      "curl probe trusted private addresses must be numeric RFC1918, CGNAT, or IPv6 ULA addresses",
+    );
   }
   const trustedPrivateSet = new Set(trustedPrivate);
   if (
@@ -273,7 +280,10 @@ export function validateCurlProbeArgs(
   const args = [...argv];
   const url = normalizeHttpProbeUrl(args.pop());
   const parsedUrl = new URL(url);
-  const trustedPrivate = getTrustedPrivateResolveAddresses(parsedUrl, opts);
+  const trustedPrivate = getTrustedPrivateResolveAddresses(opts.trustedPrivateCapability);
+  if (trustedPrivate.length > 0 && opts.pinnedAddresses === undefined) {
+    throw new Error("curl probe trusted private capability requires pinnedAddresses");
+  }
   let sawResolve = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];

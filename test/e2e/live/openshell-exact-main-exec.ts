@@ -12,10 +12,6 @@ const SUPERVISOR_TLS_ENV_NAMES = [
   "OPENSHELL_TLS_CERT",
   "OPENSHELL_TLS_KEY",
 ] as const;
-const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
-const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
-const OPENSHELL_DEFAULT_WORKSPACE = "default";
-const SAFE_OPENSHELL_IDENTITY_COMPONENT = /^[a-z0-9][a-z0-9_.-]*$/u;
 const ENTRYPOINT_ARGV = ["nemoclaw-dcode-entrypoint", "-f", "/dev/null"] as const;
 const CONNECT_CHILD_OK = "NEMOCLAW_EXACT_MAIN_CONNECT_CHILD_OK";
 
@@ -116,17 +112,14 @@ function exactMainDockerContainerId(output: string, sandboxName: string): string
       `expected exactly one running Docker container for ${sandboxName}, found ${rows.length}`,
     );
   }
-  const [id, name, sandboxId, sandboxWorkspace, ...unexpected] = rows[0].split("\t");
-  const expectedName = `openshell-${OPENSHELL_DEFAULT_WORKSPACE}--${sandboxName}-${sandboxId}`;
+  const [id, name, ...unexpected] = rows[0].split("\t");
+  const expectedName = `openshell-${sandboxName}`;
   if (
     !id ||
-    !/^[0-9a-f]{64}$/u.test(id) ||
+    !/^[0-9a-f]{12,64}$/u.test(id) ||
     !name ||
-    !sandboxId ||
-    !SAFE_OPENSHELL_IDENTITY_COMPONENT.test(sandboxId) ||
-    sandboxWorkspace !== OPENSHELL_DEFAULT_WORKSPACE ||
     unexpected.length > 0 ||
-    name !== expectedName
+    (name !== expectedName && !name.startsWith(`${expectedName}-`))
   ) {
     throw new Error(`unexpected OpenShell Docker container identity for ${sandboxName}`);
   }
@@ -189,7 +182,7 @@ export async function assertExactMainChildProcessContracts(
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
       "--format",
-      `{{.ID}}\t{{.Names}}\t{{.Label "${OPENSHELL_SANDBOX_ID_LABEL}"}}\t{{.Label "${OPENSHELL_SANDBOX_WORKSPACE_LABEL}"}}`,
+      "{{.ID}}\t{{.Names}}",
     ],
     {
       artifactName: "exact-main-entrypoint-container-identity",

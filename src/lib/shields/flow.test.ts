@@ -112,7 +112,7 @@ describe("shields command flow", () => {
   });
 
   it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", {
-    timeout: 30_000,
+    timeout: 15_000,
   }, () => {
     const harness = createHarness();
 
@@ -630,7 +630,7 @@ describe("shields command flow", () => {
   it("preserves a live transition owner instead of attempting portable process-tree takeover", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
-    const sandboxName = "live-owner";
+    const sandboxName = "live-transition-owner";
     const processToken = "b".repeat(32);
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     const owner = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
@@ -685,7 +685,7 @@ describe("shields command flow", () => {
   ])("enters durable containment for a %s-token transition whose owner exited in the recovery gap", (_tokenRelationship, transitionOwnerToken) => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
-    const sandboxName = "dead-owner";
+    const sandboxName = "dead-transition-owner";
     const processToken = "c".repeat(32);
     const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     fs.writeFileSync(

@@ -71,6 +71,27 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
+  it("connects directly after the configured portable fast-resume prerequisites", async () => {
+    const harness = createConnectHarness({
+      portableFastResumeResult: { kind: "ready", containerStarted: true },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.ensurePortableFastResumeSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.preflightVllmSpy).not.toHaveBeenCalled();
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
   it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
     const setRawModeSpy = vi.fn();
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });

@@ -673,45 +673,26 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
   it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
     const input = createInput();
-    input.lifecycleRegistrationFields = {
-      lifecycleGeneration: "current-generation",
-      lifecycleLiveIdentityFingerprint: "current-fingerprint",
-    };
     const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(
-      () => input.lifecycleRegistrationFields?.lifecycleGeneration ?? null,
-    );
+    deps.installPortableDemoLifecycle = vi.fn();
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
-      lifecycleRegistrationFields: {
-        lifecycleGeneration: "current-generation",
-        lifecycleLiveIdentityFingerprint: "current-fingerprint",
-      },
-      route: "native",
-    });
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
 
     expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
       input.sandboxName,
       input.sandboxStartupCommand,
-      process.env,
-      { registryGeneration: "current-generation" },
     );
   });
 
-  it("keeps a created sandbox when portable lifecycle setup fails (#8441)", async () => {
+  it("fails onboarding without exposing credentials when portable lifecycle setup fails (#8441)", async () => {
     const deps = createDeps();
     deps.installPortableDemoLifecycle = vi.fn(() => {
       throw new Error("Authorization: Bearer portable-secret");
     });
 
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
-      route: "native",
-    });
-
-    const warning = vi.mocked(console.warn).mock.calls.flat().join("\n");
-    expect(warning).toContain("Portable demo lifecycle setup did not complete");
-    expect(warning).toContain("Authorization: Bearer <REDACTED>");
-    expect(warning).not.toContain("portable-secret");
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow(
+      "Portable demo lifecycle setup did not complete: Authorization: Bearer <REDACTED>",
+    );
   });
 });
 

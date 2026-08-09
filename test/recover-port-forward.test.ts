@@ -348,7 +348,7 @@ describe("nemoclaw <name> recover", () => {
     testTimeoutOptions(20_000),
     () => {
       const fixture = setupFixture({
-        sandboxName: "delayed-owner-sb",
+        sandboxName: "delayed-owner-sandbox",
         gatewayProbe: "RUNNING",
         forwardListStatus: "dead",
         forwardStartDelayPolls: 3,

@@ -26,14 +26,6 @@ export interface PodmanContainerEngineOptions {
   ) => void;
 }
 
-export function localPodmanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const local = { ...env };
-  delete local.CONTAINER_CONNECTION;
-  delete local.CONTAINER_HOST;
-  delete local.CONTAINER_SSHKEY;
-  return local;
-}
-
 function podmanAuthorityId(authority: PodmanSocketAuthority): string {
   const canonical = JSON.stringify({
     socketPath: authority.socketPath,
@@ -73,9 +65,5 @@ export function createPodmanContainerEngine(
   });
 }
 
-export type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "./socket-authority";
-export {
-  assertPodmanSocketAuthority,
-  capturePodmanSocketAuthority,
-  hardenPodmanSocketDirectory,
-} from "./socket-authority";
+export type { PodmanSocketAuthority } from "./socket-authority";
+export { assertPodmanSocketAuthority, capturePodmanSocketAuthority } from "./socket-authority";

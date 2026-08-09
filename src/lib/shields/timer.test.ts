@@ -899,7 +899,10 @@ describe("shields timer authorization", () => {
 
   it("retains the exact deadline gates when revoked containment rollback cannot be proven", async () => {
     const timer = await import("./timer");
-    const fixture = createFailedRestoreFixture("contain-rollback", timer.parseTimerArgs);
+    const fixture = createFailedRestoreFixture(
+      "containment-publication-rollback-failure",
+      timer.parseTimerArgs,
+    );
     const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, writeMarker } =
       fixture;
     const replacementToken = "e".repeat(32);
@@ -941,7 +944,7 @@ describe("shields timer authorization", () => {
   it("retains the exact deadline gates when durable containment cannot be committed", async () => {
     const timer = await import("./timer");
     const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, stateDir } =
-      createFailedRestoreFixture("retry-contain", timer.parseTimerArgs);
+      createFailedRestoreFixture("retry-containment-failure", timer.parseTimerArgs);
     const originalLink = fs.linkSync.bind(fs);
     const rejectContainment = (): never => {
       const error = new Error("simulated containment commit failure") as NodeJS.ErrnoException;
@@ -978,7 +981,7 @@ describe("shields timer authorization", () => {
   it("stops retrying when transition takeover commits durable containment", async () => {
     const timer = await import("./timer");
     const { args, markerPath, mutationLockPath, sandboxName, stateDir } =
-      createFailedRestoreFixture("takeover-contain", timer.parseTimerArgs);
+      createFailedRestoreFixture("takeover-containment", timer.parseTimerArgs);
     shieldsIndexMock.prepareAutoRestoreTransitionTakeover.mockImplementationOnce(() => {
       beginCommittedMcpLifecycleContainmentSync(
         sandboxName,

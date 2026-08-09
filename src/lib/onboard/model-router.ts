@@ -40,9 +40,7 @@ export {
   type ModelRouterCommandProvisioner,
 } from "./model-router-command";
 
-// The prefill router loads its routing model before it serves /health.
-// Allow that model load to finish while keeping the startup wait bounded.
-const ROUTER_HEALTH_RETRIES = 60;
+const ROUTER_HEALTH_RETRIES = 15;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(

@@ -6,21 +6,19 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { SandboxEntry } from "../../state/registry";
 import { recordUserLocalOllamaOwnership } from "./ollama-user-local-runtime";
 import {
+  ensurePortableFastResumeForConnect,
   installPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleDeps,
   portableDemoLifecycleInternals,
-  recoverPortableDemoSandboxLifecycle as recoverPortableDemoSandboxLifecycleUnchecked,
-  removePortableDemoSandboxLifecycleReceipt,
-  resolvePortableDemoPrivilegedExecTarget,
+  recoverPortableDemoSandboxLifecycle,
+  runPortableResumeService,
 } from "./portable-demo-lifecycle";
 
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
-const SOCKET_PATH = "/run/user/1001/podman/podman.sock";
 const STARTUP_ARGV = [
   "env",
   "CHAT_UI_URL=http://127.0.0.1:18789",
@@ -62,44 +60,27 @@ function sandboxEntry(): SandboxEntry {
 }
 
 function createPodman(
-  options: {
-    running?: boolean;
-    sandboxId?: string;
-    updateStatus?: number;
-    discoveredContainerIds?: readonly string[];
-  } = {},
+  options: { running?: boolean; sandboxId?: string; updateStatus?: number } = {},
 ) {
   let running = options.running ?? true;
   let sandboxId = options.sandboxId ?? SANDBOX_ID;
   let managedLabel = "true";
   let sandboxNameLabel = "alpha";
-  let sandboxNamespaceLabel = "";
-  let sandboxWorkspaceLabel = "default";
-  let containerId = CONTAINER_ID;
-  let containerName = `openshell-default--alpha-${sandboxId}`;
-  let matches = [...(options.discoveredContainerIds ?? [CONTAINER_ID])];
-  let socketPath = SOCKET_PATH;
-  const podman = vi.fn((args: readonly string[], _env?: NodeJS.ProcessEnv) => {
-    const command = args[0] === "--url" ? args.slice(2) : args;
-    switch (command[0]) {
-      case "info":
-        return { status: 0, stdout: `${socketPath}\n` };
+  const podman = vi.fn((args: readonly string[]) => {
+    switch (args[0]) {
       case "ps":
-        return { status: 0, stdout: matches.length > 0 ? `${matches.join("\n")}\n` : "" };
+        return { status: 0, stdout: `${CONTAINER_ID}\n` };
       case "inspect":
         return {
           status: 0,
           stdout: JSON.stringify([
             {
-              Id: containerId,
-              Name: containerName,
+              Id: CONTAINER_ID,
               Config: {
                 Labels: {
                   "openshell.managed": managedLabel,
-                  "openshell.ai/sandbox-id": sandboxId,
-                  "openshell.ai/sandbox-name": sandboxNameLabel,
-                  "openshell.ai/sandbox-namespace": sandboxNamespaceLabel,
-                  "openshell.ai/sandbox-workspace": sandboxWorkspaceLabel,
+                  "openshell.sandbox-id": sandboxId,
+                  "openshell.sandbox-name": sandboxNameLabel,
                 },
               },
               State: { Running: running },
@@ -119,7 +100,6 @@ function createPodman(
     podman,
     setSandboxId(value: string) {
       sandboxId = value;
-      containerName = `openshell-default--alpha-${value}`;
     },
     setManagedLabel(value: string) {
       managedLabel = value;
@@ -127,106 +107,19 @@ function createPodman(
     setSandboxNameLabel(value: string) {
       sandboxNameLabel = value;
     },
-    setSandboxNamespaceLabel(value: string) {
-      sandboxNamespaceLabel = value;
-    },
-    setSandboxWorkspaceLabel(value: string) {
-      sandboxWorkspaceLabel = value;
-    },
-    setContainerId(value: string) {
-      containerId = value;
-    },
-    setContainerName(value: string) {
-      containerName = value;
-    },
-    setMatches(value: string[]) {
-      matches = value;
-    },
-    setRunning(value: boolean) {
-      running = value;
-    },
-    setSocketPath(value: string) {
-      socketPath = value;
-    },
   };
 }
 
-function socketAuthorityDeps(
-  options: {
-    directory?: boolean;
-    directoryMode?: bigint;
-    onLstat?: () => void;
-    socketInode?: () => bigint;
-    socketMode?: bigint;
-    socketUid?: bigint;
-  } = {},
-): PodmanSocketAuthorityDeps {
-  const directoryInodes = new Map<string, bigint>();
-  return {
-    uid: 1001,
-    lstat: (filePath) => {
-      options.onLstat?.();
-      const socket = filePath === SOCKET_PATH;
-      const directoryInode = directoryInodes.get(filePath) ?? BigInt(7000 + directoryInodes.size);
-      directoryInodes.set(filePath, directoryInode);
-      return {
-        dev: 8n,
-        ino: socket ? (options.socketInode?.() ?? 9001n) : directoryInode,
-        mode: socket
-          ? (options.socketMode ?? 0o660n)
-          : filePath === path.dirname(SOCKET_PATH)
-            ? (options.directoryMode ?? 0o700n)
-            : 0o755n,
-        uid: socket
-          ? (options.socketUid ?? 1001n)
-          : filePath.startsWith("/run/user/1001")
-            ? 1001n
-            : 0n,
-        isDirectory: () => !socket && (options.directory ?? true),
-        isSocket: () => socket,
-      };
-    },
-  };
-}
-
-function resolveTarget(
+function installReceipt(
   stateDir: string,
-  runtime: ReturnType<typeof createPodman>,
-  overrides: Partial<PortableDemoLifecycleDeps> = {},
-) {
-  return resolvePortableDemoPrivilegedExecTarget("alpha", {
-    platform: "linux",
-    registryGeneration: CONTAINER_ID,
-    stateDir,
-    podman: runtime.podman,
-    podmanSocketAuthorityDeps: socketAuthorityDeps(),
-    hardenSocketDirectory: vi.fn(),
-    ...overrides,
-  });
-}
-
-function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman>["podman"]): void {
+  podman: ReturnType<typeof createPodman>["podman"],
+  deps: PortableDemoLifecycleDeps = {},
+): void {
   installPortableDemoSandboxLifecycle(
     "alpha",
     STARTUP_ARGV,
     { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-    { platform: "linux", podman, stateDir },
-  );
-}
-
-function recoverPortableDemoSandboxLifecycle(
-  sandboxName: string,
-  context: Parameters<typeof recoverPortableDemoSandboxLifecycleUnchecked>[1],
-  deps: PortableDemoLifecycleDeps = {},
-) {
-  return recoverPortableDemoSandboxLifecycleUnchecked(
-    sandboxName,
-    {
-      lifecycleGeneration: CONTAINER_ID,
-      openshellDriver: "docker",
-      ...context,
-    },
-    deps,
+    { platform: "linux", podman, stateDir, systemctl: () => ({ status: 0 }), ...deps },
   );
 }
 
@@ -237,6 +130,28 @@ function createManagedOllamaBinary(homeDir: string): string {
   return binPath;
 }
 
+function expectRecoveryIdentityRefusal(
+  stateDir: string,
+  runtime: ReturnType<typeof createPodman>,
+): void {
+  const launchOpenshell = vi.fn();
+
+  expect(() =>
+    recoverPortableDemoSandboxLifecycle(
+      "alpha",
+      { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+      {
+        platform: "linux",
+        stateDir,
+        podman: runtime.podman,
+        launchOpenshell,
+      },
+    ),
+  ).toThrow("OpenShell identity does not match");
+  expect(runtime.podman).not.toHaveBeenCalledWith(["start", CONTAINER_ID]);
+  expect(launchOpenshell).not.toHaveBeenCalled();
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -244,43 +159,25 @@ afterEach(() => {
 });
 
 describe("portable demo sandbox lifecycle", () => {
-  it("removes a stale receipt without inspecting Podman for a non-portable replacement (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.podman.mockClear();
-    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+  it("does not inspect Podman unless the portable profile is explicit (#8441)", () => {
+    const podman = vi.fn();
 
-    installPortableDemoSandboxLifecycle(
-      "alpha",
-      STARTUP_ARGV,
-      {},
-      {
-        podman: runtime.podman,
-        stateDir,
-      },
-    );
+    installPortableDemoSandboxLifecycle("alpha", STARTUP_ARGV, {}, { podman });
 
-    expect(fs.existsSync(filePath)).toBe(false);
-    expect(runtime.podman).not.toHaveBeenCalled();
+    expect(podman).not.toHaveBeenCalled();
   });
 
-  it("removes a stale receipt for another startup contract (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.podman.mockClear();
-    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+  it("does not install an OpenClaw demo receipt for another startup contract (#8441)", () => {
+    const podman = vi.fn();
 
     installPortableDemoSandboxLifecycle(
       "alpha",
       ["env", "NEMOCLAW_OBSERVABILITY=0", "/usr/local/bin/nemoclaw-start"],
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-      { platform: "linux", podman: runtime.podman, stateDir },
+      { platform: "linux", podman },
     );
 
-    expect(fs.existsSync(filePath)).toBe(false);
-    expect(runtime.podman).not.toHaveBeenCalled();
+    expect(podman).not.toHaveBeenCalled();
   });
 
   it("ignores an installed receipt for another agent (#8441)", () => {
@@ -293,26 +190,6 @@ describe("portable demo sandbox lifecycle", () => {
       recoverPortableDemoSandboxLifecycle(
         "alpha",
         { agent: "hermes", gatewayName: "nemoclaw" },
-        { platform: "linux", stateDir, podman: runtime.podman },
-      ),
-    ).toEqual({ kind: "not-installed" });
-    expect(runtime.podman).not.toHaveBeenCalled();
-  });
-
-  it("ignores an installed receipt for a non-Docker registry driver (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.podman.mockClear();
-
-    expect(
-      recoverPortableDemoSandboxLifecycle(
-        "alpha",
-        {
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          openshellDriver: "kubernetes",
-        },
         { platform: "linux", stateDir, podman: runtime.podman },
       ),
     ).toEqual({ kind: "not-installed" });
@@ -354,7 +231,7 @@ describe("portable demo sandbox lifecycle", () => {
     expect(runtime.podman).not.toHaveBeenCalled();
   });
 
-  it("records the exact OpenShell container and applies the unless-stopped restart policy (#8441)", () => {
+  it("records the exact OpenShell container and applies restart=always (#8441)", () => {
     const stateDir = temporaryStateDir();
     const { podman } = createPodman();
 
@@ -367,243 +244,111 @@ describe("portable demo sandbox lifecycle", () => {
       "--filter",
       "label=openshell.managed=true",
       "--filter",
-      "label=openshell.ai/sandbox-name=alpha",
-      "--filter",
-      "label=openshell.ai/sandbox-workspace=default",
+      "label=openshell.sandbox-name=alpha",
       "--format",
       "{{.ID}}",
     ]);
-    expect(podman).toHaveBeenCalledWith(["update", "--restart=unless-stopped", CONTAINER_ID]);
+    expect(podman).toHaveBeenCalledWith(["update", "--restart=always", CONTAINER_ID]);
     const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(receipt).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 2,
       sandboxName: "alpha",
       sandboxId: SANDBOX_ID,
       containerId: CONTAINER_ID,
       dashboardPort: 18789,
-      registryGeneration: CONTAINER_ID,
     });
     expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
   });
 
-  it("resolves the receipt-owned container through the rootless Podman socket (#8584)", () => {
+  it("persists the POC mode and enables a receipt-driven user resume service", () => {
     const stateDir = temporaryStateDir();
-    const runtime = createPodman();
+    const { podman } = createPodman();
+    const systemctl = vi.fn((_args: readonly string[]) => ({ status: 0 }));
+    const env = { HOME: stateDir };
+
+    installReceipt(stateDir, podman, {
+      env,
+      modulePath: "/opt/nemoclaw/dist/lib/onboard/experimental/portable-demo-lifecycle.js",
+      nodeBinary: "/usr/bin/node",
+      systemctl,
+    });
+
+    const configPath = portableDemoLifecycleInternals.fastResumeConfigPath(env);
+    expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toEqual({
+      schemaVersion: 1,
+      managedBy: portableDemoLifecycleInternals.FAST_RESUME_CONFIG_MARKER,
+      mode: "fast-resume-poc",
+      sandboxName: "alpha",
+      dashboardForwardRecovery: "disabled",
+    });
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+
+    const servicePath = portableDemoLifecycleInternals.portableResumeServicePath(env);
+    const service = fs.readFileSync(servicePath, "utf8");
+    expect(service).toContain("Requires=podman.socket");
+    expect(service).toContain("After=podman.socket");
+    expect(service).toContain(
+      "ExecStart=/usr/bin/node /opt/nemoclaw/dist/lib/onboard/experimental/portable-demo-lifecycle.js --resume-service",
+    );
+    expect(service).not.toContain("Environment=");
+    expect(fs.statSync(servicePath).mode & 0o777).toBe(0o600);
+    expect(systemctl.mock.calls.map(([args]) => args)).toEqual([
+      ["--user", "daemon-reload"],
+      ["--user", "enable", "--now", "nemoclaw-portable-resume.service"],
+    ]);
+  });
+
+  it("starts only the stopped receipt-bound container from the user resume service", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({ running: false });
     installReceipt(stateDir, runtime.podman);
     runtime.podman.mockClear();
-    const socketEvents: string[] = [];
-    const hardenSocketDirectory = vi.fn(() => socketEvents.push("harden"));
-    const podmanSocketAuthorityDeps = socketAuthorityDeps({
-      onLstat: () => socketEvents.push("capture"),
-    });
+    const systemctl = vi.fn((_args: readonly string[]) => ({ status: 0 }));
 
     expect(
-      resolveTarget(stateDir, runtime, { hardenSocketDirectory, podmanSocketAuthorityDeps }),
-    ).toMatchObject({
-      containerId: CONTAINER_ID,
-      dockerHost: "unix:///run/user/1001/podman/podman.sock",
-    });
-    expect(hardenSocketDirectory).toHaveBeenCalledWith(SOCKET_PATH);
-    expect(socketEvents.slice(0, 2)).toEqual(["harden", "capture"]);
-    expect(runtime.podman.mock.calls.map(([args]) => args)).toEqual([
-      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
-      [
-        "--url",
-        "unix:///run/user/1001/podman/podman.sock",
-        "ps",
-        "-a",
-        "--no-trunc",
-        "--filter",
-        "label=openshell.managed=true",
-        "--filter",
-        "label=openshell.ai/sandbox-name=alpha",
-        "--filter",
-        "label=openshell.ai/sandbox-workspace=default",
-        "--format",
-        "{{.ID}}",
-      ],
-      ["--url", "unix:///run/user/1001/podman/podman.sock", "inspect", CONTAINER_ID],
+      runPortableResumeService({
+        env: { HOME: stateDir },
+        platform: "linux",
+        podman: runtime.podman,
+        stateDir,
+        systemctl,
+      }),
+    ).toBe("started");
+
+    expect(systemctl).toHaveBeenCalledWith([
+      "--user",
+      "start",
+      "nemoclaw-openshell-gateway.service",
     ]);
-    expect(runtime.podman.mock.calls.map(([, env]) => env)).toEqual([
-      expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
-      expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
-      expect.not.objectContaining({ CONTAINER_HOST: expect.anything() }),
+    expect(runtime.podman).toHaveBeenCalledWith(["inspect", CONTAINER_ID]);
+    expect(runtime.podman).toHaveBeenCalledWith(["start", CONTAINER_ID]);
+    expect(runtime.podman).not.toHaveBeenCalledWith(expect.arrayContaining(["ps"]));
+  });
+
+  it("uses only socket, gateway, and the exact receipt container on fast connect", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman({ running: false });
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+    const systemctl = vi.fn((_args: readonly string[]) => ({ status: 0 }));
+
+    expect(
+      ensurePortableFastResumeForConnect("alpha", {
+        env: { HOME: stateDir },
+        platform: "linux",
+        podman: runtime.podman,
+        stateDir,
+        systemctl,
+      }),
+    ).toEqual({ kind: "ready", containerStarted: true });
+
+    expect(systemctl.mock.calls.map(([args]) => args)).toEqual([
+      ["--user", "start", "podman.socket"],
+      ["--user", "start", "nemoclaw-openshell-gateway.service"],
     ]);
-  });
-
-  it("rejects a receipt outside the current registry generation before Podman access (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.podman.mockClear();
-
-    expect(() =>
-      resolveTarget(stateDir, runtime, { registryGeneration: "replacement-generation" }),
-    ).toThrow("does not belong to the current registry generation");
-    expect(runtime.podman).not.toHaveBeenCalled();
-  });
-
-  it("rejects recovery outside the current registry generation before Podman access (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.podman.mockClear();
-
-    expect(() =>
-      recoverPortableDemoSandboxLifecycle(
-        "alpha",
-        {
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          lifecycleGeneration: "replacement-generation",
-          openshellDriver: "docker",
-        },
-        {
-          platform: "linux",
-          stateDir,
-          podman: runtime.podman,
-        },
-      ),
-    ).toThrow("does not belong to the current registry generation");
-    expect(runtime.podman).not.toHaveBeenCalled();
-  });
-
-  it("rejects a legacy receipt after same-name registry replacement (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
-    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-    delete receipt.registryGeneration;
-    fs.writeFileSync(receiptPath, `${JSON.stringify({ ...receipt, schemaVersion: 2 })}\n`, {
-      mode: 0o600,
-    });
-    runtime.podman.mockClear();
-
-    expect(() =>
-      recoverPortableDemoSandboxLifecycle(
-        "alpha",
-        {
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          lifecycleGeneration: "replacement-generation",
-          openshellDriver: "docker",
-        },
-        { platform: "linux", stateDir, podman: runtime.podman },
-      ),
-    ).toThrow("does not belong to the current registry generation");
-    expect(runtime.podman).not.toHaveBeenCalled();
-  });
-
-  it("retires portable lifecycle authority after its sandbox registry entry is removed (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
-
-    removePortableDemoSandboxLifecycleReceipt("alpha", stateDir);
-
-    expect(fs.existsSync(receiptPath)).toBe(false);
-  });
-
-  it("refuses missing or duplicate portable containers before privileged exec (#8584)", () => {
-    for (const matches of [[], [CONTAINER_ID, "b".repeat(64)]]) {
-      const stateDir = temporaryStateDir();
-      const runtime = createPodman();
-      installReceipt(stateDir, runtime.podman);
-      runtime.setMatches(matches);
-
-      expect(() => resolveTarget(stateDir, runtime)).toThrow(`found ${matches.length}`);
-    }
-  });
-
-  it("refuses renamed or relabeled portable containers before privileged exec (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-
-    runtime.setContainerName("renamed-alpha");
-    expect(() => resolveTarget(stateDir, runtime)).toThrow("OpenShell identity does not match");
-
-    runtime.setContainerName(`openshell-default--alpha-${SANDBOX_ID}`);
-    runtime.setSandboxNameLabel("beta");
-    expect(() => resolveTarget(stateDir, runtime)).toThrow("OpenShell identity does not match");
-  });
-
-  it("refuses a replacement or stopped portable container before privileged exec (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-
-    const replacementId = "b".repeat(64);
-    runtime.setMatches([replacementId]);
-    runtime.setContainerId(replacementId);
-    expect(() => resolveTarget(stateDir, runtime)).toThrow("recorded container identity changed");
-
-    runtime.setMatches([CONTAINER_ID]);
-    runtime.setContainerId(CONTAINER_ID);
-    runtime.setRunning(false);
-    expect(() => resolveTarget(stateDir, runtime)).toThrow("is not running");
-  });
-
-  it("refuses a non-local portable Podman socket before privileged exec (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.setSocketPath("tcp://example.test:1234");
-
-    expect(() => resolveTarget(stateDir, runtime)).toThrow("socket path is invalid");
-  });
-
-  it.each([
-    ["foreign owner", socketAuthorityDeps({ socketUid: 2000n }), "owned by uid 2000"],
-    ["world-writable socket", socketAuthorityDeps({ socketMode: 0o666n }), "writable by another"],
-    [
-      "group-writable socket outside a private parent",
-      socketAuthorityDeps({ directoryMode: 0o750n }),
-      "writable by another",
-    ],
-    ["writable parent", socketAuthorityDeps({ directoryMode: 0o770n }), "writable by another"],
-    ["symlinked parent", socketAuthorityDeps({ directory: false }), "not a real directory"],
-  ])("refuses a %s for portable privileged exec (#8584)", (_case, authority, message) => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-
-    expect(() =>
-      resolveTarget(stateDir, runtime, { podmanSocketAuthorityDeps: authority }),
-    ).toThrow(message);
-  });
-
-  it("ignores ambient Podman remote selection for portable privileged exec (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    runtime.podman.mockClear();
-
-    resolveTarget(stateDir, runtime, {
-      env: {
-        CONTAINER_CONNECTION: "attacker",
-        CONTAINER_HOST: "tcp://example.test:1234",
-        CONTAINER_SSHKEY: "/tmp/attacker-key",
-      },
-    });
-
-    expect(runtime.podman.mock.calls.map(([, env]) => env)).toEqual([{}, {}, {}]);
-  });
-
-  it("refuses socket replacement after portable workload inspection (#8584)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman();
-    installReceipt(stateDir, runtime.podman);
-    let inode = 9001n;
-    const target = resolveTarget(stateDir, runtime, {
-      podmanSocketAuthorityDeps: socketAuthorityDeps({ socketInode: () => inode }),
-    });
-    inode = 9002n;
-
-    expect(() => target?.assertRuntimeAuthority()).toThrow("changed after it was qualified");
+    expect(runtime.podman).toHaveBeenCalledWith(["start", CONTAINER_ID]);
+    expect(runtime.podman).not.toHaveBeenCalledWith(expect.arrayContaining(["ps"]));
   });
 
   it("does not persist proxy credentials from the create-time environment (#8441)", () => {
@@ -617,8 +362,8 @@ describe("portable demo sandbox lifecycle", () => {
         "HTTPS_PROXY=https://user:password@example.test",
         STARTUP_ARGV.at(-1)!,
       ],
-      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-      { platform: "linux", podman, stateDir },
+      { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      { platform: "linux", podman, stateDir, systemctl: () => ({ status: 0 }) },
     );
 
     const receipt = fs.readFileSync(
@@ -627,6 +372,18 @@ describe("portable demo sandbox lifecycle", () => {
     );
     expect(receipt).not.toContain("PROXY");
     expect(receipt).not.toContain("user:password");
+    const config = fs.readFileSync(
+      portableDemoLifecycleInternals.fastResumeConfigPath({ HOME: stateDir }),
+      "utf8",
+    );
+    const service = fs.readFileSync(
+      portableDemoLifecycleInternals.portableResumeServicePath({ HOME: stateDir }),
+      "utf8",
+    );
+    expect(config).not.toContain("PROXY");
+    expect(config).not.toContain("user:password");
+    expect(service).not.toContain("PROXY");
+    expect(service).not.toContain("user:password");
   });
 
   it("does not record lifecycle ownership when the restart policy update fails (#8441)", () => {
@@ -636,25 +393,6 @@ describe("portable demo sandbox lifecycle", () => {
     expect(() => installReceipt(stateDir, runtime.podman)).toThrow(
       "Setting the portable restart policy",
     );
-    expect(fs.existsSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir))).toBe(
-      false,
-    );
-  });
-
-  it("fails closed when exact OpenShell labels identify multiple containers (#8441)", () => {
-    const stateDir = temporaryStateDir();
-    const runtime = createPodman({
-      discoveredContainerIds: [CONTAINER_ID, "b".repeat(64)],
-    });
-
-    expect(() => installReceipt(stateDir, runtime.podman)).toThrow(
-      "requires one exact Podman container",
-    );
-    expect(runtime.podman).not.toHaveBeenCalledWith([
-      "update",
-      "--restart=unless-stopped",
-      expect.any(String),
-    ]);
     expect(fs.existsSync(portableDemoLifecycleInternals.receiptPath("alpha", stateDir))).toBe(
       false,
     );
@@ -1334,7 +1072,6 @@ describe("portable demo sandbox lifecycle", () => {
     installReceipt(stateDir, runtime.podman);
     const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
-    delete receipt.registryGeneration;
     fs.writeFileSync(
       receiptPath,
       `${JSON.stringify({ ...receipt, schemaVersion: 1 }, null, 2)}\n`,
@@ -1398,10 +1135,7 @@ describe("portable demo sandbox lifecycle", () => {
       5000,
     );
     expect(launchOpenshell).toHaveBeenCalledOnce();
-    expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({
-      schemaVersion: 3,
-      registryGeneration: CONTAINER_ID,
-    });
+    expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({ schemaVersion: 2 });
 
     expect(
       recoverPortableDemoSandboxLifecycle(
@@ -1419,7 +1153,6 @@ describe("portable demo sandbox lifecycle", () => {
     installReceipt(stateDir, runtime.podman);
     const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8"));
-    delete receipt.registryGeneration;
     fs.writeFileSync(
       receiptPath,
       `${JSON.stringify({ ...receipt, schemaVersion: 1 }, null, 2)}\n`,
@@ -1454,5 +1187,45 @@ describe("portable demo sandbox lifecycle", () => {
     ).toThrow("agent gateway without its managed startup process");
     expect(launchOpenshell).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(receiptPath, "utf-8"))).toMatchObject({ schemaVersion: 1 });
+  });
+
+  it("refuses a container whose OpenShell sandbox ID changed (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setSandboxId("different-sandbox-id");
+    const launchOpenshell = vi.fn();
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycle(
+        "alpha",
+        { agent: sandboxEntry().agent, gatewayName: "nemoclaw" },
+        {
+          platform: "linux",
+          stateDir,
+          podman: runtime.podman,
+          launchOpenshell,
+        },
+      ),
+    ).toThrow("OpenShell sandbox ID changed");
+    expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("refuses a container whose OpenShell managed label is not true (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setManagedLabel("false");
+
+    expectRecoveryIdentityRefusal(stateDir, runtime);
+  });
+
+  it("refuses a container whose OpenShell sandbox name changed (#8441)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.setSandboxNameLabel("different-name");
+
+    expectRecoveryIdentityRefusal(stateDir, runtime);
   });
 });

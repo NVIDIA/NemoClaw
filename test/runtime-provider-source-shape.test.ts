@@ -21,11 +21,6 @@ function trackedPaths(...pathspecs: readonly string[]): string[] {
 }
 
 const read = (relativePath: string): string => readFileSync(join(repoRoot, relativePath), "utf8");
-const isTestOnlySource = (path: string): boolean =>
-  path.endsWith(".test.ts") ||
-  path.endsWith(".test-support.ts") ||
-  path.includes("/test/") ||
-  path.startsWith("test/");
 
 let productionPaths: string[] = [];
 let bootstrapProtocolPaths: string[] = [];
@@ -66,7 +61,7 @@ beforeAll(() => {
     (path) =>
       (path === "src/lib/onboard.ts" || path.startsWith("src/lib/onboard/")) &&
       path.endsWith(".ts") &&
-      !isTestOnlySource(path) &&
+      !path.endsWith(".test.ts") &&
       !path.startsWith("src/lib/onboard/managed-bootstrap/"),
   );
   providerPaths = activationPaths.filter((path) =>
@@ -169,8 +164,6 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
-      "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.ts",
-      "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
@@ -199,7 +192,9 @@ describe("runtime provider central source boundary", () => {
       .filter(
         (path) =>
           /\.[cm]?ts$/u.test(path) &&
-          !isTestOnlySource(path) &&
+          !path.endsWith(".test.ts") &&
+          !path.includes("/test/") &&
+          !path.startsWith("test/") &&
           path !== "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
       )
       .map(read)

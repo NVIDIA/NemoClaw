@@ -7,7 +7,7 @@ import {
   getAgentDeclaredForwardPorts,
   getAgentPrimaryForwardPort,
   isValidForwardPort,
-  shouldManageDashboardForwardForAgent,
+  shouldManageDashboardForAgent,
 } from "./dashboard-runtime";
 
 export type EnsureDashboardForward = (
@@ -42,7 +42,7 @@ export function ensureAgentDashboardForward(options: {
     preserveForwardPorts = [],
     warn = (message: string) => console.warn(message),
   } = options;
-  if (!shouldManageDashboardForwardForAgent(agent)) {
+  if (!shouldManageDashboardForAgent(agent)) {
     return 0;
   }
 

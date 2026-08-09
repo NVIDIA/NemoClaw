@@ -137,7 +137,7 @@ export function teardownSandboxDashboardForward(
   try {
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
     const sandbox = getSandbox(sandboxName);
-    if (!sandbox || sandbox.dashboardForwardEnabled === false) return;
+    if (!sandbox) return;
     const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(sandbox);
     const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
     const port = resolvePort(sandboxName, { getSandbox: () => sandbox });

@@ -7,28 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import {
-  assertPodmanSocketAuthority,
-  capturePodmanSocketAuthority,
-  createPodmanContainerEngine,
-  hardenPodmanSocketDirectory,
-  localPodmanEnvironment,
-  type PodmanSocketAuthorityDeps,
-} from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile } from "../docker-driver-platform";
-import {
-  PODMAN_MANAGED_LABEL,
-  PODMAN_SANDBOX_CONTAINER_PREFIX,
-  PODMAN_SANDBOX_ID_LABEL,
-  PODMAN_SANDBOX_NAME_LABEL,
-  PODMAN_SANDBOX_NAMESPACE,
-  PODMAN_SANDBOX_NAMESPACE_LABEL,
-  PODMAN_SANDBOX_WORKSPACE,
-  PODMAN_SANDBOX_WORKSPACE_LABEL,
-} from "../runtime-provider/podman-lifecycle";
 import {
   loadUserLocalOllamaOwnership,
   OLLAMA_PORT,
@@ -37,6 +18,13 @@ import {
 
 const RECEIPT_DIRECTORY = "portable-demo-lifecycle";
 const MAX_RECEIPT_BYTES = 4096;
+const FAST_RESUME_CONFIG_DIRECTORY = path.join("nemoclaw", "portable");
+const FAST_RESUME_CONFIG_FILE = "config.json";
+const FAST_RESUME_CONFIG_MARKER = "nemoclaw-portable-fast-resume-poc";
+const MAX_FAST_RESUME_CONFIG_BYTES = 2048;
+const PORTABLE_RESUME_SERVICE = "nemoclaw-portable-resume.service";
+const PORTABLE_RESUME_SERVICE_MARKER = "# NEMOCLAW_MANAGED_PORTABLE_RESUME=1";
+const MANAGED_OPENSHELL_GATEWAY_SERVICE = "nemoclaw-openshell-gateway.service";
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
@@ -48,9 +36,12 @@ const MANAGED_EXECUTABLE_CHILD_FD = 3;
 const POLL_INTERVAL_MS = 1_000;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
+const PODMAN_MANAGED_LABEL = "openshell.managed";
+const PODMAN_SANDBOX_ID_LABEL = "openshell.sandbox-id";
+const PODMAN_SANDBOX_NAME_LABEL = "openshell.sandbox-name";
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
-const CURRENT_RECEIPT_SCHEMA_VERSION = 3;
+const CURRENT_RECEIPT_SCHEMA_VERSION = 2;
 const STARTUP_PROCESS_PATTERN =
   "^(/usr/local/bin/nemoclaw-start|(bash|/bin/bash|/usr/bin/bash) /usr/local/bin/nemoclaw-start)( |$)";
 const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
@@ -63,12 +54,19 @@ type CommandResult = {
 };
 
 interface PortableDemoLifecycleReceipt {
-  schemaVersion: 1 | 2 | 3;
+  schemaVersion: 1 | 2;
   sandboxName: string;
   sandboxId: string;
   containerId: string;
   dashboardPort: number;
-  registryGeneration?: string;
+}
+
+interface PortableFastResumeConfig {
+  schemaVersion: 1;
+  managedBy: typeof FAST_RESUME_CONFIG_MARKER;
+  mode: "fast-resume-poc";
+  sandboxName: string;
+  dashboardForwardRecovery: "disabled";
 }
 
 interface PodmanContainerInspection {
@@ -77,22 +75,13 @@ interface PodmanContainerInspection {
   running: boolean;
 }
 
-export interface PortableDemoPrivilegedExecTarget {
-  readonly assertRuntimeAuthority: () => void;
-  readonly containerId: string;
-  readonly dockerHost: string;
-}
-
 export interface PortableDemoLifecycleDeps {
   platform?: NodeJS.Platform;
   stateDir?: string;
   env?: NodeJS.ProcessEnv;
   openshellBinary?: string;
-  podman?: (args: readonly string[], env?: NodeJS.ProcessEnv) => CommandResult;
-  podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
-  hardenSocketDirectory?: (socketPath: string) => void;
-  registryGeneration?: string;
-  backfillRegistryGeneration?: (registryGeneration: string) => boolean;
+  podman?: (args: readonly string[]) => CommandResult;
+  systemctl?: (args: readonly string[]) => CommandResult;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
   launchOpenshell?: (args: readonly string[]) => void;
   captureHost?: (command: string, args: readonly string[], timeoutMs: number) => CommandResult;
@@ -106,6 +95,8 @@ export interface PortableDemoLifecycleDeps {
   sleep?: (milliseconds: number) => void;
   now?: () => number;
   log?: (message: string) => void;
+  nodeBinary?: string;
+  modulePath?: string;
 }
 
 export type PortableDemoLifecycleRecoveryResult =
@@ -113,16 +104,27 @@ export type PortableDemoLifecycleRecoveryResult =
   | { kind: "already-running" }
   | { kind: "recovered" };
 
+export type PortableFastResumeResult =
+  | { kind: "not-configured" }
+  | { kind: "ready"; containerStarted: boolean };
+
 export interface PortableDemoLifecycleContext {
   agent?: string | null;
   gatewayName: string;
-  lifecycleGeneration?: string;
-  openshellDriver?: string | null;
   provider?: string | null;
 }
 
 function defaultPodman(args: readonly string[], env: NodeJS.ProcessEnv): CommandResult {
   return spawnSync("podman", [...args], {
+    encoding: "utf-8",
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: COMMAND_TIMEOUT_MS,
+  });
+}
+
+function defaultSystemctl(args: readonly string[], env: NodeJS.ProcessEnv): CommandResult {
+  return spawnSync("systemctl", [...args], {
     encoding: "utf-8",
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -209,6 +211,126 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function defaultConfigHome(env: NodeJS.ProcessEnv): string {
+  const configured = env.XDG_CONFIG_HOME?.trim();
+  if (configured && path.isAbsolute(configured)) return path.normalize(configured);
+  return path.join(env.HOME ?? os.homedir(), ".config");
+}
+
+function fastResumeConfigPath(env: NodeJS.ProcessEnv): string {
+  return path.join(defaultConfigHome(env), FAST_RESUME_CONFIG_DIRECTORY, FAST_RESUME_CONFIG_FILE);
+}
+
+function portableResumeServicePath(env: NodeJS.ProcessEnv): string {
+  return path.join(defaultConfigHome(env), "systemd", "user", PORTABLE_RESUME_SERVICE);
+}
+
+function writeFastResumeConfig(config: PortableFastResumeConfig, env: NodeJS.ProcessEnv): void {
+  const filePath = fastResumeConfigPath(env);
+  ensureConfigDir(path.dirname(filePath));
+  let file;
+  try {
+    file = openRegularFileNoFollow(filePath, { writable: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    file = openRegularFileNoFollow(filePath, { create: true, mode: 0o600, writable: true });
+  }
+  try {
+    file.replaceUtf8(`${JSON.stringify(config, null, 2)}\n`, 0o600);
+  } finally {
+    file.close();
+  }
+}
+
+function parseFastResumeConfig(value: unknown): PortableFastResumeConfig {
+  if (!isRecord(value)) throw new Error("Portable fast-resume configuration is malformed");
+  const keys = Object.keys(value).sort();
+  if (keys.join(",") !== "dashboardForwardRecovery,managedBy,mode,sandboxName,schemaVersion") {
+    throw new Error("Portable fast-resume configuration fields are invalid");
+  }
+  if (
+    value.schemaVersion !== 1 ||
+    value.managedBy !== FAST_RESUME_CONFIG_MARKER ||
+    value.mode !== "fast-resume-poc" ||
+    typeof value.sandboxName !== "string" ||
+    !SANDBOX_ID_PATTERN.test(value.sandboxName) ||
+    value.dashboardForwardRecovery !== "disabled"
+  ) {
+    throw new Error("Portable fast-resume configuration values are invalid");
+  }
+  return value as unknown as PortableFastResumeConfig;
+}
+
+function loadFastResumeConfig(env: NodeJS.ProcessEnv): PortableFastResumeConfig | null {
+  let file;
+  try {
+    file = openRegularFileNoFollow(fastResumeConfigPath(env));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    return parseFastResumeConfig(JSON.parse(file.readUtf8(MAX_FAST_RESUME_CONFIG_BYTES)));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("Portable fast-resume configuration is malformed");
+    }
+    throw error;
+  } finally {
+    file.close();
+  }
+}
+
+function requireSystemdExecPath(value: string, label: string): string {
+  if (!path.isAbsolute(value) || /[%\s"'\\]/u.test(value)) {
+    throw new Error(`Portable resume service requires a safe absolute ${label} path`);
+  }
+  return path.normalize(value);
+}
+
+function portableResumeServiceContents(nodeBinary: string, modulePath: string): string {
+  const node = requireSystemdExecPath(nodeBinary, "Node.js");
+  const lifecycleModule = requireSystemdExecPath(modulePath, "lifecycle module");
+  return `# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+${PORTABLE_RESUME_SERVICE_MARKER}
+
+[Unit]
+Description=NemoClaw portable sandbox resume
+Requires=podman.socket
+After=podman.socket
+
+[Service]
+Type=oneshot
+ExecStart=${node} ${lifecycleModule} --resume-service
+UMask=0077
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+function writePortableResumeService(contents: string, env: NodeJS.ProcessEnv): void {
+  const filePath = portableResumeServicePath(env);
+  ensureConfigDir(path.dirname(filePath));
+  let file;
+  try {
+    file = openRegularFileNoFollow(filePath, { writable: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    file = openRegularFileNoFollow(filePath, { create: true, mode: 0o600, writable: true });
+  }
+  try {
+    const existing = file.readUtf8(MAX_FAST_RESUME_CONFIG_BYTES);
+    if (existing && !existing.split(/\r?\n/u).includes(PORTABLE_RESUME_SERVICE_MARKER)) {
+      throw new Error(`Refusing to replace foreign portable resume service: ${filePath}`);
+    }
+    file.replaceUtf8(contents, 0o600);
+  } finally {
+    file.close();
+  }
+}
+
 function receiptPath(sandboxName: string, stateDir: string): string {
   const fileName = `${createHash("sha256").update(sandboxName).digest("hex")}.json`;
   return path.join(stateDir, RECEIPT_DIRECTORY, fileName);
@@ -241,17 +363,11 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
   }
   const receipt = value;
   const keys = Object.keys(receipt).sort();
-  const expectedKeys =
-    receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION
-      ? "containerId,dashboardPort,registryGeneration,sandboxId,sandboxName,schemaVersion"
-      : "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion";
-  if (keys.join(",") !== expectedKeys) {
+  if (keys.join(",") !== "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion") {
     throw new Error("Portable demo lifecycle receipt fields are invalid");
   }
   if (
-    (receipt.schemaVersion !== 1 &&
-      receipt.schemaVersion !== 2 &&
-      receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
+    (receipt.schemaVersion !== 1 && receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
     receipt.sandboxName !== sandboxName ||
     typeof receipt.containerId !== "string" ||
     !CONTAINER_ID_PATTERN.test(receipt.containerId) ||
@@ -259,32 +375,11 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
     !SANDBOX_ID_PATTERN.test(receipt.sandboxId) ||
     !Number.isInteger(receipt.dashboardPort) ||
     Number(receipt.dashboardPort) < 1024 ||
-    Number(receipt.dashboardPort) > 65535 ||
-    (receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION &&
-      (typeof receipt.registryGeneration !== "string" ||
-        !SANDBOX_ID_PATTERN.test(receipt.registryGeneration)))
+    Number(receipt.dashboardPort) > 65535
   ) {
     throw new Error("Portable demo lifecycle receipt values are invalid");
   }
   return receipt as unknown as PortableDemoLifecycleReceipt;
-}
-
-function requireCurrentRegistryGeneration(
-  receipt: PortableDemoLifecycleReceipt,
-  registryGeneration: string | undefined,
-): boolean {
-  // Legacy receipts predate an explicit generation field. Their immutable
-  // container ID may claim a missing registry generation only after exact
-  // local runtime validation; an existing generation must already match.
-  const receiptGeneration =
-    receipt.schemaVersion === 3 ? receipt.registryGeneration : receipt.containerId;
-  if (registryGeneration === undefined && receipt.schemaVersion !== 3) return true;
-  if (receiptGeneration !== registryGeneration) {
-    throw new Error(
-      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' does not belong to the current registry generation`,
-    );
-  }
-  return false;
 }
 
 function loadReceipt(sandboxName: string, stateDir: string): PortableDemoLifecycleReceipt | null {
@@ -362,17 +457,10 @@ function inspectPodmanContainer(
   const labels = config && isRecord(config.Labels) ? config.Labels : null;
   const state = isRecord(inspection.State) ? inspection.State : null;
   const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
-  const expectedContainerName =
-    typeof sandboxId === "string"
-      ? `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`
-      : null;
   if (
     inspection.Id !== containerId ||
-    inspection.Name !== expectedContainerName ||
     labels?.[PODMAN_MANAGED_LABEL] !== "true" ||
     labels?.[PODMAN_SANDBOX_NAME_LABEL] !== sandboxName ||
-    labels?.[PODMAN_SANDBOX_NAMESPACE_LABEL] !== PODMAN_SANDBOX_NAMESPACE ||
-    labels?.[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE ||
     typeof sandboxId !== "string" ||
     !SANDBOX_ID_PATTERN.test(sandboxId) ||
     typeof state?.Running !== "boolean"
@@ -392,6 +480,123 @@ function isMissingPodmanContainer(result: CommandResult): boolean {
   );
 }
 
+type ReceiptContainerResumeResult = "already-running" | "missing" | "started";
+
+function ensureReceiptContainerRunning(
+  receipt: PortableDemoLifecycleReceipt,
+  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
+): ReceiptContainerResumeResult {
+  const initialInspection = podman(["inspect", receipt.containerId]);
+  if (isMissingPodmanContainer(initialInspection)) return "missing";
+  let inspection = inspectPodmanContainer(
+    receipt.containerId,
+    receipt.sandboxName,
+    podman,
+    initialInspection,
+  );
+  if (inspection.sandboxId !== receipt.sandboxId) {
+    throw new Error(
+      `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
+    );
+  }
+  if (inspection.running) return "already-running";
+  requireCommand(
+    podman(["start", receipt.containerId]),
+    `Starting portable sandbox '${receipt.sandboxName}'`,
+  );
+  inspection = inspectPodmanContainer(receipt.containerId, receipt.sandboxName, podman);
+  if (!inspection.running) {
+    throw new Error(`Portable sandbox '${receipt.sandboxName}' did not enter the running state`);
+  }
+  return "started";
+}
+
+function installPortableFastResume(
+  sandboxName: string,
+  commandEnv: NodeJS.ProcessEnv,
+  deps: PortableDemoLifecycleDeps,
+): void {
+  const config: PortableFastResumeConfig = {
+    schemaVersion: 1,
+    managedBy: FAST_RESUME_CONFIG_MARKER,
+    mode: "fast-resume-poc",
+    sandboxName,
+    dashboardForwardRecovery: "disabled",
+  };
+  writeFastResumeConfig(config, commandEnv);
+  writePortableResumeService(
+    portableResumeServiceContents(
+      deps.nodeBinary ?? process.execPath,
+      deps.modulePath ?? __filename,
+    ),
+    commandEnv,
+  );
+  const systemctl = deps.systemctl ?? ((args) => defaultSystemctl(args, commandEnv));
+  requireCommand(
+    systemctl(["--user", "daemon-reload"]),
+    "Reloading the portable resume user service",
+  );
+  requireCommand(
+    systemctl(["--user", "enable", "--now", PORTABLE_RESUME_SERVICE]),
+    "Enabling the portable resume user service",
+  );
+}
+
+/** Start only the exact receipt-bound container selected by the portable POC configuration. */
+export function ensurePortableFastResumeForConnect(
+  sandboxName: string,
+  deps: PortableDemoLifecycleDeps = {},
+): PortableFastResumeResult {
+  const commandEnv = deps.env ?? process.env;
+  const config = loadFastResumeConfig(commandEnv);
+  if (!config || config.sandboxName !== sandboxName) return { kind: "not-configured" };
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable fast-resume configuration is only valid on Linux");
+  }
+  const systemctl = deps.systemctl ?? ((args) => defaultSystemctl(args, commandEnv));
+  requireCommand(
+    systemctl(["--user", "start", "podman.socket"]),
+    "Starting the rootless Podman socket",
+  );
+  requireCommand(
+    systemctl(["--user", "start", MANAGED_OPENSHELL_GATEWAY_SERVICE]),
+    "Starting the managed OpenShell gateway",
+  );
+  const receipt = loadReceipt(sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
+  if (!receipt) {
+    throw new Error(`Portable fast-resume receipt is missing for sandbox '${sandboxName}'`);
+  }
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  const resumed = ensureReceiptContainerRunning(receipt, podman);
+  if (resumed === "missing") {
+    throw new Error(
+      `Portable fast-resume container '${receipt.containerId}' no longer exists for sandbox '${sandboxName}'`,
+    );
+  }
+  return { kind: "ready", containerStarted: resumed === "started" };
+}
+
+/** Entrypoint used by the enabled portable resume user service. */
+export function runPortableResumeService(
+  deps: PortableDemoLifecycleDeps = {},
+): ReceiptContainerResumeResult | "not-configured" | "receipt-missing" {
+  const commandEnv = deps.env ?? process.env;
+  const config = loadFastResumeConfig(commandEnv);
+  if (!config) return "not-configured";
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable fast-resume configuration is only valid on Linux");
+  }
+  const systemctl = deps.systemctl ?? ((args) => defaultSystemctl(args, commandEnv));
+  requireCommand(
+    systemctl(["--user", "start", MANAGED_OPENSHELL_GATEWAY_SERVICE]),
+    "Starting the managed OpenShell gateway",
+  );
+  const receipt = loadReceipt(config.sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
+  if (!receipt) return "receipt-missing";
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  return ensureReceiptContainerRunning(receipt, podman);
+}
+
 function discoverPodmanContainer(
   sandboxName: string,
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
@@ -404,8 +609,6 @@ function discoverPodmanContainer(
     `label=${PODMAN_MANAGED_LABEL}=true`,
     "--filter",
     `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
-    "--filter",
-    `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
     "--format",
     "{{.ID}}",
   ]);
@@ -422,132 +625,11 @@ function discoverPodmanContainer(
   return inspectPodmanContainer(matches[0]!, sandboxName, podman);
 }
 
-function podmanSocketPath(
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  env: NodeJS.ProcessEnv,
-): string {
-  const result = podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
-  requireCommand(result, "Resolving the portable Podman socket");
-  const socket = String(result.stdout ?? "").trim();
-  if (/[\u0000-\u001f\u007f-\u009f]/u.test(socket)) {
-    throw new Error("The portable Podman socket path is invalid");
-  }
-  const socketPath = socket.startsWith("unix://") ? socket.slice("unix://".length) : socket;
-  if (!path.posix.isAbsolute(socketPath)) {
-    throw new Error("The portable Podman socket path is invalid");
-  }
-  return socketPath;
-}
-
-function podmanCapture(
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  env: NodeJS.ProcessEnv,
-): ContainerEngineCommandCapture {
-  return (_executable, args) => {
-    const result = podman(args, env);
-    return {
-      status: result.status ?? 1,
-      stdout: String(result.stdout ?? ""),
-      stderr: String(result.stderr ?? ""),
-      ...(result.error ? { error: result.error } : {}),
-    };
-  };
-}
-
-function qualifiedPodmanAuthority(commandEnv: NodeJS.ProcessEnv, deps: PortableDemoLifecycleDeps) {
-  const podman = deps.podman ?? ((args, env = commandEnv) => defaultPodman(args, env));
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const socketPath = podmanSocketPath(podman, podmanEnv);
-  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath);
-  const socketAuthority = capturePodmanSocketAuthority(socketPath, deps.podmanSocketAuthorityDeps);
-  const provider = createPodmanContainerEngine({
-    operation: "sandbox-lifecycle",
-    socketAuthority,
-    authorityDeps: deps.podmanSocketAuthorityDeps,
-    ...(deps.podman ? { capture: podmanCapture(podman, podmanEnv) } : {}),
-  });
-  return {
-    assertRuntimeAuthority: () =>
-      assertPodmanSocketAuthority(socketAuthority, deps.podmanSocketAuthorityDeps),
-    dockerHost: `unix://${socketAuthority.socketPath}`,
-    podman: (args: readonly string[]) => provider.capture(args, COMMAND_TIMEOUT_MS),
-  };
-}
-
-function requireReceiptOwnedInspection(
-  receipt: PortableDemoLifecycleReceipt,
-  inspection: PodmanContainerInspection,
-): void {
-  if (inspection.containerId !== receipt.containerId) {
-    throw new Error(
-      `Portable demo lifecycle refused container '${inspection.containerId}' because the recorded container identity changed`,
-    );
-  }
-  if (inspection.sandboxId !== receipt.sandboxId) {
-    throw new Error(
-      `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
-    );
-  }
-}
-
-function backfillLegacyReceiptGeneration(
-  receipt: PortableDemoLifecycleReceipt,
-  stateDir: string,
-  backfillRequired: boolean,
-  deps: PortableDemoLifecycleDeps,
-): PortableDemoLifecycleReceipt {
-  if (receipt.schemaVersion === 3) return receipt;
-  if (
-    backfillRequired &&
-    (!deps.backfillRegistryGeneration || !deps.backfillRegistryGeneration(receipt.containerId))
-  ) {
-    throw new Error(
-      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' could not claim the current registry generation`,
-    );
-  }
-  if (receipt.schemaVersion === 1) return receipt;
-  const migrated: PortableDemoLifecycleReceipt = {
-    ...receipt,
-    schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-    registryGeneration: receipt.containerId,
-  };
-  writeReceipt(migrated, stateDir);
-  return migrated;
-}
-
-/** Resolve the receipt-owned portable container for a host-side privileged exec. */
-export function resolvePortableDemoPrivilegedExecTarget(
-  sandboxName: string,
-  deps: PortableDemoLifecycleDeps = {},
-): PortableDemoPrivilegedExecTarget | null {
-  const commandEnv = deps.env ?? process.env;
-  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
-  const receipt = loadReceipt(sandboxName, stateDir);
-  if (!receipt) return null;
-  if ((deps.platform ?? process.platform) !== "linux") {
-    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
-  }
-  const backfillRequired = requireCurrentRegistryGeneration(receipt, deps.registryGeneration);
-  const authority = qualifiedPodmanAuthority(commandEnv, deps);
-  const inspection = discoverPodmanContainer(sandboxName, authority.podman);
-  requireReceiptOwnedInspection(receipt, inspection);
-  if (!inspection.running) {
-    throw new Error(`Portable sandbox '${sandboxName}' is not running`);
-  }
-  authority.assertRuntimeAuthority();
-  backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
-  return {
-    assertRuntimeAuthority: authority.assertRuntimeAuthority,
-    containerId: inspection.containerId,
-    dockerHost: authority.dockerHost,
-  };
-}
-
 function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
   const port = String(receipt.dashboardPort);
   // A raw Podman restart can preserve a merged CA bundle from the previous
   // OpenShell supervisor generation. Seed recovery from the current root-owned
-  // v0.0.99 OpenShell CA paths. The startup-applied marker skips the stale
+  // v0.0.85 OpenShell CA paths. The startup-applied marker skips the stale
   // bundle merge, and the cleared merged marker prevents connect shells from
   // inheriting stale CA paths. #8058 removes this direct startup contract.
   return [
@@ -790,49 +872,33 @@ export function installPortableDemoSandboxLifecycle(
   createdStartupArgv: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   deps: PortableDemoLifecycleDeps = {},
-): string | null {
-  const stateDir = deps.stateDir ?? defaultStateDir(env);
+): void {
+  if (!isPortableExperimentalProfile(env)) return;
   if (
-    !isPortableExperimentalProfile(env) ||
     createdStartupArgv[createdStartupArgv.length - 1] !== "/usr/local/bin/nemoclaw-start" ||
     startupEnvValue(createdStartupArgv, "OPENCLAW_HOME") === null
   ) {
-    removeReceipt(sandboxName, stateDir);
-    return null;
+    return;
   }
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle requires Linux");
   }
   const commandEnv = deps.env ?? env;
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
   const inspection = discoverPodmanContainer(sandboxName, podman);
-  const registryGeneration = deps.registryGeneration ?? inspection.containerId;
-  if (!SANDBOX_ID_PATTERN.test(registryGeneration)) {
-    throw new Error("Portable demo lifecycle registry generation is invalid");
-  }
   const receipt: PortableDemoLifecycleReceipt = {
     schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
     sandboxName,
     sandboxId: inspection.sandboxId,
     containerId: inspection.containerId,
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
-    registryGeneration,
   };
   requireCommand(
-    podman(["update", "--restart=unless-stopped", inspection.containerId]),
+    podman(["update", "--restart=always", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
-  writeReceipt(receipt, stateDir);
-  return registryGeneration;
-}
-
-/** Retire portable lifecycle authority only after its sandbox registry entry is removed. */
-export function removePortableDemoSandboxLifecycleReceipt(
-  sandboxName: string,
-  stateDir = defaultStateDir(process.env),
-): void {
-  removeReceipt(sandboxName, stateDir);
+  writeReceipt(receipt, deps.stateDir ?? defaultStateDir(commandEnv));
+  installPortableFastResume(sandboxName, commandEnv, deps);
 }
 
 /**
@@ -845,24 +911,15 @@ export function recoverPortableDemoSandboxLifecycle(
   deps: PortableDemoLifecycleDeps = {},
 ): PortableDemoLifecycleRecoveryResult {
   if ((context.agent ?? "openclaw") !== "openclaw") return { kind: "not-installed" };
-  if (context.openshellDriver !== "docker") return { kind: "not-installed" };
   const commandEnv = deps.env ?? process.env;
-  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
-  let receipt = loadReceipt(sandboxName, stateDir);
+  const receipt = loadReceipt(sandboxName, deps.stateDir ?? defaultStateDir(commandEnv));
   if (!receipt) return { kind: "not-installed" };
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
-  const backfillRequired = requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
-  if (backfillRequired || receipt.schemaVersion === 2) {
-    const authority = qualifiedPodmanAuthority(commandEnv, deps);
-    const migrationInspection = discoverPodmanContainer(sandboxName, authority.podman);
-    requireReceiptOwnedInspection(receipt, migrationInspection);
-    authority.assertRuntimeAuthority();
-    receipt = backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
-  }
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
+
+  const podman = deps.podman ?? ((args) => defaultPodman(args, commandEnv));
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
   const initialInspection = podman(["inspect", receipt.containerId]);
   if (isMissingPodmanContainer(initialInspection)) {
     removeReceipt(sandboxName, stateDir);
@@ -908,7 +965,7 @@ export function recoverPortableDemoSandboxLifecycle(
   }
   recoverManagedOllama(context, commandEnv, stateDir, timing, deps);
   const gatewayRunning = gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS);
-  const refreshStartup = receipt.schemaVersion === 1;
+  const refreshStartup = receipt.schemaVersion < CURRENT_RECEIPT_SCHEMA_VERSION;
   if (!refreshStartup && gatewayRunning) {
     return { kind: "already-running" };
   }
@@ -977,11 +1034,7 @@ export function recoverPortableDemoSandboxLifecycle(
   }
   if (refreshStartup) {
     writeReceipt(
-      {
-        ...receipt,
-        schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-        registryGeneration: context.lifecycleGeneration ?? receipt.containerId,
-      },
+      { ...receipt, schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION },
       deps.stateDir ?? defaultStateDir(commandEnv),
     );
   }
@@ -989,4 +1042,22 @@ export function recoverPortableDemoSandboxLifecycle(
   return { kind: "recovered" };
 }
 
-export const portableDemoLifecycleInternals = { receiptPath };
+export const portableDemoLifecycleInternals = {
+  FAST_RESUME_CONFIG_MARKER,
+  MANAGED_OPENSHELL_GATEWAY_SERVICE,
+  PORTABLE_RESUME_SERVICE,
+  fastResumeConfigPath,
+  portableResumeServicePath,
+  receiptPath,
+};
+
+if (require.main === module && process.argv[2] === "--resume-service") {
+  try {
+    runPortableResumeService();
+  } catch (error) {
+    console.error(
+      `NemoClaw portable resume failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  }
+}
