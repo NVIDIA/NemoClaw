@@ -29,16 +29,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
-  checks: read
   contents: read
-  pull-requests: read
 
 jobs:
   check-hash:
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Set up trusted installer hash parser runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -70,15 +67,9 @@ jobs:
           path: .trusted-installer-hash
           persist-credentials: false
           sparse-checkout: |
-            .github/workflows/e2e.yaml
             .github/actions/ci-installer-hash-check
-            nemoclaw-blueprint/blueprint.yaml
-            scripts/brev-launchable-ci-cpu.sh
             scripts/check-installer-hash.sh
             scripts/checks/extract-installer-pins.mts
-            scripts/checks/verify-openshell-e2e-qualification.mts
-            scripts/install-openshell.sh
-            scripts/scorecard/read-artifact-zip.mts
           sparse-checkout-cone-mode: false
 
       - name: Detect base-trusted installer hash action

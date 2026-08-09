@@ -3,6 +3,7 @@
 
 import {
   LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES,
   type LlamaCppDgxSparkExecutionPlan,
   type LlamaCppDgxSparkQualificationReceipt,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
@@ -10,7 +11,7 @@ import {
 type ProtocolProbe = (typeof LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)[number];
 
 type JsonRecord = Record<string, unknown>;
-type ProtocolEvidence = LlamaCppDgxSparkQualificationReceipt["probes"];
+type ProtocolEvidence = Omit<LlamaCppDgxSparkQualificationReceipt["probes"], "logRedaction">;
 type FetchImplementation = typeof fetch;
 
 type ToolCall = {
@@ -220,16 +221,72 @@ export function validateChatCompletionResponse(value: unknown, expectedModel: st
 export function validatePropertiesResponse(
   value: unknown,
   expectedContextSize: number,
-): ProtocolEvidence["contextWindow"] {
+  expectedModel: ProtocolEvidence["properties"]["model"],
+  expectedModelFile: ProtocolEvidence["properties"]["modelPath"],
+): {
+  readonly contextWindow: ProtocolEvidence["contextWindow"];
+  readonly disabledState: Pick<ProtocolEvidence["disabledSurfaces"], "multimodal">;
+  readonly properties: ProtocolEvidence["properties"];
+} {
+  const expectedModelPath = `/models/${expectedModelFile}`;
   if (
     !isRecord(value) ||
     value.total_slots !== 1 ||
     !isRecord(value.default_generation_settings) ||
-    value.default_generation_settings.n_ctx !== expectedContextSize
+    value.default_generation_settings.n_ctx !== expectedContextSize ||
+    value.model_alias !== expectedModel ||
+    value.model_path !== expectedModelPath ||
+    value.endpoint_metrics !== true ||
+    value.endpoint_slots !== false ||
+    value.endpoint_props !== false ||
+    value.ui !== false ||
+    value.cors_proxy_enabled !== false ||
+    value.is_sleeping !== false ||
+    !isRecord(value.modalities) ||
+    value.modalities.vision !== false ||
+    value.modalities.video !== false ||
+    value.modalities.audio !== false
   ) {
-    throw new Error("properties probe did not prove the declarative context window");
+    throw new Error("properties probe did not prove the declarative security and readiness state");
   }
-  return { contextSize: expectedContextSize, ok: true, slots: 1 };
+  return {
+    contextWindow: { contextSize: expectedContextSize, ok: true, slots: 1 },
+    disabledState: { multimodal: false },
+    properties: {
+      httpStatus: 200,
+      metrics: true,
+      model: expectedModel,
+      modelPath: expectedModelFile,
+      ok: true,
+    },
+  };
+}
+
+export function validateMetricsResponse(source: string): ProtocolEvidence["metrics"] {
+  if (source.length === 0 || /[\0\r]/u.test(source)) {
+    throw new Error("metrics probe returned an invalid Prometheus document");
+  }
+  const samples = new Map<string, number>();
+  for (const line of source.split("\n")) {
+    if (line === "" || line.startsWith("#")) continue;
+    const match =
+      /^(llamacpp:[a-z_]+)(?:\{[^{}\r\n]{1,4096}\})?\s+(-?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$/u.exec(
+        line,
+      );
+    if (!match || !Number.isFinite(Number(match[2]))) {
+      throw new Error("metrics probe returned an invalid Prometheus sample");
+    }
+    samples.set(match[1] as string, Number(match[2]));
+  }
+  if (LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES.some((name) => !samples.has(name))) {
+    throw new Error("metrics probe did not return the required llama.cpp series");
+  }
+  return {
+    httpStatus: 200,
+    ok: true,
+    requiredSeries: LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES.length,
+    unauthenticatedHttpStatus: 401,
+  };
 }
 
 export function validateStructuredOutputResponse(value: unknown, expectedModel: string): void {
@@ -555,6 +612,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   const timeoutMilliseconds = plan.recipe.serve.limits.requestTimeoutSeconds * 1000;
   const chatUrl = `${baseUrl}/v1/chat/completions`;
   const executedProbes = new Set<ProtocolProbe>();
+  const rejectedAuthorization = `${authorization.slice(0, -1)}${authorization.endsWith("0") ? "1" : "0"}`;
 
   const healthResponse = await fetchImpl(`${baseUrl}/health`, {
     headers: { Authorization: authorization },
@@ -577,16 +635,75 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     headers: { Authorization: authorization },
     signal: requestSignal(timeoutMilliseconds),
   });
-  const contextWindow = validatePropertiesResponse(
+  const propertiesEvidence = validatePropertiesResponse(
     await readJson(propertiesResponse, 200, bounds.maxResponseBytes, "properties probe"),
     plan.recipe.serve.contextSize,
+    model,
+    plan.recipe.model.file.path,
   );
+  const { contextWindow } = propertiesEvidence;
   executedProbes.add("context-window");
+  executedProbes.add("properties");
+
+  const unauthenticatedMetricsResponse = await fetchImpl(`${baseUrl}/metrics`, {
+    headers: { Authorization: rejectedAuthorization },
+    signal: requestSignal(timeoutMilliseconds),
+  });
+  await expectStatus(
+    unauthenticatedMetricsResponse,
+    401,
+    bounds.maxResponseBytes,
+    "unauthenticated metrics probe",
+  );
+  const metricsResponse = await fetchImpl(`${baseUrl}/metrics`, {
+    headers: { Authorization: authorization },
+    signal: requestSignal(timeoutMilliseconds),
+  });
+  if (
+    metricsResponse.status !== 200 ||
+    !metricsResponse.headers.get("content-type")?.toLowerCase().includes("text/plain")
+  ) {
+    throw new Error("metrics probe did not return Prometheus text");
+  }
+  const metrics = validateMetricsResponse(
+    new TextDecoder("utf8", { fatal: true }).decode(
+      await readBoundedBytes(metricsResponse, bounds.maxResponseBytes),
+    ),
+  );
+  executedProbes.add("metrics");
+
+  const disabledSurfaceRequests: readonly {
+    readonly label: string;
+    readonly path: string;
+    readonly status: number;
+    readonly init?: RequestInit;
+  }[] = [
+    { label: "UI", path: "/", status: 404 },
+    { label: "slot inspection", path: "/slots", status: 501 },
+    { label: "MCP proxy", path: "/cors-proxy", status: 403 },
+    { label: "server tools", path: "/tools", status: 403 },
+    { label: "router", path: "/models/load", status: 404, init: { method: "POST" } },
+    { label: "properties mutation", path: "/props", status: 501, init: { method: "POST" } },
+  ];
+  for (const probe of disabledSurfaceRequests) {
+    const response = await fetchImpl(`${baseUrl}${probe.path}`, {
+      ...probe.init,
+      headers: { Authorization: authorization },
+      signal: requestSignal(timeoutMilliseconds),
+    });
+    await expectStatus(
+      response,
+      probe.status,
+      bounds.maxResponseBytes,
+      `${probe.label} disabled-surface probe`,
+    );
+  }
+  executedProbes.add("disabled-surfaces");
 
   const authenticationResponse = await fetchImpl(
     chatUrl,
     jsonRequest(
-      `${authorization.slice(0, -1)}${authorization.endsWith("0") ? "1" : "0"}`,
+      rejectedAuthorization,
       {
         max_tokens: 1,
         messages: [{ content: "This request must be rejected.", role: "user" }],
@@ -779,15 +896,27 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   executedProbes.add("cancellation");
   await clientTimeoutProbe(fetchImpl, chatUrl, authorization, plan, timeoutMilliseconds);
   executedProbes.add("client-timeout");
-  assertExecutedProbeInventory(plan.qualification.probes, executedProbes);
+  assertExecutedProbeInventory(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES, executedProbes);
 
   return {
     authentication: { httpStatus: 401, ok: true },
     cancellation: { aborted: true, ok: true, recovered: true },
     contextWindow,
+    disabledSurfaces: {
+      corsProxyHttpStatus: 403,
+      multimodal: propertiesEvidence.disabledState.multimodal,
+      ok: true,
+      propertiesMutationHttpStatus: 501,
+      routerHttpStatus: 404,
+      slotsHttpStatus: 501,
+      toolsHttpStatus: 403,
+      uiHttpStatus: 404,
+    },
     health: { httpStatus: 200, ok: true },
     malformedRequest: { httpStatus: 400, ok: true },
     models: { httpStatus: 200, model, ok: true },
+    metrics,
+    properties: propertiesEvidence.properties,
     clientTimeout: {
       aborted: true,
       limitMilliseconds: bounds.clientTimeoutMilliseconds,

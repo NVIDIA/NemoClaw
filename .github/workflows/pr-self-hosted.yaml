@@ -36,6 +36,109 @@ jobs:
       - id: get-pr-info
         uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
 
+  select-llama-cpp-generic-gpu:
+    needs: get-pr-info
+    runs-on: ubuntu-latest
+    outputs:
+      selected: ${{ steps.changed.outputs.selected }}
+    steps:
+      - id: changed
+        name: Select llama.cpp generic GPU E2E from PR files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_INFO: ${{ needs.get-pr-info.outputs.pr-info }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_number="$(jq -er '.number | select(type == "number" and . > 0)' <<<"$PR_INFO")"
+          head_sha="$(jq -er '.head.sha | select(test("^[a-f0-9]{40}$"))' <<<"$PR_INFO")"
+          [[ "$head_sha" == "$GITHUB_SHA" ]] || {
+            echo "::error::Copied PR branch SHA does not match the current PR head" >&2
+            exit 1
+          }
+          if gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
+            | jq -e '
+              flatten
+              | any(
+                  .filename == ".github/workflows/e2e.yaml"
+                  or .filename == ".github/workflows/pr-self-hosted.yaml"
+                  or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
+                  or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
+                  or .filename == "test/e2e/mock-parity.json"
+                  or .filename == "tools/e2e/cli-artifact-workflow-boundary.mts"
+                  or .filename == "tools/e2e/workflow-boundary.mts"
+                  or (.filename | startswith("managed-inference/presets/llama-cpp."))
+                  or (.filename | startswith("managed-inference/recipes/llama-cpp."))
+                  or (.filename | startswith("src/lib/inference/llama-cpp/"))
+                  or (.filename | startswith("src/lib/onboard/runtime-provider/docker-llama-cpp"))
+                )
+            ' >/dev/null; then
+            selected=true
+          else
+            selected=false
+          fi
+          printf 'selected=%s\n' "$selected" >>"$GITHUB_OUTPUT"
+
+  llama-cpp-generic-gpu:
+    name: llama.cpp on generic NVIDIA GPU
+    needs:
+      - get-pr-info
+      - select-llama-cpp-generic-gpu
+    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 120
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-generic-gpu
+      E2E_JOB: "1"
+      E2E_TARGET_ID: llama-cpp-generic-gpu
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ fromJSON(needs.get-pr-info.outputs.pr-info).head.sha }}
+      NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_PROVIDER: install-llama-cpp
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-llamacpp-gpu
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ fromJSON(needs.get-pr-info.outputs.pr-info).head.sha }}
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Bind E2E correlation identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          correlation_id="$(node --input-type=module -e \
+            'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
+          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
+          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >>"$GITHUB_ENV"
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run llama.cpp generic NVIDIA GPU live test
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/llama-cpp-generic-gpu.test.ts
+
+      - name: Upload llama.cpp generic NVIDIA GPU artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
   build-sandbox-images:
     runs-on: linux-amd64-cpu4
     timeout-minutes: 45

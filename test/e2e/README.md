@@ -526,7 +526,8 @@ larger runner.
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
 
-- an `initialize` endpoint after exact-commit artifact restoration, or after workspace preparation for `security-posture`; the rebuild jobs initialize after their fixed-capacity swap;
+- an `initialize` endpoint after exact-commit artifact restoration; the rebuild
+  jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
 - a `periodic` sample on an approximately 15-second fixed cadence for
   `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
@@ -581,10 +582,10 @@ following procfs observation and may differ when a live process changes memory.
 
 The finalizer validates the complete ledger before writing
 `runner-comparison-summary.json`. The v2 summary reports the sampled window from
-`initialize` until immediately before artifact scanning or upload. For artifact-using
-jobs, initialization follows artifact restoration and any required rebuild swap. For
-the Hermes `security-posture` shard, initialization follows workspace preparation,
-so the window includes OpenShell installation and installer-backed NemoClaw setup.
+`initialize` until immediately before artifact scanning or upload. Initialization
+follows artifact restoration and any required rebuild swap. For the Hermes
+`security-posture` shard, the window includes OpenShell installation and
+installer-backed NemoClaw setup, but not workspace preparation or artifact restoration.
 The summary reports CPU average and busiest interval; one-minute load;
 available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
 endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
