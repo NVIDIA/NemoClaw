@@ -523,6 +523,19 @@ describe("blueprint identity wrapper", () => {
   it.each([
     ["not configured", "Gateway inference:\n\n  Not configured\n"],
     [
+      "OpenShell v0.0.99 ANSI not configured",
+      [
+        "\u001b[1mInference:\u001b[0m",
+        "",
+        "  Not configured",
+        "",
+        "\u001b[1mSystem inference:\u001b[0m",
+        "",
+        "  Not configured",
+        "",
+      ].join("\n"),
+    ],
+    [
       "configured for a different model",
       matchingInferenceRoute.replace("Model: test-model", "Model: other-model"),
     ],
@@ -560,6 +573,54 @@ describe("blueprint identity wrapper", () => {
     expect(
       commands.indexOf("inference set --provider test-provider --model test-model"),
     ).toBeLessThan(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"));
+  });
+
+  it("reuses the ANSI-formatted OpenShell v0.0.99 inference route", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    const routeOutput = [
+      "\u001b[1mInference:\u001b[0m",
+      "",
+      "  Workspace: default",
+      "  Provider: test-provider",
+      "  Model: test-model",
+      "  Version: 1",
+      "  Timeout: 180s",
+      "",
+      "\u001b[1mSystem inference:\u001b[0m",
+      "",
+      "  Not configured",
+      "",
+    ].join("\n");
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
+      ],
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      ["inference get", [{ exitCode: 0, stdout: routeOutput, stderr: "" }]],
+      [
+        "provider get acme-okta-runtime",
+        [
+          failureResult("provider not found"),
+          ...Array.from({ length: 4 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+    ]);
+
+    await actionApply("default", blueprint({ identity: oktaIdentity() }));
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).not.toContain("inference set --provider test-provider --model test-model");
+    expect(commands).toContain("sandbox provider attach test-sandbox acme-okta-runtime");
   });
 
   it("sets an exact reused route when the requested timeout differs", async () => {

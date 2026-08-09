@@ -103,16 +103,16 @@ export function getReportedGatewayName(output = ""): string | null {
 }
 
 /**
- * OpenShell v0.0.85 compatibility boundary: `openshell status` prints the
- * selected gateway on stdout, then reports a failed probe on stderr as either
- * `Error: <detail>` or `client error ...`. `runCapture` combines those streams
+ * OpenShell v0.0.99 compatibility boundary: a failed `openshell status` probe
+ * reports only a miette `Error:` / `client error ...` chain and no longer
+ * repeats the selected gateway name. `runCapture` combines stderr and stdout
  * for this probe. OpenShell is an independently versioned external CLI, so
- * NemoClaw cannot retrofit a structured lifecycle discriminator into v0.0.85;
- * this parser limits the compatibility fallback to the producer's error
- * suffix instead of matching diagnostic text elsewhere in the output.
+ * NemoClaw cannot retrofit a structured lifecycle discriminator into v0.0.99;
+ * this parser limits the compatibility fallback to the producer's error suffix
+ * instead of matching diagnostic text elsewhere in the output.
  *
  * Keep this contract aligned with
- * `test/fixtures/openshell-status-errors-v0.0.85.json`. Remove the text parser
+ * `test/fixtures/openshell-status-errors-v0.0.99.json`. Remove the text parser
  * once NemoClaw's entire supported OpenShell range guarantees a structured
  * status error kind (or an equivalent stable exit-code contract) and callers
  * consume that signal directly.
@@ -206,6 +206,7 @@ export function getGatewayReuseState(
   gwInfoOutput = "",
   activeGatewayInfoOutput = "",
   gatewayName = GATEWAY_NAME,
+  statusGatewayName: string | null = null,
 ): GatewayReuseState {
   if (isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName)) {
     return "healthy";
@@ -220,7 +221,10 @@ export function getGatewayReuseState(
   if ((connected || activeInfo) && activeGatewayName && activeGatewayName !== gatewayName) {
     return "foreign-active";
   }
-  if (activeGatewayName === gatewayName && hasGatewayConnectionError(statusOutput)) {
+  if (
+    (activeGatewayName === gatewayName || statusGatewayName === gatewayName) &&
+    hasGatewayConnectionError(statusOutput)
+  ) {
     return "stale";
   }
   // A status-command failure such as auth, config, TLS, or CLI validation is

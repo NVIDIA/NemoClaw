@@ -10,7 +10,7 @@ import YAML from "yaml";
 
 import {
   LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
-  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
@@ -18,7 +18,10 @@ import {
 type ServerImageManifest = {
   apiVersion?: unknown;
   kind?: unknown;
-  metadata?: { id?: unknown };
+  metadata?: {
+    annotations?: { "nemoclaw.nvidia.com/request-guard-state"?: unknown };
+    id?: unknown;
+  };
   spec?: {
     build?: {
       backendDirectory?: unknown;
@@ -296,7 +299,10 @@ export function loadLlamaCppImageConfig(
   const recipe = parseQualificationRecipe(recipeSource, recipeSchemaSource);
   const agentQualification = parseAgentQualificationDocument(agentQualificationSource);
   assertExactKeys(manifest, "manifest", ["apiVersion", "kind", "metadata", "spec"]);
-  assertExactKeys(manifest.metadata, "metadata", ["id"]);
+  assertExactKeys(manifest.metadata, "metadata", ["annotations", "id"]);
+  assertExactKeys(manifest.metadata?.annotations, "metadata annotations", [
+    "nemoclaw.nvidia.com/request-guard-state",
+  ]);
   assertExactKeys(manifest.spec, "spec", [
     "build",
     "cuda",
@@ -391,7 +397,8 @@ export function loadLlamaCppImageConfig(
   if (
     manifest?.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
     manifest?.kind !== "ServerImageBuild" ||
-    manifest?.metadata?.id !== "llama-cpp-server.v1"
+    manifest?.metadata?.id !== "llama-cpp-server.v1" ||
+    manifest?.metadata?.annotations?.["nemoclaw.nvidia.com/request-guard-state"] !== "dormant"
   ) {
     throw new Error("invalid llama.cpp server image manifest identity");
   }
@@ -479,7 +486,8 @@ export function loadLlamaCppImageConfig(
       fullOffload: true,
       vendor: "nvidia",
     }) ||
-    JSON.stringify(qualification?.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
+    JSON.stringify(qualification?.probes) !==
+      JSON.stringify(LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES)
   ) {
     throw new Error("invalid llama.cpp image publication contract");
   }
@@ -607,6 +615,7 @@ export function loadLlamaCppImageConfig(
     curl: "8.5.0-2ubuntu10.11",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
     "gcc-14": "14.2.0-4ubuntu2~24.04.1",
+    "golang-go": "2:1.22~2build1",
     "libcurl4-openssl-dev": "8.5.0-2ubuntu10.11",
     "libssl-dev": "3.0.13-0ubuntu3.12",
   };
@@ -623,6 +632,8 @@ export function loadLlamaCppImageConfig(
   const expectedRequiredPaths = [
     "/opt/llama.cpp/lib/libggml-cuda.so",
     "/usr/local/bin/llama-server",
+    "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+    "/usr/local/share/licenses/go/copyright",
     "/usr/local/share/licenses/llama.cpp/AUTHORS",
     "/usr/local/share/licenses/llama.cpp/LICENSE",
   ];
