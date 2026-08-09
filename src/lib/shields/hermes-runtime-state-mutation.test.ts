@@ -4,6 +4,7 @@
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { createHermesTransitionFailureController } from "../../../test/helpers/hermes-runtime-state-mutation-test-helpers";
 
 import { loadAgent } from "../agent/defs";
 import {
@@ -300,9 +301,10 @@ describe("Hermes runtime-provider state mutation consumer", () => {
   ] as const)("rolls a same-mutable transition back to locked after %s failure", (failureStage) => {
     const calls: string[] = [];
     const failure = new Error(`${failureStage} failed`);
+    const failureController = createHermesTransitionFailureController(failureStage, failure, {
+      failOnlyFirstActivation: true,
+    });
     let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
-    let assertionCount = 0;
-    let activationCount = 0;
 
     expect(() =>
       run(
@@ -314,12 +316,11 @@ describe("Hermes runtime-provider state mutation consumer", () => {
           },
           assertFenced: () => {
             calls.push("assert");
-            assertionCount += 1;
-            if (failureStage === "verification" && assertionCount === 2) throw failure;
+            failureController.afterAssertion();
           },
           publish: () => {
             calls.push("publish");
-            if (failureStage === "publication") throw failure;
+            failureController.afterPublication();
           },
           rollback: (_context, value) => {
             calls.push("rollback");
@@ -327,8 +328,7 @@ describe("Hermes runtime-provider state mutation consumer", () => {
           },
           activate: () => {
             calls.push("activate");
-            activationCount += 1;
-            if (failureStage === "activation" && activationCount === 1) throw failure;
+            failureController.beforeActivation();
             return proof;
           },
           release: () => calls.push("release"),
@@ -350,8 +350,8 @@ describe("Hermes runtime-provider state mutation consumer", () => {
   ] as const)("retains a same-locked restrictive fence after %s failure", (failureStage) => {
     const calls: string[] = [];
     const failure = new Error(`${failureStage} failed`);
+    const failureController = createHermesTransitionFailureController(failureStage, failure);
     let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
-    let assertionCount = 0;
 
     expect(() =>
       run(
@@ -363,17 +363,16 @@ describe("Hermes runtime-provider state mutation consumer", () => {
           },
           assertFenced: () => {
             calls.push("assert");
-            assertionCount += 1;
-            if (failureStage === "verification" && assertionCount === 2) throw failure;
+            failureController.afterAssertion();
           },
           publish: () => {
             calls.push("publish");
-            if (failureStage === "publication") throw failure;
+            failureController.afterPublication();
           },
           rollback: () => calls.push("rollback"),
           activate: () => {
             calls.push("activate");
-            if (failureStage === "activation") throw failure;
+            failureController.beforeActivation();
             return proof;
           },
           release: () => calls.push("release"),
@@ -390,16 +389,12 @@ describe("Hermes runtime-provider state mutation consumer", () => {
 
   it("rolls back and releases a recovered prior fence before acquiring a new one", () => {
     const calls: string[] = [];
-    let recovery = true;
+    const recoveries = [mutableFence, null];
     run(
       providers({
         recover: () => {
           calls.push("recover");
-          if (recovery) {
-            recovery = false;
-            return mutableFence;
-          }
-          return null;
+          return recoveries.shift() ?? null;
         },
         assertFenced: () => calls.push("assert"),
         rollback: () => calls.push("rollback"),
@@ -688,15 +683,13 @@ describe("Hermes runtime-provider state mutation consumer", () => {
 
   it("recovers a retained fence before rejecting a stale config target without acquiring", () => {
     const calls: string[] = [];
-    let recovered = false;
+    const recoveries = [{ ...fence, phase: "published" as const }, null];
     expect(() =>
       run(
         providers({
           recover: () => {
             calls.push("recover");
-            if (recovered) return null;
-            recovered = true;
-            return { ...fence, phase: "published" };
+            return recoveries.shift() ?? null;
           },
           assertFenced: () => calls.push("assert"),
           publish: () => calls.push("publish"),

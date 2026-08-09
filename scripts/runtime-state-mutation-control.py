@@ -1553,7 +1553,7 @@ def _atomic_write(
     fd = os.open(
         temporary,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-        mode,
+        0o600,
         dir_fd=directory_fd,
     )
     try:

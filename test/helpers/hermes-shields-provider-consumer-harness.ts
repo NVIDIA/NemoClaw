@@ -131,6 +131,114 @@ export function writeTimerAuthorizationProof(loadSource: NodeRequire, sandboxNam
   );
 }
 
+export function createTimerAuthorizationSender(
+  loadSource: NodeRequire,
+  sandboxName: string,
+): (message: unknown) => boolean {
+  const timerControl = loadSource(
+    "./timer-control.js",
+  ) as typeof import("../../src/lib/shields/timer-control");
+  return (message) => {
+    const request = message as { type?: unknown; processToken?: unknown };
+    if (request.type === "authorize" && typeof request.processToken === "string") {
+      const marker = timerControl.readTimerMarker(sandboxName);
+      if (marker?.timerProcessStartIdentity) {
+        fs.writeFileSync(
+          timerControl.timerAuthorizationProofPath(sandboxName, request.processToken),
+          JSON.stringify({
+            schemaVersion: 1,
+            pid: marker.pid,
+            sandboxName,
+            processToken: request.processToken,
+            timerProcessStartIdentity: marker.timerProcessStartIdentity,
+            authoritySha256: timerControl.timerAuthoritySha256(marker),
+          }),
+          { mode: 0o600 },
+        );
+      }
+    }
+    return true;
+  };
+}
+
+export function createFailingCapabilityProbeResponse(
+  isCapabilityProbe: (command: string[]) => boolean,
+  error: Error,
+): (command: string[]) => string {
+  return (command) => {
+    if (isCapabilityProbe(command)) throw error;
+    return "";
+  };
+}
+
+export function createRetainedUnlockSimulation(
+  events: string[],
+  commands: string[][],
+): {
+  readonly activeClaim: () => boolean;
+  readonly dockerExec: (commandValue: unknown) => string;
+  readonly hasActiveClaim: () => boolean;
+  readonly livePosture: () => "locked" | "mutable";
+  readonly run: (commandValue: unknown) => { readonly status: 0 };
+  readonly transition: (input: {
+    readonly target: "locked" | "mutable";
+    readonly rollback: string;
+  }) => { readonly fence: Record<string, never>; readonly proof: Record<string, never> };
+} {
+  let activeClaim = true;
+  let livePosture: "locked" | "mutable" = "mutable";
+  return {
+    activeClaim: () => activeClaim,
+    dockerExec: (commandValue) => {
+      const command = commandValue as string[];
+      commands.push(command);
+      if (command[0] === "stat" && command.at(-1) === "/sandbox/.hermes") {
+        if (livePosture === "mutable") events.push("verified-mutable");
+        return livePosture === "locked" ? "755 root:root\n" : "3770 sandbox:sandbox\n";
+      }
+      if (command[0] === "stat") {
+        return livePosture === "locked" ? "444 root:root\n" : "640 sandbox:sandbox\n";
+      }
+      if (command[0] === "lsattr") {
+        return `${livePosture === "locked" ? "----i---------------" : "--------------------"} ${String(command.at(-1))}\n`;
+      }
+      return "";
+    },
+    hasActiveClaim: () => activeClaim,
+    livePosture: () => livePosture,
+    run: (commandValue) => {
+      const command = commandValue as string[];
+      if (command[0] === "policy" && command[1] === "set") events.push("policy");
+      return { status: 0 };
+    },
+    transition: (input) => {
+      events.push(`provider:${input.target}/${input.rollback}`);
+      if (activeClaim) {
+        // Recovering the interrupted mutable target restores its retained
+        // restrictive rollback before releasing direct-exec exclusion.
+        activeClaim = false;
+        livePosture = "locked";
+      } else if (input.target !== input.rollback) {
+        livePosture = input.target;
+      }
+      return { fence: {}, proof: {} };
+    },
+  };
+}
+
+export function createTransitionFailureForPosture(
+  posture: "locked" | "mutable",
+  message: string,
+): (input: { readonly target: string; readonly rollback: string }) => {
+  readonly fence: Record<string, never>;
+  readonly proof: Record<string, never>;
+} {
+  return (input) => {
+    if (input.target === posture && input.rollback === posture) throw new Error(message);
+    return { fence: {}, proof: {} };
+  };
+}
+
 export function createHermesShieldsProviderConsumerHarness(
   loadSource: NodeRequire,
 ): HermesShieldsProviderConsumerHarness {

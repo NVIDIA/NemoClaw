@@ -14,6 +14,7 @@ import {
   managedMcpPolicy,
   managedMcpSandbox,
   type ShieldsFlowHarnessOptions,
+  writeShieldsTimerAuthorizationProof,
 } from "../../../test/helpers/shields-flow-harness";
 
 const requireDist = createRequire(import.meta.url);
@@ -28,25 +29,10 @@ function createHarness(options: ShieldsFlowHarnessOptions = {}) {
   return createShieldsFlowHarness(requireDist, tmpDir, options);
 }
 
-function writeTimerAuthorizationProof(sandboxName: string): void {
-  const timerControl = requireDist("./timer-control.js") as typeof import("./timer-control.js");
-  const marker = timerControl.readTimerMarker(sandboxName);
-  if (!marker?.processToken || !marker.timerProcessStartIdentity) {
-    throw new Error("Test timer marker is missing exact proof authority");
-  }
-  fs.writeFileSync(
-    timerControl.timerAuthorizationProofPath(sandboxName, marker.processToken),
-    JSON.stringify({
-      schemaVersion: 1,
-      pid: marker.pid,
-      sandboxName,
-      processToken: marker.processToken,
-      timerProcessStartIdentity: marker.timerProcessStartIdentity,
-      authoritySha256: timerControl.timerAuthoritySha256(marker),
-    }),
-    { mode: 0o600 },
-  );
-}
+const timerAuthorityFixtures: ReadonlyArray<readonly [string, (markerPath: string) => void]> = [
+  ["missing", () => undefined],
+  ["malformed", (markerPath) => fs.writeFileSync(markerPath, "{not-json")],
+];
 
 function writeExpiredShieldsFixture(
   processToken: string,
@@ -508,7 +494,7 @@ describe("shields command flow", () => {
         timerProcessStartIdentity: "live-timer-start",
       }),
     );
-    writeTimerAuthorizationProof(sandboxName);
+    writeShieldsTimerAuthorizationProof(requireDist, sandboxName);
 
     let observedOwner: Record<string, unknown> | null = null;
     const harness = createHarness({
@@ -1221,10 +1207,9 @@ describe("shields command flow", () => {
     expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
   });
 
-  it.each([
-    "missing",
-    "malformed",
-  ] as const)("restores lockdown when DOWN timer authority is %s", (markerState) => {
+  it.each(
+    timerAuthorityFixtures,
+  )("restores lockdown when DOWN timer authority is %s", (markerState, writeMarker) => {
     const harness = createHarness({ confirmOpenClawInodeFlags: true });
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const snapshotPath = path.join(stateDir, `policy-snapshot-${markerState}-timer.yaml`);
@@ -1242,7 +1227,7 @@ describe("shields command flow", () => {
         shieldsPolicySnapshotPath: snapshotPath,
       }),
     );
-    if (markerState === "malformed") fs.writeFileSync(markerPath, "{not-json");
+    writeMarker(markerPath);
 
     harness.shieldsStatus("openclaw");
 

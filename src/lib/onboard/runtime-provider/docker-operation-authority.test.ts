@@ -7,8 +7,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
+import {
+  createContextCapture as contextCapture,
+  createDriftingContextCapture,
+} from "../../../../test/helpers/docker-operation-authority-test-helpers";
 import { createDockerLlamaCppOperationAuthority } from "./docker-llama-cpp-operation";
 import {
   createDockerOperationAuthority,
@@ -19,10 +21,14 @@ import {
 const roots: string[] = [];
 
 function fakeDocker(output: string): string {
+  return fakeDockerScript(`printf '%s\\n' '${output}'`);
+}
+
+function fakeDockerScript(script: string): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
   roots.push(root);
   const executable = path.join(root, "docker");
-  fs.writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, { mode: 0o700 });
+  fs.writeFileSync(executable, `#!/bin/sh\n${script}\n`, { mode: 0o700 });
   return root;
 }
 
@@ -30,22 +36,6 @@ afterEach(() => {
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
-
-function contextCapture(host: string): ReturnType<typeof vi.fn<ContainerEngineCommandCapture>> {
-  return vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
-    if (args.includes("inspect")) {
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          Endpoints: { docker: { Host: host, SkipTLSVerify: false } },
-          TLSMaterial: { docker: [] },
-        }),
-        stderr: "",
-      };
-    }
-    return { status: 0, stdout: "", stderr: "" };
-  });
-}
 
 describe("Docker operation authority", () => {
   it("binds the requested operation and endpoint to every daemon command", () => {
@@ -141,6 +131,40 @@ describe("Docker operation authority", () => {
     expect(Buffer.concat(stdout).toString("utf8")).toBe("first-stream\n");
   });
 
+  it("forwards an explicitly requested Hugging Face token and the bound SSH agent", async () => {
+    const executableRoot = fakeDockerScript(
+      `printf '%s\\n' "\${HF_TOKEN-unset}" "\${SSH_AUTH_SOCK-unset}" "\${PATH-unset}"`,
+    );
+    const authority = createDockerOperationAuthority("host-local-inference", {
+      PATH: executableRoot,
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "ssh://nvidia@spark.example.test",
+      SSH_AUTH_SOCK: "/tmp/nemoclaw-ssh-agent.sock",
+    });
+    const child = authority.spawn(
+      ["run", "-e", "HF_TOKEN", "example.invalid/downloader@sha256:deadbeef"],
+      {
+        env: {
+          HF_TOKEN: "hf_secret_value",
+          PATH: "/tmp/unqualified-path",
+          SSH_AUTH_SOCK: "/tmp/unqualified-ssh-agent.sock",
+        },
+      },
+    );
+    const stdout: Buffer[] = [];
+    child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (status) => {
+        status === 0 ? resolve() : reject(new Error(`fake Docker exited ${String(status)}`));
+      });
+    });
+    expect(Buffer.concat(stdout).toString("utf8")).toBe(
+      `hf_secret_value\n/tmp/nemoclaw-ssh-agent.sock\n${executableRoot}\n`,
+    );
+  });
+
   it("fails closed when the qualified executable identity changes", () => {
     const executableRoot = fakeDocker("first");
     const authority = createDockerOperationAuthority("sandbox-lifecycle", {
@@ -171,26 +195,7 @@ describe("Docker operation authority", () => {
   });
 
   it("fails closed before a daemon command when a qualified context endpoint drifts", () => {
-    let inspections = 0;
-    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => {
-      if (args.includes("inspect")) {
-        inspections += 1;
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            Endpoints: {
-              docker: {
-                Host: `ssh://nvidia@spark-${String(inspections)}.example.test`,
-                SkipTLSVerify: false,
-              },
-            },
-            TLSMaterial: { docker: [] },
-          }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    const capture = createDriftingContextCapture();
     const authority = createDockerOperationAuthority(
       "sandbox-lifecycle",
       { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" },

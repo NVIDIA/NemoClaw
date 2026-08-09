@@ -1,366 +1,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
-import type { SandboxEntry } from "../../state/registry/types";
-import { RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION } from "./contract";
+import {
+  cleanupDockerStateMutationRoots,
+  createAmbiguousRuntimeCapture,
+  createOneTimeAcquireMountDrift,
+  createDockerStateMutationHarness as harness,
+  DOCKER_STATE_MUTATION_LIFECYCLE_GENERATION as LIFECYCLE_GENERATION,
+  DOCKER_STATE_MUTATION_PROJECTION_SHA256 as PROJECTION_SHA256,
+  persistedDockerStateMutationIntentPath as persistedIntentPath,
+  persistedDockerStateMutationRuntimeClaimPath as persistedRuntimeClaimPath,
+  dockerStateMutationPlan as plan,
+  DOCKER_STATE_MUTATION_RUNTIME_ID as RUNTIME_ID,
+  DOCKER_STATE_MUTATION_SANDBOX_FINGERPRINT as SANDBOX_FINGERPRINT,
+  DOCKER_STATE_MUTATION_STATE_ROOT as STATE_ROOT,
+  throwBeforeClaimUnlink,
+} from "../../../../test/helpers/docker-state-mutation-harness";
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
 } from "./docker-state-mutation";
-import { createFilePersistedEngineAuthorityStore } from "./persisted-engine-authority";
-import {
-  createFilePersistedEngineLifecycleStore,
-  PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-  PERSISTED_ENGINE_STATE_MUTATION_INTENT_FILE,
-} from "./persisted-engine-lifecycle";
-import { prepareRuntimeProviderStateMutationPlan } from "./state-mutation";
-
-const RUNTIME_ID = "a".repeat(64);
-const PROJECTION_SHA256 = "b".repeat(64);
-const STATE_ROOT = "/sandbox/.hermes";
-const LIFECYCLE_GENERATION = "generation-7";
-const SANDBOX_ID = "sandbox-alpha-id";
-const SANDBOX_FINGERPRINT = createHash("sha256").update(SANDBOX_ID).digest("hex");
-const roots: string[] = [];
-
-function temporaryRoot(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-state-mutation-"));
-  roots.push(root);
-  return root;
-}
-
-function persistedIntentPath(root: string, transactionId: string): string {
-  return path.join(
-    root,
-    PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-    transactionId,
-    PERSISTED_ENGINE_STATE_MUTATION_INTENT_FILE,
-  );
-}
-
-function persistedRuntimeClaimPath(root: string): string {
-  const identity = createHash("sha256")
-    .update("docker", "utf8")
-    .update("\0", "utf8")
-    .update(RUNTIME_ID, "utf8")
-    .digest("hex");
-  return path.join(root, PERSISTED_ENGINE_LIFECYCLE_DIRECTORY, "runtime-target-claims", identity);
-}
-
-function plan() {
-  return prepareRuntimeProviderStateMutationPlan({
-    schemaVersion: RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION,
-    intent: "protection-transition",
-    target: "mutable",
-    rollback: "locked",
-    stateRoot: STATE_ROOT,
-    selectors: [{ kind: "path", path: "config.yaml" }],
-    stateLockPlan: {
-      version: 1,
-      readOnlyRoots: ["config.yaml"],
-      confidentialRoots: [],
-      readOnlyPrefixes: [],
-      confidentialPrefixes: [],
-      writableSubpaths: [],
-    },
-    projectionSha256: PROJECTION_SHA256,
-  });
-}
-
-interface HarnessOptions {
-  readonly mutateReceipt?: (
-    receipt: Readonly<Record<string, unknown>>,
-    action: string,
-  ) => Readonly<Record<string, unknown>>;
-  readonly afterHelper?: (action: string, state: HarnessState) => void;
-  readonly deferAcquireOnce?: boolean;
-  readonly failAcquire?: boolean;
-  readonly failReleaseOnce?: boolean;
-  readonly lifecycleGeneration?: string;
-  readonly loseAcquireResponseOnce?: boolean;
-  readonly loseReleaseResponseOnce?: boolean;
-}
-
-interface HarnessState {
-  runtimePid: number;
-  mountSource: string;
-  sandboxId: string;
-  pidMode: string;
-  privileged: boolean;
-  overlayProc: boolean;
-}
-
-function harness(options: HarnessOptions = {}) {
-  const lifecycleGeneration = options.lifecycleGeneration ?? LIFECYCLE_GENERATION;
-  const state: HarnessState = {
-    runtimePid: 4812,
-    mountSource: "/var/lib/openshell/alpha/hermes",
-    sandboxId: SANDBOX_ID,
-    pidMode: "",
-    privileged: false,
-    overlayProc: false,
-  };
-  const helperActions: string[] = [];
-  const acquireRequests: string[] = [];
-  let acquireDeferralsRemaining = options.deferAcquireOnce ? 1 : 0;
-  let lostAcquireResponsesRemaining = options.loseAcquireResponseOnce ? 1 : 0;
-  let releaseFailuresRemaining = options.failReleaseOnce ? 1 : 0;
-  let lostReleaseResponsesRemaining = options.loseReleaseResponseOnce ? 1 : 0;
-  let marker: Record<string, unknown> | null = null;
-  let releasedMarker: Record<string, unknown> | null = null;
-  let deferredAcquireRequest: string | null = null;
-
-  const acquireMarker = (request: Record<string, unknown>) => {
-    const candidate = {
-      schemaVersion: 1,
-      phase: "fenced",
-      transactionId: request.transactionId,
-      providerId: request.providerId,
-      sandboxName: request.sandboxName,
-      lifecycleGeneration: request.lifecycleGeneration,
-      engineBindingSha256: request.engineBindingSha256,
-      runtimeId: request.runtimeId,
-      runtimePid: request.runtimePid,
-      sandboxIdentitySha256: request.sandboxIdentitySha256,
-      containerMountsSha256: request.containerMountsSha256,
-      stateRoot: request.stateRoot,
-      stateRootMountsSha256: request.stateRootMountsSha256,
-      mountNamespace: "mnt:[4026533007]",
-      stateRootDevice: "2050",
-      stateRootInode: "94212",
-      planSha256: request.planSha256,
-      projectionSha256: request.projectionSha256,
-      nonce: request.nonce,
-      target: request.target,
-      rollback: request.rollback,
-    };
-    if (marker !== null && JSON.stringify(marker) !== JSON.stringify(candidate)) {
-      return { status: 1, stdout: "", stderr: "conflicting acquire request" };
-    }
-    marker = candidate;
-    return null;
-  };
-
-  const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args, _timeout, input) => {
-    const command = args.slice(4);
-    if (command[0] === "ps") {
-      return { status: 0, stdout: `${RUNTIME_ID}\n`, stderr: "" };
-    }
-    if (command[0] === "container" && command[1] === "inspect") {
-      return {
-        status: 0,
-        stdout: JSON.stringify([
-          RUNTIME_ID,
-          true,
-          "running",
-          false,
-          false,
-          false,
-          state.runtimePid,
-          "openshell",
-          "alpha",
-          state.sandboxId,
-          state.pidMode,
-          state.privileged,
-          [
-            {
-              Type: "bind",
-              Source: state.mountSource,
-              Destination: STATE_ROOT,
-              Mode: "",
-              RW: true,
-              Propagation: "rprivate",
-            },
-            {
-              Type: "bind",
-              Source: "/var/lib/openshell/alpha/cache",
-              Destination: `${STATE_ROOT}/cache`,
-              Mode: "",
-              RW: true,
-              Propagation: "rprivate",
-            },
-            ...(state.overlayProc
-              ? [
-                  {
-                    Type: "bind",
-                    Source: "/proc",
-                    Destination: "/proc",
-                    Mode: "",
-                    RW: true,
-                    Propagation: "rprivate",
-                  },
-                ]
-              : []),
-          ],
-        ]),
-        stderr: "",
-      };
-    }
-    if (command[0] !== "container" || command[1] !== "exec") {
-      return { status: 1, stdout: "", stderr: "unexpected command" };
-    }
-    const action = command.at(-1) ?? "";
-    helperActions.push(action);
-    const serializedRequest = input?.toString("utf8") ?? "null";
-    const request = JSON.parse(serializedRequest) as Record<string, unknown>;
-    if (action === "acquire") {
-      acquireRequests.push(serializedRequest);
-      if (options.failAcquire) {
-        return { status: 1, stdout: "", stderr: "helper marker unavailable" };
-      }
-      if (acquireDeferralsRemaining > 0) {
-        acquireDeferralsRemaining -= 1;
-        deferredAcquireRequest = serializedRequest;
-        return { status: 1, stdout: "", stderr: "in-container acquire is still queued" };
-      }
-      const conflict = acquireMarker(request);
-      if (conflict) return conflict;
-    } else if (!marker) {
-      if (releasedMarker && (action === "recover" || action === "release")) {
-        marker = releasedMarker;
-      } else {
-        return { status: 1, stdout: "", stderr: "no durable marker" };
-      }
-    } else if (request.providerHandle !== undefined && action !== "recover") {
-      const active: Record<string, unknown> = { ...marker, phase: "fenced" };
-      delete active.configurationGeneration;
-      delete active.listenerIdentity;
-      delete active.healthSha256;
-      delete active.activationProviderHandle;
-      const expected = `docker-state-mutation-v1:${String(marker.transactionId)}:${createHash("sha256").update(JSON.stringify(active), "utf8").digest("hex")}`;
-      if (request.providerHandle !== expected) {
-        return { status: 1, stdout: "", stderr: "provider handle mismatch" };
-      }
-    }
-    const activeMarker = marker as Record<string, unknown>;
-    if (action === "publish") {
-      marker = { ...activeMarker, phase: "published" };
-    } else if (action === "rollback") {
-      marker = { ...activeMarker, phase: "rolled-back" };
-    } else if (action === "activate") {
-      const configurationGeneration = "config-generation-8";
-      const listenerIdentity = "tcp:18789";
-      const healthSha256 = "c".repeat(64);
-      const evidence = {
-        schemaVersion: 1,
-        providerId: activeMarker.providerId,
-        sandboxName: activeMarker.sandboxName,
-        lifecycleGeneration: activeMarker.lifecycleGeneration,
-        runtimeId: activeMarker.runtimeId,
-        nonce: activeMarker.nonce,
-        configurationGeneration,
-        listenerIdentity,
-        healthSha256,
-        fenceProviderHandle: request.providerHandle,
-      };
-      marker = {
-        ...activeMarker,
-        phase: "activation-proven",
-        configurationGeneration,
-        listenerIdentity,
-        healthSha256,
-        activationProviderHandle: `docker-state-mutation-activation-v1:${String(
-          activeMarker.transactionId,
-        )}:${createHash("sha256").update(JSON.stringify(evidence), "utf8").digest("hex")}`,
-      };
-    } else if (action === "release") {
-      if (releaseFailuresRemaining > 0) {
-        releaseFailuresRemaining -= 1;
-        return { status: 1, stdout: "", stderr: "release unavailable" };
-      }
-      if (request.activationProviderHandle !== activeMarker.activationProviderHandle) {
-        return { status: 1, stdout: "", stderr: "activation handle mismatch" };
-      }
-    }
-    const response = options.mutateReceipt?.(marker as Record<string, unknown>, action) ?? marker;
-    options.afterHelper?.(action, state);
-    if (action === "acquire" && lostAcquireResponsesRemaining > 0) {
-      lostAcquireResponsesRemaining -= 1;
-      return { status: 1, stdout: "", stderr: "acquire response lost" };
-    }
-    if (action === "release") {
-      releasedMarker = marker;
-      marker = null;
-      if (lostReleaseResponsesRemaining > 0) {
-        lostReleaseResponsesRemaining -= 1;
-        return { status: 1, stdout: "", stderr: "release response lost" };
-      }
-    } else if (releasedMarker === marker) {
-      marker = null;
-    }
-    return { status: 0, stdout: `${JSON.stringify(response)}\n`, stderr: "" };
-  });
-  const root = temporaryRoot();
-  const authority = createDockerOperationAuthority(
-    "sandbox-lifecycle",
-    {
-      HOME: "/tmp/nemoclaw-home",
-      DOCKER_CONFIG: "/tmp/nemoclaw-docker",
-      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
-    },
-    capture,
-  );
-  const engineAuthorityStore = createFilePersistedEngineAuthorityStore(root);
-  const lifecycleStore = createFilePersistedEngineLifecycleStore(root);
-  const owner = createDockerStateMutationOwner({
-    sandboxName: "alpha",
-    lifecycleGeneration,
-    lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
-    runtimeId: RUNTIME_ID,
-    authority,
-    engineAuthorityStore,
-    lifecycleStore,
-  });
-  const sandbox: SandboxEntry = {
-    name: "alpha",
-    openshellDriver: "docker",
-    lifecycleGeneration,
-    lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
-  };
-  const context = {
-    environment: {
-      HOME: "/tmp/nemoclaw-home",
-      DOCKER_CONFIG: "/tmp/nemoclaw-docker",
-      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
-    },
-    sandbox,
-    sandboxName: "alpha",
-  };
-  const replayDeferredAcquire = () => {
-    if (deferredAcquireRequest === null) throw new Error("No deferred acquire request exists.");
-    const serializedRequest = deferredAcquireRequest;
-    deferredAcquireRequest = null;
-    helperActions.push("acquire");
-    acquireRequests.push(serializedRequest);
-    const request = JSON.parse(serializedRequest) as Record<string, unknown>;
-    const conflict = acquireMarker(request);
-    if (conflict) throw new Error(conflict.stderr);
-    return marker;
-  };
-  return {
-    acquireRequests,
-    authority,
-    capture,
-    context,
-    engineAuthorityStore,
-    helperActions,
-    lifecycleStore,
-    lifecycleGeneration,
-    owner,
-    replayDeferredAcquire,
-    root,
-    state,
-  };
-}
 
 function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
   const acquireMutationExecution = vi.fn(() => {
@@ -384,7 +47,7 @@ function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
+  cleanupDockerStateMutationRoots();
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
@@ -526,12 +189,7 @@ describe("Docker runtime-provider state mutation surface", () => {
 
   it("rejects ambiguous labeled runtime resolution before recording authority", () => {
     const runtime = harness();
-    const ambiguous = vi.fn<ContainerEngineCommandCapture>((executable, args, timeout, input) => {
-      if (args.slice(4)[0] === "ps") {
-        return { status: 0, stdout: `${RUNTIME_ID}\n${"c".repeat(64)}\n`, stderr: "" };
-      }
-      return runtime.capture(executable, args, timeout, input);
-    });
+    const ambiguous = createAmbiguousRuntimeCapture(runtime);
     const surface = createDockerStateMutationSurface({
       capture: ambiguous,
       resolveStateDir: () => runtime.root,
@@ -794,10 +452,9 @@ describe("Docker state mutation owner", () => {
     const completedLedgerSha256 = "e".repeat(64);
     const claimPath = persistedRuntimeClaimPath(runtime.root);
     const originalUnlink = fs.unlinkSync.bind(fs);
-    const unlink = vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
-      if (String(target) === claimPath) throw new Error("injected exit before claim unlink");
-      return originalUnlink(target);
-    });
+    const unlink = vi
+      .spyOn(fs, "unlinkSync")
+      .mockImplementation((target) => throwBeforeClaimUnlink(originalUnlink, claimPath, target));
 
     expect(() =>
       runtime.owner.release(runtime.context, fence, proof, completedLedgerSha256),
@@ -812,14 +469,8 @@ describe("Docker state mutation owner", () => {
   });
 
   it("converges when the first helper acquire wins before ledger publication", async () => {
-    let driftOnce = true;
     const runtime = harness({
-      afterHelper(action, state) {
-        if (action === "acquire" && driftOnce) {
-          driftOnce = false;
-          state.mountSource = "/var/lib/openshell/replaced/hermes";
-        }
-      },
+      afterHelper: createOneTimeAcquireMountDrift(),
     });
 
     expect(() => runtime.owner.acquire({ ...runtime.context, plan: plan() })).toThrow(

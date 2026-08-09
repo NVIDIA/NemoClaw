@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDurableReceiptUnlinkInterruption } from "../../../../test/helpers/docker-state-mutation-harness";
 
 import {
   type ContainerEngineCommandCapture,
@@ -729,14 +730,12 @@ describe("persisted engine lifecycle", () => {
     executePersistedEngineStateMutation(runtime.input, () => "fenced");
     const claimPath = runtimeTargetClaimPath(runtime.root);
     const originalUnlink = fs.unlinkSync.bind(fs);
-    let receiptWasDurableBeforeUnlink = false;
-    const unlink = vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
-      if (String(target) === claimPath) {
-        receiptWasDurableBeforeUnlink = fs.existsSync(stateMutationReleasePath(runtime.root));
-        throw new Error("injected exit before claim unlink");
-      }
-      return originalUnlink(target);
-    });
+    const interruption = createDurableReceiptUnlinkInterruption(
+      originalUnlink,
+      claimPath,
+      stateMutationReleasePath(runtime.root),
+    );
+    const unlink = vi.spyOn(fs, "unlinkSync").mockImplementation(interruption.unlink);
 
     expect(() =>
       completePersistedEngineStateMutation(
@@ -748,7 +747,7 @@ describe("persisted engine lifecycle", () => {
     unlink.mockRestore();
 
     expect(fs.existsSync(stateMutationReleasePath(runtime.root))).toBe(true);
-    expect(receiptWasDurableBeforeUnlink).toBe(true);
+    expect(interruption.receiptWasDurable()).toBe(true);
     expect(fs.existsSync(claimPath)).toBe(true);
     const duplicateRelease = vi.fn(() => {
       throw new Error("provider callback must not be retried");

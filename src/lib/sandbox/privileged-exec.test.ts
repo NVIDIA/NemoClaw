@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createPersistedLifecycleStoreOrThrow } from "../../../test/helpers/privileged-exec-test-helpers";
 
 // The shared source hook preserves the writable CommonJS cache used by these mocks.
 const require = createRequire(import.meta.url);
@@ -108,10 +109,8 @@ function withPrivilegedExecMocks<T>(
     loaded: true,
     exports: {
       PERSISTED_ENGINE_LIFECYCLE_DIRECTORY: "runtime-provider-lifecycle",
-      createFilePersistedEngineLifecycleStore: () => {
-        if (deps.stateMutationGate?.storeError) throw deps.stateMutationGate.storeError;
-        return {};
-      },
+      createFilePersistedEngineLifecycleStore: () =>
+        createPersistedLifecycleStoreOrThrow(deps.stateMutationGate),
       hasActivePersistedEngineStateMutationTarget: () => deps.stateMutationGate?.active ?? false,
     },
   } as any;

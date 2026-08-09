@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createOrdinaryExecReleaseSleeper,
+  releaseAndStopChild,
+  waitForChildExit,
+} from "../../../test/helpers/privileged-exec-test-helpers";
 
 import {
   createFilePersistedEngineLifecycleStore,
@@ -36,14 +41,6 @@ function childEnvironment(stateDir: string): NodeJS.ProcessEnv {
     NEMOCLAW_TEST_STATE_DIR: stateDir,
     VITEST: "true",
   };
-}
-
-async function waitForExit(child: ChildProcess): Promise<number | null> {
-  if (child.exitCode !== null) return child.exitCode;
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", resolve);
-  });
 }
 
 afterEach(() => {
@@ -82,16 +79,10 @@ describe("privileged direct-execution exclusion", () => {
       );
 
       const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-      let waitedForOrdinaryExec = false;
+      const ordinaryExecRelease = createOrdinaryExecReleaseSleeper(releasePath, waitBuffer);
       const providerLock = new ShieldsTransitionLockManager({
         stateDir,
-        sleep: (milliseconds) => {
-          if (!waitedForOrdinaryExec) {
-            waitedForOrdinaryExec = true;
-            fs.writeFileSync(releasePath, "release");
-          }
-          Atomics.wait(waitBuffer, 0, 0, Math.min(milliseconds, 50));
-        },
+        sleep: ordinaryExecRelease.sleep,
       });
       const transactionId = "a".repeat(64);
       const serializedPlan = '{"schemaVersion":1,"intent":"protection-transition"}';
@@ -137,9 +128,9 @@ describe("privileged direct-execution exclusion", () => {
         { pollIntervalMs: 10, waitTimeoutMs: 5_000 },
       );
 
-      expect(waitedForOrdinaryExec).toBe(true);
+      expect(ordinaryExecRelease.wasReleased()).toBe(true);
       expect(lifecycleStore.load(transactionId)?.phase).toBe("fence-established");
-      expect(await waitForExit(holder)).toBe(0);
+      expect(await waitForChildExit(holder)).toBe(0);
       expect(Buffer.concat(holderStderr).toString("utf8")).toBe("");
 
       const lateScript = [
@@ -158,9 +149,7 @@ describe("privileged direct-execution exclusion", () => {
       expect(late.stderr).toMatch(/state mutation owns direct-container execution/i);
       expect(fs.existsSync(lateSpawnPath)).toBe(false);
     } finally {
-      if (!fs.existsSync(releasePath)) fs.writeFileSync(releasePath, "release");
-      if (holder.exitCode === null) holder.kill("SIGKILL");
-      await waitForExit(holder).catch(() => null);
+      await releaseAndStopChild(holder, releasePath);
     }
   }, 15_000);
 });

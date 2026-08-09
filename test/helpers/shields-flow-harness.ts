@@ -110,6 +110,31 @@ export function managedMcpSandbox(
   };
 }
 
+export function writeShieldsTimerAuthorizationProof(
+  requireDist: NodeRequire,
+  sandboxName: string,
+): void {
+  const timerControl = requireDist(
+    "./timer-control.js",
+  ) as typeof import("../../src/lib/shields/timer-control.js");
+  const marker = timerControl.readTimerMarker(sandboxName);
+  if (!marker?.processToken || !marker.timerProcessStartIdentity) {
+    throw new Error("Test timer marker is missing exact proof authority");
+  }
+  fs.writeFileSync(
+    timerControl.timerAuthorizationProofPath(sandboxName, marker.processToken),
+    JSON.stringify({
+      schemaVersion: 1,
+      pid: marker.pid,
+      sandboxName,
+      processToken: marker.processToken,
+      timerProcessStartIdentity: marker.timerProcessStartIdentity,
+      authoritySha256: timerControl.timerAuthoritySha256(marker),
+    }),
+    { mode: 0o600 },
+  );
+}
+
 function throwHarnessError(error: Error): never {
   throw error;
 }

@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  buildLlamaCppHostLocalDockerArgv,
+  buildLlamaCppRequestGuardDockerArgv,
   type VerifiedLocalModelArtifact,
 } from "../../src/lib/inference/llama-cpp/host-local-runtime.ts";
 import {
@@ -332,7 +332,10 @@ export function buildServerContainerArgv(
     hostPort?: number;
   },
 ): string[] {
-  return buildLlamaCppHostLocalDockerArgv(plan.recipe, {
+  if (plan.qualification.requestGuard !== "required") {
+    throw new Error("llama.cpp qualification requires the declarative request guard");
+  }
+  return buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
     apiKeyHostPath: options.apiKeyHostPath,
     containerName: options.containerName,
     imageReference: options.imageReference,

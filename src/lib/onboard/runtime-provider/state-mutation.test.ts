@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { requireProtectionTransitionPlan } from "../../../../test/helpers/runtime-provider-state-mutation-test-helpers";
 
 import {
   prepareAgentDefinitionProtectionTransitionPlan,
@@ -124,14 +125,10 @@ describe("runtime provider state mutation plan", () => {
     );
 
     expect(second.plan.selectors).toEqual(first.plan.selectors);
-    if (
-      first.plan.intent !== "protection-transition" ||
-      second.plan.intent !== "protection-transition"
-    ) {
-      throw new Error("expected protection-transition plans");
-    }
-    expect(second.plan.stateLockPlan.writableSubpaths).not.toEqual(
-      first.plan.stateLockPlan.writableSubpaths,
+    const firstPlan = requireProtectionTransitionPlan(first.plan);
+    const secondPlan = requireProtectionTransitionPlan(second.plan);
+    expect(secondPlan.stateLockPlan.writableSubpaths).not.toEqual(
+      firstPlan.stateLockPlan.writableSubpaths,
     );
     expect(second.projectionSha256).not.toBe(first.projectionSha256);
     expect(second.planSha256).not.toBe(first.planSha256);
@@ -167,9 +164,9 @@ describe("runtime provider state mutation plan", () => {
       { kind: "path", path: "config.toml" },
     ]);
     expect(prepared.plan.intent).toBe("protection-transition");
-    if (prepared.plan.intent === "protection-transition") {
-      expect(prepared.plan.stateLockPlan.writableSubpaths).toEqual([]);
-    }
+    expect(requireProtectionTransitionPlan(prepared.plan).stateLockPlan.writableSubpaths).toEqual(
+      [],
+    );
   });
 
   it("rejects a noncanonical writable exception in the AgentDefinition projection", () => {
@@ -318,15 +315,14 @@ describe("runtime provider state mutation plan", () => {
     expect(protectionTransition.plan).toEqual(protectionTransitionPlan());
     expect(Object.isFrozen(protectionTransition.plan)).toBe(true);
     expect(protectionTransition.plan.intent).toBe("protection-transition");
-    if (protectionTransition.plan.intent === "protection-transition") {
-      expect(protectionTransition.plan.target).toBe("locked");
-      expect(protectionTransition.plan.rollback).toBe("mutable");
-      expect(Object.isFrozen(protectionTransition.plan.stateLockPlan)).toBe(true);
-      expect(Object.isFrozen(protectionTransition.plan.stateLockPlan.readOnlyRoots)).toBe(true);
-      expect(Object.isFrozen(protectionTransition.plan.stateLockPlan.writableSubpaths)).toBe(true);
-      source.stateLockPlan.readOnlyRoots[0] = "changed-after-prepare";
-      expect(protectionTransition.plan.stateLockPlan.readOnlyRoots).toEqual(["scripts"]);
-    }
+    const protectionPlan = requireProtectionTransitionPlan(protectionTransition.plan);
+    expect(protectionPlan.target).toBe("locked");
+    expect(protectionPlan.rollback).toBe("mutable");
+    expect(Object.isFrozen(protectionPlan.stateLockPlan)).toBe(true);
+    expect(Object.isFrozen(protectionPlan.stateLockPlan.readOnlyRoots)).toBe(true);
+    expect(Object.isFrozen(protectionPlan.stateLockPlan.writableSubpaths)).toBe(true);
+    source.stateLockPlan.readOnlyRoots[0] = "changed-after-prepare";
+    expect(protectionPlan.stateLockPlan.readOnlyRoots).toEqual(["scripts"]);
   });
 
   it.each([
@@ -496,9 +492,9 @@ describe("runtime provider state mutation plan", () => {
     });
 
     expect(prepared.plan.intent).toBe("protection-transition");
-    if (prepared.plan.intent === "protection-transition") {
-      expect(prepared.plan.stateLockPlan.writableSubpaths).toEqual(["agents/*/sessions"]);
-    }
+    expect(requireProtectionTransitionPlan(prepared.plan).stateLockPlan.writableSubpaths).toEqual([
+      "agents/*/sessions",
+    ]);
   });
 
   it.each([

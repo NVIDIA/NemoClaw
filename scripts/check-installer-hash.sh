@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Verifies that pinned SHA-256 hashes for downloaded OpenShell release assets
-# still match the immutable upstream checksum manifests.
+# still match the base-trusted upstream release digests.
 #
 # Checked artifacts:
 #   1. OpenShell archives/formula — scripts/install-openshell.sh release-asset table
@@ -25,10 +25,11 @@ fi
 CHECKER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Trust-anchor rollout is intentionally two-step. First land a prerequisite PR
-# that adds the reviewed release-manifest digests here while runtime selectors
-# still name the current release. Only after that commit is on the target branch
-# may a separate pin PR select the new release. Pull-request verification runs
-# this file from the base SHA, so a pin PR can never authorize its own digests.
+# that adds the reviewed manifest, formula, and standalone sandbox identities
+# while runtime selectors still name the current release. Only after that
+# commit is on the target branch may a separate pin PR select the new release.
+# Pull-request verification runs this checker and its parser from the base SHA,
+# so a pin PR can never authorize its own identities.
 readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.72|openshell-checksums-sha256.txt|0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
   "0.0.72|openshell-gateway-checksums-sha256.txt|3c454dc15154b8c700ec820628559ea8964c6e552d9c5f8af78b6ee19cf34547"
@@ -42,6 +43,21 @@ readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.99|openshell-checksums-sha256.txt|ea3e2c1a583e5ea00332c3b65a18068bd1f9b090f7ff0f5e24b29762cfc3b4c7"
   "0.0.99|openshell-gateway-checksums-sha256.txt|7f84f728412548720c8ef51993c58414c4f04598451c282b26ead233185e40c5"
   "0.0.99|openshell-sandbox-checksums-sha256.txt|9e67af6bab9f975432a1045fcfea5ab182ab585b17886c8c290c1eb77232b87a"
+  "0.0.101|openshell-checksums-sha256.txt|9c90869d00b109b5ac1062b1a9808a592c2311d3c0c4926bae44d136b979d8a9"
+  "0.0.101|openshell-gateway-checksums-sha256.txt|dcb3f1917713bf2a8e8e1803ac42c5e39d9dd41e644136b05def32b077082777"
+  "0.0.101|openshell-sandbox-checksums-sha256.txt|d16f7d369c54d74d36c7df036565267a960e7ce6fb143012fe9d77f257d6e8b3"
+)
+
+# OpenShell's Homebrew formula is a release asset but is not included in any
+# published checksum manifest. Keep its reviewed identity tuple in the same
+# base-trusted checker so a later pin PR cannot authorize a replaced formula by
+# changing its candidate-controlled pin to match the live download.
+readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(
+  "0.0.72|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb|4b75a7e3a7630eb8954d73ca828b394d5e0646adbaa4b087b2435329d53b61b3"
+  "0.0.82|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.82/openshell.rb|fa54640184e22fa74500ab24f5b4372582616c7e12a1152cb6983bc0738c5a74"
+  "0.0.85|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.85/openshell.rb|f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"
+  "0.0.99|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.99/openshell.rb|8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713"
+  "0.0.101|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.101/openshell.rb|87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"
 )
 
 case "${1:-}" in
@@ -92,9 +108,10 @@ check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
   local brev_installer="${REPO_ROOT}/scripts/brev-launchable-ci-cpu.sh"
   local release_base workspace manifests spec manifest expected actual source asset pinned upstream formula_asset
-  local matches required_manifest required_matches
+  local matches required_manifest required_matches formula_expected="" formula_matches=0 formula_url=""
   local pin_records parser_error parser_errors parsed_version release_version="" record_extra
   local allowlist_entry allowlist_version allowlist_extra
+  local formula_allowlist_entry formula_allowlist_version formula_allowlist_asset formula_allowlist_url formula_allowlist_digest formula_allowlist_extra
   local count=0 brev_count=0 published_count=0 expected_published_count=0 failures=0
   local -a manifest_specs=()
   workspace=$(mktemp -d)
@@ -200,6 +217,24 @@ check_openshell_release_assets() {
     return "$failures"
   fi
 
+  for formula_allowlist_entry in "${OPENSHELL_RELEASE_FORMULA_ALLOWLIST[@]}"; do
+    IFS='|' read -r formula_allowlist_version formula_allowlist_asset formula_allowlist_url formula_allowlist_digest formula_allowlist_extra <<<"$formula_allowlist_entry"
+    if [[ ! "$formula_allowlist_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$formula_allowlist_asset" != "openshell.rb" || "$formula_allowlist_url" != "https://github.com/NVIDIA/OpenShell/releases/download/v${formula_allowlist_version}/${formula_allowlist_asset}" || ! "$formula_allowlist_digest" =~ ^[a-f0-9]{64}$ || -n "$formula_allowlist_extra" ]]; then
+      echo "  STALE: trusted OpenShell formula allowlist is invalid."
+      return 1
+    fi
+    if [[ "$formula_allowlist_version" == "$release_version" ]]; then
+      formula_matches=$((formula_matches + 1))
+      formula_url="$formula_allowlist_url"
+      formula_expected="$formula_allowlist_digest"
+    fi
+  done
+
+  if [[ "$formula_matches" -ne 1 ]]; then
+    echo "  STALE: OpenShell v${release_version} does not have exactly one trusted openshell.rb digest."
+    return 1
+  fi
+
   release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
   echo "Checking OpenShell v${release_version} release assets..."
   for spec in "${manifest_specs[@]}"; do
@@ -229,7 +264,7 @@ check_openshell_release_assets() {
   while IFS=$'\t' read -r parsed_version source asset pinned record_extra; do
     if [[ "$asset" == "openshell.rb" ]]; then
       formula_asset="${workspace}/${asset}"
-      if ! fetch_file "${release_base}/${asset}" "$formula_asset"; then
+      if ! fetch_file "$formula_url" "$formula_asset"; then
         echo "  STALE: unable to download ${source} ${asset}."
         failures=$((failures + 1))
         continue
@@ -239,13 +274,18 @@ check_openshell_release_assets() {
         failures=$((failures + 1))
         continue
       fi
-      if [[ "$actual" == "$pinned" ]]; then
+      if [[ "$actual" != "$formula_expected" ]]; then
+        echo "  STALE: ${source} ${asset} does not match the base-trusted v${release_version} formula digest."
+        echo "    trusted:  ${formula_expected}"
+        echo "    upstream: ${actual}"
+        failures=$((failures + 1))
+      elif [[ "$pinned" == "$formula_expected" ]]; then
         published_count=$((published_count + 1))
         echo "  OK: ${source} ${asset} (${pinned})"
       else
-        echo "  STALE: ${source} ${asset} digest does not match the pinned v${release_version} release asset."
+        echo "  STALE: ${source} ${asset} pin does not match the base-trusted v${release_version} formula digest."
         echo "    pinned:   ${pinned}"
-        echo "    upstream: ${actual}"
+        echo "    trusted:  ${formula_expected}"
         failures=$((failures + 1))
       fi
       continue

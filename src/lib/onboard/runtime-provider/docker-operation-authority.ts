@@ -55,6 +55,7 @@ const DOCKER_COMMAND_ENV_NAMES = new Set([
   "LOGNAME",
   "SHELL",
   "PATH",
+  "SSH_AUTH_SOCK",
   "TERM",
   "HOSTNAME",
   "LANG",
@@ -74,6 +75,7 @@ const DOCKER_COMMAND_ENV_NAMES = new Set([
   "CURL_CA_BUNDLE",
 ]);
 const DOCKER_COMMAND_ENV_PREFIXES = ["LC_", "XDG_"] as const;
+const DOCKER_STREAMED_CREDENTIAL_ENV_NAMES = new Set(["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"]);
 const MAX_DOCKER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_DOCKER_ARGUMENTS = 512;
 
@@ -275,6 +277,22 @@ function fixedDockerSpawnArguments(args: readonly string[]): readonly string[] {
   );
 }
 
+function fixedDockerSpawnEnvironment(
+  args: readonly string[],
+  commandEnvironment: Readonly<NodeJS.ProcessEnv>,
+  callerEnvironment: NodeJS.ProcessEnv | undefined,
+): NodeJS.ProcessEnv {
+  const environment = { ...commandEnvironment };
+  for (let index = 0; index < args.length - 1; index += 1) {
+    if (args[index] !== "-e" && args[index] !== "--env") continue;
+    const name = args[index + 1];
+    if (!name || !DOCKER_STREAMED_CREDENTIAL_ENV_NAMES.has(name)) continue;
+    const value = callerEnvironment?.[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
+}
+
 function dockerBindingProbe(
   operation: ContainerEngineOperationScope,
   endpointArgs: readonly string[],
@@ -462,7 +480,7 @@ export function createDockerOperationAuthority(
       return spawn(binding.executable, [...binding.endpointArgs, ...normalized], {
         ...options,
         cwd: binding.cwd,
-        env: { ...binding.commandEnvironment },
+        env: fixedDockerSpawnEnvironment(normalized, binding.commandEnvironment, options?.env),
         shell: false,
       });
     },

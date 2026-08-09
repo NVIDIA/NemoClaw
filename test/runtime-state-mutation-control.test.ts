@@ -224,6 +224,32 @@ activation = control.ActivationProof(
 )
 
 results = {}
+with tempfile.TemporaryDirectory() as atomic_root:
+    atomic_root_fd = os.open(atomic_root, os.O_RDONLY | os.O_DIRECTORY)
+    atomic_creation_modes = []
+    real_os_open = control.os.open
+    def recording_os_open(path, flags, mode=0o777, *, dir_fd=None):
+        atomic_creation_modes.append(mode)
+        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+    control.os.open = recording_os_open
+    try:
+        control._atomic_write(
+            atomic_root_fd,
+            "public-receipt.json",
+            b"{}\n",
+            mode=0o444,
+        )
+        atomic_final_mode = stat.S_IMODE(
+            os.stat(
+                "public-receipt.json",
+                dir_fd=atomic_root_fd,
+                follow_symlinks=False,
+            ).st_mode
+        )
+    finally:
+        control.os.open = real_os_open
+        os.close(atomic_root_fd)
+results["atomic_write_modes"] = [atomic_creation_modes, atomic_final_mode]
 results["sigcont"] = int(signal.SIGCONT)
 results["sigstop"] = int(signal.SIGSTOP)
 kernel_stop_calls = []
@@ -1269,6 +1295,10 @@ describe("runtime state mutation controller", () => {
     expect(events).toContainEqual(["retire", "rolled-back", true]);
     expect(events).toContainEqual(["hold", "mnt:[401]", 10, 77]);
     expect(events).toContainEqual(["activation-receipt", "activation-proven"]);
+  });
+
+  it("creates public protocol files privately before applying their final mode (#7744)", () => {
+    expect(harnessResult.atomic_write_modes).toEqual([[0o600], 0o444]);
   });
 
   it("uses the fixed publisher contract and rejects unbound evidence (#7744)", () => {

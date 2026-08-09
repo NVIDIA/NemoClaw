@@ -9,7 +9,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import {
   HERMES_PROVIDER_CAPABILITY_PATH as CAPABILITY_PATH,
+  createFailingCapabilityProbeResponse,
   createHermesShieldsProviderConsumerHarness,
+  createRetainedUnlockSimulation,
+  createTimerAuthorizationSender,
+  createTransitionFailureForPosture,
   hermesProviderConsumerSandbox as sandbox,
   hermesProviderConsumerTarget as target,
   writeBoundForwardPolicy,
@@ -98,6 +102,80 @@ function isRuntimeStateMutationCapabilityProbe(cmd: string[]): boolean {
     cmd.at(-1) === RUNTIME_STATE_MUTATION_CAPABILITY
   );
 }
+
+type ForwardPolicyFailureSetup = (input: {
+  readonly forwardPolicyPath: string;
+  readonly routeSpy: MockInstance;
+  readonly timerPath: string;
+}) => void;
+
+type ForwardPolicyFailureAssertion = (input: {
+  readonly routeSpy: MockInstance;
+  readonly runSpy: MockInstance;
+  readonly transitionPath: string;
+  readonly transitionSpy: MockInstance;
+}) => void;
+
+function removeForwardPolicy({
+  forwardPolicyPath,
+}: Parameters<ForwardPolicyFailureSetup>[0]): void {
+  fs.rmSync(forwardPolicyPath);
+}
+
+function tamperForwardPolicy({
+  forwardPolicyPath,
+}: Parameters<ForwardPolicyFailureSetup>[0]): void {
+  fs.writeFileSync(forwardPolicyPath, "tampered\n", { mode: 0o600 });
+}
+
+function replaceTimerDuringRoute({
+  routeSpy,
+  timerPath,
+}: Parameters<ForwardPolicyFailureSetup>[0]): void {
+  routeSpy.mockImplementation(() => {
+    const marker = JSON.parse(fs.readFileSync(timerPath, "utf-8"));
+    fs.writeFileSync(
+      timerPath,
+      JSON.stringify({ ...marker, timerProcessStartIdentity: "replacement-timer-start" }),
+    );
+    return { ok: true, attempts: 1, httpStatus: 200 };
+  });
+}
+
+function expectForwardPolicyRejectedBeforeMutation({
+  routeSpy,
+  runSpy,
+  transitionSpy,
+}: Parameters<ForwardPolicyFailureAssertion>[0]): void {
+  expect(runSpy).not.toHaveBeenCalled();
+  expect(transitionSpy).not.toHaveBeenCalled();
+  expect(routeSpy).not.toHaveBeenCalled();
+}
+
+function expectTimerReplacementRejectedAfterMutation({
+  routeSpy,
+  runSpy,
+  transitionPath,
+  transitionSpy,
+}: Parameters<ForwardPolicyFailureAssertion>[0]): void {
+  expect(runSpy).toHaveBeenCalled();
+  expect(transitionSpy).toHaveBeenCalled();
+  expect(routeSpy).toHaveBeenCalledTimes(1);
+  expect(fs.existsSync(transitionPath)).toBe(false);
+}
+
+const forwardPolicyFailureFixtures: ReadonlyArray<
+  readonly [string, ForwardPolicyFailureSetup, RegExp, ForwardPolicyFailureAssertion]
+> = [
+  ["missing", removeForwardPolicy, /forward policy/u, expectForwardPolicyRejectedBeforeMutation],
+  ["tampered", tamperForwardPolicy, /forward policy/u, expectForwardPolicyRejectedBeforeMutation],
+  [
+    "timer-replaced",
+    replaceTimerDuringRoute,
+    /auto-restore authority changed|timer generation/iu,
+    expectTimerReplacementRejectedAfterMutation,
+  ],
+];
 
 describe("legacy Hermes shields compatibility", () => {
   let homeDir: string;
@@ -220,27 +298,7 @@ describe("legacy Hermes shields compatibility", () => {
           disconnect: vi.fn(),
           unref: vi.fn(),
           kill: vi.fn(() => true),
-          send: vi.fn((message: unknown) => {
-            const request = message as { type?: unknown; processToken?: unknown };
-            if (request.type === "authorize" && typeof request.processToken === "string") {
-              const marker = timerControl.readTimerMarker(sandboxName);
-              if (marker?.timerProcessStartIdentity) {
-                fs.writeFileSync(
-                  timerControl.timerAuthorizationProofPath(sandboxName, request.processToken),
-                  JSON.stringify({
-                    schemaVersion: 1,
-                    pid: marker.pid,
-                    sandboxName,
-                    processToken: request.processToken,
-                    timerProcessStartIdentity: marker.timerProcessStartIdentity,
-                    authoritySha256: timerControl.timerAuthoritySha256(marker),
-                  }),
-                  { mode: 0o600 },
-                );
-              }
-            }
-            return true;
-          }),
+          send: vi.fn(createTimerAuthorizationSender(requireSource, sandboxName)),
         };
       }),
     );
@@ -632,12 +690,12 @@ describe("legacy Hermes shields compatibility", () => {
   });
 
   it("does not reinterpret a failed capability probe as permission to use the legacy path", () => {
-    dockerExecSpy.mockImplementation((cmd: string[]) => {
-      if (isRuntimeStateMutationCapabilityProbe(cmd)) {
-        throw new Error("temporary Docker exec failure");
-      }
-      return "";
-    });
+    dockerExecSpy.mockImplementation(
+      createFailingCapabilityProbeResponse(
+        isRuntimeStateMutationCapabilityProbe,
+        new Error("temporary Docker exec failure"),
+      ),
+    );
 
     expect(() =>
       shields.unlockAgentConfig("unreachable-hermes", hermesTarget(), true, true),
@@ -820,44 +878,12 @@ describe("legacy Hermes shields compatibility", () => {
           forwardPolicy,
         }),
       );
-      let activeClaim = true;
-      let livePosture: "locked" | "mutable" = "mutable";
       const events: string[] = [];
-      runSpy.mockImplementation((commandValue: unknown) => {
-        const command = commandValue as string[];
-        if (command[0] === "policy" && command[1] === "set") events.push("policy");
-        return { status: 0 };
-      });
-      lifecycleGateSpy.mockImplementation(() => activeClaim);
-      transitionSpy.mockImplementation(
-        (input: { target: "locked" | "mutable"; rollback: string }) => {
-          events.push(`provider:${input.target}/${input.rollback}`);
-          if (activeClaim) {
-            // Recovering the interrupted mutable target restores its retained
-            // restrictive rollback before releasing direct-exec exclusion.
-            activeClaim = false;
-            livePosture = "locked";
-          } else if (input.target !== input.rollback) {
-            livePosture = input.target;
-          }
-          return { fence: {}, proof: {} };
-        },
-      );
-      dockerExecSpy.mockImplementation((commandValue: unknown) => {
-        const command = commandValue as string[];
-        commands.push(command);
-        if (command[0] === "stat" && command.at(-1) === "/sandbox/.hermes") {
-          if (livePosture === "mutable") events.push("verified-mutable");
-          return livePosture === "locked" ? "755 root:root\n" : "3770 sandbox:sandbox\n";
-        }
-        if (command[0] === "stat") {
-          return livePosture === "locked" ? "444 root:root\n" : "640 sandbox:sandbox\n";
-        }
-        if (command[0] === "lsattr") {
-          return `${livePosture === "locked" ? "----i---------------" : "--------------------"} ${String(command.at(-1))}\n`;
-        }
-        return "";
-      });
+      const simulation = createRetainedUnlockSimulation(events, commands);
+      runSpy.mockImplementation(simulation.run);
+      lifecycleGateSpy.mockImplementation(simulation.hasActiveClaim);
+      transitionSpy.mockImplementation(simulation.transition);
+      dockerExecSpy.mockImplementation(simulation.dockerExec);
       routeSpy.mockImplementation(() => {
         expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("preparing");
         events.push("route");
@@ -880,8 +906,8 @@ describe("legacy Hermes shields compatibility", () => {
         { target: "mutable", rollback: "mutable" },
         { target: "mutable", rollback: "locked" },
       ]);
-      expect(livePosture).toBe("mutable");
-      expect(activeClaim).toBe(false);
+      expect(simulation.livePosture()).toBe("mutable");
+      expect(simulation.activeClaim()).toBe(false);
       expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
       expect(
         JSON.parse(fs.readFileSync(path.join(stateDir, `shields-${sandbox.name}.json`), "utf-8")),
@@ -999,11 +1025,9 @@ describe("legacy Hermes shields compatibility", () => {
       expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
     });
 
-    it.each([
-      "missing",
-      "tampered",
-      "timer-replaced",
-    ] as const)("fails closed when the recovered forward policy is %s", (failureMode) => {
+    it.each(
+      forwardPolicyFailureFixtures,
+    )("fails closed when the recovered forward policy is %s", (_failureMode, arrangeFailure, expectedError, assertSideEffects) => {
       const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
       const stateDir = statePaths.resolveNemoclawStateDir();
       const processToken = "f".repeat(32);
@@ -1056,37 +1080,13 @@ describe("legacy Hermes shields compatibility", () => {
           forwardPolicy,
         }),
       );
-      if (failureMode === "missing") {
-        fs.rmSync(forwardPolicy.path);
-      } else if (failureMode === "tampered") {
-        fs.writeFileSync(forwardPolicy.path, "tampered\n", { mode: 0o600 });
-      } else {
-        routeSpy.mockImplementation(() => {
-          const marker = JSON.parse(fs.readFileSync(timerPath, "utf-8"));
-          fs.writeFileSync(
-            timerPath,
-            JSON.stringify({ ...marker, timerProcessStartIdentity: "replacement-timer-start" }),
-          );
-          return { ok: true, attempts: 1, httpStatus: 200 };
-        });
-      }
+      arrangeFailure({ forwardPolicyPath: forwardPolicy.path, routeSpy, timerPath });
       lifecycleGateSpy.mockReturnValue(false);
 
       expect(() => shields.shieldsDown(sandbox.name, { throwOnError: true })).toThrow(
-        failureMode === "timer-replaced"
-          ? /auto-restore authority changed|timer generation/iu
-          : /forward policy/u,
+        expectedError,
       );
-      if (failureMode === "timer-replaced") {
-        expect(runSpy).toHaveBeenCalled();
-        expect(transitionSpy).toHaveBeenCalled();
-        expect(routeSpy).toHaveBeenCalledTimes(1);
-        expect(fs.existsSync(transitionPath)).toBe(false);
-      } else {
-        expect(runSpy).not.toHaveBeenCalled();
-        expect(transitionSpy).not.toHaveBeenCalled();
-        expect(routeSpy).not.toHaveBeenCalled();
-      }
+      assertSideEffects({ routeSpy, runSpy, transitionPath, transitionSpy });
       expect(auditSpy).not.toHaveBeenCalled();
     });
 
@@ -1153,12 +1153,12 @@ describe("legacy Hermes shields compatibility", () => {
         }),
       );
       lifecycleGateSpy.mockReturnValue(false);
-      transitionSpy.mockImplementation((input: { target: string; rollback: string }) => {
-        if (input.target === "locked" && input.rollback === "locked") {
-          throw new Error("recursive state lock plan drift under skills/pairing");
-        }
-        return { fence: {}, proof: {} };
-      });
+      transitionSpy.mockImplementation(
+        createTransitionFailureForPosture(
+          "locked",
+          "recursive state lock plan drift under skills/pairing",
+        ),
+      );
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
       }) as never);
@@ -1198,12 +1198,12 @@ describe("legacy Hermes shields compatibility", () => {
 
     it("does not report clean mutable-default when provider verification finds nested skills or pairing drift", () => {
       lifecycleGateSpy.mockReturnValue(false);
-      transitionSpy.mockImplementation((input: { target: string; rollback: string }) => {
-        if (input.target === "mutable" && input.rollback === "mutable") {
-          throw new Error("recursive mutable state drift under skills/pairing");
-        }
-        return { fence: {}, proof: {} };
-      });
+      transitionSpy.mockImplementation(
+        createTransitionFailureForPosture(
+          "mutable",
+          "recursive mutable state drift under skills/pairing",
+        ),
+      );
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
       }) as never);
@@ -1277,12 +1277,12 @@ describe("legacy Hermes shields compatibility", () => {
         }),
       );
       lifecycleGateSpy.mockReturnValue(false);
-      transitionSpy.mockImplementation((input: { target: string; rollback: string }) => {
-        if (input.target === "mutable" && input.rollback === "mutable") {
-          throw new Error("recursive timed state drift under skills/pairing");
-        }
-        return { fence: {}, proof: {} };
-      });
+      transitionSpy.mockImplementation(
+        createTransitionFailureForPosture(
+          "mutable",
+          "recursive timed state drift under skills/pairing",
+        ),
+      );
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
       }) as never);

@@ -52,6 +52,15 @@ def code(call):
         return str(error)
 
 results = {}
+results["uses_o_path_when_available"] = not hasattr(os, "O_PATH") or bool(
+    gate._directory_flags() & os.O_PATH
+)
+results["readable_final_is_read_only"] = (
+    gate._directory_flags(readable=True) & os.O_ACCMODE
+) == os.O_RDONLY
+results["readable_final_excludes_o_path"] = not hasattr(os, "O_PATH") or not bool(
+    gate._directory_flags(readable=True) & os.O_PATH
+)
 with tempfile.TemporaryDirectory() as root:
     root = os.path.realpath(root)
     durable = os.path.join(root, "durable")
@@ -174,6 +183,9 @@ describe("runtime state mutation startup gate", () => {
       procInode: "33",
     };
     expect(value).toMatchObject({
+      uses_o_path_when_available: true,
+      readable_final_is_read_only: true,
+      readable_final_excludes_o_path: true,
       inactive: "inactive",
       unpermitted: "activation-not-permitted",
       admitted: "permitted",

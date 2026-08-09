@@ -125,17 +125,28 @@ def _parse(raw: bytes, code: str) -> object:
     return value
 
 
-def _directory_flags() -> int:
-    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+def _directory_flags(*, readable: bool = False) -> int:
+    # Linux O_PATH preserves search-only 0711 traversal without granting the
+    # sandbox identity directory-enumeration access. Writers reopen only the
+    # sandbox-owned final directory readably so its fsync remains valid.
+    directory_access = os.O_RDONLY if readable else getattr(os, "O_PATH", os.O_RDONLY)
+    return directory_access | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
-def _open_absolute_directory(path: str) -> int:
+def _open_absolute_directory(path: str, *, readable_final: bool = False) -> int:
     if not path.startswith("/") or os.path.normpath(path) != path:
         _fail("unsafe-directory")
-    current = os.open("/", _directory_flags())
+    components = path.split("/")[1:]
+    current = os.open("/", _directory_flags(readable=readable_final and not components))
     try:
-        for component in path.split("/")[1:]:
-            next_fd = os.open(component, _directory_flags(), dir_fd=current)
+        for index, component in enumerate(components):
+            next_fd = os.open(
+                component,
+                _directory_flags(
+                    readable=readable_final and index == len(components) - 1
+                ),
+                dir_fd=current,
+            )
             os.close(current)
             current = next_fd
         return current
@@ -429,7 +440,7 @@ def _candidate(binding: dict[str, object]) -> tuple[dict[str, object], bytes]:
 
 def _publish_candidate(binding: dict[str, object]) -> None:
     directory = str(binding["candidateDirectory"])
-    directory_fd = _open_absolute_directory(directory)
+    directory_fd = _open_absolute_directory(directory, readable_final=True)
     try:
         metadata = os.fstat(directory_fd)
         if (
@@ -541,7 +552,9 @@ def _verify_retry_binding(directory_fd: int, binding: dict[str, object]) -> byte
 
 
 def _publish_retry_ack(binding: dict[str, object], retry_payload: bytes) -> None:
-    directory_fd = _open_absolute_directory(str(binding["candidateDirectory"]))
+    directory_fd = _open_absolute_directory(
+        str(binding["candidateDirectory"]), readable_final=True
+    )
     try:
         metadata = os.fstat(directory_fd)
         if (
