@@ -17,46 +17,20 @@ import {
   applyMessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { baseOpenClawGenerationEnv, buildOpenClawTestEnv } from "./helpers/openclaw-env-fixture";
 import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.mts");
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
 
 /** Minimal env vars required for a valid config generation run. */
-const BASE_ENV: Record<string, string> = {
-  NEMOCLAW_MODEL: "test-model",
-  NEMOCLAW_PROVIDER_KEY: "test-provider",
-  NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
-  CHAT_UI_URL: "http://127.0.0.1:18789",
-  NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
-  NEMOCLAW_INFERENCE_API: "openai",
-  NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("{}").toString("base64"),
-  NEMOCLAW_PROXY_HOST: "10.200.0.1",
-  NEMOCLAW_PROXY_PORT: "3128",
-  NEMOCLAW_CONTEXT_WINDOW: "131072",
-  NEMOCLAW_MAX_TOKENS: "4096",
-  NEMOCLAW_REASONING: "false",
-  NEMOCLAW_AGENT_TIMEOUT: "600",
-};
+const BASE_ENV = baseOpenClawGenerationEnv();
 const STRUCTURED_TOOL_SEARCH = { mode: "tools", searchDefaultLimit: 8, maxSearchLimit: 20 };
 
 let tmpDir: string;
 
-function ensureFakeOpenClaw(): string {
-  const fakeOpenclaw = path.join(tmpDir, "openclaw");
-  fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  return fakeOpenclaw;
-}
-
-function buildTestEnv(envOverrides: Record<string, string> = {}): Record<string, string> {
-  ensureFakeOpenClaw();
-  return {
-    PATH: `${tmpDir}:${process.env.PATH || "/usr/bin:/bin"}`,
-    ...BASE_ENV,
-    ...envOverrides,
-    HOME: tmpDir,
-  };
-}
+const buildTestEnv = (envOverrides: Record<string, string> = {}): Record<string, string> =>
+  buildOpenClawTestEnv(tmpDir, BASE_ENV, envOverrides);
 
 const CHANNELS_ENV = "NEMOCLAW_MESSAGING_CHANNELS_B64";
 const messagingEnv = (channels: string, env: Record<string, string> = {}) =>

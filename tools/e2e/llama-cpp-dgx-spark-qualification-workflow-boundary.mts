@@ -258,6 +258,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA:
       "${{ inputs.base_sha || github.event.before || github.sha }}",
+    NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.checkout_sha || github.sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN:
       "${{ github.workspace }}/.llama-cpp-qualification/plan.json",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA:

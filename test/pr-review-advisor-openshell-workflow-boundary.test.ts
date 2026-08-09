@@ -306,6 +306,7 @@ describe("PR review advisor OpenShell workflow boundary", () => {
         workflow.jobs.review.env.PI_IMAGE =
           "ghcr.io/nvidia/openshell-community/sandboxes/pi:latest";
         workflow.jobs.review.env.SANDBOX_NAME = "pr-advisor";
+        workflow.jobs.review.strategy.matrix.advisor[0].sandbox_name = "pr-advisor--bad";
         workflow.jobs.review.strategy.matrix.advisor[0].artifact_dir = "../../advisor";
         const prepare = workflow.jobs.review.steps.find(
           (step: { name?: string }) => step.name === "Prepare isolated analysis workspace",
@@ -318,7 +319,8 @@ describe("PR review advisor OpenShell workflow boundary", () => {
       expect.arrayContaining([
         "review job env.OPENSHELL_GATEWAY_ENDPOINT must be http://127.0.0.1:8080",
         "review job env.PI_IMAGE must be ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd",
-        "review job env.SANDBOX_NAME must be pr-advisor-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.advisor.id }}",
+        "review job env.SANDBOX_NAME must be ${{ matrix.advisor.sandbox_name }}",
+        "advisor matrix entry 1 sandbox_name must satisfy the OpenShell 0.0.99 sandbox-name contract",
         "advisor matrix entry 1 artifact_dir must be a simple directory name",
         "Prepare isolated analysis workspace must use the fixed pr-workdir upload directory",
       ]),

@@ -12,6 +12,7 @@ import {
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "./helpers/installer-sourced-env";
+import { writeNpmStub } from "./helpers/installer-run-fixture";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
@@ -34,20 +35,6 @@ exit 99`,
 }
 
 /** Minimal npm stub with an injectable install/link/run handler. */
-function writeNpmStub(fakeBin: string, installSnippet: string = "exit 0") {
-  writeExecutable(
-    path.join(fakeBin, "npm"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
-if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
-if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
-  ${installSnippet}
-  if [ "$1" = "ci" ]; then exit 0; fi
-fi
-echo "unexpected npm invocation: $*" >&2; exit 98`,
-  );
-}
 
 function writeFailedOnboardSession(home: string) {
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
@@ -541,9 +528,8 @@ printf 'pip3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
 exit 89
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+    writeNpmStub(fakeBin, {
+      installSnippet: `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
 if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
@@ -562,7 +548,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -627,9 +614,8 @@ fi`,
 
     writeNodeStub(fakeBin);
     writeDockerOkStub(fakeBin);
-    writeNpmStub(
-      fakeBin,
-      `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+    writeNpmStub(fakeBin, {
+      installSnippet: `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
 if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
@@ -648,7 +634,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -713,9 +700,8 @@ if [ "$1" = "--version" ]; then echo "openshell 0.0.39"; exit 0; fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+    writeNpmStub(fakeBin, {
+      installSnippet: `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
 if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
@@ -734,7 +720,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -813,9 +800,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -833,7 +819,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -915,9 +902,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -935,7 +921,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -1022,9 +1009,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1042,7 +1028,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -1127,9 +1114,8 @@ if [ "$1" = "is-enabled" ] && [ "$2" = "docker" ]; then echo "disabled"; exit 1;
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1147,7 +1133,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -1476,9 +1463,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1496,7 +1482,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
     writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
@@ -1566,9 +1553,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1586,7 +1572,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER, "--non-interactive"], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -1637,9 +1624,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1657,7 +1643,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync(
       "bash",
@@ -1705,9 +1692,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   echo "ENOTFOUND simulated network error" >&2
   exit 1
 fi
@@ -1715,7 +1701,8 @@ if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "run" ] || [ "$1" = "link
   echo "ENOTFOUND simulated network error" >&2
   exit 1
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
@@ -2034,9 +2021,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then exit 1; fi
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then exit 1; fi
 if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
@@ -2048,7 +2034,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -2162,9 +2149,8 @@ exit 99`,
     writeNodeStub(fakeBin);
     writeDockerOkStub(fakeBin);
     writeOpenShellOkStub(fakeBin);
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then exit 1; fi
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then exit 1; fi
 if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
@@ -2176,7 +2162,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     // curl stub that would fail — must NOT be called
     writeExecutable(
@@ -2271,9 +2258,8 @@ fi
 exit 0`,
     );
 
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then exit 1; fi
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then exit 1; fi
 if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
@@ -2285,7 +2271,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
