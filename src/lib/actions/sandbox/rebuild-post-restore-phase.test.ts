@@ -62,6 +62,21 @@ describe("rebuild post-restore phase", () => {
       (_sandboxName, targetAgentName) =>
         targetAgentName === "hermes" ? "healthy" : "not-applicable",
     );
+    vi.spyOn(
+      rebuildHermesPostRestore,
+      "ensureHermesGatewayAfterStateRestoreForCronGate",
+    ).mockReturnValue({
+      state: "healthy",
+      replacementIdentity: { pid: 77, start_time: 903, drain_token: "restore-token" },
+    });
+    vi.spyOn(
+      rebuildHermesPostRestore,
+      "completeHermesCronRestoreAfterGatewayReplacement",
+    ).mockReturnValue({ pid: 77, start_time: 903, drain_token: "restore-token" });
+    vi.spyOn(
+      rebuildHermesPostRestore,
+      "isHermesCronRestoreDrainMarkerRollbackFailure",
+    ).mockReturnValue(false);
     vi.spyOn(registry, "getSandbox").mockImplementation(
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
@@ -113,6 +128,234 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps cron dispatch blocked through replacement health verification (#8472)", async () => {
+    agentName = "hermes";
+    const events: string[] = [];
+    let dispatchHeld = true;
+    const attemptDispatch = () => events.push(dispatchHeld ? "dispatch-blocked" : "dispatch-ran");
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockImplementation(async () => {
+      events.push("mcp");
+      attemptDispatch();
+      return true;
+    });
+    vi.mocked(
+      rebuildHermesPostRestore.ensureHermesGatewayAfterStateRestoreForCronGate,
+    ).mockImplementation(() => {
+      events.push("restart");
+      attemptDispatch();
+      events.push("health-verified");
+      return {
+        state: "healthy",
+        replacementIdentity: { pid: 77, start_time: 903, drain_token: "restore-token" },
+      };
+    });
+    vi.mocked(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).mockImplementation(() => {
+      events.push("release");
+      dispatchHeld = false;
+      return { pid: 77, start_time: 903, drain_token: "restore-token" };
+    });
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
+      () => {
+        attemptDispatch();
+        return true;
+      },
+    );
+    const args = {
+      ...input(),
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(events).toEqual([
+      "mcp",
+      "dispatch-blocked",
+      "restart",
+      "dispatch-blocked",
+      "health-verified",
+      "release",
+      "dispatch-ran",
+    ]);
+    expect(args.log).toHaveBeenCalledWith(
+      "Hermes cron restore gate released: pid=77, startTime=903",
+    );
+    expect(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).toHaveBeenCalledWith(
+      "alpha",
+      { pid: 41, start_time: 902, drain_token: "restore-token" },
+      { pid: 77, start_time: 903, drain_token: "restore-token" },
+    );
+    expect(args.bail).not.toHaveBeenCalled();
+  });
+
+  it("leaves the cron gate active when replacement verification fails (#8472)", async () => {
+    agentName = "hermes";
+    vi.mocked(
+      rebuildHermesPostRestore.ensureHermesGatewayAfterStateRestoreForCronGate,
+    ).mockReturnValue({ state: "unverified" });
+    const args = {
+      ...input(),
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith(
+      "Hermes cron restore validation failed; dispatch was not re-enabled.",
+    );
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "Hermes cron dispatch remains drained",
+    );
+  });
+
+  it("leaves the cron gate active when replacement completion fails (#8472)", async () => {
+    agentName = "hermes";
+    vi.mocked(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).mockImplementation(() => {
+      throw new Error("replacement cron tree is invalid");
+    });
+    const args = {
+      ...input(),
+      backupManifest: { backupPath: "/tmp/alpha-backup" } as never,
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(args.bail).toHaveBeenCalledWith(
+      "Hermes cron restore validation failed; dispatch was not re-enabled.",
+    );
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("replacement cron tree is invalid");
+    expect(output).toContain("Backup is preserved at: /tmp/alpha-backup");
+    expect(output).toContain("nemoclaw alpha recover");
+  });
+
+  it("reports preserved recovery authority when release marker rollback fails (#8472)", async () => {
+    agentName = "hermes";
+    const rollbackFailure = new Error(
+      "Hermes cron complete failed: Hermes cron restore drain release failed and its marker could not be restored",
+    );
+    vi.mocked(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).mockImplementation(() => {
+      throw rollbackFailure;
+    });
+    vi.mocked(
+      rebuildHermesPostRestore.isHermesCronRestoreDrainMarkerRollbackFailure,
+    ).mockImplementation((error) => error === rollbackFailure);
+    const args = {
+      ...input(),
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(args.bail).toHaveBeenCalledWith(
+      "Hermes cron restore release state requires immediate recovery.",
+    );
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("drain release failed and its marker could not be restored");
+    expect(output).toContain("root-owned recovery state was preserved");
+    expect(output).toContain("reacquire the gate and validate restored cron state");
+    expect(output).toContain("nemoclaw alpha recover");
+    expect(output).not.toContain("dispatch was not re-enabled");
+    expect(
+      rebuildHermesPostRestore.isHermesCronRestoreDrainMarkerRollbackFailure,
+    ).toHaveBeenCalledWith(rollbackFailure);
+  });
+
+  it("keeps the gate active and repairs MCP before cron recovery (#8472)", async () => {
+    agentName = "hermes";
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+    const args = {
+      ...input(),
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith(
+      "Hermes MCP restoration failed; cron dispatch was not re-enabled.",
+    );
+    const mcpCall = vi
+      .mocked(console.log)
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha mcp restart"));
+    const recoverCall = vi
+      .mocked(console.error)
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha recover"));
+    expect(mcpCall).toBeGreaterThanOrEqual(0);
+    expect(recoverCall).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(console.log).mock.invocationCallOrder[mcpCall]).toBeLessThan(
+      vi.mocked(console.error).mock.invocationCallOrder[recoverCall] ?? 0,
+    );
+  });
+
+  it("repairs MCP before cron recovery when gateway verification also fails (#8472)", async () => {
+    agentName = "hermes";
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+    vi.mocked(
+      rebuildHermesPostRestore.ensureHermesGatewayAfterStateRestoreForCronGate,
+    ).mockReturnValue({ state: "unverified" });
+    const args = {
+      ...input(),
+      hermesCronRestoreIdentity: {
+        pid: 41,
+        start_time: 902,
+        drain_token: "restore-token",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).not.toHaveBeenCalled();
+    const mcpCall = vi
+      .mocked(console.log)
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha mcp restart"));
+    const recoverCall = vi
+      .mocked(console.error)
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha recover"));
+    expect(mcpCall).toBeGreaterThanOrEqual(0);
+    expect(recoverCall).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(console.log).mock.invocationCallOrder[mcpCall]).toBeLessThan(
+      vi.mocked(console.error).mock.invocationCallOrder[recoverCall] ?? 0,
+    );
   });
 
   it("discloses carried-over baseline exclusions in the successful rebuild summary (#7194)", async () => {

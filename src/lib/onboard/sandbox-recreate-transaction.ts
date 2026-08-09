@@ -82,6 +82,19 @@ export function retireReplacedSandboxWorkload(
   if (source.workload?.shared === true) {
     return { status: "skipped", reason: "shared-image" };
   }
+  if (!source.imageTag) {
+    return { status: "skipped", reason: "no-owned-image" };
+  }
+  if (
+    typeof source.openshellDriver !== "string" ||
+    source.openshellDriver.trim().length === 0 ||
+    source.workload?.schemaVersion !== 1 ||
+    source.workload.kind !== "legacy-dockerfile" ||
+    source.workload.shared !== false ||
+    source.workload.reference !== source.imageTag
+  ) {
+    return { status: "skipped", reason: "authority-unproven" };
+  }
 
   const cleanupSource = providerCleanupSource(source);
   const providers = deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES;

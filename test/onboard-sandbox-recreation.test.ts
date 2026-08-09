@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -100,7 +101,7 @@ const { createSandbox } = require(${onboardPath});
   it.each([
     "balanced",
     "restricted",
-  ])("recreate-sandbox materializes and records the %s policy tier", {
+  ])("recreate-sandbox records the %s policy tier and late replacement identity", {
     timeout: 60_000,
   }, async (policyTier) => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -118,19 +119,31 @@ const { createSandbox } = require(${onboardPath});
 const runner = require(${runnerPath});
 require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-let _deleted = false;
+let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = []; let registeredSandbox = null;
+const sourceSandbox = {
+  name: "my-assistant",
+  gpuEnabled: false,
+  openshellDriver: "docker",
+  imageTag: "openshell/sandbox-from:source",
+  workload: {
+    schemaVersion: 1,
+    kind: "legacy-dockerfile",
+    reference: "openshell/sandbox-from:source",
+    shared: false,
+  },
+};
 runner.run = (command, opts = {}) => {
   _deleted = _deleted || _n(command).includes("sandbox delete");
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + _sandboxId].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
@@ -141,7 +154,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => registeredSandbox || sourceSandbox;
 registry.registerSandbox = (entry) => { registeredSandbox = entry; return true; };
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -152,6 +165,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
   _deleted = false;
+  _sandboxId = "sbx-8e6b10fd33";
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -210,6 +224,21 @@ const { createSandbox } = require(${onboardPath});
         payload.registeredSandbox?.policyTier === policyTier,
       "should create a sandbox and persist its tier before policy finalization",
     );
+    assert.ok(
+      !payload.commands.some((entry: CommandEntry) =>
+        entry.command.includes("docker rmi openshell/sandbox-from:source"),
+      ),
+      "must defer source image retirement until replacement registration is proven",
+    );
+    const sourceFingerprint = createHash("sha256").update("sbx-4f2a91c0d7").digest("hex");
+    const replacementFingerprint = createHash("sha256").update("sbx-8e6b10fd33").digest("hex");
+    assert.match(payload.registeredSandbox?.lifecycleGeneration ?? "", /^[0-9a-f-]{36}$/);
+    assert.equal(
+      payload.registeredSandbox?.lifecycleLiveIdentityFingerprint,
+      replacementFingerprint,
+      "replacement registration must read the live identity after creation",
+    );
+    assert.notEqual(payload.registeredSandbox?.lifecycleLiveIdentityFingerprint, sourceFingerprint);
   });
   it("recreate-sandbox flag backs up and restores workspace state", {
     timeout: 60_000,
