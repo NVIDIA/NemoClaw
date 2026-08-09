@@ -247,6 +247,35 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
     expect(output).toContain("http://127.0.0.1:8642/v1");
   });
 
+  it("announces the sandbox's own API port from an API-kind dashboard", () => {
+    const hermesApiDashboard = makeAgent({
+      name: "hermes",
+      displayName: "Hermes Agent",
+      forwardPort: 18789,
+      forward_ports: [18789, 8642],
+      healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 90 },
+      dashboard: {
+        kind: "api",
+        label: "OpenAI-compatible API",
+        path: "/v1",
+        healthPath: "/health",
+        auth: "none",
+      },
+    });
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8645 });
+
+    printDashboardUi("hermes-api-box", null, hermesApiDashboard, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent OpenAI-compatible API");
+    expect(output).toContain("Port 8645 must be forwarded before connecting.");
+    expect(output).toContain("http://127.0.0.1:8645/");
+    expect(output).not.toContain("http://127.0.0.1:8642/");
+  });
+
   it("labels a non-health-probe secondary forward port as 'additional port' rooted at /", () => {
     const dualAgent = makeAgent({
       name: "experimental",

@@ -483,7 +483,7 @@ export function printDashboardUi(
     }
     printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
-    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls, sandboxName);
     return;
   }
 
