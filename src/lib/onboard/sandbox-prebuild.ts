@@ -39,6 +39,8 @@ export interface SandboxPrebuildInput {
   sandboxName: string;
   dockerDriverGateway: boolean;
   origin: SandboxBuildContextOrigin;
+  /** The selected generated Dockerfile cannot be built by OpenShell's classic Docker builder. */
+  requiresLocalBuildKit?: boolean;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
@@ -192,7 +194,10 @@ export function sandboxLocalImageRef(
  * Build a NemoClaw-generated staged context with the shared local container
  * runtime. Docker uses BuildKit; the portable profile uses native rootless
  * Podman. User-supplied Dockerfiles stay on the OpenShell gateway builder trust
- * boundary, and any failure preserves that original build path.
+ * boundary. Generated OpenClaw and Hermes Dockerfiles fail closed when their
+ * required local BuildKit build cannot complete because the gateway's classic
+ * Docker builder cannot preserve their archive-mode, per-step network, and
+ * mount contracts.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
  */
@@ -202,7 +207,16 @@ export async function prebuildSandboxImageIfEligible(
   const createArgs = [...input.createArgs];
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
+  const portable = isPortableExperimentalProfile(env);
+  const requiresLocalBuildKit =
+    input.origin === "generated" &&
+    input.requiresLocalBuildKit === true &&
+    input.dockerDriverGateway &&
+    !portable;
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
+    if (requiresLocalBuildKit) {
+      throw new Error("Local BuildKit is required for this generated sandbox image");
+    }
     return { createArgs, imageRef: null, imageId: null };
   }
   if (input.origin !== "generated") {
@@ -218,6 +232,9 @@ export async function prebuildSandboxImageIfEligible(
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
+    if (requiresLocalBuildKit) {
+      throw new Error("Local BuildKit requires the generated staged Dockerfile");
+    }
     return { createArgs, imageRef: null, imageId: null };
   }
   let trustedContext: TrustedStagedBuildContext | null;
@@ -225,12 +242,20 @@ export async function prebuildSandboxImageIfEligible(
     trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (requiresLocalBuildKit) {
+      throw new Error(`Local BuildKit could not inspect the staged build context: ${detail}`, {
+        cause: error,
+      });
+    }
     log(
       `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
     );
     return { createArgs, imageRef: null, imageId: null };
   }
   if (!trustedContext) {
+    if (requiresLocalBuildKit) {
+      throw new Error("Local BuildKit rejected the staged build context trust boundary");
+    }
     log(
       "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
     );
@@ -238,7 +263,6 @@ export async function prebuildSandboxImageIfEligible(
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
-  const portable = isPortableExperimentalProfile(env);
   const builderName = portable ? "rootless Podman" : "BuildKit";
   const buildImage = input.buildImage ?? createHostImageCommand(portable ? "podman" : "docker");
   log(`  Building sandbox image with ${builderName} (skips the slower in-gateway builder)...`);
@@ -257,6 +281,9 @@ export async function prebuildSandboxImageIfEligible(
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (requiresLocalBuildKit) {
+      throw new Error(`Local BuildKit build could not start: ${detail}`, { cause: error });
+    }
     log(
       `  Local ${builderName} build could not start (${detail}); using the gateway builder instead.`,
     );
@@ -265,6 +292,9 @@ export async function prebuildSandboxImageIfEligible(
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
+    if (requiresLocalBuildKit) {
+      throw new Error(`Local BuildKit build failed${detail}`);
+    }
     log(`  Local ${builderName} build failed${detail}; using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
   }
