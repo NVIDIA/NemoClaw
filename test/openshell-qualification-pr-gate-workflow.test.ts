@@ -32,12 +32,6 @@ function step(owner: WorkflowJob, name: string): WorkflowStep {
   return value;
 }
 
-function sparsePaths(owner: WorkflowJob, stepName: string): string[] {
-  const value = step(owner, stepName).with?.["sparse-checkout"];
-  assert(typeof value === "string", `${stepName} must declare sparse paths`);
-  return value.trim().split("\n");
-}
-
 describe("OpenShell qualification draft PR gate workflow", () => {
   it("validates the parsed trust boundary through an executable contract (#8590)", () => {
     const validation = spawnSync(
