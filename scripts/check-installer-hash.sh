@@ -80,8 +80,8 @@ sha256_file() {
 # sourceBoundary: NVIDIA/OpenShell owns the release assets and their published
 # digests; NemoClaw owns this independent verification of its local pin table.
 # In pull-request CI, this checker and its pin parser execute only from the
-# base-trusted checkout or the immutable bootstrap checkout, never from the PR
-# head; installer files from the PR head are treated strictly as input data.
+# base-trusted checkout. Installer files from the latest PR commit are input data
+# and are never sourced or executed.
 # whyNotSourceFix: an upstream release cannot validate which artifacts a
 # downstream installer consumes, so this comparison must remain in NemoClaw.
 # regressionTest: test/installer-hash-check.test.ts proves download failures and
@@ -105,10 +105,10 @@ check_openshell_release_assets() {
   # invalidState: target-controlled shell formatting hides, duplicates, or
   # mixes a release version while the trusted release-asset check still reports
   # success.
-  # sourceBoundary: this parser executes beside the checker only from the
-  # base-trusted checkout or immutable bootstrap, never from the PR head. It
-  # defines the accepted static shell subset; PR-head installers are input data
-  # only and are never sourced or executed.
+  # sourceBoundary: In pull-request CI, this parser and checker execute only
+  # from the base-trusted checkout. The parser defines the accepted static shell
+  # subset. Installer files from the latest PR commit are input data and are
+  # never sourced or executed.
   # whyNotSourceFix: installers need shell-native lookup before dependencies are
   # available, and sourcing target-controlled shell here would execute PR code.
   # regressionTest: test/installer-hash-check.test.ts covers resilient formatting

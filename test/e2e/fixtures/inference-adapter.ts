@@ -77,7 +77,7 @@ const MODEL_PROBE_TIMEOUT_MS = 30_000;
 const PUBLIC_NVIDIA_ALLOWED_HOSTS = ["integrate.api.nvidia.com"] as const;
 const SANDBOX_HOST_ALIAS = "host.openshell.internal";
 
-function normalizeMode(env: NodeJS.ProcessEnv): E2EInferenceMode {
+export function normalizeMode(env: NodeJS.ProcessEnv): E2EInferenceMode {
   const raw = env.NEMOCLAW_E2E_INFERENCE_MODE?.trim().toLowerCase();
   if (!raw) return "mock";
   if (raw === "mock" || raw === "internal-nvidia" || raw === "public-nvidia") return raw;
