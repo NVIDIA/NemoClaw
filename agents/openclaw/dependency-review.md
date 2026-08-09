@@ -36,7 +36,9 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   Because PR #6739's base SHA predates the action, only that PR can use the pinned bootstrap action from signed immutable commit `HOYALIM/NemoClaw@0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2`.
   Other PRs fail closed if their base lacks the action.
   The `main.yaml` workflow uses the merged action.
-  The action uses Node `22.19.0` and npm `10.9.4`.
+  The action uses Node.js `22.19.0`.
+  It downloads `npm@10.9.4` and verifies the archive against the committed Subresource Integrity (SRI) value.
+  It installs the verified archive in npm offline mode with lifecycle scripts disabled.
   It materializes the committed graph with scripts disabled.
   The action rejects any low-or-higher production advisory and verifies registry signatures.
   The PR and main workflows upload the resulting reports.
@@ -50,7 +52,7 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   Removal condition: delete the PR #6739 bootstrap checkout, its paired conditional audit step, and the bootstrap-specific test assertions in the first follow-up after this PR merges, before the next release tag; all later PRs must use the normal base-SHA action path.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --prefix agents/openclaw/wechat-runtime`.
 - Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.
-- Regression tests: `test/wechat-locked-install.test.ts` keeps the manifest runtime-lock paths and installer verification dispatch synchronized; `test/verify-wechat-runtime-lock.test.ts` proves the installed graph and OpenClaw peer-range compatibility fail closed; `test/wechat-runtime-audit-workflow.test.ts` keeps the Docker cache lifecycle, base-trusted required CI gate, evidence upload, audit threshold, bounded download-only signature retry, invalid-signature denial, and real npm-pack boundary synchronized.
+- Regression tests: `test/wechat-locked-install.test.ts` keeps the manifest runtime-lock paths and installer verification dispatch synchronized; `test/verify-wechat-runtime-lock.test.ts` proves the installed graph and OpenClaw peer-range compatibility fail closed; `test/wechat-runtime-audit-workflow.test.ts` keeps the Docker cache lifecycle, audit threshold, bounded download-only signature retry, invalid-signature denial, and real npm-pack boundary synchronized.
 
 The dedicated graph intentionally omits the plugin's `openclaw` peer dependency. The image already installs and integrity-verifies the reviewed OpenClaw runtime separately; auto-installing another OpenClaw copy would create a second unreviewed runtime graph.
 Disabling scripts also prevents transitive packages from executing lifecycle code during the trusted image build.

@@ -30,6 +30,7 @@ concurrency:
 jobs:
   get-pr-info:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       pr-info: ${{ steps.get-pr-info.outputs.pr-info }}
     steps:
@@ -39,6 +40,7 @@ jobs:
   select-llama-cpp-generic-gpu:
     needs: get-pr-info
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       selected: ${{ steps.changed.outputs.selected }}
     steps:
@@ -145,6 +147,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Resolve sandbox base image
         uses: ./.github/actions/resolve-sandbox-base-image
@@ -172,6 +176,7 @@ jobs:
           name: sandbox-test-image
           path: /tmp/sandbox-test-image.tar.gz
           retention-days: 1
+          if-no-files-found: error
 
       - name: Upload isolation image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -179,6 +184,7 @@ jobs:
           name: isolation-image
           path: /tmp/isolation-image.tar.gz
           retention-days: 1
+          if-no-files-found: error
 
   build-sandbox-images-arm64:
     runs-on: linux-arm64-cpu4
@@ -186,6 +192,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Resolve sandbox base image
         uses: ./.github/actions/resolve-sandbox-base-image
@@ -209,6 +217,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Download image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -229,6 +239,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -266,6 +278,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Download image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -286,6 +300,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Download image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

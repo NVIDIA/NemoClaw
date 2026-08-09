@@ -42,39 +42,9 @@
       "category": "compatibility"
     },
     {
-      "file": "test/candidate-compat.test.ts",
-      "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
-      "category": "security"
-    },
-    {
-      "file": "test/ci-cli-coverage-pi-tools-workflow.test.ts",
-      "test": "installs pinned fd and ripgrep before CLI coverage can invoke Pi",
-      "category": "security"
-    },
-    {
-      "file": "test/cloudflared-update-check-workflow.test.ts",
-      "test": "keeps automatic and on-demand update checks reachable and credential-free",
-      "category": "security"
-    },
-    {
       "file": "test/code-change-considerations.test.ts",
       "test": "keeps the stage-neutral questions in one concise owner",
       "category": "compatibility"
-    },
-    {
-      "file": "test/code-scanning-workflow.test.ts",
-      "test": "groups CodeQL action updates so Dependabot keeps the shared revision synchronized",
-      "category": "security"
-    },
-    {
-      "file": "test/code-scanning-workflow.test.ts",
-      "test": "keeps every CodeQL action on one immutable revision",
-      "category": "security"
-    },
-    {
-      "file": "test/code-scanning-workflow.test.ts",
-      "test": "runs only the trusted converter and keeps scanner status separate from conversion failures (#6959)",
-      "category": "security"
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
@@ -107,18 +77,8 @@
       "category": "security"
     },
     {
-      "file": "test/dcode-base-image-workflow.test.ts",
-      "test": "accepts every discovered publisher and rejects supply-chain mutations",
-      "category": "security"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-release-gate-workflow.test.ts",
-      "test": "replaces legacy target_ref dispatches with the validated checkout contract",
       "category": "security"
     },
     {
@@ -228,11 +188,6 @@
     },
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "derives test selectors from code and workflow jobs from workflow metadata",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects channels stop/start workflow-boundary drift for secret and artifact handling",
       "category": "security"
     },
@@ -327,21 +282,6 @@
       "category": "security"
     },
     {
-      "file": "test/macos-e2e-workflow-boundary.test.ts",
-      "test": "keeps secret-bearing live E2E on trusted main-branch code",
-      "category": "security"
-    },
-    {
-      "file": "test/macos-e2e-workflow-boundary.test.ts",
-      "test": "pins the macOS artifact publisher to an immutable action",
-      "category": "security"
-    },
-    {
-      "file": "test/macos-e2e-workflow-boundary.test.ts",
-      "test": "keeps gateway lifecycle coverage on supported Apple Silicon macOS",
-      "category": "compatibility"
-    },
-    {
       "file": "test/messaging-image-env-contract.test.ts",
       "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
       "category": "security"
@@ -407,18 +347,8 @@
       "category": "security"
     },
     {
-      "file": "test/openclaw-dependency-review.test.ts",
-      "test": "runs and gates the real patched-distribution harness only from trusted main code",
-      "category": "security"
-    },
-    {
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-locked-install.test.ts",
-      "test": "audits the same lock and rebuilds the base when its graph changes",
       "category": "security"
     },
     {
@@ -449,16 +379,6 @@
     {
       "file": "test/openclaw-locked-install.test.ts",
       "test": "rejects symlinked package manifests",
-      "category": "security"
-    },
-    {
-      "file": "test/reviewed-npm-audit-workflow.test.ts",
-      "test": "executes the trusted driver and helper against explicit target inputs",
-      "category": "security"
-    },
-    {
-      "file": "test/reviewed-npm-audit-workflow.test.ts",
-      "test": "runs PR audits from trusted code and keeps the main audit on the checked-in action",
       "category": "security"
     },
     {
@@ -562,118 +482,8 @@
       "category": "security"
     },
     {
-      "file": "test/pr-limit-policy.test.ts",
-      "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "does not persist checkout credentials in PR or main jobs",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "does not run npm lifecycle scripts during CI dependency installs",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "folds hermetic E2E support and Ollama proxy coverage into existing Vitest lanes",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "keeps the installer verifier inside the trusted composite action",
-      "category": "security"
-    },
-    {
-      "file": "test/openshell-e2e-qualification-workflow.test.ts",
-      "test": "keeps installer verification independent from full E2E qualification",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "keeps the trusted test-size guard closed around budget policy changes",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "pins downloaded CI tooling to reviewed integrity",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "publishes coverage only from same-repository code (#6692)",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "records the Dependabot DCO bypass as a successful required job",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "reruns installer hash verification after a pull request base retarget",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "reuses the same shared CI actions in PR and main workflows",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "routes only code-changing PRs through the code-check path",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "runs pull request installer verification from immutable trusted code",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "preserves repository validation file routing, command scopes, and compatibility aliases",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "runs the source-shape guard for root and co-located tests",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
-      "test": "scopes pre-push typechecks to project and transitive inputs",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/regression-e2e-workflow.test.ts",
-      "test": "prepares every discovered non-hermetic Vitest job before execution (#6692)",
-      "category": "security"
-    },
-    {
-      "file": "test/regression-e2e-workflow.test.ts",
-      "test": "runs the OpenClaw custom-plugin lifecycle and EXDEV guard in a secret-free lane",
-      "category": "security"
-    },
-    {
-      "file": "test/regression-e2e-workflow.test.ts",
-      "test": "runs WhatsApp compact QR through Vitest instead of the retired shell script",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/regression-e2e-workflow.test.ts",
-      "test": "stages the public NVIDIA key for the Model Router's NVIDIA credential",
-      "category": "security"
-    },
-    {
       "file": "test/release-latest-tag-workflow.test.ts",
       "test": "binds latest promotion to the exact GitHub-verified tag object",
-      "category": "security"
-    },
-    {
-      "file": "test/release-lkg-brev-image.test.ts",
-      "test": "keeps LKG dispatch inside the trusted secret boundary (#6772)",
       "category": "security"
     },
     {
@@ -754,36 +564,6 @@
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
-      "category": "security"
-    },
-    {
-      "file": "test/wechat-runtime-audit-workflow.test.ts",
-      "test": "makes the trusted audit required in PR and main workflows",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-main-retry-workflow.test.ts",
-      "test": "subscribes only to completed E2E workflow runs",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-main-retry-workflow.test.ts",
-      "test": "accepts only trusted main push attempts one through three",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-main-retry-workflow.test.ts",
-      "test": "uses one source-run concurrency identity and least privileges",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-main-retry-workflow.test.ts",
-      "test": "checks out trusted controller code and invokes the bounded helper",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-main-retry-workflow.test.ts",
-      "test": "runs the bounded evidence-upload step after evaluation failure",
       "category": "security"
     }
   ]

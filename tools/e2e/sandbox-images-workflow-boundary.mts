@@ -119,7 +119,6 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
   },
 ];
 
-
 type WorkflowRecord = Record<string, unknown>;
 
 export type SandboxImagesWorkflowStep = WorkflowRecord & {
@@ -754,6 +753,7 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
       name: "isolation-image",
       path: "/tmp/isolation-image.tar.gz",
       "retention-days": 1,
+      "if-no-files-found": "error",
     }) ||
     stepIndex(producer, save.name ?? "") >= stepIndex(producer, isolationUpload.name ?? "")
   ) {
@@ -985,6 +985,7 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
       name: "hermes-isolation-image",
       path: "/tmp/hermes-isolation-image.tar.gz",
       "retention-days": 1,
+      "if-no-files-found": "error",
     }) ||
     stepIndex(producer, save.name ?? "") >= stepIndex(producer, upload.name ?? "") ||
     stepIndex(producer, upload.name ?? "") >= stepIndex(producer, CLEANUP_STEP_NAME)

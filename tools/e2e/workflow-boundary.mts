@@ -52,6 +52,7 @@ import {
   validateTrustedHermesSwapWorkflow,
 } from "./trusted-hermes-swap-workflow-boundary.mts";
 import {
+  E2E_ACTION_PROVENANCE,
   UPLOAD_E2E_ARTIFACTS_ACTION,
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
@@ -189,25 +190,10 @@ const NO_IMAGE_E2E_JOBS = new Set(["staging-brev-launchable", SHARED_E2E_JOB_ID]
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
-const DOCKER_HUB_AUTH_PROVENANCE = {
-  reference:
-    "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928",
-  actionSha256: "cf93dcbd19589a56d1d58225fd6b3f8ad2180705662ff79a3407f340b5dba4c0",
-  scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
-} as const;
-const DOCKER_HUB_CLEANUP_PROVENANCE = {
-  reference:
-    "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3",
-  actionSha256: "8b7bf4bdb793ddd27aa9bab2e38157e91f0401148f6ba684acb516fc75e8d367",
-  scriptSha256: "4e5ce850c28f309b97695d61e11bcf1f154eae2b1d58c9697a3f49631c76abb4",
-} as const;
+const DOCKER_HUB_AUTH_PROVENANCE = E2E_ACTION_PROVENANCE.dockerAuth;
+const DOCKER_HUB_CLEANUP_PROVENANCE = E2E_ACTION_PROVENANCE.dockerCleanup;
 const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
-const HOST_DEPENDENCY_ACTION_PROVENANCE = {
-  reference:
-    "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75",
-  actionSha256: "1ac05a0e0a0159fa0850eb82fccb0704d0e49b15bc6f2d6e3b6bb04c7ab94923",
-  scriptSha256: "2e910ed80b5dcf9aaf94230371fe586376c46f6df8fcbd76229063cbda1852c8",
-} as const;
+const HOST_DEPENDENCY_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.hostDependencies;
 const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on push/manual dispatch. Its event set is
@@ -2797,7 +2783,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("hermes-e2e checkout step must set persist-credentials=false");
   }
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
@@ -4973,6 +4958,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
+  validateFreeStandingJobSelector(errors, jobs, "whatsapp-qr-compact", "whatsapp-qr-compact");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
   validateInferenceRoutingJob(errors, jobs);
   validateCloudInferenceJob(errors, jobs);

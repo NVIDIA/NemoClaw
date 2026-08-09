@@ -8,34 +8,24 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
+import { E2E_ACTION_PROVENANCE, E2E_JOB_POLICY } from "./workflow-boundary-policy.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(REPO_ROOT, ".github", "actions", "prepare-e2e", "action.yaml");
 
-const PREPARE_E2E_ACTION_PROVENANCE = {
-  reference: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75",
-  contentSha256: "1283c2eadfbc38ccb3b795684ba5ced9c89ae2040fffbb6b81854a9d1926802b",
-} as const;
+const PREPARE_E2E_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.prepareWorkspace;
 
 export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
 export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
-export const CLI_ARTIFACT_PRODUCER_JOB = "generate-matrix";
+export const CLI_ARTIFACT_PRODUCER_JOB = E2E_JOB_POLICY.cliArtifactProducer;
 const PREINSTALLED_E2E_JOBS = new Set(["staging-brev-launchable"]);
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 
-export const PREPARE_E2E_NO_BUILD_JOBS = new Set([
-  "bootstrap-install-smoke",
-  "llama-cpp-dgx-spark-qualification",
-  "managed-image-multiarch-startup",
-  "ollama-auth-proxy",
-  "shields-config",
-  "snapshot-commands",
-  "spark-install",
-]);
+export const PREPARE_E2E_NO_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareNoBuild);
 
-export const PREPARE_E2E_TRUSTED_BUILD_JOBS = new Set(["managed-image-protected-runtime"]);
+export const PREPARE_E2E_TRUSTED_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareTrustedBuild);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {

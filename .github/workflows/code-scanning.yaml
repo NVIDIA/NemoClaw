@@ -33,6 +33,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
@@ -51,15 +53,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: source
           persist-credentials: false
+          path: source
 
       - name: Check out the trusted ShellCheck converter
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}
           path: trusted-shellcheck-converter
-          persist-credentials: false
           sparse-checkout: |
             scripts/shellcheck-json1-to-sarif.mts
           sparse-checkout-cone-mode: false
