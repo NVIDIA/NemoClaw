@@ -24,6 +24,11 @@ import { cleanupTempDir, secureTempFile } from "./temp-files";
 // The CLI's exit code is no longer the success signal — the appearance of
 // the live forward in the list is.
 
+/**
+ * Returns the serialized forward list on success. An empty string means the
+ * list query succeeded with no entries; `null` means ownership is unknown
+ * because the query did not return a result.
+ */
 export type ForwardListFetcher = () => string | null;
 
 export type DetachedForwardSpawnRunner = (stdio: { stdout: number; stderr: number }) => {

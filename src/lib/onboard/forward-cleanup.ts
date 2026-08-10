@@ -10,6 +10,11 @@ export type ForwardStopRunner = (
   opts: { ignoreError?: boolean; suppressOutput?: boolean },
 ) => unknown;
 
+/**
+ * Returns the serialized forward list on success. An empty string means the
+ * list query succeeded with no entries; `null` means ownership is unknown
+ * because the query did not return a result.
+ */
 export type ForwardListRunner = (
   args: string[],
   opts: { ignoreError?: boolean; timeout?: number },
