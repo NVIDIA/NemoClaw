@@ -20,6 +20,7 @@ import {
   buildOllamaProbeOptions,
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  findReachableOllamaHost,
   getBootstrapOllamaModelOptions,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
@@ -86,6 +87,7 @@ describe("local inference helpers", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetOllamaHostCache();
     if (originalSandboxHostUrl === undefined) {
       delete process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
@@ -119,6 +121,29 @@ describe("local inference helpers", () => {
       "--max-time",
       "5",
       "http://host.docker.internal:11434/api/tags",
+    ]);
+  });
+
+  it("probes WSL loopback before Windows-host Ollama", () => {
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    const commands: string[][] = [];
+    const endpoints: string[] = [];
+
+    const host = findReachableOllamaHost((command) => {
+      commands.push([...command]);
+      const endpoint = command.at(-1) ?? "";
+      endpoints.push(endpoint);
+      return endpoint.includes("host.docker.internal") ? "ollama" : "";
+    });
+
+    expect(host).toBe("host.docker.internal");
+    expect(endpoints).toEqual([
+      "http://127.0.0.1:11434/api/tags",
+      "http://host.docker.internal:11434/api/tags",
+    ]);
+    expect(commands.map((command) => command.slice(2, 6))).toEqual([
+      ["--connect-timeout", "3", "--max-time", "5"],
+      ["--connect-timeout", "3", "--max-time", "5"],
     ]);
   });
 
@@ -562,6 +587,32 @@ describe("local inference helpers", () => {
       probeLabel: "auth proxy",
       endpoint: "http://127.0.0.1:11435/api/tags",
     });
+  });
+
+  it("skips the auth-proxy subprobe when connect probes it separately (#8669)", () => {
+    const commands: string[][] = [];
+    const result = probeLocalProviderHealth("ollama-local", {
+      skipOllamaAuthProxySubprobe: true,
+      loadOllamaProxyTokenImpl: () => {
+        throw new Error("auth-proxy token should not be loaded");
+      },
+      runCurlProbeImpl: (command) => {
+        commands.push([...command]);
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: '{"models":[]}',
+          stderr: "",
+          message: "HTTP 200",
+        };
+      },
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.at(-1)).toBe("http://127.0.0.1:11434/api/tags");
+    expect(result?.ok).toBe(true);
+    expect(result?.subprobes).toBeUndefined();
   });
 
   it("loads the Ollama proxy token only from the selected nondefault gateway root", async () => {
