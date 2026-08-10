@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
@@ -19,9 +20,11 @@ function verifyGateway(sandboxName: string): Promise<void> {
   return connectSandbox(sandboxName, { probeOnly: true });
 }
 
-function restoreProcessState(sandboxName: string): void {
+type SandboxStartupRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
+
+function restoreProcessState(sandboxName: string): SandboxStartupRecoveryResult {
   const { restoreSandboxStartupState } = require("./connect") as typeof import("./connect");
-  restoreSandboxStartupState(sandboxName);
+  return restoreSandboxStartupState(sandboxName);
 }
 
 function restoreLockedStartupAccess(sandboxName: string): void {
@@ -33,26 +36,60 @@ function restoreLockedStartupAccess(sandboxName: string): void {
 export interface SandboxStartupStateDeps {
   agent?: SandboxEntry["agent"];
   restoreLockedStartupAccess?: (sandboxName: string) => void;
-  restoreProcessState?: (sandboxName: string) => void;
+  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
 }
 
 export function restoreStoppedSandboxStartupState(
   sandboxName: string,
   deps: SandboxStartupStateDeps = {},
-): void {
+): SandboxStartupRecoveryResult {
   if ((deps.agent ?? "openclaw") === "openclaw") {
     (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
   }
-  (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
+  return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 
 export interface SandboxStartDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  restoreStartupState?: (sandboxName: string) => void;
+  restoreStartupState?: (sandboxName: string) => SandboxStartupRecoveryResult;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   log?: (message: string) => void;
+}
+
+function displayRecoveryDetail(value: unknown): string {
+  const detail = value instanceof Error && value.message ? value.message : String(value);
+  const { sanitizeSandboxStartupRecoveryDetail } =
+    require("./connect") as typeof import("./connect");
+  return sanitizeSandboxStartupRecoveryDetail(detail);
+}
+
+function startupRecoveryFailure(result: SandboxStartupRecoveryResult): string | null {
+  const check = result.processCheck;
+  if (!check.checked) return "managed agent gateway inspection did not complete";
+  if ("runtime" in check && check.runtime === "terminal") return null;
+  if ("secretBoundaryRefused" in check && check.secretBoundaryRefused) {
+    return `secret-boundary refusal: ${displayRecoveryDetail(check.secretBoundaryReason)}`;
+  }
+  if ("mcpReconciliationRefused" in check && check.mcpReconciliationRefused) {
+    return `MCP reconciliation refusal: ${displayRecoveryDetail(check.mcpReconciliationReason)}`;
+  }
+  if ("forwardRecoveryFailed" in check && check.forwardRecoveryFailed) {
+    return displayRecoveryDetail(check.forwardRecoveryFailureDetail);
+  }
+  if (check.wasRunning || check.recovered) return null;
+  const layer = result.recoveryFailureLayer ?? "managed agent gateway recovery";
+  return result.recoveryFailureDetail
+    ? `${layer}: ${displayRecoveryDetail(result.recoveryFailureDetail)}`
+    : `${layer}: the agent gateway did not recover`;
+}
+
+function preservedSandboxRecoveryError(sandboxName: string, detail: unknown): Error {
+  return new Error(
+    `Sandbox '${sandboxName}' started, but startup recovery failed: ${displayRecoveryDetail(detail)}. ` +
+      `The existing sandbox was preserved. Run \`${cliName()} ${sandboxName} recover\`, then retry \`${cliName()} ${sandboxName} start\`.`,
+  );
 }
 
 /**
@@ -93,7 +130,14 @@ export async function startSandbox(
         restoreStoppedSandboxStartupState(sandboxNameToRestore, {
           agent: resolved.sandbox.agent,
         }));
-    restoreStartupState(name);
+    let recovery: SandboxStartupRecoveryResult;
+    try {
+      recovery = restoreStartupState(name);
+    } catch (error) {
+      throw preservedSandboxRecoveryError(name, error);
+    }
+    const failure = startupRecoveryFailure(recovery);
+    if (failure) throw preservedSandboxRecoveryError(name, failure);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
   });
