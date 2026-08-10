@@ -38,7 +38,7 @@ import {
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import { redact } from "../../security/redact";
+import { redact, redactFull } from "../../security/redact";
 import {
   isSandboxReady,
   isTerminalSandboxPhase,
@@ -84,16 +84,30 @@ import {
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   type ManagedGatewayControlCompletion,
+  type ManagedGatewayRecoveryFailure,
+  pinnedManagedGatewayProbeFailure,
   resolveSandboxDashboardPort,
+  type SandboxProcessRecoveryOptions,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
-export { runConnectAutoPairApprovalPass };
+export { pinnedManagedGatewayProbeFailure, runConnectAutoPairApprovalPass };
 
 export type SandboxConnectOptions = {
+  /** Immutable direct-container identity retained by lifecycle `start`. */
+  expectedContainerId?: string;
   probeOnly?: boolean;
+  /** Internal recovery guard used by `start`; this is not a CLI flag. */
+  preserveContainer?: boolean;
 };
+
+export type SandboxStartupRecoveryOptions = Omit<
+  SandboxProcessRecoveryOptions,
+  "preserveContainer" | "quiet"
+>;
+export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses>;
+export type SandboxStartupManagedGatewayRecoveryFailure = ManagedGatewayRecoveryFailure;
 
 type SpawnLikeResult = {
   status: number | null;
@@ -235,7 +249,39 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
-async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
+function exitOnPreservedStartupRecoveryFailure(
+  sandboxName: string,
+  agentName: string,
+  layer: "managed gateway health" | "managed supervisor" | "OpenShell readiness",
+  detail: unknown,
+): never {
+  const sanitizedDetail = sanitizeSandboxStartupRecoveryDetail(
+    String(detail ?? "startup recovery failed"),
+  );
+  console.error(
+    `  Probe failed: ${agentName} startup recovery in '${sandboxName}' failed during ${layer}: ${sanitizedDetail}.`,
+  );
+  console.error(
+    `  The existing sandbox was preserved. Run \`${CLI_NAME} ${sandboxName} recover\` and retry \`${CLI_NAME} ${sandboxName} start\`.`,
+  );
+  process.exit(1);
+}
+
+export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
+  return redactFull(raw)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 240);
+}
+
+async function runSandboxConnectProbe(
+  sandboxName: string,
+  {
+    expectedContainerId,
+    preserveContainer = false,
+  }: Pick<SandboxConnectOptions, "expectedContainerId" | "preserveContainer"> = {},
+): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
@@ -256,10 +302,42 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
+    expectedContainerId,
+    preserveContainer,
     onRecoveryFailureLayer: (layer) => {
       recoveryFailureLayer = layer;
     },
   });
+  if ("managedSupervisorUnavailable" in processCheck && processCheck.managedSupervisorUnavailable) {
+    exitOnPreservedStartupRecoveryFailure(
+      sandboxName,
+      agentName,
+      "managed supervisor",
+      "managedSupervisorFailureDetail" in processCheck
+        ? processCheck.managedSupervisorFailureDetail
+        : "the managed supervisor did not become available",
+    );
+  }
+  if ("managedGatewayProbeFailed" in processCheck && processCheck.managedGatewayProbeFailed) {
+    exitOnPreservedStartupRecoveryFailure(
+      sandboxName,
+      agentName,
+      "managed gateway health",
+      "managedGatewayProbeFailureDetail" in processCheck
+        ? processCheck.managedGatewayProbeFailureDetail
+        : "the authenticated managed gateway health probe did not pass",
+    );
+  }
+  if ("openshellReadinessFailed" in processCheck && processCheck.openshellReadinessFailed) {
+    exitOnPreservedStartupRecoveryFailure(
+      sandboxName,
+      agentName,
+      "OpenShell readiness",
+      "openshellReadinessFailureDetail" in processCheck
+        ? processCheck.openshellReadinessFailureDetail
+        : "the sandbox did not become ready in OpenShell",
+    );
+  }
   if (!processCheck.checked) {
     console.error(
       `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
@@ -925,8 +1003,15 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
-export function restoreSandboxStartupState(sandboxName: string): void {
-  checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+export function restoreSandboxStartupState(
+  sandboxName: string,
+  options: SandboxStartupRecoveryOptions = {},
+): SandboxStartupRecoveryResult {
+  return checkAndRecoverSandboxProcesses(sandboxName, {
+    ...options,
+    preserveContainer: true,
+    quiet: true,
+  });
 }
 
 function restoreInteractiveTerminal(): void {
@@ -1227,7 +1312,7 @@ export async function prepareInteractiveSession(
 
 export async function connectSandbox(
   sandboxName: string,
-  { probeOnly = false }: SandboxConnectOptions = {},
+  { expectedContainerId, probeOnly = false, preserveContainer = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
     await runConnectEntryPreflight(sandboxName, { probeOnly: true });
@@ -1239,7 +1324,10 @@ export async function connectSandbox(
     // before any in-sandbox process or host-forward mutation. The readiness
     // polls are already owner-scoped; this also catches registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName);
+    return await runSandboxConnectProbe(sandboxName, {
+      expectedContainerId,
+      preserveContainer,
+    });
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);

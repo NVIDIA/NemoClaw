@@ -146,7 +146,7 @@ function startDockerSandbox(
   const containers = deps.findLabeledSandboxContainers(input.sandboxName);
   const paused = containers.find((container) => isPausedStatus(container.status));
   if (paused) {
-    const result = deps.unpauseContainer(paused.name, {
+    const result = deps.unpauseContainer(paused.containerId, {
       ignoreError: true,
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
@@ -157,7 +157,7 @@ function startDockerSandbox(
       };
     }
     input.log(`  Container '${paused.name}' unpaused.`);
-    return { exitCode: 0 };
+    return { exitCode: 0, containerId: paused.containerId };
   }
 
   // Docker health is an image-level signal, not the lifecycle authority for
@@ -175,12 +175,20 @@ function startDockerSandbox(
         `If the container was removed, run '${cliName()} ${input.sandboxName} rebuild' to recreate it.`,
     };
   }
+  if (!recovery.containerId) {
+    return {
+      exitCode: 1,
+      message:
+        `  Docker reported sandbox '${input.sandboxName}' running without its immutable ` +
+        "container identity; refusing startup recovery against an unpinned container.",
+    };
+  }
   if (recovery.via === "started-running-original") {
     input.log(`  Sandbox '${input.sandboxName}' is already running.`);
   } else {
     input.log(`  Container '${recovery.containerName ?? input.sandboxName}' started.`);
   }
-  return { exitCode: 0 };
+  return { exitCode: 0, containerId: recovery.containerId };
 }
 
 function stopDockerSandbox(

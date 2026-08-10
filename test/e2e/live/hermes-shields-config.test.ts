@@ -19,6 +19,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
+import { expectProtectedStopStartRecovery } from "./shields-restart-recovery-evidence.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-shields";
 const GATEWAY_NAME = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
@@ -27,6 +28,8 @@ const COMPATIBLE_MODEL = "hermes-shields-e2e-model";
 const CONFIG_PATH = "/sandbox/.hermes/config.yaml";
 const HERMES_DIR = "/sandbox/.hermes";
 const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
+const RESTART_WORKSPACE_MARKER = "/sandbox/.hermes/workspace/.shields-restart-recovery-marker";
+const RESTART_PAIRING_MARKER = "/sandbox/.hermes/pairing/.shields-restart-recovery-marker";
 const COMMAND_TIMEOUT_MS = 120_000;
 
 validateSandboxName(SANDBOX_NAME);
@@ -101,38 +104,6 @@ async function expectShieldsStatus(
   const status = await runShields(host, ["status"], artifactName);
   assertExitZero(status, `read Hermes shields ${expected} status`);
   expect(resultText(status)).toContain(`Shields: ${expected}`);
-}
-
-async function expectStopStartRecovery(
-  host: HostCliClient,
-  posture: "DOWN" | "UP",
-  artifactPrefix: string,
-): Promise<void> {
-  const stop = await host.nemoclaw([SANDBOX_NAME, "stop"], {
-    artifactName: `${artifactPrefix}-stop`,
-    env: commandEnv(),
-    redactionValues: [COMPATIBLE_API_KEY],
-    timeoutMs: 5 * 60_000,
-  });
-  assertExitZero(stop, `stop Hermes with shields ${posture.toLowerCase()}`);
-
-  const start = await host.nemoclaw([SANDBOX_NAME, "start"], {
-    artifactName: `${artifactPrefix}-start`,
-    env: commandEnv(),
-    redactionValues: [COMPATIBLE_API_KEY],
-    timeoutMs: 5 * 60_000,
-  });
-  assertExitZero(start, `start Hermes with shields ${posture.toLowerCase()}`);
-
-  const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
-    artifactName: `${artifactPrefix}-status`,
-    env: commandEnv(),
-    redactionValues: [COMPATIBLE_API_KEY],
-    timeoutMs: 5 * 60_000,
-  });
-  assertExitZero(status, `read Hermes status with shields ${posture.toLowerCase()}`);
-  expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
-  await expectShieldsStatus(host, posture, `${artifactPrefix}-shields-status`);
 }
 
 async function expectMutablePosture(sandbox: SandboxClient, cycle: number): Promise<void> {
@@ -210,7 +181,7 @@ async function completeShieldsCycle(
   await expectLockedPosture(sandbox, cycle);
 }
 
-test("hermes-shields-config: stopped Hermes restores under both Shields postures (#6381, #8112)", {
+test("hermes-shields-config: stopped Hermes restores under both Shields postures (#6381, #8112, #8662)", {
   timeout: HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -236,6 +207,8 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
       "shields-up establishes the root-owned locked posture",
       "start restores a stopped Hermes sandbox while shields are up",
       "start restores a stopped Hermes sandbox while shields are down",
+      "protected restart preserves the exact container, registry inference selection, workspace marker, Shields receipt, and configuration seals",
+      "public start returns with a current PID 1 lease, authenticated managed health, Ready status, and required host-forward health",
       "each successful shields-down returns only after inference.local serves the configured model",
       "a second down/up cycle completes without corrupting config state",
     ],
@@ -354,11 +327,49 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
   const configHashBefore = triggerLines.at(-1) ?? "";
   expect(configHashBefore).toMatch(/^[0-9a-f]{64}$/);
 
+  const restartWorkspaceMarker = await sandboxShell(
+    sandbox,
+    `umask 077; mkdir -p ${HERMES_DIR}/workspace ${HERMES_DIR}/pairing; printf '%s\n' 'nemoclaw-8662-hermes-restart-state' > ${RESTART_WORKSPACE_MARKER}; printf '%s\n' 'nemoclaw-8662-hermes-pairing-state' > ${RESTART_PAIRING_MARKER}`,
+    "seed-restart-workspace-marker",
+  );
+  assertExitZero(restartWorkspaceMarker, "seed Hermes restart workspace marker");
+
   progress.phase("complete first shields cycle");
   await completeShieldsCycle(host, sandbox, 1);
 
   progress.phase("restart Hermes with shields up");
-  await expectStopStartRecovery(host, "UP", "cycle-1-shields-up-start-recovery");
+  await expectProtectedStopStartRecovery({
+    agent: "hermes",
+    artifactPrefix: "cycle-1-shields-up-start-recovery",
+    artifacts,
+    configPaths: [
+      CONFIG_PATH,
+      `${HERMES_DIR}/.env`,
+      `${HERMES_DIR}/.config-hash`,
+      STATE_LOCK_PLAN_PATH,
+      RESTART_PAIRING_MARKER,
+    ],
+    env: commandEnv(),
+    host,
+    posture: "UP",
+    posturePaths: [
+      "/sandbox",
+      HERMES_DIR,
+      CONFIG_PATH,
+      `${HERMES_DIR}/.env`,
+      `${HERMES_DIR}/.config-hash`,
+      `${HERMES_DIR}/workspace`,
+      `${HERMES_DIR}/pairing`,
+    ],
+    readShieldsStatus: (artifactName) => runShields(host, ["status"], artifactName),
+    redactionValues: [COMPATIBLE_API_KEY],
+    requiredForwards: [
+      { path: "/api/status", port: 18789 },
+      { path: "/health", port: 8642 },
+    ],
+    sandboxName: SANDBOX_NAME,
+    workspaceMarkerPath: RESTART_WORKSPACE_MARKER,
+  });
   await expectLockedPosture(sandbox, 1);
 
   progress.phase("unlock shields and restart Hermes");
@@ -371,7 +382,38 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
   await expectImmediateInferenceRoute(sandbox, 2);
   await expectShieldsStatus(host, "DOWN", "cycle-2-status-down");
   await expectMutablePosture(sandbox, 2);
-  await expectStopStartRecovery(host, "DOWN", "cycle-2-shields-down-start-recovery");
+  await expectProtectedStopStartRecovery({
+    agent: "hermes",
+    artifactPrefix: "cycle-2-shields-down-start-recovery",
+    artifacts,
+    configPaths: [
+      CONFIG_PATH,
+      `${HERMES_DIR}/.env`,
+      `${HERMES_DIR}/.config-hash`,
+      STATE_LOCK_PLAN_PATH,
+      RESTART_PAIRING_MARKER,
+    ],
+    env: commandEnv(),
+    host,
+    posture: "DOWN",
+    posturePaths: [
+      "/sandbox",
+      HERMES_DIR,
+      CONFIG_PATH,
+      `${HERMES_DIR}/.env`,
+      `${HERMES_DIR}/.config-hash`,
+      `${HERMES_DIR}/workspace`,
+      `${HERMES_DIR}/pairing`,
+    ],
+    readShieldsStatus: (artifactName) => runShields(host, ["status"], artifactName),
+    redactionValues: [COMPATIBLE_API_KEY],
+    requiredForwards: [
+      { path: "/api/status", port: 18789 },
+      { path: "/health", port: 8642 },
+    ],
+    sandboxName: SANDBOX_NAME,
+    workspaceMarkerPath: RESTART_WORKSPACE_MARKER,
+  });
   await expectMutablePosture(sandbox, 2);
 
   progress.phase("complete second shields cycle");
@@ -409,6 +451,8 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
       postTransitionInferenceRoute: true,
       shieldsDownStartRecovery: true,
       shieldsUpStartRecovery: true,
+      protectedRestartIdentityAndStatePreservation: true,
+      protectedRestartManagedRecoveryAndReadiness: true,
       secondCycle: true,
     },
   });

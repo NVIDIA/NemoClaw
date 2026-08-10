@@ -275,6 +275,7 @@ export function ensureSandboxPortForwardForPort(
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
 
+  if (!beforeStart()) return false;
   const stopResult = runOpenshell(["forward", "stop", String(port), sandboxName], {
     ignoreError: true,
     stdio: "ignore",
@@ -379,10 +380,20 @@ export function ensureSandboxPortForwardForPort(
   return settled && !occupied && acceptSuccessfulForward();
 }
 
-export function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
+export function ensureHermesDashboardPortForwardIfEnabled(
+  sandboxName: string,
+  options: SandboxForwardRecoveryOptions = {},
+): boolean | null {
   return ensureHermesDashboardPortForward(sandboxName, {
-    isPortForwardHealthy: isSandboxPortForwardHealthy,
-    ensurePortForward: ensureSandboxPortForwardForPort,
+    isPortForwardHealthy: (name, port) => {
+      const health = isSandboxPortForwardHealthy(name, port);
+      return health === true && options.afterSuccess && !options.afterSuccess() ? null : health;
+    },
+    ensurePortForward: (name, port) =>
+      ensureSandboxPortForwardForPort(name, port, {
+        afterSuccess: options.afterSuccess,
+        beforeStart: options.beforeStart,
+      }),
   });
 }
 
@@ -395,20 +406,33 @@ function getSandboxMessagingHostForward(
   return getActiveMessagingHostForward(plan);
 }
 
-export function ensureMessagingHostForwardHealthy(sandboxName: string): boolean | null {
+export function ensureMessagingHostForwardHealthy(
+  sandboxName: string,
+  options: SandboxForwardRecoveryOptions = {},
+): boolean | null {
   const forward = getSandboxMessagingHostForward(sandboxName);
   if (!forward) return null;
   const health = isSandboxPortForwardHealthy(sandboxName, forward.port);
-  if (health === true) return true;
+  if (health === true) return options.afterSuccess?.() ?? true;
   if (health === "occupied") return false;
-  return ensureSandboxPortForwardForPort(sandboxName, forward.port);
+  return ensureSandboxPortForwardForPort(sandboxName, forward.port, {
+    afterSuccess: options.afterSuccess,
+    beforeStart: options.beforeStart,
+  });
 }
 
 export function recoverMessagingHostForward(
   sandboxName: string,
-  { quiet }: { quiet: boolean },
+  {
+    afterSuccess,
+    beforeStart,
+    quiet,
+  }: { afterSuccess?: () => boolean; beforeStart?: () => boolean; quiet: boolean },
 ): boolean | null {
-  const recovered = ensureMessagingHostForwardHealthy(sandboxName);
+  const recovered = ensureMessagingHostForwardHealthy(sandboxName, {
+    afterSuccess,
+    beforeStart,
+  });
   if (!quiet && recovered === false) {
     console.error("  Messaging webhook port forward could not be re-established.");
   }
@@ -425,6 +449,7 @@ export function recoverMessagingHostForward(
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
   primaryPort: number,
+  options: SandboxForwardRecoveryOptions = {},
 ): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (!agent) return null;
@@ -443,12 +468,20 @@ export function ensureDeclaredAgentForwardPortsHealthy(
     if (skipSet.has(candidate)) continue;
     sawCovered = true;
     const health = isSandboxPortForwardHealthy(sandboxName, candidate);
-    if (health === true) continue;
+    if (health === true) {
+      if (options.afterSuccess?.() === false) allHealthy = false;
+      continue;
+    }
     if (health === "occupied") {
       allHealthy = false;
       continue;
     }
-    if (!ensureSandboxPortForwardForPort(sandboxName, candidate)) {
+    if (
+      !ensureSandboxPortForwardForPort(sandboxName, candidate, {
+        afterSuccess: options.afterSuccess,
+        beforeStart: options.beforeStart,
+      })
+    ) {
       allHealthy = false;
     }
   }
@@ -459,9 +492,16 @@ export function ensureDeclaredAgentForwardPortsHealthy(
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
-  { quiet }: { quiet: boolean },
+  {
+    afterSuccess,
+    beforeStart,
+    quiet,
+  }: { afterSuccess?: () => boolean; beforeStart?: () => boolean; quiet: boolean },
 ): boolean | null {
-  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort);
+  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort, {
+    afterSuccess,
+    beforeStart,
+  });
   if (!quiet && recovered === false) {
     console.error("  One or more agent-declared port forwards could not be re-established.");
   }

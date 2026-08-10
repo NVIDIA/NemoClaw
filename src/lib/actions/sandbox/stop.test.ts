@@ -19,6 +19,7 @@ function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
 
 function container(name: string, running: boolean) {
   return {
+    containerId: "a".repeat(64),
     name,
     status: running ? "Up 5 minutes" : "Exited (0) 2 hours ago",
     running,
@@ -275,6 +276,7 @@ describe("stopSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
+        containerId: "a".repeat(64),
         name: "openshell-my-sandbox",
         status: "Restarting (137) 2 seconds ago",
         running: false,
@@ -294,6 +296,7 @@ describe("stopSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
+        containerId: "a".repeat(64),
         name: "openshell-my-sandbox",
         status: "Up 5 minutes (Paused)",
         running: true,

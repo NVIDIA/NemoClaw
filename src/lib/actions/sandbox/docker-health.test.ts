@@ -24,7 +24,12 @@ function fixture({
   throwOnInspect?: boolean;
   throwOnPaused?: boolean;
   knownSandboxes?: string[];
-  labeledContainers?: Array<{ name: string; status: string; running: boolean }>;
+  labeledContainers?: Array<{
+    containerId: string;
+    name: string;
+    status: string;
+    running: boolean;
+  }>;
 } = {}) {
   const sandbox: Partial<SandboxEntry> = { name: "my-assistant", openshellDriver: driver };
   const runningNames = new Set(
@@ -44,6 +49,7 @@ function fixture({
         .map((name) => name.trim())
         .filter(Boolean)
         .map((name) => ({
+          containerId: "a".repeat(64),
           name,
           status: runningNames.has(name) ? "Up 1 minute" : "Exited (0) 1 minute ago",
           running: runningNames.has(name),
