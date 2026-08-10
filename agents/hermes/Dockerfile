@@ -13,7 +13,7 @@ ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.
 FROM scratch AS mcp-tool-discovery-runtime
-# Normalize bundle metadata so the build-context umask cannot make reviewed runtime files writable.
+# Set root ownership and read-only modes because scratch-stage COPY preserves source metadata.
 COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/
 COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
 

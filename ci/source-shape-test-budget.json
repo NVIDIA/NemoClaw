@@ -288,6 +288,11 @@
     },
     {
       "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "builds managed images when reviewed runtime bundle files are group-writable (#8665)",
+      "category": "security"
+    },
+    {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins reviewed packages and audits their lock outside image builds (#8253)",
       "category": "security"
     },

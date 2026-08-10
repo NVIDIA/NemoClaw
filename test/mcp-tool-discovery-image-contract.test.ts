@@ -11,11 +11,18 @@ import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
+const managedImagesWorkflowPath = path.join(repoRoot, ".github/workflows/managed-images.yaml");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const dockerfiles = [
   "Dockerfile",
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
+] as const;
+const reviewedRuntimeBundleFiles = [
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle",
 ] as const;
 
 function createCacheSeedFixture(): {
@@ -103,6 +110,22 @@ function createCacheSeedFixture(): {
 }
 
 describe("MCP tool discovery image contract", () => {
+  // source-shape-contract: security -- The PR image build must reproduce group-writable inputs before validating the immutable bundle boundary
+  it("builds managed images when reviewed runtime bundle files are group-writable (#8665)", () => {
+    const workflow = fs.readFileSync(managedImagesWorkflowPath, "utf8");
+    const metadataStep = workflow.indexOf(
+      "- name: Make reviewed runtime bundle files group-writable",
+    );
+    const buildStep = workflow.indexOf("- name: Build PR managed image locally");
+
+    expect(metadataStep).toBeGreaterThan(0);
+    expect(metadataStep).toBeLessThan(buildStep);
+    expect(workflow.slice(metadataStep, buildStep)).toContain("chmod 0664 \\");
+    for (const bundleFile of reviewedRuntimeBundleFiles) {
+      expect(workflow.slice(metadataStep, buildStep)).toContain(bundleFile);
+    }
+  });
+
   // source-shape-contract: security -- Exact package pins and the CI audit mapping protect the shipped runtime graph
   it("pins reviewed packages and audits their lock outside image builds (#8253)", () => {
     const packageRoot = path.join(repoRoot, "tools", "mcp-tool-discovery-runtime");
