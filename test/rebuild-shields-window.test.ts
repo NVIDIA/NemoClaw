@@ -8,8 +8,10 @@ const shieldsMock = vi.hoisted(() => ({
   shieldsDown: vi.fn(),
   shieldsUp: vi.fn(),
 }));
+const timerMock = vi.hoisted(() => ({ isShieldsTimerDeadlineExpired: vi.fn() }));
 
 vi.mock("../src/lib/shields", () => shieldsMock);
+vi.mock("../src/lib/state/mcp-lifecycle-lock/shields-timer-authority", () => timerMock);
 
 import {
   openBackupShieldsWindow,
@@ -23,6 +25,7 @@ import {
 describe("rebuild Shields window", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(false);
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -146,5 +149,25 @@ describe("rebuild Shields window", () => {
     expect(relockRebuildShieldsWindow("mutable-sandbox", window!, true, "nemoclaw")).toBe(true);
     expect(shieldsMock.shieldsUp).not.toHaveBeenCalled();
     expect(vi.mocked(console.log)).not.toHaveBeenCalled();
+
+    timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(true);
+    expect(
+      relockBackupShieldsWindow("mutable-sandbox", window!, true, {
+        operation: "backup-all",
+        reason: "backup",
+        retryCommand: "nemoclaw backup-all",
+        shieldsUpCommand: "nemoclaw mutable-sandbox shields up",
+      }),
+    ).toBe(true);
+    expect(shieldsMock.shieldsUp).not.toHaveBeenCalled();
+  });
+
+  it("settles an elapsed Shields timer before rebuild returns (#8697)", () => {
+    timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(true);
+    const window = { relocked: false, wasLocked: false };
+
+    expect(relockRebuildShieldsWindow("mutable-sandbox", window, true, "nemoclaw")).toBe(true);
+    expect(shieldsMock.shieldsUp).toHaveBeenCalledOnce();
+    expect(window.relocked).toBe(true);
   });
 });
