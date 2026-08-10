@@ -48,6 +48,7 @@ It does not attest that cleanup reversed every possible host change made by cand
 Run these checks as the `nvidia` account that the dispatcher uses:
 
 ```bash
+set -euo pipefail
 uname -m
 tr -d '\0' </proc/device-tree/model
 cat /etc/nv_tegra_release
@@ -238,16 +239,25 @@ The dispatcher invokes it after success, failure, cancellation, and timeout.
 The dispatcher also invokes it during startup when `device.lock` remains from an interrupted service process.
 
 Before destructive cleanup, the program discovers and validates the job-owned Docker volume and process identities.
+It accepts a helper or forward PID only when its environment has the exact job `HOME` and its command has one of these markers:
+
+- `ollama-auth-proxy.`
+- `openshell-gateway`
+- `openshell-forward`
+- `openshell forward`
+- `cloudflared`
+
 It merges them into a mode-`0600` private `<jobId>.cleanup.json` record on Colossus.
 The record survives retries so stale-lock recovery can clean and verify the same identities.
+The cleanup program must not execute OpenShell or any other executable installed in the job workspace.
 
 The destructive phase must perform these bounded actions:
 
-1. Use only the canonical job-local OpenShell installation to stop the named forwards, sandbox, and gateway.
-2. Stop only the recorded helper PIDs after verifying the process owner, command marker, and job `HOME`.
-3. Remove only the labeled sandbox containers, exact gateway container, recorded volumes, and reserved test image tags.
-4. Remove only the helper-service directory and `/var/tmp/nemoclaw-jetson-e2e/<validated-job-id>` workspace for the locked job.
-5. After workspace removal, verify that the allowlisted resources are absent, host OpenShell remains absent, and the host baseline matches.
+1. Stop recorded helper and forward PIDs after verifying the process owner, exact job `HOME`, and command marker.
+2. Remove the exact labeled sandbox containers and exact gateway container.
+3. Remove the recorded volumes and reserved test image tags.
+4. Remove the helper-service directory and `/var/tmp/nemoclaw-jetson-e2e/<validated-job-id>` workspace for the locked job.
+5. Independently verify that the allowlisted resources are absent, host OpenShell remains absent, and the host baseline matches.
 
 The cleanup program must be idempotent.
 It must treat an already absent allowlisted resource as success.
@@ -735,8 +745,11 @@ for volume in "${cleanup_volumes[@]}"; do
     -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
     nvidia@192.168.55.1 bash -s -- "$volume" <<'VERIFY_RECORDED_VOLUME'
 set -euo pipefail
-docker info >/dev/null
-if docker volume inspect "$1" >/dev/null 2>&1; then
+volume_names="$(docker volume ls --format '{{.Name}}')" || {
+  echo 'Unable to list Docker volumes' >&2
+  exit 1
+}
+if printf '%s\n' "$volume_names" | grep -Fqx -- "$1"; then
   echo "A recorded job-owned Docker volume remains: $1" >&2
   exit 1
 fi
@@ -771,22 +784,46 @@ if [ -e /var/tmp/nemoclaw-jetson-e2e ]; then
   test ! -L /var/tmp/nemoclaw-jetson-e2e
   test -z "$(find /var/tmp/nemoclaw-jetson-e2e -mindepth 1 -maxdepth 1 -print -quit)"
 fi
-test -z "$(docker ps -aq --filter label=openshell.ai/managed-by=openshell \
-  --filter label=openshell.ai/sandbox-name=e2e-jetson-nvmap)"
-! docker container inspect openshell-cluster-nemoclaw >/dev/null 2>&1
-! docker volume inspect openshell-cluster-nemoclaw >/dev/null 2>&1
+sandbox_container_output="$(docker ps -aq \
+  --filter label=openshell.ai/managed-by=openshell \
+  --filter label=openshell.ai/sandbox-name=e2e-jetson-nvmap)" || {
+  echo 'Unable to list labeled sandbox containers' >&2
+  exit 1
+}
+test -z "$sandbox_container_output"
+container_rows="$(docker container ls --all --no-trunc --format '{{.ID}}\t{{.Names}}')" || {
+  echo 'Unable to list Docker containers' >&2
+  exit 1
+}
+if printf '%s\n' "$container_rows" |
+  awk -F '\t' '$2 == "openshell-cluster-nemoclaw" { found = 1 } END { exit found ? 0 : 1 }'; then
+  echo 'The job-owned gateway container remains' >&2
+  exit 1
+fi
+volume_names="$(docker volume ls --format '{{.Name}}')" || {
+  echo 'Unable to list Docker volumes' >&2
+  exit 1
+}
+if printf '%s\n' "$volume_names" | grep -Fqx openshell-cluster-nemoclaw; then
+  echo 'The job-owned gateway volume remains' >&2
+  exit 1
+fi
 for proc_dir in /proc/[0-9]*; do
   [ -r "$proc_dir/environ" ] || continue
   tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
   cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
   case "$cmdline" in
-    *ollama-auth-proxy.*|*openshell-gateway*|*cloudflared*)
+    *ollama-auth-proxy.*|*openshell-gateway*|*openshell-forward*|*openshell\ forward*|*cloudflared*)
       echo "A job-owned helper process remains: ${proc_dir##*/}" >&2
       exit 1
       ;;
   esac
 done
-test -z "$(docker image ls --format '{{.Repository}}\t{{.Tag}}' |
+image_rows="$(docker image ls nemoclaw-sandbox-local --format '{{.Repository}}\t{{.Tag}}')" || {
+  echo 'Unable to list job-owned Docker images' >&2
+  exit 1
+}
+test -z "$(printf '%s\n' "$image_rows" |
   awk '$1 == "nemoclaw-sandbox-local" && index($2, "e2e-jetson-nvmap-") == 1 { print $1 ":" $2 }')"
 command -v node npm ollama
 ollama list >/dev/null
@@ -890,6 +927,16 @@ sudo rm -- \
   /var/lib/nemoclaw-jetson-dispatch/id_ed25519.pub
 sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/id_ed25519
 sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/id_ed25519.pub
+```
+
+Remove the cleanup executable and pinned SSH host-key file, then verify their absence:
+
+```bash
+sudo rm -- \
+  /usr/local/libexec/nemoclaw-jetson-cleanup \
+  /var/lib/nemoclaw-jetson-dispatch/known_hosts
+sudo test ! -e /usr/local/libexec/nemoclaw-jetson-cleanup
+sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/known_hosts
 ```
 
 After the required retention period, remove the private job state and logs.

@@ -336,6 +336,12 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(processRunner.mock.calls[1]![0].input).toContain(
       'for pid in "${recorded_process_ids[@]}"',
     );
+    expect(processRunner.mock.calls[1]![0].input).toContain("docker container ls --all --no-trunc");
+    expect(processRunner.mock.calls[1]![0].input).toContain(
+      "docker volume ls --format '{{.Name}}'",
+    );
+    expect(processRunner.mock.calls[1]![0].input).not.toContain("docker container inspect");
+    expect(processRunner.mock.calls[1]![0].input).not.toContain("docker volume inspect");
     expect(processRunner.mock.calls[1]![0].args).toEqual(
       expect.arrayContaining(["nvidia@192.168.55.1", "--", jobId]),
     );
@@ -567,7 +573,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     const directoryFsync = cleanupProgram.indexOf("fs.fsyncSync(directoryDescriptor)");
     const destructivePhase = cleanupProgram.indexOf("<<'JETSON_CLEANUP'");
     expect(cleanupProgram).toContain("sandbox_name=e2e-jetson-nvmap");
-    expect(cleanupProgram).toContain("gateway_name=nemoclaw");
+    expect(cleanupProgram).toContain("gateway_container=openshell-cluster-nemoclaw");
     expect(cleanupProgram).toContain("destination=nvidia@192.168.55.1");
     expect(cleanupProgram).toContain('if [ "$#" -ne 0 ]');
     expect(cleanupProgram).toContain('mapfile -t lock_lines <"$lock_file"');
@@ -577,6 +583,8 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram).toContain("ollama-auth-proxy.pid");
     expect(cleanupProgram).toContain('process_uid="$(awk');
     expect(cleanupProgram).toContain('grep -Fqx "HOME=$job_home"');
+    expect(cleanupProgram).toContain("*openshell-forward*");
+    expect(cleanupProgram).toContain("*openshell\\ forward*");
     expect(cleanupProgram).toContain('kill "$pid"');
     expect(cleanupProgram).toContain("label=openshell.ai/sandbox-name=$sandbox_name");
     expect(cleanupProgram).toContain("image_repository=nemoclaw-sandbox-local");
@@ -584,8 +592,12 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram.indexOf('docker image rm "$image"')).toBeLessThan(
       cleanupProgram.indexOf('rm -rf -- "$workspace"'),
     );
-    expect(cleanupProgram).toContain('"$job_home/.local/bin/openshell"');
-    expect(cleanupProgram).toContain("Refusing an OpenShell binary outside the job workspace");
+    expect(cleanupProgram).not.toContain("job_openshell");
+    expect(cleanupProgram).not.toContain('"$job_home/.local/bin/openshell"');
+    expect(cleanupProgram).toContain("docker container ls --all --no-trunc");
+    expect(cleanupProgram).toContain("docker volume ls --format '{{.Name}}'");
+    expect(cleanupProgram).not.toMatch(/if docker (?:container|volume) inspect/u);
+    expect(cleanupProgram).not.toContain("mapfile -t sandbox_containers < <(");
     expect(cleanupProgram).toContain("A host-level OpenShell binary remains after cleanup");
     expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-begin");
     expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-end");
@@ -622,7 +634,10 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(jetsonLiveTest).toContain(
       "for installed_command in nemoclaw openshell openshell-gateway openshell-sandbox",
     );
-    expect(cleanupProgram.indexOf("job_openshell sandbox delete")).toBeLessThan(
+    expect(cleanupProgram.indexOf('stop_recorded_pid "$pid"')).toBeLessThan(
+      cleanupProgram.indexOf('docker container rm --force "$container"'),
+    );
+    expect(cleanupProgram.indexOf('docker container rm --force "$container"')).toBeLessThan(
       cleanupProgram.indexOf('rm -rf -- "$workspace"'),
     );
   });
@@ -649,7 +664,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     const aggregateCleanupRecords = dispatcherRunbook.indexOf(
       "const cleanupName = /^[a-f0-9]{64}\\.cleanup\\.json$/",
     );
-    const verifyRecordedVolume = dispatcherRunbook.indexOf('docker volume inspect "$1"');
+    const verifyRecordedVolume = dispatcherRunbook.indexOf("docker volume ls --format '{{.Name}}'");
     const verifyRecordedProcess = dispatcherRunbook.indexOf('if [ -e "/proc/$1" ]');
     const stopDispatcher = dispatcherRunbook.indexOf(
       "sudo systemctl disable --now nemoclaw-jetson-dispatch.service",

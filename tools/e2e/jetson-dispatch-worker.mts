@@ -101,6 +101,7 @@ job_id="$1"
 cleanup_evidence_base64="$2"
 [[ "$job_id" =~ ^[a-f0-9]{64}$ ]]
 workspace="/var/tmp/nemoclaw-jetson-e2e/$job_id"
+job_home="$workspace/home"
 sandbox_name=e2e-jetson-nvmap
 gateway_name=nemoclaw
 recorded_volumes=()
@@ -131,19 +132,25 @@ if [ -n "$cleanup_rows" ]; then
 fi
 test ! -e "$workspace"
 test ! -L "$workspace"
-test -z "$(docker ps -aq \
+sandbox_container_output="$(docker ps -aq \
   --filter label=openshell.ai/managed-by=openshell \
   --filter "label=openshell.ai/sandbox-name=$sandbox_name")"
-if docker container inspect "openshell-cluster-$gateway_name" >/dev/null 2>&1; then
+if [ -n "$sandbox_container_output" ]; then
+  echo "A test-owned OpenShell sandbox container remains" >&2
+  exit 1
+fi
+container_rows="$(docker container ls --all --no-trunc --format '{{.ID}}\t{{.Names}}')"
+if printf '%s\n' "$container_rows" | awk -F '\t' -v name="openshell-cluster-$gateway_name" '$2 == name { found = 1 } END { exit found ? 0 : 1 }'; then
   echo "The test-owned OpenShell gateway container remains" >&2
   exit 1
 fi
-if docker volume inspect "openshell-cluster-$gateway_name" >/dev/null 2>&1; then
+volume_names="$(docker volume ls --format '{{.Name}}')"
+if printf '%s\n' "$volume_names" | grep -Fqx "openshell-cluster-$gateway_name"; then
   echo "The test-owned OpenShell gateway volume remains" >&2
   exit 1
 fi
 for volume in "${"${recorded_volumes[@]}"}"; do
-  if docker volume inspect "$volume" >/dev/null 2>&1; then
+  if printf '%s\n' "$volume_names" | grep -Fqx "$volume"; then
     echo "A recorded test-owned Docker volume remains" >&2
     exit 1
   fi
@@ -153,6 +160,17 @@ for pid in "${"${recorded_process_ids[@]}"}"; do
     echo "A recorded test-owned helper process remains" >&2
     exit 1
   fi
+done
+for proc_dir in /proc/[0-9]*; do
+  [ -r "$proc_dir/environ" ] && [ -r "$proc_dir/cmdline" ] || continue
+  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
+  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  case "$cmdline" in
+    *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*)
+      echo "A job-owned helper process remains" >&2
+      exit 1
+      ;;
+  esac
 done
 ` + PRESERVED_BASELINE_SCRIPT;
 

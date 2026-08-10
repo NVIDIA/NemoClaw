@@ -87,22 +87,33 @@ record_volume() {
 }
 
 record_container_volumes() {
-  local container="$1" volume
-  while IFS= read -r volume; do
-    [ -n "$volume" ] || continue
-    record_volume "$volume"
-  done < <(
+  local container="$1" volume volume_output
+  volume_output="$(
     docker container inspect --format \
       '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}' \
       "$container"
-  )
+  )" || {
+    echo "Unable to inspect a test-owned Docker container" >&2
+    exit 1
+  }
+  while IFS= read -r volume; do
+    [ -n "$volume" ] || continue
+    record_volume "$volume"
+  done <<<"$volume_output"
 }
 
-mapfile -t sandbox_containers < <(
+sandbox_container_output="$(
   docker ps -aq \
     --filter label=openshell.ai/managed-by=openshell \
     --filter "label=openshell.ai/sandbox-name=$sandbox_name"
-)
+)" || {
+  echo "Unable to list test-owned Docker containers" >&2
+  exit 1
+}
+sandbox_containers=()
+if [ -n "$sandbox_container_output" ]; then
+  mapfile -t sandbox_containers <<<"$sandbox_container_output"
+fi
 for container in "${sandbox_containers[@]}"; do
   [[ "$container" =~ ^[a-f0-9]{12,64}$ ]] || {
     echo "Refusing an invalid recorded Docker container ID" >&2
@@ -115,8 +126,19 @@ for container in "${sandbox_containers[@]}"; do
   esac
   record_container_volumes "$container"
 done
-if docker container inspect "$gateway_container" >/dev/null 2>&1; then
-  record_container_volumes "$gateway_container"
+container_rows="$(docker container ls --all --no-trunc --format '{{.ID}}\t{{.Names}}')" || {
+  echo "Unable to list Docker containers" >&2
+  exit 1
+}
+gateway_container_ids="$(
+  printf '%s\n' "$container_rows" | awk -F '\t' -v name="$gateway_container" '$2 == name { print $1 }'
+)"
+if [ -n "$gateway_container_ids" ]; then
+  if [[ "$gateway_container_ids" == *$'\n'* ]] || ! [[ "$gateway_container_ids" =~ ^[a-f0-9]{12,64}$ ]]; then
+    echo "Refusing an ambiguous test-owned gateway container" >&2
+    exit 1
+  fi
+  record_container_volumes "$gateway_container_ids"
 fi
 record_volume "$gateway_volume"
 
@@ -174,6 +196,18 @@ for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
   if [ -n "$pid" ]; then
     printf 'processId\t%s\n' "$pid"
   fi
+done
+for proc_dir in /proc/[0-9]*; do
+  [ -r "$proc_dir/status" ] && [ -r "$proc_dir/environ" ] && [ -r "$proc_dir/cmdline" ] || continue
+  process_uid="$(awk '/^Uid:/ { print $2; exit }' "$proc_dir/status")"
+  [ "$process_uid" = "$(id -u)" ] || continue
+  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
+  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  case "$cmdline" in
+    *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*)
+      printf 'processId\t%s\n' "${proc_dir##*/}"
+      ;;
+  esac
 done
 printf '%s\n' nemoclaw-cleanup-evidence-v1-end
 JETSON_DISCOVERY
@@ -252,7 +286,6 @@ workspace_root=/var/tmp/nemoclaw-jetson-e2e
 workspace="$workspace_root/$job_id"
 job_home="$workspace/home"
 sandbox_name=e2e-jetson-nvmap
-gateway_name=nemoclaw
 gateway_container=openshell-cluster-nemoclaw
 image_repository=nemoclaw-sandbox-local
 service_directory="/tmp/nemoclaw-services-$sandbox_name"
@@ -314,7 +347,7 @@ stop_recorded_pid() {
   }
   cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline")"
   case "$cmdline" in
-    *ollama-auth-proxy.* | *openshell-gateway* | *cloudflared*) ;;
+    *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*) ;;
     *) echo "Refusing to stop a recorded PID with an unexpected command" >&2; exit 1 ;;
   esac
   if ! tr '\000' '\n' <"/proc/$pid/environ" | grep -Fqx "HOME=$job_home"; then
@@ -335,113 +368,61 @@ stop_recorded_pid() {
   exit 1
 }
 
-openshell_bin=""
-openshell_install_complete=1
-for component in openshell openshell-gateway openshell-sandbox; do
-  component_path="$job_home/.local/bin/$component"
-  if [ -x "$component_path" ]; then
-    canonical_component="$(realpath -e "$component_path")"
-    case "$canonical_component" in
-      "$workspace"/*) ;;
-      *) echo "Refusing an OpenShell binary outside the job workspace" >&2; exit 1 ;;
-    esac
-  else
-    openshell_install_complete=0
-  fi
-done
-if [ "$openshell_install_complete" -eq 1 ]; then
-  openshell_bin="$job_home/.local/bin/openshell"
-fi
-
-job_openshell() {
-  HOME="$job_home" \
-    TMPDIR="$workspace/tmp" \
-    XDG_BIN_HOME="$job_home/.local/bin" \
-    XDG_CACHE_HOME="$job_home/.cache" \
-    XDG_CONFIG_HOME="$job_home/.config" \
-    XDG_DATA_HOME="$job_home/.local/share" \
-    XDG_STATE_HOME="$job_home/.local/state" \
-    PATH="$job_home/.local/bin:$workspace/npm-prefix/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    "$openshell_bin" "$@"
-}
-
-gateway_present=0
-if [ -n "$openshell_bin" ]; then
-  gateway_json="$(job_openshell gateway list -o json)"
-  gateway_state="$(printf '%s' "$gateway_json" | node -e '
-    const fs = require("node:fs");
-    const rows = JSON.parse(fs.readFileSync(0, "utf8"));
-    if (!Array.isArray(rows)) throw new Error("invalid gateway list");
-    process.stdout.write(rows.some((row) => row && row.name === "nemoclaw") ? "present" : "absent");
-  ')"
-  [ "$gateway_state" = present ] && gateway_present=1
-fi
-
-if [ "$gateway_present" -eq 1 ]; then
-  forward_list="$(job_openshell forward list --gateway "$gateway_name")"
-  while IFS= read -r port; do
-    [ -n "$port" ] || continue
-    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || exit 1
-    job_openshell forward stop "$port" "$sandbox_name"
-  done < <(
-    printf '%s\n' "$forward_list" | awk -v sandbox="$sandbox_name" \
-      '$1 == sandbox && $3 ~ /^[0-9]+$/ { print $3 }'
-  )
-  sandbox_names="$(job_openshell sandbox list --names -g "$gateway_name")"
-  if printf '%s\n' "$sandbox_names" | grep -Fqx "$sandbox_name"; then
-    job_openshell sandbox delete "$sandbox_name"
-  fi
-  sandbox_names="$(job_openshell sandbox list --names -g "$gateway_name")"
-  if printf '%s\n' "$sandbox_names" | grep -Fqx "$sandbox_name"; then
-    echo "The test-owned OpenShell sandbox remains" >&2
-    exit 1
-  fi
-  forward_list="$(job_openshell forward list --gateway "$gateway_name")"
-  if printf '%s\n' "$forward_list" | awk -v sandbox="$sandbox_name" \
-    '$1 == sandbox && $3 ~ /^[0-9]+$/ { found = 1 } END { exit found ? 0 : 1 }'; then
-    echo "A test-owned OpenShell forward remains" >&2
-    exit 1
-  fi
-  job_openshell gateway remove "$gateway_name" \
-    || job_openshell gateway destroy -g "$gateway_name"
-  gateway_json="$(job_openshell gateway list -o json)"
-  gateway_state="$(printf '%s' "$gateway_json" | node -e '
-    const fs = require("node:fs");
-    const rows = JSON.parse(fs.readFileSync(0, "utf8"));
-    if (!Array.isArray(rows)) throw new Error("invalid gateway list");
-    process.stdout.write(rows.some((row) => row && row.name === "nemoclaw") ? "present" : "absent");
-  ')"
-  if [ "$gateway_state" = present ]; then
-    echo "The test-owned OpenShell gateway remains" >&2
-    exit 1
-  fi
-fi
-
 for pid in "${recorded_process_ids[@]}"; do
   stop_recorded_pid "$pid"
 done
 
-mapfile -t sandbox_containers < <(
+sandbox_container_output="$(
   docker ps -aq \
     --filter label=openshell.ai/managed-by=openshell \
     --filter "label=openshell.ai/sandbox-name=$sandbox_name"
-)
+)" || {
+  echo "Unable to list test-owned Docker containers" >&2
+  exit 1
+}
+sandbox_containers=()
+if [ -n "$sandbox_container_output" ]; then
+  mapfile -t sandbox_containers <<<"$sandbox_container_output"
+fi
 for container in "${sandbox_containers[@]}"; do
   [[ "$container" =~ ^[a-f0-9]{12,64}$ ]] || exit 1
+  container_image="$(docker container inspect --format '{{.Config.Image}}' "$container")"
+  case "$container_image" in
+    "$image_repository:$sandbox_name-"*) ;;
+    *) echo "Refusing a sandbox container whose image is not test-owned" >&2; exit 1 ;;
+  esac
   docker container rm --force "$container"
 done
-if docker container inspect "$gateway_container" >/dev/null 2>&1; then
-  docker container rm --force "$gateway_container"
+container_rows="$(docker container ls --all --no-trunc --format '{{.ID}}\t{{.Names}}')" || {
+  echo "Unable to list Docker containers" >&2
+  exit 1
+}
+gateway_container_ids="$(
+  printf '%s\n' "$container_rows" | awk -F '\t' -v name="$gateway_container" '$2 == name { print $1 }'
+)"
+if [ -n "$gateway_container_ids" ]; then
+  if [[ "$gateway_container_ids" == *$'\n'* ]] || ! [[ "$gateway_container_ids" =~ ^[a-f0-9]{12,64}$ ]]; then
+    echo "Refusing an ambiguous test-owned gateway container" >&2
+    exit 1
+  fi
+  docker container rm --force "$gateway_container_ids"
 fi
+volume_names="$(docker volume ls --format '{{.Name}}')" || {
+  echo "Unable to list Docker volumes" >&2
+  exit 1
+}
 for volume in "${recorded_volumes[@]}"; do
-  if docker volume inspect "$volume" >/dev/null 2>&1; then
+  if printf '%s\n' "$volume_names" | grep -Fqx "$volume"; then
     docker volume rm "$volume"
   fi
 done
 
 list_test_owned_images() {
   local image_rows repository tag
-  image_rows="$(docker image ls "$image_repository" --format '{{.Repository}}\t{{.Tag}}')"
+  image_rows="$(docker image ls "$image_repository" --format '{{.Repository}}\t{{.Tag}}')" || {
+    echo "Unable to list test-owned Docker images" >&2
+    return 1
+  }
   while IFS=$'\t' read -r repository tag; do
     [ -n "$repository" ] || continue
     if [ "$repository" = "$image_repository" ] && [[ "$tag" =~ ^e2e-jetson-nvmap-[a-z0-9_.-]+$ ]]; then
@@ -468,15 +449,30 @@ fi
 
 test ! -e "$workspace"
 test ! -e "$service_directory"
-test -z "$(docker ps -aq \
+sandbox_container_output="$(docker ps -aq \
   --filter label=openshell.ai/managed-by=openshell \
-  --filter "label=openshell.ai/sandbox-name=$sandbox_name")"
-if docker container inspect "$gateway_container" >/dev/null 2>&1; then
+  --filter "label=openshell.ai/sandbox-name=$sandbox_name")" || {
+  echo "Unable to verify test-owned Docker container absence" >&2
+  exit 1
+}
+if [ -n "$sandbox_container_output" ]; then
+  echo "A test-owned sandbox container remains" >&2
+  exit 1
+fi
+container_rows="$(docker container ls --all --no-trunc --format '{{.ID}}\t{{.Names}}')" || {
+  echo "Unable to verify Docker container absence" >&2
+  exit 1
+}
+if printf '%s\n' "$container_rows" | awk -F '\t' -v name="$gateway_container" '$2 == name { found = 1 } END { exit found ? 0 : 1 }'; then
   echo "The test-owned gateway container remains" >&2
   exit 1
 fi
+volume_names="$(docker volume ls --format '{{.Name}}')" || {
+  echo "Unable to verify Docker volume absence" >&2
+  exit 1
+}
 for volume in "${recorded_volumes[@]}"; do
-  if docker volume inspect "$volume" >/dev/null 2>&1; then
+  if printf '%s\n' "$volume_names" | grep -Fqx "$volume"; then
     echo "A recorded test-owned Docker volume remains" >&2
     exit 1
   fi
@@ -487,7 +483,19 @@ for pid in "${recorded_process_ids[@]}"; do
     exit 1
   fi
 done
-if [ -n "$(list_test_owned_images)" ]; then
+for proc_dir in /proc/[0-9]*; do
+  [ -r "$proc_dir/environ" ] && [ -r "$proc_dir/cmdline" ] || continue
+  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
+  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  case "$cmdline" in
+    *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*)
+      echo "A job-owned helper process remains" >&2
+      exit 1
+      ;;
+  esac
+done
+remaining_job_images="$(list_test_owned_images)" || exit 1
+if [ -n "$remaining_job_images" ]; then
   echo "A test-owned Jetson image remains" >&2
   exit 1
 fi
