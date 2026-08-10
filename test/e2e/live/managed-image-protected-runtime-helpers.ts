@@ -153,13 +153,16 @@ diagnose_ollama() {
 
 system_service=0
 if command -v systemctl >/dev/null 2>&1 &&
-  { [ "$(id -u)" -eq 0 ] || [ "\${#sudo_prefix[@]}" -gt 0 ]; } &&
-  "\${sudo_prefix[@]}" systemctl cat ollama.service >/dev/null 2>&1; then
+  systemctl cat ollama.service >/dev/null 2>&1; then
   system_service=1
 fi
 
 if [ "$system_service" -eq 1 ]; then
   restart_mode=system
+  if [ "$(id -u)" -ne 0 ] && [ "\${#sudo_prefix[@]}" -eq 0 ]; then
+    echo 'Ollama system service is installed but cannot be restarted without root or passwordless sudo' >&2
+    exit 1
+  fi
   if ! "\${sudo_prefix[@]}" systemctl restart ollama.service; then
     echo 'Ollama system service restart failed' >&2
     diagnose_ollama

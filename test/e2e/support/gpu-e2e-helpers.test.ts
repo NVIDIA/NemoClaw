@@ -236,8 +236,46 @@ describe("GPU E2E helpers", () => {
         }),
       ).toThrow();
       const commandLog = readFileSync(calls, "utf8");
-      expect(commandLog).toContain("sudo -n systemctl cat ollama.service");
+      expect(commandLog).toContain("systemctl cat ollama.service");
       expect(commandLog).toContain("sudo -n systemctl restart ollama.service");
+      expect(commandLog).not.toContain("systemctl --user restart ollama.service");
+      expect(commandLog).not.toContain("setsid");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an installed Ollama system service without restart permission", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-unprivileged-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "id %s\\n" "$*" >>"$FAKE_CALLS"\nprintf "1000\\n"\n'],
+        ["sudo", 'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\nexit 1\n'],
+        [
+          "systemctl",
+          'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "cat ollama.service") exit 0 ;;\n  *) exit 1 ;;\nesac\n',
+        ],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["curl", "exit 0\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      expect(() =>
+        execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+          env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+          stdio: "pipe",
+        }),
+      ).toThrow();
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl cat ollama.service");
+      expect(commandLog).not.toContain("systemctl restart ollama.service");
       expect(commandLog).not.toContain("systemctl --user restart ollama.service");
       expect(commandLog).not.toContain("setsid");
     } finally {
