@@ -48,7 +48,7 @@ export type SandboxBridgeReachabilityReason =
   | "probe_timeout"
   | "veth_unsupported"
   | "docker_daemon_unreachable";
-export type SandboxBridgeRouteKind = "bridge_gateway" | "host_gateway";
+export type SandboxBridgeRouteKind = "bridge_gateway" | "host_gateway" | "portable_host_gateway";
 
 export interface DockerBridgeNetworkInfo {
   subnet?: string;
@@ -177,7 +177,7 @@ function buildOpenShellDockerRoute(
       networkName,
       subnet: network.subnet,
       gatewayIp: portableHostGatewayIp,
-      routeKind: "host_gateway",
+      routeKind: "portable_host_gateway",
       addHosts: [`${HOST_INTERNAL_NAME}:${portableHostGatewayIp}`],
     };
   }
@@ -467,6 +467,14 @@ export function formatSandboxBridgeUnreachableMessage(
       .join("\n");
   }
 
+  if (result.routeKind === "portable_host_gateway") {
+    return [
+      failLine(`Sandbox containers cannot reach the gateway at ${HOST_INTERNAL_NAME}:${port}.`),
+      `    The probe mapped ${HOST_INTERNAL_NAME} to the OpenShell Podman host gateway.`,
+      `    Restart Podman and the OpenShell gateway, then re-run \`${cliName()} onboard\`.`,
+    ].join("\n");
+  }
+
   if (result.routeKind === "host_gateway") {
     return [
       failLine(`Sandbox containers cannot reach the gateway at ${HOST_INTERNAL_NAME}:${port}.`),
@@ -518,7 +526,10 @@ const SILENT_UFW_AUTO_APPLY_REASONS = new Set<UfwAutoApplyResult["reason"]>([
 ]);
 
 function isRetriableHostGatewayFailure(reach: SandboxBridgeReachabilityResult): boolean {
-  return reach.routeKind === "host_gateway" && reach.reason === "tcp_failed";
+  return (
+    (reach.routeKind === "host_gateway" || reach.routeKind === "portable_host_gateway") &&
+    reach.reason === "tcp_failed"
+  );
 }
 
 function sleepMs(ms: number): Promise<void> {
