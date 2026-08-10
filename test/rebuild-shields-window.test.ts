@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const shieldsMock = vi.hoisted(() => ({
   isShieldsDown: vi.fn(),
@@ -23,6 +23,10 @@ import {
 } from "../src/lib/actions/sandbox/rebuild-shields";
 
 describe("rebuild Shields window", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(false);

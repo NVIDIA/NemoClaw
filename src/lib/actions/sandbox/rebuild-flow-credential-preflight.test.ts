@@ -582,6 +582,9 @@ describe("rebuildSandbox flow: credential preflight", () => {
       expect(output).not.toContain("NOUS_API_KEY");
       expect(output).not.toContain("nous-key-from-env");
       expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.registerHermesInferenceProviderSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+        harness.backupSandboxStateSpy.mock.invocationCallOrder[0]!,
+      );
     } finally {
       restoreEnv();
     }

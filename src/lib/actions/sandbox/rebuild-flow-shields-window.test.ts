@@ -23,7 +23,7 @@ describe("rebuild Shields window selection", () => {
     vi.clearAllMocks();
   });
 
-  it("opens the normal rebuild window through the Shields owner", () => {
+  it("opens the rebuild Shields window for a live sandbox", () => {
     const window = { relocked: false, wasLocked: true };
     mocks.openRebuildShieldsWindow.mockReturnValue(window);
 
@@ -35,7 +35,7 @@ describe("rebuild Shields window selection", () => {
     expect(mocks.isShieldsDown).not.toHaveBeenCalled();
   });
 
-  it("records stale locked state without lowering Shields", () => {
+  it("records Shields up for a stale sandbox without applying Shields down", () => {
     mocks.isShieldsDown.mockReturnValue(false);
 
     expect(openRebuildShieldsWindowForState("alpha", true)).toEqual({

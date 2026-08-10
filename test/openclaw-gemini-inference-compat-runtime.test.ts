@@ -256,7 +256,7 @@ function runPinnedRuntime(entrypoint: string, args: readonly string[]) {
 
 function parseJsonOutput(output: string): unknown {
   const jsonStart = output.indexOf("{");
-  if (jsonStart < 0) throw new Error(`OpenClaw did not emit JSON: ${output}`);
+  expect(jsonStart, `OpenClaw did not emit JSON: ${output}`).toBeGreaterThanOrEqual(0);
   return JSON.parse(output.slice(jsonStart));
 }
 
