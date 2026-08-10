@@ -35,6 +35,20 @@ const DISCOVERY_RUNTIME_ROOT = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runti
 const DISCOVERY_RUNTIME_PATH = `${DISCOVERY_RUNTIME_ROOT}/mcp-tool-discovery.mjs`;
 const DISCOVERY_EXPECTED_CONTRACT =
   '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}';
+const REVIEWED_DISCOVERY_RUNTIME_ROOT = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "tools",
+  "mcp-tool-discovery-runtime",
+  "reviewed-runtime-bundle",
+  "mcp-tool-discovery",
+);
+const REVIEWED_DISCOVERY_RUNTIME_FILES = [
+  ["BUNDLED_PACKAGES.json", "BUNDLED_PACKAGES.json"],
+  ["THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES.txt"],
+  ["mcp-tool-discovery.bundle", "mcp-tool-discovery.mjs"],
+] as const;
 const MANAGED_STARTUP_RUNTIME_PATH = "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
 
 function expectManagedRuntimeDiagnostic(dockerfile: string): void {
@@ -54,7 +68,17 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     discoveryStart,
   );
   expect(managedRuntimeStart).toBeGreaterThan(discoveryStart);
-  const functionSource = logicalInstruction.slice(0, discoveryStart).trim();
+  const permissionReplayStart = logicalInstruction.indexOf(
+    `if find -P ${DISCOVERY_RUNTIME_ROOT} -exec chown -h root:root '{}' +`,
+  );
+  expect(permissionReplayStart).toBeGreaterThan(0);
+  expect(permissionReplayStart).toBeLessThan(discoveryStart);
+  const functionSource = logicalInstruction.slice(0, permissionReplayStart).trim();
+  const permissionReplaySource = logicalInstruction
+    .slice(permissionReplayStart, discoveryStart)
+    .trim();
+  const treeSafetyStart = logicalInstruction.indexOf("discovery_unsafe=", discoveryStart);
+  expect(treeSafetyStart).toBeGreaterThan(discoveryStart);
   const discoverySource = logicalInstruction.slice(discoveryStart, managedRuntimeStart).trim();
 
   for (const fragment of [
@@ -68,6 +92,10 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
   }
 
   for (const assertion of [
+    `find -P ${DISCOVERY_RUNTIME_ROOT} -exec chown -h root:root '{}' +`,
+    `find -P ${DISCOVERY_RUNTIME_ROOT} -type d -exec chmod 0555 '{}' +`,
+    `find -P ${DISCOVERY_RUNTIME_ROOT} -type f -exec chmod 0444 '{}' +`,
+    'managed_image_command_failed mcp-tool-discovery-tree-permission-replay "$?"',
     `discovery_contract="$(node ${DISCOVERY_RUNTIME_PATH})" || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"`,
     "ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s",
     `discovery_unsafe="$(find -L ${DISCOVERY_RUNTIME_ROOT} \\( ! -user root -o -perm /022 \\) -print -quit)" || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"`,
@@ -85,8 +113,36 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
   const missingPath = path.join(tmp, "missing-runtime.cjs");
   const targetPath = path.join(tmp, "runtime-target.cjs");
   const linkPath = path.join(tmp, "runtime-link.cjs");
+  const permissionReplayRoot = path.join(tmp, "mcp-tool-discovery-runtime");
+  const permissionReplayPaths = REVIEWED_DISCOVERY_RUNTIME_FILES.map(([, installedName]) =>
+    path.join(permissionReplayRoot, installedName),
+  );
+  const permissionReplayBundlePath = path.join(permissionReplayRoot, "mcp-tool-discovery.mjs");
+  const externalPermissionTarget = path.join(tmp, "external-reviewed-artifact.json");
+  const externalPermissionLink = path.join(permissionReplayRoot, "external-reviewed-artifact.json");
   fs.writeFileSync(targetPath, "fixture\n", { mode: 0o444 });
   fs.symlinkSync(targetPath, linkPath);
+  fs.mkdirSync(permissionReplayRoot, { mode: 0o775 });
+  for (const [reviewedName, installedName] of REVIEWED_DISCOVERY_RUNTIME_FILES) {
+    const installedPath = path.join(permissionReplayRoot, installedName);
+    fs.copyFileSync(path.join(REVIEWED_DISCOVERY_RUNTIME_ROOT, reviewedName), installedPath);
+    fs.chmodSync(installedPath, 0o664);
+  }
+  fs.chmodSync(permissionReplayRoot, 0o775);
+  fs.copyFileSync(
+    path.join(REVIEWED_DISCOVERY_RUNTIME_ROOT, "BUNDLED_PACKAGES.json"),
+    externalPermissionTarget,
+  );
+  fs.chmodSync(externalPermissionTarget, 0o664);
+  fs.symlinkSync(externalPermissionTarget, externalPermissionLink);
+  const permissionReplayContents = new Map(
+    permissionReplayPaths.map((artifactPath) => [artifactPath, fs.readFileSync(artifactPath)]),
+  );
+  const permissionReplayForHost = permissionReplaySource
+    .replaceAll(DISCOVERY_RUNTIME_ROOT, '"$NEMOCLAW_TEST_DISCOVERY_ROOT"')
+    // The source contract pins root:root. Use the current identity so this
+    // extracted production command can also run on an unprivileged test host.
+    .replaceAll("root:root", '"$(id -u):$(id -g)"');
   const runDiscoveryChecks = ({
     discoveryOutput = DISCOVERY_EXPECTED_CONTRACT,
     discoveryStatus = 0,
@@ -166,8 +222,71 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
         },
       },
     );
+  const runPermissionReplay = (findStatus?: number) =>
+    spawnSync(
+      "sh",
+      [
+        "-c",
+        [
+          ...(findStatus === undefined ? [] : [`find() { return ${findStatus}; }`]),
+          functionSource,
+          permissionReplayForHost,
+          '"$NEMOCLAW_TEST_NODE" "$NEMOCLAW_TEST_DISCOVERY_BUNDLE"',
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          NEMOCLAW_TEST_DISCOVERY_BUNDLE: permissionReplayBundlePath,
+          NEMOCLAW_TEST_DISCOVERY_ROOT: permissionReplayRoot,
+          NEMOCLAW_TEST_NODE: process.execPath,
+          PATH: process.env.PATH ?? "",
+        },
+      },
+    );
 
   try {
+    const permissionReplayFailure = runPermissionReplay(43);
+    expect(permissionReplayFailure.status).toBe(1);
+    expect(permissionReplayFailure.stdout).toBe("");
+    expect(permissionReplayFailure.stderr).toBe(
+      "ERROR: managed image assertion failed: mcp-tool-discovery-tree-permission-replay exit-status=43\n",
+    );
+    expect(fs.statSync(path.join(permissionReplayRoot, "BUNDLED_PACKAGES.json")).mode & 0o777).toBe(
+      0o664,
+    );
+
+    const permissionReplay = runPermissionReplay();
+    expect(permissionReplay.status, permissionReplay.stderr).toBe(0);
+    expect(permissionReplay.stderr).toBe("");
+    expect(JSON.parse(permissionReplay.stdout)).toMatchObject({
+      protocol: 1,
+      ok: false,
+      detail: "tool discovery received invalid runtime arguments",
+    });
+    const expectedUid = process.getuid?.() ?? 0;
+    const expectedGid = process.getgid?.() ?? 0;
+    const permissionReplayDirectory = fs.statSync(permissionReplayRoot);
+    expect(permissionReplayDirectory.uid).toBe(expectedUid);
+    expect(permissionReplayDirectory.gid).toBe(expectedGid);
+    expect(permissionReplayDirectory.mode & 0o022).toBe(0);
+    expect(permissionReplayDirectory.mode & 0o777).toBe(0o555);
+    for (const artifactPath of permissionReplayPaths) {
+      const artifactHandle = fs.openSync(artifactPath, "r");
+      try {
+        const artifact = fs.fstatSync(artifactHandle);
+        expect(artifact.uid).toBe(expectedUid);
+        expect(artifact.gid).toBe(expectedGid);
+        expect(artifact.mode & 0o022).toBe(0);
+        expect(artifact.mode & 0o777).toBe(0o444);
+        expect(fs.readFileSync(artifactHandle)).toEqual(permissionReplayContents.get(artifactPath));
+      } finally {
+        fs.closeSync(artifactHandle);
+      }
+    }
+    expect(fs.lstatSync(externalPermissionLink).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(externalPermissionTarget).mode & 0o777).toBe(0o664);
+
     const bundleFailure = runDiscoveryChecks({
       discoveryOutput: "output must remain private",
       discoveryStatus: 23,
@@ -312,6 +431,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       `ERROR: managed image assertion failed: non-symlink path=${linkPath} uid=0 gid=0 type=symbolic link mode=777 symlink=yes\n`,
     );
   } finally {
+    fs.chmodSync(permissionReplayRoot, 0o755);
     fs.rmSync(tmp, { force: true, recursive: true });
   }
 }

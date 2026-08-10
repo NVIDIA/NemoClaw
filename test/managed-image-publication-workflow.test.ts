@@ -25,6 +25,7 @@ type Step = {
   run?: string;
   uses?: string;
   with?: Record<string, unknown>;
+  "working-directory"?: string;
 };
 
 type MatrixEntry = {
@@ -127,6 +128,13 @@ function step(job: Job, name: string): Step {
   );
 }
 
+function inlineNodeStdinValidator(source: string): string {
+  return required(
+    source.match(/if ! node -e '([\s\S]+?)' <<< "\$actual_discovery_contract"/u)?.[1],
+    "managed-image workflow is missing or has an incomplete inline Node validator",
+  ).trim();
+}
+
 function isStrictChildPath(root: string, candidate: string): boolean {
   const relative = path.relative(fs.realpathSync(root), fs.realpathSync(candidate));
   return (
@@ -150,6 +158,13 @@ function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
     "managed-image workflow is missing its all-agent PR build and runtime gate",
+  );
+}
+
+function stagingQaDeepCodeBuilder(workflow: Workflow): Job {
+  return required(
+    workflow.jobs?.["pr-staging-qa-deep-code"],
+    "managed-image workflow is missing its staging QA Deep Agents Code regression",
   );
 }
 
@@ -440,6 +455,9 @@ describe("complete managed-image publication workflow", () => {
     const prBuilder = managedPrBuilder(workflow);
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
+    const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
+    const build = step(prBuilder, "Build PR managed image locally");
+    const contract = step(prBuilder, "Validate exact PR managed image contract");
 
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
@@ -453,6 +471,10 @@ describe("complete managed-image publication workflow", () => {
       "langchain-deepagents-code",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
+    expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
+      steps.indexOf(step(prBuilder, "Checkout")),
+    );
+    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(build));
 
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
@@ -466,11 +488,125 @@ describe("complete managed-image publication workflow", () => {
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
-    expect(step(prBuilder, "Build PR managed image locally").with).toMatchObject({
+    expect(build.with).toMatchObject({
       platforms: "linux/amd64",
       load: true,
       push: false,
     });
+    const contractSource = required(contract.run, "PR managed image contract is missing");
+    expect(contractSource).toContain(
+      'docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id"',
+    );
+    expect(contractSource).toContain('find -L "$discovery_runtime"');
+    expect(contractSource).toContain('find -P "$discovery_runtime" ! -user root');
+    expect(contractSource).toContain("\\( ! -user root -o -perm /022 \\) -print -quit");
+    expect(contractSource).toContain("-type d ! -perm 0555");
+    expect(contractSource).toContain("-type f ! -perm 0444");
+    expect(contractSource).toContain('node "$discovery_runtime/mcp-tool-discovery.mjs"');
+    expect(contractSource).toContain('result = JSON.parse(require("node:fs").readFileSync(0');
+    expect(contractSource).toContain("record.protocol !== expected.protocol");
+    expect(contractSource).toContain("record.ok !== expected.ok");
+    expect(contractSource).toContain("record.detail !== expected.detail");
+    expect(contractSource).not.toContain(
+      '[ "$actual_discovery_contract" != "$expected_discovery_contract" ]',
+    );
+    const contractValidator = inlineNodeStdinValidator(contractSource);
+
+    const permissionDriftSource = required(
+      permissionDrift.run,
+      "reviewed discovery permission drift fixture is missing",
+    );
+    const permissionFixture = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-discovery-permission-drift-"),
+    );
+    const reviewedRoot = path.join(
+      permissionFixture,
+      "tools",
+      "mcp-tool-discovery-runtime",
+      "reviewed-runtime-bundle",
+      "mcp-tool-discovery",
+    );
+    const reviewedArtifacts = [
+      "BUNDLED_PACKAGES.json",
+      "THIRD_PARTY_LICENSES.txt",
+      "mcp-tool-discovery.bundle",
+    ];
+    const permissionDriftScript = path.join(permissionFixture, "permission-drift.sh");
+    fs.writeFileSync(permissionDriftScript, permissionDriftSource, { mode: 0o700 });
+    fs.mkdirSync(reviewedRoot, { recursive: true });
+    for (const artifact of reviewedArtifacts) {
+      const source = path.join(
+        repoRoot,
+        "tools",
+        "mcp-tool-discovery-runtime",
+        "reviewed-runtime-bundle",
+        "mcp-tool-discovery",
+        artifact,
+      );
+      const fixture = path.join(reviewedRoot, artifact);
+      fs.copyFileSync(source, fixture);
+      fs.chmodSync(fixture, 0o444);
+    }
+    try {
+      const drifted = spawnSync("bash", [permissionDriftScript], {
+        cwd: permissionFixture,
+        encoding: "utf8",
+      });
+      expect(drifted.status, drifted.stderr).toBe(0);
+      expect(drifted.stdout).toBe("");
+      expect(drifted.stderr).toBe("");
+      for (const artifact of reviewedArtifacts) {
+        expect(fs.statSync(path.join(reviewedRoot, artifact)).mode & 0o777).toBe(0o664);
+      }
+
+      const executableBundle = path.join(permissionFixture, "mcp-tool-discovery.mjs");
+      fs.copyFileSync(path.join(reviewedRoot, "mcp-tool-discovery.bundle"), executableBundle);
+      const bundleResult = spawnSync(process.execPath, [executableBundle], { encoding: "utf8" });
+      expect(bundleResult.status, bundleResult.stderr).toBe(0);
+      expect(JSON.parse(bundleResult.stdout)).toMatchObject({
+        protocol: 1,
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "tool discovery received invalid runtime arguments",
+      });
+      const acceptedContract = spawnSync(process.execPath, ["-e", contractValidator], {
+        encoding: "utf8",
+        input: bundleResult.stdout,
+      });
+      expect(acceptedContract.status, acceptedContract.stderr).toBe(0);
+      for (const rejectedOutput of [
+        '{"protocol":1,"ok":false,"detail":"wrong"}\n',
+        '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments","extra":NaN}\n',
+        '\uFEFF{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}\n',
+      ]) {
+        const rejectedContract = spawnSync(process.execPath, ["-e", contractValidator], {
+          encoding: "utf8",
+          input: rejectedOutput,
+        });
+        expect(rejectedContract.status).not.toBe(0);
+      }
+
+      const linkedArtifact = path.join(reviewedRoot, reviewedArtifacts[0]);
+      const externalArtifact = path.join(permissionFixture, "external-reviewed-artifact.json");
+      fs.unlinkSync(linkedArtifact);
+      fs.writeFileSync(externalArtifact, "{}\n", { mode: 0o444 });
+      fs.symlinkSync(externalArtifact, linkedArtifact);
+      const rejected = spawnSync("bash", [permissionDriftScript], {
+        cwd: permissionFixture,
+        encoding: "utf8",
+      });
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stdout).toBe("");
+      expect(rejected.stderr).toContain(
+        "ERROR: reviewed discovery permission fixture must be a regular non-symlink:",
+      );
+      expect(fs.statSync(externalArtifact).mode & 0o777).toBe(0o444);
+    } finally {
+      fs.rmSync(permissionFixture, { recursive: true, force: true });
+    }
+
     expect(step(prBuilder, "Exercise managed startup root stdin and hold").run).toContain(
       "run-managed-image-direct-e2e.ts",
     );
@@ -498,6 +634,96 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContract.run).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
+  });
+
+  it("rebuilds the staging QA base from exact source before validating the Deep Agents Code repair (#8665)", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const qaBuilder = stagingQaDeepCodeBuilder(workflow);
+    const steps = qaBuilder.steps ?? [];
+    const prCheckout = step(qaBuilder, "Checkout latest PR commit");
+    const baseCheckout = step(qaBuilder, "Checkout exact staging QA base source");
+    const drift = step(qaBuilder, "Reproduce staging discovery permission drift");
+    const baseBuild = step(qaBuilder, "Rebuild staging QA Deep Agents Code base from exact source");
+    const finalBuild = step(qaBuilder, "Build latest PR commit against reproduced staging QA base");
+    const contract = step(qaBuilder, "Validate staging QA final image contract");
+
+    expect(qaBuilder.if).toBe("github.event_name == 'pull_request'");
+    expect(qaBuilder["runs-on"]).toBe("ubuntu-22.04");
+    expect(qaBuilder["timeout-minutes"]).toBe(90);
+    expect(qaBuilder.permissions).toEqual({ contents: "read" });
+    expect(qaBuilder.env).toMatchObject({
+      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
+      STAGING_PRODUCER_SHA: "cd0cb2b89965d57cd3d7d97a30d4bdab26781b61",
+      STAGING_QA_SOURCE_SHA: "d097a22145859102c0495b0310de264b7a27624f",
+      STAGING_QA_RECORDED_INDEX_DIGEST:
+        "sha256:ceaa94a895ba5cb3f231074b97f9910df3ce9d375802cb1d21c777691e0feb43",
+      STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
+    });
+    expect(JSON.stringify(qaBuilder)).not.toContain(":latest");
+    expect(prCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      path: "candidate",
+      "persist-credentials": false,
+    });
+    expect(baseCheckout.with).toMatchObject({
+      ref: "${{ env.STAGING_QA_SOURCE_SHA }}",
+      path: "staging-qa-base-source",
+      "persist-credentials": false,
+    });
+    for (const action of steps.filter((candidate) => candidate.uses)) {
+      expect(action.uses, action.name).toMatch(fullShaAction);
+    }
+    expect(drift.run).toBe(
+      step(managedPrBuilder(workflow), "Reproduce reviewed discovery permission drift").run,
+    );
+    expect(drift["working-directory"]).toBe("candidate");
+    expect(steps.indexOf(prCheckout)).toBeLessThan(steps.indexOf(drift));
+    expect(steps.indexOf(drift)).toBeLessThan(steps.indexOf(baseBuild));
+    expect(steps.indexOf(baseBuild)).toBeLessThan(steps.indexOf(finalBuild));
+    expect(steps.indexOf(finalBuild)).toBeLessThan(steps.indexOf(contract));
+
+    const baseSource = required(baseBuild.run, "staging QA base build is missing");
+    expect(baseBuild.env?.DOCKER_BUILDKIT).toBe("1");
+    expect(baseSource).toContain(
+      '-f "$source_root/agents/langchain-deepagents-code/Dockerfile.base"',
+    );
+    expect(baseSource).toContain('-t "$STAGING_QA_BASE_IMAGE"');
+    expect(baseSource).toContain('"$source_root"');
+
+    const finalSource = required(finalBuild.run, "staging QA final build is missing");
+    expect(finalBuild["working-directory"]).toBe("candidate");
+    expect(finalSource).toContain("-f agents/langchain-deepagents-code/Dockerfile");
+    expect(finalSource).toContain('--build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE"');
+    expect(finalSource).toContain("--build-arg NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
+    expect(finalSource).toContain("--build-arg NEMOCLAW_INFERENCE_PROVIDER_ID=inference");
+    expect(finalSource).not.toContain("--build-arg NEMOCLAW_PROVIDER_KEY=");
+    expect(finalSource).toContain("--build-arg NEMOCLAW_UPSTREAM_PROVIDER=nvidia-nim");
+    expect(finalSource).toContain(
+      "--build-arg NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+    );
+    expect(finalSource).toContain("--build-arg NEMOCLAW_INFERENCE_API=openai-completions");
+    expect(finalSource).toContain("--build-arg NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in");
+    expect(finalSource).toContain('--build-arg NEMOCLAW_BUILD_ID="$STAGING_QA_SOURCE_SHA"');
+    expect(finalSource).toContain("--build-arg NEMOCLAW_DARWIN_VM_COMPAT=0");
+    expect(finalSource).toMatch(/-t "\$final_reference"\s+\\\n\s+\./u);
+
+    const contractSource = required(contract.run, "staging QA final contract is missing");
+    expect(contractSource).toMatch(
+      /if ! jq -n -e \\\n\s+--argjson base "\$base_layers" \\\n\s+--argjson final "\$final_layers"/u,
+    );
+    expect(contractSource).toContain("$final[.] == $base[.]");
+    expect(contractSource).toContain('find -P "$discovery_runtime" ! -user root');
+    expect(contractSource).toContain("\\( ! -user root -o -perm /022 \\) -print -quit");
+    expect(contractSource).toContain("-type d ! -perm 0555");
+    expect(contractSource).toContain("-type f ! -perm 0444");
+    expect(contractSource).toContain('node "$discovery_runtime/mcp-tool-discovery.mjs"');
+    expect(contractSource).toContain('result = JSON.parse(require("node:fs").readFileSync(0');
+    expect(contractSource).not.toContain('actual_discovery_contract" !=');
+    const mainContract = required(
+      step(managedPrBuilder(workflow), "Validate exact PR managed image contract").run,
+      "main PR managed-image contract is missing",
+    );
+    expect(inlineNodeStdinValidator(contractSource)).toBe(inlineNodeStdinValidator(mainContract));
   });
 
   it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
