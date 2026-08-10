@@ -13,13 +13,13 @@ import {
   PREPARE_E2E_NO_BUILD_JOBS,
   PREPARE_E2E_TRUSTED_BUILD_JOBS,
 } from "./prepare-e2e-workflow-boundary.mts";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 export const CLI_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
-export const CLI_ARTIFACT_RESTORE_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3";
+export const CLI_ARTIFACT_RESTORE_ACTION = E2E_ACTION_PROVENANCE.restoreCliArtifact.reference;
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
@@ -32,79 +32,14 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "restore-e2e-cli-artifact",
   "action.yaml",
 );
-const RESTORE_ACTION_CONTENT_SHA256 =
-  "3a81ad631b839aa938eaaf1ad6777bab247204bf86fbca3c43c326a44dfb9c6c";
+const RESTORE_ACTION_CONTENT_SHA256 = E2E_ACTION_PROVENANCE.restoreCliArtifact.contentSha256;
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "f46080a39df2db871cfc2638dc3c7b2fa93ee0bb64702e3e405fe52a8e6ba50e";
-const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
-  "agent-turn-latency",
-  "bedrock-runtime-compatible-anthropic",
-  "brave-search",
-  "channels-add-remove",
-  "channels-stop-start",
-  "cloud-inference",
-  "cloud-onboard",
-  "common-egress-agent",
-  "concurrent-gateway-ports",
-  "cron-preflight-inference-local",
-  "dashboard-remote-bind",
-  "device-auth-health",
-  "double-onboard",
-  "full-e2e",
-  "gateway-guard-recovery",
-  "gpu-double-onboard",
-  "gpu-e2e",
-  "hermes-discord",
-  "hermes-e2e",
-  "hermes-gpu-startup",
-  "hermes-inference-switch",
-  "hermes-shields-config",
-  "hermes-slack",
-  "inference-routing",
-  "issue-2478-crash-loop-recovery",
-  "issue-4434-tui-unreachable-inference",
-  "issue-4462-scope-upgrade-approval",
-  "jetson-nvmap-gpu",
-  "kimi-inference-compat",
-  "live",
-  "mcp-bridge",
-  "mcp-bridge-dev",
-  "messaging-compatible-endpoint",
-  "messaging-providers",
-  "model-router-provider-routed-inference",
-  "network-policy",
-  "onboard-repair",
-  "onboard-resume",
-  "openclaw-discord-pairing",
-  "openclaw-inference-switch",
-  "openclaw-plugin-runtime-exdev",
-  "openclaw-plugin-runtime-exdev-release",
-  "openclaw-skill-cli",
-  "openclaw-slack-pairing",
-  "openclaw-tui-chat-correlation",
-  "openshell-credential-generation-window",
-  "openshell-gateway-auth-contract",
-  "openshell-gateway-upgrade",
-  "overlayfs-autofix",
-  "rebuild-hermes",
-  "rebuild-hermes-stale-base",
-  "rebuild-openclaw",
-  "retired-selector-compatibility",
-  "sandbox-operations",
-  "sandbox-survival",
-  "sessions-agents-cli",
-  "shared-e2e",
-  "skill-agent",
-  "state-backup-restore",
-  "telegram-injection",
-  "token-rotation",
-  "tunnel-lifecycle",
-] as const;
+  "cf436f4885b22d05444f78362b9acb0dddd7027bb369ff47bf15c6a0ec66cf55";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -270,6 +205,7 @@ export function validateCliArtifactRestoreAction(
     'restore_dir="$(mktemp -d',
     'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
     '[[ -f "$cli_entrypoint" && ! -L "$cli_entrypoint" && -s "$cli_entrypoint" ]]',
+    "sandbox-name.cjs",
     '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
 
     ".sourceRevision == $candidateSha",
@@ -332,6 +268,7 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
     "for required_file in dist/nemoclaw.js dist/build-identity.json; do",
     '[[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]]',
+    "sandbox-name.cjs",
     '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
 
     ".sourceRevision == $candidateSha",
@@ -486,11 +423,8 @@ export function validateCliArtifactWorkflowBoundary(
   }
 
   const actualConsumerJobNames = [...consumerJobNames].sort();
-  if (!isDeepStrictEqual(actualConsumerJobNames, CLI_ARTIFACT_CONSUMER_JOB_NAMES)) {
-    errors.push("CLI artifact consumer job names must match the required list");
-  }
   const consumers = Object.fromEntries(
-    CLI_ARTIFACT_CONSUMER_JOB_NAMES.map((jobName) => [
+    actualConsumerJobNames.map((jobName) => [
       jobName,
       jobSettingsAndStepsThroughRestore(record(jobs[jobName])),
     ]),

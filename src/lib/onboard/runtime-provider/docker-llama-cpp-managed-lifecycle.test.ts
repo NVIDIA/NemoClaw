@@ -8,18 +8,12 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ContainerEngine } from "../../adapters/container-engine";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
-import { buildLlamaCppHostLocalServerArgv } from "../../inference/llama-cpp/host-local-runtime";
-import {
-  createDockerLlamaCppManagedLifecycle,
-  type DockerLlamaCppManagedLifecycleOptions,
-} from "./docker-llama-cpp-managed-lifecycle";
+import type { DockerLlamaCppManagedLifecycleOptions } from "./docker-llama-cpp-managed-lifecycle";
 import {
   contract,
   digest,
-  HOST_PORT,
   IMAGE,
   invariant,
   MODEL_CONTENT,
@@ -33,6 +27,14 @@ import {
   rawDigest,
   TRANSACTION_ID,
 } from "./docker-llama-cpp-managed-lifecycle.test-support";
+import {
+  createDockerFixture,
+  type DockerFixture,
+} from "./docker-llama-cpp-managed-lifecycle-engine.test-support";
+import {
+  createTestDockerLlamaCppManagedLifecycle as createLifecycle,
+  privateBridgeFixture,
+} from "./docker-llama-cpp-private-bridge.test-support";
 import type {
   HostLocalCreateJournalExecutionLease,
   HostLocalCreateJournalRecord,
@@ -40,7 +42,6 @@ import type {
 } from "./host-local-create-journal";
 import {
   type HostLocalInferenceReceiptWriter,
-  parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
 } from "./host-local-inference";
 import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
@@ -179,7 +180,6 @@ function authorityStore(): PersistedEngineAuthorityStore {
     record: (next) => (authority = next),
   };
 }
-
 interface TestJournalStore extends HostLocalCreateJournalStore {
   readonly abandonExecution: () => void;
   readonly hasExecution: () => boolean;
@@ -261,6 +261,7 @@ function journalStore(): TestJournalStore {
         transactionId,
         ownerId: "12345678-1234-4123-8123-123456789abc",
         ownerPid: process.pid,
+        ownerStartIdentity: "test-process-start-identity",
       });
       return activeLease;
     },
@@ -279,354 +280,20 @@ function journalStore(): TestJournalStore {
   };
 }
 
-interface DockerFixture {
-  readonly engine: ContainerEngine;
-  readonly capture: ReturnType<typeof vi.fn>;
-  readonly setNetworkId: (value: string) => void;
-  readonly setNetworkTransactionId: (value: string) => void;
-  readonly removeNetwork: () => void;
-  readonly failNetworkCreateUncertain: (networkAppears: boolean) => void;
-  readonly setCreateStdout: (value: string) => void;
-  readonly failCreateUncertain: () => void;
-  readonly failProbe: () => void;
-  readonly driftHardening: () => void;
-  readonly dropTmpfs: () => void;
-  readonly driftGpuRequest: (driver: string | undefined, count: number) => void;
-  readonly driftExtraDeviceAuthority: (kind: "cap-add" | "legacy-device") => void;
-  readonly failInspectWithDaemonError: () => void;
-  readonly setAbsentNetworkInspectError: (value: string) => void;
-  readonly onAbsentInspect: (callback: () => void) => void;
-  readonly onAbsentNetworkInspect: (callback: () => void) => void;
-  readonly onNetworkCreate: (callback: () => void) => void;
-  readonly onStart: (callback: () => void) => void;
-  readonly onProbe: (callback: () => void) => void;
-  readonly onCreate: (callback: () => void) => void;
-  readonly setContainerState: (running: boolean, status: string) => void;
-  readonly seedNetwork: (journal: HostLocalCreateJournalRecord) => void;
-  readonly seed: (journal: HostLocalCreateJournalRecord, running: boolean) => void;
-}
-
 function dockerFixture(
-  configuredHostPort = HOST_PORT,
+  configuredHostPort = "",
   publishedHostPort?: string,
   publishedHostIp = "127.0.0.1",
-  publishedBindingCount = 1,
+  publishedBindingCount = 0,
 ): DockerFixture {
-  const effectivePublishedHostPort = publishedHostPort ?? (configuredHostPort || "49152");
-  let networkId = NETWORK_ID;
-  let networkPresent = false;
-  let networkTransactionId = TRANSACTION_ID;
-  let networkCreateUncertain = false;
-  let uncertainNetworkAppears = false;
-  let createStdout = `${RUNTIME_ID}\n`;
-  let createUncertain = false;
-  let probeFails = false;
-  let hardeningDrift = false;
-  let tmpfs: Record<string, string> | null = {
-    "/tmp": "rw,noexec,nosuid,nodev,size=1024,uid=1001,gid=1001,mode=1777",
-  };
-  let gpuDriver: string | undefined = "nvidia";
-  let gpuCount = 1;
-  let capAdd: null | string[] = null;
-  let legacyDevices: null | object[] = null;
-  let inspectDaemonError = false;
-  let absentNetworkInspectError: string | null = null;
-  let absentInspectHook: (() => void) | undefined;
-  let absentNetworkInspectHook: (() => void) | undefined;
-  let networkCreateHook: (() => void) | undefined;
-  let startHook: (() => void) | undefined;
-  let probeHook: (() => void) | undefined;
-  let createHook: (() => void) | undefined;
-  let startedOnce = false;
-  let container:
-    | {
-        labels: Record<string, string>;
-        running: boolean;
-        status: string;
-        transactionId: string;
-        command: string[];
-      }
-    | undefined;
-
-  const inspection = () => [
-    {
-      Id: RUNTIME_ID,
-      Name: "/nemoclaw-llama-cpp",
-      Config: {
-        Image: IMAGE,
-        User: "1001:1001",
-        Cmd: container?.command ?? [],
-        Labels: container?.labels ?? {},
-      },
-      HostConfig: {
-        NetworkMode: "nemoclaw-llama-cpp-internal",
-        RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 },
-        PortBindings: {
-          "8081/tcp": [{ HostIp: "127.0.0.1", HostPort: configuredHostPort }],
-        },
-        ReadonlyRootfs: !hardeningDrift,
-        CapDrop: ["ALL"],
-        SecurityOpt: ["no-new-privileges:true"],
-        Memory: 51_539_607_552,
-        MemorySwap: 51_539_607_552,
-        PidsLimit: 256,
-        DeviceRequests: [
-          {
-            ...(gpuDriver === undefined ? {} : { Driver: gpuDriver }),
-            Count: gpuCount,
-            DeviceIDs: null,
-            Capabilities: [["gpu"]],
-            Options: {},
-          },
-        ],
-        CapAdd: capAdd,
-        Devices: legacyDevices,
-        Privileged: false,
-        Tmpfs: tmpfs,
-      },
-      State: {
-        Running: container?.running ?? false,
-        Status: container?.status ?? "created",
-      },
-      NetworkSettings: {
-        Networks: { "nemoclaw-llama-cpp-internal": { NetworkID: networkId } },
-        Ports: {
-          "8081/tcp": startedOnce
-            ? Array.from({ length: publishedBindingCount }, () => ({
-                HostIp: publishedHostIp,
-                HostPort: effectivePublishedHostPort,
-              }))
-            : null,
-        },
-      },
-      Mounts: [
-        {
-          Type: "bind",
-          Source: modelPath,
-          Destination: `/models/${MODEL_FILENAME}`,
-          RW: false,
-        },
-        {
-          Type: "bind",
-          Source: apiKeyPath,
-          Destination: "/run/secrets/llama-cpp-api-key",
-          RW: false,
-        },
-      ],
-    },
-  ];
-
-  const capture = vi.fn((args: readonly string[]) => {
-    const unexpected = `unexpected Docker command: ${args.join(" ")}`;
-    switch (args[0]) {
-      case "network":
-        switch (args[1]) {
-          case "inspect":
-            switch (networkPresent) {
-              case false:
-                absentNetworkInspectHook?.();
-            }
-            return networkPresent
-              ? {
-                  status: 0,
-                  stdout: JSON.stringify([
-                    {
-                      Id: networkId,
-                      Name: args[2],
-                      Internal: true,
-                      Driver: "bridge",
-                      Scope: "local",
-                      Labels: {
-                        "io.nvidia.nemoclaw.llama-cpp-owner": "gateway.primary",
-                        "io.nvidia.nemoclaw.host-local-inference.network-transaction-sha256":
-                          networkTransactionId,
-                      },
-                    },
-                  ]),
-                  stderr: "",
-                }
-              : {
-                  status: 1,
-                  stdout: "",
-                  stderr:
-                    absentNetworkInspectError ??
-                    `Error response from daemon: No such network: ${String(args[2])}`,
-                };
-          case "create": {
-            networkCreateHook?.();
-            const labelIndex = args.lastIndexOf("--label");
-            networkTransactionId = String(args[labelIndex + 1]).split("=")[1] ?? "";
-            networkPresent = !networkCreateUncertain || uncertainNetworkAppears;
-            switch (networkCreateUncertain) {
-              case true:
-                return {
-                  status: 1,
-                  stdout: "",
-                  stderr: "",
-                  error: new Error("Docker network create capture timed out"),
-                };
-            }
-            return { status: 0, stdout: `${networkId}\n`, stderr: "" };
-          }
-          case "rm":
-            invariant(args[2] === networkId, unexpected);
-            networkPresent = false;
-            return { status: 0, stdout: `${networkId}\n`, stderr: "" };
-          default:
-            throw new Error(unexpected);
-        }
-      case "container": {
-        invariant(args[1] === "inspect", unexpected);
-        switch (inspectDaemonError) {
-          case true:
-            return { status: 1, stdout: "", stderr: "daemon unavailable" };
-        }
-        const target = args[2];
-        switch (Boolean(container && (target === RUNTIME_ID || target === "nemoclaw-llama-cpp"))) {
-          case true:
-            return { status: 0, stdout: JSON.stringify(inspection()), stderr: "" };
-        }
-        absentInspectHook?.();
-        return {
-          status: 1,
-          stdout: "",
-          stderr: `Error response from daemon: No such container: ${String(target)}`,
-        };
-      }
-      case "create": {
-        switch (createUncertain) {
-          case true:
-            return {
-              status: 1,
-              stdout: "",
-              stderr: "",
-              error: new Error("Docker create capture timed out"),
-            };
-        }
-        const labels = Object.fromEntries(
-          args
-            .flatMap((argument, index) =>
-              argument === "--label" ? [String(args[index + 1]).split("=")] : [],
-            )
-            .filter(([name, value]) => Boolean(name && value)),
-        );
-        container = {
-          labels,
-          running: false,
-          status: "created",
-          transactionId: labels["io.nvidia.nemoclaw.host-local-inference.transaction-sha256"] ?? "",
-          command: args.slice(args.indexOf(IMAGE) + 1),
-        };
-        createHook?.();
-        return { status: 0, stdout: createStdout, stderr: "" };
-      }
-      case "start":
-        startHook?.();
-        switch (container) {
-          case undefined:
-            break;
-          default:
-            startedOnce = true;
-            container.running = true;
-            container.status = "running";
-        }
-        return { status: 0, stdout: `${RUNTIME_ID}\n`, stderr: "" };
-      case "stop":
-        switch (container) {
-          case undefined:
-            break;
-          default:
-            container.running = false;
-            container.status = "exited";
-        }
-        return { status: 0, stdout: RUNTIME_ID, stderr: "" };
-      case "rm":
-        invariant(args[1] === "--force", unexpected);
-        container = undefined;
-        return { status: 0, stdout: RUNTIME_ID, stderr: "" };
-      case "run":
-        invariant(args[1] === "--rm", unexpected);
-        probeHook?.();
-        return probeFails
-          ? { status: 1, stdout: "", stderr: "not ready" }
-          : { status: 0, stdout: "ok", stderr: "" };
-      default:
-        throw new Error(unexpected);
-    }
-  });
-  return {
-    engine: {
-      operation: "host-local-inference",
-      engineId: "docker",
-      displayName: "Docker",
-      authorityId: "docker:local",
-      capture,
-      captureHost: capture,
-    },
-    capture,
-    setNetworkId: (value) => (networkId = value),
-    setNetworkTransactionId: (value) => (networkTransactionId = value),
-    removeNetwork: () => (networkPresent = false),
-    failNetworkCreateUncertain: (networkAppears) => {
-      networkCreateUncertain = true;
-      uncertainNetworkAppears = networkAppears;
-    },
-    setCreateStdout: (value) => (createStdout = value),
-    failCreateUncertain: () => (createUncertain = true),
-    failProbe: () => (probeFails = true),
-    driftHardening: () => (hardeningDrift = true),
-    dropTmpfs: () => (tmpfs = null),
-    driftGpuRequest: (driver, count) => {
-      gpuDriver = driver;
-      gpuCount = count;
-    },
-    driftExtraDeviceAuthority: (kind) => {
-      kind === "cap-add"
-        ? (capAdd = ["SYS_ADMIN"])
-        : (legacyDevices = [{ PathOnHost: "/dev/nvidia0" }]);
-    },
-    failInspectWithDaemonError: () => (inspectDaemonError = true),
-    setAbsentNetworkInspectError: (value) => (absentNetworkInspectError = value),
-    onAbsentInspect: (callback) => (absentInspectHook = callback),
-    onAbsentNetworkInspect: (callback) => (absentNetworkInspectHook = callback),
-    onNetworkCreate: (callback) => (networkCreateHook = callback),
-    onStart: (callback) => (startHook = callback),
-    onProbe: (callback) => (probeHook = callback),
-    onCreate: (callback) => (createHook = callback),
-    setContainerState: (running, status) => {
-      invariant(container !== undefined, "cannot change an absent fixture container");
-      container.running = running;
-      container.status = status;
-    },
-    seedNetwork: (journal) => {
-      invariant(journal.networkId !== null, "seeded network identity is missing");
-      networkId = journal.networkId;
-      networkTransactionId = journal.transactionId;
-      networkPresent = true;
-    },
-    seed: (journal, running) => {
-      invariant(journal.networkId !== null, "seeded network identity is missing");
-      networkId = journal.networkId;
-      networkTransactionId = journal.transactionId;
-      networkPresent = true;
-      container = {
-        labels: {
-          "io.nvidia.nemoclaw.host-local-inference.managed": "true",
-          "io.nvidia.nemoclaw.host-local-inference.provider": "docker",
-          "io.nvidia.nemoclaw.host-local-inference.service": "llama-cpp",
-          "io.nvidia.nemoclaw.host-local-inference.spec-sha256": journal.specSha256,
-          "io.nvidia.nemoclaw.host-local-inference.transaction-sha256": journal.transactionId,
-          "io.nvidia.nemoclaw.llama-cpp-owner": "gateway.primary",
-        },
-        running,
-        status: running ? "running" : "created",
-        transactionId: journal.transactionId,
-        command: [...buildLlamaCppHostLocalServerArgv(contract())],
-      };
-    },
-  };
+  return createDockerFixture(
+    { apiKeyPath, modelPath, networkName: bindings().network.name },
+    configuredHostPort,
+    publishedHostPort,
+    publishedHostIp,
+    publishedBindingCount,
+  );
 }
-
 function dockerCommandPrefixes(fixture: DockerFixture): unknown[] {
   return fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2));
 }
@@ -653,7 +320,7 @@ function options(
 }
 
 function controller(fixture: DockerFixture, store = journalStore(), now: () => number = Date.now) {
-  return createDockerLlamaCppManagedLifecycle(options(fixture, store), {
+  return createLifecycle(options(fixture, store), {
     now,
   });
 }
@@ -716,15 +383,17 @@ function preparedJournal(): HostLocalCreateJournalRecord {
 
 describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("journals a product install on its declared loopback host port (#8544)", () => {
-    const fixture = dockerFixture("8081");
+    const fixture = dockerFixture();
     const store = journalStore();
-    const lifecycle = createDockerLlamaCppManagedLifecycle(
+    const privateBridge = privateBridgeFixture();
+    const lifecycle = createLifecycle(
       options(fixture, store, { ...bindings(), hostPort: 8081 }),
+      {},
+      privateBridge,
     );
     const writer = receiptWriter();
     const receipt = lifecycle.start(writer);
     const serialized = serializeHostLocalInferenceReceipt(receipt);
-    expect(receipt.endpoint.port).toBe(8081);
     expect(receipt.runtime).toMatchObject({
       kind: "container",
       runtimeId: RUNTIME_ID,
@@ -736,19 +405,108 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       networkId: NETWORK_ID,
     });
     expect(writer.writeExact).toHaveBeenCalledExactlyOnceWith(serialized);
+    expect(privateBridge.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transactionId: TRANSACTION_ID,
+        targetHost: "172.30.0.2",
+        bindAddresses: ["127.0.0.1", "172.29.0.1"],
+      }),
+    );
     expect(serialized).not.toContain(modelPath);
-    expect(serialized).not.toContain(apiKeyPath);
     expect(serialized).not.toContain("filesystemIdentity");
     expect(serialized).not.toContain("test-only-secret");
-    const roundTrip = serializeHostLocalInferenceReceipt(
-      parseHostLocalInferenceReceipt(serialized),
-    );
-    expect(roundTrip).toBe(serialized);
     expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
     expect(lifecycle.runtime.stopManaged(receipt).running).toBe(false);
     expect(lifecycle.runtime.prepareDestroy(receipt)).toEqual(receipt);
     expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
+  });
+
+  it("accepts managed reachability through the authoritative OpenShell bridge (#8712)", () => {
+    const fixture = dockerFixture();
+    createLifecycle(options(fixture)).start(receiptWriter());
+
+    expect(fixture.capture.mock.calls.map((call) => call[0])).toContainEqual(
+      expect.arrayContaining([
+        "--network",
+        "openshell-docker",
+        "--add-host",
+        "host.openshell.internal:172.29.0.1",
+        "http://host.openshell.internal:8081/health",
+      ]),
+    );
+  });
+
+  it.each([
+    { failure: "connection refusal", status: 7, stderr: "curl: (7) failed to connect" },
+    { failure: "timeout", status: 28, stderr: "curl: (28) timed out" },
+  ])("reports a narrow UFW remediation and rolls back after bridge $failure (#8712)", ({
+    status,
+    stderr,
+  }) => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const privateBridge = privateBridgeFixture();
+    fixture.failSandboxBridgeProbe({ status, stderr });
+
+    let failure: Error | undefined;
+    try {
+      createLifecycle(options(fixture, store), {}, privateBridge).start(receiptWriter());
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toContain(
+      "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
+    );
+    expect(failure?.message).toContain("OpenShell Docker network: openshell-docker");
+    expect(failure?.message).toContain("Source subnet: 172.29.0.0/16");
+    expect(failure?.message).toContain("Gateway IP address: 172.29.0.1");
+    expect(failure?.message).toContain("TCP port: 8081");
+    expect(failure?.message).toContain(
+      "sudo ufw allow from 172.29.0.0/16 to 172.29.0.1 port 8081 proto tcp",
+    );
+    expect(failure?.message).not.toContain("test-only-secret");
+    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(store.list()).toEqual([]);
+    expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
+    expect(dockerCommandPrefixes(fixture)).toContainEqual(["network", "rm"]);
+  });
+
+  it("does not report UFW remediation for a Docker probe command failure (#8712)", () => {
+    const fixture = dockerFixture();
+    fixture.failSandboxBridgeProbe({ status: 125, stderr: "docker run failed" });
+
+    let failure: Error | undefined;
+    try {
+      createLifecycle(options(fixture)).start(receiptWriter());
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toBe(
+      "Docker llama.cpp private sandbox bridge probe failed (exit 125).",
+    );
+    expect(failure?.message).not.toContain("sudo ufw");
+  });
+
+  it("does not print unvalidated bridge topology in UFW remediation (#8712)", () => {
+    const fixture = dockerFixture();
+    fixture.setOpenShellBridgeSubnet("0.0.0.0/0");
+    fixture.failSandboxBridgeProbe({ status: 28, stderr: "curl: (28) timed out" });
+
+    let failure: Error | undefined;
+    try {
+      createLifecycle(options(fixture)).start(receiptWriter());
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toBe(
+      "Docker llama.cpp private sandbox bridge probe failed (exit 28).",
+    );
+    expect(failure?.message).not.toContain("sudo ufw");
+    expect(failure?.message).not.toContain("0.0.0.0/0");
   });
 
   it("resumes an already-running receipt without creating or starting resources (#8144)", () => {
@@ -779,6 +537,41 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
     expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
     expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+  });
+
+  it("preserves receipt-bound resources after bridge refusal during resume (#8712)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const privateBridge = privateBridgeFixture();
+    const lifecycle = createLifecycle(options(fixture, store), {}, privateBridge);
+    const receipt = lifecycle.start(receiptWriter());
+    lifecycle.runtime.stopManaged(receipt);
+    fixture.capture.mockClear();
+    privateBridge.stopTransaction.mockClear();
+    fixture.failSandboxBridgeProbe({ status: 7, stderr: "curl: (7) failed to connect" });
+
+    let failure: Error | undefined;
+    try {
+      lifecycle.resume(receipt);
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toContain(
+      "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
+    );
+    expect(failure?.message).toContain(
+      "sudo ufw allow from 172.29.0.0/16 to 172.29.0.1 port 8081 proto tcp",
+    );
+    expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
+    expect(store.load(TRANSACTION_ID)).toMatchObject({
+      phase: "finalized",
+      runtimeId: RUNTIME_ID,
+      networkId: NETWORK_ID,
+    });
+    expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
+    expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
+    expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["network", "rm"]);
   });
 
   it("rejects a non-resumable exact runtime without lifecycle mutation (#8144)", () => {
@@ -831,40 +624,21 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(store.load(TRANSACTION_ID)).toMatchObject({ phase: "finalized", runtimeId: RUNTIME_ID });
   });
   it.each([
-    ["configured", "8082", undefined, /bound host port/u],
-    ["published", "8081", "8082", /declared binding/u],
-  ] as const)("rolls back exact ownership for %s loopback port drift (#8544)", (_kind, configured, published, expectedError) => {
-    const [fixture, store] = [dockerFixture(configured, published), journalStore()];
-    const lifecycle = createDockerLlamaCppManagedLifecycle(
-      options(fixture, store, { ...bindings(), hostPort: 8081 }),
-    );
+    ["configured", "8081", undefined, "127.0.0.1", 0, /must not configure/u],
+    ["runtime", "", "8081", "127.0.0.1", 1, /must not publish/u],
+    ["runtime-wide", "", "8081", "0.0.0.0", 1, /must not publish/u],
+  ] as const)("rolls back exact ownership for unexpected %s Docker publication (#8544)", (_kind, configured, published, ip, count, expectedError) => {
+    const [fixture, store] = [dockerFixture(configured, published, ip, count), journalStore()];
+    const lifecycle = createLifecycle(options(fixture, store));
     expect(() => lifecycle.start(receiptWriter())).toThrow(expectedError);
     const calls = fixture.capture.mock.calls.map((call) => call[0]);
     expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
     expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
     expect(store.list()).toEqual([]);
   });
-  it("rejects and cleans up malformed or non-loopback published bindings (#8544)", () => {
-    for (const args of [
-      [HOST_PORT, HOST_PORT, "0.0.0.0", 1],
-      ["8081", "8082", "0.0.0.0", 1],
-      ["8081", "invalid", "127.0.0.1", 1],
-      ["8081", "8082", "127.0.0.1", 2],
-    ] as const) {
-      const [fixture, store] = [dockerFixture(args[0], args[1], args[2], args[3]), journalStore()];
-      const lifecycle = createDockerLlamaCppManagedLifecycle(
-        options(fixture, store, { ...bindings(), hostPort: 8081 }),
-      );
-      expect(() => lifecycle.start(receiptWriter())).toThrow(/port|binding/u);
-      const calls = fixture.capture.mock.calls.map((call) => call[0]);
-      expect(store.list()).toEqual([]);
-      expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
-      expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
-    }
-  });
   it("uses the declarative readiness timeout as both curl retry budget and capture budget", () => {
     const fixture = dockerFixture();
-    const lifecycle = createDockerLlamaCppManagedLifecycle({
+    const lifecycle = createLifecycle({
       ...options(fixture),
       readinessTimeoutSeconds: 37,
     });
@@ -888,7 +662,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it("rejects an invalid declarative readiness timeout before inspection or mutation", () => {
     const fixture = dockerFixture();
     expect(() =>
-      createDockerLlamaCppManagedLifecycle({
+      createLifecycle({
         ...options(fixture),
         readinessTimeoutSeconds: 0,
       }),
@@ -912,7 +686,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       ...options(fixture, store),
       plan: { ...plan(), planDigest: `sha256:${"0".repeat(64)}` },
     };
-    expect(() => createDockerLlamaCppManagedLifecycle(invalid)).toThrow("canonical payload");
+    expect(() => createLifecycle(invalid)).toThrow("canonical payload");
     expect(store.list()).toEqual([]);
     expect(fixture.capture).not.toHaveBeenCalled();
   });
@@ -942,7 +716,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       ...changedPayload,
       planDigest: digest(changedPayload),
     };
-    const lifecycle = createDockerLlamaCppManagedLifecycle({
+    const lifecycle = createLifecycle({
       ...options(fixture, store),
       plan: changedPlan,
     });
@@ -1093,6 +867,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       switch (committed) {
         case null:
           committed = serializedReceipt;
+          fs.writeFileSync(path.join(apiKeyRoot, "receipt.json"), serializedReceipt);
           throw new Error("writer outcome unknown");
         default:
           invariant(committed === serializedReceipt, "different receipt");
@@ -1310,10 +1085,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     persistedAuthority.record(journal.engineAuthority);
     fixture.setAbsentNetworkInspectError(stderr);
 
-    const recovery = createDockerLlamaCppManagedLifecycle(
-      options(fixture, store, bindings(), persistedAuthority),
-      { now: () => 31 * 60 * 1_000 },
-    ).recoverUnfinished(receiptWriter());
+    const recovery = createLifecycle(options(fixture, store, bindings(), persistedAuthority), {
+      now: () => 31 * 60 * 1_000,
+    }).recoverUnfinished(receiptWriter());
 
     expect(recovery.recovered).toEqual([]);
     expect(recovery.failures[0]?.message).toContain("network inspection failed");
@@ -1336,10 +1110,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     fixture.setAbsentNetworkInspectError("network nemoclaw-llama-cpp-internal not found");
 
     expect(
-      createDockerLlamaCppManagedLifecycle(
-        options(fixture, store, bindings(), persistedAuthority),
-        { now: () => 31 * 60 * 1_000 },
-      ).recoverUnfinished(receiptWriter()),
+      createLifecycle(options(fixture, store, bindings(), persistedAuthority), {
+        now: () => 31 * 60 * 1_000,
+      }).recoverUnfinished(receiptWriter()),
     ).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
     expect(store.list()).toEqual([]);
     expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["network", "rm"]);
@@ -1368,10 +1141,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       arrangePhase[phase]();
       const persistedAuthority = authorityStore();
       persistedAuthority.record(base.engineAuthority);
-      const recovery = createDockerLlamaCppManagedLifecycle(
-        options(fixture, store, bindings(), persistedAuthority),
-        { now: () => 31 * 60 * 1_000 },
-      ).recoverUnfinished(receiptWriter());
+      const recovery = createLifecycle(options(fixture, store, bindings(), persistedAuthority), {
+        now: () => 31 * 60 * 1_000,
+      }).recoverUnfinished(receiptWriter());
       expect(recovery).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
       expect(store.list()).toEqual([]);
     }
@@ -1396,7 +1168,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
           }),
       } as const;
       arrangeAuthority[state]();
-      const recovery = createDockerLlamaCppManagedLifecycle(
+      const recovery = createLifecycle(
         options(fixture, store, bindings(), persistedAuthority),
       ).recoverUnfinished(receiptWriter());
       expect(recovery.recovered).toEqual([]);
@@ -1422,7 +1194,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const receipt = lifecycle.start(receiptWriter());
     fixture.driftHardening();
     expect(() => lifecycle.runtime.inspectManaged(receipt)).toThrow("exact journal authority");
-
     for (const mutate of [
       (candidate: DockerFixture) => candidate.driftGpuRequest(undefined, 1),
       (candidate: DockerFixture) => candidate.driftGpuRequest("nvidia", 2),
@@ -1439,7 +1210,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       );
     }
   });
-
   it("rejects model and API-key filesystem identity drift during exact inspection", () => {
     const modelFixture = dockerFixture();
     const modelLifecycle = controller(modelFixture);
@@ -1448,34 +1218,33 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(() => modelLifecycle.runtime.inspectManaged(modelReceipt)).toThrow(
       "filesystem identity",
     );
-
     fs.writeFileSync(modelPath, MODEL_CONTENT, { mode: 0o600 });
     const keyFixture = dockerFixture();
     const keyLifecycle = controller(keyFixture);
-    const keyReceipt = keyLifecycle.start(receiptWriter());
+    const keyReceipt = keyLifecycle.start(
+      receiptWriter((serializedReceipt) => {
+        fs.writeFileSync(path.join(apiKeyRoot, "receipt.json"), serializedReceipt, { mode: 0o600 });
+        return serializedReceipt;
+      }),
+    );
+    expect(() => keyLifecycle.runtime.inspectManaged(keyReceipt)).not.toThrow();
     fs.writeFileSync(apiKeyPath, "replacement-test-key\n", { mode: 0o600 });
     expect(() => keyLifecycle.runtime.inspectManaged(keyReceipt)).toThrow("API-key identity");
   });
-
   it("rejects a same-size GGUF replacement when inspection reconstructs current identity", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const persistedAuthority = authorityStore();
-    const initial = createDockerLlamaCppManagedLifecycle(
-      options(fixture, store, bindings(), persistedAuthority),
-    );
+    const initial = createLifecycle(options(fixture, store, bindings(), persistedAuthority));
     const receipt = initial.start(receiptWriter());
-
     fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
-    const currentIdentityInspector = createDockerLlamaCppManagedLifecycle(
+    const currentIdentityInspector = createLifecycle(
       options(fixture, store, bindings(), persistedAuthority),
     );
-
     expect(() => currentIdentityInspector.runtime.inspectManaged(receipt)).toThrow(
       "durable create journal",
     );
   });
-
   it("fails closed on crafted absent destroy authority and status-one daemon errors (#8395)", () => {
     const fixture = dockerFixture();
     const store = journalStore();

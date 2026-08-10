@@ -626,7 +626,7 @@ describe("managed startup shared-state transaction", () => {
           readOnlyReceipt: true,
         },
       ),
-    ).toThrow(/rollback receipt mount is writable/u);
+    ).toThrow(/copied receipt mount is writable/u);
   });
 
   it("rejects planted target and ancestor symlinks before creating a receipt", () => {

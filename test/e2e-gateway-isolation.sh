@@ -49,7 +49,7 @@ fi
 
 # Helper: run a command inside the container as the sandbox user
 run_as_sandbox() {
-  docker run --rm --entrypoint "" "$IMAGE" /usr/bin/setpriv \
+  docker run --rm --user root --entrypoint "" "$IMAGE" /usr/bin/setpriv \
     --reuid=sandbox --regid=sandbox --init-groups -- bash -c "$1" 2>&1
 }
 

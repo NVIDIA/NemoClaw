@@ -10,6 +10,7 @@ import {
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
+  getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
@@ -278,7 +279,7 @@ describe("docker-driver-gateway-service", () => {
     );
 
     expect(
-      getTrustedActiveOpenShellGatewayUserServicePid({
+      getTrustedActiveOpenShellGatewayUserServiceIdentity({
         commandExists: (command) => command === "systemctl",
         env: { HOME: home },
         existsSync: (candidate) => candidate === servicePath,
@@ -288,7 +289,7 @@ describe("docker-driver-gateway-service", () => {
         readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
         spawnSyncImpl,
       }),
-    ).toBe(4242);
+    ).toEqual({ pid: 4242, executablePath: gatewayBin });
     expect(spawnSyncImpl).toHaveBeenCalledWith(
       "systemctl",
       [
@@ -330,19 +331,25 @@ describe("docker-driver-gateway-service", () => {
   });
 
   it("identifies the active official Homebrew gateway process (#6903)", () => {
+    const formulaPrefix = "/opt/homebrew/opt/openshell";
+    const gatewayBin = `${formulaPrefix}/bin/openshell-gateway`;
     const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args[0] === "info") return officialFormulaInfo();
-      if (args[0] === "services") return officialRunningServiceInfo();
-      return spawnResult();
+      const responses = {
+        info: officialFormulaInfo(),
+        services: officialRunningServiceInfo(),
+        "--prefix": spawnResult(0, "", formulaPrefix),
+      };
+      return responses[args[0] as keyof typeof responses] ?? spawnResult();
     });
 
     expect(
-      getTrustedActiveOpenShellGatewayUserServicePid({
+      getTrustedActiveOpenShellGatewayUserServiceIdentity({
         commandExists: (command) => command === "brew",
+        existsSync: (candidate) => candidate === gatewayBin,
         platform: "darwin",
         spawnSyncImpl,
       }),
-    ).toBe(4242);
+    ).toEqual({ pid: 4242, executablePath: gatewayBin });
     expect(spawnSyncImpl).toHaveBeenCalledWith(
       "brew",
       ["services", "info", "openshell", "--json"],

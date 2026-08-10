@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 export const RISK_SIGNAL_FILE = "risk-signal.json";
 
@@ -73,7 +74,11 @@ export function configuredRiskSignalEnvironment(
   if (!CORRELATION_PATTERN.test(values.correlationId)) {
     throw new Error("risk signal requires a lowercase UUIDv4 correlation id");
   }
-  const testedSha = resolveHead(env.GITHUB_WORKSPACE ?? process.cwd());
+  const testedRoot = env.NEMOCLAW_E2E_TESTED_ROOT ?? env.GITHUB_WORKSPACE ?? process.cwd();
+  if (!path.isAbsolute(testedRoot)) {
+    throw new Error("risk signal requires an absolute tested root");
+  }
+  const testedSha = resolveHead(testedRoot);
   if (!SHA_PATTERN.test(testedSha) || testedSha !== values.expectedSha) {
     throw new Error("risk signal checked-out HEAD does not match the expected SHA");
   }

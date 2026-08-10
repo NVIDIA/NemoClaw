@@ -400,6 +400,14 @@ describe("RuntimeProviderBundle registry contract", () => {
       }),
     ],
     [
+      "stateMutation",
+      (bundle: RuntimeProviderBundle) => ({
+        ...bundle.stateMutation,
+        supported: true,
+        contractVersion: 1,
+      }),
+    ],
+    [
       "bootstrap",
       (bundle: RuntimeProviderBundle) => ({
         ...bundle.bootstrap,

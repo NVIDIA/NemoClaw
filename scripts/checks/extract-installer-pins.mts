@@ -30,6 +30,10 @@ type SandboxBuildPin = {
   version: string;
 };
 
+type TrustedSandboxBuildPin = SandboxBuildPin & {
+  required: boolean;
+};
+
 type CliOptions = {
   blueprint: string;
   brevInstaller: string;
@@ -71,6 +75,54 @@ const EXPECTED_INSTALLER_ASSETS = [
 const EXPECTED_BREV_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-aarch64-unknown-linux-musl.tar.gz",
+] as const;
+// These are SHA-256 identities of the standalone openshell-sandbox binaries
+// extracted from checksum-verified OpenShell release archives. Existing
+// fallback identities stay required so a candidate cannot silently remove
+// downgrade/upgrade coverage. A future release is first added here as an
+// optional trust prerequisite; only a later selector PR may add its exact
+// digest/version pairs to the candidate-controlled shell map.
+const TRUSTED_SANDBOX_BUILD_PINS: readonly TrustedSandboxBuildPin[] = [
+  {
+    required: true,
+    sha256: "f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198",
+    version: "0.0.72",
+  },
+  {
+    required: true,
+    sha256: "32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f",
+    version: "0.0.72",
+  },
+  {
+    required: true,
+    sha256: "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09",
+    version: "0.0.82",
+  },
+  {
+    required: true,
+    sha256: "76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500",
+    version: "0.0.82",
+  },
+  {
+    required: true,
+    sha256: "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214",
+    version: "0.0.99",
+  },
+  {
+    required: true,
+    sha256: "f60ce5b76e4dbd645f690c8519852d261c8cf6a70b5fc56db329a23d68bc7b2e",
+    version: "0.0.99",
+  },
+  {
+    required: false,
+    sha256: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
+    version: "0.0.101",
+  },
+  {
+    required: false,
+    sha256: "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4",
+    version: "0.0.101",
+  },
 ] as const;
 
 function fail(message: string): never {
@@ -617,6 +669,46 @@ function extractSandboxBuildPins(source: string): SandboxBuildPin[] {
   return pins;
 }
 
+// invalidState: a selector PR adds an arbitrary standalone sandbox binary
+// digest to the normalized shell map and thereby labels candidate-controlled
+// bytes as the selected OpenShell release when `--version` cannot execute.
+// sourceBoundary: this allowlist and comparison execute from the base-trusted
+// parser; the PR-head shell function remains bounded inert input.
+// whyNotSourceFix: OpenShell authenticates the outer archives, while NemoClaw
+// owns the inner-binary fallback used by its downstream installer.
+// regressionTest: installer-sandbox-build-trust.test.ts rejects arbitrary,
+// remapped, missing, and self-authorized identities while accepting a
+// prerequisite that adds only the exact extracted v0.0.101 binary digests.
+// removalCondition: remove this check only when the standalone sandbox exposes
+// a reliable authenticated build identity on every supported host.
+function assertTrustedSandboxBuildPins(pins: SandboxBuildPin[], releaseVersion: string): void {
+  const pinKey = (pin: SandboxBuildPin): string => `${pin.version}:${pin.sha256}`;
+  const trustedKeys = new Set(TRUSTED_SANDBOX_BUILD_PINS.map(pinKey));
+  const actualKeys = new Set(pins.map(pinKey));
+  const selectedPins = TRUSTED_SANDBOX_BUILD_PINS.filter((pin) => pin.version === releaseVersion);
+  if (selectedPins.length === 0) {
+    fail(
+      `no base-trusted standalone sandbox binary identities exist for release ${releaseVersion}`,
+    );
+  }
+
+  const missing = TRUSTED_SANDBOX_BUILD_PINS.filter(
+    (pin) => (pin.required || pin.version === releaseVersion) && !actualKeys.has(pinKey(pin)),
+  )
+    .map(pinKey)
+    .sort();
+  const unexpected = pins
+    .filter((pin) => !trustedKeys.has(pinKey(pin)))
+    .map(pinKey)
+    .sort();
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(
+      `pinned_sandbox_build_version must use only base-trusted binary identities; ` +
+        `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
+    );
+  }
+}
+
 function normalizeTrustedInstallerTemplate(
   source: string,
   functionNames: readonly string[],
@@ -949,11 +1041,7 @@ function runCli(): void {
   }
   const releaseVersion = releaseVersions[0] ?? fail("installer pin tables contain no release");
   const sandboxBuildPins = extractSandboxBuildPins(installerSource);
-  if (!sandboxBuildPins.some((pin) => pin.version === releaseVersion)) {
-    fail(
-      `pinned_sandbox_build_version must contain at least one digest for release ${releaseVersion}`,
-    );
-  }
+  assertTrustedSandboxBuildPins(sandboxBuildPins, releaseVersion);
   assertTrustedTemplate(
     installerSource,
     ["openshell_pinned_sha256", "pinned_sandbox_build_version"],

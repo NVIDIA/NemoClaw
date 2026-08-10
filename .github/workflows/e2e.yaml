@@ -1026,7 +1026,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.99"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1111,7 +1111,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -1364,12 +1364,12 @@ jobs:
             jq -n '{
               schemaVersion: 1,
               sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.99",
-              sourceSha: "8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032",
+              releaseTag: "v0.0.101",
+              sourceSha: "8ddd98c3dff62619a3963f99ba1e055b67650e72",
               artifacts: {
-                cli: {binarySha256: "5c0dabb90152a3cfae9005731771da99f00a22403080c81952c7be8ba4b5728f"},
-                gateway: {binarySha256: "05bd6c982dd72b73364b91ab694487c026bc56d0cd869f4289b44cc392a5c2ba"},
-                standaloneSandbox: {binarySha256: "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214"}
+                cli: {binarySha256: "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9"},
+                gateway: {binarySha256: "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5"},
+                standaloneSandbox: {binarySha256: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920"}
               }
             }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
@@ -1433,7 +1433,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1485,12 +1485,12 @@ jobs:
           jq -n '{
             schemaVersion: 1,
             sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.99",
-            sourceSha: "8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032",
+            releaseTag: "v0.0.101",
+            sourceSha: "8ddd98c3dff62619a3963f99ba1e055b67650e72",
             artifacts: {
-              cli: {binarySha256: "5c0dabb90152a3cfae9005731771da99f00a22403080c81952c7be8ba4b5728f"},
-              gateway: {binarySha256: "05bd6c982dd72b73364b91ab694487c026bc56d0cd869f4289b44cc392a5c2ba"},
-              standaloneSandbox: {binarySha256: "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214"}
+              cli: {binarySha256: "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9"},
+              gateway: {binarySha256: "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5"},
+              standaloneSandbox: {binarySha256: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920"}
             }
           }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
@@ -1923,6 +1923,7 @@ jobs:
       E2E_JOB: "1"
       E2E_TARGET_ID: "gpu-e2e"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/gpu-e2e
+      E2E_LLAMA_CPP_DEDICATED_LANE: "1"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1969,6 +1970,72 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gpu-e2e.test.ts
       - name: Upload GPU E2E artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  llama-cpp-generic-gpu:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',llama-cpp-generic-gpu,') || contains(format(',{0},', inputs.targets), ',llama-cpp-generic-gpu,') }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 120
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "llama-cpp-generic-gpu"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-generic-gpu
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_PROVIDER: "install-llama-cpp"
+      NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run generic NVIDIA GPU llama.cpp live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/llama-cpp-generic-gpu.test.ts
+
+      - name: Upload generic NVIDIA GPU llama.cpp artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -2580,21 +2647,25 @@ jobs:
   # Every main push runs this lane after managed-image startup succeeds. Manual
   # PR qualification requires the exact candidate activation contract. Its
   # hosted amd64 prerequisite exports the exact candidate build cache.
-  # exact candidate build cache; this GPU lane imports it and rebuilds with
-  # BuildKit networking disabled so a cache miss fails closed.
+  # This GPU lane imports the exact candidate build cache and its complete
+  # locked npm cache seed, then rebuilds with BuildKit networking disabled.
   # invalidState: Cold managed-image builds on the protected GPU runner can
   # stall in npm and terminate with "Exit handler never called!" before any
   # GPU, Ollama, NIM, or vLLM assertion executes.
-  # sourceBoundary: The hosted amd64 lane builds the same exact candidate and
-  # exports only BuildKit cache records; the GPU lane verifies that complete
-  # all-agent cache and rebuilds with network access disabled.
-  # whyNotSourceFix: The root cause is unverified. Protected run 31012875592
-  # failed twice during npm install before qualification while hosted builds of
-  # the same candidate passed; the protected runner infrastructure is not owned
-  # by this change. Evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/31012875592
-  # regressionTest: The build-script behavior test proves required cache paths
-  # and metadata, symlink rejection, and exact --cache-from/--network none
-  # Docker arguments; workflow boundary tests pin the producer/consumer handoff.
+  # sourceBoundary: The hosted amd64 lane builds the exact candidate. It adds
+  # every reachable Linux x64 glibc registry archive from the candidate
+  # lockfile to the same-run cache artifact. The GPU lane verifies the manifest,
+  # lock digest, archive set, and
+  # each SHA-512 integrity before the candidate build can consume the seed.
+  # BuildKit records can accelerate the rebuild, while the seed makes a missing
+  # npm layer reproducible without weakening the fail-closed network boundary.
+  # whyNotBuildCacheOnly: Protected runs 31156103003, 31158136234, and
+  # 31159822518 proved that network-key drift and incomplete local cache exports
+  # can miss the npm layer before runtime qualification.
+  # regressionTest: The materializer and build-script behavior tests reject an
+  # incomplete, substituted, unexpected, or symlinked archive handoff and pin
+  # exact --cache-from/--network none arguments. Workflow boundary tests pin the
+  # same-run cache artifact.
   # lifecycleDecision: PR #8261 owns removal after three consecutive protected
   # GPU cold builds of all three images reach GPU, Ollama, NIM, and vLLM
   # assertions without the hosted cache.
@@ -2613,7 +2684,9 @@ jobs:
       E2E_WORKLOAD_SOURCE: "managed-image"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: linux-amd64-gpu
+      NEMOCLAW_E2E_TESTED_ROOT: ${{ github.workspace }}/.candidate-runtime
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64
@@ -2815,7 +2888,7 @@ jobs:
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
-            --offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
+            --cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"
@@ -2891,6 +2964,11 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
+      # Selects the shared E2E inference adapter's internal-nvidia mode
+      # (#5745) so this real-latency measurement always runs against a real
+      # hosted endpoint; the adapter defaults to hermetic `mock` otherwise,
+      # which the test now explicitly refuses to measure latency against.
+      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
@@ -5104,11 +5182,9 @@ jobs:
       matrix:
         include:
           - agent: openclaw
-            expect_non_root_entrypoint: "1"
             sandbox_name: e2e-oc-security
             test_file: test/e2e/live/full-e2e.test.ts
           - agent: hermes
-            expect_non_root_entrypoint: "0"
             sandbox_name: e2e-hm-security
             test_file: test/e2e/live/hermes-e2e.test.ts
     env:
@@ -5120,10 +5196,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT: ${{ matrix.expect_non_root_entrypoint }}
-      # Legacy-parity contract: enforce a non-root host user. PID 1 must stay
-      # root long enough to step down child processes, so its uid, bounding
-      # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
+      NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1"
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
       NEMOCLAW_E2E_SECURITY_POSTURE: "1"
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
@@ -5165,6 +5238,11 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
@@ -7174,6 +7252,45 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  whatsapp-qr-compact:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',whatsapp-qr-compact,') || contains(format(',{0},', inputs.targets), ',whatsapp-qr-compact,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "whatsapp-qr-compact"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/whatsapp-qr-compact
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Run WhatsApp compact QR code E2E test
+        run: |-
+          set -euo pipefail
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/whatsapp-qr-compact.test.ts
+
+      - name: Upload WhatsApp compact QR code artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+
   spark-install:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',spark-install,') || contains(format(',{0},', inputs.targets), ',spark-install,') }}
@@ -7254,6 +7371,7 @@ jobs:
         inference-routing,
         cloud-inference,
         gpu-e2e,
+        llama-cpp-generic-gpu,
         managed-image-multiarch-startup,
         llama-cpp-dgx-spark-plan,
         llama-cpp-dgx-spark-qualification,
@@ -7313,6 +7431,7 @@ jobs:
         openclaw-discord-pairing,
         openclaw-slack-pairing,
         channels-stop-start,
+        whatsapp-qr-compact,
         spark-install,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}

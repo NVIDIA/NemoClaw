@@ -30,6 +30,7 @@ describe("PR review advisor writing guides", () => {
     expect(controlledWords).toContain("| `commit under review` | Technical noun |");
     expect(controlledWords).toContain("| `latest PR commit` | Technical noun |");
     expect(controlledWords).toContain("| `commit SHA` | Technical noun |");
+    expect(controlledWords).toContain("| `runtime provider state mutation` | Technical noun |");
     expect(considerations).toContain("# Code Change Considerations");
     expect(prompt).toContain("Trusted security rubric from workflow checkout");
     expect(prompt).toContain("Trusted code change considerations from workflow checkout");

@@ -10,7 +10,7 @@ import YAML from "yaml";
 
 import {
   LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
-  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   llamaCppDgxSparkExecutionPlanSha256,
   parseLlamaCppDgxSparkExecutionPlan,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
@@ -59,6 +59,7 @@ type ServerImageManifest = {
         probes?: unknown;
         profile?: unknown;
         recipeRef?: unknown;
+        requestGuard?: unknown;
         required?: unknown;
         runner?: unknown;
       };
@@ -136,8 +137,13 @@ type LlamaCppQualificationRecipe = {
       kvCache: { key: string; value: string };
       speculativeDecoding: string;
       limits: {
+        maxRequestBodyBytes: number;
+        maxRequestHeaderBytes: number;
+        maxOutputTokens: number;
         requestTimeoutSeconds: number;
+        shutdownTimeoutSeconds: number;
       };
+      requestGuard: { upstreamPort: number };
     };
     readiness: {
       contractRef: string;
@@ -381,6 +387,7 @@ export function loadLlamaCppImageConfig(
     "probes",
     "profile",
     "recipeRef",
+    "requestGuard",
     "required",
     "runner",
   ]);
@@ -425,6 +432,11 @@ export function loadLlamaCppImageConfig(
     qualification?.recipeRef,
     "qualification recipe reference",
     /^llama-cpp\.nemotron-3-nano-30b-a3b\.spark-single\.v1$/u,
+  );
+  const qualificationRequestGuard = requiredString(
+    qualification?.requestGuard,
+    "qualification request guard",
+    /^required$/u,
   );
   const qualificationModel = qualification?.model as
     | { digest?: unknown; hostPath?: unknown; id?: unknown }
@@ -486,7 +498,8 @@ export function loadLlamaCppImageConfig(
       fullOffload: true,
       vendor: "nvidia",
     }) ||
-    JSON.stringify(qualification?.probes) !== JSON.stringify(LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES)
+    JSON.stringify(qualification?.probes) !==
+      JSON.stringify(LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES)
   ) {
     throw new Error("invalid llama.cpp image publication contract");
   }
@@ -587,6 +600,7 @@ export function loadLlamaCppImageConfig(
     probes: qualification?.probes,
     profile: qualification?.profile,
     recipeRef: qualificationRecipeRef,
+    requestGuard: qualificationRequestGuard,
     required: qualification?.required,
     runner: qualificationRunner,
   };
@@ -724,6 +738,7 @@ export function loadLlamaCppImageConfig(
       agentQualification,
       probeBounds: qualification?.probeBounds,
       probes: qualification?.probes,
+      requestGuard: qualificationRequestGuard,
     },
     recipe: {
       capabilities: recipe.spec.capabilities,

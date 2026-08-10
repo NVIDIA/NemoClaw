@@ -6,16 +6,24 @@ import { describe, expect, it, vi } from "vitest";
 import { loadLlamaCppImageConfig } from "../scripts/checks/export-llama-cpp-image-config.mts";
 import {
   runLlamaCppDgxSparkProtocolQualification,
+  validateMetricsResponse,
   validatePropertiesResponse,
   validateStreamingChatResponse,
   validateStructuredOutputResponse,
   validateToolCallResponse,
   validateToolResultContinuationResponse,
 } from "../scripts/checks/llama-cpp-dgx-spark-protocol-qualification.mts";
-import { parseLlamaCppDgxSparkExecutionPlan } from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
+import {
+  LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES,
+  parseLlamaCppDgxSparkExecutionPlan,
+} from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
 
 const AUTHORIZATION = `Bearer ${"a".repeat(64)}`;
 const MODEL = "nvidia-nemotron-3-nano-30b-a3b";
+const MODEL_FILE = "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
+const METRICS = LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES.map(
+  (name, index) => `${name} ${String(index + 1)}`,
+).join("\n");
 
 const config = loadLlamaCppImageConfig();
 const compiledPlan = parseLlamaCppDgxSparkExecutionPlan(
@@ -46,6 +54,22 @@ function completion(content = "ready", usage = true): JsonObject {
     model: MODEL,
     object: "chat.completion",
     ...(usage ? { usage: { completion_tokens: 2, prompt_tokens: 5, total_tokens: 7 } } : {}),
+  };
+}
+
+function properties(contextSize = 262144): JsonObject {
+  return {
+    cors_proxy_enabled: false,
+    default_generation_settings: { n_ctx: contextSize },
+    endpoint_metrics: true,
+    endpoint_props: false,
+    endpoint_slots: false,
+    is_sleeping: false,
+    modalities: { audio: false, video: false, vision: false },
+    model_alias: MODEL,
+    model_path: `/models/${MODEL_FILE}`,
+    total_slots: 1,
+    ui: false,
   };
 }
 
@@ -137,16 +161,12 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
         MODEL,
       ),
     ).not.toThrow();
-    expect(
-      validatePropertiesResponse(
-        { default_generation_settings: { n_ctx: 262144 }, total_slots: 1 },
-        262144,
-      ),
-    ).toEqual({
-      contextSize: 262144,
-      ok: true,
-      slots: 1,
+    expect(validatePropertiesResponse(properties(), 262144, MODEL, MODEL_FILE)).toMatchObject({
+      contextWindow: { contextSize: 262144, ok: true, slots: 1 },
+      disabledState: { multimodal: false },
+      properties: { metrics: true, model: MODEL, modelPath: MODEL_FILE },
     });
+    expect(validateMetricsResponse(METRICS)).toMatchObject({ requiredSeries: 11 });
   });
 
   it("rejects malformed or unbounded protocol evidence without exposing response content (#8144)", () => {
@@ -164,12 +184,23 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
     expect(() =>
       validateStructuredOutputResponse(completion('{"status":"wrong"}', false), MODEL),
     ).toThrow("JSON schema");
+    expect(() => validatePropertiesResponse(properties(131072), 262144, MODEL, MODEL_FILE)).toThrow(
+      "security and readiness",
+    );
+    expect(() => validateMetricsResponse("llamacpp:requests_processing nope")).toThrow(
+      "invalid Prometheus sample",
+    );
+    expect(() =>
+      validateMetricsResponse(METRICS.replace("llamacpp:requests_processing 7\n", "")),
+    ).toThrow("required llama.cpp series");
     expect(() =>
       validatePropertiesResponse(
-        { default_generation_settings: { n_ctx: 131072 }, total_slots: 1 },
+        { ...properties(), endpoint_slots: true },
         262144,
+        MODEL,
+        MODEL_FILE,
       ),
-    ).toThrow("context window");
+    ).toThrow("security and readiness");
     expect(() =>
       validateToolCallResponse(
         {
@@ -245,12 +276,21 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
         case "http://127.0.0.1:18081/v1/models":
           return jsonResponse({ data: [{ id: MODEL }], object: "list" });
         case "http://127.0.0.1:18081/props":
-          return jsonResponse({
-            default_generation_settings: {
-              n_ctx: plan.recipe.serve.contextSize,
-            },
-            total_slots: 1,
-          });
+          return init?.method === "POST"
+            ? jsonResponse({ error: {} }, 501)
+            : jsonResponse(properties(plan.recipe.serve.contextSize));
+        case "http://127.0.0.1:18081/metrics":
+          return new Headers(init?.headers).get("authorization") === AUTHORIZATION
+            ? new Response(METRICS, { headers: { "Content-Type": "text/plain" }, status: 200 })
+            : jsonResponse({ error: {} }, 401);
+        case "http://127.0.0.1:18081/":
+        case "http://127.0.0.1:18081/models/load":
+          return jsonResponse({ error: {} }, 404);
+        case "http://127.0.0.1:18081/slots":
+          return jsonResponse({ error: {} }, 501);
+        case "http://127.0.0.1:18081/cors-proxy":
+        case "http://127.0.0.1:18081/tools":
+          return jsonResponse({ error: {} }, 403);
         default:
           expect(url).toBe("http://127.0.0.1:18081/v1/chat/completions");
       }
@@ -346,7 +386,17 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
       authentication: { httpStatus: 401, ok: true },
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize: plan.recipe.serve.contextSize, slots: 1 },
+      disabledSurfaces: {
+        corsProxyHttpStatus: 403,
+        multimodal: false,
+        routerHttpStatus: 404,
+        slotsHttpStatus: 501,
+        toolsHttpStatus: 403,
+        uiHttpStatus: 404,
+      },
       malformedRequest: { httpStatus: 400, ok: true },
+      metrics: { requiredSeries: 11, unauthenticatedHttpStatus: 401 },
+      properties: { metrics: true, model: MODEL, modelPath: MODEL_FILE },
       clientTimeout: { limitMilliseconds: 10, recovered: true },
       streamingChat: { done: true, events: 3, model: MODEL },
       structuredOutput: { schemaMatched: true },

@@ -10,6 +10,8 @@ import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 import { resolveManagedLlamaCppSelection } from "./managed-selection";
 
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
+const SPARK_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
 
 function readinessReport(
   preset: ManagedInferenceServingPreset,
@@ -58,11 +60,9 @@ function readinessReport(
   } as SystemReadinessReport;
 }
 
-function fixture() {
+function fixture(presetId = SPARK_PRESET_ID) {
   const catalog = loadManagedInferenceCatalog();
-  const preset = catalog.presets.find(
-    ({ spec }) => spec.plan.backend === "install-llama-cpp" && spec.plan.recipeRef === RECIPE_ID,
-  );
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
   expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
   return { catalog, preset: preset!, report: readinessReport(preset!) };
 }
@@ -132,6 +132,90 @@ describe("managed llama.cpp selection", () => {
         recipe: { metadata: { id: RECIPE_ID } },
         preset: { spec: { plan: { backend: "install-llama-cpp" } } },
       },
+    });
+  });
+
+  it("selects the generic Linux amd64 NVIDIA GPU preset from the same declarative recipe", () => {
+    const { catalog } = fixture(GENERIC_PRESET_ID);
+    const now = new Date();
+    const report = createHostReadinessReport(
+      {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        now: () => now,
+      },
+      {
+        now: () => now,
+        architecture: "x64",
+        assess: () => ({
+          platform: "linux",
+          isWsl: false,
+          runtime: "docker",
+          dockerInstalled: true,
+          dockerRunning: true,
+          dockerReachable: true,
+          nodeInstalled: true,
+          openshellInstalled: true,
+          dockerCgroupVersion: "v2",
+          dockerDefaultCgroupnsMode: "private",
+          dockerStorageDriver: "overlay2",
+          dockerUsesContainerdSnapshotter: false,
+          dockerCpus: 16,
+          dockerMemTotalBytes: 64 * 1024 ** 3,
+          isContainerRuntimeUnderProvisioned: false,
+          hasNestedOverlayConflict: false,
+          requiresHostCgroupnsFix: false,
+          isUnsupportedRuntime: false,
+          isHeadlessLikely: true,
+          hasNvidiaGpu: true,
+          dockerCdiSpecDirs: ["/etc/cdi"],
+          cdiNvidiaGpuSpecMissing: false,
+          cdiNvidiaGpuSpecStale: false,
+          cdiNvidiaGpuSpecNeedsRepair: false,
+          nvidiaContainerToolkitInstalled: true,
+          notes: [],
+        }),
+        collectPlatformIdentity: () => ({
+          nvidiaPlatform: "linux",
+          productName: "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        }),
+        detectGpu: () => ({ count: 1 }),
+        detectHostGpuPlatform: () => "linux",
+        detectNvidiaDriverVersion: () => "580.65.06",
+      },
+    );
+
+    const resolved = resolveManagedLlamaCppSelection(
+      { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
+      catalog,
+      report,
+    );
+
+    expect(resolved).toMatchObject({
+      kind: "selected",
+      selection: {
+        recipe: { metadata: { id: RECIPE_ID } },
+        preset: { metadata: { id: GENERIC_PRESET_ID } },
+      },
+    });
+  });
+
+  it("rejects a host that matches more than one hardware preset for one recipe", () => {
+    const { catalog, preset, report } = fixture(GENERIC_PRESET_ID);
+    const duplicate = {
+      ...preset,
+      metadata: { ...preset.metadata, id: `${GENERIC_PRESET_ID}.duplicate` },
+    };
+
+    const resolved = resolveManagedLlamaCppSelection(
+      { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
+      { ...catalog, presets: [...catalog.presets, duplicate] },
+      report,
+    );
+
+    expect(resolved).toEqual({
+      kind: "rejected",
+      reason: `Managed llama.cpp recipe ${RECIPE_ID} matches more than one explicit serving preset: ${GENERIC_PRESET_ID}, ${GENERIC_PRESET_ID}.duplicate.`,
     });
   });
 

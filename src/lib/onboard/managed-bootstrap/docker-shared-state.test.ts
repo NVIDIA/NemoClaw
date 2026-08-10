@@ -96,7 +96,16 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
 
     expect(outcome).toEqual({ supervisorReady: true, failure: null });
     const helpers = nodeHelperCalls(fake.deps);
-    expect(helpers.some((args) => args.includes("--shared-state-transaction-status"))).toBe(true);
+    const statusHelpers = helpers.filter((args) =>
+      args.includes("--shared-state-transaction-status"),
+    );
+    expect(statusHelpers).not.toHaveLength(0);
+    statusHelpers.forEach((args) => {
+      expect(args).toContain("--read-only-receipt");
+      expect(args).toEqual(
+        expect.arrayContaining(["--cap-drop", "ALL", "--cap-add", "DAC_OVERRIDE"]),
+      );
+    });
     expect(helpers.some((args) => args.includes("--commit-shared-state-transaction"))).toBe(true);
     expect(helpers).not.toHaveLength(0);
     expect(

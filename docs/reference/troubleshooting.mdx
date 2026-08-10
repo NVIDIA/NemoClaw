@@ -346,7 +346,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.99 directly supports Linux hosts with glibc 2.39 or newer.
+OpenShell 0.0.101 directly supports Linux hosts with glibc 2.39 or newer.
 On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
 Leave it unset on supported hosts.
 
@@ -892,6 +892,43 @@ On Docker Desktop, raise CPU and memory limits in *Settings → Resources*, then
 To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` before running `$$nemoclaw onboard`.
 
 <AgentOnly variant="openclaw,hermes">
+
+### Managed Sandbox Image Build Requires Local BuildKit
+
+On a local Docker-driver gateway, NemoClaw builds each generated OpenClaw or Hermes sandbox image with host-side BuildKit.
+The generated Dockerfiles include BuildKit-only file-mode, per-step network, and mount controls.
+NemoClaw stops before sandbox creation in these cases:
+
+- The local build is disabled.
+- The staged build context fails trust validation.
+- Docker cannot start the build.
+- The build exits with an error.
+
+It does not send that generated Dockerfile to the OpenShell gateway's classic Docker API builder because that builder cannot enforce the same instructions.
+
+Keep the local prebuild enabled, and verify that the host Docker installation provides BuildKit:
+
+```bash
+unset NEMOCLAW_SANDBOX_PREBUILD
+docker info
+docker buildx version
+```
+
+Repair Docker access or the Docker Buildx plugin when either Docker command fails.
+Then rerun the original onboarding or rebuild command.
+For a resumable onboarding session, run:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+A passing recovery completes the local BuildKit build before sandbox creation starts.
+If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile.
+Rerun the command so NemoClaw creates a new private staged context.
+If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
+
+This requirement does not change user-supplied `--from` contexts, which continue to use the OpenShell gateway builder.
+It also preserves the gateway fallback when a generated LangChain Deep Agents Code image does not complete its local prebuild.
 
 ### Re-onboard fails because port 18789 is held by SSH
 
@@ -3038,6 +3075,53 @@ Then rerun portable onboarding:
 ```bash
 $$nemoclaw onboard --experimental-profile portable
 ```
+
+### Portable Host Gateway Is Unreachable
+
+The portable experimental profile maps `host.openshell.internal` to the OpenShell Podman host gateway.
+Do not apply the Docker bridge UFW command when portable onboarding reports this route as unreachable.
+
+Use the same procedure when onboarding reports that the Podman service is unreachable for the portable gateway probe.
+
+Portable onboarding reports output like this:
+
+```text
+✗ Sandbox containers cannot reach the gateway at host.openshell.internal:8080.
+  The probe mapped host.openshell.internal to the OpenShell Podman host gateway.
+```
+
+If `podman.service` is active, restart it.
+Then enable and start the user-scoped Podman socket:
+
+```bash
+systemctl --user try-restart podman.service
+systemctl --user enable --now podman.socket
+```
+
+The first command does not start an inactive service.
+The second command enables and starts the current user's Podman API socket.
+These commands affect only the current user's Podman units.
+They do not read or write credentials.
+
+Verify that the socket is active:
+
+```bash
+systemctl --user is-active podman.socket
+```
+
+Expected output:
+
+```text
+active
+```
+
+Then rerun portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
+
+Continue only when onboarding no longer reports that the Podman service or OpenShell Podman host gateway is unreachable.
 
 <AgentOnly variant="hermes">
 

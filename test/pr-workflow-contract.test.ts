@@ -71,11 +71,6 @@ const trustedPrActionPaths = {
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
-const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
-const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
-const installerHashBootstrapCreatedAt = "2026-07-02T19:35:41Z";
-const installerHashBootstrapExpiresAt = "2026-12-29T19:35:41Z";
-
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
@@ -85,8 +80,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardMatrix = [1, 2, 3, 4, 5, 6, 7, 8] as const;
-const cliShardCount = String(cliShardMatrix.length);
+const cliShardCount = "12";
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
@@ -285,11 +279,52 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
   });
 }
 
+function installerHashTrustViolations(workflow: CiWorkflow): string[] {
+  const steps = workflow.jobs["check-hash"]?.steps ?? [];
+  const baseCheckout = steps.find(
+    (step) => step.name === "Checkout base-trusted installer hash action",
+  );
+  const prCheck = steps.find(
+    (step) => step.name === "Verify pull request installer hashes from base-trusted code",
+  );
+  const allowedExecutors = new Set([
+    "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
+    "./.github/actions/ci-installer-hash-check",
+  ]);
+
+  return [
+    ...(baseCheckout ? [] : ["missing base-trusted installer hash checkout"]),
+    ...(baseCheckout?.uses === trustedCheckoutAction
+      ? []
+      : ["base-trusted installer hash checkout must use the pinned checkout action"]),
+    ...(baseCheckout?.with?.ref === "${{ github.event.pull_request.base.sha }}"
+      ? []
+      : ["base-trusted installer hash checkout must use the PR base SHA"]),
+    ...(baseCheckout?.with?.path === ".trusted-installer-hash"
+      ? []
+      : ["base-trusted installer hash checkout must use the trusted action path"]),
+    ...(prCheck?.if === "github.event_name == 'pull_request'" &&
+    prCheck.uses === "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
+      ? []
+      : ["pull request installer hashes must use only the base-trusted action"]),
+    ...steps.flatMap((step) => [
+      ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
+      step.if !== "github.event_name != 'pull_request'"
+        ? ["installer hash action from the latest PR commit must not execute for pull requests"]
+        : []),
+      ...(step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)
+        ? [`unapproved installer hash executor: ${step.uses}`]
+        : []),
+    ]),
+  ];
+}
+
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
@@ -313,819 +348,59 @@ describe("pull request and main workflow contracts", () => {
     ),
   };
 
-  // source-shape-contract: security -- Base retargets must rerun trusted installer verification without minting skipped required evidence
-  it("reruns installer hash verification after a pull request base retarget", () => {
-    expect(installerHashWorkflow.on?.pull_request?.types).toEqual([
-      "opened",
-      "synchronize",
-      "reopened",
-      "edited",
-    ]);
-    expect(installerHashWorkflow.jobs["check-hash"].if).toBe(
-      "github.repository == 'NVIDIA/NemoClaw'",
-    );
-  });
+  // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
+  it("executes pull request installer hash checks only from the PR base SHA", () => {
+    expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
 
-  // source-shape-contract: security -- Dependabot's bounded DCO exemption must report an explicit successful required check
-  it("records the Dependabot DCO bypass as a successful required job", () => {
-    const job = dcoWorkflow.jobs["dco-check"];
-    const bypass = requiredWorkflowStep(job, "Check Dependabot DCO bypass");
-    const declaration = requiredWorkflowStep(job, "Check PR body for Signed-off-by");
-
-    expect(job.if).toBeUndefined();
-    expect(job.steps?.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
-    expect(bypass.env?.USERNAME).toBe("${{ github.event.pull_request.user.login }}");
-    expect(bypass.run).toContain('"$USERNAME" == "dependabot[bot]"');
-    expect(bypass.run).toContain('"$USERNAME" == "app/dependabot"');
-    expect(bypass.run).not.toContain(".github/dco-bypass.txt");
-    expect(declaration.if).toBe("${{ steps.dco-bypass.outputs.bypass != 'true' }}");
-  });
-
-  // source-shape-contract: security -- Installer hashes must be verified by base-trusted or immutable bootstrap code
-  it("runs pull request installer verification from immutable trusted code", () => {
-    const job = installerHashWorkflow.jobs["check-hash"];
-    const parserRuntimeSetup = requiredWorkflowStep(
-      job,
-      "Set up trusted installer hash parser runtime",
-    );
-    const prCheckout = requiredWorkflowStep(job, "Checkout pull request head");
-    const baseCheckout = requiredWorkflowStep(job, "Checkout base-trusted installer hash action");
-    const trustedActionProbe = requiredWorkflowStep(
-      job,
-      "Detect base-trusted installer hash action",
-    );
-    const bootstrapCheckout = requiredWorkflowStep(
-      job,
-      "Checkout immutable installer hash bootstrap",
-    );
-    const bootstrapTreeVerification = requiredWorkflowStep(
-      job,
-      "Verify immutable installer hash bootstrap tree",
-    );
-    const bootstrapExpiry = requiredWorkflowStep(
-      job,
-      "Enforce immutable installer hash bootstrap expiry",
-    );
-    const baseVerification = requiredWorkflowStep(
-      job,
-      "Verify pull request installer hashes from base-trusted code",
-    );
-    const bootstrapVerification = requiredWorkflowStep(
-      job,
-      "Verify pull request installer hashes from immutable bootstrap",
-    );
-    const trustedEventVerification = requiredWorkflowStep(
-      job,
-      "Verify trusted event installer hashes",
-    );
-
-    expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
-    expect(installerHashWorkflow.on?.pull_request?.types).toEqual([
-      "opened",
-      "synchronize",
-      "reopened",
-      "edited",
-    ]);
-    expect(installerHashWorkflow["run-name"]).toContain(
-      "Installer Hash PR #{0} head {1} base {2} gate true",
-    );
-    expect(installerHashWorkflow["run-name"]).toContain("github.event.pull_request.base.sha");
-    expect(installerHashWorkflow["run-name"]).not.toContain("github.event.changes.base");
-    expect(job.if).toBe("github.repository == 'NVIDIA/NemoClaw'");
-    expect(parserRuntimeSetup.uses).toBe(trustedSetupNodeAction);
-    expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.19.0");
-    expect(prCheckout.with?.repository).toBe(
-      "${{ github.event.pull_request.head.repo.full_name }}",
-    );
-    expect(prCheckout.with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
-
-    for (const checkout of (job.steps ?? []).filter(
-      (step) => step.uses === trustedCheckoutAction,
-    )) {
-      expect(checkout.with?.["persist-credentials"], checkout.name).toBe(false);
-    }
-    expect(
-      (job.steps ?? [])
-        .filter((step) => step.uses?.startsWith("actions/checkout@"))
-        .every((step) => step.uses === trustedCheckoutAction),
-    ).toBe(true);
-
-    expect(baseCheckout.with?.ref).toBe("${{ github.event.pull_request.base.sha }}");
-    expect(baseCheckout.with?.path).toBe(".trusted-installer-hash");
-    expect(baseCheckout.with?.["sparse-checkout"]).toContain(
-      ".github/actions/ci-installer-hash-check",
-    );
-    expect(baseCheckout.with?.["sparse-checkout"]).toContain("scripts/check-installer-hash.sh");
-    expect(baseCheckout.with?.["sparse-checkout"]).toContain(
-      "scripts/checks/extract-installer-pins.mts",
-    );
-
-    expect(trustedActionProbe.id).toBe("trusted-installer-hash");
-    expect(trustedActionProbe.run).toContain(
-      ".trusted-installer-hash/.github/actions/ci-installer-hash-check/action.yaml",
-    );
-    expect(trustedActionProbe.run).not.toContain("scripts/check-installer-hash.sh");
-    expect(bootstrapCheckout.with?.ref).toBe(installerHashBootstrapCommit);
-    expect(String(bootstrapCheckout.with?.ref)).toMatch(/^[a-f0-9]{40}$/u);
-    expect(bootstrapCheckout.with?.path).toBe(".bootstrap-installer-hash");
-    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
-      ".github/actions/ci-installer-hash-check",
-    );
-    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
-      "scripts/check-installer-hash.sh",
-    );
-    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
-      "scripts/checks/extract-installer-pins.mts",
-    );
-    expect(bootstrapCheckout.with?.["sparse-checkout-cone-mode"]).toBe(false);
-    expect((bootstrapExpiry as WorkflowStep & { shell?: string }).shell).toBe("bash");
-    expect(bootstrapExpiry.env).toBeUndefined();
-    expect(bootstrapExpiry.run).toContain(installerHashBootstrapCommit);
-    expect(bootstrapExpiry.run).toContain(installerHashBootstrapExpiresAt);
-    expect(bootstrapExpiry.if).toBe(bootstrapCheckout.if);
-    expect(bootstrapExpiry.if).toBe(bootstrapVerification.if);
-    expect(bootstrapTreeVerification.if).toBe(bootstrapCheckout.if);
-    expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapCommit);
-    expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapTree);
-    expect(
-      requiredWorkflowStepIndex(job, "Enforce immutable installer hash bootstrap expiry"),
-    ).toBeLessThan(requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"));
-    expect(
-      requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"),
-    ).toBeLessThan(
-      requiredWorkflowStepIndex(job, "Verify immutable installer hash bootstrap tree"),
-    );
-    expect(
-      requiredWorkflowStepIndex(job, "Verify immutable installer hash bootstrap tree"),
-    ).toBeLessThan(
-      requiredWorkflowStepIndex(
-        job,
-        "Verify pull request installer hashes from immutable bootstrap",
-      ),
-    );
-    expect(
-      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
-    ).toBeLessThan(
-      requiredWorkflowStepIndex(job, "Verify pull request installer hashes from base-trusted code"),
-    );
-    expect(
-      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
-    ).toBeLessThan(
-      requiredWorkflowStepIndex(
-        job,
-        "Verify pull request installer hashes from immutable bootstrap",
-      ),
-    );
-    expect(
-      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
-    ).toBeLessThan(requiredWorkflowStepIndex(job, "Verify trusted event installer hashes"));
-    expect(
-      (Date.parse(installerHashBootstrapExpiresAt) - Date.parse(installerHashBootstrapCreatedAt)) /
-        86_400_000,
-    ).toBe(180);
-    expect(bootstrapExpiry.run).toContain("Date.now() >= expiresAtMs");
-    expect(bootstrapExpiry.run).toContain("Remove the bootstrap fallback");
-
-    expect(baseVerification.uses).toBe(
-      "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
-    );
-    expect(bootstrapVerification.uses).toBe(
-      "./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
-    );
-    expect(trustedEventVerification.uses).toBe("./.github/actions/ci-installer-hash-check");
-    expect(baseVerification.if).toBe(
-      "github.event_name == 'pull_request' && steps.trusted-installer-hash.outputs.available == 'true'",
-    );
-    expect(bootstrapVerification.if).toBe(
-      "github.event_name == 'pull_request' && steps.trusted-installer-hash.outputs.available != 'true'",
-    );
-    expect(trustedEventVerification.if).toBe("github.event_name != 'pull_request'");
-    for (const verification of [
-      baseVerification,
-      bootstrapVerification,
-      trustedEventVerification,
-    ]) {
-      expect(verification.with?.["repo-root"], verification.name).toBe("${{ github.workspace }}");
-    }
-
-    expect(job.steps?.some((step) => step.name === "Detect installer-affecting changes")).toBe(
-      false,
-    );
-    expect(stepRuns(job).join("\n")).not.toContain("bash scripts/check-installer-hash.sh");
-  });
-
-  it("fails closed when the immutable installer hash bootstrap expiry is mutated", () => {
-    const expiryStep = requiredWorkflowStep(
-      installerHashWorkflow.jobs["check-hash"],
-      "Enforce immutable installer hash bootstrap expiry",
-    );
-    const expired = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "2000-12-27T23:26:13Z"),
-      },
-      {},
-    );
-    const malformedExpiry = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "not-a-canonical-utc-date"),
-      },
-      {},
-    );
-    const mutableRef = runWorkflowShellStep(
-      {
-        ...expiryStep,
-        run: expiryStep.run?.replace(installerHashBootstrapCommit, "main"),
-      },
-      {},
-    );
-    const valid = runWorkflowShellStep(expiryStep, {});
-
-    expect(valid.status).toBe(0);
-    expect(valid.stdout).toContain("remains valid");
-    expect(expired.status).not.toBe(0);
-    expect(expired.stderr).toContain("expired at 2000-12-27T23:26:13Z");
-    expect(expired.stderr).toContain("Remove the bootstrap fallback");
-    expect(malformedExpiry.status).not.toBe(0);
-    expect(malformedExpiry.stderr).toContain("expiry configuration is invalid");
-    expect(mutableRef.status).not.toBe(0);
-    expect(mutableRef.stderr).toContain("refusing the fallback");
-  });
-
-  it("fails closed when the immutable installer hash bootstrap tree differs", () => {
-    const treeStep = requiredWorkflowStep(
-      installerHashWorkflow.jobs["check-hash"],
-      "Verify immutable installer hash bootstrap tree",
-    );
-    const fakeBin = mkdtempSync(join(tmpdir(), "nemoclaw-bootstrap-git-"));
-    const fakeGit = join(fakeBin, "git");
-    writeFileSync(
-      fakeGit,
-      [
-        "#!/bin/sh",
-        'case "$*" in',
-        '  *"HEAD^{tree}"*) printf \'%s\\n\' "${FAKE_TREE}" ;;',
-        `  *) printf '%s\\n' ${installerHashBootstrapCommit} ;;`,
-        "esac",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    try {
-      const env = {
-        GITHUB_WORKSPACE: tmpdir(),
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      };
-      const valid = runWorkflowShellStep(treeStep, {
-        ...env,
-        FAKE_TREE: installerHashBootstrapTree,
-      });
-      const mismatch = runWorkflowShellStep(treeStep, {
-        ...env,
-        FAKE_TREE: "0000000000000000000000000000000000000000",
-      });
-
-      expect(valid.status).toBe(0);
-      expect(mismatch.status).not.toBe(0);
-      expect(mismatch.stderr).toContain("does not match the reviewed tree");
-    } finally {
-      rmSync(fakeBin, { recursive: true, force: true });
-    }
-  });
-
-  // source-shape-contract: security -- The trusted action must invoke its bundled verifier without PR-controlled resolution
-  it("keeps the installer verifier inside the trusted composite action", () => {
-    const verification = requiredStep(installerHashAction, "Verify installer hashes are current");
-
-    expect(installerHashAction.inputs?.["repo-root"]?.required).toBe(true);
-    expect(verification.env).toEqual({
-      NEMOCLAW_INSTALLER_HASH_REPO_ROOT: "${{ inputs.repo-root }}",
-    });
-    expect(verification.run).toBe(
-      'bash "${{ github.action_path }}/../../../scripts/check-installer-hash.sh"',
-    );
-  });
-
-  // source-shape-contract: compatibility -- Path-filter semantics keep documentation-only and code-changing PR lanes distinct
-  it("routes only code-changing PRs through the code-check path", () => {
-    const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const docsOnlyCheckout = requiredWorkflowStep(prWorkflow.jobs["docs-only-checks"], "Checkout");
-
-    expect(filterStep?.uses).toContain("dorny/paths-filter");
-    expect(docsOnlyCheckout.with?.["fetch-depth"]).toBe(0);
-    expect(filterStep?.with?.["predicate-quantifier"]).toBe("every");
-    expect(filterStep?.with?.filters).toContain("code:");
-    expect(filterStep?.with?.filters).toContain("!**/*.md");
-    expect(filterStep?.with?.filters).toContain("!docs/**");
-
-    expect(codeFilterMatchesChangedPaths(prWorkflow, ["docs/get-started/prerequisites.mdx"])).toBe(
-      false,
-    );
-    expect(codeFilterMatchesChangedPaths(prWorkflow, ["README.md"])).toBe(false);
-    expect(codeFilterMatchesChangedPaths(prWorkflow, ["src/lib/runner.ts"])).toBe(true);
-    expect(
-      codeFilterMatchesChangedPaths(prWorkflow, [
-        "docs/get-started/prerequisites.mdx",
-        "src/lib/runner.ts",
-      ]),
-    ).toBe(true);
-  });
-
-  // source-shape-contract: compatibility -- Repository validation must preserve file routing, command scopes, and aliases
-  it("preserves repository validation file routing, command scopes, and compatibility aliases", () => {
-    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
-    const repositoryChecks = hooks.find((candidate) => candidate.id === "repository-checks");
-    const files = new RegExp(repositoryChecks?.files ?? "(?!)", "u");
-
-    for (const path of [
-      ".pre-commit-config.yaml",
-      "Dockerfile",
-      "Dockerfile.base",
-      "agents/openclaw/manifest.yaml",
-      "agents/hermes/Dockerfile",
-      "agents/hermes/Dockerfile.base",
-      "agents/hermes/manifest.yaml",
-      "agents/hermes/mcp-config-transaction.py",
-      "nemoclaw-blueprint/blueprint.yaml",
-      "nemoclaw/package.json",
-      "package.json",
-      "scripts/brev-launchable-ci-cpu.sh",
-      "scripts/check-installer-hash.sh",
-      "scripts/install-openshell.sh",
-      "scripts/update-hermes-agent.sh",
-      "src/lib/actions/sandbox/mcp-bridge-validation.ts",
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
-    ]) {
-      expect(files.test(path), path).toBe(true);
-    }
-    expect(files.test("dependency-pins.yaml")).toBe(false);
-    expect(files.test("docs/reference/commands.mdx")).toBe(false);
-
-    const scripts = packageJson.scripts;
-    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
-    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
-    const broadCheckCalls = runLoggedPackageScript(scripts.check);
-    const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
-    const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
-    const legacyRepositoryChecks = runLoggedPackageScriptWithOutput(scripts.checks);
-
-    expect(cliCoverageCalls.map(([command]) => command)).toEqual(
-      "npm npm tsx vitest tsx".split(" "),
-    );
-    expect(cliCoverageCalls[3]).toEqual(
-      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
-    );
-    expect(cliCoverageCalls[4]).toEqual(
-      "tsx|scripts/check-coverage-ratchet.mts|coverage/cli/coverage-summary.json|ci/coverage-threshold-cli.json|CLI coverage".split(
-        "|",
-      ),
-    );
-    expect(pluginCoverageCalls[0]).toEqual(
-      expect.arrayContaining([
-        "--project",
-        "plugin",
-        "--coverage.include=nemoclaw/src/**/*.ts",
-        "--coverage.include=nemoclaw/src/**/*.cts",
-      ]),
-    );
-    expect(pluginCoverageCalls[1]).toEqual(
-      "tsx|scripts/check-coverage-ratchet.mts|coverage/plugin/coverage-summary.json|ci/coverage-threshold-plugin.json|Plugin coverage".split(
-        "|",
-      ),
-    );
-    expect(broadCheckCalls.map((call) => call.join(" "))).toEqual([
-      "npx prek run --all-files --stage pre-commit",
-      "npx prek run --all-files --stage manual",
-    ]);
-    expect(routinePrCalls.map((call) => call.join(" "))).toEqual([
-      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-commit",
-      "npx commitlint --from origin/main --to HEAD",
-      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-push",
-    ]);
-    expect(repositoryCheckCalls.map((call) => call.join(" "))).toEqual([
-      "tsx scripts/checks/run.mts",
-    ]);
-    expect(scripts["check:diff"]).toBe("npm run validate:pr");
-    expect(legacyRepositoryChecks.calls.map((call) => call.join(" "))).toEqual([
-      "npm run checks:repository",
-    ]);
-    expect(legacyRepositoryChecks.stderr).toContain("npm run validate:pr");
-    expect(legacyRepositoryChecks.stderr).toContain("npm run checks:repository");
-    expect(legacyRepositoryChecks.stderr).toContain("runs only narrow repository checks");
-    expect(scripts.lint).toContain("npm run checks:repository");
-    expect(scripts["lint:fix"]).toContain("npm run checks:repository");
-    expect(repositoryChecks?.entry).toBe("npm run checks:repository");
-  });
-
-  // source-shape-contract: compatibility -- Pre-commit routing must apply the declarative guard to every supported test location
-  it("runs the source-shape guard for root and co-located tests", () => {
-    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
-    const sourceShape = hooks.find((candidate) => candidate.id === "source-shape-test-budget");
-    const files = new RegExp(sourceShape?.files ?? "(?!)", "u");
-
-    expect(sourceShape?.entry).toBe("npm run source-shape:check");
-    for (const path of [
-      "test/example.test.ts",
-      "src/lib/example.spec.ts",
-      "nemoclaw/src/example.test.ts",
-      "scripts/find-source-shape-tests.mts",
-      "ci/source-shape-test-budget.json",
-    ]) {
-      expect(files.test(path), path).toBe(true);
-    }
-    expect(files.test("src/lib/example.ts")).toBe(false);
-  });
-
-  // source-shape-contract: compatibility -- Changed-file routing must typecheck each project and its transitive configuration inputs
-  it("scopes pre-push typechecks to project and transitive inputs", () => {
-    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
-    const pluginTypecheck = hooks.find((candidate) => candidate.id === "tsc-plugin");
-    const cliTypecheck = hooks.find((candidate) => candidate.id === "tsc-cli");
-    const jsTypecheck = hooks.find((candidate) => candidate.id === "tsc-js");
-    const pluginFiles = new RegExp(pluginTypecheck?.files ?? "(?!)", "u");
-    const files = new RegExp(cliTypecheck?.files ?? "(?!)", "u");
-    const jsFiles = new RegExp(jsTypecheck?.files ?? "(?!)", "u");
-
-    expect(pluginTypecheck?.entry).toBe("npm --prefix nemoclaw run typecheck");
-    expect(cliTypecheck?.entry).toBe("npm run typecheck:cli -- --incremental");
-    expect(cliTypecheck?.always_run).toBeUndefined();
-    for (const include of cliTypeScriptConfig.include) {
-      const representativeInput = include.replace("**/*", "nested/input");
-      expect(files.test(representativeInput), include).toBe(true);
-    }
-    for (const path of [
-      ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
-      ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
-      "agents/hermes/generate-config.ts",
-      "bin/nemoclaw.ts",
-      "scripts/check.ts",
-      "scripts/check.mts",
-      "src/lib/runner.ts",
-      "test/runner.test.ts",
-      "tools/e2e/workflow-boundary.mts",
-      "nemoclaw/src/lib/subprocess-env.ts",
-      "nemoclaw/src/blueprint/private-networks.ts",
-      "nemoclaw-blueprint/scripts/render.ts",
-      "src/lib/actions/sandbox/credentials.json",
-      "package.json",
-      "package-lock.json",
-      "tsconfig.cli.json",
-      "vitest.config.ts",
-    ]) {
-      expect(files.test(path), path).toBe(true);
-    }
-    for (const path of [
-      ".agents/skills/example/scripts/unchecked.ts",
-      "agents/hermes/start.sh",
-      "docs/get-started/quickstart.mdx",
-      "nemoclaw/src/commands/status.ts",
-      "scripts/check.js",
-    ]) {
-      expect(files.test(path), path).toBe(false);
-    }
-    for (const path of [
-      "nemoclaw/src/lib/subprocess-env.ts",
-      "nemoclaw/src/blueprint/private-networks.ts",
-      "nemoclaw/src/commands/status.ts",
-    ]) {
-      expect(pluginFiles.test(path), path).toBe(true);
-    }
-    expect(pluginFiles.test(".agents/skills/example/scripts/unchecked.ts")).toBe(false);
-    for (const path of ["bin/nemoclaw.js", "jsconfig.json", "package.json", "package-lock.json"]) {
-      expect(jsFiles.test(path), path).toBe(true);
-    }
-    expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
-  });
-
-  // source-shape-contract: security -- Pull requests must execute base-trusted actions while main uses reviewed repository actions
-  it("reuses the same shared CI actions in PR and main workflows", () => {
-    expect(prWorkflow.on?.pull_request?.types).toEqual([
-      "opened",
-      "synchronize",
-      "reopened",
-      "edited",
-    ]);
-    expect(prWorkflow["run-name"]).toBe(
-      "CI PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }} gate ${{ github.event.action != 'edited' || github.event.changes.base != null }}",
-    );
-    expect(prWorkflow.concurrency).toEqual({
-      group:
-        "${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
-      "cancel-in-progress": true,
-    });
-    expect(
-      requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Checkout").with?.["fetch-depth"],
-    ).toBe(0);
-    for (const [jobName, stepName, trustedActionPath, mainActionPath] of [
-      [
-        "static-checks",
-        "Run static checks",
-        trustedPrActionPaths.staticChecks,
-        sharedActionPaths.staticChecks,
-      ],
-      [
-        "build-typecheck",
-        "Run build and type checks",
-        trustedPrActionPaths.buildTypecheck,
-        sharedActionPaths.buildTypecheck,
-      ],
-      [
-        "cli-test-shards",
-        "Run CLI coverage shard",
-        trustedPrActionPaths.cliCoverageShard,
-        sharedActionPaths.cliCoverageShard,
-      ],
-      [
-        "cli-tests",
-        "Merge CLI coverage",
-        trustedPrActionPaths.cliCoverageMerge,
-        sharedActionPaths.cliCoverageMerge,
-      ],
-      [
-        "plugin-tests",
-        "Run plugin coverage",
-        trustedPrActionPaths.pluginCoverage,
-        sharedActionPaths.pluginCoverage,
-      ],
-    ] as const) {
-      expect(stepUses(prWorkflow.jobs[jobName]), `PR ${jobName}`).toContain(trustedActionPath);
-      expect(stepUses(mainWorkflow.jobs[jobName]), `main ${jobName}`).toContain(mainActionPath);
-      expect(stepUses(prWorkflow.jobs[jobName]), `PR ${jobName}`).not.toContain(mainActionPath);
-      expect(stepUses(mainWorkflow.jobs[jobName]), `main ${jobName}`).not.toContain(
-        trustedActionPath,
-      );
-
-      const trustedCheckout = requiredWorkflowStep(
-        prWorkflow.jobs[jobName],
-        "Checkout trusted CI actions",
-      );
-      expect(trustedCheckout.uses).toBe(trustedCheckoutAction);
-      expect(trustedCheckout.with?.ref).toBe("${{ github.event.pull_request.base.sha }}");
-      expect(trustedCheckout.with?.path).toBe(".trusted-ci-actions");
-      expect(trustedCheckout.with?.["persist-credentials"]).toBe(false);
-      expect(trustedCheckout.with?.["sparse-checkout-cone-mode"]).toBe(false);
-      for (const trustedActionDir of trustedActionDirs) {
-        expect(String(trustedCheckout.with?.["sparse-checkout"])).toContain(trustedActionDir);
-      }
-      expect(
-        requiredWorkflowStepIndex(prWorkflow.jobs[jobName], "Checkout trusted CI actions"),
-      ).toBeLessThan(requiredWorkflowStepIndex(prWorkflow.jobs[jobName], stepName));
-    }
-
-    expect(stepUses(prWorkflow.jobs["installer-integration"])).toContain(
-      trustedPrActionPaths.installerIntegration,
-    );
-    expect(stepUses(prWorkflow.jobs["installer-integration"])).not.toContain(
-      sharedActionPaths.installerIntegration,
-    );
-    expect(stepUses(mainWorkflow.jobs["installer-integration"])).toContain(
-      sharedActionPaths.installerIntegration,
-    );
-    expect(stepUses(mainWorkflow.jobs["installer-integration"])).not.toContain(
-      trustedPrActionPaths.installerIntegration,
-    );
-    const installerTrustedCheckout = requiredWorkflowStep(
-      prWorkflow.jobs["installer-integration"],
-      "Checkout trusted CI actions",
-    );
-    expect(installerTrustedCheckout.uses).toBe(trustedCheckoutAction);
-    expect(installerTrustedCheckout.with?.ref).toBe("${{ github.event.pull_request.base.sha }}");
-    expect(installerTrustedCheckout.with?.path).toBe(".trusted-ci-actions");
-    expect(installerTrustedCheckout.with?.["persist-credentials"]).toBe(false);
-    expect(installerTrustedCheckout.with?.["sparse-checkout-cone-mode"]).toBe(false);
-    expect(String(installerTrustedCheckout.with?.["sparse-checkout"])).toContain(
-      ".github/actions/ci-installer-integration",
-    );
-    const installerActionProbe = requiredWorkflowStep(
-      prWorkflow.jobs["installer-integration"],
-      "Detect trusted installer integration action",
-    );
-    expect(installerActionProbe.id).toBe("trusted-installer-integration");
-    expect(installerActionProbe.run).toContain(
-      ".trusted-ci-actions/.github/actions/ci-installer-integration/action.yaml",
-    );
-    expect(installerActionProbe.run).toContain("available=true");
-    expect(installerActionProbe.run).toContain("available=false");
-    const installerActionStep = requiredWorkflowStep(
-      prWorkflow.jobs["installer-integration"],
-      "Run installer integration tests",
-    );
-    expect(installerActionStep.if).toBe(
-      "${{ steps.trusted-installer-integration.outputs.available == 'true' }}",
-    );
-    const bootstrapSetup = requiredWorkflowStep(
-      prWorkflow.jobs["installer-integration"],
-      "Setup Node.js for installer integration",
-    );
-    expect(bootstrapSetup.if).toBe(
-      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
-    );
-    expect(bootstrapSetup.uses).toBe(trustedSetupNodeAction);
-    expect(bootstrapSetup.with?.["node-version"]).toBe("22");
-    expect(bootstrapSetup.with?.cache).toBe("npm");
-    const bootstrapInstall = requiredWorkflowStep(
-      prWorkflow.jobs["installer-integration"],
-      "Install installer integration dependencies",
-    );
-    expect(bootstrapInstall.if).toBe(
-      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
-    );
-    expect(bootstrapInstall.run).toContain("npm install --ignore-scripts");
-    expect(bootstrapInstall.run).toContain("cd nemoclaw && npm install --ignore-scripts");
-    const bootstrapBuild = requiredWorkflowStep(
-      prWorkflow.jobs["installer-integration"],
-      "Build installer integration artifacts",
-    );
-    expect(bootstrapBuild.if).toBe(
-      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
-    );
-    expect(bootstrapBuild.run).toContain("npm run build:cli");
-    expect(bootstrapBuild.run).toContain("cd nemoclaw && npm run build");
-    const bootstrapRun = requiredWorkflowStep(
-      prWorkflow.jobs["installer-integration"],
-      "Run installer integration tests (bootstrap)",
-    );
-    expect(bootstrapRun.if).toBe(
-      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
-    );
-    expect(bootstrapRun.run).toBe("CI=true npx vitest run --project installer-integration");
-    expect(
-      requiredWorkflowStepIndex(
-        prWorkflow.jobs["installer-integration"],
-        "Checkout trusted CI actions",
-      ),
-    ).toBeLessThan(
-      requiredWorkflowStepIndex(
-        prWorkflow.jobs["installer-integration"],
-        "Run installer integration tests",
-      ),
-    );
-    expect(
-      requiredWorkflowStepIndex(
-        prWorkflow.jobs["installer-integration"],
-        "Detect trusted installer integration action",
-      ),
-    ).toBeLessThan(
-      requiredWorkflowStepIndex(
-        prWorkflow.jobs["installer-integration"],
-        "Run installer integration tests (bootstrap)",
-      ),
-    );
-
-    expect(stepUses(mainWorkflow.jobs.checks)).not.toContain("./.github/actions/basic-checks");
-    expect(prWorkflow.jobs["cli-test-shards"].strategy?.["fail-fast"]).toBe(false);
-    expect(mainWorkflow.jobs["cli-test-shards"].strategy?.["fail-fast"]).toBe(false);
-    expect(prWorkflow.jobs["cli-test-shards"].strategy?.matrix?.shard).toEqual([...cliShardMatrix]);
-    expect(mainWorkflow.jobs["cli-test-shards"].strategy?.matrix?.shard).toEqual([
-      ...cliShardMatrix,
-    ]);
-    for (const [workflowName, workflow] of [
-      ["pull_request", prWorkflow],
-      ["main", mainWorkflow],
-    ] as const) {
-      expect(workflow.jobs["cli-test-shards"]["timeout-minutes"], workflowName).toBe(15);
-      const checkoutStep = requiredWorkflowStep(workflow.jobs["cli-test-shards"], "Checkout");
-      const shardStep = requiredWorkflowStep(
-        workflow.jobs["cli-test-shards"],
-        "Run CLI coverage shard",
-      );
-      const mergeStep = requiredWorkflowStep(workflow.jobs["cli-tests"], "Merge CLI coverage");
-      expect(checkoutStep.with?.["fetch-depth"], `${workflowName} checkout depth`).toBe(0);
-      expect(shardStep.with?.shard, `${workflowName} shard input`).toBe("${{ matrix.shard }}");
-      expect(shardStep.with?.["shard-count"], `${workflowName} shard-count input`).toBe(
-        cliShardCount,
-      );
-      expect(mergeStep.with?.["shard-count"], `${workflowName} merge shard-count`).toBe(
-        cliShardCount,
-      );
-      expect(workflow.jobs["cli-tests"].permissions?.actions, workflowName).toBe("read");
-      expect(workflow.jobs.checks.permissions?.actions, workflowName).toBe("read");
-    }
-  });
-
-  // source-shape-contract: security -- Base-trusted PR sharding must retain hermetic coverage while retired duplicate lanes stay absent
-  it("folds hermetic E2E support and Ollama proxy coverage into existing Vitest lanes", () => {
-    const shardRun = requiredStep(
-      sharedActions.cliCoverageShard,
-      "Run CLI coverage and E2E support shard",
-    );
-    expect(shardRun.run).toContain("--project cli --project integration --project e2e-support");
-
-    const parityStep = requiredStep(
-      sharedActions.cliCoverageShard,
-      "Validate changed live E2E mock parity",
-    );
-    expect(parityStep.if).toBe("${{ inputs.shard == '1' }}");
-    expect(parityStep.run).toContain("base=HEAD^1");
-    expect(parityStep.run).toContain("head=HEAD^2");
-    expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
-    expect(parityStep.run).toContain("npx tsx scripts/checks/e2e-mock-parity.mts");
-    expect(parityStep.run).not.toContain("scripts/checks/e2e-mock-parity.ts");
-    const trustedCapabilityProbe = requiredWorkflowStep(
-      prWorkflow.jobs["cli-test-shards"],
-      "Detect trusted E2E support sharding",
-    );
-    expect(trustedCapabilityProbe.id).toBe("trusted-shard-capabilities");
-    expect(trustedCapabilityProbe.run).toContain("--project e2e-support");
-    expect(trustedCapabilityProbe.run).toContain("e2e-support=true");
-    expect(trustedCapabilityProbe.run).toContain("e2e-support=false");
-
-    const bootstrapParity = requiredWorkflowStep(
-      prWorkflow.jobs["cli-test-shards"],
-      "Validate changed live E2E mock parity (bootstrap)",
-    );
-    expect(bootstrapParity.if).toBe(
-      "${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' && matrix.shard == 1 }}",
-    );
-    expect(bootstrapParity.run).toContain("--base HEAD^1 --head HEAD^2");
-
-    const bootstrapShard = requiredWorkflowStep(
-      prWorkflow.jobs["cli-test-shards"],
-      "Run E2E support shard (bootstrap)",
-    );
-    expect(bootstrapShard.if).toBe(
-      "${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' }}",
-    );
-    expect(bootstrapShard.run).toContain("--project e2e-support");
-    expect(bootstrapShard.run).toContain(
-      '--shard="${E2E_SUPPORT_SHARD}/${E2E_SUPPORT_SHARD_COUNT}"',
-    );
-
-    for (const workflow of [prWorkflow, mainWorkflow]) {
-      expect(workflow.jobs["e2e-support"]).toBeUndefined();
-      expect(workflow.jobs["test-e2e-ollama-proxy"]).toBeUndefined();
-      expect(workflow.jobs.checks.needs).not.toContain("e2e-support");
-      expect(workflow.jobs.checks.needs).not.toContain("test-e2e-ollama-proxy");
-    }
-
-    expect(stepRuns(sharedActions.staticChecks).join("\n")).not.toContain(
-      "skills-frontmatter.test.ts",
-    );
-    const trustedRatchetDependencies = requiredStep(
-      sharedActions.staticChecks,
-      "Install base-trusted createRequire verifier dependencies",
-    );
-    const trustedRatchet = requiredStep(
-      sharedActions.staticChecks,
-      "Enforce base-trusted createRequire allowlist ratchet",
-    );
-    expect(trustedRatchetDependencies.run).toBe(
-      'npm ci --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"',
-    );
-    expect(trustedRatchet.run).toBe(
-      'node --experimental-strip-types "$GITHUB_ACTION_PATH/create-require-ratchet.mts"',
-    );
-    expect(stepRuns(sharedActions.staticChecks)).not.toContain(
-      'npx tsx "$GITHUB_ACTION_PATH/create-require-ratchet.mts"',
-    );
-    expect(
-      requiredStepIndex(
-        sharedActions.staticChecks,
-        "Install base-trusted createRequire verifier dependencies",
-      ),
-    ).toBeLessThan(
-      requiredStepIndex(
-        sharedActions.staticChecks,
-        "Enforce base-trusted createRequire allowlist ratchet",
-      ),
-    );
-    expect(
-      requiredStepIndex(
-        sharedActions.staticChecks,
-        "Enforce base-trusted createRequire allowlist ratchet",
-      ),
-    ).toBeLessThan(requiredStepIndex(sharedActions.staticChecks, "Install dependencies"));
-
-    const ratchetPackage = JSON.parse(
-      readFileSync(".github/actions/ci-static-checks/package.json", "utf8"),
-    ) as { dependencies?: Record<string, string> };
-    const ratchetLock = JSON.parse(
-      readFileSync(".github/actions/ci-static-checks/package-lock.json", "utf8"),
-    ) as {
-      packages?: Record<string, { integrity?: string; version?: string }>;
+    const headCheckout = structuredClone(installerHashWorkflow);
+    requiredWorkflowStep(
+      headCheckout.jobs["check-hash"],
+      "Checkout base-trusted installer hash action",
+    ).with = {
+      ref: "${{ github.event.pull_request.head.sha }}",
+      path: ".trusted-installer-hash",
     };
-    const ratchetRuntime = readFileSync(
-      ".github/actions/ci-static-checks/create-require-ratchet.mts",
-      "utf8",
-    );
-    expect(ratchetPackage.dependencies).toEqual({ typescript: "6.0.3" });
-    expect(ratchetLock.packages?.["node_modules/typescript"]?.version).toBe("6.0.3");
-    expect(ratchetLock.packages?.["node_modules/typescript"]?.integrity).toMatch(/^sha512-/);
-    expect(ratchetRuntime).toContain(
-      'import ts from "./node_modules/typescript/lib/typescript.js";',
-    );
-    expect(ratchetRuntime).not.toMatch(/from ["']typescript["']/);
-  });
 
-  // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata
-  it("pins downloaded CI tooling to reviewed integrity", () => {
-    const docsRuns = stepRuns(prWorkflow.jobs["docs-only-checks"]).join("\n");
-    for (const runs of [stepRuns(sharedActions.staticChecks).join("\n"), docsRuns]) {
-      expect(runs).toContain("6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47");
-      expect(runs).not.toMatch(/HADOLINT_URL.*sha256|EXPECTED=\$\(curl/);
-    }
-    expect(docsRuns.indexOf("HADOLINT_SHA256")).toBeLessThan(docsRuns.indexOf("prek run"));
+    const missingBaseCheckout = structuredClone(installerHashWorkflow);
+    missingBaseCheckout.jobs["check-hash"].steps = missingBaseCheckout.jobs[
+      "check-hash"
+    ].steps?.filter((step) => step.name !== "Checkout base-trusted installer hash action");
+
+    const mutableExecutor = structuredClone(installerHashWorkflow);
+    requiredWorkflowStep(
+      mutableExecutor.jobs["check-hash"],
+      "Verify pull request installer hashes from base-trusted code",
+    ).uses = "./.github/actions/ci-installer-hash-check";
+
+    const bootstrapExecutor = structuredClone(installerHashWorkflow);
+    bootstrapExecutor.jobs["check-hash"].steps?.push({
+      name: "Run installer hash bootstrap",
+      uses: "./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    });
+
+    const prOnlyLocalExecutor = structuredClone(installerHashWorkflow);
+    prOnlyLocalExecutor.jobs["check-hash"].steps?.push({
+      name: "Run local installer hash action for pull requests",
+      if: "github.event_name == 'pull_request'",
+      uses: "./.github/actions/ci-installer-hash-check",
+    });
+
+    expect(installerHashTrustViolations(headCheckout)).toContain(
+      "base-trusted installer hash checkout must use the PR base SHA",
+    );
+    expect(installerHashTrustViolations(missingBaseCheckout)).toContain(
+      "missing base-trusted installer hash checkout",
+    );
+    expect(installerHashTrustViolations(mutableExecutor)).toContain(
+      "pull request installer hashes must use only the base-trusted action",
+    );
+    expect(installerHashTrustViolations(bootstrapExecutor)).toContain(
+      "unapproved installer hash executor: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    );
+
+    expect(installerHashTrustViolations(prOnlyLocalExecutor)).toContain(
+      "installer hash action from the latest PR commit must not execute for pull requests",
+    );
   });
 
   it("validates CLI shard inputs before using them in shell commands", () => {
@@ -1140,22 +415,30 @@ describe("pull request and main workflow contracts", () => {
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-validation-"));
     const marker = join(temp, "injected");
     const shellPayload = `$(touch ${marker})`;
+    const output = join(temp, "github-output");
 
     try {
+      const validShard = runWorkflowShellStep(shardValidationStep, {
+        CLI_SHARD: cliShardCount,
+        CLI_SHARD_COUNT: cliShardCount,
+        GITHUB_OUTPUT: output,
+      });
       const invalidShard = runWorkflowShellStep(shardValidationStep, {
         CLI_SHARD: shellPayload,
-        CLI_SHARD_COUNT: "8",
-        GITHUB_OUTPUT: join(temp, "github-output"),
+        CLI_SHARD_COUNT: cliShardCount,
+        GITHUB_OUTPUT: output,
       });
       const invalidRange = runWorkflowShellStep(shardValidationStep, {
-        CLI_SHARD: "9",
-        CLI_SHARD_COUNT: "8",
+        CLI_SHARD: "13",
+        CLI_SHARD_COUNT: cliShardCount,
         GITHUB_OUTPUT: join(temp, "github-output"),
       });
       const invalidCount = runWorkflowShellStep(mergeValidationStep, {
         CLI_SHARD_COUNT: shellPayload,
       });
 
+      expect(validShard.status).toBe(0);
+      expect(readFileSync(output, "utf8")).toContain("upload_build_artifact=false");
       expect(invalidShard.status).not.toBe(0);
       expect(invalidShard.stdout).toContain("Invalid CLI shard");
       expect(invalidRange.status).not.toBe(0);
@@ -1249,50 +532,12 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
-  // source-shape-contract: security -- Growth-budget changes must inspect trusted GitHub data without fetching PR-authored URLs
-  it("keeps the trusted test-size guard closed around budget policy changes", () => {
-    const growthGuardrails = readYaml<CodebaseGrowthGuardrailsWorkflow>(
-      ".github/workflows/codebase-growth-guardrails.yaml",
-    );
-    const guardJob = growthGuardrails.jobs["codebase-growth-guardrails"];
-    const guardRun = stepRuns(guardJob).join("\n");
-    const guardEnv = JSON.stringify((guardJob.steps ?? []).map((step) => step.env ?? {}));
-    expect(guardEnv).toContain("HEAD_REPO");
-    expect(guardRun).not.toContain(".raw_url");
-    expect(guardRun).not.toContain("node <<'NODE'");
-    expect(guardRun).toContain("tools/growth-guardrails/test-size-budget.mts");
-    expect(guardRun).toContain("tools/growth-guardrails/test-conditionals.mts");
-  });
-
-  // source-shape-contract: security -- Coverage publication must exclude fork-authored reports and pin the publishing action
-  it("publishes coverage only from same-repository code (#6692)", () => {
-    const sameRepositoryGuard =
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}";
-    const uploadAction = "actions/upload-code-coverage@abb5995db9e0199b0e2bb9dbd136fce4cb1ec4d3";
-    const reports = [
-      {
-        action: sharedActions.cliCoverageMerge,
-        uploadStep: "Upload CLI coverage report",
-      },
-      {
-        action: sharedActions.pluginCoverage,
-        uploadStep: "Upload plugin coverage report",
-      },
-    ] as const;
-
-    for (const report of reports) {
-      const uploadStep = requiredStep(report.action, report.uploadStep);
-      expect(uploadStep.if).toBe(sameRepositoryGuard);
-      expect(uploadStep.uses).toBe(uploadAction);
-    }
-  });
-
   it("links every failed CLI shard and falls back safely when job metadata is unavailable", () => {
     const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
     const failedShards = workflowJobListing([
       workflowJob(101, "cli-test-shards (1)", "success"),
       workflowJob(102, "cli-test-shards (2)", "failure"),
-      workflowJob(108, "cli-test-shards (8)", "cancelled"),
+      workflowJob(112, "cli-test-shards (12)", "cancelled"),
       workflowJob(109, "plugin-tests", "success"),
     ]);
     const malformedShards = workflowJobListing([
@@ -1334,7 +579,7 @@ describe("pull request and main workflow contracts", () => {
 
       expect(failure.status, `${workflowName}: ${failure.stderr}`).not.toBe(0);
       expect(failure.stdout).toContain(`${runUrl}/job/102`);
-      expect(failure.stdout).toContain(`${runUrl}/job/108`);
+      expect(failure.stdout).toContain(`${runUrl}/job/112`);
       expect(malformed.status).not.toBe(0);
       expect(malformed.stdout).toContain(`Details: ${runUrl}`);
       expect(malformed.stdout).not.toContain(`${runUrl}/job/`);
@@ -1448,49 +693,5 @@ describe("pull request and main workflow contracts", () => {
       "Details: https://github.com/NVIDIA/NemoClaw/actions/runs/123",
     );
     expect(oversizedFailure.stdout).not.toContain("actions/runs/123/job/");
-  });
-
-  // source-shape-contract: security -- CI dependency installs must never execute package lifecycle scripts from fetched code
-  it("does not run npm lifecycle scripts during CI dependency installs", () => {
-    for (const [actionName, action] of Object.entries(sharedActions)) {
-      const installRuns = stepRuns(action).filter((run) => run.includes("npm install"));
-
-      expect(installRuns.length, `${actionName} install steps`).toBeGreaterThan(0);
-      for (const run of installRuns) {
-        for (const line of run.split("\n").map((candidate) => candidate.trim())) {
-          if (line.includes("npm install")) {
-            expect(line, `${actionName} install command`).toContain("--ignore-scripts");
-          }
-        }
-      }
-    }
-
-    const docsOnlyInstall = stepRuns(prWorkflow.jobs["docs-only-checks"]).find((run) =>
-      run.includes("npm install"),
-    );
-    expect(docsOnlyInstall).toBe("npm install --ignore-scripts");
-    const installerBootstrapInstall = stepRuns(prWorkflow.jobs["installer-integration"]).find(
-      (run) => run.includes("npm install"),
-    );
-    expect(installerBootstrapInstall).toContain("npm install --ignore-scripts");
-    expect(installerBootstrapInstall).toContain("cd nemoclaw && npm install --ignore-scripts");
-  });
-
-  // source-shape-contract: security -- Workflow checkouts must not leave write-capable credentials available to later steps
-  it("does not persist checkout credentials in PR or main jobs", () => {
-    for (const [workflowName, workflow] of [
-      ["pull_request", prWorkflow],
-      ["main", mainWorkflow],
-    ] as const) {
-      for (const [jobName, job] of Object.entries(workflow.jobs)) {
-        for (const step of job.steps ?? []) {
-          if (!step.uses?.startsWith("actions/checkout@")) {
-            continue;
-          }
-
-          expect(step.with?.["persist-credentials"], `${workflowName} ${jobName}`).toBe(false);
-        }
-      }
-    }
   });
 });

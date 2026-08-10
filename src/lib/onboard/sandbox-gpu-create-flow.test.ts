@@ -330,6 +330,11 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     recoverUnfinished.mockClear();
     createLifecycle.mockClear();
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 23,
+      output: "Created sandbox: alpha",
+      sawProgress: true,
+    });
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 
@@ -353,9 +358,11 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
-    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenLastCalledWith(
-      expect.objectContaining({ stableReadyPolls: 2 }),
-    );
+    expect(
+      mocks.waitForCreatedSandboxReadyWithTrace.mock.calls.map(
+        ([options]) => options.stableReadyPolls,
+      ),
+    ).toEqual([2, 2]);
 
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
@@ -500,8 +507,26 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
-  it("threads restart-safe startup resource limits on the no-GPU Docker route", async () => {
+  it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
     const input = createInput();
+    const patch = createPatch();
+    const createHandoff: string[] = [];
+    let completeCreate!: () => void;
+    const createPending = new Promise<void>((resolve) => {
+      completeCreate = resolve;
+    });
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
+      const options = args[3];
+      createHandoff.push("poll");
+      options.onPoll();
+      await createPending;
+      createHandoff.push("create-complete");
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    patch.ensureApplied.mockImplementationOnce(() => {
+      createHandoff.push("ensure-applied");
+    });
     input.sandboxGpuConfig = {
       ...input.sandboxGpuConfig,
       mode: "0",
@@ -516,9 +541,12 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       { name: "nofile", soft: 65_536, hard: 65_536 },
     ];
 
-    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
-      route: "none",
-    });
+    const flow = runSandboxGpuCreateFlow(input, createDeps());
+    await vi.waitFor(() => expect(createHandoff).toEqual(["poll"]));
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    completeCreate();
+
+    await expect(flow).resolves.toMatchObject({ route: "none" });
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -527,6 +555,14 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
         requiredUlimits: input.requiredUlimits,
       }),
     );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "create"],
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: true }),
+    );
+    expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+    expect(createHandoff).toEqual(["poll", "create-complete", "ensure-applied"]);
   });
 
   it("does not replace a native GPU container solely to persist its startup command", async () => {
@@ -690,21 +726,17 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
   it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
     const input = createInput();
-    input.lifecycleRegistrationFields = {
-      lifecycleGeneration: "current-generation",
-      lifecycleLiveIdentityFingerprint: "current-fingerprint",
-    };
+    input.lifecycleGeneration = "current-generation";
     const deps = createDeps();
     deps.installPortableDemoLifecycle = vi.fn(
-      () => input.lifecycleRegistrationFields?.lifecycleGeneration ?? null,
+      (_sandboxName, _startupCommand, _env, options) => options.registryGeneration ?? null,
     );
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
-      lifecycleRegistrationFields: {
-        lifecycleGeneration: "current-generation",
-        lifecycleLiveIdentityFingerprint: "current-fingerprint",
-      },
-      route: "native",
+    const result = await runSandboxGpuCreateFlow(input, deps);
+
+    expect(result.route).toBe("native");
+    expect(result.lifecycleRegistrationFields).toEqual({
+      lifecycleGeneration: "current-generation",
     });
 
     expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(

@@ -23,6 +23,7 @@ export type ContainerEngineCommandCapture = (
   executable: string,
   args: readonly string[],
   timeoutMs: number,
+  input?: Buffer,
 ) => ContainerEngineCommandResult;
 
 /**
@@ -36,7 +37,11 @@ export interface ContainerEngine {
   readonly displayName: string;
   /** Opaque identity for the exact endpoint authority bound to this command. */
   readonly authorityId: string;
-  readonly capture: (args: readonly string[], timeoutMs?: number) => ContainerEngineCommandResult;
+  readonly capture: (
+    args: readonly string[],
+    timeoutMs?: number,
+    input?: Buffer,
+  ) => ContainerEngineCommandResult;
   readonly captureHost: (
     args: readonly string[],
     timeoutMs?: number,
@@ -58,6 +63,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_ARGUMENTS = 512;
 const MAX_ARGUMENT_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+const MAX_INPUT_BYTES = 1024 * 1024;
 const ENGINE_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
 const AUTHORITY_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}:[A-Za-z0-9._:-]{1,255}$/u;
 const EXECUTABLE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/u;
@@ -169,6 +175,7 @@ function defaultCapture(
   executable: string,
   args: readonly string[],
   timeoutMs: number,
+  input?: Buffer,
 ): ContainerEngineCommandResult {
   const result = spawnSync(executable, [...args], {
     cwd: process.cwd(),
@@ -176,7 +183,8 @@ function defaultCapture(
     encoding: "utf8",
     maxBuffer: MAX_OUTPUT_BYTES,
     shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
+    ...(input ? { input } : {}),
     timeout: timeoutMs,
   });
   return {
@@ -224,11 +232,16 @@ export function createContainerEngineCommand(
     "Container engine endpoint arguments",
   );
   const capture = options.capture ?? defaultCapture;
-  const run = (args: readonly string[], timeoutMs: number, endpoint: boolean) => {
+  const run = (args: readonly string[], timeoutMs: number, endpoint: boolean, input?: Buffer) => {
     const normalized = normalizedArguments(args, "Container engine command arguments");
     const commandArgs = endpoint ? [...endpointArgs, ...normalized] : [...normalized];
+    if (input !== undefined && (!Buffer.isBuffer(input) || input.length > MAX_INPUT_BYTES)) {
+      throw new Error("Container engine command input is invalid or exceeds its byte bound.");
+    }
     return invokeGuarded(options.guard, () =>
-      capture(executable, commandArgs, positiveTimeout(timeoutMs)),
+      input === undefined
+        ? capture(executable, commandArgs, positiveTimeout(timeoutMs))
+        : capture(executable, commandArgs, positiveTimeout(timeoutMs), Buffer.from(input)),
     );
   };
 
@@ -237,8 +250,8 @@ export function createContainerEngineCommand(
     engineId: options.engineId,
     displayName,
     authorityId: options.authorityId,
-    capture: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS) =>
-      run(args, timeoutMs, true),
+    capture: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS, input?: Buffer) =>
+      run(args, timeoutMs, true, input),
     captureHost: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS) =>
       run(args, timeoutMs, false),
   });

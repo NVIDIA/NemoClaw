@@ -169,16 +169,20 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
+      "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-preflight.ts",
       "src/lib/onboard/runtime-provider/podman.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
+      "src/lib/onboard/runtime-provider/state-mutation.ts",
     ]);
   });
 
@@ -335,9 +339,10 @@ describe("runtime provider central source boundary", () => {
     expect(directE2e).toContain("renderManagedBootstrapHeldCommand(request, bootstrapIdentity");
     expect(directE2e).toContain("...heldWorkloadArgv.slice(1)");
     expect(directE2e).toContain(`"--interactive"`);
-    expect(directE2e).toContain("cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
-    expect(directE2e).toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
-    expect(directE2e).not.toContain(`docker(["cp"`);
+    expect(directE2e).toContain(`docker(["cp", "-"`);
+    expect(directE2e).toContain("input: serializeManagedBootstrapEnvelopeTar({");
+    expect(directE2e).not.toContain("cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
+    expect(directE2e).not.toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
     expect(directE2e).not.toMatch(/const HOLD\s*=/u);
     expect(bootstrapRuntime.match(/require\.main === module/gu)).toHaveLength(1);
     expect(startupRuntime).not.toMatch(/require\.main === module/u);
