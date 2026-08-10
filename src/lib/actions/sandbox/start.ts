@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as agentRuntime from "../../agent/runtime";
 import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -9,6 +10,7 @@ import {
 import { SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED } from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import { shouldUseManagedStartupRecovery } from "./process-recovery";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -196,10 +198,6 @@ export interface SandboxStartupStateDeps {
   ) => SandboxProcessRecoveryResult;
 }
 
-function requiresManagedStartupRecovery(agent: SandboxEntry["agent"]): boolean {
-  return !agent || agent === "openclaw" || agent === "hermes";
-}
-
 export function restoreStoppedSandboxStartupState(
   sandboxName: string,
   deps: SandboxStartupStateDeps = {},
@@ -263,8 +261,11 @@ export async function startSandbox(
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
   const expectedContainerId = result.runtimeHandle;
-  const pinnedManagedStartupRecovery =
-    requiresManagedStartupRecovery(resolved.sandbox.agent) && Boolean(expectedContainerId);
+  const pinnedManagedStartupRecovery = shouldUseManagedStartupRecovery(
+    resolved.sandbox.agent,
+    agentRuntime.getSessionAgent(sandboxName),
+    Boolean(expectedContainerId),
+  );
 
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Restoring sandbox startup state…");

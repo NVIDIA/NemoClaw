@@ -676,16 +676,24 @@ function runningSandboxRecoveryPreflight(
   });
 }
 
-function shouldUseManagedStartupRecovery(
-  sandboxName: string,
+export function shouldUseManagedStartupRecovery(
+  persistedAgent: string | null | undefined,
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
   preserveContainer: boolean,
 ): boolean {
   if (!preserveContainer) return false;
   if (agent) return agent.name === "openclaw" || agent.name === "hermes";
+  return !persistedAgent || persistedAgent === "openclaw" || persistedAgent === "hermes";
+}
+
+function shouldUseManagedStartupRecoveryForSandbox(
+  sandboxName: string,
+  agent: ReturnType<typeof agentRuntime.getSessionAgent>,
+  preserveContainer: boolean,
+): boolean {
   try {
     const persistedAgent = registry.getSandbox(sandboxName)?.agent;
-    return !persistedAgent || persistedAgent === "openclaw" || persistedAgent === "hermes";
+    return shouldUseManagedStartupRecovery(persistedAgent, agent, preserveContainer);
   } catch {
     return false;
   }
@@ -705,7 +713,8 @@ function inspectManagedStartupRecovery(
 } {
   const running = inspectGateway(sandboxName);
   const managedStartupRecovery =
-    running === null && shouldUseManagedStartupRecovery(sandboxName, agent, preserveContainer);
+    running === null &&
+    shouldUseManagedStartupRecoveryForSandbox(sandboxName, agent, preserveContainer);
   return {
     failure: managedStartupRecovery
       ? managedSupervisorProbeFailure(
@@ -1465,7 +1474,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     ? (name, action, timeout = 210000) =>
         requestPinnedGatewaySupervisorAction(name, action, timeout, expectedContainerId)
     : requestGatewaySupervisorAction;
-  const requirePreservedManagedHealth = shouldUseManagedStartupRecovery(
+  const requirePreservedManagedHealth = shouldUseManagedStartupRecoveryForSandbox(
     sandboxName,
     recoveryAgent,
     preserveContainer,

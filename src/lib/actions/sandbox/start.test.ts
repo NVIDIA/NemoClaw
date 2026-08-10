@@ -121,6 +121,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 
 describe("startSandbox", () => {
   beforeEach(() => {
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
     vi.spyOn(sandboxStartDependencies, "loadConnect").mockReturnValue(connect);
     vi.spyOn(sandboxStartDependencies, "loadShields").mockReturnValue(shields);
   });
@@ -147,6 +148,34 @@ describe("startSandbox", () => {
       restoreProcesses.mock.invocationCallOrder[0],
     );
     expect(result).toBe(recovery);
+  });
+
+  it("pins sealed startup access to the lifecycle container identity (#8662)", () => {
+    const restoreAccess = vi.fn();
+    const recovery = runningStartupState();
+    const restoreProcesses = vi.fn(() => recovery);
+    const processRecoveryOptions = { expectedContainerId: ORIGINAL_CONTAINER_ID };
+
+    const result = restoreStoppedSandboxStartupState("my-sandbox", {
+      agent: "openclaw",
+      processRecovery: processRecoveryOptions,
+      restoreLockedStartupAccess: restoreAccess,
+      restoreProcessState: restoreProcesses,
+    });
+
+    expect(restoreAccess).toHaveBeenCalledExactlyOnceWith("my-sandbox", ORIGINAL_CONTAINER_ID);
+    expect(restoreProcesses).toHaveBeenCalledExactlyOnceWith("my-sandbox", processRecoveryOptions);
+    expect(result).toBe(recovery);
+  });
+
+  it("normalizes control characters before redacting startup diagnostics (#8662)", () => {
+    const sanitized = connect.sanitizeSandboxStartupRecoveryDetail(
+      "supervisor failed: Authorization:\u0000Bearer opaque-control-token",
+    );
+
+    expect(sanitized).toContain("Authorization: Bearer <REDACTED>");
+    expect(sanitized).not.toContain("opaque-control-token");
+    expect(sanitized).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
   });
 
   it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", () => {
@@ -432,6 +461,35 @@ describe("startSandbox", () => {
     expect(controller).not.toHaveBeenCalled();
     expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+  });
+
+  it("uses the session agent as the managed-recovery authority when registry state is stale (#8662)", async () => {
+    const entry = sandbox({ agent: "openclaw", openshellDriver: "docker" });
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+      name: "custom-gateway",
+      displayName: "Custom Gateway",
+      forwardPort: 19090,
+      healthProbe: {
+        port: 19090,
+        timeout_seconds: 30,
+        url: "http://127.0.0.1:19090/health",
+      },
+      runtime: { kind: "gateway" },
+    } as never);
+    vi.spyOn(persistedRegistry, "getSandbox").mockReturnValue(entry);
+    const h = harness();
+    h.getSandbox.mockReturnValue(entry);
+    h.restoreStartupState.mockReturnValue({
+      checked: false,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.restoreStartupState).toHaveBeenCalledExactlyOnceWith("my-sandbox");
+    expect(h.verifyGateway).toHaveBeenCalledExactlyOnceWith("my-sandbox");
   });
 
   it.each(

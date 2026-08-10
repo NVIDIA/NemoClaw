@@ -268,11 +268,11 @@ function exitOnPreservedStartupRecoveryFailure(
 }
 
 export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
-  return redactFull(raw)
+  const normalized = raw
     .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
     .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 240);
+    .trim();
+  return redactFull(normalized).slice(0, 240);
 }
 
 async function runSandboxConnectProbe(
