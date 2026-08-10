@@ -13,6 +13,7 @@ const INDEX_MODULE = "./index.js";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const LOCK_TOKEN = "a".repeat(64);
+const SETUP_TIMEOUT_MS = 30_000;
 const OLD_GUARD_HELP = "usage: guard {ensure-api-key,refresh-hashes,provider-placeholders}";
 const PARTIAL_GUARD_HELP = "begin-shields-transition --rollback-shields-mode";
 const PREVIOUS_SEALED_GUARD_HELP = [
@@ -158,7 +159,7 @@ describe("legacy Hermes shields compatibility", () => {
     );
 
     shields = requireSource(INDEX_MODULE);
-  });
+  }, SETUP_TIMEOUT_MS);
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
