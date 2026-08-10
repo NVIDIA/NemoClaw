@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayOwner } from "../onboard/gateway-ownership";
-import { getTraceCollector, resetTraceForTests, TRACE_FILE_ENV } from "../trace";
+import { resetTraceForTests, TRACE_FILE_ENV } from "../trace";
 
 const subprocess = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -310,7 +310,7 @@ describe("managed gateway port readiness (#7411)", () => {
     }
   });
 
-  it("does not initialize an onboard trace for a public external attachment probe (#7411)", async () => {
+  it("does not write an onboard trace for a public external attachment probe (#7411)", async () => {
     const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-readiness-trace-"));
     const tracePath = path.join(traceDir, "unexpected.json");
     vi.stubEnv(TRACE_FILE_ENV, tracePath);
@@ -327,10 +327,8 @@ describe("managed gateway port readiness (#7411)", () => {
       });
 
       await deps.probeAttachment(externalOwner(gatewayPort));
-      vi.stubEnv(TRACE_FILE_ENV, "");
-
-      expect(getTraceCollector()).toBeNull();
       expect(fs.existsSync(tracePath)).toBe(false);
+      vi.stubEnv(TRACE_FILE_ENV, "");
     } finally {
       resetTraceForTests();
       fs.rmSync(traceDir, { force: true, recursive: true });

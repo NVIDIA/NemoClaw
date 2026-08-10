@@ -49,8 +49,34 @@ describe("system readiness child environment (#7411)", () => {
           PATH: "/usr/bin",
           OPENSHELL_GATEWAY: "target-gateway",
         },
+        maxBuffer: 1024 * 1024,
         shell: false,
+        timeout: 15_000,
       }),
     );
+  });
+
+  it("allows callers to lower the bounded readiness probe limits", () => {
+    subprocess.spawnSync.mockReturnValue({ status: 0, stdout: "ready", stderr: "" });
+    const capture = createSystemReadinessCapture({ PATH: "/usr/bin" });
+
+    capture(["probe"], { maxBuffer: 2048, timeout: 2500 });
+
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "probe",
+      [],
+      expect.objectContaining({ maxBuffer: 2048, timeout: 2500 }),
+    );
+  });
+
+  it.each([
+    "gateway\0spoof",
+    "gateway\rspoof",
+    "gateway\nspoof",
+  ])("rejects an invalid gateway name before spawning: %j", (gatewayName) => {
+    expect(() => buildSystemReadinessProbeEnv({}, { gatewayName })).toThrow(
+      "Readiness gateway name contains an invalid character.",
+    );
+    expect(subprocess.spawnSync).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,9 @@ import path from "node:path";
 
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 
+const READINESS_PROBE_TIMEOUT_MS = 15_000;
+const READINESS_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
+
 const READINESS_PROBE_ENV_NAMES = new Set([
   "HOME",
   "USER",
@@ -77,7 +80,12 @@ export function buildSystemReadinessProbeEnv(
   if (source.DOCKER_HOST && isSupportedGatewayDockerHost(source.DOCKER_HOST)) {
     env.DOCKER_HOST = source.DOCKER_HOST.trim();
   }
-  if (controls.gatewayName) env.OPENSHELL_GATEWAY = controls.gatewayName;
+  if (controls.gatewayName) {
+    if (/[\0\r\n]/u.test(controls.gatewayName)) {
+      throw new Error("Readiness gateway name contains an invalid character.");
+    }
+    env.OPENSHELL_GATEWAY = controls.gatewayName;
+  }
   if (
     controls.localTlsDir &&
     path.isAbsolute(controls.localTlsDir) &&
@@ -110,6 +118,8 @@ export function createSystemReadinessCapture(env: NodeJS.ProcessEnv): ReadinessR
     } = opts;
     if (shell) throw new Error("Readiness probe commands cannot enable shell interpretation.");
     const result = spawnSync(file, args, {
+      timeout: READINESS_PROBE_TIMEOUT_MS,
+      maxBuffer: READINESS_PROBE_MAX_BUFFER_BYTES,
       ...spawnOptions,
       encoding: "utf-8",
       env,

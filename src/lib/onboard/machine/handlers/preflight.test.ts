@@ -387,7 +387,8 @@ describe("handlePreflightState", () => {
         return { cdiNvidiaGpuSpecMissing: false };
       },
       assertOnboardHostReadiness: (_host, _gpu, options) => {
-        const age = currentTime - Date.parse(options.observedAt ?? "");
+        expect(options.observedAt).toBe("2026-08-07T12:00:00.000Z");
+        const age = currentTime - Date.parse(options.observedAt as string);
         expect(age).toBeGreaterThan(30_000);
         throw new Error("host observations are stale");
       },

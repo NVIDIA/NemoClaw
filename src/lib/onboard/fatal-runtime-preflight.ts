@@ -328,7 +328,7 @@ export async function runReadinessGatedRuntimePreflight(
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
   const gatewayBeforePreparation = await context.collectGatewayReadiness();
   assertOnboardGatewayReadiness(gatewayBeforePreparation, exitProcess);
-  const result = runFatalOnboardRuntimePreflight(options, {
+  runFatalOnboardRuntimePreflight(options, {
     ...context,
     allowStorageRemediation: isManagedGatewayReadiness(gatewayBeforePreparation),
     deferEffectfulChecks: true,

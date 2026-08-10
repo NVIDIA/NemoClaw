@@ -135,8 +135,6 @@ describe("readiness process effects (#7412)", () => {
   });
 
   it("repeats the composite probe without invoking gateway lifecycle effects (#7411)", async () => {
-    const startGateway = vi.fn();
-    const selectGateway = vi.fn();
     const resolveOwner = vi.fn(() => ({
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
@@ -197,8 +195,6 @@ describe("readiness process effects (#7412)", () => {
     );
     expect(resolveOwner).toHaveBeenCalledTimes(2);
     expect(observeManagedGateway).toHaveBeenCalledTimes(2);
-    expect(startGateway).not.toHaveBeenCalled();
-    expect(selectGateway).not.toHaveBeenCalled();
     expect(process.env).toEqual(beforeEnv);
   });
 });

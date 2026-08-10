@@ -174,6 +174,7 @@ describe("composite system readiness (#7411)", () => {
         expect.objectContaining({ id: "gateway.probe.stale" }),
       ]),
     );
+    expect(report.capabilities.length).toBeGreaterThan(0);
     expect(report.capabilities.every(({ state }) => state === "unknown")).toBe(true);
   });
 });

@@ -578,15 +578,17 @@ export function createProductionGatewayReadinessDependencies(
       process.platform === "linux"
         ? readLinuxProcessExecutable(pid)
         : readDarwinProcessExecutable(pid, probeEnv);
+    const serviceAfter = getTrustedActiveOpenShellGatewayUserServiceIdentity({
+      env: probeEnv,
+      suppressUnsupportedVersionWarning: true,
+    });
+    // Bracket the complete service-identity probe so PID reuse or re-exec
+    // cannot preserve a stale trusted executable sample.
     const executableAfter =
       process.platform === "linux"
         ? readLinuxProcessExecutable(pid)
         : readDarwinProcessExecutable(pid, probeEnv);
     const generationAfter = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
-    const serviceAfter = getTrustedActiveOpenShellGatewayUserServiceIdentity({
-      env: probeEnv,
-      suppressUnsupportedVersionWarning: true,
-    });
     const expected = normalizeExecutablePath(serviceBefore.executablePath);
     const confirmed = serviceAfter?.executablePath
       ? normalizeExecutablePath(serviceAfter.executablePath)

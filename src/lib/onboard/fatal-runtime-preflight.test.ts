@@ -250,10 +250,12 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(output).not.toContain("Generate NVIDIA CDI device specs");
     expect(output).not.toContain("nvidia-ctk cdi generate");
 
+    const optOutExit = vi.fn();
     assertOnboardHostReadiness(host, gpu, {
       explicitlyOptedOutGpuPassthrough: true,
-      exitProcess: vi.fn() as never,
+      exitProcess: optOutExit as never,
     });
+    expect(optOutExit).not.toHaveBeenCalled();
   });
 
   it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
