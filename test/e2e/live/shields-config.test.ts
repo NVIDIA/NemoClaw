@@ -108,13 +108,14 @@ async function sandboxShell(
 async function docker(
   host: HostCliClient,
   args: string[],
-  options: { artifactName: string; timeoutMs?: number } = {
+  options: { artifactName: string; timeoutMs?: number; redactionValues?: string[] } = {
     artifactName: "docker",
   },
 ): Promise<ShellProbeResult> {
   return host.command("docker", args, {
     artifactName: options.artifactName,
     env: commandEnv(),
+    redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
   });
 }
@@ -155,25 +156,73 @@ async function statPath(
   return { ...parsed, raw: result.stdout.trim() };
 }
 
+async function collectStartFailureDockerLogs(
+  host: HostCliClient,
+  artifactPrefix: string,
+  redactionValues: string[],
+): Promise<string> {
+  const lookup = await docker(
+    host,
+    [
+      "ps",
+      "--all",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: `${artifactPrefix}-failure-container`,
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  const containerId = lookup.stdout.trim().split(/\s+/u).filter(Boolean)[0] ?? "";
+  if (lookup.exitCode !== 0 || !containerId) return resultText(lookup);
+  const logs = await docker(host, ["logs", "--tail", "200", containerId], {
+    artifactName: `${artifactPrefix}-failure-docker-logs`,
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  return resultText(logs);
+}
+
 async function expectStopStartRecovery(
   host: HostCliClient,
+  sandbox: SandboxClient,
   posture: "DOWN" | "UP",
   artifactPrefix: string,
+  redactionValues: string[],
 ): Promise<void> {
   const stop = await runNemoclaw(host, [SANDBOX_NAME, "stop"], {
     artifactName: `${artifactPrefix}-stop`,
+    redactionValues,
     timeoutMs: 5 * 60_000,
   });
   expect(stop.exitCode, resultText(stop)).toBe(0);
 
   const start = await runNemoclaw(host, [SANDBOX_NAME, "start"], {
     artifactName: `${artifactPrefix}-start`,
+    redactionValues,
     timeoutMs: 5 * 60_000,
   });
-  expect(start.exitCode, resultText(start)).toBe(0);
+  const startFailureLogs =
+    start.exitCode === 0
+      ? ""
+      : await collectStartFailureDockerLogs(host, artifactPrefix, redactionValues);
+  expect(
+    start.exitCode,
+    [resultText(start), startFailureLogs && `Docker logs:\n${startFailureLogs}`]
+      .filter(Boolean)
+      .join("\n"),
+  ).toBe(0);
 
   const status = await runNemoclaw(host, [SANDBOX_NAME, "status"], {
     artifactName: `${artifactPrefix}-status`,
+    redactionValues,
     timeoutMs: 5 * 60_000,
   });
   expect(status.exitCode, resultText(status)).toBe(0);
@@ -181,9 +230,32 @@ async function expectStopStartRecovery(
 
   const shields = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
     artifactName: `${artifactPrefix}-shields-status`,
+    redactionValues,
   });
   expect(shields.exitCode, resultText(shields)).toBe(0);
   expect(resultText(shields)).toContain(`Shields: ${posture}`);
+
+  const runtimeIdentity = await sandboxShell(
+    sandbox,
+    'printf \'pwd=%s\\nhome=%s\\nuser=%s\\ngroup=%s\\n\' "$PWD" "$HOME" "$(id -un)" "$(id -gn)"',
+    { artifactName: `${artifactPrefix}-runtime-identity` },
+  );
+  expect(runtimeIdentity.exitCode, resultText(runtimeIdentity)).toBe(0);
+  expect(runtimeIdentity.stdout).toContain("pwd=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("home=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("user=sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("group=sandbox\n");
+
+  if (posture === "UP") {
+    const containerId = await findSandboxContainer(host);
+    const parent = await docker(
+      host,
+      ["exec", "--user", "0", containerId, "stat", "-c", "%a %U:%G", "/sandbox"],
+      { artifactName: `${artifactPrefix}-sandbox-parent` },
+    );
+    expect(parent.exitCode, resultText(parent)).toBe(0);
+    expect(parent.stdout.trim()).toBe("1775 root:sandbox");
+  }
 }
 
 async function expectCredentialsTraversalBoundary(
@@ -686,7 +758,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(statusUp.stdout).toContain("Shields: UP");
 
   progress.phase("restart OpenClaw with shields up");
-  await expectStopStartRecovery(host, "UP", "phase-5a-shields-up-start-recovery");
+  await expectStopStartRecovery(host, sandbox, "UP", "phase-5a-shields-up-start-recovery", [
+    apiKey,
+  ]);
   const configAfterLockedRestart = await statPath(
     sandbox,
     CONFIG_PATH,
@@ -844,7 +918,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(statusDown.stdout).toMatch(/Auto-lockdown in:|remaining/i);
 
   progress.phase("restart OpenClaw with shields down");
-  await expectStopStartRecovery(host, "DOWN", "phase-7a-shields-down-start-recovery");
+  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-7a-shields-down-start-recovery", [
+    apiKey,
+  ]);
   const configAfterMutableRestart = await statPath(
     sandbox,
     CONFIG_PATH,
@@ -1074,7 +1150,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     { artifactName: "phase-12-reconcile-shields-down", timeoutMs: 16 * 60_000 },
   );
   expect(reconcileDown.exitCode, resultText(reconcileDown)).toBe(0);
-  await expectStopStartRecovery(host, "DOWN", "phase-12-restart-after-recovery");
+  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [apiKey]);
   const relockAfterRecovery = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-12-relock-after-recovery",
   });
