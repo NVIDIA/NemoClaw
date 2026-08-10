@@ -324,9 +324,7 @@ process.exit(0);
 });
 
 afterEach(async () => {
-  if (gatewayListener) {
-    await new Promise<void>((resolve) => gatewayListener?.close(() => resolve()));
-  }
+  await new Promise<void>((resolve) => gatewayListener?.close(() => resolve()) ?? resolve());
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
