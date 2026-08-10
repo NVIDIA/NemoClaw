@@ -274,9 +274,7 @@ describe("rebuild gateway drift preflight", () => {
       .mockReturnValueOnce({ status: 0, output: "" })
       .mockReturnValueOnce({ status: 1, output: "Error: sandbox not found" });
     queryDockerContainersSpy.mockReturnValueOnce(queryResults[0] as never);
-    if (queryResults[1]) {
-      queryDockerContainersSpy.mockReturnValueOnce(queryResults[1] as never);
-    }
+    queryDockerContainersSpy.mockReturnValueOnce((queryResults[1] ?? queryResults[0]) as never);
     forceRemoveDockerContainerSpy.mockReturnValue(removeResult);
 
     await expect(resolveRebuildLiveState("alpha", entry, vi.fn(), bail)).rejects.toThrow(
