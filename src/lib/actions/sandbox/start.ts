@@ -41,6 +41,11 @@ export interface SandboxStartupStateDeps {
   restoreProcessState?: typeof restoreProcessState;
 }
 
+function requiresManagedStartupRecovery(agent: SandboxEntry["agent"]): boolean {
+  const resolvedAgent = agent ?? "openclaw";
+  return resolvedAgent === "openclaw" || resolvedAgent === "hermes";
+}
+
 export function restoreStoppedSandboxStartupState(
   sandboxName: string,
   deps: SandboxStartupStateDeps = {},
@@ -51,7 +56,7 @@ export function restoreStoppedSandboxStartupState(
   }
   return (deps.restoreProcessState ?? restoreProcessState)(
     sandboxName,
-    agent === "openclaw" || agent === "hermes",
+    requiresManagedStartupRecovery(agent),
   );
 }
 
@@ -149,7 +154,9 @@ export async function startSandbox(
           agent: resolved.sandbox.agent,
         }));
     const recovery = restoreStartupState(name);
-    assertSandboxStartupRecovery(name, recovery);
+    if (requiresManagedStartupRecovery(resolved.sandbox.agent)) {
+      assertSandboxStartupRecovery(name, recovery);
+    }
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
   });

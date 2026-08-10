@@ -23,6 +23,8 @@ const RUNNING_RECOVERY = {
   recovered: false,
   forwardRecovered: false,
 } as const;
+const SECRET_BOUNDARY_PRIVATE_DETAIL = "raw-secret" as const;
+const PRIVATE_RECOVERY_DETAIL = "raw diagnostic remains private";
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
@@ -194,6 +196,20 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
+  it("keeps custom-agent readiness authoritative when recovery is inconclusive (#8662)", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(sandbox({ agent: "custom-agent" }));
+    h.restoreStartupState.mockReturnValue({
+      checked: false,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+  });
+
   it("verifies readiness after managed gateway recovery succeeds (#8662)", async () => {
     const h = harness();
     h.restoreStartupState.mockReturnValue({
@@ -219,9 +235,10 @@ describe("startSandbox", () => {
         recovered: false,
         forwardRecovered: false,
         secretBoundaryRefused: true,
-        secretBoundaryReason: "raw-secret",
+        secretBoundaryReason: SECRET_BOUNDARY_PRIVATE_DETAIL,
       },
       "secret-boundary check refused",
+      SECRET_BOUNDARY_PRIVATE_DETAIL,
     ],
     [
       "MCP reconciliation refusal",
@@ -231,9 +248,10 @@ describe("startSandbox", () => {
         recovered: false,
         forwardRecovered: false,
         mcpReconciliationRefused: true,
-        mcpReconciliationReason: "raw diagnostic remains private",
+        mcpReconciliationReason: PRIVATE_RECOVERY_DETAIL,
       },
       "MCP configuration does not match",
+      PRIVATE_RECOVERY_DETAIL,
     ],
     [
       "forward recovery failure",
@@ -243,9 +261,10 @@ describe("startSandbox", () => {
         recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail: "raw diagnostic remains private",
+        forwardRecoveryFailureDetail: PRIVATE_RECOVERY_DETAIL,
       },
       "required host forwards could not be restored",
+      PRIVATE_RECOVERY_DETAIL,
     ],
     [
       "managed recovery failure",
@@ -256,8 +275,9 @@ describe("startSandbox", () => {
         forwardRecovered: false,
       },
       "authenticated managed gateway recovery did not complete",
+      undefined,
     ],
-  ] as const)("fails closed on %s without exposing raw recovery details (#8662)", async (_label, recovery, expected) => {
+  ] as const)("fails closed on %s without exposing raw recovery details (#8662)", async (_label, recovery, expected, privateDetail) => {
     const h = harness();
     h.restoreStartupState.mockReturnValue(recovery);
 
@@ -269,7 +289,9 @@ describe("startSandbox", () => {
     }
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain(expected);
-    expect((failure as Error).message).not.toContain("raw diagnostic remains private");
+    if (privateDetail) {
+      expect((failure as Error).message).not.toContain(privateDetail);
+    }
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
