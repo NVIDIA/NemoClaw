@@ -3030,7 +3030,12 @@ repair_installer_nvidia_cdi_spec() {
 
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
-  if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
+  local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
+  local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
+  if ! command_exists node \
+    || [[ ! -f "$preflight_module" ]] \
+    || [[ ! -f "$host_readiness_module" ]] \
+    || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
   fi
 
@@ -3041,17 +3046,35 @@ run_installer_host_preflight() {
     # shellcheck disable=SC2016
     node -e '
       const preflightPath = process.argv[1];
+      const hostReadinessPath = process.argv[2];
+      const onboardAdmissionPath = process.argv[3];
       try {
-        const { assessHost, planHostRemediation } = require(preflightPath);
+        const { assessHost, planHostAdvisories } = require(preflightPath);
+        const { createHostReadinessReport } = require(hostReadinessPath);
+        const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
         const host = assessHost();
-        const actions = planHostRemediation(host);
-        const blockingActions = actions.filter((action) => action && action.blocking);
+        const actions = planHostAdvisories(host);
+        const readiness = createHostReadinessReport(
+          { nemoclawVersion: "installer", sourceRevision: "installer" },
+          {
+            assess: () => host,
+            detectGpu: () => null,
+            detectHostGpuPlatform: () => host.hostGpuPlatform,
+            detectNvidiaDriverVersion: () => host.nvidiaDriverVersion,
+            collectPlatformIdentity: () => ({}),
+          }
+        );
+        const admission = evaluateOnboardReadinessAdmission(readiness, {
+          explicitlyOptedOutGpuPassthrough: false,
+          allowUnsupportedRuntime: false,
+          allowStorageRemediation: false,
+        });
         const infoLines = [];
         const actionLines = [];
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
-        if (host.notes && host.notes.includes("Running under WSL")) {
+        if (host.isWsl) {
           infoLines.push("Running under WSL");
         }
         for (const action of actions) {
@@ -3066,11 +3089,11 @@ run_installer_host_preflight() {
         if (actionLines.length > 0) {
           process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
-        process.exit(blockingActions.length > 0 ? 10 : 0);
+        process.exit(admission.admitted ? 0 : 10);
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module"
   )"; then
     status=0
   else

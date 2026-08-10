@@ -10,12 +10,20 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SERVER_NAME = "fake";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
 const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
 const INSPECTION_CONTROL_MARKER = "MCP_INSPECT_FORGED_CONTROL_LINE";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
+
+function targetSandboxDoesNotExist(result: ShellProbeResult, sandboxName: string): boolean {
+  const expected = `Sandbox '${sandboxName}' does not exist.`;
+  return resultText(result)
+    .split(/\r?\n/u)
+    .some((line) => line.trim() === expected);
+}
 
 export async function assertHermesConfig(
   sandbox: SandboxClient,
@@ -225,6 +233,36 @@ export async function reopenHermesMcpMaintenanceWindow(
     },
   );
   expectExitZero(shieldsDown, "open a fresh Hermes MCP maintenance window after rebuild");
+}
+
+export async function lowerHermesShieldsForCleanup(
+  host: HostCliClient,
+  sandboxName: string,
+): Promise<void> {
+  const shieldsDown = await host.nemoclaw(
+    [sandboxName, "shields", "down", "--timeout", "5m", "--reason", "E2E cleanup"],
+    {
+      artifactName: "cleanup-hermes-shields-down",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 3 * 60_000,
+    },
+  );
+  if (shieldsDown.exitCode === 0 || targetSandboxDoesNotExist(shieldsDown, sandboxName)) {
+    return;
+  }
+
+  const shieldsStatus = await host.nemoclaw([sandboxName, "shields", "status"], {
+    artifactName: "cleanup-hermes-shields-status-after-down-error",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  if (targetSandboxDoesNotExist(shieldsStatus, sandboxName)) {
+    return;
+  }
+  expect(
+    shieldsStatus.exitCode === 0 && shieldsStatus.stdout.includes("Shields: DOWN"),
+    `Hermes Shields cleanup could not confirm DOWN posture\n${resultText(shieldsDown)}\n${resultText(shieldsStatus)}`,
+  ).toBe(true);
 }
 
 /**
