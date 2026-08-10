@@ -47,11 +47,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/fern-dependency-review.test.ts",
-      "test": "disables package lifecycle scripts for every Fern npx consumer",
-      "category": "security"
-    },
-    {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "declares exactly one corporate CA build arg so onboard patching stays unambiguous",
       "category": "security"

@@ -44,7 +44,6 @@ describe("Fern preview configuration", () => {
       }),
     ).toEqual([
       "--yes",
-      "--ignore-scripts",
       "fern-api@3.67.1",
       "generate",
       "--docs",

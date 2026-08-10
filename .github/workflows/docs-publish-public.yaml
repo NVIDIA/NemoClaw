@@ -58,4 +58,4 @@ jobs:
         run: |
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
           cd fern
-          npx --yes --ignore-scripts "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_PUBLIC_INSTANCE"
+          npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_PUBLIC_INSTANCE"

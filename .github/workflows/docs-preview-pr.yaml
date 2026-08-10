@@ -72,7 +72,7 @@ jobs:
         run: |
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
           set +e
-          OUTPUT=$(cd fern && npx --yes --ignore-scripts "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)
+          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)
           STATUS=$?
           set -e
           echo "$OUTPUT"
