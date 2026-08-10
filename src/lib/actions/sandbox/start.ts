@@ -54,8 +54,20 @@ export interface SandboxStartDeps {
   getSandbox?: typeof registry.getSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   restoreStartupState?: (sandboxName: string) => SandboxStartupRecoveryResult;
+  waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   log?: (message: string) => void;
+}
+
+function isMissingManagedSupervisorStartupFailure(
+  check: SandboxStartupRecoveryResult,
+  failure: string,
+): boolean {
+  return (
+    failure === "supervisor not running: SUPERVISOR_NOT_RUNNING" &&
+    check.recoveryFailureLayer === "supervisor not running" &&
+    check.recoveryFailureDetail === "SUPERVISOR_NOT_RUNNING"
+  );
 }
 
 function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | null {
@@ -132,7 +144,27 @@ export async function startSandbox(
     } catch (error) {
       throw preservedSandboxRecoveryError(name, error);
     }
-    const failure = startupRecoveryFailure(recovery);
+    let failure = startupRecoveryFailure(recovery);
+    if (failure && isMissingManagedSupervisorStartupFailure(recovery, failure)) {
+      let supervisorReady = false;
+      try {
+        const waitForSupervisor =
+          deps.waitForManagedGatewaySupervisor ??
+          (require("./connect") as typeof import("./connect")).waitForManagedGatewaySupervisor;
+        supervisorReady = waitForSupervisor(name);
+      } catch {
+        // Preserve the authoritative first recovery failure when the bounded
+        // read-only settling probe itself cannot complete.
+      }
+      if (supervisorReady) {
+        try {
+          recovery = restoreStartupState(name);
+        } catch (error) {
+          throw preservedSandboxRecoveryError(name, error);
+        }
+        failure = startupRecoveryFailure(recovery);
+      }
+    }
     if (failure) throw preservedSandboxRecoveryError(name, failure);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
