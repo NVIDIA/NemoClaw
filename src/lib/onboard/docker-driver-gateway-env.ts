@@ -33,6 +33,11 @@ import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docke
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
+/** Return the configured gateway port used by Docker-driver runtime helpers. */
+export function getConfiguredGatewayPort(): number {
+  return GATEWAY_PORT;
+}
+
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "CONTAINERS_CONF",
   "DOCKER_HOST",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
@@ -20,7 +21,7 @@ type RebuildOnboardModule = {
   onboard: (options: RebuildRecreateOnboardOpts) => Promise<void>;
   preflightAuthoritativeRebuildTarget: (
     options: RebuildAuthoritativePreflightOptions,
-  ) => Promise<void>;
+  ) => Promise<CheckpointGatewayAuthority>;
 };
 
 function loadOnboardModule(): RebuildOnboardModule {
@@ -48,7 +49,7 @@ export const rebuildOnboardDependencies = {
   },
   preflightAuthoritativeRebuildTarget(
     options: RebuildAuthoritativePreflightOptions,
-  ): Promise<void> {
+  ): Promise<CheckpointGatewayAuthority> {
     return loadOnboardModule().preflightAuthoritativeRebuildTarget(options);
   },
 };

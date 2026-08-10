@@ -90,6 +90,33 @@ function createPluginApi(): OpenClawPluginApi {
   };
 }
 
+type AsyncTestLock = <T>(name: string, operation: () => Promise<T> | T) => Promise<T>;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function createSerialTestLock(events: string[], label: string): AsyncTestLock {
+  let tail = Promise.resolve();
+  return async <T>(_name: string, operation: () => Promise<T> | T): Promise<T> => {
+    const previous = tail;
+    const release = deferred();
+    tail = previous.then(() => release.promise);
+    await previous;
+    events.push(`${label}:acquired`);
+    try {
+      return await operation();
+    } finally {
+      events.push(`${label}:released`);
+      release.resolve();
+    }
+  };
+}
+
 describe("runAgentPassthrough", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -121,6 +148,94 @@ describe("runAgentPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(2);
     expect(writes.join("")).toMatch(/cannot dispatch to sandbox 'alpha' because it runs 'hermes'/);
     expect(writes.join("")).toMatch(/port 8642/);
+  });
+
+  it("holds CUA mutation authority through the exact headless child execution (#7755)", async () => {
+    const entry = { name: "alpha", agent: "nemocua" };
+    getSandboxMock.mockReturnValueOnce(entry as never).mockReturnValueOnce(entry as never);
+    listAgentsMock.mockReturnValueOnce([
+      "custom-terminal",
+      "hermes",
+      "langchain-deepagents-code",
+      "nemocua",
+      "openclaw",
+    ]);
+    loadAgentMock.mockReturnValueOnce({
+      name: "nemocua",
+      runtime: {
+        kind: "terminal",
+        interactive_command: "nemocua interactive",
+        headless_command: "nemocua headless",
+      },
+    });
+    const events: string[] = [];
+    const childStarted = deferred();
+    const releaseChild = deferred();
+    const withSandboxMutationLock = createSerialTestLock(events, "sandbox");
+    const withGatewayRouteMutationLock = createSerialTestLock(events, "gateway");
+    const requireCuaReadiness = vi.fn(() => events.push("readiness"));
+    execMock.mockImplementationOnce(async () => {
+      events.push("child");
+      childStarted.resolve();
+      await releaseChild.promise;
+    });
+
+    const passthrough = runAgentPassthrough(
+      "alpha",
+      {},
+      {
+        requireCuaReadiness,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withGatewayRouteMutationLock,
+        withSandboxMutationLock,
+      },
+    );
+    await childStarted.promise;
+    const mutation = withSandboxMutationLock("alpha", () =>
+      withGatewayRouteMutationLock("gateway-alpha", () => events.push("mutation")),
+    );
+    await Promise.resolve();
+
+    expect(requireCuaReadiness).toHaveBeenCalledWith(entry);
+    expect(execMock).toHaveBeenCalledWith("alpha", ["nemocua", "headless"], { tty: false });
+    expect(events).toEqual(["sandbox:acquired", "gateway:acquired", "readiness", "child"]);
+
+    releaseChild.resolve();
+    await passthrough;
+    await mutation;
+
+    expect(events).toEqual([
+      "sandbox:acquired",
+      "gateway:acquired",
+      "readiness",
+      "child",
+      "gateway:released",
+      "sandbox:released",
+      "sandbox:acquired",
+      "gateway:acquired",
+      "mutation",
+      "gateway:released",
+      "sandbox:released",
+    ]);
+  });
+
+  it("rejects added NemoCUA arguments before readiness probes or execution (#7755)", async () => {
+    getSandboxMock.mockReturnValueOnce({ name: "alpha", agent: "nemocua" } as never);
+    const requireCuaReadiness = vi.fn();
+    const { writes, proc } = makeProcMock();
+
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--help"] },
+        { process: proc, requireCuaReadiness },
+      ),
+    ).rejects.toThrow("__exit:2");
+
+    expect(writes.join("")).toContain("does not accept additional arguments");
+    expect(requireCuaReadiness).not.toHaveBeenCalled();
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
   });
 
   it("forwards extraArgs verbatim to `openclaw agent` for OpenClaw sandboxes with --no-tty enforced", async () => {

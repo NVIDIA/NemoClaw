@@ -49,28 +49,4 @@ export const increaseContainerRuntimeResources: AdvisoryCheck<HostAssessment> = 
   },
 };
 
-export const warnUnsupportedContainerRuntime: AdvisoryCheck<HostAssessment> = {
-  id: "unsupported_runtime_warning",
-  phase: "preflight.host",
-  severity: "warning",
-  resumeSafe: false,
-  skipIf: wslDockerBlocksRemainingChecks,
-  check(host) {
-    if (!host.isUnsupportedRuntime) return null;
-    return hostAdvisory(warnUnsupportedContainerRuntime, {
-      title: "Use a supported Docker runtime if problems appear",
-      kind: "manual",
-      reason:
-        "OpenShell officially documents Docker-based runtimes. Podman may work in some environments, but it is not a supported runtime and behavior may vary.",
-      commands:
-        host.platform === "darwin"
-          ? ["If onboarding or sandbox lifecycle fails, switch to Docker Desktop or Colima."]
-          : ["If onboarding or sandbox lifecycle fails, switch to a Docker-supported runtime."],
-    });
-  },
-};
-
-export const RUNTIME_HOST_ADVISORY_CHECKS = Object.freeze([
-  increaseContainerRuntimeResources,
-  warnUnsupportedContainerRuntime,
-]);
+export const RUNTIME_HOST_ADVISORY_CHECKS = Object.freeze([increaseContainerRuntimeResources]);

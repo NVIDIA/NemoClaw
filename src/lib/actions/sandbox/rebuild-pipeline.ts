@@ -280,17 +280,24 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      const expectedGatewayAuthority = recreateOptions.rebuildGatewayAuthority;
+      if (!expectedGatewayAuthority) {
+        bail("Authoritative rebuild gateway readiness did not produce an authority handoff.");
+        return;
+      }
       const recreateJournal = openRebuildRecreateJournal({
         target: {
           sandboxName,
           gatewayName: recreateOptions.targetGatewayName,
           gatewayPort: recreateOptions.targetGatewayPort,
         },
+        expectedGatewayAuthority,
         agentName: rebuildAgent || "openclaw",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
         log,
         onAuthorityRefusal: (lines) => bail(lines.join("\n")),
       });
+      recreateOptions.rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
 
       // An earlier run of this rebuild already registered and proved the
       // replacement. Retire its journal and stop before the destroy phase so a

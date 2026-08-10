@@ -27,6 +27,15 @@ export function printUnsupportedRuntimeError(): void {
   console.error("    Switch to Docker Engine, Docker Desktop, or Colima, then rerun onboarding.");
 }
 
+/** NVIDIA CDI state cannot support GPU passthrough for this onboarding run. */
+export function printCdiSpecUnavailableError(): void {
+  console.error(
+    failLine(
+      "Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    ),
+  );
+}
+
 export interface UnderProvisionedRuntimeWarning {
   /** Human-readable detected resources, e.g. "2 vCPU / 2.0 GiB". */
   detectedStr: string;

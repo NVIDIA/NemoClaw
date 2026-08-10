@@ -42,6 +42,8 @@ export interface OpenShellGatewayUserServiceOptions {
   platform?: NodeJS.Platform;
   /** Sink for the one-shot notice emitted when a package unit is declined. */
   warn?: (message: string) => void;
+  /** Keep observation-only callers from emitting or consuming the warning latch. */
+  suppressUnsupportedVersionWarning?: boolean;
   preparePortForServiceStart?: () => void;
   prepareServiceEnv?: () => void;
   readFileSync?: (filePath: string, encoding: BufferEncoding) => string;
@@ -520,7 +522,9 @@ function resolveOpenShellGatewayUserService(
       if (verdict.supported) {
         return upstreamService;
       }
-      warnUnsupportedUpstreamGateway(verdict, opts);
+      if (!opts.suppressUnsupportedVersionWarning) {
+        warnUnsupportedUpstreamGateway(verdict, opts);
+      }
     }
   }
 
@@ -630,9 +634,26 @@ function validateSystemdServiceIdentityFromProperties(
   };
 }
 
-export function getTrustedActiveOpenShellGatewayUserServicePid(
+export interface TrustedActiveOpenShellGatewayUserServiceIdentity {
+  pid: number;
+  /** Exact validated systemd ExecStart or official Homebrew formula binary path. */
+  executablePath: string | null;
+}
+
+function resolveOfficialHomebrewGatewayBinary(
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "existsSync" | "spawnSyncImpl">>,
+): string | null {
+  const prefix = runBrew(["--prefix", OPENSHELL_GATEWAY_HOMEBREW_SERVICE], opts);
+  if (!prefix.ok) return null;
+  const value = prefix.stdout?.trim() ?? "";
+  if (!path.isAbsolute(value)) return null;
+  const gatewayBinary = path.normalize(path.join(value, "bin", "openshell-gateway"));
+  return opts.existsSync(gatewayBinary) ? gatewayBinary : null;
+}
+
+export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   opts: OpenShellGatewayUserServiceOptions = {},
-): number | null {
+): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
   const platform = opts.platform ?? process.platform;
   if (platform !== "linux" && platform !== "darwin") return null;
   const env = opts.env ?? process.env;
@@ -666,12 +687,22 @@ export function getTrustedActiveOpenShellGatewayUserServicePid(
           candidate.name === service.serviceName &&
           candidate.service_name === `homebrew.mxcl.${service.serviceName}`,
       );
-      return record?.running === true &&
+      const pid =
+        record?.running === true &&
         record.loaded === true &&
         Number.isSafeInteger(record.pid) &&
         Number(record.pid) > 0
-        ? Number(record.pid)
-        : null;
+          ? Number(record.pid)
+          : null;
+      if (pid === null) return null;
+      return {
+        pid,
+        executablePath: resolveOfficialHomebrewGatewayBinary({
+          env,
+          existsSync: opts.existsSync ?? fs.existsSync,
+          spawnSyncImpl,
+        }),
+      };
     } catch {
       return null;
     }
@@ -690,14 +721,20 @@ export function getTrustedActiveOpenShellGatewayUserServicePid(
   );
   if (!result.ok) return null;
   const properties = parseSystemctlShow(result.stdout ?? "");
-  if (
-    properties.ActiveState !== "active" ||
-    !validateSystemdServiceIdentityFromProperties(service, properties).ok
-  ) {
+  const identity = validateSystemdServiceIdentityFromProperties(service, properties);
+  if (properties.ActiveState !== "active" || !identity.ok) {
     return null;
   }
   const mainPid = Number(properties.MainPID);
-  return Number.isSafeInteger(mainPid) && mainPid > 0 ? mainPid : null;
+  return Number.isSafeInteger(mainPid) && mainPid > 0
+    ? { pid: mainPid, executablePath: identity.execStartPath }
+    : null;
+}
+
+export function getTrustedActiveOpenShellGatewayUserServicePid(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): number | null {
+  return getTrustedActiveOpenShellGatewayUserServiceIdentity(opts)?.pid ?? null;
 }
 
 function removeCompetingNemoclawUnit(

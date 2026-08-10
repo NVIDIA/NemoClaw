@@ -12,6 +12,8 @@ const {
   formatOpenShellStateRpcIssue,
   getGatewayClusterImageDrift,
   getGatewayHostProcessDrift,
+  isGatewayClusterActiveForGateway,
+  observeOpenShellGatewayVersionCompatibility,
   parseGatewayClusterImageVersion,
 } = requireDist("./gateway-drift.ts") as typeof import("./gateway-drift");
 
@@ -114,6 +116,8 @@ describe("OpenShell gateway drift preflight", () => {
       currentVersion: "0.0.36",
       expectedVersion: "0.0.37",
     });
+    expect(isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 8080 })).toBe(true);
+    expect(isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 9090 })).toBe(false);
   });
 
   it("ignores stale cluster containers whose published port is not the active gateway endpoint", () => {
@@ -267,6 +271,79 @@ describe("OpenShell gateway drift preflight", () => {
         },
       }),
     ).toBeNull();
+  });
+
+  it.each([
+    ["0.0.44", "compatible"],
+    ["0.0.43", "drift"],
+    [null, "unknown"],
+  ] as const)("reports host-process running version %s as %s readiness evidence", (runningVersion, expected) => {
+    expect(
+      observeOpenShellGatewayVersionCompatibility({
+        source: "host-process",
+        deps: {
+          getInstalledOpenshellVersion: () => "0.0.44",
+          getGatewayClusterImageRef: () => null,
+          getHostProcessGatewayRuntime: () => ({
+            gatewayBin: "/home/u/.local/bin/openshell-gateway",
+            runningVersion,
+          }),
+        },
+      }),
+    ).toBe(expected);
+  });
+
+  it("keeps version compatibility unknown without an installed version", () => {
+    expect(
+      observeOpenShellGatewayVersionCompatibility({
+        source: "host-process",
+        deps: {
+          getInstalledOpenshellVersion: () => null,
+          getGatewayClusterImageRef: () => null,
+          getHostProcessGatewayRuntime: () => ({
+            gatewayBin: "/home/u/.local/bin/openshell-gateway",
+            runningVersion: "0.0.44",
+          }),
+        },
+      }),
+    ).toBe("unknown");
+  });
+
+  it("does not fall from an unproven legacy cluster to an unrelated host binary", () => {
+    const getHostProcessGatewayRuntime = vi.fn(() => ({
+      gatewayBin: "/home/u/.local/bin/openshell-gateway",
+      runningVersion: "0.0.44",
+    }));
+
+    expect(
+      observeOpenShellGatewayVersionCompatibility({
+        source: "legacy-cluster",
+        deps: {
+          getInstalledOpenshellVersion: () => "0.0.44",
+          getGatewayClusterImageRef: () => null,
+          isGatewayClusterActive: () => false,
+          getHostProcessGatewayRuntime,
+        },
+      }),
+    ).toBe("unknown");
+    expect(getHostProcessGatewayRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["ghcr.io/nvidia/openshell/cluster:0.0.44", "compatible"],
+    ["ghcr.io/nvidia/openshell/cluster:0.0.43", "drift"],
+    ["example.com/cluster:latest", "unknown"],
+  ] as const)("reports bound legacy cluster image %s as %s", (image, expected) => {
+    expect(
+      observeOpenShellGatewayVersionCompatibility({
+        source: "legacy-cluster",
+        deps: {
+          getInstalledOpenshellVersion: () => "0.0.44",
+          getGatewayClusterImageRef: () => image,
+          isGatewayClusterActive: () => true,
+        },
+      }),
+    ).toBe(expected);
   });
 
   it("surfaces host-process drift as a preflight issue when cluster image drift is absent", () => {
