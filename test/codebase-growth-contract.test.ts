@@ -18,7 +18,7 @@ it("does not add JavaScript files", () => {
   expectNoViolations(evaluateCurrentJavaScriptContract());
 });
 
-it("keeps the onboard entrypoint at its ratcheted line budget", () => {
+it("does not increase the onboard entrypoint line count", () => {
   expectNoViolations(evaluateCurrentOnboardContract());
 });
 
@@ -26,6 +26,6 @@ it("keeps test files within their line budgets", () => {
   expectNoViolations(evaluateCurrentTestFileSizeBudget());
 });
 
-it("keeps test-file if-statement counts at their ratcheted budgets", () => {
+it("does not add if statements to changed test files", () => {
   expectNoViolations(evaluateCurrentTestConditionalContract());
 });
