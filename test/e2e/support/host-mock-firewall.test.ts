@@ -216,7 +216,7 @@ describe("OpenShell live E2E host mock firewall", () => {
     host.expectNoPendingResponses();
   });
 
-  it("does not change UFW when the service is inactive or absent (#8696)", async () => {
+  it("does not change UFW when UFW is inactive or unavailable (#8696)", async () => {
     const inactiveHost = new FakeHost([
       shellResult(networkInspect()),
       shellResult(bridgeAddresses()),
@@ -244,7 +244,7 @@ describe("OpenShell live E2E host mock firewall", () => {
     expect(missingHost.calls).toHaveLength(2);
   });
 
-  it("reports the detected tuple and manual command when mutation is not authorized (#8696)", async () => {
+  it("reports the bridge, subnet, gateway, port, and manual command when mutation is not authorized (#8696)", async () => {
     const customBridge = "br-custom0";
     const host = new FakeHost([
       shellResult(networkInspect({ bridgeInterface: customBridge })),
@@ -333,7 +333,7 @@ describe("OpenShell live E2E host mock firewall", () => {
     const cleanup = new CleanupRegistry();
 
     await expect(registration(host, cleanup)).rejects.toThrow(
-      /UFW rejected the exact rule \(timed out\).*Run this command manually/s,
+      /UFW rule application was not confirmed \(timed out\).*Run this command manually/s,
     );
     await expect(cleanup.runAll()).resolves.toEqual({
       failures: [],
@@ -342,7 +342,29 @@ describe("OpenShell live E2E host mock firewall", () => {
     host.expectNoPendingResponses();
   });
 
-  it("fails cleanup when deletion does not restore the original UFW rules (#8696)", async () => {
+  it("reports rule absence after a successful UFW inspection (#8696)", async () => {
+    const host = new FakeHost([
+      shellResult(networkInspect()),
+      shellResult(bridgeAddresses()),
+      shellResult("Status: active\n"),
+      shellResult(BASELINE_RULES),
+      shellResult("Rule added\n"),
+      shellResult(BASELINE_RULES),
+      shellResult(BASELINE_RULES),
+    ]);
+    const cleanup = new CleanupRegistry();
+
+    await expect(registration(host, cleanup)).rejects.toThrow(
+      /UFW inspection completed but the exact rule was absent.*Run this command manually/s,
+    );
+    await expect(cleanup.runAll()).resolves.toEqual({
+      failures: [],
+      passed: [`restore UFW state after host mock port ${PORT}`],
+    });
+    host.expectNoPendingResponses();
+  });
+
+  it("reports a cleanup failure when UFW rejects rule deletion (#8696)", async () => {
     const host = new FakeHost([
       shellResult(networkInspect()),
       shellResult(bridgeAddresses()),

@@ -424,6 +424,13 @@ export function registerOpenShellHostMockFirewall(
     if (closed) {
       throw new Error("host mock firewall setup was interrupted while applying the UFW rule");
     }
+    if (applied.timedOut || applied.signal !== null || applied.exitCode === null) {
+      throw remediationError(
+        `UFW rule application was not confirmed (${commandFailure(applied)})`,
+        topology,
+        options.port,
+      );
+    }
     if (applied.exitCode !== 0) {
       throw remediationError(
         `UFW rejected the exact rule (${commandFailure(applied)})`,
@@ -441,9 +448,16 @@ export function registerOpenShellHostMockFirewall(
       ["-n", "ufw", "show", "added"],
       commandOptions("host-mock-firewall-rules-after"),
     );
-    if (after.exitCode !== 0 || !snapshotContainsRule(after.stdout, rule())) {
+    if (after.exitCode !== 0) {
       throw remediationError(
-        `could not verify the exact UFW rule (${commandFailure(after)})`,
+        `could not inspect UFW after rule application (${commandFailure(after)})`,
+        topology,
+        options.port,
+      );
+    }
+    if (!snapshotContainsRule(after.stdout, rule())) {
+      throw remediationError(
+        "UFW inspection completed but the exact rule was absent",
         topology,
         options.port,
       );
