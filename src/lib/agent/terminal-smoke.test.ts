@@ -1,0 +1,54 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import { DCODE_MANAGED_EXEC_LAUNCHER } from "../actions/sandbox/connect-inference-route-probe";
+import type { AgentDefinition } from "./defs";
+import { buildAgentSmokeArgs, runAgentSmokeCommands } from "./terminal-smoke";
+
+function agent(name: string): AgentDefinition {
+  return { name, runtime: { smoke_commands: ["dcode --version"] } } as unknown as AgentDefinition;
+}
+
+describe("terminal agent smoke command invocation", () => {
+  it("runs Deep Agents Code smoke commands without a login shell (#8624)", () => {
+    const args = buildAgentSmokeArgs(
+      "probe-box",
+      agent("langchain-deepagents-code"),
+      "dcode --version",
+    );
+
+    expect(args).not.toContain("-lc");
+    expect(args.join(" ")).not.toContain("sh -lc");
+    expect(args).toContain(DCODE_MANAGED_EXEC_LAUNCHER);
+    expect(args).toContain("BASH_ENV=");
+    expect(args).toContain("ENV=");
+    expect(args.at(-1)).toBe("dcode --version");
+  });
+
+  it("keeps the login shell for other terminal agents (#8624)", () => {
+    const args = buildAgentSmokeArgs("probe-box", agent("hermes"), "hermes --version");
+
+    expect(args).toContain("-lc");
+    expect(args).not.toContain(DCODE_MANAGED_EXEC_LAUNCHER);
+    expect(args.at(-1)).toBe("hermes --version");
+  });
+
+  it("never issues a Deep Agents Code smoke exec through a login shell (#8624)", () => {
+    const issued: string[][] = [];
+    const result = runAgentSmokeCommands(
+      "probe-box",
+      agent("langchain-deepagents-code"),
+      (args) => {
+        issued.push(args);
+        return `NEMOCLAW_AGENT_SMOKE_EXIT:0\n`;
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(issued).toHaveLength(1);
+    expect(issued[0]).not.toContain("-lc");
+    expect(issued[0]!.join(" ")).not.toContain("sh -lc");
+  });
+});
