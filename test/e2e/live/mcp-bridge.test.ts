@@ -38,6 +38,7 @@ import {
   assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout,
   assertHermesReloadRollback,
   assertHermesRemovalSurvivesGatewayRestart,
+  reopenHermesMcpMaintenanceWindow,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
   buildMcpBridgeExactMainEnv,
@@ -1226,6 +1227,7 @@ mcpBridgeShardTest("hermes")(
       artifactName: "hermes-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
     });
+    await reopenHermesMcpMaintenanceWindow(host, HERMES_SANDBOX_NAME);
     await removeBridgeAndAssertEmpty(host, sandbox, {
       agent: "hermes",
       adapter: "hermes-config",
