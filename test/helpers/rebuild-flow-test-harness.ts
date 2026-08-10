@@ -210,13 +210,20 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         : defaultHydrateCredentialEnv(credentialEnv);
     },
   );
-  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockReturnValue({
-    exists: overrides.hermesProviderExists ?? true,
-    credentialKeys:
-      (overrides.hermesProviderExists ?? true)
-        ? (overrides.hermesCredentialKeys ?? ["OPENAI_API_KEY"])
-        : null,
-  });
+  let hermesProviderExists = overrides.hermesProviderExists ?? true;
+  let hermesCredentialKeys = hermesProviderExists
+    ? (overrides.hermesCredentialKeys ?? ["OPENAI_API_KEY"])
+    : null;
+  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockImplementation(() => ({
+    exists: hermesProviderExists,
+    credentialKeys: hermesCredentialKeys,
+  }));
+  const registerHermesInferenceProviderSpy = vi
+    .spyOn(hermesProviderAuth, "registerHermesInferenceProvider")
+    .mockImplementation((...args: unknown[]) => {
+      hermesProviderExists = true;
+      hermesCredentialKeys = [String(args[2] ?? "OPENAI_API_KEY")];
+    });
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     if (typeof mutator !== "function") {
@@ -658,6 +665,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     registryUpdateSpy,
     setDefaultSpy,
     setDefault: (name: string) => registry.setDefault(name),
+    registerHermesInferenceProviderSpy,
     registerSandboxEntry: (name: string) => {
       currentRegistryEntryNames.add(name);
       if (currentDefaultSandbox === null) {
