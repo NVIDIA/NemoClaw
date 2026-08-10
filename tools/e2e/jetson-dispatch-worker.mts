@@ -17,6 +17,9 @@ import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.
 
 const MAX_PROCESS_OUTPUT_BYTES = 4 * 1024 * 1024;
 const JETSON_SSH_DESTINATION = "nvidia@192.168.55.1";
+const JETSON_CLEANUP_EXECUTABLE = "/usr/local/libexec/nemoclaw-jetson-cleanup";
+const JETSON_CLEANUP_TARGET =
+  "/opt/nemoclaw-jetson-dispatch/current/tools/e2e/jetson-dispatch-cleanup.sh";
 const SAFE_PROCESS_ENV = {
   LANG: "C.UTF-8",
   PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -323,6 +326,25 @@ function requireSecureFile(
   }
 }
 
+function requireSecureCleanupExecutable(file: string): void {
+  if (file !== JETSON_CLEANUP_EXECUTABLE) {
+    requireSecureFile(file, { executable: true });
+    return;
+  }
+  const linkStat = fs.lstatSync(file);
+  if (!linkStat.isSymbolicLink()) {
+    requireSecureFile(file, { executable: true });
+    return;
+  }
+  if (linkStat.uid !== 0) {
+    throw new Error(`${file} symbolic link must be owned by root`);
+  }
+  if (fs.readlinkSync(file) !== JETSON_CLEANUP_TARGET) {
+    throw new Error(`${file} must select the managed current-release cleanup program`);
+  }
+  requireSecureFile(JETSON_CLEANUP_TARGET, { executable: true });
+}
+
 function positiveIntegerEnvironment(
   value: string | undefined,
   name: string,
@@ -355,7 +377,7 @@ export function loadSshJetsonWorkerConfig(
   const cleanupExecutable = env.JETSON_DISPATCH_CLEANUP_EXECUTABLE ?? "";
   requireSecureFile(identityFile, { private: true });
   requireSecureFile(knownHostsFile, {});
-  requireSecureFile(cleanupExecutable, { executable: true });
+  requireSecureCleanupExecutable(cleanupExecutable);
   return {
     cleanupExecutable,
     destination,

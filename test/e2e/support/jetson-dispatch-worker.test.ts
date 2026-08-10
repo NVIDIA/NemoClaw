@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -108,17 +109,114 @@ function loadConfig(files = deploymentFiles()) {
 }
 
 describe("Colossus SSH worker deployment boundary", () => {
-  it("pins dispatcher deployment to one reviewed commit before service startup (#8142)", () => {
-    const verification = 'test "$(sudo git -C /opt/nemoclaw-jetson-dispatch rev-parse HEAD)" =';
+  it("uses the fixed deployment command before service startup (#8142)", () => {
+    const deployment =
+      'sudo /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy \\\n  --commit "$REVIEWED_COMMIT_SHA"';
     expect(dispatcherRunbook).toContain(
-      'fetch --depth=1 --no-tags origin \\\n  "$REVIEWED_COMMIT_SHA"',
+      "tools/e2e/colossus-jetson-dispatch-deploy.sh \\\n  /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy",
     );
-    expect(dispatcherRunbook).toContain("checkout --detach FETCH_HEAD");
-    expect(dispatcherRunbook).toContain(verification);
-    expect(dispatcherRunbook.indexOf(verification)).toBeLessThan(
+    expect(dispatcherRunbook).toContain(deployment);
+    expect(dispatcherRunbook).toContain("WorkingDirectory=/opt/nemoclaw-jetson-dispatch/current");
+    expect(dispatcherRunbook.indexOf(deployment)).toBeLessThan(
       dispatcherRunbook.indexOf("## Configure the Dispatcher Service"),
     );
+    expect(dispatcherRunbook).not.toContain("sudo git -C /opt/nemoclaw-jetson-dispatch init");
     expect(dispatcherRunbook).not.toContain("git clone --branch main");
+  });
+
+  it("keeps public ingress stopped until a later release passes local verification (#8142)", () => {
+    const section = dispatcherRunbook.slice(
+      dispatcherRunbook.indexOf("## Deploy a Later Reviewed Commit"),
+      dispatcherRunbook.indexOf("## Publish the Dispatcher With Cloudflare Tunnel"),
+    );
+    const stopTunnel = "sudo systemctl stop nemoclaw-jetson-tunnel.service";
+    const deploy = "sudo /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy";
+    const startTunnel = "sudo systemctl start nemoclaw-jetson-tunnel.service";
+    const publicProof = 'test "$PUBLIC_HTTP_CODE" = 401';
+
+    expect(section).toContain("set -euo pipefail");
+    expect(section.indexOf(stopTunnel)).toBeLessThan(section.indexOf(deploy));
+    expect(section.indexOf(deploy)).toBeLessThan(section.indexOf(startTunnel));
+    expect(section.indexOf(startTunnel)).toBeLessThan(section.indexOf(publicProof));
+    expect(section.indexOf(publicProof)).toBeLessThan(section.indexOf("tunnel_verified=1"));
+    expect(section).toContain("trap stop_unverified_tunnel EXIT");
+    expect(section).toContain("curl --disable --noproxy '*'");
+  });
+
+  it.each([
+    {
+      expectedLog: ["stop", "deploy", "start", "stop"],
+      expectedState: "inactive\n",
+      failContainmentStop: false,
+      name: "stops public ingress when the public proof fails",
+    },
+    {
+      expectedLog: ["stop", "deploy", "start", "stop-failed"],
+      expectedState: "active\n",
+      failContainmentStop: true,
+      name: "reports when public-ingress containment fails",
+    },
+  ])("$name (#8142)", ({ expectedLog, expectedState, failContainmentStop }) => {
+    const section = dispatcherRunbook.slice(
+      dispatcherRunbook.indexOf("## Deploy a Later Reviewed Commit"),
+      dispatcherRunbook.indexOf("## Publish the Dispatcher With Cloudflare Tunnel"),
+    );
+    const block = section.match(/```bash\n([\s\S]*?)\n```/u)?.[1];
+    expect(block).toBeDefined();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tunnel-deploy-test-"));
+    temporaryDirectories.push(directory);
+    const log = path.join(directory, "service.log");
+    const state = path.join(directory, "tunnel.state");
+    const stopCount = path.join(directory, "stop.count");
+    fs.writeFileSync(state, "active\n");
+    fs.writeFileSync(
+      path.join(directory, "sudo"),
+      `#!/bin/sh
+set -eu
+case "$1:$2" in
+  systemctl:stop)
+    count="$(cat "$STOP_COUNT" 2>/dev/null || printf '0')"
+    count="$((count + 1))"
+    printf '%s\\n' "$count" >"$STOP_COUNT"
+    if [ "$FAIL_CONTAINMENT_STOP" = 1 ] && [ "$count" -gt 1 ]; then
+      printf 'stop-failed\\n' >>"$SERVICE_LOG"
+      exit 5
+    fi
+    printf 'stop\\n' >>"$SERVICE_LOG"
+    printf 'inactive\\n' >"$TUNNEL_STATE"
+    ;;
+  systemctl:start) printf 'start\\n' >>"$SERVICE_LOG"; printf 'active\\n' >"$TUNNEL_STATE" ;;
+  systemctl:show) cat "$TUNNEL_STATE" ;;
+  /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy:--commit) printf 'deploy\\n' >>"$SERVICE_LOG" ;;
+  *) exit 1 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(directory, "curl"), "#!/bin/sh\nprintf '503'\n", { mode: 0o755 });
+
+    const result = spawnSync("/bin/bash", ["-c", block!], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FAIL_CONTAINMENT_STOP: failContainmentStop ? "1" : "0",
+        PATH: `${directory}:${process.env.PATH ?? ""}`,
+        SERVICE_LOG: log,
+        STOP_COUNT: stopCount,
+        TUNNEL_STATE: state,
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual(expectedLog);
+    expect(fs.readFileSync(state, "utf8")).toBe(expectedState);
+    if (failContainmentStop) {
+      expect(result.stderr).toContain(
+        "PUBLIC INGRESS CONTAINMENT FAILED: tunnel stop status=5; ActiveState=active",
+      );
+    } else {
+      expect(result.stderr).not.toContain("PUBLIC INGRESS CONTAINMENT FAILED");
+    }
   });
 
   it("loads fixed SSH, host-key, timeout, and cleanup configuration (#8142)", () => {
@@ -293,6 +391,78 @@ describe("Colossus SSH worker deployment boundary", () => {
         },
       ),
     ).toThrow("must be a regular file");
+  });
+
+  it("accepts only the exact root-owned current-release cleanup link (#8142)", () => {
+    const files = deploymentFiles();
+    const cleanupExecutable = "/usr/local/libexec/nemoclaw-jetson-cleanup";
+    const cleanupTarget =
+      "/opt/nemoclaw-jetson-dispatch/current/tools/e2e/jetson-dispatch-cleanup.sh";
+    const localLink = path.join(files.stateDirectory, "managed-cleanup-link");
+    fs.symlinkSync(files.cleanupExecutable, localLink);
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const realReadlinkSync = fs.readlinkSync.bind(fs);
+    const localLinkStat = realLstatSync(localLink);
+    const rootLinkStat = Object.assign(
+      Object.create(Object.getPrototypeOf(localLinkStat)),
+      localLinkStat,
+      { uid: 0 },
+    ) as fs.Stats;
+    const nonRootLinkStat = Object.assign(
+      Object.create(Object.getPrototypeOf(localLinkStat)),
+      localLinkStat,
+      { uid: 1000 },
+    ) as fs.Stats;
+    const secureTargetStat = realLstatSync(files.cleanupExecutable);
+    const unsafeTargetStat = Object.assign(
+      Object.create(Object.getPrototypeOf(secureTargetStat)),
+      secureTargetStat,
+      { mode: secureTargetStat.mode | 0o022 },
+    ) as fs.Stats;
+    let selectedTarget = "/tmp/unmanaged-cleanup";
+    let managedLinkStat = rootLinkStat;
+    let managedTargetStat = secureTargetStat;
+    const lstat = vi.spyOn(fs, "lstatSync").mockImplementation((candidate, options) => {
+      if (String(candidate) === cleanupExecutable) return managedLinkStat;
+      if (String(candidate) === cleanupTarget) return managedTargetStat;
+      return realLstatSync(candidate, options as never);
+    });
+    const readlink = vi
+      .spyOn(fs, "readlinkSync")
+      .mockImplementation(((candidate, options) =>
+        String(candidate) === cleanupExecutable
+          ? selectedTarget
+          : realReadlinkSync(candidate, options as never)) as typeof fs.readlinkSync);
+
+    try {
+      const env = {
+        ...environment(files),
+        JETSON_DISPATCH_CLEANUP_EXECUTABLE: cleanupExecutable,
+      };
+      expect(() =>
+        loadSshJetsonWorkerConfig({ stateDirectory: files.stateDirectory }, env),
+      ).toThrow("must select the managed current-release cleanup program");
+
+      selectedTarget = cleanupTarget;
+      managedLinkStat = nonRootLinkStat;
+      expect(() =>
+        loadSshJetsonWorkerConfig({ stateDirectory: files.stateDirectory }, env),
+      ).toThrow("symbolic link must be owned by root");
+
+      managedLinkStat = rootLinkStat;
+      managedTargetStat = unsafeTargetStat;
+      expect(() =>
+        loadSshJetsonWorkerConfig({ stateDirectory: files.stateDirectory }, env),
+      ).toThrow("must not be group- or world-writable");
+
+      managedTargetStat = secureTargetStat;
+      expect(
+        loadSshJetsonWorkerConfig({ stateDirectory: files.stateDirectory }, env),
+      ).toMatchObject({ cleanupExecutable });
+    } finally {
+      readlink.mockRestore();
+      lstat.mockRestore();
+    }
   });
 
   it("invokes the fixed cleanup executable without request-controlled arguments (#8142)", async () => {

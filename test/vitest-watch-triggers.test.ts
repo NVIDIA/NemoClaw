@@ -62,6 +62,7 @@ const OPAQUE_INPUTS = [
   "test/e2e/lib/ci-compatible-inference.sh",
   "scripts/setup-jetson.sh",
   "tools/e2e/jetson-dispatch-cleanup.sh",
+  "tools/e2e/colossus-jetson-dispatch-deploy.sh",
   ".github/workflows/base-image.yaml",
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/validate-managed-base-index.sh",
@@ -128,6 +129,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
     expect(triggeredBy("tools/e2e/jetson-dispatch-cleanup.sh")).toEqual([
       "test/e2e/support/jetson-dispatch-worker.test.ts",
+    ]);
+    expect(triggeredBy("tools/e2e/colossus-jetson-dispatch-deploy.sh")).toEqual([
+      "test/e2e/support/colossus-jetson-dispatch-deploy.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
       "test/managed-base-image-contract.test.ts",

@@ -154,14 +154,13 @@ The cleanup program must not change or remove any resource outside its allowlist
 Review its command construction and target resolution before deployment.
 Do not use broad process termination, Docker pruning, wildcard paths, or host-wide package removal.
 
-## Create the Colossus Dispatcher Account
+## Create the Colossus Dispatcher Account and Bootstrap Deployment
 
 Run these commands on Colossus.
-Replace the checkout path if the host uses a managed deployment location.
 The dispatcher requires `/usr/bin/node` 22.19.0 or later.
-Replace `REVIEWED_COMMIT_SHA` with the full lowercase 40-character SHA of the reviewed commit to deploy.
 
 ```bash
+set -euo pipefail
 /usr/bin/node --version
 /usr/bin/node -e '
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -172,22 +171,48 @@ sudo useradd --system --create-home \
   --shell /usr/sbin/nologin nemoclaw-jetson-dispatch
 sudo install -d -o nemoclaw-jetson-dispatch -g nemoclaw-jetson-dispatch -m 0700 \
   /var/lib/nemoclaw-jetson-dispatch /etc/nemoclaw-jetson-dispatch
-REVIEWED_COMMIT_SHA=0000000000000000000000000000000000000000
-sudo install -d -o root -g root -m 0755 /opt/nemoclaw-jetson-dispatch
-sudo git -C /opt/nemoclaw-jetson-dispatch init
-sudo git -C /opt/nemoclaw-jetson-dispatch remote add origin \
-  https://github.com/NVIDIA/NemoClaw.git
-sudo git -C /opt/nemoclaw-jetson-dispatch fetch --depth=1 --no-tags origin \
-  "$REVIEWED_COMMIT_SHA"
-sudo git -C /opt/nemoclaw-jetson-dispatch checkout --detach FETCH_HEAD
-test "$(sudo git -C /opt/nemoclaw-jetson-dispatch rev-parse HEAD)" = \
-  "$REVIEWED_COMMIT_SHA"
-test -z "$(sudo git -C /opt/nemoclaw-jetson-dispatch status --short)"
 ```
 
-The two final checks must pass before the dispatcher service starts.
-Do not deploy a branch reference or automatically update this checkout.
-The Colossus service runs the dispatcher files from this trusted commit.
+Bootstrap the deployment command from a separately reviewed checkout of `https://github.com/NVIDIA/NemoClaw.git`.
+Replace both placeholder SHAs with full lowercase 40-character reviewed commit SHAs:
+
+```bash
+set -euo pipefail
+REVIEWED_BOOTSTRAP_SHA=0000000000000000000000000000000000000000
+test "$(git remote get-url origin)" = https://github.com/NVIDIA/NemoClaw.git
+test "$(git rev-parse HEAD)" = "$REVIEWED_BOOTSTRAP_SHA"
+test -z "$(git status --short)"
+sudo install -o root -g root -m 0755 \
+  tools/e2e/colossus-jetson-dispatch-deploy.sh \
+  /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy
+
+test "$(systemctl show --property=LoadState --value \
+  nemoclaw-jetson-dispatch.service)" = not-found
+sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/state/device.lock
+sudo test ! -L /var/lib/nemoclaw-jetson-dispatch/state/device.lock
+REVIEWED_COMMIT_SHA=0000000000000000000000000000000000000000
+sudo /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy \
+  --commit "$REVIEWED_COMMIT_SHA"
+test "$(sudo readlink /opt/nemoclaw-jetson-dispatch/current)" = \
+  "/opt/nemoclaw-jetson-dispatch/releases/$REVIEWED_COMMIT_SHA"
+sudo test -L /usr/local/libexec/nemoclaw-jetson-cleanup
+test "$(sudo readlink /usr/local/libexec/nemoclaw-jetson-cleanup)" = \
+  /opt/nemoclaw-jetson-dispatch/current/tools/e2e/jetson-dispatch-cleanup.sh
+```
+
+The deployment command requires root and accepts only `--commit <full lowercase 40-character SHA>`.
+It fetches only that commit from the fixed `https://github.com/NVIDIA/NemoClaw.git` origin.
+It stores each verified release at `/opt/nemoclaw-jetson-dispatch/releases/<sha>`.
+Each release directory must be owned by `root:root` with mode `0755`.
+The command verifies the origin, commit, unmodified worktree, and bundled cleanup file before selection.
+It installs one root-owned stable symbolic link from `/usr/local/libexec/nemoclaw-jetson-cleanup` to `/opt/nemoclaw-jetson-dispatch/current/tools/e2e/jetson-dispatch-cleanup.sh`.
+It then selects the dispatcher and cleanup program together with one atomic absolute `/opt/nemoclaw-jetson-dispatch/current` symbolic-link switch.
+The initial deployment requires the systemd service and `device.lock` to be absent.
+It installs the release selection and cleanup link without starting a service.
+The command does not update its installed copy.
+Install a reviewed deployment-command revision separately when that command changes.
+
+The Colossus service runs the dispatcher files from the selected reviewed release.
 The GitHub-hosted controller runs the client from the trusted workflow commit.
 The Colossus service never checks out candidate code.
 
@@ -221,14 +246,14 @@ Do not accept a changed host key without reconciling it through the serial conso
 
 ## Define the Cleanup Program
 
-Install the bundled cleanup program from the trusted checkout:
-
-```bash
-sudo install -d -o root -g root -m 0755 /usr/local/libexec
-sudo install -o root -g root -m 0755 \
-  /opt/nemoclaw-jetson-dispatch/tools/e2e/jetson-dispatch-cleanup.sh \
-  /usr/local/libexec/nemoclaw-jetson-cleanup
-```
+The deployment command installs `/usr/local/libexec/nemoclaw-jetson-cleanup` as a root-owned stable symbolic link to `/opt/nemoclaw-jetson-dispatch/current/tools/e2e/jetson-dispatch-cleanup.sh`.
+The selected target file is owned by `root:root` with mode `0755`.
+One atomic `current` switch selects both the dispatcher code and cleanup program, so an interruption cannot select them from different releases.
+The deployed worker configuration must name that exact cleanup path.
+The worker accepts the symbolic link only when root owns it, its target is the exact managed `current` cleanup program, and that target passes the regular executable ownership and write-permission checks.
+It rejects arbitrary cleanup symbolic links and an unsafe managed target.
+The deployment command accepts no cleanup path, resource selector, or cleanup-scope override.
+Review a release that changes the cleanup allowlist separately before deployment.
 
 It must accept no arguments and must not be group- or world-writable.
 It must derive the lowercase 64-character job ID from the private dispatcher `device.lock`.
@@ -355,7 +380,7 @@ Type=simple
 User=nemoclaw-jetson-dispatch
 Group=nemoclaw-jetson-dispatch
 UMask=0077
-WorkingDirectory=/opt/nemoclaw-jetson-dispatch
+WorkingDirectory=/opt/nemoclaw-jetson-dispatch/current
 EnvironmentFile=/etc/nemoclaw-jetson-dispatch/environment
 ExecStart=/usr/bin/node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-service.mts
 Restart=on-failure
@@ -383,13 +408,127 @@ sudo ss -ltnp | grep '127.0.0.1:8787'
 An anonymous request must fail:
 
 ```bash
-curl --fail-with-body -X POST http://127.0.0.1:8787/v1/jobs \
+curl --disable --noproxy '*' --fail-with-body \
+  -X POST http://127.0.0.1:8787/v1/jobs \
   -H 'Content-Type: application/json' \
   --data '{"schemaVersion":1,"target":"jetson-nvmap-gpu","candidateSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workflowRunId":"1","workflowRunAttempt":1}'
 ```
 
 The expected result is HTTP `401`.
 A malformed request returns HTTP `400`, and an unknown route returns HTTP `404`.
+
+## Deploy a Later Reviewed Commit
+
+This procedure applies after the tunnel has been published once.
+Use the installed deployment command for each later reviewed release:
+
+```bash
+(
+  set -euo pipefail
+  tunnel_verified=0
+  stop_unverified_tunnel() {
+    original_status=$?
+    trap - EXIT
+    if [ "$tunnel_verified" = 1 ]; then
+      exit "$original_status"
+    fi
+
+    set +e
+    sudo systemctl stop nemoclaw-jetson-tunnel.service
+    stop_status=$?
+    observed_state="$(sudo systemctl show --property=ActiveState --value \
+      nemoclaw-jetson-tunnel.service)"
+    inspection_status=$?
+    set -e
+
+    exit_status=$original_status
+    if [ "$exit_status" -eq 0 ]; then
+      exit_status=1
+    fi
+    if [ "$inspection_status" -ne 0 ]; then
+      state_report=unknown
+    elif [ -n "$observed_state" ]; then
+      state_report=$observed_state
+    else
+      state_report=empty
+    fi
+    if [ "$stop_status" -ne 0 ] || [ "$inspection_status" -ne 0 ] || \
+      [ "$observed_state" != inactive ]; then
+      printf 'PUBLIC INGRESS CONTAINMENT FAILED: tunnel stop status=%s; ActiveState=%s; inspection status=%s\n' \
+        "$stop_status" "$state_report" "$inspection_status" >&2
+    fi
+    exit "$exit_status"
+  }
+  trap stop_unverified_tunnel EXIT
+
+  REVIEWED_COMMIT_SHA=0000000000000000000000000000000000000000
+  sudo systemctl stop nemoclaw-jetson-tunnel.service
+  test "$(sudo systemctl show --property=ActiveState --value \
+    nemoclaw-jetson-tunnel.service)" = inactive
+  sudo /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy \
+    --commit "$REVIEWED_COMMIT_SHA"
+  sudo systemctl start nemoclaw-jetson-tunnel.service
+  test "$(sudo systemctl show --property=ActiveState --value \
+    nemoclaw-jetson-tunnel.service)" = active
+  PUBLIC_HTTP_CODE="$(
+    curl --disable --noproxy '*' --silent --show-error --output /dev/null \
+      --write-out '%{http_code}' --max-time 10 --request POST \
+      --header 'Content-Type: application/json' \
+      --data '{"schemaVersion":1,"target":"jetson-nvmap-gpu","candidateSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workflowRunId":"1","workflowRunAttempt":1}' \
+      https://jetson-e2e.example.com/v1/jobs
+  )"
+  test "$PUBLIC_HTTP_CODE" = 401
+  tunnel_verified=1
+)
+```
+
+The tunnel stop and exact `ActiveState=inactive` check happen before the deployer can change the dispatcher release.
+The subshell installs an `EXIT` trap before tunnel operations and leaves its `tunnel_verified` sentinel unset until every check succeeds.
+On any earlier exit, the trap disables itself, records the tunnel stop status, and independently inspects `ActiveState`.
+Only a successful stop, successful inspection, and exact `ActiveState=inactive` confirm local public-ingress containment.
+The trap preserves the original nonzero status, or returns `1` for an otherwise successful unverified exit.
+When it cannot confirm containment, it reports `PUBLIC INGRESS CONTAINMENT FAILED` with the stop status and observed or unknown state.
+The deployer completes only after the dispatcher starts and its local loopback bind and anonymous HTTP `401` checks pass.
+Only after that successful return does the block start the tunnel, require `ActiveState=active`, and repeat a config-free, direct anonymous HTTP `401` check through the public endpoint.
+The tunnel remains running only when the block sets `tunnel_verified=1` after all three checks succeed.
+
+It accepts only systemd `LoadState` values `loaded` and `not-found`.
+Both cases require `device.lock` to be absent before release preparation.
+A loaded service is eligible only when `current` selects one managed release and the stable cleanup link follows `current`.
+For a loaded service, the command performs these actions:
+
+1. Stop the service.
+2. Query `ActiveState` and require the exact value `inactive`.
+3. Refuse deployment when `/var/lib/nemoclaw-jetson-dispatch/state/device.lock` remains.
+4. Validate the managed `current` release and stable cleanup link, then prepare and verify the requested release.
+5. Atomically switch `current`, selecting the requested dispatcher code and cleanup program together.
+6. Start the service.
+7. Verify that only `127.0.0.1:8787` listens and make a config-free, direct request with `curl --disable --noproxy '*'`; the anonymous job request must return HTTP `401`.
+
+If the post-stop state cannot be read, is not `inactive`, or `device.lock` remains, the command exits with the service stopped and does not prepare or select a release.
+Do not remove the lock.
+Complete the recovery procedure on this page before you rerun deployment.
+
+An interruption before the atomic `current` switch leaves the previous dispatcher and cleanup program selected; an interruption after it selects both from the requested release.
+If activation, start, or loopback verification fails for a loaded service, rollback must first stop the service successfully, require `ActiveState=inactive`, and require `device.lock` to be absent.
+Only then does it atomically restore the prior `current` selection, which restores both the dispatcher and cleanup program.
+If rollback cannot prove those three conditions after the requested pair is selected, it leaves that new code and cleanup pair selected and reports rollback failure.
+When an earlier selected release exists, it restarts that release and repeats the loopback verification.
+When no prior selection exists, rollback removes the new `current` and stable cleanup link.
+If rollback cannot restore a verified service, the command exits with an explicit rollback failure.
+When the trap confirms `ActiveState=inactive`, keep the tunnel stopped while you complete dispatcher recovery.
+If it reports `PUBLIC INGRESS CONTAINMENT FAILED`, do not assume that the tunnel stopped.
+Immediately disable or delete the public ingress through the approved Cloudflare administrator path and confirm that the public endpoint is unavailable.
+Only after that external containment proof should you recover the dispatcher locally.
+Do not restart it until the dispatcher again binds only to `127.0.0.1:8787` and a config-free, direct anonymous request returns HTTP `401` locally.
+Then rerun the complete later-deployment subshell.
+Its exit trap keeps the tunnel stopped unless `ActiveState=active` and the config-free, direct public HTTP `401` proof both succeed.
+
+The command does not modify the dispatcher environment, systemd unit, SSH credentials, or Cloudflare credentials.
+It does not update itself.
+Normal deployment requires the selected release to preserve the documented cleanup allowlist.
+A cleanup-scope change requires separate review and a corresponding runbook update before deployment.
+After every later deployment, repeat the authenticated successful, controlled-failure, and cancellation proof jobs under [Configure GitHub and Run a Proof Job](#configure-github-and-run-a-proof-job).
 
 ## Publish the Dispatcher With Cloudflare Tunnel
 
@@ -479,6 +618,14 @@ Confirm the public endpoint also rejects an anonymous request with HTTP `401`.
 Confirm Colossus has outbound HTTPS access to GitHub's OIDC key endpoint:
 
 ```bash
+PUBLIC_HTTP_CODE="$(
+  curl --disable --noproxy '*' --silent --show-error --output /dev/null \
+    --write-out '%{http_code}' --max-time 10 --request POST \
+    --header 'Content-Type: application/json' \
+    --data '{"schemaVersion":1,"target":"jetson-nvmap-gpu","candidateSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workflowRunId":"1","workflowRunAttempt":1}' \
+    https://jetson-e2e.example.com/v1/jobs
+)"
+test "$PUBLIC_HTTP_CODE" = 401
 curl --fail-with-body \
   https://token.actions.githubusercontent.com/.well-known/jwks
 ```
@@ -936,8 +1083,25 @@ sudo rm -- \
   /usr/local/libexec/nemoclaw-jetson-cleanup \
   /var/lib/nemoclaw-jetson-dispatch/known_hosts
 sudo test ! -e /usr/local/libexec/nemoclaw-jetson-cleanup
+sudo test ! -L /usr/local/libexec/nemoclaw-jetson-cleanup
 sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/known_hosts
 ```
 
 After the required retention period, remove the private job state and logs.
-Remove the dispatcher environment, service unit, and trusted checkout when no investigation, recovery, or retention requirement remains.
+When no investigation, recovery, or retention requirement remains, remove these remaining deployment files:
+
+```bash
+sudo rm -- \
+  /etc/nemoclaw-jetson-dispatch/environment \
+  /etc/systemd/system/nemoclaw-jetson-dispatch.service \
+  /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy
+sudo rm -rf -- /opt/nemoclaw-jetson-dispatch
+sudo systemctl daemon-reload
+sudo test ! -e /etc/nemoclaw-jetson-dispatch/environment
+sudo test ! -e /etc/systemd/system/nemoclaw-jetson-dispatch.service
+sudo test ! -e /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy
+sudo test ! -e /opt/nemoclaw-jetson-dispatch
+sudo test ! -L /opt/nemoclaw-jetson-dispatch
+test "$(systemctl show --property=LoadState --value \
+  nemoclaw-jetson-dispatch.service)" = not-found
+```
