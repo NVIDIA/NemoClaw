@@ -213,7 +213,8 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   assertNvidiaAvailable(nvidia, skip);
 
   await ensureOllama(host);
-  await cleanupOllama(host, "pre-cleanup-ollama");
+  const ollamaCleanup = await cleanupOllama(host, "pre-cleanup-ollama");
+  expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
 
   progress.phase("install Ollama and GPU sandbox");
   const install = await host.command("bash", ["install.sh", "--non-interactive"], {

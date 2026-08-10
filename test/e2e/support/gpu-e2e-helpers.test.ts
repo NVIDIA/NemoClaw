@@ -8,9 +8,12 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertAgentExecutionSucceeded,
   buildLlamaCppCompatibilityTargetEnv,
+  cleanupGpu,
   env,
   hasExactReadyPhase,
   ollamaCleanupScript,
@@ -281,6 +284,58 @@ describe("GPU E2E helpers", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("restarts an available Ollama user service without a manual daemon", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-user-service-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "1000\\n"\n'],
+        ["sudo", "exit 1\n"],
+        [
+          "systemctl",
+          'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "cat ollama.service") exit 1 ;;\n  "--user restart ollama.service") exit 0 ;;\n  *) exit 1 ;;\nesac\n',
+        ],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["curl", "exit 0\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+        encoding: "utf8",
+        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+      });
+      expect(stdout).toBe("restart_mode=user\n");
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl cat ollama.service");
+      expect(commandLog).toContain("systemctl --user restart ollama.service");
+      expect(commandLog).not.toContain("setsid");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
+    const success = { exitCode: 0, stderr: "", stdout: "" };
+    const host = {
+      command: async (command: string) =>
+        command === "bash"
+          ? { exitCode: 1, stderr: "Ollama still listens on 127.0.0.1:11434", stdout: "" }
+          : success,
+    } as unknown as HostCliClient;
+    const sandbox = {
+      cleanupSandbox: async () => success,
+      openshell: async () => success,
+    } as unknown as SandboxClient;
+
+    await expect(cleanupGpu(host, sandbox)).rejects.toThrow(/still listens/u);
   });
 
   it("bootstraps the new llama.cpp target through the trusted pre-merge GPU lane", () => {

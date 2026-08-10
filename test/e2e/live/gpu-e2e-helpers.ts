@@ -228,7 +228,8 @@ export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): P
       timeoutMs: 60_000,
     }),
   );
-  await cleanupOllama(host, "cleanup-ollama-processes");
+  const ollamaCleanup = await cleanupOllama(host, "cleanup-ollama-processes");
+  expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
 }
 
 export async function cleanupOllama(
