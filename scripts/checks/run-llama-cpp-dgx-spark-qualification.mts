@@ -327,15 +327,20 @@ function withQualificationLoopbackPublish(
   argv: string[],
   imageReference: string,
   containerPort: number,
+  hostPort?: number,
 ): string[] {
   const imageIndex = argv.indexOf(imageReference);
   if (imageIndex < 0) {
     throw new Error("qualification container arguments are missing the candidate image reference");
   }
+  const mapping =
+    hostPort === undefined
+      ? `127.0.0.1::${String(containerPort)}`
+      : `127.0.0.1:${String(hostPort)}:${String(containerPort)}`;
   return [
     ...argv.slice(0, imageIndex),
     "--publish",
-    `127.0.0.1::${String(containerPort)}`,
+    mapping,
     ...argv.slice(imageIndex),
   ];
 }
@@ -368,14 +373,12 @@ export function buildServerContainerArgv(
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
   });
-  if (options.hostPort === undefined) {
-    return withQualificationLoopbackPublish(
-      argv,
-      options.imageReference,
-      plan.recipe.serve.port,
-    );
-  }
-  return argv;
+  return withQualificationLoopbackPublish(
+    argv,
+    options.imageReference,
+    plan.recipe.serve.port,
+    options.hostPort,
+  );
 }
 
 export function validateOpenClawQualificationImageLabels(
