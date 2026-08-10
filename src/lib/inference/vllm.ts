@@ -1708,6 +1708,19 @@ async function runVllmInstall(
       }
     }
   }
+
+  // Reject a held serving port before anything durable happens. In
+  // particular, managed bearer auth persists a host credential below and
+  // beforeInstall publishes the selected model to onboarding state. Running
+  // the guard first keeps a refused install free of both side effects.
+  // Port 25000 is not checked here: it belongs to the managed-cluster
+  // rendezvous contract and this single-node path never binds it.
+  const servingPort = await opts.checkServingPort?.(VLLM_PORT);
+  if (servingPort && !servingPort.ok) {
+    printServingPortConflict(servingPort);
+    return { ok: false };
+  }
+
   let hostLocalApiKey: string | null = null;
   if (!dualStationPlan && model.managedBearerAuth) {
     try {
@@ -1786,18 +1799,6 @@ async function runVllmInstall(
       console.error(`  vLLM install failed: ${replacement.reason}`);
       return { ok: false };
     }
-  }
-
-  // Reject a held serving port before anything durable happens: before the
-  // storage decisions can prompt, before the cache directory is created, and
-  // before the image pull. Otherwise the run reaches `docker run`, which cannot
-  // bind and reports a bare exit 125 (#8685). Port 25000 is not checked here:
-  // it belongs to the managed-cluster rendezvous contract and this single-node
-  // path never binds it.
-  const servingPort = await opts.checkServingPort?.(VLLM_PORT);
-  if (servingPort && !servingPort.ok) {
-    printServingPortConflict(servingPort);
-    return { ok: false };
   }
 
   // Guard the host filesystem before an image pull or model-download

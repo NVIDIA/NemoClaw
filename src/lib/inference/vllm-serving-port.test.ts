@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   dockerRunDetached: vi.fn(),
   dockerSpawn: vi.fn(),
   dockerStop: vi.fn(),
+  ensureDualStationVllmApiKey: vi.fn(() => "b".repeat(64)),
   findUnwritableModelCachePath: vi.fn(),
   getGpuIndicesByName: vi.fn<(_pattern: RegExp) => number[]>(() => []),
   measureDirectorySizeBytes: vi.fn(),
@@ -57,6 +58,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./serving/vllm-managed-support")>();
   return {
     ...actual,
+    ensureDualStationVllmApiKey: mocks.ensureDualStationVllmApiKey,
     tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
   };
 });
@@ -134,6 +136,25 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(mocks.probeHostStorage).not.toHaveBeenCalled();
     expect(mocks.probeDockerStorage).not.toHaveBeenCalled();
     expect(mocks.measureDirectorySizeBytes).not.toHaveBeenCalled();
+  });
+
+  it("rejects the port before persisting managed auth or publishing the selection", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "muse-glimmer-30b";
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn<(q: string) => Promise<string>>(),
+      beforeInstall,
+      checkServingPort: async () => ({ ok: false, reason: "port 8000 is held" }),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.ensureDualStationVllmApiKey).not.toHaveBeenCalled();
+    expect(beforeInstall).not.toHaveBeenCalled();
   });
 
   it("proceeds past the guard when the serving port is free", async () => {
