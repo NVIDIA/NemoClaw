@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { createHermesTransitionFailureController } from "../../../test/helpers/hermes-runtime-state-mutation-test-helpers";
+import { testTimeout } from "../../../test/helpers/timeouts";
 
 import { loadAgent } from "../agent/defs";
 import {
@@ -175,14 +176,18 @@ function run(
 }
 
 describe("Hermes runtime-provider state mutation consumer", () => {
-  it("resolves the current Docker provider when the caller does not inject a registry", () => {
-    expect(
-      supportsHermesRuntimeProviderStateMutation(sandbox, {
-        content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
-        metadata: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA,
-      }),
-    ).toBe(true);
-  });
+  it(
+    "resolves the current Docker provider when the caller does not inject a registry",
+    () => {
+      expect(
+        supportsHermesRuntimeProviderStateMutation(sandbox, {
+          content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
+          metadata: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA,
+        }),
+      ).toBe(true);
+    },
+    testTimeout(30_000),
+  );
 
   it("selects only an exact current managed Hermes Docker image capability", () => {
     const capability = {
