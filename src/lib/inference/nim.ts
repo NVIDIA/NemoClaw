@@ -101,6 +101,8 @@ export interface DetectGpuDeps {
   // in production `detectGpu()` lazily builds the default prover only when it
   // is about to reject a denylisted ARM64 name.
   proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
+  /** Read-only command transport used by observation-only readiness callers. */
+  runCaptureImpl?: typeof runCapture;
 }
 
 // Lazily construct the default ARM64 Linux GPU prover. Keep it behind a require
@@ -205,9 +207,9 @@ function readPlatformModel(): string {
   return "";
 }
 
-function readHostMemoryMB(): number {
+function readHostMemoryMB(runCaptureImpl: typeof runCapture = runCapture): number {
   try {
-    const freeOut = runCapture(["free", "-m"], { ignoreError: true });
+    const freeOut = runCaptureImpl(["free", "-m"], { ignoreError: true });
     if (freeOut) {
       const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
       if (memLine) {
@@ -227,9 +229,9 @@ function readHostMemoryMB(): number {
 // a 22 GB model right now?" signal the unified-memory Linux path uses.
 // Returns 0 when any expected field is missing so the caller can treat
 // the figure as "unknown" and fall back to total memory.
-function readMacOsAvailableMemoryMB(): number {
+function readMacOsAvailableMemoryMB(runCaptureImpl: typeof runCapture = runCapture): number {
   try {
-    const out = runCapture(["vm_stat"], { ignoreError: true });
+    const out = runCaptureImpl(["vm_stat"], { ignoreError: true });
     if (!out) return 0;
     const pageMatch = out.match(/page size of (\d+) bytes/);
     if (!pageMatch) return 0;
@@ -253,9 +255,9 @@ function readMacOsAvailableMemoryMB(): number {
 // 22 GB Ollama load right now?" on unified-memory hosts. Returns 0 when
 // the column cannot be parsed; the caller treats 0 as "unknown" and falls
 // back to total memory.
-function readHostAvailableMemoryMB(): number {
+function readHostAvailableMemoryMB(runCaptureImpl: typeof runCapture = runCapture): number {
   try {
-    const freeOut = runCapture(["free", "-m"], { ignoreError: true });
+    const freeOut = runCaptureImpl(["free", "-m"], { ignoreError: true });
     if (freeOut) {
       const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
       if (memLine) {
@@ -411,12 +413,13 @@ export function adoptServedModelId(catalogModel: string | null, port = VLLM_PORT
 }
 
 export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
+  const runCaptureImpl = deps.runCaptureImpl ?? runCapture;
   // Try NVIDIA first — query name, total, and free VRAM in a single call so
   // the preflight line can show the GPU model alongside the memory size and
   // the bootstrap-model selector can pick a model that fits currently
   // available memory, not just the headline total.
   try {
-    const output = runCapture(
+    const output = runCaptureImpl(
       ["nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
@@ -529,7 +532,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
 
   // Fallback: unified-memory NVIDIA devices
   try {
-    const nameOutput = runCapture(
+    const nameOutput = runCaptureImpl(
       ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
@@ -569,7 +572,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           ? gpuNames
           : [];
     if (unifiedGpuNames.length > 0) {
-      const totalMemoryMB = readHostMemoryMB();
+      const totalMemoryMB = readHostMemoryMB(runCaptureImpl);
       const count = unifiedGpuNames.length;
       const perGpuMB = count > 0 ? Math.floor(totalMemoryMB / count) : totalMemoryMB;
       const firstUnifiedName = unifiedGpuNames[0] ?? "";
@@ -595,7 +598,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       // `availableMemoryMB` mirrors that approximation using MemAvailable so
       // the bootstrap-model selector reacts to concurrent GPU workloads
       // eating into the shared system pool.
-      const availableMemoryMB = readHostAvailableMemoryMB();
+      const availableMemoryMB = readHostAvailableMemoryMB(runCaptureImpl);
       return {
         type: "nvidia",
         ...(allUnifiedSameName ? { name: firstUnifiedName } : {}),
@@ -619,8 +622,8 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // integrated NVIDIA GPU through firmware and Tegra device nodes.
   const tegraGpu = detectTegraHostGpu();
   if (tegraGpu) {
-    const totalMemoryMB = readHostMemoryMB();
-    const availableMemoryMB = readHostAvailableMemoryMB();
+    const totalMemoryMB = readHostMemoryMB(runCaptureImpl);
+    const availableMemoryMB = readHostAvailableMemoryMB(runCaptureImpl);
     return {
       type: "nvidia",
       name: tegraGpu.name,
@@ -640,7 +643,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
     try {
-      const spOutput = runCapture(["system_profiler", "SPDisplaysDataType"], {
+      const spOutput = runCaptureImpl(["system_profiler", "SPDisplaysDataType"], {
         ignoreError: true,
       });
       if (spOutput) {
@@ -657,14 +660,16 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
             if (vramMatch[2].toUpperCase() === "GB") memoryMB *= 1024;
           } else {
             try {
-              const memBytes = runCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true });
+              const memBytes = runCaptureImpl(["sysctl", "-n", "hw.memsize"], {
+                ignoreError: true,
+              });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
             } catch {
               /* ignored */
             }
           }
 
-          const availableMemoryMB = readMacOsAvailableMemoryMB();
+          const availableMemoryMB = readMacOsAvailableMemoryMB(runCaptureImpl);
           return {
             type: "apple",
             name,
@@ -686,8 +691,10 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
 }
 
 /** Return one consistent NVIDIA driver version from the read-only host GPU inventory. */
-export function detectNvidiaDriverVersion(): string | undefined {
-  const output = runCapture(
+export function detectNvidiaDriverVersion(
+  deps: { runCaptureImpl?: typeof runCapture } = {},
+): string | undefined {
+  const output = (deps.runCaptureImpl ?? runCapture)(
     ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
     { ignoreError: true },
   );

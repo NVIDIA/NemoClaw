@@ -10,6 +10,7 @@ export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
+const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
 
 type DockerSandboxContainerQueryDeps = Pick<DockerGpuPatchDeps, "dockerCapture" | "dockerRun">;
 
@@ -79,6 +80,56 @@ export function queryOpenShellDockerSandboxContainers(
     .map((line) => line.trim())
     .filter(Boolean);
   return { ok: true, ids };
+}
+
+type StaleDockerOrphanCleanupDeps = {
+  queryContainers?: typeof queryOpenShellDockerSandboxContainers;
+  forceRemove?: (containerId: string) => { status?: number | null };
+};
+
+/**
+ * Remove one exact Docker-owned orphan when a registry row outlives its OpenShell sandbox.
+ * Docker labels are the remaining authority in this invalid state; see the focused #8720 tests.
+ * Remove this workaround once OpenShell upgrades clean up or expose these orphans natively.
+ */
+export function removeStaleRebuildDockerOrphan(
+  sandboxName: string,
+  openshellDriver: string | null | undefined,
+  log: (message: string) => void,
+  deps: StaleDockerOrphanCleanupDeps = {},
+): void {
+  if (openshellDriver && openshellDriver !== "docker") return;
+  const queryContainers = deps.queryContainers ?? queryOpenShellDockerSandboxContainers;
+  const initial = queryContainers(sandboxName);
+  if (!initial.ok) {
+    if (openshellDriver === "docker") {
+      throw new Error(`could not inspect the owned Docker orphan: ${initial.error}`);
+    }
+    return;
+  }
+  if (initial.ids.length === 0) return;
+  if (initial.ids.length !== 1) {
+    throw new Error(
+      `found ${String(initial.ids.length)} exactly labeled Docker containers; refusing ambiguous orphan cleanup`,
+    );
+  }
+
+  const containerId = initial.ids[0];
+  const removal = deps.forceRemove
+    ? deps.forceRemove(containerId)
+    : dockerRun(["rm", "-f", containerId], {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: STALE_DOCKER_ORPHAN_TIMEOUT_MS,
+      });
+  if (Number(removal.status ?? 1) !== 0) {
+    throw new Error(`could not remove exactly labeled Docker orphan '${containerId}'`);
+  }
+  const confirmed = queryContainers(sandboxName);
+  if (!confirmed.ok || confirmed.ids.length !== 0) {
+    throw new Error("could not confirm exact Docker orphan removal");
+  }
+  log(`Removed exactly labeled Docker orphan '${containerId}' before stale rebuild`);
 }
 
 export type OpenShellDockerDeviceRequest = {

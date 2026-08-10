@@ -298,7 +298,14 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       };
       readonly speculativeDecoding: "disabled";
       readonly limits: {
+        readonly maxRequestBodyBytes: number;
+        readonly maxRequestHeaderBytes: number;
+        readonly maxOutputTokens: number;
         readonly requestTimeoutSeconds: number;
+        readonly shutdownTimeoutSeconds: number;
+      };
+      readonly requestGuard: {
+        readonly upstreamPort: number;
       };
     };
     readonly readiness: {

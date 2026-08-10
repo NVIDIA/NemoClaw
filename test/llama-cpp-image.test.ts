@@ -266,6 +266,7 @@ describe("declarative llama.cpp server image", () => {
             "agent-multi-turn",
           ],
         },
+        requestGuard: "required",
       },
       recipe: {
         id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",

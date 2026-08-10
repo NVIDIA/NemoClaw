@@ -9,6 +9,7 @@ const SAFE_PROBE_DIAGNOSTICS = new Map<string, string>([
   ["anthropic-streaming-missing-content-block-delta", "missing content_block_delta"],
   ["anthropic-streaming-missing-message-start", "missing message_start"],
   ["anthropic-streaming-missing-message-stop", "missing message_stop"],
+  ["openai-chat-missing-structured-tool-call", "missing structured tool call"],
 ]);
 
 function summarizeSafeProbeDiagnostics(value: unknown): string[] {
