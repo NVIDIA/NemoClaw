@@ -106,6 +106,27 @@ describe("formatHostServiceUnreachableMessage", () => {
     expect(msg).toContain("nemoclaw onboard");
   });
 
+  it.each([
+    "nemohermes",
+    "nemo-deepagents",
+  ])("uses the invoked %s CLI in the recovery command (#8712)", (invokedAs) => {
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", invokedAs);
+
+    const msg = formatHostServiceUnreachableMessage(
+      {
+        ok: false,
+        reason: "tcp_failed",
+        port: 8081,
+        networkName: "openshell-docker",
+        subnet: "172.18.0.0/16",
+        gatewayIp: "172.18.0.1",
+      },
+      { serviceLabel: "managed llama.cpp server" },
+    );
+
+    expect(msg).toContain(`Then rerun \`${invokedAs} onboard\`.`);
+  });
+
   it("falls back to result.port when no explicit port option is given", () => {
     const msg = formatHostServiceUnreachableMessage(
       {

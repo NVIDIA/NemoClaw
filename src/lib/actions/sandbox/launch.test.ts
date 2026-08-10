@@ -49,6 +49,33 @@ function launchedCommand(): readonly string[] {
   return mocks.execSandbox.mock.calls[0]?.[1] as readonly string[];
 }
 
+type AsyncTestLock = <T>(name: string, operation: () => Promise<T> | T) => Promise<T>;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function createSerialTestLock(events: string[], label: string): AsyncTestLock {
+  let tail = Promise.resolve();
+  return async <T>(_name: string, operation: () => Promise<T> | T): Promise<T> => {
+    const previous = tail;
+    const release = deferred();
+    tail = previous.then(() => release.promise);
+    await previous;
+    events.push(`${label}:acquired`);
+    try {
+      return await operation();
+    } finally {
+      events.push(`${label}:released`);
+      release.resolve();
+    }
+  };
+}
+
 describe("launchSandbox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -97,6 +124,65 @@ describe("launchSandbox", () => {
     await launchSandbox("alpha");
 
     expect(launchedCommand()).toEqual(["bash", "-lc", "hermes"]);
+  });
+
+  it("holds CUA mutation authority through the exact interactive child execution (#7755)", async () => {
+    const nemocua = {
+      ...loadAgent("hermes"),
+      name: "nemocua",
+      runtime: {
+        kind: "terminal" as const,
+        interactive_command: "nemocua interactive",
+        headless_command: "nemocua headless",
+      },
+    };
+    prepareSession("nemocua", nemocua);
+    const events: string[] = [];
+    const childStarted = deferred();
+    const releaseChild = deferred();
+    const withSandboxMutationLock = createSerialTestLock(events, "sandbox");
+    const withGatewayRouteMutationLock = createSerialTestLock(events, "gateway");
+    const requireCuaReadiness = vi.fn(() => events.push("readiness"));
+    mocks.execSandbox.mockImplementationOnce(async () => {
+      events.push("child");
+      childStarted.resolve();
+      await releaseChild.promise;
+    });
+
+    const launch = launchSandbox("alpha", {
+      getSandbox: () => sandboxEntry("nemocua"),
+      requireCuaReadiness,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withGatewayRouteMutationLock,
+      withSandboxMutationLock,
+    });
+    await childStarted.promise;
+    const mutation = withSandboxMutationLock("alpha", () =>
+      withGatewayRouteMutationLock("gateway-alpha", () => events.push("mutation")),
+    );
+    await Promise.resolve();
+
+    expect(requireCuaReadiness).toHaveBeenCalledWith(expect.objectContaining({ agent: "nemocua" }));
+    expect(launchedCommand()).toEqual(["nemocua", "interactive"]);
+    expect(events).toEqual(["sandbox:acquired", "gateway:acquired", "readiness", "child"]);
+
+    releaseChild.resolve();
+    await launch;
+    await mutation;
+
+    expect(events).toEqual([
+      "sandbox:acquired",
+      "gateway:acquired",
+      "readiness",
+      "child",
+      "gateway:released",
+      "sandbox:released",
+      "sandbox:acquired",
+      "gateway:acquired",
+      "mutation",
+      "gateway:released",
+      "sandbox:released",
+    ]);
   });
 
   it("rejects an untrusted registry agent before starting an in-sandbox command (#6006)", async () => {

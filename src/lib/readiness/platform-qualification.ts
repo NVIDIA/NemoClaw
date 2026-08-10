@@ -455,14 +455,14 @@ export function projectPlatformQualification(
   } else if (nativeDocker) {
     findings.push({
       id: "host.platform.wsl_native_docker_unqualified",
-      severity: "warning",
+      severity: "blocking",
       summary: "Native Docker Engine inside WSL is not the qualified Docker Desktop integration.",
       capabilityIds: ["host.platform.wsl_native_docker", "host.platform.supported"],
     });
   } else if (input.isWsl && input.dockerReachable && !dockerDesktop) {
     findings.push({
       id: "host.platform.wsl_runtime_inconclusive",
-      severity: "warning",
+      severity: "blocking",
       summary: "WSL Docker runtime identity is inconclusive.",
       capabilityIds: ["host.platform.wsl_runtime_available"],
     });
@@ -506,6 +506,17 @@ export function projectPlatformQualification(
       summary: "DGX Spark requires an ARM64 host with an available NVIDIA GPU.",
       capabilityIds: ["host.platform.dgx_spark", "host.platform.supported"],
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
+    });
+  }
+  if (
+    !platformSupported &&
+    !findings.some(({ severity }) => severity === "blocking" || severity === "fatal")
+  ) {
+    findings.push({
+      id: "host.platform.unsupported",
+      severity: "blocking",
+      summary: "The detected host platform and container runtime are not supported.",
+      capabilityIds: ["host.platform.supported"],
     });
   }
   return { capabilities, qualifications, findings, evidence };
