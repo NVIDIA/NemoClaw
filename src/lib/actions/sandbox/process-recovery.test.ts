@@ -7,6 +7,8 @@ import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
+  pinnedManagedGatewayProbeFailure,
+  waitForManagedGatewaySupervisor,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
 } from "./process-recovery";
@@ -68,6 +70,195 @@ describe("managed gateway control completion", () => {
     ["GATEWAY_PID=4242", ""],
   ])("rejects malformed or unstructured controller output (#7919)", (stdout, stderr) => {
     expect(parseManagedGatewayControlCompletion({ status: 0, stdout, stderr })).toBeNull();
+  });
+});
+
+describe("managed gateway supervisor startup barrier", () => {
+  it("pins the post-connect managed proof to the lifecycle container identity (#8662)", () => {
+    const expectedContainerId = "c".repeat(64);
+    const requestPinnedGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 0,
+      stdout: `v1 ${"d".repeat(64)} complete already-running 4242 4242\nGATEWAY_PID=4242`,
+      stderr: "",
+    }));
+    const waitForManagedGatewaySupervisorImpl = vi.fn<typeof waitForManagedGatewaySupervisor>(
+      (sandboxName, options = {}) => {
+        const result = options.requestGatewaySupervisorActionImpl?.(sandboxName, "probe", 1234);
+        return result?.status === 0;
+      },
+    );
+
+    expect(
+      pinnedManagedGatewayProbeFailure("restart-box", expectedContainerId, {
+        requestPinnedGatewaySupervisorActionImpl,
+        waitForManagedGatewaySupervisorImpl,
+      }),
+    ).toBeNull();
+
+    expect(waitForManagedGatewaySupervisorImpl).toHaveBeenCalledWith(
+      "restart-box",
+      expect.objectContaining({ acceptGatewayHealthPending: false }),
+    );
+    expect(requestPinnedGatewaySupervisorActionImpl).toHaveBeenCalledExactlyOnceWith(
+      "restart-box",
+      "probe",
+      1234,
+      expectedContainerId,
+    );
+  });
+
+  it("classifies a final pinned identity exception without exposing its detail (#8662)", () => {
+    const requestPinnedGatewaySupervisorActionImpl = vi.fn(() => {
+      throw new Error("container identity changed: Authorization: Bearer opaque-token");
+    });
+
+    const failure = pinnedManagedGatewayProbeFailure("restart-box", "c".repeat(64), {
+      requestPinnedGatewaySupervisorActionImpl,
+      waitForManagedGatewaySupervisorImpl: (sandboxName, options = {}) => {
+        options.requestGatewaySupervisorActionImpl?.(sandboxName, "probe", 1234);
+        return false;
+      },
+    });
+
+    expect(failure).toEqual({
+      layer: "privileged control unavailable",
+      detail: "the pinned runtime identity changed during final managed gateway verification",
+    });
+    expect(JSON.stringify(failure)).not.toContain("opaque-token");
+  });
+
+  it("admits only the exact health-pending result for stopped-container recovery (#8662)", () => {
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "GATEWAY_HEALTH_TIMEOUT",
+    }));
+    const sleepImpl = vi.fn();
+    const onFailureResult = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("restart-box", {
+        acceptGatewayHealthPending: true,
+        onFailureResult,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(1);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledWith(
+      "restart-box",
+      "probe",
+      expect.any(Number),
+    );
+    expect(sleepImpl).not.toHaveBeenCalled();
+    expect(onFailureResult).not.toHaveBeenCalled();
+  });
+
+  it("keeps health-pending retry semantics unchanged for existing callers (#8662)", () => {
+    const result = {
+      status: 1,
+      stdout: "",
+      stderr: "GATEWAY_HEALTH_TIMEOUT",
+    };
+    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
+    const sleepImpl = vi.fn();
+    const onFailureResult = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("restart-box", {
+        intervalSeconds: 2,
+        maxAttempts: 2,
+        onFailureResult,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(2);
+    expect(onFailureResult).toHaveBeenCalledWith(result);
+  });
+
+  it("waits through exact supervisor startup states before admitting health-pending (#8662)", () => {
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor",
+      })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" });
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("restart-box", {
+        acceptGatewayHealthPending: true,
+        intervalSeconds: 3,
+        maxAttempts: 3,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(3);
+    expect(sleepImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenNthCalledWith(1, 3);
+    expect(sleepImpl).toHaveBeenNthCalledWith(2, 3);
+  });
+
+  it("rejects a missing-supervisor result from any other control stage (#8662)", () => {
+    const result = {
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=preflight",
+    };
+    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
+    const sleepImpl = vi.fn();
+    const onFailureResult = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("restart-box", {
+        acceptGatewayHealthPending: true,
+        onFailureResult,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(1);
+    expect(sleepImpl).not.toHaveBeenCalled();
+    expect(onFailureResult).toHaveBeenCalledWith(result);
+  });
+
+  it("rejects decorated health output without retrying or hiding its result (#8662)", () => {
+    const result = {
+      status: 1,
+      stdout: "",
+      stderr: "GATEWAY_HEALTH_TIMEOUT\nunexpected controller diagnostic",
+    };
+    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
+    const sleepImpl = vi.fn();
+    const onFailureResult = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("restart-box", {
+        acceptGatewayHealthPending: true,
+        onFailureResult,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(1);
+    expect(sleepImpl).not.toHaveBeenCalled();
+    expect(onFailureResult).toHaveBeenCalledWith(result);
   });
 });
 

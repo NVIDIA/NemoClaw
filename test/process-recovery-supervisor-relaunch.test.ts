@@ -733,7 +733,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       recovered: true,
       forwardRecovered: true,
     });
-    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(5);
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(6);
+    expect(
+      requestPinnedGatewaySupervisorAction.mock.calls.every(
+        (call: unknown[]) => call[1] === "probe" && call[3] === "replacement-container-id",
+      ),
+    ).toBe(true);
     expect(captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "exec", "--name", "busy-recovered-box", "--", "true"],
       expect.objectContaining({ ignoreError: true }),

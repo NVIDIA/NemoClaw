@@ -74,6 +74,7 @@ const DOCKER_RECOVERY_READY_POLL_INTERVAL_MS = 1_000;
 const DOCKER_RECOVERY_READY_MAX_ATTEMPTS =
   Math.floor(DOCKER_RECOVERY_READY_TIMEOUT_MS / DOCKER_RECOVERY_READY_POLL_INTERVAL_MS) + 1;
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
+const FULL_DOCKER_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/u;
 const DOCKER_RECOVERY_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 function sleepForDockerRecovery(ms: number): void {
@@ -96,6 +97,8 @@ export type DockerDriverRecoveryVia =
 export interface DockerDriverRecoveryResult {
   recovered: boolean;
   via: DockerDriverRecoveryVia | null;
+  /** Immutable full Docker ID of the container recovery acted on. */
+  containerId?: string;
   /** Container name (post-rename if applicable) the recovery acted on. */
   containerName?: string;
   /**
@@ -108,10 +111,10 @@ export interface DockerDriverRecoveryResult {
 export interface DockerDriverRecoveryDeps {
   /** `docker ps -a --filter ... --format ...` runner. */
   dockerCapture?: (args: readonly string[], opts?: Record<string, unknown>) => string;
-  dockerStart?: (name: string, opts?: Record<string, unknown>) => { status?: number | null };
-  dockerUnpause?: (name: string, opts?: Record<string, unknown>) => { status?: number | null };
+  dockerStart?: (target: string, opts?: Record<string, unknown>) => { status?: number | null };
+  dockerUnpause?: (target: string, opts?: Record<string, unknown>) => { status?: number | null };
   dockerRename?: (
-    oldName: string,
+    target: string,
     newName: string,
     opts?: Record<string, unknown>,
   ) => { status?: number | null };
@@ -129,6 +132,7 @@ export interface DockerDriverRecoveryDeps {
 }
 
 interface LabeledContainer {
+  containerId: string;
   name: string;
   status: string;
   /** True when the container is in a Docker `running` state. */
@@ -168,8 +172,8 @@ function originalNameFromBackup(backupName: string): string {
  * name across all states (running, exited, paused, dead). Empty array
  * means recovery has nothing to act on.
  *
- * Output rows are tab-separated `<name>\t<status>` from
- * `--format '{{.Names}}\t{{.Status}}'`. `Status` strings start with
+ * Output rows are tab-separated `<full-id>\t<name>\t<status>` from
+ * `--no-trunc --format '{{.ID}}\t{{.Names}}\t{{.Status}}'`. `Status` strings start with
  * `Up` for running containers (e.g. `Up 5 minutes`) and `Exited` /
  * `Created` / `Paused` / `Dead` otherwise.
  */
@@ -182,12 +186,13 @@ export function findLabeledSandboxContainers(
     [
       "ps",
       "-a",
+      "--no-trunc",
       "--filter",
       `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
       "--filter",
       `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
       "--format",
-      "{{.Names}}\t{{.Status}}",
+      "{{.ID}}\t{{.Names}}\t{{.Status}}",
     ],
     { ignoreError: true, timeout: DOCKER_PROBE_TIMEOUT_MS },
   );
@@ -196,9 +201,17 @@ export function findLabeledSandboxContainers(
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [name, ...rest] = line.split("\t");
+      const [containerId, name, ...rest] = line.split("\t");
       const status = rest.join("\t").trim();
-      return { name, status, running: status.startsWith("Up") };
+      if (
+        !FULL_DOCKER_CONTAINER_ID_PATTERN.test(containerId) ||
+        !name ||
+        !status ||
+        /[\u0000-\u001f\u007f]/u.test(name)
+      ) {
+        throw new Error("Docker returned malformed OpenShell sandbox container metadata.");
+      }
+      return { containerId, name, status, running: status.startsWith("Up") };
     });
 }
 
@@ -247,7 +260,7 @@ interface ContainerReadinessResult {
  * Docker's own readiness contract settles.
  */
 function waitForRecoveredContainerReady(
-  containerName: string,
+  containerId: string,
   deps: ReturnType<typeof depsWithDefaults>,
   readiness: NonNullable<DockerDriverRecoveryDeps["readiness"]>,
 ): ContainerReadinessResult {
@@ -263,7 +276,7 @@ function waitForRecoveredContainerReady(
         "container",
         "--format",
         "{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
-        containerName,
+        containerId,
       ],
       { ignoreError: true, timeout: Math.min(DOCKER_PROBE_TIMEOUT_MS, remainingMs) },
     );
@@ -293,15 +306,17 @@ function waitForRecoveredContainerReady(
 
 function recoveredAfterReadiness(
   containerName: string,
+  containerId: string,
   via: DockerDriverRecoveryVia,
   deps: ReturnType<typeof depsWithDefaults>,
   readiness: NonNullable<DockerDriverRecoveryDeps["readiness"]>,
 ): DockerDriverRecoveryResult {
-  const result = waitForRecoveredContainerReady(containerName, deps, readiness);
+  const result = waitForRecoveredContainerReady(containerId, deps, readiness);
   if (!result.ready) {
     return {
       recovered: false,
       via: null,
+      containerId,
       containerName,
       detail:
         `docker container ${containerName} did not become ready after recovery ` +
@@ -311,6 +326,7 @@ function recoveredAfterReadiness(
   return {
     recovered: true,
     via,
+    containerId,
     containerName,
   };
 }
@@ -322,9 +338,9 @@ function recoveredAfterReadiness(
  *
  * Order of operations:
  *   1. Already-running labeled container → no-op success.
- *   2. Stopped labeled original → `docker start <name>`.
+ *   2. Stopped labeled original → `docker start <full-id>`.
  *   3. Backup-only (`*-nemoclaw-gpu-backup-*` sibling) → `docker
- *      rename <backup> <original>` then `docker start <original>`.
+ *      rename <full-id> <original-name>` then `docker start <full-id>`.
  *   4. Conflict (backup AND a stale stopped original with the same
  *      base name) → start the original; leave the backup alone.
  *   5. No labeled container at all → `{ recovered: false }`.
@@ -348,7 +364,7 @@ export function recoverDockerDriverSandbox(
 
   if (runningOriginal) {
     if (isPausedStatus(runningOriginal.status)) {
-      const unpause = d.dockerUnpause(runningOriginal.name, {
+      const unpause = d.dockerUnpause(runningOriginal.containerId, {
         ignoreError: true,
         timeout: DOCKER_OPERATION_TIMEOUT_MS,
       });
@@ -356,23 +372,37 @@ export function recoverDockerDriverSandbox(
         return {
           recovered: false,
           via: null,
+          containerId: runningOriginal.containerId,
           containerName: runningOriginal.name,
           detail: `docker unpause ${runningOriginal.name} failed (exit ${unpause.status ?? "unknown"}).`,
         };
       }
-      return recoveredAfterReadiness(runningOriginal.name, "unpaused-original", d, readiness);
+      return recoveredAfterReadiness(
+        runningOriginal.name,
+        runningOriginal.containerId,
+        "unpaused-original",
+        d,
+        readiness,
+      );
     }
-    return recoveredAfterReadiness(runningOriginal.name, "started-running-original", d, readiness);
+    return recoveredAfterReadiness(
+      runningOriginal.name,
+      runningOriginal.containerId,
+      "started-running-original",
+      d,
+      readiness,
+    );
   }
 
   if (stoppedOriginal) {
-    const result = d.dockerStart(stoppedOriginal.name, {
+    const result = d.dockerStart(stoppedOriginal.containerId, {
       ignoreError: true,
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
     if (result.status === 0) {
       return recoveredAfterReadiness(
         stoppedOriginal.name,
+        stoppedOriginal.containerId,
         "started-stopped-original",
         d,
         readiness,
@@ -381,13 +411,15 @@ export function recoverDockerDriverSandbox(
     return {
       recovered: false,
       via: null,
+      containerId: stoppedOriginal.containerId,
+      containerName: stoppedOriginal.name,
       detail: `docker start ${stoppedOriginal.name} failed (exit ${result.status ?? "unknown"})`,
     };
   }
 
   if (backup) {
     const restoreName = buildBackupRestoreName(originalNameFromBackup(backup.name));
-    const renameResult = d.dockerRename(backup.name, restoreName, {
+    const renameResult = d.dockerRename(backup.containerId, restoreName, {
       ignoreError: true,
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
@@ -395,19 +427,29 @@ export function recoverDockerDriverSandbox(
       return {
         recovered: false,
         via: null,
+        containerId: backup.containerId,
+        containerName: backup.name,
         detail: `docker rename ${backup.name} ${restoreName} failed (exit ${renameResult.status ?? "unknown"})`,
       };
     }
-    const startResult = d.dockerStart(restoreName, {
+    const startResult = d.dockerStart(backup.containerId, {
       ignoreError: true,
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
     if (startResult.status === 0) {
-      return recoveredAfterReadiness(restoreName, "renamed-and-started-backup", d, readiness);
+      return recoveredAfterReadiness(
+        restoreName,
+        backup.containerId,
+        "renamed-and-started-backup",
+        d,
+        readiness,
+      );
     }
     return {
       recovered: false,
       via: null,
+      containerId: backup.containerId,
+      containerName: restoreName,
       detail: `docker start ${restoreName} after backup rename failed (exit ${startResult.status ?? "unknown"})`,
     };
   }

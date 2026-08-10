@@ -122,6 +122,8 @@ export interface RuntimeProviderLifecycleInput {
 export type RuntimeProviderLifecycleResult = {
   readonly exitCode: number;
   readonly message?: string;
+  /** Opaque immutable runtime identity captured by a successful direct start. */
+  readonly runtimeHandle?: string;
 };
 
 export type RuntimeProviderLifecycleStopOutcome = RuntimeProviderLifecycleResult & {

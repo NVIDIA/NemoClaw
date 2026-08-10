@@ -508,7 +508,7 @@ describe("connectSandbox flow", () => {
 
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ quiet: true }),
+      expect.objectContaining({ preserveContainer: false, quiet: true }),
     );
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
@@ -519,6 +519,28 @@ describe("connectSandbox flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Probe complete: recovered OpenClaw gateway in 'alpha'.",
     );
+  });
+
+  it("preserves the existing container during a lifecycle-owned final probe (#8662)", async () => {
+    const harness = createConnectHarness();
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        expectedContainerId: "a".repeat(64),
+        preserveContainer: true,
+        probeOnly: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        expectedContainerId: "a".repeat(64),
+        preserveContainer: true,
+        quiet: true,
+      }),
+    );
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
   });
 
   it("probe-only mode exits before reporting success when inference.local returns no trusted result (#8502)", async () => {
@@ -580,6 +602,51 @@ describe("connectSandbox flow", () => {
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  it.each([
+    {
+      expectedLayer: "managed supervisor",
+      processCheck: {
+        checked: false,
+        forwardRecovered: false,
+        managedSupervisorFailureDetail:
+          "supervisor unavailable: Authorization: Bearer opaque-final-probe-token",
+        managedSupervisorUnavailable: true,
+        recovered: false,
+        wasRunning: false,
+      },
+    },
+    {
+      expectedLayer: "OpenShell readiness",
+      processCheck: {
+        checked: true,
+        forwardRecovered: false,
+        openshellReadinessFailed: true,
+        openshellReadinessFailureDetail:
+          "the sandbox did not become ready in OpenShell, so its host forward was not started",
+        recovered: false,
+        wasRunning: false,
+      },
+    },
+  ])("probe-only mode preserves the actionable $expectedLayer failure (#8662)", async ({
+    expectedLayer,
+    processCheck,
+  }) => {
+    const harness = createConnectHarness({ processCheck });
+
+    await expect(
+      harness.connectSandbox("alpha", { preserveContainer: true, probeOnly: true }),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(expectedLayer);
+    expect(errorOutput).toContain("existing sandbox was preserved");
+    expect(errorOutput).toContain("nemoclaw alpha recover");
+    expect(errorOutput).not.toContain("opaque-final-probe-token");
+    expect(errorOutput.includes("<REDACTED>")).toBe(expectedLayer === "managed supervisor");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("probe-only mode reports the supported repair when relaunch is quarantined (#7801)", async () => {
     const harness = createConnectHarness({
       processCheck: { checked: true, wasRunning: false, recovered: false },

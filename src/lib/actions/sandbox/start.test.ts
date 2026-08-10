@@ -1,33 +1,52 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as agentRuntime from "../../agent/runtime";
 import {
   createDockerRuntimeProviderBundle,
   createKubernetesRuntimeProviderBundle,
   type DockerRuntimeProviderDependencies,
 } from "../../onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
+import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
+import * as persistedRegistry from "../../state/registry";
+import * as connect from "./connect";
+import * as processRecovery from "./process-recovery";
 import {
-  assertSandboxStartupRecovery,
   restoreStoppedSandboxStartupState,
   type SandboxStartDeps,
+  sandboxStartDependencies,
   startSandbox,
 } from "./start";
 
-const RUNNING_RECOVERY = {
-  checked: true,
-  wasRunning: true,
-  recovered: false,
-  forwardRecovered: false,
-} as const;
-const SECRET_BOUNDARY_PRIVATE_DETAIL = "raw-secret" as const;
-const PRIVATE_RECOVERY_DETAIL = "raw diagnostic remains private";
+const ORIGINAL_CONTAINER_ID = "a".repeat(64);
+
+type StartupRecoveryResult = ReturnType<typeof restoreStoppedSandboxStartupState>;
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
+}
+
+function runningStartupState(): ReturnType<typeof restoreStoppedSandboxStartupState> {
+  return {
+    checked: true,
+    wasRunning: true,
+    recovered: false,
+    forwardRecovered: false,
+  };
+}
+
+function stubProductionStartupRecovery(result: StartupRecoveryResult) {
+  const check = vi
+    .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
+    .mockReturnValue(result);
+  const restoreAccess = vi
+    .spyOn(shields, "restoreLockedStateDirStartupAccess")
+    .mockImplementation(() => undefined);
+  return { check, restoreAccess };
 }
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
@@ -41,6 +60,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     DockerRuntimeProviderDependencies["findLabeledSandboxContainers"]
   >(() => [
     {
+      containerId: ORIGINAL_CONTAINER_ID,
       name: "openshell-my-sandbox",
       status: "Exited (0) 2 hours ago",
       running: false,
@@ -50,6 +70,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     () => ({
       recovered: true,
       via: "started-stopped-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-my-sandbox",
     }),
   );
@@ -59,8 +80,8 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const verifyGateway = vi.fn<NonNullable<SandboxStartDeps["verifyGateway"]>>(() =>
     Promise.resolve(),
   );
-  const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(
-    () => RUNNING_RECOVERY,
+  const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(() =>
+    runningStartupState(),
   );
   const log = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
@@ -99,9 +120,20 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 describe("startSandbox", () => {
+  beforeEach(() => {
+    vi.spyOn(sandboxStartDependencies, "loadConnect").mockReturnValue(connect);
+    vi.spyOn(sandboxStartDependencies, "loadShields").mockReturnValue(shields);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
   it("restores sealed access before recovering sandbox processes (#8112)", () => {
     const restoreAccess = vi.fn();
-    const restoreProcesses = vi.fn(() => RUNNING_RECOVERY);
+    const recovery = runningStartupState();
+    const restoreProcesses = vi.fn(() => recovery);
 
     const result = restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "openclaw",
@@ -109,17 +141,18 @@ describe("startSandbox", () => {
       restoreProcessState: restoreProcesses,
     });
 
-    expect(result).toBe(RUNNING_RECOVERY);
-    expect(restoreAccess).toHaveBeenCalledWith("my-sandbox");
-    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox", true);
+    expect(restoreAccess).toHaveBeenCalledWith("my-sandbox", undefined);
+    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
     expect(restoreAccess.mock.invocationCallOrder[0]).toBeLessThan(
       restoreProcesses.mock.invocationCallOrder[0],
     );
+    expect(result).toBe(recovery);
   });
 
   it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", () => {
     const restoreAccess = vi.fn();
-    const restoreProcesses = vi.fn(() => RUNNING_RECOVERY);
+    const recovery = runningStartupState();
+    const restoreProcesses = vi.fn(() => recovery);
 
     const result = restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
@@ -127,20 +160,9 @@ describe("startSandbox", () => {
       restoreProcessState: restoreProcesses,
     });
 
-    expect(result).toBe(RUNNING_RECOVERY);
     expect(restoreAccess).not.toHaveBeenCalled();
-    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox", true);
-  });
-
-  it("does not force managed recovery for custom agents (#8662)", () => {
-    const restoreProcesses = vi.fn(() => RUNNING_RECOVERY);
-
-    restoreStoppedSandboxStartupState("my-sandbox", {
-      agent: "custom-agent",
-      restoreProcessState: restoreProcesses,
-    });
-
-    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox", false);
+    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
+    expect(result).toBe(recovery);
   });
 
   it("restores startup state before probing readiness after a stopped container starts (#8112)", async () => {
@@ -152,8 +174,15 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).toHaveBeenCalledWith("my-sandbox", {
       readiness: "runtime-running",
     });
-    expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
-    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.restoreStartupState).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ expectedContainerId: ORIGINAL_CONTAINER_ID }),
+    );
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox", {
+      expectedContainerId: ORIGINAL_CONTAINER_ID,
+      preserveContainer: true,
+      requirePinnedManagedGatewayProof: true,
+    });
     expect(h.recoverDockerDriverSandbox.mock.invocationCallOrder[0]).toBeLessThan(
       h.restoreStartupState.mock.invocationCallOrder[0],
     );
@@ -161,6 +190,47 @@ describe("startSandbox", () => {
       h.verifyGateway.mock.invocationCallOrder[0],
     );
   });
+
+  it("keeps the original container pinned through the production final probe (#8662)", async () => {
+    const connectSandbox = vi.spyOn(connect, "connectSandbox").mockResolvedValue(undefined);
+    const finalManagedProbe = vi
+      .spyOn(connect, "pinnedManagedGatewayProbeFailure")
+      .mockReturnValue(null);
+    const h = harness({ verifyGateway: undefined });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(connectSandbox).toHaveBeenCalledExactlyOnceWith("my-sandbox", {
+      expectedContainerId: ORIGINAL_CONTAINER_ID,
+      preserveContainer: true,
+      probeOnly: true,
+    });
+    expect(finalManagedProbe).toHaveBeenCalledExactlyOnceWith("my-sandbox", ORIGINAL_CONTAINER_ID);
+    expect(connectSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      finalManagedProbe.mock.invocationCallOrder[0],
+    );
+  }, 15_000);
+
+  it("fails after connect-time reconciliation if the original container identity changes (#8662)", async () => {
+    const connectSandbox = vi.spyOn(connect, "connectSandbox").mockResolvedValue(undefined);
+    const finalManagedProbe = vi
+      .spyOn(connect, "pinnedManagedGatewayProbeFailure")
+      .mockReturnValue({
+        layer: "privileged control unavailable",
+        detail: "container identity changed; Authorization: Bearer opaque-post-connect-token",
+      });
+    const h = harness({ verifyGateway: undefined });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      /final managed gateway health.*container identity changed.*<REDACTED>/iu,
+    );
+
+    expect(connectSandbox).toHaveBeenCalledOnce();
+    expect(finalManagedProbe).toHaveBeenCalledExactlyOnceWith("my-sandbox", ORIGINAL_CONTAINER_ID);
+    expect(connectSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      finalManagedProbe.mock.invocationCallOrder[0],
+    );
+  }, 15_000);
 
   it("attempts startup restoration again when start is rerun after a failure (#8112)", async () => {
     const h = harness();
@@ -181,128 +251,275 @@ describe("startSandbox", () => {
     );
   });
 
-  it("fails before readiness when the managed startup result is inconclusive (#8662)", async () => {
+  it("directs expired Shields startup recovery to the command that can complete it (#8662)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
-      checked: false,
-      wasRunning: null,
-      recovered: false,
-      forwardRecovered: false,
+    h.restoreStartupState.mockImplementation(() => {
+      throw Object.assign(new Error("expired auto-restore"), {
+        code: "NEMOCLAW_SHIELDS_AUTO_RESTORE_REQUIRED",
+      });
     });
 
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
-      "managed gateway could not be inspected through the trusted container boundary",
+      /nemoclaw my-sandbox shields up.*retry `nemoclaw my-sandbox start`/iu,
     );
+
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
-  it("keeps custom-agent readiness authoritative when recovery is inconclusive (#8662)", async () => {
-    const h = harness();
-    h.getSandbox.mockReturnValue(sandbox({ agent: "custom-agent" }));
-    h.restoreStartupState.mockReturnValue({
-      checked: false,
-      wasRunning: null,
+  it("propagates the actual managed recovery failure before readiness verification (#8662)", async () => {
+    const production = stubProductionStartupRecovery({
+      checked: true,
+      wasRunning: false,
       recovered: false,
       forwardRecovered: false,
     });
+    const h = harness({ restoreStartupState: undefined });
+    h.getSandbox.mockReturnValue(sandbox({ agent: "hermes" }));
 
-    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
-    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      /startup recovery failed.*nemoclaw my-sandbox recover/iu,
+    );
+
+    expect(production.check).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ preserveContainer: true, quiet: true }),
+    );
+    expect(production.restoreAccess).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
-  it("verifies readiness after managed gateway recovery succeeds (#8662)", async () => {
-    const h = harness();
-    h.restoreStartupState.mockReturnValue({
+  it.each([
+    "openclaw",
+    "hermes",
+  ] as const)("threads %s managed recovery success through production restoration before final verification (#8662)", async (agent) => {
+    const managedResult = {
       checked: true,
       wasRunning: false,
       recovered: true,
       forwardRecovered: true,
-    });
+      managedControlCompletion: {
+        disposition: "ok",
+        oldPid: 0,
+        newPid: 4242,
+      },
+    } as StartupRecoveryResult;
+    const production = stubProductionStartupRecovery(managedResult);
+    const h = harness({ restoreStartupState: undefined });
+    h.getSandbox.mockReturnValue(sandbox({ agent }));
 
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
-    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
-    expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
+
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+    expect(production.check).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ preserveContainer: true, quiet: true }),
+    );
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox", {
+      expectedContainerId: ORIGINAL_CONTAINER_ID,
+      preserveContainer: true,
+      requirePinnedManagedGatewayProof: true,
+    });
+    expect(h.recoverDockerDriverSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      production.check.mock.invocationCallOrder[0],
+    );
+    expect(production.check.mock.invocationCallOrder[0]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
+    expect(production.restoreAccess.mock.calls).toEqual(
+      agent === "openclaw" ? [["my-sandbox", ORIGINAL_CONTAINER_ID]] : [],
+    );
+    expect(
+      agent === "hermes" ||
+        production.restoreAccess.mock.invocationCallOrder[0] <
+          production.check.mock.invocationCallOrder[0],
+    ).toBe(true);
   });
 
-  it.each([
-    [
-      "secret-boundary refusal",
-      {
-        checked: true,
-        wasRunning: false,
-        recovered: false,
-        forwardRecovered: false,
-        secretBoundaryRefused: true,
-        secretBoundaryReason: SECRET_BOUNDARY_PRIVATE_DETAIL,
-      },
-      "secret-boundary check refused",
-      SECRET_BOUNDARY_PRIVATE_DETAIL,
-    ],
-    [
-      "MCP reconciliation refusal",
-      {
-        checked: true,
-        wasRunning: false,
-        recovered: false,
-        forwardRecovered: false,
-        mcpReconciliationRefused: true,
-        mcpReconciliationReason: PRIVATE_RECOVERY_DETAIL,
-      },
-      "MCP configuration does not match",
-      PRIVATE_RECOVERY_DETAIL,
-    ],
-    [
-      "forward recovery failure",
-      {
-        checked: true,
-        wasRunning: false,
-        recovered: true,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail: PRIVATE_RECOVERY_DETAIL,
-      },
-      "required host forwards could not be restored",
-      PRIVATE_RECOVERY_DETAIL,
-    ],
-    [
-      "managed recovery failure",
-      {
-        checked: true,
-        wasRunning: false,
-        recovered: false,
-        forwardRecovered: false,
-      },
-      "authenticated managed gateway recovery did not complete",
-      PRIVATE_RECOVERY_DETAIL,
-    ],
-  ] as const)("fails closed on %s without exposing raw recovery details (#8662)", async (_label, recovery, expected, privateDetail) => {
-    const h = harness();
-    h.restoreStartupState.mockReturnValue(recovery);
+  it("surfaces real preserved-controller failures for both managed agents through public start (#8662)", async () => {
+    const getSessionAgent = vi.spyOn(agentRuntime, "getSessionAgent");
+    const getPersistedSandbox = vi.spyOn(persistedRegistry, "getSandbox");
 
-    let failure: unknown;
-    try {
-      await startSandbox("my-sandbox", h.deps);
-    } catch (error) {
-      failure = error;
+    for (const agent of ["openclaw", "hermes"] as const) {
+      const sandboxName = agent === "openclaw" ? "oc-restart" : "hm-restart";
+      const entry = sandbox({ name: sandboxName, agent, openshellDriver: "docker" });
+      getSessionAgent.mockReturnValue({
+        name: agent,
+        displayName: agent === "hermes" ? "Hermes Agent" : "OpenClaw",
+        forwardPort: agent === "hermes" ? 8642 : 18789,
+        healthProbe: {
+          port: agent === "hermes" ? 8642 : 18789,
+          timeout_seconds: 30,
+          url: `http://127.0.0.1:${agent === "hermes" ? 8642 : 18789}/health`,
+        },
+        runtime: { kind: "gateway" },
+      } as never);
+      getPersistedSandbox.mockReturnValue(entry);
+      const controller = vi.fn(
+        (
+          _name: string,
+          action: "restart" | "recover" | "probe",
+          _timeout: number,
+          expectedContainerId?: string,
+        ) => {
+          expect(expectedContainerId).toBe(ORIGINAL_CONTAINER_ID);
+          return action === "recover"
+            ? {
+                status: 1,
+                stdout: "",
+                stderr:
+                  "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=preflight\nAuthorization: Bearer opaque-token-8662",
+              }
+            : { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" };
+        },
+      );
+      const relaunch = vi.fn(() => {
+        throw new Error("preserved start attempted to replace its container");
+      });
+      const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(
+        (name, options = {}) =>
+          connect.restoreSandboxStartupState(name, {
+            ...options,
+            isSandboxGatewayRunningImpl: () => null,
+            requestPinnedGatewaySupervisorAction: controller,
+            relaunchManagedSupervisorSessionImpl: relaunch,
+            waitForManagedGatewaySupervisorImpl: () => true,
+          }),
+      );
+      const h = harness({ restoreStartupState });
+      h.getSandbox.mockReturnValue(entry);
+
+      const failure = await startSandbox(sandboxName, h.deps).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(Error);
+      const failureMessage = (failure as Error).message;
+      expect(failureMessage).toMatch(
+        /managed gateway recovery: supervisor unavailable.*NEMOCLAW_CONTROL_STAGE=preflight/iu,
+      );
+      expect(failureMessage).toContain("<REDACTED>");
+      expect(failureMessage).not.toContain("opaque-token-8662");
+      expect(restoreStartupState).toHaveBeenCalledWith(
+        sandboxName,
+        expect.objectContaining({ expectedContainerId: ORIGINAL_CONTAINER_ID }),
+      );
+      expect(controller).toHaveBeenCalledExactlyOnceWith(
+        sandboxName,
+        "recover",
+        210000,
+        ORIGINAL_CONTAINER_ID,
+      );
+      expect(relaunch).not.toHaveBeenCalled();
+      expect(h.verifyGateway).not.toHaveBeenCalled();
     }
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain(expected);
-    expect((failure as Error).message).not.toContain(privateDetail);
-    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
-  it("accepts terminal agents without requiring gateway recovery (#8662)", () => {
-    expect(() =>
-      assertSandboxStartupRecovery("terminal-box", {
-        checked: true,
-        wasRunning: null,
-        recovered: false,
-        forwardRecovered: false,
-        runtime: "terminal",
-      }),
-    ).not.toThrow();
+  it("keeps a missing custom-agent manifest outside managed OpenClaw recovery (#8662)", async () => {
+    const entry = sandbox({ agent: "custom-agent", openshellDriver: "docker" });
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(persistedRegistry, "getSandbox").mockReturnValue(entry);
+    const controller = vi.fn(() => {
+      throw new Error("custom agent crossed the managed controller boundary");
+    });
+    const h = harness({
+      startupRecovery: {
+        isSandboxGatewayRunningImpl: () => null,
+        requestGatewaySupervisorAction: controller,
+      },
+    });
+    h.getSandbox.mockReturnValue(entry);
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(controller).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+  });
+
+  it.each(
+    (["openclaw", "hermes"] as const).flatMap((agent) => [
+      {
+        agent,
+        label: "inspection failure",
+        result: {
+          checked: false,
+          wasRunning: null,
+          recovered: false,
+          forwardRecovered: false,
+        } as StartupRecoveryResult,
+        expected: /inspection.*could not be inspected/iu,
+        privateDetail: undefined,
+      },
+      {
+        agent,
+        label: "secret-boundary refusal",
+        result: {
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          forwardRecovered: false,
+          secretBoundaryRefused: true,
+          secretBoundaryReason: "raw-secret",
+        } as StartupRecoveryResult,
+        expected: /secret boundary.*agent secret boundary refused recovery/iu,
+        privateDetail: "raw-secret",
+      },
+      {
+        agent,
+        label: "MCP reconciliation refusal",
+        result: {
+          checked: true,
+          wasRunning: false,
+          recovered: false,
+          forwardRecovered: false,
+          mcpReconciliationRefused: true,
+          mcpReconciliationReason: "registered MCP intent no longer matches",
+        } as StartupRecoveryResult,
+        expected: /MCP reconciliation.*persisted managed MCP configuration does not match/iu,
+        privateDetail: "registered MCP intent no longer matches",
+      },
+      {
+        agent,
+        label: "required-forward failure",
+        result: {
+          checked: true,
+          wasRunning: false,
+          recovered: true,
+          forwardRecovered: false,
+          forwardRecoveryFailed: true,
+          forwardRecoveryFailureDetail: "the required API forward remained occupied",
+        } as StartupRecoveryResult,
+        expected: /host-forward recovery.*required host forward could not be restored/iu,
+        privateDetail: "the required API forward remained occupied",
+      },
+      {
+        agent,
+        label: "inconclusive managed result",
+        result: {
+          checked: true,
+          wasRunning: null,
+          recovered: false,
+          forwardRecovered: false,
+        } as StartupRecoveryResult,
+        expected: /inspection.*result was inconclusive/iu,
+        privateDetail: undefined,
+      },
+    ]),
+  )("fails closed for $agent $label before final readiness verification (#8662)", async ({
+    agent,
+    result,
+    expected,
+    privateDetail,
+  }) => {
+    const production = stubProductionStartupRecovery(result);
+    const h = harness({ restoreStartupState: undefined });
+    h.getSandbox.mockReturnValue(sandbox({ agent }));
+
+    const failure = await startSandbox("my-sandbox", h.deps).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(expected);
+    expect((failure as Error).message).not.toContain(privateDetail ?? "private-detail-not-present");
+    expect(production.check).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
   it("reports the started container by name (#6026)", async () => {
@@ -317,19 +534,32 @@ describe("startSandbox", () => {
   it("still probes when the container was already running (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
-      { name: "openshell-my-sandbox", status: "Up 5 minutes", running: true },
+      {
+        containerId: ORIGINAL_CONTAINER_ID,
+        name: "openshell-my-sandbox",
+        status: "Up 5 minutes",
+        running: true,
+      },
     ]);
     h.recoverDockerDriverSandbox.mockReturnValue({
       recovered: true,
       via: "started-running-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-my-sandbox",
     });
 
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
-    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.restoreStartupState).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ expectedContainerId: ORIGINAL_CONTAINER_ID }),
+    );
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox", {
+      expectedContainerId: ORIGINAL_CONTAINER_ID,
+      preserveContainer: true,
+      requirePinnedManagedGatewayProof: true,
+    });
     expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
@@ -341,6 +571,7 @@ describe("startSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
+        containerId: ORIGINAL_CONTAINER_ID,
         name: "openshell-my-sandbox",
         status: "Up 3 minutes (Paused)",
         running: true,
@@ -350,13 +581,20 @@ describe("startSandbox", () => {
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.dockerUnpause).toHaveBeenCalledWith("openshell-my-sandbox", {
+    expect(h.dockerUnpause).toHaveBeenCalledWith(ORIGINAL_CONTAINER_ID, {
       ignoreError: true,
       timeout: 30_000,
     });
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
-    expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
-    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.restoreStartupState).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ expectedContainerId: ORIGINAL_CONTAINER_ID }),
+    );
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox", {
+      expectedContainerId: ORIGINAL_CONTAINER_ID,
+      preserveContainer: true,
+      requirePinnedManagedGatewayProof: true,
+    });
     expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
@@ -368,6 +606,7 @@ describe("startSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
+        containerId: ORIGINAL_CONTAINER_ID,
         name: "openshell-my-sandbox",
         status: "Up 3 minutes (Paused)",
         running: true,
@@ -389,13 +628,34 @@ describe("startSandbox", () => {
     h.recoverDockerDriverSandbox.mockReturnValue({
       recovered: true,
       via: "renamed-and-started-backup",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-my-sandbox",
     });
 
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox", {
+      expectedContainerId: ORIGINAL_CONTAINER_ID,
+      preserveContainer: true,
+      requirePinnedManagedGatewayProof: true,
+    });
+  });
+
+  it("refuses startup recovery when Docker omits the immutable container identity (#8662)", async () => {
+    const h = harness();
+    h.recoverDockerDriverSandbox.mockReturnValue({
+      recovered: true,
+      via: "started-stopped-original",
+      containerName: "openshell-my-sandbox",
+    });
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toMatch(/without its immutable container identity.*unpinned/iu);
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
   it("names the Docker daemon outage instead of claiming the container was removed (#6026)", async () => {
@@ -409,6 +669,26 @@ describe("startSandbox", () => {
     expect(h.printDockerRuntimeDownGuidance).toHaveBeenCalledWith("my-sandbox", {
       retryCommand: "start",
     });
+    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("returns actionable guidance when Docker discovery is malformed (#8662)", async () => {
+    const h = harness();
+    h.findLabeledSandboxContainers.mockImplementation(() => {
+      throw new Error("opaque malformed discovery detail");
+    });
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result).toEqual({
+      exitCode: 1,
+      message:
+        "  Docker could not verify the existing container for sandbox 'my-sandbox'. " +
+        "Run 'nemoclaw doctor', then retry 'nemoclaw my-sandbox start'.",
+    });
+    expect(result.message).not.toContain("opaque malformed discovery detail");
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
     expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();

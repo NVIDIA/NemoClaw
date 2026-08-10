@@ -132,8 +132,10 @@ $$nemoclaw <sandbox-name> start
 ```
 
 <AgentOnly variant="openclaw,hermes">
-After Docker reports the existing container as running, NemoClaw checks the selected agent's managed startup state and recovers missing processes when needed.
+After the lifecycle provider reports the existing runtime as running, NemoClaw checks the selected agent's managed startup state and recovers missing processes when needed.
 NemoClaw completes this recovery before its final OpenShell readiness and host-forward checks.
+For the Docker driver, the command binds recovery and verification to the existing container's immutable runtime identity.
+It does not recreate the container.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 After Docker reports the existing container as running, NemoClaw verifies the managed terminal runtime before the command reports success.

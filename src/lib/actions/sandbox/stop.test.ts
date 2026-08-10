@@ -17,8 +17,9 @@ function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
 }
 
-function container(name: string, running: boolean) {
+function container(name: string, running: boolean, containerId = "a".repeat(64)) {
   return {
+    containerId,
     name,
     status: running ? "Up 5 minutes" : "Exited (0) 2 hours ago",
     running,
@@ -175,7 +176,7 @@ describe("stopSandbox", () => {
         warn: expect.any(Function),
       }),
     );
-    expect(h.dockerStop).toHaveBeenCalledWith("openshell-my-sandbox", {
+    expect(h.dockerStop).toHaveBeenCalledWith("a".repeat(64), {
       ignoreError: true,
       timeout: 30_000,
     });
@@ -275,6 +276,7 @@ describe("stopSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
+        containerId: "a".repeat(64),
         name: "openshell-my-sandbox",
         status: "Restarting (137) 2 seconds ago",
         running: false,
@@ -284,7 +286,7 @@ describe("stopSandbox", () => {
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.dockerStop).toHaveBeenCalledWith("openshell-my-sandbox", {
+    expect(h.dockerStop).toHaveBeenCalledWith("a".repeat(64), {
       ignoreError: true,
       timeout: 30_000,
     });
@@ -294,6 +296,7 @@ describe("stopSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
+        containerId: "a".repeat(64),
         name: "openshell-my-sandbox",
         status: "Up 5 minutes (Paused)",
         running: true,
@@ -309,14 +312,17 @@ describe("stopSandbox", () => {
   it("stops every running labeled container, including backup siblings (#6026)", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
-      container("openshell-my-sandbox", true),
-      container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true),
+      container("openshell-my-sandbox", true, "a".repeat(64)),
+      container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true, "b".repeat(64)),
     ]);
 
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.dockerStop).toHaveBeenCalledTimes(2);
+    expect(h.dockerStop.mock.calls.map(([containerId]) => containerId)).toEqual([
+      "a".repeat(64),
+      "b".repeat(64),
+    ]);
   });
 
   it("continues to docker stop when the graceful channel stop throws (#6026)", () => {
@@ -346,6 +352,27 @@ describe("stopSandbox", () => {
     });
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.dockerStop).not.toHaveBeenCalled();
+  });
+
+  it("returns actionable guidance without stopping channels when Docker discovery is malformed (#8662)", () => {
+    const h = harness({
+      findLabeledSandboxContainers: vi.fn(() => {
+        throw new Error("opaque malformed discovery detail");
+      }),
+    });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result).toEqual({
+      exitCode: 1,
+      message:
+        "  Docker could not verify the existing container for sandbox 'my-sandbox'. " +
+        "Run 'nemoclaw doctor', then retry 'nemoclaw my-sandbox stop'.",
+    });
+    expect(result.message).not.toContain("opaque malformed discovery detail");
+    expect(h.stopSandboxChannels).not.toHaveBeenCalled();
+    expect(h.dockerStop).not.toHaveBeenCalled();
+    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
   });
 
   it("fails with a rebuild hint when no labeled container exists (#6026)", () => {
@@ -431,8 +458,8 @@ describe("stopSandbox", () => {
   it("attempts every container and aggregates failures when one stop fails (#6026)", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
-      container("openshell-my-sandbox", true),
-      container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true),
+      container("openshell-my-sandbox", true, "a".repeat(64)),
+      container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true, "b".repeat(64)),
     ]);
     // First container fails to stop; the sibling still must be attempted.
     h.dockerStop.mockReturnValueOnce({ status: 137 }).mockReturnValueOnce({ status: 0 });
@@ -442,14 +469,10 @@ describe("stopSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(h.dockerStop).toHaveBeenCalledTimes(2);
     expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
-    expect(h.dockerStop).toHaveBeenNthCalledWith(
-      2,
-      "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
-      {
-        ignoreError: true,
-        timeout: 30_000,
-      },
-    );
+    expect(h.dockerStop).toHaveBeenNthCalledWith(2, "b".repeat(64), {
+      ignoreError: true,
+      timeout: 30_000,
+    });
     expect(result.message).toContain("openshell-my-sandbox");
     expect(result.message).toContain("137");
     expect(result.message).not.toContain("gpu-backup");
@@ -463,7 +486,7 @@ describe("stopSandbox", () => {
     // The deps surface has no removal lever at all; assert the only docker
     // mutation issued is the stop of the labeled container.
     expect(h.dockerStop.mock.calls).toEqual([
-      ["openshell-my-sandbox", { ignoreError: true, timeout: 30_000 }],
+      ["a".repeat(64), { ignoreError: true, timeout: 30_000 }],
     ]);
   });
 });

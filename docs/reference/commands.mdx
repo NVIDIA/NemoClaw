@@ -1538,6 +1538,29 @@ Starting an already-running sandbox skips the container start and still runs the
 A paused container is unpaused.
 If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
+<AgentOnly variant="openclaw,hermes">
+
+For an OpenClaw or Hermes sandbox that uses the Docker driver, `start` binds recovery and verification to the existing container's immutable runtime identity.
+The command does not rebuild, replace, or destroy that container.
+
+`start` returns success only after these checks pass:
+
+- The authenticated managed gateway is healthy in the same runtime identity.
+- OpenShell reports the sandbox in the `Ready` phase.
+- Every required host forward is active.
+- A final authenticated managed-gateway check passes after inference-route verification and any applicable best-effort pairing pass.
+
+If a check fails, the command exits nonzero, identifies the failed layer, and preserves the existing container.
+A failure after the Docker start can leave that container running but unready.
+For most recovery failures, run the printed `$$nemoclaw <name> recover` command before you retry `start`.
+
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+If an expired Shields auto-restore blocks startup access, run `$$nemoclaw <name> shields up`, then retry `$$nemoclaw <name> start`.
+
+</AgentOnly>
+
 ### `$$nemoclaw <name> status`
 
 Show sandbox-scoped status, health, and inference configuration for one registered sandbox.

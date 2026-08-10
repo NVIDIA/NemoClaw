@@ -22,24 +22,24 @@ $$nemoclaw <sandbox-name> start
 ```
 
 This path preserves the sandbox workspace and repairs the agent runtime and host-side forwards after the container starts.
-If the container is paused, follow the printed `docker unpause` guidance instead.
+If the Docker container is paused, `start` unpauses it.
 If the container is missing or OpenShell reports another terminal phase such as `Failed`, follow the printed `rebuild --yes` guidance so NemoClaw can recreate the sandbox from its recorded metadata.
 
+<AgentOnly variant="openclaw,hermes">
+For a Docker-driver sandbox, `start` binds managed recovery and verification to the existing container's immutable runtime identity.
+The command preserves the current Shields posture and does not rebuild, replace, or destroy the container.
+If another recovery layer fails, run the printed `recover` command before you retry `start`.
+
+</AgentOnly>
 <AgentOnly variant="openclaw">
-If the sandbox has shields up and the OpenClaw gateway does not start after the container restarts, lower shields before you rebuild:
+If an expired Shields auto-restore blocks locked startup access, finish the restore and retry `start`:
 
 ```bash
-$$nemoclaw <sandbox-name> shields down
+$$nemoclaw <sandbox-name> shields up
+$$nemoclaw <sandbox-name> start
 ```
 
-While holding the config mutation lock, NemoClaw confirms that no startup process runs and no readiness lease exists.
-Only then does it accept `shields down`.
-Other locked-config operations still require the lease.
-This failed-startup recovery path requires a sandbox image that includes the in-container OpenClaw config and state guards.
-If NemoClaw reports that the config guard is absent, upgrade the CLI.
-Then rebuild the sandbox before you retry recovery.
-After shields are down, start the sandbox again.
-When the OpenClaw gateway is healthy, rerun `shields up`.
+Use `shields down` only when you intend to change protected configuration.
 </AgentOnly>
 
 ## Recover the Agent Runtime

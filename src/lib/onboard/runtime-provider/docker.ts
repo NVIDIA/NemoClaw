@@ -139,6 +139,18 @@ function isAtRestStatus(status: string): boolean {
   return AT_REST_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix));
 }
 
+function dockerLifecycleInspectionFailure(
+  action: "start" | "stop",
+  input: RuntimeProviderLifecycleInput,
+): RuntimeProviderLifecycleResult {
+  return {
+    exitCode: 1,
+    message:
+      `  Docker could not verify the existing container for sandbox '${input.sandboxName}'. ` +
+      `Run '${cliName()} doctor', then retry '${cliName()} ${input.sandboxName} ${action}'.`,
+  };
+}
+
 function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
@@ -146,7 +158,7 @@ function startDockerSandbox(
   const containers = deps.findLabeledSandboxContainers(input.sandboxName);
   const paused = containers.find((container) => isPausedStatus(container.status));
   if (paused) {
-    const result = deps.unpauseContainer(paused.name, {
+    const result = deps.unpauseContainer(paused.containerId, {
       ignoreError: true,
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
@@ -157,7 +169,7 @@ function startDockerSandbox(
       };
     }
     input.log(`  Container '${paused.name}' unpaused.`);
-    return { exitCode: 0 };
+    return { exitCode: 0, runtimeHandle: paused.containerId };
   }
 
   // Docker health is an image-level signal, not the lifecycle authority for
@@ -175,12 +187,20 @@ function startDockerSandbox(
         `If the container was removed, run '${cliName()} ${input.sandboxName} rebuild' to recreate it.`,
     };
   }
+  if (!recovery.containerId) {
+    return {
+      exitCode: 1,
+      message:
+        `  Docker reported sandbox '${input.sandboxName}' running without its immutable ` +
+        "container identity; refusing startup recovery against an unpinned container.",
+    };
+  }
   if (recovery.via === "started-running-original") {
     input.log(`  Sandbox '${input.sandboxName}' is already running.`);
   } else {
     input.log(`  Container '${recovery.containerName ?? input.sandboxName}' started.`);
   }
-  return { exitCode: 0 };
+  return { exitCode: 0, runtimeHandle: recovery.containerId };
 }
 
 function stopDockerSandbox(
@@ -205,7 +225,7 @@ function stopDockerSandbox(
   const failures: string[] = [];
   for (const container of stoppable) {
     input.log(`  Stopping container '${container.name}'…`);
-    const result = deps.stopContainer(container.name, {
+    const result = deps.stopContainer(container.containerId, {
       ignoreError: true,
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
@@ -349,9 +369,21 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "docker-kubectl-first",
-      start: (input) => startDockerSandbox(input, deps),
+      start: (input) => {
+        try {
+          return startDockerSandbox(input, deps);
+        } catch {
+          return dockerLifecycleInspectionFailure("start", input);
+        }
+      },
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
-      stop: (input, hooks) => stopDockerSandbox(input, hooks, deps),
+      stop: (input, hooks) => {
+        try {
+          return stopDockerSandbox(input, hooks, deps);
+        } catch {
+          return dockerLifecycleInspectionFailure("stop", input);
+        }
+      },
     },
     mutationAuthority: {
       providerId,

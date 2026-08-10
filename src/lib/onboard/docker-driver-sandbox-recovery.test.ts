@@ -12,6 +12,29 @@ interface FakeRunResult {
   status: number;
 }
 
+const ORIGINAL_CONTAINER_ID = "a".repeat(64);
+const BACKUP_CONTAINER_ID = "b".repeat(64);
+const NEWEST_BACKUP_CONTAINER_ID = "c".repeat(64);
+
+function containerIdForFixtureName(name: string): string {
+  return name.endsWith("1717290000000")
+    ? NEWEST_BACKUP_CONTAINER_ID
+    : name.includes("-nemoclaw-gpu-backup-")
+      ? BACKUP_CONTAINER_ID
+      : ORIGINAL_CONTAINER_ID;
+}
+
+function withFullContainerIds(output: string): string {
+  return output
+    .split(/\r?\n/u)
+    .map((line) => {
+      const trimmed = line.trim();
+      const [name, ...status] = trimmed.split("\t");
+      return trimmed ? `${containerIdForFixtureName(name)}\t${name}\t${status.join("\t")}` : "";
+    })
+    .join("\n");
+}
+
 function fakeStart(status = 0): (name: string, opts?: Record<string, unknown>) => FakeRunResult {
   return () => ({ status });
 }
@@ -25,39 +48,52 @@ function fakeRename(
 function fakeCapture(
   output: string,
   inspectOutputs: string[] = ["running\thealthy"],
-  onInspect: (opts?: Record<string, unknown>) => void = () => undefined,
+  onInspect: (args: readonly string[], opts?: Record<string, unknown>) => void = () => undefined,
 ): (args: readonly string[], opts?: Record<string, unknown>) => string {
   let inspectIndex = 0;
   return (args, opts) => {
     switch (args[0]) {
       case "inspect": {
-        onInspect(opts);
+        onInspect(args, opts);
         const index = Math.min(inspectIndex, inspectOutputs.length - 1);
         inspectIndex += 1;
         return inspectOutputs[index] ?? "";
       }
       default:
-        return output;
+        return withFullContainerIds(output);
     }
   };
 }
 
 describe("findLabeledSandboxContainers", () => {
   it("parses the OpenShell-labeled container list and detects running state", () => {
-    const containers = findLabeledSandboxContainers("e2e-x", {
-      dockerCapture: fakeCapture(
+    const dockerCapture = vi.fn(
+      fakeCapture(
         "openshell-e2e-x\tUp 2 hours\n" +
           "openshell-e2e-x-nemoclaw-gpu-backup-1717280000000\tExited (0) 10 minutes ago\n",
       ),
+    );
+    const containers = findLabeledSandboxContainers("e2e-x", {
+      dockerCapture,
     });
     expect(containers).toEqual([
-      { name: "openshell-e2e-x", status: "Up 2 hours", running: true },
       {
+        containerId: ORIGINAL_CONTAINER_ID,
+        name: "openshell-e2e-x",
+        status: "Up 2 hours",
+        running: true,
+      },
+      {
+        containerId: BACKUP_CONTAINER_ID,
         name: "openshell-e2e-x-nemoclaw-gpu-backup-1717280000000",
         status: "Exited (0) 10 minutes ago",
         running: false,
       },
     ]);
+    expect(dockerCapture).toHaveBeenCalledWith(
+      expect.arrayContaining(["--no-trunc", "{{.ID}}\t{{.Names}}\t{{.Status}}"]),
+      expect.anything(),
+    );
   });
 
   it("returns an empty array when docker ps has no labeled rows", () => {
@@ -68,7 +104,27 @@ describe("findLabeledSandboxContainers", () => {
     const containers = findLabeledSandboxContainers("e2e-x", {
       dockerCapture: fakeCapture("\n  openshell-e2e-x\tCreated\n\n"),
     });
-    expect(containers).toEqual([{ name: "openshell-e2e-x", status: "Created", running: false }]);
+    expect(containers).toEqual([
+      {
+        containerId: ORIGINAL_CONTAINER_ID,
+        name: "openshell-e2e-x",
+        status: "Created",
+        running: false,
+      },
+    ]);
+  });
+
+  it.each([
+    ["truncated identity", `abc123\topenshell-e2e-x\tCreated\n`],
+    ["uppercase identity", `${"A".repeat(64)}\topenshell-e2e-x\tCreated\n`],
+    ["control character in name", `${ORIGINAL_CONTAINER_ID}\topenshell-e2e-\u007fx\tCreated\n`],
+    ["empty status", `${ORIGINAL_CONTAINER_ID}\topenshell-e2e-x\t\n`],
+  ])("rejects malformed metadata with a %s", (_label, row) => {
+    expect(() =>
+      findLabeledSandboxContainers("e2e-x", {
+        dockerCapture: () => row,
+      }),
+    ).toThrow(/malformed OpenShell sandbox container metadata/u);
   });
 });
 
@@ -76,21 +132,25 @@ describe("recoverDockerDriverSandbox — running original (no-op)", () => {
   it("waits for an already-running container to become healthy without starting it", () => {
     const start = vi.fn(fakeStart(0));
     const sleep = vi.fn();
+    const inspectTargets: string[] = [];
     const result = recoverDockerDriverSandbox("e2e-x", {
-      dockerCapture: fakeCapture("openshell-e2e-x\tUp 5 seconds\n", [
-        "running\tstarting",
-        "running\thealthy",
-      ]),
+      dockerCapture: fakeCapture(
+        "openshell-e2e-x\tUp 5 seconds\n",
+        ["running\tstarting", "running\thealthy"],
+        (args) => inspectTargets.push(String(args.at(-1))),
+      ),
       dockerStart: start,
       sleep,
     });
     expect(result).toEqual({
       recovered: true,
       via: "started-running-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(start).not.toHaveBeenCalled();
     expect(sleep).toHaveBeenCalledOnce();
+    expect(inspectTargets).toEqual([ORIGINAL_CONTAINER_ID, ORIGINAL_CONTAINER_ID]);
   });
 });
 
@@ -106,11 +166,12 @@ describe("recoverDockerDriverSandbox — paused original (unpause)", () => {
     expect(result).toEqual({
       recovered: true,
       via: "unpaused-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(unpause).toHaveBeenCalledTimes(1);
     expect(unpause).toHaveBeenCalledWith(
-      "openshell-e2e-x",
+      ORIGINAL_CONTAINER_ID,
       expect.objectContaining({ ignoreError: true }),
     );
     expect(start).not.toHaveBeenCalled();
@@ -139,6 +200,7 @@ describe("recoverDockerDriverSandbox — paused original (unpause)", () => {
     expect(result).toMatchObject({
       recovered: false,
       via: null,
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
       detail: expect.stringContaining("runtime=dead, health=unhealthy"),
     });
@@ -155,11 +217,12 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(result).toEqual({
       recovered: true,
       via: "started-stopped-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(start).toHaveBeenCalledTimes(1);
     expect(start).toHaveBeenCalledWith(
-      "openshell-e2e-x",
+      ORIGINAL_CONTAINER_ID,
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -189,6 +252,7 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(result).toEqual({
       recovered: true,
       via: "started-stopped-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(sleep).toHaveBeenCalledTimes(2);
@@ -209,6 +273,7 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(result).toEqual({
       recovered: true,
       via: "started-stopped-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(sleep).not.toHaveBeenCalled();
@@ -227,6 +292,7 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(result).toEqual({
       recovered: true,
       via: "started-stopped-original",
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(sleep).not.toHaveBeenCalled();
@@ -249,6 +315,7 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(result).toEqual({
       recovered: false,
       via: null,
+      containerId: ORIGINAL_CONTAINER_ID,
       containerName: "openshell-e2e-x",
       detail:
         "docker container openshell-e2e-x did not become ready after recovery " +
@@ -264,7 +331,7 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     const capture = fakeCapture(
       "openshell-e2e-x\tExited (137) 30 seconds ago\n",
       ["running\tstarting"],
-      (opts) => {
+      (_args, opts) => {
         inspectStartTimes.push(currentMs);
         const timeout = Number(opts?.timeout);
         inspectTimeouts.push(timeout);
@@ -315,9 +382,12 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
   it("renames the backup sibling back to the original name and starts it", () => {
     const rename = vi.fn(fakeRename(0));
     const start = vi.fn(fakeStart(0));
+    const inspectTargets: string[] = [];
     const result = recoverDockerDriverSandbox("e2e-x", {
       dockerCapture: fakeCapture(
         "openshell-e2e-x-nemoclaw-gpu-backup-1717280000000\tExited (0) 5 minutes ago\n",
+        ["running\thealthy"],
+        (args) => inspectTargets.push(String(args.at(-1))),
       ),
       dockerRename: rename,
       dockerStart: start,
@@ -325,17 +395,19 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
     expect(result).toEqual({
       recovered: true,
       via: "renamed-and-started-backup",
+      containerId: BACKUP_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(rename).toHaveBeenCalledWith(
-      "openshell-e2e-x-nemoclaw-gpu-backup-1717280000000",
+      BACKUP_CONTAINER_ID,
       "openshell-e2e-x",
       expect.objectContaining({ ignoreError: true }),
     );
     expect(start).toHaveBeenCalledWith(
-      "openshell-e2e-x",
+      BACKUP_CONTAINER_ID,
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(inspectTargets).toEqual([BACKUP_CONTAINER_ID]);
   });
 
   it("hands a renamed backup to lifecycle verification while Docker health is starting (#8112)", () => {
@@ -354,6 +426,7 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
     expect(result).toEqual({
       recovered: true,
       via: "renamed-and-started-backup",
+      containerId: BACKUP_CONTAINER_ID,
       containerName: "openshell-e2e-x",
     });
     expect(sleep).not.toHaveBeenCalled();
@@ -372,7 +445,7 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
     });
     expect(rename).toHaveBeenCalledTimes(1);
     expect(rename).toHaveBeenCalledWith(
-      "openshell-e2e-x-nemoclaw-gpu-backup-1717290000000",
+      NEWEST_BACKUP_CONTAINER_ID,
       "openshell-e2e-x",
       expect.anything(),
     );
@@ -411,6 +484,7 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
     expect(result).toMatchObject({
       recovered: false,
       via: null,
+      containerId: BACKUP_CONTAINER_ID,
       containerName: "openshell-e2e-x",
       detail: expect.stringContaining("runtime=removing, health=none"),
     });
@@ -431,7 +505,7 @@ describe("recoverDockerDriverSandbox — collision and missing cases", () => {
     });
     expect(result.via).toBe("started-stopped-original");
     expect(rename).not.toHaveBeenCalled();
-    expect(start).toHaveBeenCalledWith("openshell-e2e-x", expect.anything());
+    expect(start).toHaveBeenCalledWith(ORIGINAL_CONTAINER_ID, expect.anything());
   });
 
   it("returns recovered=false when no labeled container exists at all", () => {
