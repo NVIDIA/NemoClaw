@@ -415,7 +415,11 @@ describe("setupSelectedMessagingChannels", () => {
       { agent: { name: "hermes" } },
     );
 
-    expect(prompt).not.toHaveBeenCalled();
+    // The reply mode is a config question. Pairing still happens in-sandbox by
+    // QR, so nothing asks for a token and no provider is bound (#8312).
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      "  WhatsApp reply mode [self-chat/bot; default: self-chat]: ",
+    );
     expect(getCredential).not.toHaveBeenCalled();
     expect(plan?.credentialBindings).toEqual([]);
     expect(plan?.channels[0]).toMatchObject({

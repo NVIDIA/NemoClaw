@@ -7,6 +7,7 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import {
   createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
   MessagingWorkflowPlanner,
 } from "../../messaging";
@@ -43,7 +44,10 @@ describe("policy channel remove/enable flows", () => {
   async function arrangeHermesWhatsappRemoval() {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
-      undefined,
+      // WhatsApp declares an enroll hook for its reply mode, so the planner
+      // needs the built-in handlers. This plan is non-interactive, so the hook
+      // records the manifest default without asking anything.
+      createBuiltInMessagingHookRegistry(),
       createBuiltInRenderTemplateResolver(),
     ).buildPlan({
       sandboxName: "alpha",

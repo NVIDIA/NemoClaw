@@ -1098,6 +1098,10 @@ describe("agents/hermes/generate-config.ts", () => {
     // Hermes' own adapter default. self-chat reads no allowlist, so a paired
     // sandbox answers the owner's own chat with nothing else configured (#8312).
     expect(envFile).toContain("WHATSAPP_MODE=self-chat\n");
+    // self-chat drops every message that is not the paired account's own before
+    // the bridge reads a policy, so stating one would seal a rule nothing
+    // applies (#8312).
+    expect(envFile).not.toContain("WHATSAPP_DM_POLICY");
     expect(envFile).not.toContain("WHATSAPP_BOT_TOKEN=");
     expect(envFile).not.toContain("openshell:resolve:env:WHATSAPP");
   });
@@ -1111,6 +1115,22 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(envFile).toContain("WHATSAPP_MODE=bot\n");
     expect(envFile).toContain("WHATSAPP_ALLOWED_USERS=15551234567\n");
+    expect(envFile).toContain("WHATSAPP_DM_POLICY=allowlist\n");
+  });
+
+  it("pairs unknown senders when Hermes WhatsApp bot mode carries no allowlist (#8312)", async () => {
+    const { envFile } = await runConfigScriptWithMessaging({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
+      NEMOCLAW_WHATSAPP_CONFIG_B64: encodeJson({ mode: "bot" }),
+    });
+
+    // The bridge defaults this key to `open`, which enforces the empty
+    // allowlist and rejects every sender, so the rendered value is what keeps
+    // bot mode reachable: the gateway answers an unknown sender with a pairing
+    // code the operator approves.
+    expect(envFile).toContain("WHATSAPP_MODE=bot\n");
+    expect(envFile).toContain("WHATSAPP_DM_POLICY=pairing\n");
+    expect(envFile).not.toContain("WHATSAPP_ALLOWED_USERS=");
   });
 
   it("falls back to self-chat when the stored Hermes WhatsApp mode is not an accepted value (#8312)", async () => {
@@ -1123,6 +1143,9 @@ describe("agents/hermes/generate-config.ts", () => {
     // would start it in a mode it cannot serve.
     expect(envFile).toContain("WHATSAPP_MODE=self-chat\n");
     expect(envFile).not.toContain("WHATSAPP_MODE=broadcast");
+    // The mode fallback decides the policy, so a registry entry the bridge
+    // cannot serve must not open the gateway to unknown senders (#8312).
+    expect(envFile).not.toContain("WHATSAPP_DM_POLICY");
   });
 
   it("emits Hermes WhatsApp allowed users when configured", async () => {

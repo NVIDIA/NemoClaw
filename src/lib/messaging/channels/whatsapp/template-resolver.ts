@@ -13,7 +13,8 @@ import {
 } from "../template-resolver-utils";
 
 const DEFAULT_WHATSAPP_MODE = "self-chat";
-const WHATSAPP_MODES = new Set([DEFAULT_WHATSAPP_MODE, "bot"]);
+const BOT_WHATSAPP_MODE = "bot";
+const WHATSAPP_MODES = new Set([DEFAULT_WHATSAPP_MODE, BOT_WHATSAPP_MODE]);
 
 export const resolveWhatsappTemplateReference: BuiltInRenderTemplateResolver = (
   reference,
@@ -22,8 +23,11 @@ export const resolveWhatsappTemplateReference: BuiltInRenderTemplateResolver = (
   if (reference === "whatsappConfig.mode") {
     return resolvedRenderTemplateReference(whatsappMode(context));
   }
+  if (reference === "whatsappConfig.dmPolicy") {
+    return resolvedRenderTemplateReference(whatsappDmPolicy(context));
+  }
 
-  const allowedIdsReference = reference.match(/^allowedIds[.]whatsapp[.](values|csv|dmPolicy)$/);
+  const allowedIdsReference = reference.match(/^allowedIds[.]whatsapp[.](values|csv)$/);
   if (!allowedIdsReference?.[1]) return undefined;
   const ids = allowedIds(context, "whatsapp");
   switch (allowedIdsReference[1]) {
@@ -31,8 +35,6 @@ export const resolveWhatsappTemplateReference: BuiltInRenderTemplateResolver = (
       return resolvedRenderTemplateReference(nonEmptyArray(ids));
     case "csv":
       return resolvedRenderTemplateReference(nonEmptyCsv(ids));
-    case "dmPolicy":
-      return resolvedRenderTemplateReference(ids.length > 0 ? "allowlist" : undefined);
     default:
       return undefined;
   }
@@ -48,4 +50,15 @@ export const resolveWhatsappTemplateReference: BuiltInRenderTemplateResolver = (
 function whatsappMode(context: RenderTemplateContext): string {
   const value = nonEmptyString(stateValue(context, "whatsappConfig.mode"));
   return value && WHATSAPP_MODES.has(value) ? value : DEFAULT_WHATSAPP_MODE;
+}
+
+// `self-chat` drops every message that is not the paired account's own before
+// the bridge consults a policy, so the key only distinguishes behavior in `bot`
+// mode. There an empty allowlist is a working state rather than a dead one: the
+// bridge forwards the unknown sender and the gateway answers with a pairing code
+// the operator approves. Dropping the key instead would leave the bridge on its
+// own `open` default, which enforces the empty allowlist and rejects everyone.
+function whatsappDmPolicy(context: RenderTemplateContext): string | undefined {
+  if (whatsappMode(context) !== BOT_WHATSAPP_MODE) return undefined;
+  return allowedIds(context, "whatsapp").length > 0 ? "allowlist" : "pairing";
 }
