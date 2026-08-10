@@ -24,7 +24,6 @@ const DOCKER_OPERATING_SYSTEM =
   "Docker Engine";
 const tmpFixtures: string[] = [];
 const gatewayProcesses: ReturnType<typeof spawn>[] = [];
-let gatewayPortSequence = 0;
 
 afterEach(() => {
   for (const child of gatewayProcesses.splice(0)) child.kill();
@@ -51,13 +50,38 @@ function createFixture(opts: {
     providerRegistered = true,
     inferenceProbeHttpStatus = null,
   } = opts;
-  const gatewayPort = 30_000 + ((process.pid + gatewayPortSequence++) % 10_000);
-  const gatewayName = `nemoclaw-${gatewayPort}`;
   const sandboxName = "my-assistant";
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
+
+  const gatewayReadyMarker = path.join(tmpDir, "gateway-ready");
+  const gatewayProcess = spawn(
+    process.execPath,
+    [path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.cjs"), gatewayReadyMarker],
+    { stdio: "ignore" },
+  );
+  gatewayProcesses.push(gatewayProcess);
+  const gatewayWait = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `const fs = require("node:fs");
+const marker = process.argv[1];
+const deadline = Date.now() + 5_000;
+const wait = () => fs.existsSync(marker) ? process.exit(0) : Date.now() >= deadline ? process.exit(1) : setTimeout(wait, 10);
+wait();`,
+      gatewayReadyMarker,
+    ],
+    { stdio: "ignore", timeout: 6_000 },
+  );
+  expect(gatewayWait.status).toBe(0);
+  const gatewayPortText = fs.readFileSync(gatewayReadyMarker, "utf-8").trim();
+  expect(gatewayPortText).toMatch(/^[1-9][0-9]{0,4}$/);
+  const gatewayPort = Number(gatewayPortText);
+  expect(gatewayPort).toBeLessThanOrEqual(65_535);
+  const gatewayName = `nemoclaw-${gatewayPort}`;
 
   fs.writeFileSync(
     path.join(nemoclawDir, "sandboxes.json"),
@@ -211,32 +235,6 @@ process.exit(0);
       { mode: 0o755 },
     );
   }
-
-  const gatewayReadyMarker = path.join(tmpDir, "gateway-ready");
-  const gatewayProcess = spawn(
-    process.execPath,
-    [
-      "-e",
-      `const fs = require("node:fs");
-const net = require("node:net");
-net.createServer((socket) => socket.end()).listen(${gatewayPort}, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(gatewayReadyMarker)}, "ready\\n"));`,
-    ],
-    { stdio: "ignore" },
-  );
-  gatewayProcesses.push(gatewayProcess);
-  const gatewayWait = spawnSync(
-    process.execPath,
-    [
-      "-e",
-      `const fs = require("node:fs");
-const marker = ${JSON.stringify(gatewayReadyMarker)};
-const deadline = Date.now() + 5_000;
-const wait = () => fs.existsSync(marker) ? process.exit(0) : Date.now() >= deadline ? process.exit(1) : setTimeout(wait, 10);
-wait();`,
-    ],
-    { stdio: "ignore", timeout: 6_000 },
-  );
-  expect(gatewayWait.status).toBe(0);
 
   fs.writeFileSync(path.join(tmpDir, "lsof"), "#!/usr/bin/env node\nprocess.exit(1);\n", {
     mode: 0o755,

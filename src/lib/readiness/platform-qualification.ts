@@ -455,14 +455,14 @@ export function projectPlatformQualification(
   } else if (nativeDocker) {
     findings.push({
       id: "host.platform.wsl_native_docker_unqualified",
-      severity: "warning",
+      severity: "blocking",
       summary: "Native Docker Engine inside WSL is not the qualified Docker Desktop integration.",
       capabilityIds: ["host.platform.wsl_native_docker", "host.platform.supported"],
     });
   } else if (input.isWsl && input.dockerReachable && !dockerDesktop) {
     findings.push({
       id: "host.platform.wsl_runtime_inconclusive",
-      severity: "warning",
+      severity: "blocking",
       summary: "WSL Docker runtime identity is inconclusive.",
       capabilityIds: ["host.platform.wsl_runtime_available"],
     });

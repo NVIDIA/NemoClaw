@@ -6,15 +6,15 @@ import {
   type GatewayReadinessDependencies,
   type GatewayReadinessProjection,
   projectGatewayReadiness,
-} from "./gateway";
+} from "./gateway.js";
 import {
   type CollectHostObservationsOptions,
   type CreateHostReadinessReportOptions,
   collectHostObservations,
   projectHostReadiness,
-} from "./host";
-import { getSystemReadinessReferenceErrors } from "./references";
-import type { SystemReadinessReport } from "./types";
+} from "./host.js";
+import { getSystemReadinessReferenceErrors } from "./references.js";
+import type { SystemReadinessReport } from "./types.js";
 
 export interface CollectSystemReadinessOptions {
   gateway: GatewayReadinessDependencies;

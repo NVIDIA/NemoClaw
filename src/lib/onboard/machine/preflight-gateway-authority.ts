@@ -4,7 +4,7 @@
 import type { GatewayReadinessProjection } from "../../readiness/gateway";
 import type { GatewayReuseState } from "../../state/gateway";
 import * as fatalRuntimePreflight from "../fatal-runtime-preflight";
-import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
+import type { GatewayOwner } from "../gateway-ownership";
 import {
   failFastOnForeignGatewayPortConflict,
   type GatewayPortConflictDeps,
@@ -36,25 +36,6 @@ export interface PreflightGatewayAuthority {
   gatewayReuseState: GatewayReuseState;
 }
 
-export interface EarlyGatewayPortConflictDeps {
-  resolveOwner(): GatewayOwner;
-  gatewayPort: number;
-  portConflict: Omit<GatewayPortConflictDeps, "gatewayPort" | "externallySupervised">;
-}
-
-/** Preserve the foreign-port fast-fail before continuing to bounded readiness probes. */
-export async function runAfterEarlyGatewayPortConflict<Result>(
-  deps: EarlyGatewayPortConflictDeps,
-  continuePreflight: () => Promise<Result>,
-): Promise<Result> {
-  await failFastOnForeignGatewayPortConflict({
-    gatewayPort: deps.gatewayPort,
-    externallySupervised: isExternallySupervised(deps.resolveOwner()),
-    ...deps.portConflict,
-  });
-  return continuePreflight();
-}
-
 export function collectOnboardGatewayReadiness(
   deps: OnboardGatewayReadinessCollectorDeps,
 ): Promise<GatewayReadinessProjection> {
@@ -76,6 +57,7 @@ export async function preparePreflightGatewayAuthority(
   // Installation and portable preparation can replace binaries, services, or
   // runtime endpoints. Refresh authority before any lifecycle effect consumes it.
   const gatewayReadiness = await deps.collectGatewayReadiness();
+  fatalRuntimePreflight.assertOnboardGatewayReadiness(gatewayReadiness);
   const externallySupervised = !isManagedGateway(gatewayReadiness);
   await failFastOnForeignGatewayPortConflict({
     gatewayPort: deps.gatewayPort,
