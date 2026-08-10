@@ -12,15 +12,15 @@ const shieldsMock = vi.hoisted(() => ({
 vi.mock("../src/lib/shields", () => shieldsMock);
 
 import {
-  openRebuildShieldsWindow,
-  relockRebuildShieldsWindow,
-} from "../src/lib/actions/sandbox/rebuild-shields";
-import {
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
 } from "../src/lib/actions/sandbox/backup-shields-window";
+import {
+  openRebuildShieldsWindow,
+  relockRebuildShieldsWindow,
+} from "../src/lib/actions/sandbox/rebuild-shields";
 
-describe("rebuild shields window", () => {
+describe("rebuild Shields window", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -28,7 +28,7 @@ describe("rebuild shields window", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("temporarily unlocks locked shields with a bounded auto-restore timer", () => {
+  it("applies bounded Shields down for a rebuild backup (#3113)", () => {
     shieldsMock.isShieldsDown.mockReturnValue(false);
 
     const window = openRebuildShieldsWindow("locked-sandbox", "nemoclaw");
@@ -42,6 +42,9 @@ describe("rebuild shields window", () => {
       deferAutoRestoreWhileOwnerAlive: true,
       allowLegacyHermesProtocol: true,
     });
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Shields are UP");
+    expect(output).toContain("temporarily unlocking for rebuild backup");
   });
 
   it("keeps ordinary backup windows bounded without the rebuild legacy bypass (#6455)", () => {
@@ -132,7 +135,7 @@ describe("rebuild shields window", () => {
     );
   });
 
-  it("does nothing when shields were already mutable", () => {
+  it("does not apply Shields down when the sandbox is already mutable", () => {
     shieldsMock.isShieldsDown.mockReturnValue(true);
 
     const window = openRebuildShieldsWindow("mutable-sandbox", "nemoclaw");
@@ -142,5 +145,6 @@ describe("rebuild shields window", () => {
     expect(shieldsMock.shieldsDown).not.toHaveBeenCalled();
     expect(relockRebuildShieldsWindow("mutable-sandbox", window!, true, "nemoclaw")).toBe(true);
     expect(shieldsMock.shieldsUp).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log)).not.toHaveBeenCalled();
   });
 });

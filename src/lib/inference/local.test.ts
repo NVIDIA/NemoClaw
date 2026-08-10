@@ -20,6 +20,7 @@ import {
   buildOllamaProbeOptions,
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  findReachableOllamaHost,
   getBootstrapOllamaModelOptions,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
@@ -86,6 +87,7 @@ describe("local inference helpers", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetOllamaHostCache();
     if (originalSandboxHostUrl === undefined) {
       delete process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
@@ -118,6 +120,23 @@ describe("local inference helpers", () => {
       "2",
       "--max-time",
       "5",
+      "http://host.docker.internal:11434/api/tags",
+    ]);
+  });
+
+  it("probes WSL loopback before Windows-host Ollama", () => {
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    const endpoints: string[] = [];
+
+    const host = findReachableOllamaHost((command) => {
+      const endpoint = command.at(-1) ?? "";
+      endpoints.push(endpoint);
+      return endpoint.includes("host.docker.internal") ? "ollama" : "";
+    });
+
+    expect(host).toBe("host.docker.internal");
+    expect(endpoints).toEqual([
+      "http://127.0.0.1:11434/api/tags",
       "http://host.docker.internal:11434/api/tags",
     ]);
   });
