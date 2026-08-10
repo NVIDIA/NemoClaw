@@ -282,7 +282,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("constructs a read-only bounded one-GPU server without putting the key on argv (#8260)", () => {
+  it("activates the YAML-bound guard without putting the key on argv (#8260)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -339,7 +339,38 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           "--no-agent",
         ]),
       );
-      expect(valuesAfter(argv, "--publish")).toEqual([]);
+      expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+      expect(valuesAfter(argv, "--entrypoint")).toEqual([
+        "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+      ]);
+      expect(valuesAfter(argv, "--listen-port")).toEqual([String(testPlan.recipe.serve.port)]);
+      expect(valuesAfter(argv, "--upstream-port")).toEqual([
+        String(testPlan.recipe.serve.requestGuard.upstreamPort),
+      ]);
+      expect(valuesAfter(argv, "--max-request-body-bytes")).toEqual([
+        String(testPlan.recipe.serve.limits.maxRequestBodyBytes),
+      ]);
+      expect(valuesAfter(argv, "--max-request-header-bytes")).toEqual([
+        String(testPlan.recipe.serve.limits.maxRequestHeaderBytes),
+      ]);
+      expect(valuesAfter(argv, "--max-output-tokens")).toEqual([
+        String(testPlan.recipe.serve.limits.maxOutputTokens),
+      ]);
+      expect(valuesAfter(argv, "--request-timeout-seconds")).toEqual([
+        String(testPlan.recipe.serve.limits.requestTimeoutSeconds),
+      ]);
+      expect(valuesAfter(argv, "--shutdown-timeout-seconds")).toEqual([
+        String(testPlan.recipe.serve.limits.shutdownTimeoutSeconds),
+      ]);
+      const separator = argv.indexOf("--");
+      expect(argv[separator + 1]).toBe("/usr/local/bin/llama-server");
+      expect(valuesAfter(argv.slice(separator), "--host")).toEqual(["127.0.0.1"]);
+      expect(valuesAfter(argv.slice(separator), "--port")).toEqual([
+        String(testPlan.recipe.serve.requestGuard.upstreamPort),
+      ]);
+      expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
+        String(testPlan.recipe.serve.limits.maxOutputTokens),
+      ]);
       const agentQualificationArgv = buildServerContainerArgv(testPlan, {
         apiKeyHostPath: "/work/tmp/api-key",
         containerName: "qualified-server",

@@ -49,6 +49,17 @@ function runScript(options: { fakeBin: string; homeDir: string; installing?: boo
 }
 
 describe("npm-link-or-shim.sh", () => {
+  it("skips developer prepare tasks during installer linking", () => {
+    const result = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "prepare"], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, NEMOCLAW_INSTALLING: "1" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Skipping prepare during NemoClaw installer linking");
+  });
+
   it("falls back to a wrapper script on npm link failure, preserving the Node directory", () => {
     expect(fs.existsSync(compiledCli)).toBe(true);
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-link-shim-wrapper-"));

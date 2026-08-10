@@ -3881,8 +3881,11 @@ For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux g
 It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
 Gateway-scoped cleanup removes that gateway's OpenShell resources first, then the marked Linux unit.
 The OpenShell gateway service therefore keeps running while uninstall deletes the selected gateway's sandboxes.
-If that OpenShell cleanup fails, uninstall exits nonzero and preserves the marked Linux unit and the gateway process.
-That cleanup can partially complete before the failure.
+If OpenShell resource cleanup fails, uninstall exits nonzero and preserves the marked Linux unit and gateway process.
+If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process or continues with later Docker and gateway-state cleanup.
+OpenShell resource and Linux unit cleanup can partially complete before either failure.
+After selected sandbox cleanup succeeds, uninstall removes those entries from `sandboxes.json` before gateway registration and Linux unit cleanup.
+If a later step fails, the retry skips gateway selection and resumes the remaining cleanup.
 Resolve the reported error.
 Inspect the remaining gateways with `openshell gateway list`.
 Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port from the failed uninstall.

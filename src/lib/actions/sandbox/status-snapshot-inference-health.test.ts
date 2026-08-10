@@ -84,16 +84,113 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(order).toEqual(["reconcile", "recover-agent-and-forward", "probe-inference"]);
   });
 
+  it("waits for the inference route after recovering the agent gateway", async () => {
+    const unreachable: SandboxInferenceRouteHealth = {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "unreachable",
+    };
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const options = snapshotDeps(unreachable);
+    options.deps.reconcile = async () => ({
+      state: "present",
+      output: "Phase: Ready",
+      recoveredSandbox: true,
+      recoverySandboxVia: "started-stopped-original",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi
+      .fn()
+      .mockResolvedValueOnce(unreachable)
+      .mockResolvedValueOnce(healthy);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    }));
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        recoverSandboxProcesses,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(2);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledWith(2_000);
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, okLabel: "reachable" });
+  });
+
+  it("reports the inference route as unreachable after all post-recovery probes", async () => {
+    const unreachable: SandboxInferenceRouteHealth = {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "unreachable",
+    };
+    const options = snapshotDeps(unreachable);
+    options.deps.reconcile = async () => ({
+      state: "present",
+      output: "Phase: Ready",
+      recoveredSandbox: true,
+      recoverySandboxVia: "started-stopped-original",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => unreachable);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    }));
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        recoverSandboxProcesses,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(3);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledTimes(2);
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unreachable" });
+  });
+
   it("does not mutate the agent or host forward during an ordinary present status lookup", async () => {
     const options = snapshotDeps(null);
     const recoverSandboxProcesses = vi.fn();
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(
+      options.deps.probeSandboxInferenceGatewayHealthImpl,
+    );
 
     await collectSandboxStatusSnapshot("alpha", {
       ...options,
-      deps: { ...options.deps, recoverSandboxProcesses },
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        recoverSandboxProcesses,
+      },
     });
 
     expect(recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
+    expect(delayInferenceRecoveryProbe).not.toHaveBeenCalled();
   });
 
   it("labels a reachable route okLabel: reachable, not a bare healthy claim (#6846)", async () => {
