@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const shieldsMock = vi.hoisted(() => ({
   isShieldsDown: vi.fn(),
@@ -22,7 +22,11 @@ import {
   relockRebuildShieldsWindow,
 } from "../src/lib/actions/sandbox/rebuild-shields";
 
-describe("rebuild shields window", () => {
+describe("rebuild Shields window", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(false);
@@ -31,7 +35,7 @@ describe("rebuild shields window", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("temporarily unlocks locked shields with a bounded auto-restore timer", () => {
+  it("applies bounded Shields down for a rebuild backup (#3113)", () => {
     shieldsMock.isShieldsDown.mockReturnValue(false);
 
     const window = openRebuildShieldsWindow("locked-sandbox", "nemoclaw");
@@ -45,6 +49,9 @@ describe("rebuild shields window", () => {
       deferAutoRestoreWhileOwnerAlive: true,
       allowLegacyHermesProtocol: true,
     });
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Shields are UP");
+    expect(output).toContain("temporarily unlocking for rebuild backup");
   });
 
   it("keeps ordinary backup windows bounded without the rebuild legacy bypass (#6455)", () => {
@@ -135,7 +142,7 @@ describe("rebuild shields window", () => {
     );
   });
 
-  it("does nothing when Shields were already mutable", () => {
+  it("does not apply Shields down when the sandbox is already mutable", () => {
     shieldsMock.isShieldsDown.mockReturnValue(true);
 
     const window = openRebuildShieldsWindow("mutable-sandbox", "nemoclaw");
@@ -145,6 +152,7 @@ describe("rebuild shields window", () => {
     expect(shieldsMock.shieldsDown).not.toHaveBeenCalled();
     expect(relockRebuildShieldsWindow("mutable-sandbox", window!, true, "nemoclaw")).toBe(true);
     expect(shieldsMock.shieldsUp).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log)).not.toHaveBeenCalled();
 
     timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(true);
     expect(
