@@ -260,6 +260,10 @@ function gatewayNameFromOutput(output: string): string | undefined {
   return stripAnsi(output).match(/^\s*Gateway:\s+([^\s]+)/m)?.[1];
 }
 
+function gatewayServerEndpointFromOutput(output: string): string | undefined {
+  return stripAnsi(output).match(/^\s*Server:\s+(\S+)\s*$/m)?.[1];
+}
+
 function dashboardPortFromList(output: string, sandboxName: string): string | undefined {
   let current: string | undefined;
   for (const line of output.split("\n")) {
@@ -524,6 +528,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     boundary: "direct-cli-openshell-lifecycle",
     contract: [
       "first onboard creates a sandbox and NemoClaw gateway",
+      "OpenShell status reports the managed gateway through its Server endpoint line",
       "same-name recreate reuses the healthy gateway without port conflicts",
       "different-name onboard preserves the first sandbox and allocates distinct dashboard forwards",
       "stopping one sandbox releases only its dashboard forward and reports the container stopped",
@@ -548,6 +553,25 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   });
   expect(resultText(gatewayInfo)).toContain("nemoclaw");
 
+  const gatewayStatus = await sandbox.openshell(["status"], {
+    artifactName: "phase-2-openshell-status",
+    env: commandEnv(),
+    timeoutMs: 30_000,
+  });
+  const gatewayStatusText = resultText(gatewayStatus);
+  expect(gatewayStatus.exitCode, gatewayStatusText).toBe(0);
+  const gatewayServerEndpoint = gatewayServerEndpointFromOutput(gatewayStatusText);
+  expect(gatewayServerEndpoint, gatewayStatusText).toBeDefined();
+  const parsedGatewayServerEndpoint = new URL(gatewayServerEndpoint as string);
+  const gatewayServerPort =
+    parsedGatewayServerEndpoint.port ||
+    (parsedGatewayServerEndpoint.protocol === "https:"
+      ? "443"
+      : parsedGatewayServerEndpoint.protocol === "http:"
+        ? "80"
+        : "");
+  expect(gatewayServerPort).toBe(process.env.NEMOCLAW_GATEWAY_PORT ?? "8080");
+
   const sandboxAAfterFirst = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
     artifactName: "phase-2-openshell-sandbox-a-get",
     env: commandEnv(),
@@ -566,6 +590,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   const gatewayAfterSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-after");
   expect(gatewayBeforeSecond, "gateway runtime id before second onboard").not.toBe("");
   expect(gatewayAfterSecond).toBe(gatewayBeforeSecond);
+  expect(secondText).toContain("Reusing healthy NemoClaw gateway.");
   expect(secondText).not.toContain("Port 8080 is not available");
   expect(secondText).not.toContain("Port 18789 is not available");
   const sandboxAAfterSecond = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
@@ -844,7 +869,10 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     fakeOpenAiRequests: fake.requests(),
     assertions: {
       firstOnboard: first.exitCode === 0,
-      secondOnboardReusedGateway: gatewayAfterSecond === gatewayBeforeSecond,
+      gatewayStatusReportedServerEndpoint: Boolean(gatewayServerEndpoint),
+      secondOnboardReusedGateway:
+        gatewayAfterSecond === gatewayBeforeSecond &&
+        secondText.includes("Reusing healthy NemoClaw gateway."),
       thirdOnboardPreservedSibling:
         sandboxAAfterThird.exitCode === 0 && sandboxBAfterThird.exitCode === 0,
       distinctDashboardPorts: Boolean(portA && portB && portA !== portB),

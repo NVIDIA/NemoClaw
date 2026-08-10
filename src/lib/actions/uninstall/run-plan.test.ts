@@ -55,8 +55,8 @@ function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; o
   return (args: readonly string[]): RunResult | null => {
     if (args[0] !== "-p" || args[1] !== pidStr || args[2] !== "-o") return null;
     const pid = Number(pidStr);
-    if (args[3] === "pid=") {
-      return opts.exited.has(pid) ? notFound() : ok(`${pidStr}\n`);
+    if (args[3] === "pid=" || args[3] === "stat=") {
+      return opts.exited.has(pid) ? notFound() : ok(args[3] === "stat=" ? "S\n" : `${pidStr}\n`);
     }
     if (args[3] === "user=") return ok(`${opts.owner ?? "testuser"}\n`);
     if (args[3] === "args=") return ok(opts.cmdline ?? PROXY_CMDLINE);
