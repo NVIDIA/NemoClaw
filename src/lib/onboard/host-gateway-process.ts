@@ -6,6 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { dockerForceRm as runDockerForceRm } from "../adapters/docker/container";
+import { dockerInspect as runDockerInspect } from "../adapters/docker/inspect";
+import type { DockerRunOptions, DockerRunResult } from "../adapters/docker/run";
 import { waitUntil } from "../core/wait";
 import {
   clearDockerDriverGatewayRuntimeMarker,
@@ -33,6 +36,14 @@ export interface HostGatewayProcessDeps {
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   env: NodeJS.ProcessEnv;
   commandExists?: (command: string) => boolean;
+  dockerForceRm: (
+    containerName: string,
+    options?: DockerRunOptions,
+  ) => Pick<DockerRunResult, "status" | "stdout" | "stderr">;
+  dockerInspect: (
+    args: readonly string[],
+    options?: DockerRunOptions,
+  ) => Pick<DockerRunResult, "status" | "stdout" | "stderr">;
   isPortFree?: (port: number) => boolean;
   log?: (message: string) => void;
   readProcessExecutable?: (pid: number) => string | null;
@@ -144,6 +155,8 @@ function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatew
     kill: overrides.kill ?? defaultKill,
     env,
     commandExists: overrides.commandExists ?? ((cmd) => defaultCommandExists(cmd, env)),
+    dockerForceRm: overrides.dockerForceRm ?? runDockerForceRm,
+    dockerInspect: overrides.dockerInspect ?? runDockerInspect,
     isPortFree: overrides.isPortFree ?? ((port) => isHostPortFree(port)),
     log: overrides.log,
     readProcessExecutable: overrides.readProcessExecutable,
@@ -320,12 +333,15 @@ function dockerCompatContainerIdentity(
     delete dockerEnv[key];
   }
   dockerEnv.DOCKER_HOST = dockerHost;
-  const result = deps.run("docker", ["inspect", "--type", "container", containerName], {
+  const result = deps.dockerInspect(["--type", "container", containerName], {
+    encoding: "utf-8",
     env: dockerEnv,
+    ignoreError: true,
+    suppressOutput: true,
   });
   if (result.status !== 0) return null;
   try {
-    const parsed = JSON.parse(result.stdout) as Array<{
+    const parsed = JSON.parse(String(result.stdout ?? "")) as Array<{
       Args?: unknown;
       HostConfig?: { NetworkMode?: unknown };
       Id?: unknown;
@@ -711,12 +727,15 @@ function tryStopScopedPid(
   const log = deps.log ?? ((message: string) => console.log(message));
   if (processStartIdentity(pid, deps) !== expectedStartIdentity) return "identity-changed";
   if (compatContainerIdentity) {
-    const removed = deps.run("docker", ["rm", "-f", compatContainerIdentity.containerId], {
+    const removed = deps.dockerForceRm(compatContainerIdentity.containerId, {
+      encoding: "utf-8",
       env: compatContainerIdentity.dockerEnv,
+      ignoreError: true,
+      suppressOutput: true,
     });
     if (removed.status !== 0) {
       const warn = deps.warn ?? ((message: string) => console.warn(message));
-      const detail = removed.stderr.trim() || `status ${String(removed.status)}`;
+      const detail = String(removed.stderr ?? "").trim() || `status ${String(removed.status)}`;
       warn(
         `Failed to remove scoped gateway compatibility container '${compatContainerIdentity.containerName}': ${detail}`,
       );

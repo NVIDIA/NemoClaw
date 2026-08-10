@@ -81,7 +81,11 @@ type ScopedGatewayFixtureOptions = {
   markerPid?: number;
   markerPort?: number;
   omitMarker?: boolean;
+  omitPidFile?: boolean;
   pidFilePid?: number;
+  portFree?: boolean;
+  processAlive?: boolean;
+  processExecutable?: string | null;
   processUid?: number;
   startIdentities?: readonly string[];
   usePgrepFallback?: boolean;
@@ -108,17 +112,22 @@ function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
     options.cmdline ??
     `${directGatewayBin} gateway start --name ${selectedName} --port ${String(selectedPort)}\n`;
   const compatibilityMode = selectedCmdline.includes("/opt/nemoclaw/openshell-gateway");
-  fs.writeFileSync(selectedPidFile, `${String(options.pidFilePid ?? selectedPid)}\n`);
+  const writeSelectedPidFile = options.omitPidFile
+    ? () => undefined
+    : () => fs.writeFileSync(selectedPidFile, `${String(options.pidFilePid ?? selectedPid)}\n`);
+  writeSelectedPidFile();
   fs.writeFileSync(siblingPidFile, `${String(siblingPid)}\n`);
-  if (!options.omitMarker) {
-    writeDockerDriverGatewayRuntimeMarkerForStateDir(selectedStateDir, {
-      desiredEnv: {},
-      dockerHost: null,
-      endpoint: `https://127.0.0.1:${String(options.markerPort ?? selectedPort)}`,
-      gatewayBin: compatibilityMode ? null : directGatewayBin,
-      pid: options.markerPid ?? selectedPid,
-    });
-  }
+  const writeSelectedMarker = options.omitMarker
+    ? () => undefined
+    : () =>
+        writeDockerDriverGatewayRuntimeMarkerForStateDir(selectedStateDir, {
+          desiredEnv: {},
+          dockerHost: null,
+          endpoint: `https://127.0.0.1:${String(options.markerPort ?? selectedPort)}`,
+          gatewayBin: compatibilityMode ? null : directGatewayBin,
+          pid: options.markerPid ?? selectedPid,
+        });
+  writeSelectedMarker();
   writeDockerDriverGatewayRuntimeMarkerForStateDir(siblingStateDir, {
     desiredEnv: {},
     endpoint: "https://127.0.0.1:8080",
@@ -126,7 +135,35 @@ function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
   });
 
   const recordedPid = options.pidFilePid ?? selectedPid;
-  const exited = new Set<number>();
+  const exited = new Set<number>(options.processAlive === false ? [recordedPid] : []);
+  const compatContainerPid = options.compatContainerPid;
+  const compatibilityResponses: [string, RunResult | ((args: string[]) => RunResult)][] =
+    compatContainerPid === undefined
+      ? []
+      : [
+          [
+            `docker inspect --type container ${selectedCompatContainerName}`,
+            ok(
+              `${JSON.stringify([
+                {
+                  Args: [],
+                  HostConfig: { NetworkMode: "host" },
+                  Id: selectedCompatContainerId,
+                  Name: `/${selectedCompatContainerName}`,
+                  Path: "/opt/nemoclaw/openshell-gateway",
+                  State: { Pid: compatContainerPid, Running: true },
+                },
+              ])}\n`,
+            ),
+          ],
+          [
+            `docker rm -f ${selectedCompatContainerId}`,
+            () => {
+              exited.add(recordedPid);
+              return ok(`${selectedCompatContainerName}\n`);
+            },
+          ],
+        ];
   const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
     // A host-wide fallback would discover both gateways. Scoped teardown must
     // never execute this response.
@@ -141,32 +178,15 @@ function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
       `lsof -ti :${String(selectedPort)} -sTCP:LISTEN`,
       ok((options.listenerPids ?? [recordedPid]).map(String).join("\n") + "\n"),
     ],
+    ...compatibilityResponses,
   ]);
-  if (options.compatContainerPid !== undefined) {
-    responses.set(
-      `docker inspect --type container ${selectedCompatContainerName}`,
-      ok(
-        `${JSON.stringify([
-          {
-            Args: [],
-            HostConfig: { NetworkMode: "host" },
-            Id: selectedCompatContainerId,
-            Name: `/${selectedCompatContainerName}`,
-            Path: "/opt/nemoclaw/openshell-gateway",
-            State: { Pid: options.compatContainerPid, Running: true },
-          },
-        ])}\n`,
-      ),
-    );
-    responses.set(`docker rm -f ${selectedCompatContainerId}`, () => {
-      exited.add(recordedPid);
-      return ok(`${selectedCompatContainerName}\n`);
-    });
-  }
   const { calls, run } = makeRun(responses);
   let startIdentityRead = 0;
+  const signalHandlers = new Map<NodeJS.Signals | number | undefined, (pid: number) => void>([
+    ["SIGKILL", (pid) => void exited.add(pid)],
+  ]);
   const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-    if (signal === "SIGKILL") exited.add(pid);
+    signalHandlers.get(signal)?.(pid);
     return true;
   });
 
@@ -176,16 +196,18 @@ function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
       kill,
       env: { USER: "tester" },
       commandExists: () => true,
-      isPortFree: () => true,
+      dockerForceRm: (containerId) => run("docker", ["rm", "-f", containerId]),
+      dockerInspect: (args) => run("docker", ["inspect", ...args]),
+      isPortFree: () => options.portFree ?? true,
       log: vi.fn(),
-      readProcessExecutable: () => directGatewayBin,
+      readProcessExecutable: () =>
+        options.processExecutable === undefined ? directGatewayBin : options.processExecutable,
       readProcessEnvironment: () => ({}),
       readProcessStartIdentity: (pid) => {
-        if (exited.has(pid)) return null;
         const identities = options.startIdentities ?? ["fixture-start-identity"];
         const identity = identities[Math.min(startIdentityRead, identities.length - 1)] ?? null;
         startIdentityRead += 1;
-        return identity;
+        return exited.has(pid) ? null : identity;
       },
     },
     {
@@ -709,6 +731,16 @@ describe("scoped host gateway stop isolation (#8663)", () => {
       reason: "gateway process owner does not match the scoped runtime evidence owner",
     },
     {
+      label: "the process executable differs from the runtime marker",
+      options: { processExecutable: "/opt/foreign/openshell" },
+      reason: "gateway process executable does not match the runtime marker",
+    },
+    {
+      label: "the process executable has been deleted",
+      options: { processExecutable: "/opt/openshell/openshell (deleted)" },
+      reason: "gateway process executable does not match the runtime marker",
+    },
+    {
       label: "the selected port listener belongs to the sibling PID",
       options: { listenerPids: [9_990_808] },
       reason: "PID 9991880 is not the sole listener owner for port 18080",
@@ -728,6 +760,43 @@ describe("scoped host gateway stop isolation (#8663)", () => {
       expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(!options.omitMarker);
       expect(fs.existsSync(fixture.siblingPidFile)).toBe(true);
       expect(fs.existsSync(fixture.siblingRuntimeMarker)).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("fails closed when the selected port is occupied without PID ownership evidence", () => {
+    const fixture = scopedGatewayFixture({
+      listenerPids: [9_990_808],
+      omitMarker: true,
+      omitPidFile: true,
+      portFree: false,
+    });
+    try {
+      expect(fixture.result.ownershipFailures).toEqual([
+        "gateway port 18080 is occupied without PID-file ownership evidence",
+      ]);
+      expect(fixture.kill).not.toHaveBeenCalled();
+      expect(fixture.calls.filter(({ command }) => command === "pgrep")).toEqual([]);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("fails closed when the recorded PID is dead but the selected port remains occupied", () => {
+    const fixture = scopedGatewayFixture({
+      listenerPids: [9_990_808],
+      portFree: false,
+      processAlive: false,
+    });
+    try {
+      expect(fixture.result.skippedDeadPids).toEqual([fixture.selectedPid]);
+      expect(fixture.result.ownershipFailures).toEqual([
+        `recorded PID ${String(fixture.selectedPid)} is dead but port 18080 remains occupied`,
+      ]);
+      expect(fixture.kill).not.toHaveBeenCalled();
+      expect(fs.existsSync(fixture.selectedPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(true);
     } finally {
       fixture.cleanup();
     }

@@ -20,6 +20,42 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
+type RunResponder = () => RunResult;
+
+function commandSignature(command: string, args: readonly string[]): string {
+  return [command, ...args].join("\0");
+}
+
+function systemctlShowSignature(serviceName: string): string {
+  return commandSignature("systemctl", [
+    "--user",
+    "show",
+    serviceName,
+    "--property=FragmentPath",
+    "--property=ExecStart",
+    "--property=ExecStop",
+    "--property=ExecStopPost",
+    "--property=ActiveState",
+    "--property=MainPID",
+    "--property=Restart",
+    "--property=KillSignal",
+    "--property=KillMode",
+  ]);
+}
+
+function runFromResponses(
+  responses: ReadonlyMap<string, RunResponder>,
+  calls: string[][],
+  fallback: NonNullable<UninstallRunDeps["run"]> = () => ok(),
+): NonNullable<UninstallRunDeps["run"]> {
+  return (command, args, options) => {
+    calls.push([command, ...args]);
+    return (
+      responses.get(commandSignature(command, args)) ?? (() => fallback(command, args, options))
+    )();
+  };
+}
+
 interface Fixture {
   env: NodeJS.ProcessEnv;
   home: string;
@@ -136,6 +172,28 @@ function uninstall(
     run = () => ok(),
     ...overrides
   } = deps;
+  const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
+  const gatewayBin = `${test.home}/.local/bin/openshell-gateway`;
+  const inactiveSystemdShow = ok(
+    [
+      `FragmentPath=${servicePath}`,
+      `ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ; }`,
+      "ExecStop=",
+      "ExecStopPost=",
+      "ActiveState=inactive",
+      "MainPID=0",
+      "Restart=on-failure",
+      "KillSignal=15",
+      "KillMode=control-group",
+    ].join("\n"),
+  );
+  const defaultSystemdShows = new Map<string, RunResult>([
+    [systemctlShowSignature(NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE), inactiveSystemdShow],
+  ]);
+  const gatewayListSignature = commandSignature("openshell", ["gateway", "list", "-o", "json"]);
+  const defaultResponses = new Map<string, RunResult>([
+    [gatewayListSignature, ok(JSON.stringify(gateways))],
+  ]);
   return runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell },
     {
@@ -162,33 +220,13 @@ function uninstall(
       commandExists: (command) =>
         command === "openshell" || command === "lsof" || commandExists(command),
       run: (command, args, options) => {
-        if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-          return ok(JSON.stringify(gateways));
-        }
-        const response = run(command, args, options);
-        if (
-          command === "systemctl" &&
-          args.includes("show") &&
-          response.status === 0 &&
-          response.stdout === ""
-        ) {
-          const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
-          const gatewayBin = `${test.home}/.local/bin/openshell-gateway`;
-          return ok(
-            [
-              `FragmentPath=${servicePath}`,
-              `ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ; }`,
-              "ExecStop=",
-              "ExecStopPost=",
-              "ActiveState=inactive",
-              "MainPID=0",
-              "Restart=on-failure",
-              "KillSignal=15",
-              "KillMode=control-group",
-            ].join("\n"),
-          );
-        }
-        return response;
+        const signature = commandSignature(command, args);
+        const response = defaultResponses.get(signature) ?? run(command, args, options);
+        const defaultSystemdShow =
+          response.status === 0 && response.stdout === ""
+            ? defaultSystemdShows.get(signature)
+            : undefined;
+        return defaultSystemdShow ?? response;
       },
     },
   );
@@ -328,6 +366,68 @@ describe("uninstall OpenShell gateway user service", () => {
     const kill = vi.fn(() => true);
     const readProcessExecutable = vi.fn(() => gatewayBin);
     const readProcessStartIdentity = vi.fn(() => "boot-identity:12345");
+    const daemonReload = vi
+      .fn<() => RunResult>()
+      .mockImplementationOnce(() => {
+        events.push("daemon-reload");
+        const dropInPath = path.join(`${servicePath}.d`, "99-nemoclaw-scoped-uninstall.conf");
+        expect(fs.readFileSync(dropInPath, "utf-8")).toBe(
+          "[Service]\nRestart=no\nKillSignal=SIGKILL\nKillMode=control-group\n",
+        );
+        scopedOverrideLoaded = true;
+        return ok();
+      })
+      .mockImplementation(() => {
+        events.push("daemon-reload");
+        return ok();
+      });
+    const runResponses = new Map<string, RunResponder>([
+      [
+        commandSignature("openshell", ["sandbox", "delete", "my-assistant"]),
+        () => {
+          events.push("sandbox-delete");
+          return ok();
+        },
+      ],
+      [
+        systemctlShowSignature(NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE),
+        () =>
+          ok(
+            managedSystemdShow(test, {
+              active: !serviceStopped,
+              effectiveScopedStop: scopedOverrideLoaded,
+              mainPid,
+            }),
+          ),
+      ],
+      [commandSignature("systemctl", ["--user", "daemon-reload"]), daemonReload],
+      [
+        commandSignature("systemctl", [
+          "--user",
+          "disable",
+          "--now",
+          NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+        ]),
+        () => {
+          events.push("disable-now");
+          expect(scopedOverrideLoaded).toBe(true);
+          serviceStopped = true;
+          return ok();
+        },
+      ],
+      [
+        commandSignature("ps", ["-p", String(mainPid), "-o", "uid="]),
+        () => ok(`${String(CURRENT_UID)}\n`),
+      ],
+      [
+        commandSignature("ps", ["-p", String(mainPid), "-o", "pid="]),
+        () => (serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`)),
+      ],
+      [
+        commandSignature("lsof", ["-ti", ":8080", "-sTCP:LISTEN"]),
+        () => (serviceStopped ? ok() : ok(`${mainPid}\n`)),
+      ],
+    ]);
 
     const result = uninstall(
       test,
@@ -338,47 +438,7 @@ describe("uninstall OpenShell gateway user service", () => {
         kill,
         readProcessExecutable,
         readProcessStartIdentity,
-        run: (command, args) => {
-          calls.push([command, ...args]);
-          if (command === "openshell" && args[0] === "sandbox" && args[1] === "delete") {
-            events.push("sandbox-delete");
-            return ok();
-          }
-          if (command === "systemctl" && args.includes("show")) {
-            return ok(
-              managedSystemdShow(test, {
-                active: !serviceStopped,
-                effectiveScopedStop: scopedOverrideLoaded,
-                mainPid,
-              }),
-            );
-          }
-          if (command === "systemctl" && args.includes("daemon-reload")) {
-            events.push("daemon-reload");
-            if (!serviceStopped) {
-              const dropInPath = path.join(`${servicePath}.d`, "99-nemoclaw-scoped-uninstall.conf");
-              expect(fs.readFileSync(dropInPath, "utf-8")).toBe(
-                "[Service]\nRestart=no\nKillSignal=SIGKILL\nKillMode=control-group\n",
-              );
-              scopedOverrideLoaded = true;
-            }
-            return ok();
-          }
-          if (command === "systemctl" && args.includes("disable")) {
-            events.push("disable-now");
-            expect(scopedOverrideLoaded).toBe(true);
-            serviceStopped = true;
-            return ok();
-          }
-          if (command === "ps" && args.at(-1) === "uid=") return ok(`${String(CURRENT_UID)}\n`);
-          if (command === "ps" && args.at(-1) === "pid=") {
-            return serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`);
-          }
-          if (command === "lsof" && args.includes(":8080")) {
-            return serviceStopped ? ok() : ok(`${mainPid}\n`);
-          }
-          return ok();
-        },
+        run: runFromResponses(runResponses, calls),
       },
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
     );
@@ -432,6 +492,48 @@ describe("uninstall OpenShell gateway user service", () => {
     const calls: string[][] = [];
     let scopedOverrideLoaded = false;
     let serviceStopped = false;
+    const runResponses = new Map<string, RunResponder>([
+      [
+        systemctlShowSignature("openshell-gateway"),
+        () =>
+          ok(
+            managedSystemdShow(test, {
+              active: !serviceStopped,
+              effectiveScopedStop: scopedOverrideLoaded,
+              execStartPath: gatewayBin,
+              fragmentPath: servicePath,
+              mainPid,
+            }),
+          ),
+      ],
+      [
+        commandSignature("systemctl", ["--user", "daemon-reload"]),
+        () => {
+          scopedOverrideLoaded = fs.existsSync(dropInPath);
+          return ok();
+        },
+      ],
+      [
+        commandSignature("systemctl", ["--user", "stop", "openshell-gateway"]),
+        () => {
+          expect(scopedOverrideLoaded).toBe(true);
+          serviceStopped = true;
+          return ok();
+        },
+      ],
+      [
+        commandSignature("ps", ["-p", String(mainPid), "-o", "uid="]),
+        () => ok(`${String(CURRENT_UID)}\n`),
+      ],
+      [
+        commandSignature("ps", ["-p", String(mainPid), "-o", "pid="]),
+        () => (serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`)),
+      ],
+      [
+        commandSignature("lsof", ["-ti", ":8080", "-sTCP:LISTEN"]),
+        () => (serviceStopped ? ok() : ok(`${mainPid}\n`)),
+      ],
+    ]);
 
     const result = uninstall(
       test,
@@ -444,37 +546,7 @@ describe("uninstall OpenShell gateway user service", () => {
         isPortFree: () => serviceStopped,
         readProcessExecutable: () => gatewayBin,
         readProcessStartIdentity: () => "boot-identity:package-service",
-        run: (command, args) => {
-          calls.push([command, ...args]);
-          if (command === "systemctl" && args.includes("show")) {
-            return ok(
-              managedSystemdShow(test, {
-                active: !serviceStopped,
-                effectiveScopedStop: scopedOverrideLoaded,
-                execStartPath: gatewayBin,
-                fragmentPath: servicePath,
-                mainPid,
-              }),
-            );
-          }
-          if (command === "systemctl" && args.includes("daemon-reload")) {
-            scopedOverrideLoaded = fs.existsSync(dropInPath);
-            return ok();
-          }
-          if (command === "systemctl" && args.includes("stop")) {
-            expect(scopedOverrideLoaded).toBe(true);
-            serviceStopped = true;
-            return ok();
-          }
-          if (command === "ps" && args.at(-1) === "uid=") return ok(`${String(CURRENT_UID)}\n`);
-          if (command === "ps" && args.at(-1) === "pid=") {
-            return serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`);
-          }
-          if (command === "lsof" && args.includes(":8080")) {
-            return serviceStopped ? ok() : ok(`${mainPid}\n`);
-          }
-          return ok();
-        },
+        run: runFromResponses(runResponses, calls),
       },
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
     );
@@ -498,32 +570,54 @@ describe("uninstall OpenShell gateway user service", () => {
     let failFirstDropInRemoval = true;
     let scopedOverrideLoaded = false;
     let serviceStopped = false;
-    const run = (command: string, args: string[]) => {
-      if (command === "systemctl" && args.includes("show")) {
-        return ok(
-          managedSystemdShow(test, {
-            active: !serviceStopped,
-            effectiveScopedStop: scopedOverrideLoaded,
-            mainPid,
-          }),
-        );
-      }
-      if (command === "systemctl" && args.includes("daemon-reload")) {
-        scopedOverrideLoaded = fs.existsSync(dropInPath);
-        return ok();
-      }
-      if (command === "systemctl" && args.includes("disable")) {
-        serviceStopped = true;
-        return ok();
-      }
-      if (command === "ps" && args.at(-1) === "uid=") return ok(`${String(CURRENT_UID)}\n`);
-      if (command === "ps" && args.at(-1) === "pid=") {
-        return serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`);
-      }
-      if (command === "lsof" && args.includes(":8080")) {
-        return serviceStopped ? ok() : ok(`${mainPid}\n`);
-      }
-      return ok();
+    const calls: string[][] = [];
+    const runResponses = new Map<string, RunResponder>([
+      [
+        systemctlShowSignature(NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE),
+        () =>
+          ok(
+            managedSystemdShow(test, {
+              active: !serviceStopped,
+              effectiveScopedStop: scopedOverrideLoaded,
+              mainPid,
+            }),
+          ),
+      ],
+      [
+        commandSignature("systemctl", ["--user", "daemon-reload"]),
+        () => {
+          scopedOverrideLoaded = fs.existsSync(dropInPath);
+          return ok();
+        },
+      ],
+      [
+        commandSignature("systemctl", [
+          "--user",
+          "disable",
+          "--now",
+          NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+        ]),
+        () => {
+          serviceStopped = true;
+          return ok();
+        },
+      ],
+      [
+        commandSignature("ps", ["-p", String(mainPid), "-o", "uid="]),
+        () => ok(`${String(CURRENT_UID)}\n`),
+      ],
+      [
+        commandSignature("ps", ["-p", String(mainPid), "-o", "pid="]),
+        () => (serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`)),
+      ],
+      [
+        commandSignature("lsof", ["-ti", ":8080", "-sTCP:LISTEN"]),
+        () => (serviceStopped ? ok() : ok(`${mainPid}\n`)),
+      ],
+    ]);
+    const run = runFromResponses(runResponses, calls);
+    const failDropInRemoval = (): never => {
+      throw new Error("injected drop-in removal failure");
     };
     const deps: Partial<UninstallRunDeps> = {
       commandExists: (command) => command === "systemctl",
@@ -531,11 +625,9 @@ describe("uninstall OpenShell gateway user service", () => {
       readProcessExecutable: () => gatewayBin,
       readProcessStartIdentity: () => "boot-identity:retry",
       rmSync: (target, options) => {
-        if (String(target) === dropInPath && failFirstDropInRemoval) {
-          failFirstDropInRemoval = false;
-          throw new Error("injected drop-in removal failure");
-        }
-        fs.rmSync(target, options);
+        const failThisRemoval = String(target) === dropInPath && failFirstDropInRemoval;
+        failFirstDropInRemoval = failFirstDropInRemoval && !failThisRemoval;
+        return failThisRemoval ? failDropInRemoval() : fs.rmSync(target, options);
       },
       run,
     };
@@ -578,6 +670,27 @@ describe("uninstall OpenShell gateway user service", () => {
     const mainPid = 41_201;
     const calls: string[][] = [];
     const kill = vi.fn(() => true);
+    const runResponses = new Map<string, RunResponder>([
+      [
+        systemctlShowSignature(NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE),
+        () =>
+          ok(
+            managedSystemdShow(test, {
+              active: true,
+              fragmentPath: identity.fragmentPath,
+              mainPid,
+            }),
+          ),
+      ],
+      [
+        commandSignature("ps", ["-p", String(mainPid), "-o", "uid="]),
+        () => ok(`${String(identity.processUid ?? CURRENT_UID)}\n`),
+      ],
+      [
+        commandSignature("lsof", ["-ti", ":8080", "-sTCP:LISTEN"]),
+        () => ok(`${identity.listenerPid}\n`),
+      ],
+    ]);
 
     const result = uninstall(
       test,
@@ -588,25 +701,7 @@ describe("uninstall OpenShell gateway user service", () => {
         kill,
         readProcessExecutable: () => gatewayBin,
         readProcessStartIdentity: () => "boot-identity:12345",
-        run: (command, args) => {
-          calls.push([command, ...args]);
-          if (command === "systemctl" && args.includes("show")) {
-            return ok(
-              managedSystemdShow(test, {
-                active: true,
-                fragmentPath: identity.fragmentPath,
-                mainPid,
-              }),
-            );
-          }
-          if (command === "ps" && args.at(-1) === "uid=") {
-            return ok(`${String(identity.processUid ?? CURRENT_UID)}\n`);
-          }
-          if (command === "lsof" && args.includes(":8080")) {
-            return ok(`${identity.listenerPid}\n`);
-          }
-          return ok();
-        },
+        run: runFromResponses(runResponses, calls),
       },
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
     );

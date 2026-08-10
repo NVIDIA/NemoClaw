@@ -18,6 +18,23 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
+type RunResponder = () => RunResult;
+
+function commandSignature(command: string, args: readonly string[]): string {
+  return [command, ...args].join("\0");
+}
+
+function runFromResponses(
+  responses: ReadonlyMap<string, RunResponder>,
+  calls: string[],
+): NonNullable<UninstallRunDeps["run"]> {
+  const fallback = () => ok();
+  return (command, args) => {
+    calls.push([command, ...args].join(" "));
+    return (responses.get(commandSignature(command, args)) ?? fallback)();
+  };
+}
+
 function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   const commandExists = deps.commandExists;
   return {
@@ -146,6 +163,41 @@ describe("scoped uninstall gateway process isolation", () => {
         path.join(selectedGatewayRuntimeDir, "openshell-gateway.pid"),
       ).uid;
       let selectedAlive = true;
+      const gatewayList = JSON.stringify([
+        { name: "nemoclaw" },
+        { name: `nemoclaw-${String(selectedPort)}` },
+      ]);
+      const stopped = { ...ok(), status: 1 };
+      const runResponses = new Map<string, RunResponder>([
+        [commandSignature("openshell", ["gateway", "list", "-o", "json"]), () => ok(gatewayList)],
+        [
+          commandSignature("lsof", ["-ti", `:${String(selectedPort)}`, "-sTCP:LISTEN"]),
+          () => (selectedAlive ? ok(`${String(selectedPid)}\n`) : stopped),
+        ],
+        [
+          commandSignature("ps", ["-p", String(selectedPid), "-o", "pid="]),
+          () => (selectedAlive ? ok(`${String(selectedPid)}\n`) : stopped),
+        ],
+        [
+          commandSignature("ps", ["-p", String(selectedPid), "-o", "uid="]),
+          () => ok(`${String(selectedUid)}\n`),
+        ],
+        [
+          commandSignature("ps", ["-p", String(selectedPid), "-o", "comm="]),
+          () => ok("/opt/openshell-gateway\n"),
+        ],
+        [
+          commandSignature("ps", ["-p", String(selectedPid), "-o", "lstart="]),
+          () => ok("fixture-start-identity\n"),
+        ],
+        [
+          commandSignature("ps", ["-p", String(selectedPid), "-o", "args="]),
+          () =>
+            ok(
+              `openshell-gateway[nemoclaw=nemoclaw-${String(selectedPort)};port=${String(selectedPort)}]\n`,
+            ),
+        ],
+      ]);
       const result = runPortUninstall(
         {
           assumeYes: true,
@@ -167,40 +219,12 @@ describe("scoped uninstall gateway process isolation", () => {
           kill: (pid, signal) => {
             events.push(`kill ${String(pid)} ${String(signal)}`);
             signals.push({ pid, signal });
-            if (pid !== selectedPid || signal !== "SIGKILL") return false;
-            selectedAlive = false;
-            return true;
+            const matchesSelectedGateway = pid === selectedPid && signal === "SIGKILL";
+            selectedAlive = selectedAlive && !matchesSelectedGateway;
+            return matchesSelectedGateway;
           },
           log: vi.fn(),
-          run: (command, args) => {
-            events.push([command, ...args].join(" "));
-            if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-              return ok(
-                JSON.stringify([
-                  { name: "nemoclaw" },
-                  { name: `nemoclaw-${String(selectedPort)}` },
-                ]),
-              );
-            }
-            if (command === "lsof" && args.includes(`:${String(selectedPort)}`)) {
-              return selectedAlive ? ok(`${String(selectedPid)}\n`) : { ...ok(), status: 1 };
-            }
-            if (command === "ps" && args[1] === String(selectedPid)) {
-              if (args.includes("pid=")) {
-                return selectedAlive ? ok(`${String(selectedPid)}\n`) : { ...ok(), status: 1 };
-              }
-              if (args.includes("uid=")) return ok(`${String(selectedUid)}\n`);
-              if (args.includes("comm=")) return ok("/opt/openshell-gateway\n");
-              if (args.includes("lstart=")) return ok("fixture-start-identity\n");
-              if (args.includes("args=")) {
-                return ok(
-                  `openshell-gateway[nemoclaw=nemoclaw-${String(selectedPort)};port=${String(selectedPort)}]\n`,
-                );
-              }
-            }
-            if (command === "pgrep") return ok(`${String(siblingPid)}\n${String(selectedPid)}\n`);
-            return ok();
-          },
+          run: runFromResponses(runResponses, events),
           runDocker: () => ok(),
         },
       );
@@ -252,6 +276,17 @@ describe("scoped uninstall gateway process isolation", () => {
       const errors: string[] = [];
       const kill = vi.fn(() => true);
       const calls: string[] = [];
+      const gatewayList = JSON.stringify([
+        { name: "nemoclaw" },
+        { name: `nemoclaw-${String(selectedPort)}` },
+      ]);
+      const runResponses = new Map<string, RunResponder>([
+        [commandSignature("openshell", ["gateway", "list", "-o", "json"]), () => ok(gatewayList)],
+        [
+          commandSignature("ps", ["-p", String(siblingPid), "-o", "pid="]),
+          () => ok(`${String(siblingPid)}\n`),
+        ],
+      ]);
       const result = runPortUninstall(
         {
           assumeYes: true,
@@ -268,24 +303,7 @@ describe("scoped uninstall gateway process isolation", () => {
           isTty: false,
           kill,
           log: vi.fn(),
-          run: (command, args) => {
-            calls.push([command, ...args].join(" "));
-            if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-              return ok(
-                JSON.stringify([
-                  { name: "nemoclaw" },
-                  { name: `nemoclaw-${String(selectedPort)}` },
-                ]),
-              );
-            }
-            if (command === "ps" && args[1] === String(siblingPid) && args.includes("pid=")) {
-              return ok(`${String(siblingPid)}\n`);
-            }
-            if (command === "pgrep") {
-              return ok(`${String(siblingPid)}\n${String(selectedMarkerPid)}\n`);
-            }
-            return ok();
-          },
+          run: runFromResponses(runResponses, calls),
           runDocker: () => ok(),
         },
       );
