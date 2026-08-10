@@ -55,6 +55,8 @@ describe("Hermes MCP gateway restart", () => {
         ok: false,
         failureLayer: "MCP reconciliation refusal",
         detail: "Hermes MCP config does not match persisted managed intent",
+        restarted: true,
+        healthPassed: true,
       });
       expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
     } finally {
@@ -75,6 +77,8 @@ describe("Hermes MCP gateway restart", () => {
         ok: false,
         failureLayer: "MCP reconciliation refusal",
         detail: "integrity pending FORGED SUCCESS <REDACTED>",
+        restarted: true,
+        healthPassed: true,
       });
       expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
     } finally {
@@ -94,10 +98,13 @@ describe("Hermes MCP gateway restart", () => {
         })),
       });
 
-      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({
+      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+      expect(result).toMatchObject({
         ok: false,
         failureLayer: "MCP reconciliation refusal",
       });
+      expect(result).not.toHaveProperty("restarted");
+      expect(result).not.toHaveProperty("healthPassed");
       expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
       const output = vi.mocked(console.error).mock.calls.flat().join("\n");
       expect(output).toContain("nemoclaw alpha mcp restart");
