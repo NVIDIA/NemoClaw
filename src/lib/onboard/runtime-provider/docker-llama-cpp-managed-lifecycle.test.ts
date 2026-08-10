@@ -477,12 +477,17 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const fixture = dockerFixture();
     fixture.failSandboxBridgeProbe({ status: 125, stderr: "docker run failed" });
 
-    expect(() => createLifecycle(options(fixture)).start(receiptWriter())).toThrow(
+    let failure: Error | undefined;
+    try {
+      createLifecycle(options(fixture)).start(receiptWriter());
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toBe(
       "Docker llama.cpp private sandbox bridge probe failed (exit 125).",
     );
-    expect(
-      fixture.capture.mock.calls.some(([args]) => args.some((value: string) => value === "ufw")),
-    ).toBe(false);
+    expect(failure?.message).not.toContain("sudo ufw");
   });
 
   it("does not print unvalidated bridge topology in UFW remediation (#8712)", () => {

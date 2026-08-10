@@ -135,7 +135,7 @@ Onboarding performs these actions:
 - Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
-- Publishes port `8081` on `127.0.0.1` and connects the container to a Docker internal network.
+- Starts a private host bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without publishing a container port.
 - Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
@@ -147,16 +147,14 @@ Selecting either runtime fails before model acquisition or runtime mutation and 
 
 ## Verify the Managed Runtime
 
-Run the managed runtime, route, and host-port checks:
+Run the managed runtime and route checks:
 
 ```bash
 $$nemoclaw my-assistant status
 $$nemoclaw my-assistant doctor
-docker port nemoclaw-llama-cpp
 ```
 
 Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `reachable`, and `doctor` exits with status `0`.
-The Docker port output must contain `127.0.0.1:8081`.
 These checks do not establish agent and model qualification.
 
 `status` reports the recipe ID, model digest, image reference, endpoint, and lifecycle state without exposing the API key.
@@ -169,13 +167,16 @@ During managed installation, NemoClaw first checks internal runtime readiness an
 It repeats these checks when onboarding resumes.
 It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
 If that bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
-The error reports these values:
+When the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
 
 - The detected Docker network.
 - The source subnet.
 - The gateway IP address.
 - The fixed port `8081`.
 - The exact narrow UFW command.
+
+If the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
+Inspect the OpenShell Docker bridge configuration before you retry onboarding.
 
 <Warning>
 The printed command changes UFW.
