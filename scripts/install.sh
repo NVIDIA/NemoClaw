@@ -4384,6 +4384,40 @@ resolve_pending_express_wsl_provider() {
   fi
 }
 
+select_spark_express_inference() {
+  local input_fd="${1:-0}"
+  local reply=""
+
+  unset _SPARK_EXPRESS_INFERENCE_SELECTION
+  if [ -n "${NEMOCLAW_MODEL:-}" ] || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+    return 0
+  fi
+
+  printf "  Choose the DGX Spark inference setup:\n"
+  printf "    1) Managed vLLM with automatic serving-profile selection (default)\n"
+  printf "    2) Qwen3.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile\n"
+  while true; do
+    printf "  Choose 1 or 2 [1]: "
+    if ! IFS= read -r -u "$input_fd" reply; then
+      return 1
+    fi
+    reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
+    case "$reply" in
+      "" | 1)
+        _SPARK_EXPRESS_INFERENCE_SELECTION="managed-vllm"
+        return 0
+        ;;
+      2)
+        _SPARK_EXPRESS_INFERENCE_SELECTION="fixed-vllm"
+        return 0
+        ;;
+      *)
+        warn "Choose 1 or 2."
+        ;;
+    esac
+  done
+}
+
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
@@ -4399,9 +4433,21 @@ activate_express_install() {
   case "$platform" in
     "DGX Spark")
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-      export NEMOCLAW_PROVIDER=install-vllm
-      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
-        export NEMOCLAW_VLLM_MODEL
+      if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
+        if [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ] \
+          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_VLLM_PORT:-}" ] \
+          || [ -n "${NEMOCLAW_VLLM_EXTRA_ARGS_JSON:-}" ]; then
+          error "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides."
+        fi
+        unset NEMOCLAW_PROVIDER
+        export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
+        export NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm
+      else
+        unset NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE NEMOCLAW_LOCAL_MODEL_RUNTIME
+        export NEMOCLAW_PROVIDER=install-vllm
+        if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+          export NEMOCLAW_VLLM_MODEL
+        fi
       fi
       ;;
     "DGX Station")
@@ -4837,9 +4883,15 @@ describe_express_install() {
 
   case "$platform" in
     "DGX Spark")
-      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+      if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
+        inference_summary="Qwen3.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile"
+        inference_disclosure="The serving catalog owns the model, image, port, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides before starting its managed container."
+      elif [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="The explicit model remains authoritative, so this run keeps the existing single-host DGX Spark profile. Managed vLLM pulls the configured image/model and runs only its dedicated container."
+      elif [ -n "${NEMOCLAW_MODEL:-}" ]; then
+        inference_summary="managed local vLLM with explicit model intent ${NEMOCLAW_MODEL}"
+        inference_disclosure="The explicit model remains authoritative, so this run keeps the customizable managed-vLLM path and does not offer the fixed profile."
       else
         inference_summary="managed vLLM with automatic DGX Spark serving-profile selection"
         inference_disclosure="With no explicit inference intent or related runtime, one exactly qualified pretrusted managed cluster topology selects a matching pinned distributed profile. An ordinary no-match keeps the existing single-host DGX Spark profile; any related or ambiguous setup remains untouched and stops installation. Managed vLLM pulls the selected image/model and runs only its dedicated containers. The selected distributed profile is experimental pending physical end-to-end validation."
@@ -5023,6 +5075,10 @@ maybe_offer_express_install() {
   local reply=""
   if [ -t 0 ]; then
     info "Detected ${platform}."
+    if [ "$platform" = "DGX Spark" ] && ! select_spark_express_inference 0; then
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
@@ -5036,6 +5092,11 @@ maybe_offer_express_install() {
     fi
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Detected ${platform}."
+    if [ "$platform" = "DGX Spark" ] && ! select_spark_express_inference 3; then
+      exec 3<&-
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then

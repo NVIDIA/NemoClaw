@@ -445,6 +445,24 @@ describe("vLLM run command", () => {
     expect(args).toContain("8000:8000");
   });
 
+  it("publishes authenticated managed vLLM only on loopback and the private OpenShell bridge (#8379)", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const model = { ...profile.defaultModel, managedBearerAuth: true as const };
+    const args = buildVllmRunArgs(
+      profile,
+      model,
+      profile.dockerRunFlags,
+      {
+        VLLM_API_KEY: "a".repeat(64),
+      },
+      "172.18.0.1",
+    );
+    const bindings = args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []));
+
+    expect(bindings).toEqual(["127.0.0.1:8000:8000", "172.18.0.1:8000:8000"]);
+    expect(bindings.join(" ")).not.toMatch(/(?:0\.0\.0\.0|\[?::\]?):8000/u);
+  });
+
   it("labels catalog-selected host-local containers with immutable recipe provenance (#8246)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
@@ -993,6 +1011,7 @@ describe("installVllm model resolution", () => {
       hasImage: true,
       nonInteractive: true,
       promptFn: vi.fn(),
+      resolveManagedBridgeHost: () => "172.18.0.1",
     });
     expect(result).toEqual({ ok: false });
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("unauthenticated model inventory"));
@@ -1085,6 +1104,64 @@ describe("installVllm model resolution", () => {
         }),
       );
     }
+  });
+
+  it("pins authenticated host-local installs to the physical default daemon (#8379)", async () => {
+    process.env.DOCKER_CONTEXT = "remote-builder";
+    process.env.DOCKER_HOST = "ssh://remote.example.test";
+    process.env.DOCKER_CONFIG = "/tmp/remote-docker-config";
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const servingCatalog = {
+      catalogDigest: `sha256:${"1".repeat(64)}`,
+      presetId: "local-model-profile.vllm.spark.v1",
+      presetDigest: `sha256:${"2".repeat(64)}`,
+      recipeId: "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
+      recipeDigest: `sha256:${"3".repeat(64)}`,
+    };
+    const model = { ...baseProfile.defaultModel, managedBearerAuth: true as const };
+    const profile = { ...baseProfile, defaultModel: model, servingCatalog };
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({
+      kind: "selected",
+      profile,
+      model,
+      presetId: servingCatalog.presetId,
+      recipeId: servingCatalog.recipeId,
+    });
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    const resolveManagedBridgeHost = vi.fn(() => "172.18.0.1");
+
+    const result = await installVllm(baseProfile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      resolveManagedBridgeHost,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeDockerStorage).toHaveBeenCalledWith(
+      expect.objectContaining({ dockerContext: "default", dockerHost: undefined }),
+    );
+    const dockerAdapterOptions = [
+      ...mocks.dockerImageInspectFormat.mock.calls.map((call) => call[2]),
+      ...mocks.dockerPullWithProgressWatchdog.mock.calls.map((call) => call[1]),
+      ...mocks.dockerSpawn.mock.calls.map((call) => call[1]),
+      ...mocks.dockerForceRm.mock.calls.map((call) => call[1]),
+      ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
+      ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
+      ...mocks.dockerStop.mock.calls.map((call) => call[1]),
+    ];
+    expect(dockerAdapterOptions.length).toBeGreaterThan(0);
+    for (const options of dockerAdapterOptions) {
+      expect(options.env.DOCKER_CONTEXT).toBe("default");
+      expect(options.env.DOCKER_HOST).toBeUndefined();
+      expect(options.env.DOCKER_CONFIG).toBeUndefined();
+    }
+    expect(resolveManagedBridgeHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        DOCKER_CONTEXT: "default",
+        VLLM_API_KEY: "b".repeat(64),
+      }),
+    );
   });
 
   it("fails before image pull when the host Hugging Face cache cannot be created", async () => {

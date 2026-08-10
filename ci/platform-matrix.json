@@ -47,7 +47,7 @@
       "status": "tested",
       "prd_priority": "P1",
       "ci_tested": true,
-      "notes": "Use the standard installer and `$$nemoclaw onboard`. The automatic two-DGX Spark managed-vLLM profile is Experimental, and physical two-node end-to-end validation is pending. For the profile requirements and controls, see [Set Up vLLM on Two DGX Sparks](../inference/local-inference/set-up-vllm-on-two-dgx-sparks). For the validated single-DGX Spark walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
+      "notes": "Use the standard installer and `$$nemoclaw onboard`. DGX Spark Express keeps automatic managed-vLLM serving-profile selection as option 1 and offers the fixed single-host catalog profile as option 2. The automatic two-DGX Spark managed-vLLM profile is Experimental, and physical two-node end-to-end validation is pending. For the profile requirements and controls, see [Set Up vLLM on Two DGX Sparks](../inference/local-inference/set-up-vllm-on-two-dgx-sparks). For the validated single-DGX Spark walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
     },
     {
       "name": "Windows WSL2",
