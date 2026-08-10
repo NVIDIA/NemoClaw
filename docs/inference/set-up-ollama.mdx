@@ -100,9 +100,9 @@ During strict tool-call validation, NemoClaw retries a response from the Local O
 - Ollama returns HTTP `200`.
 - The response contains no structured tool call.
 - The response contains no tool-call JSON in plain message text.
-- The response is not reasoning-only.
+- The response did not stop at the output token limit after producing only reasoning.
 
-If the response is reasoning-only, NemoClaw retries once with a larger output token limit.
+If a response stops at the output token limit after producing only reasoning, NemoClaw retries once with a larger output token limit.
 NemoClaw waits 5, 15, and 30 seconds before the second, third, and fourth validation requests.
 If four consecutive responses meet these conditions, onboarding stops and reports `missing structured tool call` without displaying the response body.
 Other compatible endpoints do not use this retry.
