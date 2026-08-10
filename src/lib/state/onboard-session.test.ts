@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
+import { decisionSelected } from "./onboard-checkpoint-decision";
 
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("./onboard-session");
@@ -250,6 +251,59 @@ describe("onboard session", () => {
     expect(loaded.failure).toBeNull();
     expect(loaded.status).toBe("in_progress");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+  });
+
+  it("clears provider selection authority when a review is rejected", () => {
+    session.saveSession(
+      session.createSession({
+        provider: "ollama-local",
+        model: "qwen3.5:9b",
+        endpointUrl: "http://127.0.0.1:11435/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        sandboxName: "rejected-review",
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      }),
+    );
+    session.markStepStarted("provider_selection");
+    session.updateSession((current) => {
+      current.checkpoint = {
+        schemaVersion: 3,
+        sessionId: current.sessionId,
+        machineState: "init",
+        updatedAt: new Date().toISOString(),
+        sandboxIdentity: decisionSelected({ name: "rejected-review", agent: "openclaw" }),
+        webSearch: { kind: "unset" },
+        messaging: { kind: "unset" },
+        resourceProfile: { kind: "unset" },
+        gatewayAuthority: { kind: "unset" },
+        effectGroups: {},
+        bindings: { credentialEnvs: [], registeredProviders: [] },
+        sandboxRecreate: null,
+      };
+      return current;
+    });
+
+    const rejected = session.markStepRejected("provider_selection");
+
+    expect(rejected).toMatchObject({
+      provider: null,
+      model: null,
+      endpointUrl: null,
+      credentialEnv: null,
+      sandboxName: null,
+      sandboxPromptProgress: { sandboxName: false },
+      lastStepStarted: null,
+      resumable: false,
+      status: "failed",
+      failure: null,
+      steps: { provider_selection: { status: "skipped" } },
+      checkpoint: { sandboxIdentity: { kind: "unset" } },
+    });
   });
 
   it("can record step boundaries without mutating the machine snapshot", () => {

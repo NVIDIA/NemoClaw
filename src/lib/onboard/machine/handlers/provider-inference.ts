@@ -170,6 +170,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       updates?: { provider?: string | null; model?: string | null },
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
+    recordStepRejected(stepName: string): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     ensureResumeProviderReady(
@@ -238,6 +239,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       },
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
+    checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
+    prepareLocalProviderForInference(provider: string): Promise<void>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     assessHost(): Host;
     formatSandboxBuildEstimateNote(host: Host): string | null;
@@ -500,13 +503,24 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       recoveryReceiptLedger: providerRecoveryReceiptLedger,
       gatewayName,
     });
+    const completeRecoveredReviewSelectionAfterInference =
+      session?.steps?.provider_selection?.status === "failed" &&
+      session.sandboxPromptProgress.sandboxName === true &&
+      session.sandboxName === sandboxName;
+    const reviewRecoveredInteractively =
+      completeRecoveredReviewSelectionAfterInference && !deps.isNonInteractive();
     const resumeProviderSelection =
       !forceProviderSelection &&
       effectiveResume &&
-      (authoritativeResumeConfig || session?.steps?.provider_selection?.status === "complete") &&
+      (authoritativeResumeConfig ||
+        session?.steps?.provider_selection?.status === "complete" ||
+        completeRecoveredReviewSelectionAfterInference) &&
       typeof provider === "string" &&
       typeof model === "string";
     let shouldRecordProviderSelection = false;
+    // A review interruption selected a provider but did not configure its
+    // route. Do not let a coincidentally ready gateway route skip setup.
+    forceInferenceSetup ||= completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
     if (resumeProviderSelection) {
       assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
@@ -748,10 +762,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         preferredInferenceApi,
       });
     }
-    if (shouldRecordProviderSelection) {
-      // Provider selection is not yet durable route trust. Deliberately omit
-      // endpointSource/onboardEndpointUrl here so an interrupted run fails
-      // closed and revalidates the endpoint before inference setup on resume.
+    if (
+      shouldRecordProviderSelection &&
+      (authoritativeResumeConfig || effectiveResume) &&
+      !completeRecoveredReviewSelectionAfterInference
+    ) {
+      // Authoritative rebuild selections are already route-validated. Persist
+      // them before inference setup so their reservation can retain the
+      // authoritative session identity.
       session = await deps.recordStepComplete(
         "provider_selection",
         deps.toSessionUpdates({
@@ -761,9 +779,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           credentialEnv,
           hermesAuthMethod,
           hermesToolGateways,
-          // An authoritative rebuild records route fidelity before inference
-          // setup. Keep the stale marker until the provider surface heal
-          // succeeds so a failed attempt remains armed on the next resume.
           preferredInferenceApi: healAdjustedInferenceApi
             ? initial.preferredInferenceApi
             : preferredInferenceApi,
@@ -992,14 +1007,47 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }),
       );
       deps.log("  Web search and messaging channels will be prompted next.");
+      // Persist canonical sandbox identity and selection before local-provider
+      // preparation. A preparation failure or SIGINT must leave a no-TTY-
+      // resumable provider_selection step without claiming inference setup
+      // completed.
+      await deps.checkpointSandboxIdentity(confirmedSandboxName, agent);
+      const needsReviewSelectionRecovery =
+        session?.steps?.provider_selection?.status !== "complete";
+      if (needsReviewSelectionRecovery) {
+        await deps.startRecordedStep("provider_selection", { provider, model });
+      }
       if (!deps.isNonInteractive()) {
         if (!(await deps.promptYesNoOrDefault("  Apply this configuration?", null, true))) {
+          await deps.recordStepRejected("provider_selection");
           deps.log(`  Aborted. Re-run \`${deps.cliName()} onboard\` to start over.`);
           deps.log("  Credentials entered so far were only staged in memory for this run.");
           deps.log("  No new gateway credential was registered because onboarding stopped here.");
-          deps.exitProcess(0);
+          deps.exitProcess(1);
         }
       }
+      // The review acceptance authorizes this fresh selection. Persist it
+      // before inference setup starts so an interruption in setup can resume
+      // the accepted provider/model rather than returning to the default menu.
+      if (shouldRecordProviderSelection && !effectiveResume) {
+        session = await deps.recordStepComplete(
+          "provider_selection",
+          deps.toSessionUpdates({
+            provider,
+            model,
+            endpointUrl,
+            credentialEnv,
+            hermesAuthMethod,
+            hermesToolGateways,
+            preferredInferenceApi,
+            compatibleEndpointReasoning,
+            compatibleEndpointReasoningEffort,
+            nimContainer,
+            stationExpressModelIdentity: vllmModelIdentity,
+          }),
+        );
+      }
+      await deps.prepareLocalProviderForInference(provider);
 
       const inferenceOptions = {
         gatewayName,
@@ -1064,6 +1112,29 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
       }),
     );
+    if (completeRecoveredReviewSelectionAfterInference) {
+      // Provider selection remains in progress until its inference route has
+      // configured successfully. This retains the selected provider/model for
+      // interruption recovery without claiming a usable route prematurely.
+      session = await deps.recordStepComplete(
+        "provider_selection",
+        deps.toSessionUpdates({
+          provider,
+          model,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi: healAdjustedInferenceApi
+            ? initial.preferredInferenceApi
+            : preferredInferenceApi,
+          compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
+          nimContainer,
+          stationExpressModelIdentity: vllmModelIdentity,
+        }),
+      );
+    }
     break;
   }
 

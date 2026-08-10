@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import type { CheckpointSandboxIdentity } from "../../../state/onboard-checkpoint-types";
-import { createSession } from "../../../state/onboard-session";
+import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
@@ -38,7 +38,12 @@ describe("handleProviderInferenceState", () => {
   it("runs provider selection and inference setup on a fresh flow", async () => {
     const { deps, calls } = createDeps();
     const session = createSession();
-    calls.complete.mockResolvedValue(session);
+    calls.complete.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "provider_selection") {
+        session.steps.provider_selection.status = "complete";
+      }
+      return session;
+    });
 
     const result = await handleProviderInferenceState(baseOptions(deps, session));
 
@@ -60,7 +65,11 @@ describe("handleProviderInferenceState", () => {
     expect(selectionUpdates).not.toHaveProperty("onboardEndpointUrl");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
-    expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
+    expect(calls.startStep).toHaveBeenNthCalledWith(2, "provider_selection", {
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.startStep).toHaveBeenNthCalledWith(3, "inference", {
       provider: "nvidia-prod",
       model: "nvidia/test",
     });
@@ -1420,16 +1429,274 @@ describe("handleProviderInferenceState", () => {
     ]);
   });
 
-  it("aborts before inference setup when the configuration summary is rejected", async () => {
+  it("rejects configuration review with a non-zero exit before inference setup (#8686)", async () => {
     const { deps, calls } = createDeps({
       isNonInteractive: () => false,
       promptYesNoOrDefault: vi.fn(async () => false),
     });
 
-    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 0");
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
 
-    expect(calls.exit).toHaveBeenCalledWith(0);
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("my-assistant", null);
+    expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.rejected).toHaveBeenCalledWith("provider_selection");
+    expect(calls.exit).toHaveBeenCalledWith(1);
     expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse an explicitly rejected review selection on no-TTY resume (#8686)", async () => {
+    const session = createSession({
+      sandboxName: "rejected-review",
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.steps.provider_selection.status = "skipped";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => false) });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "rejected-review",
+    });
+
+    expect(calls.setupNim).toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalledWith(
+      "rejected-review",
+      "qwen3.5:9b",
+      "ollama-local",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("checkpoints a prompted sandbox identity before interactive review (#8686)", async () => {
+    const promptYesNoOrDefault = vi.fn(async () => true);
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      promptYesNoOrDefault,
+    });
+
+    await handleProviderInferenceState(baseOptions(deps));
+
+    expect(calls.promptName).toHaveBeenCalledWith(null);
+    expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("my-assistant", null);
+    expect(promptYesNoOrDefault).toHaveBeenCalledWith("  Apply this configuration?", null, true);
+    expect(calls.setupInference).toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/test" }),
+    );
+    expect(calls.exit).not.toHaveBeenCalled();
+  });
+
+  it("resumes an accepted selection after inference setup throws (#8687)", async () => {
+    const session = createSession({ sandboxName: "accepted-review" });
+    const setupInference = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("inference setup failed"))
+      .mockResolvedValueOnce({ ok: true as const });
+    const { deps, calls } = createDeps({
+      setupInference,
+      isInferenceRouteReady: vi.fn(() => false),
+      promptYesNoOrDefault: vi.fn(async () => true),
+    });
+    calls.complete.mockImplementation(async (...args: unknown[]) => {
+      const stepName = args[0] as string;
+      const updates = args[1] as SessionUpdates;
+      Object.assign(session, updates);
+      session.steps[stepName].status = "complete";
+      return session;
+    });
+
+    await expect(
+      handleProviderInferenceState({ ...baseOptions(deps, session), sandboxName: "accepted-review" }),
+    ).rejects.toThrow("inference setup failed");
+    expect(session.steps.provider_selection.status).toBe("complete");
+    expect(session.provider).toBe("nvidia-prod");
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "accepted-review",
+    });
+
+    expect(calls.setupNim).toHaveBeenCalledTimes(1);
+    expect(setupInference).toHaveBeenCalledTimes(2);
+  });
+
+  it("checkpoints a supplied sandbox identity before review (#8687)", async () => {
+    const promptYesNoOrDefault = vi.fn(async () => false);
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      promptYesNoOrDefault,
+    });
+
+    await expect(
+      handleProviderInferenceState({ ...baseOptions(deps), sandboxName: "supplied-review" }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.promptName).not.toHaveBeenCalled();
+    expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("supplied-review", null);
+    expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
+  });
+
+  it("does not prepare the Ollama proxy after interactive review decline (#8687)", async () => {
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "ollama-local",
+        model: "qwen3.5:9b",
+        endpointUrl: "http://127.0.0.1:11435/v1",
+        credentialEnv: null,
+      })),
+      promptYesNoOrDefault: vi.fn(async () => false),
+    });
+
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
+
+    expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+    });
+    expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  it("prepares the Ollama proxy after review acceptance and before inference setup (#8687)", async () => {
+    const prepareLocalProviderForInference = vi.fn(async () => undefined);
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "ollama-local",
+        model: "qwen3.5:9b",
+        endpointUrl: "http://127.0.0.1:11435/v1",
+        credentialEnv: null,
+      })),
+      prepareLocalProviderForInference,
+      promptYesNoOrDefault: vi.fn(async () => true),
+    });
+
+    await handleProviderInferenceState(baseOptions(deps));
+
+    expect(prepareLocalProviderForInference).toHaveBeenCalledWith("ollama-local");
+    expect(prepareLocalProviderForInference.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.setupInference.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("skips configuration review in explicit non-interactive mode (#8687)", async () => {
+    const promptYesNoOrDefault = vi.fn(async () => true);
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => true,
+      promptYesNoOrDefault,
+    });
+
+    await handleProviderInferenceState(baseOptions(deps));
+
+    expect(promptYesNoOrDefault).not.toHaveBeenCalled();
+    expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.setupInference).toHaveBeenCalled();
+  });
+
+  function failedReviewSession() {
+    const session = createSession({
+      sandboxName: "review-interrupted",
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.steps.provider_selection.status = "failed";
+    return session;
+  }
+
+  it("prompts for review when interactive resume reuses an interrupted selection (#8687)", async () => {
+    const session = failedReviewSession();
+    const promptYesNoOrDefault = vi.fn(async () => true);
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      promptYesNoOrDefault,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "review-interrupted",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(promptYesNoOrDefault).toHaveBeenCalledWith("  Apply this configuration?", null, true);
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "review-interrupted",
+      "qwen3.5:9b",
+      "ollama-local",
+      null,
+      null,
+      null,
+      [],
+      expect.any(Object),
+    );
+  });
+
+  it("bypasses review when non-interactive resume reuses an interrupted selection (#8687)", async () => {
+    const session = failedReviewSession();
+    const promptYesNoOrDefault = vi.fn(async () => true);
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => true,
+      promptYesNoOrDefault,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "review-interrupted",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(promptYesNoOrDefault).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "review-interrupted",
+      "qwen3.5:9b",
+      "ollama-local",
+      null,
+      null,
+      null,
+      [],
+      expect.any(Object),
+    );
+    expect(result).toMatchObject({
+      sandboxName: "review-interrupted",
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+    });
   });
 
   // Regression: #4241. When the provider selection step accepted a no-tools

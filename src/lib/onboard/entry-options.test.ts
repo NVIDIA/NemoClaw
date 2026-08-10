@@ -157,6 +157,23 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.error).not.toHaveBeenCalled();
   });
 
+  it("does not auto-resume a rejected non-resumable session", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: {},
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "failed",
+      },
+      deps,
+    );
+
+    expect(result.resume).toBe(false);
+  });
+
   it("does not auto-resume when --fresh is set even with an in_progress session (#5470)", () => {
     const deps = createDeps();
 

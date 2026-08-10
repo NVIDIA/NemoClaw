@@ -454,8 +454,12 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   promptOrDefault,
   cliDisplayName,
   isNonInteractive,
-  checkpointSandboxName: (sandboxName, agent) =>
-    onboardSessionBootstrap.checkpointSandboxName(sandboxName, agent, onboardSession.updateSession),
+  checkpointSandboxName: async (sandboxName, agent) =>
+    await onboardSessionBootstrap.checkpointSandboxName(
+      sandboxName,
+      agent,
+      onboardSession.updateSession,
+    ),
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
@@ -658,6 +662,7 @@ const {
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
+import { isOnboardAutoYesNonInteractive } from "./onboard/no-tty-auto-yes";
 import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
 
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -3685,6 +3690,7 @@ const {
 
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
+const recordStepRejected = onboardRuntimeBoundary.recordStepRejected.bind(onboardRuntimeBoundary);
 const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
@@ -3760,33 +3766,45 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     authoritativeGateway?.name ?? GATEWAY_NAME,
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
-  NON_INTERACTIVE = opts.nonInteractive || isNonInteractiveEnv();
-  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
+  const terminal = {
+    stdinIsTty: Boolean(process.stdin?.isTTY),
+    stdoutIsTty: Boolean(process.stdout?.isTTY),
+  };
+  const entryOptionsInput = {
+    opts,
+    env: process.env,
+    stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
+    stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+    persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
+  };
+  const resume =
+    opts.resume === true ||
+    (opts.fresh !== true && entryOptionsInput.persistedSessionStatus === "in_progress");
+  NON_INTERACTIVE =
+    opts.nonInteractive ||
+    isOnboardAutoYesNonInteractive(
+      opts.autoYes === true || process.env.NEMOCLAW_YES === "1",
+      resume,
+      terminal,
+    ) ||
+    isNonInteractiveEnv();
+  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
   preparedDcodeRuntime.applyGatewayEnv(process.env);
-  const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
-    onboardEntryOptions.resolveOnboardEntryOptions(
-      {
-        opts,
-        env: process.env,
-        stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
-        stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
-        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
-      },
-      {
-        isNonInteractive,
-        validateName,
-        reservedSandboxNames: RESERVED_SANDBOX_NAMES,
-        cliDisplayName,
-        getNameValidationGuidance,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    );
+  const { fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
+    onboardEntryOptions.resolveOnboardEntryOptions(entryOptionsInput, {
+      isNonInteractive,
+      validateName,
+      reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+      cliDisplayName,
+      getNameValidationGuidance,
+      error: (message) => console.error(message),
+      exitProcess: (code) => process.exit(code),
+    });
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
@@ -4136,6 +4154,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           setupInference,
           startRecordedStep,
           recordStepComplete,
+          recordStepRejected,
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
           skippedStepMessage,
@@ -4167,6 +4186,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           },
           reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
           registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
+          checkpointSandboxIdentity: async (name, checkpointAgent) =>
+            await onboardSessionBootstrap.checkpointSandboxName(
+              name,
+              checkpointAgent,
+              onboardSession.updateSession,
+            ),
+          prepareLocalProviderForInference: async (providerName) => {
+            if (providerName !== "ollama-local" || !shouldFrontOllamaWithProxy()) return;
+            if (!startOllamaAuthProxy()) process.exit(1);
+            const proxyToken = getOllamaProxyToken();
+            if (!proxyToken) {
+              console.error("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");
+              process.exit(1);
+            }
+            await persistAndProbeOllamaProxy(proxyToken);
+          },
           promptValidatedSandboxName,
           assessHost,
           formatSandboxBuildEstimateNote,
@@ -4529,6 +4564,7 @@ module.exports = {
   shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,
   isOpenclawReady,
+  runOnboard,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
   computeSetupPresetSuggestions,

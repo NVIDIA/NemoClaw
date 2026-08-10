@@ -46,6 +46,7 @@ import {
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
+import { decisionUnset } from "./onboard-checkpoint-decision";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   assignSafeToolDisclosureUpdate,
@@ -1462,6 +1463,44 @@ export function markStepSkipped(stepName: string): Session {
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
+    if (session.lastStepStarted === stepName) session.lastStepStarted = null;
+    return session;
+  });
+}
+
+export function markStepRejected(stepName: string): Session {
+  return updateSession((session) => {
+    const step = session.steps[stepName];
+    if (!step) return session;
+    step.status = "skipped";
+    step.startedAt = null;
+    step.completedAt = null;
+    step.error = null;
+    if (session.lastStepStarted === stepName) session.lastStepStarted = null;
+    if (stepName === "provider_selection") {
+      session.provider = null;
+      session.model = null;
+      session.endpointUrl = null;
+      session.credentialEnv = null;
+      session.hermesAuthMethod = null;
+      session.preferredInferenceApi = null;
+      session.compatibleEndpointReasoning = null;
+      session.compatibleEndpointReasoningEffort = null;
+      session.nimContainer = null;
+      session.hermesToolGateways = null;
+      session.sandboxName = null;
+      session.sandboxPromptProgress.sandboxName = false;
+      session.resumable = false;
+      session.status = "failed";
+      session.failure = null;
+      if (session.checkpoint) {
+        session.checkpoint = {
+          ...session.checkpoint,
+          sandboxIdentity: decisionUnset(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
     return session;
   });
 }

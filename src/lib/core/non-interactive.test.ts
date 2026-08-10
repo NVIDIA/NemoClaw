@@ -10,12 +10,13 @@ afterEach(() => {
 });
 
 describe("non-interactive environment detection", () => {
-  it("treats only the canonical value as non-interactive", () => {
+  it("treats only the canonical explicit value as non-interactive", () => {
     expect(isNonInteractiveEnv({ NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv)).toBe(true);
     expect(isNonInteractiveEnv({ NEMOCLAW_NON_INTERACTIVE: "true" } as NodeJS.ProcessEnv)).toBe(
       false,
     );
     expect(isNonInteractiveEnv({ NEMOCLAW_NON_INTERACTIVE: "" } as NodeJS.ProcessEnv)).toBe(false);
+    expect(isNonInteractiveEnv({ NEMOCLAW_YES: "1" } as NodeJS.ProcessEnv)).toBe(false);
     expect(isNonInteractiveEnv({} as NodeJS.ProcessEnv)).toBe(false);
   });
 
