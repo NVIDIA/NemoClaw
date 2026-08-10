@@ -435,4 +435,47 @@ describe("fixture redaction entry point", () => {
       await fs.rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])("rejects invalid post-redaction capture limit %s before spawning a child or writing artifacts (#8697)", async (postRedactionCaptureLimitBytes) => {
+    const rootDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "nemoclaw-e2e-invalid-post-redaction-capture-"),
+    );
+    try {
+      const artifactRoot = path.join(rootDir, "e2e-artifacts/live/invalid-post-redaction-capture");
+      const spawnMarker = path.join(rootDir, "spawned.txt");
+      const artifacts = new ArtifactSink(artifactRoot);
+      await artifacts.ensureRoot();
+      const probe = new ShellProbe({
+        artifacts,
+        progress: supportProgress(),
+        redact: (text, extra) => redactString(text, extra),
+        signal: new AbortController().signal,
+      });
+
+      await expect(
+        probe.run(
+          trustedShellCommand({
+            command: "bash",
+            args: ["-lc", 'printf spawned >"$SPAWN_MARKER"'],
+            reason:
+              "verify that ShellProbe rejects invalid post-redaction limits before child execution",
+          }),
+          {
+            env: { SPAWN_MARKER: spawnMarker },
+            postRedactionCaptureLimitBytes,
+          },
+        ),
+      ).rejects.toThrow("postRedactionCaptureLimitBytes must be a positive safe integer");
+      await expect(fs.access(spawnMarker)).rejects.toThrow();
+      await expect(fs.readdir(artifactRoot)).resolves.toEqual([]);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
