@@ -17,6 +17,10 @@ import { failLine, warnLine } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
 import { cliDisplayName, cliName } from "./branding";
 import {
+  isPortableExperimentalProfile,
+  PORTABLE_HOST_GATEWAY_IP,
+} from "./experimental/portable-profile";
+import {
   DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
   ensureProbeImageCached,
   isDockerDaemonUnreachable,
@@ -165,8 +169,18 @@ function buildOpenShellDockerRoute(
   networkName: string,
   network: DockerBridgeNetworkInfo | undefined,
   usesHostGatewayRoute: boolean,
+  portableHostGatewayIp?: string,
 ): OpenShellDockerRoute | undefined {
   if (!network) return undefined;
+  if (portableHostGatewayIp) {
+    return {
+      networkName,
+      subnet: network.subnet,
+      gatewayIp: portableHostGatewayIp,
+      routeKind: "host_gateway",
+      addHosts: [`${HOST_INTERNAL_NAME}:${portableHostGatewayIp}`],
+    };
+  }
   if (usesHostGatewayRoute) {
     return {
       networkName,
@@ -270,7 +284,12 @@ export async function isSandboxBridgeGatewayReachable(
   const runImpl = opts.runImpl ?? defaultRunImpl;
 
   const network = inspectNetwork(networkName);
-  const route = buildOpenShellDockerRoute(networkName, network, usesHostGatewayRoute());
+  const route = buildOpenShellDockerRoute(
+    networkName,
+    network,
+    usesHostGatewayRoute(),
+    isPortableExperimentalProfile() ? PORTABLE_HOST_GATEWAY_IP : undefined,
+  );
   if (!route) {
     return {
       ok: false,
