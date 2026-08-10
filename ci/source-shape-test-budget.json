@@ -302,6 +302,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/openshell-0.0.101-migration-review.test.ts",
+      "test": "binds the newly generated credential manifest to reviewed source identities (#8599)",
+      "category": "security"
+    },
+    {
       "file": "test/openshell-0.0.99-migration-review.test.ts",
       "test": "associates every reviewed release identity with the 0.0.99 manifest (#8497)",
       "category": "security"

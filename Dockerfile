@@ -1571,7 +1571,8 @@ ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 # (e.g. "text" or "text,image" for vision-capable models). OpenClaw's
 # model schema currently accepts "text" and "image". See #2421.
 ARG NEMOCLAW_INFERENCE_INPUTS=text
-# Per-request inference timeout (seconds) baked into agents.defaults.timeoutSeconds.
+# Per-request inference timeout (seconds) baked into agents.defaults.timeoutSeconds
+# and models.providers.<provider-id>.timeoutSeconds.
 # Increase for slow local inference (e.g., CPU Ollama). openclaw.json is
 # immutable at runtime (Landlock read-only), so this can only be changed by
 # rebuilding via `nemoclaw onboard`. Ref: issue #2281

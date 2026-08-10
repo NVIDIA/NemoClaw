@@ -37,16 +37,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
 # `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
-MIN_VERSION="0.0.99"
+MIN_VERSION="0.0.101"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.99"
+MAX_VERSION="0.0.101"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.99"
+DEV_MIN_VERSION="0.0.101"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -143,32 +143,32 @@ fi
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.99:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "35725a358e42ef7f0f0393035536da317706b0febcc459a2011e0555f6c2b71c"
+    v0.0.101:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "7d49ab2a5ff0b826bd2bdca5e0244010f832dfc6901c808ea8c8467004c26913"
       ;;
-    v0.0.99:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "d00cbf0d8779c01ddea6453ead2ad4db3d89a1f14eb6f0785f7919f42813a279"
+    v0.0.101:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "b553d3bfc08e9354b990a10fb8abd976e039afeec2d3947f8a112018be40d296"
       ;;
-    v0.0.99:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "e31cac5360e2adf3c971d5742a516626c58acf2fd3db4dcb0e45804def3dc844"
+    v0.0.101:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "9daaccdb9e30e220d56dd6d6bf4bd00ccca8ae4ad2845f5f0d9b9da3eb8ee881"
       ;;
-    v0.0.99:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "640d204dc3c6bc28bffa1f3d870897fc23bbc5ec0151a6c642083e958455cb49"
+    v0.0.101:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "eaeb094ccf7dcb1fe00c7e926e6aa9aaaefb89ecbef8343720628b0fd2d84654"
       ;;
-    v0.0.99:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "3a5d3092ae34356beb0ff2a920f9a87af4233c7a1086a53cd9429d48358f5c09"
+    v0.0.101:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "ac842ccc2ab8b5682f7479d71532cc650839250a8a41dbfae2b871cbbdfd3279"
       ;;
-    v0.0.99:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "4340619292ecb565f90eb2250db504baa37dd410361b366b42e174d34512cb6c"
+    v0.0.101:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "0f9e195b7cde57f4c2080df95159c5e7e72b0248306abc242ae00a3bb6f07f14"
       ;;
-    v0.0.99:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "84caed3dec4390e0938e89b38b1256d31e8970b4bfd85437bf92ed79f5b1ff05"
+    v0.0.101:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "953b90eaa7d2fc1bb7bdf38eb0ada6fad7902b13f9f895ca20b89caeac483a9e"
       ;;
-    v0.0.99:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "c758e7dc2b8c904baa01e2ccce0f08daf96ede0c648478b23346d8c4dd16f432"
+    v0.0.101:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "c39b7ba3cf212b88712a00d2a0e3d28e2c1e0e9f47a9a6ca818a8f06ed2140aa"
       ;;
-    v0.0.99:openshell.rb)
-      printf '%s\n' "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713"
+    v0.0.101:openshell.rb)
+      printf '%s\n' "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"
       ;;
     *)
       return 1
@@ -295,6 +295,11 @@ pinned_sandbox_build_version() {
     a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214 | \
       f60ce5b76e4dbd645f690c8519852d261c8cf6a70b5fc56db329a23d68bc7b2e)
       printf '%s\n' "0.0.99"
+      ;;
+    # OpenShell v0.0.101 standalone sandbox binaries.
+    a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920 | \
+      88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4)
+      printf '%s\n' "0.0.101"
       ;;
     *)
       return 1

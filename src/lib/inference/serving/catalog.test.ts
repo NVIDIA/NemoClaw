@@ -195,7 +195,13 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
+      maxRequestBodyBytes: 1048576
+      maxRequestHeaderBytes: 32768
+      maxOutputTokens: 4096
       requestTimeoutSeconds: 120
+      shutdownTimeoutSeconds: 25
+    requestGuard:
+      upstreamPort: 8082
   readiness:
     contractRef: test.readiness/v1
     timeoutSeconds: 120
@@ -362,6 +368,14 @@ describe("managed inference serving catalog compiler", () => {
         flashAttention: "enabled",
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
+        limits: {
+          maxRequestBodyBytes: 1048576,
+          maxRequestHeaderBytes: 32768,
+          maxOutputTokens: 4096,
+          requestTimeoutSeconds: 120,
+          shutdownTimeoutSeconds: 25,
+        },
+        requestGuard: { upstreamPort: 8082 },
       },
       capabilities: { agents: [], protocols: ["openai-completions"] },
     });
@@ -433,6 +447,8 @@ describe("managed inference serving catalog compiler", () => {
     ["CPU fallback", "      cpuFallback: reject", "      cpuFallback: allow"],
     ["external network exposure", "    networkExposure: loopback", "    networkExposure: lan"],
     ["missing authentication", "    authentication: bearer\n", ""],
+    ["a missing guard limit", "      shutdownTimeoutSeconds: 25\n", ""],
+    ["a colliding guard port", "      upstreamPort: 8082", "      upstreamPort: 8081"],
     ["an unsafe KV cache type", "      key: f16", "      key: q4_0"],
     ["disabled flash attention", "    flashAttention: enabled", "    flashAttention: disabled"],
     [

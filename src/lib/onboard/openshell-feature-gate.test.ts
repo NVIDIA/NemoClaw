@@ -81,7 +81,7 @@ describe("OpenShell MCP feature gate", () => {
     }
   });
 
-  it("identifies the pinned v0.0.99 sandbox artifacts without executing them", () => {
+  it("identifies the pinned v0.0.101 sandbox artifacts without executing them", () => {
     const sandbox = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
       "openshell-sandbox",
@@ -92,13 +92,13 @@ describe("OpenShell MCP feature gate", () => {
         `#!/bin/sh\nexit 127\n# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`,
         { mode: 0o755 },
       );
-      const digest = "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214";
-      const arm64Digest = "f60ce5b76e4dbd645f690c8519852d261c8cf6a70b5fc56db329a23d68bc7b2e";
+      const digest = "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920";
+      const arm64Digest = "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4";
 
-      expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.99");
-      expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.99");
+      expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.101");
+      expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.101");
       expect(resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => digest)).toBe(
-        "0.0.99",
+        "0.0.101",
       );
     } finally {
       fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
