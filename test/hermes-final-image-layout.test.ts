@@ -393,7 +393,7 @@ describe("Hermes final image layout", () => {
     );
     const managedRuntimeDirectory = indexOfRequired(
       finalStage,
-      "install -d -o root -g root -m 0755 /run/nemoclaw \\\n      || managed_runtime_assertion_failed runtime-directory-create /run/nemoclaw; \\\n    test -d /run/nemoclaw \\\n      || managed_runtime_assertion_failed runtime-directory /run/nemoclaw; \\\n    test ! -L /run/nemoclaw \\\n      || managed_runtime_assertion_failed runtime-directory-non-symlink /run/nemoclaw; \\\n    test \"$(stat -c '%u:%g:%a' /run/nemoclaw 2>/dev/null)\" = '0:0:755' \\\n      || managed_runtime_assertion_failed runtime-directory-metadata-0:0:755 /run/nemoclaw",
+      "install -d -o root -g root -m 0755 /run/nemoclaw || managed_runtime_assertion_failed runtime-directory-create /run/nemoclaw; } \\\n    && { test -d /run/nemoclaw || managed_runtime_assertion_failed runtime-directory /run/nemoclaw; } \\\n    && { test ! -L /run/nemoclaw || managed_runtime_assertion_failed runtime-directory-non-symlink /run/nemoclaw; } \\\n    && { test \"$(stat -c '%u:%g:%a' /run/nemoclaw 2>/dev/null)\" = '0:0:755' || managed_runtime_assertion_failed runtime-directory-metadata-0:0:755 /run/nemoclaw; }",
     );
     const runtimeModeReplay = indexOfRequired(
       finalStage,

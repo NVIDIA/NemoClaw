@@ -11,11 +11,12 @@ ARG NEMOCLAW_CORPORATE_CA_B64=
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.
 FROM scratch AS mcp-tool-discovery-runtime
-COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/
-COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
+# Set root ownership and read-only modes because scratch-stage COPY preserves source metadata.
+COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/
+COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
 
 FROM scratch AS managed-startup-runtime-builder
-COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
+COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains
