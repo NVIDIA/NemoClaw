@@ -16,7 +16,7 @@ import {
   MANAGED_BOOTSTRAP_REQUEST_FILE,
   type ManagedBootstrapImageCompletion,
   parseManagedBootstrapImageCompletion,
-  serializeManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
 } from "./envelope";
 import {
   normalizePodmanBootstrapJournal,
@@ -32,7 +32,6 @@ import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 
 export const PODMAN_BOOTSTRAP_IMAGE_TRANSACTION_SCHEMA_VERSION = 1 as const;
 
-const REQUEST_TEMP_PREFIX = "nemoclaw-podman-bootstrap-request";
 const COMPLETION_TEMP_PREFIX = "nemoclaw-podman-bootstrap-completion";
 const FULL_RUNTIME_ID = /^[a-f0-9]{64}$/u;
 const IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
@@ -236,8 +235,9 @@ function capture(
   args: readonly string[],
   action: string,
   timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  input?: Buffer,
 ): ContainerEngineCommandResult {
-  const result = engine.capture(args, timeoutMs);
+  const result = engine.capture(args, timeoutMs, input);
   if (result.status !== 0) commandFailure(result, action);
   return result;
 }
@@ -393,56 +393,21 @@ function inspectStable(
   return second;
 }
 
-function writeProtectedEnvelope(
-  input: PodmanBootstrapImageTransactionInput,
-  prepared: PodmanBootstrapPreparedReplacement,
-): string {
-  const file = secureTempFile(REQUEST_TEMP_PREFIX, ".json");
-  try {
-    fs.writeFileSync(
-      file,
-      serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: prepared.bootstrapIdentity,
-        rootApplyRequest: input.request,
-      }),
-      { encoding: "utf8", flag: "wx", mode: 0o400 },
-    );
-    fs.chmodSync(file, 0o400);
-    const stat = fs.lstatSync(file);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.nlink !== 1 ||
-      (stat.mode & 0o777) !== 0o400
-    ) {
-      fail("the root request source is not one protected 0400 file");
-    }
-    return file;
-  } catch (error) {
-    cleanupTempDir(file, REQUEST_TEMP_PREFIX);
-    throw error;
-  }
-}
-
 function stageProtectedEnvelope(
   input: PodmanBootstrapImageTransactionInput,
   prepared: PodmanBootstrapPreparedReplacement,
 ): void {
-  const file = writeProtectedEnvelope(input, prepared);
-  try {
-    capture(
-      input.engine,
-      [
-        "container",
-        "cp",
-        file,
-        `${prepared.replacementRuntimeId}:${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-      ],
-      "protected root request staging",
-    );
-  } finally {
-    cleanupTempDir(file, REQUEST_TEMP_PREFIX);
-  }
+  const archive = serializeManagedBootstrapEnvelopeTar({
+    bootstrapIdentity: prepared.bootstrapIdentity,
+    rootApplyRequest: input.request,
+  });
+  capture(
+    input.engine,
+    ["container", "cp", "-", `${prepared.replacementRuntimeId}:/`],
+    "protected root request staging",
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    archive,
+  );
 }
 
 function sameStableMetadata(left: fs.BigIntStats, right: fs.BigIntStats): boolean {

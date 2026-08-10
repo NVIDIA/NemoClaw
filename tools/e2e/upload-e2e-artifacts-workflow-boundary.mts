@@ -12,6 +12,9 @@ import {
   CLI_ARTIFACT_UPLOAD_ACTION,
 } from "./cli-artifact-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
+
+export { E2E_ACTION_PROVENANCE };
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(
@@ -22,11 +25,7 @@ const DEFAULT_ACTION_PATH = join(
   "action.yaml",
 );
 
-export const UPLOAD_E2E_ARTIFACTS_ACTION_PROVENANCE = {
-  reference:
-    "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
-  contentSha256: "8f6f71a0e6d71d85418fa88c2b26a4d601f568bdcaae20aca4085ae423c5044b",
-} as const;
+export const UPLOAD_E2E_ARTIFACTS_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.uploadArtifacts;
 
 export const UPLOAD_E2E_ARTIFACTS_ACTION = UPLOAD_E2E_ARTIFACTS_ACTION_PROVENANCE.reference;
 

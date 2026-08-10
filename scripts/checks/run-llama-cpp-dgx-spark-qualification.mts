@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  buildLlamaCppHostLocalDockerArgv,
+  buildLlamaCppRequestGuardDockerArgv,
   type VerifiedLocalModelArtifact,
 } from "../../src/lib/inference/llama-cpp/host-local-runtime.ts";
 import {
@@ -318,6 +318,54 @@ export function buildCandidateImageArgv(
   ];
 }
 
+export function insertQualificationLoopbackPublishArgv(
+  argv: readonly string[],
+  options: {
+    containerPort: number;
+    hostPort?: number;
+    imageReference: string;
+  },
+): string[] {
+  const imageIndex = argv.indexOf(options.imageReference);
+  if (imageIndex < 0 || imageIndex !== argv.lastIndexOf(options.imageReference)) {
+    throw new Error(
+      "llama.cpp qualification requires exactly one Docker image reference in the materialized argument vector",
+    );
+  }
+  const materializedDockerOptions = argv.slice(0, imageIndex);
+  if (
+    materializedDockerOptions.some(
+      (argument) =>
+        argument === "--publish" ||
+        argument.startsWith("--publish=") ||
+        argument === "--publish-all" ||
+        argument.startsWith("--publish-all=") ||
+        argument === "-p" ||
+        (argument.startsWith("-p") && argument.length > 2) ||
+        argument === "-P" ||
+        argument.startsWith("-P="),
+    )
+  ) {
+    throw new Error("llama.cpp qualification materializer must not publish a Docker port");
+  }
+  const containerPort = requiredInteger(
+    options.containerPort,
+    "qualification container port",
+    1,
+    65_535,
+  );
+  const hostPort =
+    options.hostPort === undefined
+      ? ""
+      : String(requiredInteger(options.hostPort, "qualification host port", 1, 65_535));
+  return [
+    ...argv.slice(0, imageIndex),
+    "--publish",
+    `127.0.0.1:${hostPort}:${String(containerPort)}`,
+    ...argv.slice(imageIndex),
+  ];
+}
+
 export function buildServerContainerArgv(
   plan: QualificationPlan,
   options: {
@@ -332,7 +380,10 @@ export function buildServerContainerArgv(
     hostPort?: number;
   },
 ): string[] {
-  return buildLlamaCppHostLocalDockerArgv(plan.recipe, {
+  if (plan.qualification.requestGuard !== "required") {
+    throw new Error("llama.cpp qualification requires the declarative request guard");
+  }
+  const argv = buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
     apiKeyHostPath: options.apiKeyHostPath,
     containerName: options.containerName,
     imageReference: options.imageReference,
@@ -342,6 +393,11 @@ export function buildServerContainerArgv(
     ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
+  });
+  return insertQualificationLoopbackPublishArgv(argv, {
+    containerPort: plan.recipe.serve.port,
+    ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
+    imageReference: options.imageReference,
   });
 }
 
@@ -397,6 +453,52 @@ export function validateStartupLog(log: string): {
   if (uniqueCounts.size !== 1)
     throw new Error("startup evidence has inconsistent GPU offload counts");
   return counts[0] as { offloadedLayers: number; totalLayers: number };
+}
+
+export function validateRuntimeLogRedaction(
+  log: string,
+  forbiddenValues: readonly string[],
+): { readonly ok: true } {
+  if (Buffer.byteLength(log) < 1 || Buffer.byteLength(log) > 16 * 1024 * 1024) {
+    throw new Error("runtime log evidence is missing or exceeds the bounded log size");
+  }
+  if (
+    forbiddenValues.length < 1 ||
+    forbiddenValues.some((value) => value.length < 8 || log.includes(value))
+  ) {
+    throw new Error("runtime log evidence contains a credential, path, prompt, or response value");
+  }
+  return { ok: true };
+}
+
+export function buildRuntimeLogForbiddenValues(
+  plan: QualificationPlan,
+  invocation: QualificationInvocation,
+  apiKey: string,
+  authorization: string,
+): readonly string[] {
+  const agentPlan = plan.qualification.agentQualification;
+  const rejectedAuthorization = `${authorization.slice(0, -1)}${authorization.endsWith("0") ? "1" : "0"}`;
+  return [
+    apiKey,
+    authorization,
+    rejectedAuthorization,
+    invocation.modelHostPath,
+    `/models/${plan.recipe.model.file.path}`,
+    "This request must be rejected.",
+    "Return one short readiness token.",
+    "Reply with exactly: ready",
+    "Reply with one token.",
+    "Count upward without stopping.",
+    "Report the requested qualification status.",
+    "Use the available tool to get the weather in Seattle.",
+    JSON.stringify({ conditions: "clear", temperature_c: 21 }),
+    JSON.stringify({ location: "Seattle" }),
+    agentPlan.prompts.normal,
+    agentPlan.prompts.tool,
+    agentPlan.prompts.continuation,
+    agentPlan.fixture.value,
+  ];
 }
 
 function compareVersions(left: string, right: string): number {
@@ -1014,6 +1116,12 @@ async function runQualification(
         else process.env[baseUrlEnvironmentName] = priorBaseUrl;
       }
     }
+    const logRedaction = validateRuntimeLogRedaction(
+      runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
+        maximumBytes: 16 * 1024 * 1024,
+      }).toString("utf8"),
+      buildRuntimeLogForbiddenValues(plan, invocation, apiKey, authorization),
+    );
     successReceipt = {
       agentQualification,
       baseSha: invocation.candidateBase,
@@ -1047,7 +1155,7 @@ async function runQualification(
         fullOffload: true,
         ...offload,
       },
-      probes,
+      probes: { ...probes, logRedaction },
     };
   } catch (error) {
     failure = error;

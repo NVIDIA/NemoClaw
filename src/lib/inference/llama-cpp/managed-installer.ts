@@ -287,7 +287,14 @@ function launchContract(
       flashAttention: recipe.spec.serve.flashAttention,
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
       kvCache: recipe.spec.serve.kvCache,
-      limits: { requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds },
+      limits: {
+        maxRequestBodyBytes: recipe.spec.serve.limits.maxRequestBodyBytes,
+        maxRequestHeaderBytes: recipe.spec.serve.limits.maxRequestHeaderBytes,
+        maxOutputTokens: recipe.spec.serve.limits.maxOutputTokens,
+        requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
+        shutdownTimeoutSeconds: recipe.spec.serve.limits.shutdownTimeoutSeconds,
+      },
+      requestGuard: { upstreamPort: recipe.spec.serve.requestGuard.upstreamPort },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
       protocol: recipe.spec.serve.protocol,
@@ -350,15 +357,25 @@ export function resolveManagedLlamaCppOwnerSelection(
     throw new Error("Managed llama.cpp catalog authority changed; rerun onboarding.");
   }
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === owner.recipeId);
-  const preset = catalog.presets.find(
+  const candidatePresets = catalog.presets.filter(
     ({ spec }) =>
       spec.selection === "explicit-only" &&
       spec.plan.backend === "install-llama-cpp" &&
       spec.plan.recipeRef === owner.recipeId,
   );
-  if (!recipe || !isLlamaCppServingRecipe(recipe) || !preset) {
+  if (!recipe || !isLlamaCppServingRecipe(recipe) || candidatePresets.length === 0) {
     throw new Error("Managed llama.cpp declarative authority is unavailable.");
   }
+  const matchingPresets = candidatePresets.filter(({ metadata }) =>
+    catalog.sources.some(
+      ({ kind, id, digest }) =>
+        kind === "ServingPreset" && id === metadata.id && digest === owner.presetDigest,
+    ),
+  );
+  if (matchingPresets.length !== 1) {
+    throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
+  }
+  const preset = matchingPresets[0]!;
   const recipeDigest = catalog.sources.find(
     ({ kind, id }) => kind === "ServingRecipe" && id === recipe.metadata.id,
   )?.digest;
