@@ -57,6 +57,16 @@ function cleanupOutput({
   ].join("\n");
 }
 
+function persistCleanupEvidence(
+  files: ReturnType<typeof deploymentFiles>,
+  jobId: string,
+  evidence: { schemaVersion: 1; volumes: string[]; processIds: number[] },
+): string {
+  const file = path.join(files.stateDirectory, `${jobId}.cleanup.json`);
+  fs.writeFileSync(file, `${JSON.stringify(evidence)}\n`, { mode: 0o600 });
+  return file;
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -282,6 +292,11 @@ describe("Colossus SSH worker deployment boundary", () => {
     const jobId = "b".repeat(64);
     const baselinePath = path.join(files.stateDirectory, `${jobId}.baseline.json`);
     fs.writeFileSync(baselinePath, `${JSON.stringify(BASELINE)}\n`, { mode: 0o600 });
+    persistCleanupEvidence(files, jobId, {
+      schemaVersion: 1,
+      volumes: ["sandbox-volume"],
+      processIds: [1234],
+    });
     const processRunner = vi
       .fn()
       .mockResolvedValueOnce({
@@ -334,6 +349,7 @@ describe("Colossus SSH worker deployment boundary", () => {
   it("verifies cleanup after a pre-candidate failure without a baseline record (#8142)", async () => {
     const files = deploymentFiles();
     const jobId = "b".repeat(64);
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
     const processRunner = vi
       .fn()
       .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
@@ -359,6 +375,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     const jobId = "b".repeat(64);
     const baselinePath = path.join(files.stateDirectory, `${jobId}.baseline.json`);
     fs.writeFileSync(baselinePath, `${JSON.stringify(BASELINE)}\n`, { mode: 0o600 });
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
     const processRunner = vi
       .fn()
       .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
@@ -381,14 +398,31 @@ describe("Colossus SSH worker deployment boundary", () => {
     );
     const processRunner = vi
       .fn()
-      .mockResolvedValueOnce({
-        stdout: cleanupOutput({ volumes: ["sandbox-volume"], processIds: [1234] }),
-        stderr: "",
+      .mockImplementationOnce(async () => {
+        persistCleanupEvidence(files, jobId, {
+          schemaVersion: 1,
+          volumes: ["sandbox-volume"],
+          processIds: [1234],
+        });
+        return {
+          stdout: cleanupOutput({ volumes: ["sandbox-volume"], processIds: [1234] }),
+          stderr: "",
+        };
       })
       .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" })
-      .mockResolvedValueOnce({
-        stdout: cleanupOutput({ volumes: ["gateway-volume"], processIds: [5678] }),
-        stderr: "",
+      .mockImplementationOnce(async () => {
+        persistCleanupEvidence(files, jobId, {
+          schemaVersion: 1,
+          volumes: ["gateway-volume", "sandbox-volume"],
+          processIds: [1234, 5678],
+        });
+        return {
+          stdout: cleanupOutput({
+            volumes: ["gateway-volume", "sandbox-volume"],
+            processIds: [1234, 5678],
+          }),
+          stderr: "",
+        };
       })
       .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
     const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
@@ -408,6 +442,7 @@ describe("Colossus SSH worker deployment boundary", () => {
   it("retains a failed volume identity for startup cleanup recovery (#8142)", async () => {
     const files = deploymentFiles();
     const jobId = "b".repeat(64);
+    const cleanupEvidencePath = path.join(files.stateDirectory, `${jobId}.cleanup.json`);
     fs.writeFileSync(
       path.join(files.stateDirectory, `${jobId}.baseline.json`),
       `${JSON.stringify(BASELINE)}\n`,
@@ -415,22 +450,32 @@ describe("Colossus SSH worker deployment boundary", () => {
     );
     const processRunner = vi
       .fn()
-      .mockRejectedValueOnce(
-        new ProcessFailure("volume removal failed", {
-          stdout: `${cleanupOutput({ volumes: ["sandbox-volume"] })}container removed\n`,
-          stderr: "volume is still in use\n",
-        }),
-      )
-      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
+      .mockImplementationOnce(async () => {
+        persistCleanupEvidence(files, jobId, {
+          schemaVersion: 1,
+          volumes: ["sandbox-volume"],
+          processIds: [],
+        });
+        throw new ProcessFailure("cleanup interrupted after container removal", {
+          stdout: "container removed\n",
+          stderr: "service interrupted\n",
+        });
+      })
+      .mockResolvedValueOnce({
+        stdout: cleanupOutput({ volumes: ["sandbox-volume"] }),
+        stderr: "",
+      })
       .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
     const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
     await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
-      "volume removal failed",
+      "cleanup interrupted after container removal",
     );
-    expect(
-      JSON.parse(fs.readFileSync(path.join(files.stateDirectory, `${jobId}.cleanup.json`), "utf8")),
-    ).toEqual({ schemaVersion: 1, volumes: ["sandbox-volume"], processIds: [] });
+    expect(JSON.parse(fs.readFileSync(cleanupEvidencePath, "utf8"))).toEqual({
+      schemaVersion: 1,
+      volumes: ["sandbox-volume"],
+      processIds: [],
+    });
 
     const restartedWorker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
     await expect(
@@ -461,7 +506,27 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(fs.existsSync(path.join(files.stateDirectory, `${jobId}.cleanup.json`))).toBe(false);
   });
 
+  it("rejects cleanup output that differs from the durable identity record (#8142)", async () => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
+    const processRunner = vi.fn().mockResolvedValueOnce({
+      stdout: cleanupOutput({ volumes: ["unpersisted-volume"] }),
+      stderr: "",
+    });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
+      "Jetson cleanup output differs from its durable resource evidence",
+    );
+    expect(processRunner).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps cleanup targets fixed and preserves the Jetson baseline (#8142)", () => {
+    const fileFsync = cleanupProgram.indexOf("fs.fsyncSync(descriptor)");
+    const atomicRename = cleanupProgram.indexOf("fs.renameSync(temporaryFile, cleanupFile)");
+    const directoryFsync = cleanupProgram.indexOf("fs.fsyncSync(directoryDescriptor)");
+    const destructivePhase = cleanupProgram.indexOf("<<'JETSON_CLEANUP'");
     expect(cleanupProgram).toContain("sandbox_name=e2e-jetson-nvmap");
     expect(cleanupProgram).toContain("gateway_name=nemoclaw");
     expect(cleanupProgram).toContain("destination=nvidia@192.168.55.1");
@@ -482,6 +547,11 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram.indexOf("nemoclaw-cleanup-evidence-v1-end")).toBeLessThan(
       cleanupProgram.indexOf('docker volume rm "$volume"'),
     );
+    expect(cleanupProgram).toContain("fs.constants.O_EXCL");
+    expect(fileFsync).toBeGreaterThan(cleanupProgram.indexOf("<<'JETSON_DISCOVERY'"));
+    expect(atomicRename).toBeGreaterThan(fileFsync);
+    expect(directoryFsync).toBeGreaterThan(atomicRename);
+    expect(destructivePhase).toBeGreaterThan(directoryFsync);
     expect(cleanupProgram).not.toMatch(/pkill|pgrep|docker (?:system|container|volume) prune/u);
     expect(cleanupProgram).not.toContain('rm -rf -- "$workspace_root"');
     expect(cleanupProgram).not.toContain("ollama serve");

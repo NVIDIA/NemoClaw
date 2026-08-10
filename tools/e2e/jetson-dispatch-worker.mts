@@ -594,17 +594,6 @@ function parseCleanupCommandEvidence(output: string): JetsonCleanupEvidence {
   return validateCleanupEvidence({ schemaVersion: 1, volumes, processIds });
 }
 
-function mergeCleanupEvidence(
-  previous: JetsonCleanupEvidence | undefined,
-  current: JetsonCleanupEvidence,
-): JetsonCleanupEvidence {
-  return validateCleanupEvidence({
-    schemaVersion: 1,
-    volumes: [...(previous?.volumes ?? []), ...current.volumes],
-    processIds: [...(previous?.processIds ?? []), ...current.processIds],
-  });
-}
-
 export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   readonly #config: SshJetsonWorkerConfig;
   readonly #runProcess: typeof runProcess;
@@ -739,20 +728,22 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   }
 
   async cleanup(options: { jobId: string; signal: AbortSignal }): Promise<void> {
-    let serializedEvidence: string;
-    try {
-      const cleanupResult = await this.#runProcess({
-        executable: this.#config.cleanupExecutable,
-        args: [],
-        signal: options.signal,
-      });
-      serializedEvidence = this.#recordCleanupEvidence(options.jobId, cleanupResult.stdout);
-    } catch (error) {
-      if (error instanceof ProcessFailure && error.result.stdout.includes(CLEANUP_EVIDENCE_BEGIN)) {
-        this.#recordCleanupEvidence(options.jobId, error.result.stdout);
-      }
-      throw error;
+    const cleanupResult = await this.#runProcess({
+      executable: this.#config.cleanupExecutable,
+      args: [],
+      signal: options.signal,
+    });
+    const reportedEvidence = parseCleanupCommandEvidence(cleanupResult.stdout);
+    const evidencePath = this.#cleanupEvidencePath(options.jobId);
+    const persistedRaw = readPrivateRegularFile(evidencePath, {
+      maxBytes: MAX_CLEANUP_EVIDENCE_BYTES,
+    });
+    if (persistedRaw === null) throw new Error("Jetson cleanup evidence is missing");
+    const persistedEvidence = parseCleanupEvidenceJson(persistedRaw);
+    if (JSON.stringify(reportedEvidence) !== JSON.stringify(persistedEvidence)) {
+      throw new Error("Jetson cleanup output differs from its durable resource evidence");
     }
+    const serializedEvidence = `${JSON.stringify(persistedEvidence)}\n`;
     const expectedRaw = readPrivateRegularFile(this.#baselinePath(options.jobId), {
       allowMissing: true,
       maxBytes: MAX_BASELINE_BYTES,
@@ -777,25 +768,6 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error("Jetson protected tool or Ollama model baseline differs after cleanup");
     }
-  }
-
-  #recordCleanupEvidence(jobId: string, output: string): string {
-    const currentEvidence = parseCleanupCommandEvidence(output);
-    const evidencePath = this.#cleanupEvidencePath(jobId);
-    const previousRaw = readPrivateRegularFile(evidencePath, {
-      allowMissing: true,
-      maxBytes: MAX_CLEANUP_EVIDENCE_BYTES,
-    });
-    const evidence = mergeCleanupEvidence(
-      previousRaw === null ? undefined : parseCleanupEvidenceJson(previousRaw),
-      currentEvidence,
-    );
-    const serializedEvidence = `${JSON.stringify(evidence)}\n`;
-    if (Buffer.byteLength(serializedEvidence) > MAX_CLEANUP_EVIDENCE_BYTES) {
-      throw new Error("Jetson cleanup evidence is too large");
-    }
-    writePrivateRegularFile(evidencePath, serializedEvidence);
-    return serializedEvidence;
   }
 
   #baselinePath(jobId: string): string {

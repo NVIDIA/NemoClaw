@@ -21,16 +21,21 @@ if ! [[ "$job_id" =~ ^[a-f0-9]{64}$ ]]; then
   exit 1
 fi
 
-exec ssh -F /dev/null -T \
-  -o BatchMode=yes \
-  -o ConnectTimeout=15 \
-  -o IdentitiesOnly=yes \
-  -o ServerAliveCountMax=2 \
-  -o ServerAliveInterval=15 \
-  -o StrictHostKeyChecking=yes \
-  -o "UserKnownHostsFile=$known_hosts_file" \
-  -i "$identity_file" \
-  "$destination" bash -s -- "$job_id" <<'JETSON_CLEANUP'
+ssh_args=(
+  -F /dev/null
+  -T
+  -o BatchMode=yes
+  -o ConnectTimeout=15
+  -o IdentitiesOnly=yes
+  -o ServerAliveCountMax=2
+  -o ServerAliveInterval=15
+  -o StrictHostKeyChecking=yes
+  -o "UserKnownHostsFile=$known_hosts_file"
+  -i "$identity_file"
+)
+
+discovery_output="$(
+  ssh "${ssh_args[@]}" "$destination" bash -s -- "$job_id" <<'JETSON_DISCOVERY'
 set -euo pipefail
 
 job_id="$1"
@@ -40,23 +45,9 @@ workspace_root=/var/tmp/nemoclaw-jetson-e2e
 workspace="$workspace_root/$job_id"
 job_home="$workspace/home"
 sandbox_name=e2e-jetson-nvmap
-gateway_name=nemoclaw
 gateway_container=openshell-cluster-nemoclaw
 gateway_volume=openshell-cluster-nemoclaw
 service_directory="/tmp/nemoclaw-services-$sandbox_name"
-
-if [ -L "$workspace_root" ] || { [ -e "$workspace_root" ] && [ ! -d "$workspace_root" ]; }; then
-  echo "Jetson E2E workspace root is not a trusted directory" >&2
-  exit 1
-fi
-if [ -L "$workspace" ] || { [ -e "$workspace" ] && [ ! -d "$workspace" ]; }; then
-  echo "Jetson E2E job workspace is not a trusted directory" >&2
-  exit 1
-fi
-if [ -L "$job_home" ] || { [ -e "$job_home" ] && [ ! -d "$job_home" ]; }; then
-  echo "Jetson E2E job home is not a trusted directory" >&2
-  exit 1
-fi
 
 require_plain_directory_if_present() {
   local directory="$1"
@@ -66,6 +57,9 @@ require_plain_directory_if_present() {
   fi
 }
 
+require_plain_directory_if_present "$workspace_root"
+require_plain_directory_if_present "$workspace"
+require_plain_directory_if_present "$job_home"
 require_plain_directory_if_present "$job_home/.nemoclaw"
 require_plain_directory_if_present "$job_home/.local"
 require_plain_directory_if_present "$job_home/.local/state"
@@ -75,12 +69,11 @@ require_plain_directory_if_present "$service_directory"
 
 recorded_volumes=()
 record_volume() {
-  local volume="$1"
+  local volume="$1" recorded
   [[ "$volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$ ]] || {
     echo "Refusing an invalid recorded Docker volume name" >&2
     exit 1
   }
-  local recorded
   for recorded in "${recorded_volumes[@]}"; do
     [ "$recorded" = "$volume" ] && return 0
   done
@@ -134,10 +127,6 @@ read_recorded_pid() {
   printf '%s\n' "$pid"
 }
 
-auth_proxy_pid="$(read_recorded_pid "$job_home/.nemoclaw/ollama-auth-proxy.pid")"
-gateway_pid="$(read_recorded_pid "$job_home/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid")"
-cloudflared_pid="$(read_recorded_pid "$service_directory/cloudflared.pid")"
-
 validate_recorded_pid() {
   local pid="$1" marker="$2"
   [ -n "$pid" ] || return 0
@@ -145,39 +134,23 @@ validate_recorded_pid() {
   local process_uid cmdline
   process_uid="$(awk '/^Uid:/ { print $2; exit }' "/proc/$pid/status")"
   [ "$process_uid" = "$(id -u)" ] || {
-    echo "Refusing to stop a process owned by another user" >&2
+    echo "Refusing to record a process owned by another user" >&2
     exit 1
   }
   cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline")"
   case "$cmdline" in
     *"$marker"*) ;;
-    *) echo "Refusing to stop a recorded PID with an unexpected command" >&2; exit 1 ;;
+    *) echo "Refusing to record a PID with an unexpected command" >&2; exit 1 ;;
   esac
   if ! tr '\000' '\n' <"/proc/$pid/environ" | grep -Fqx "HOME=$job_home"; then
-    echo "Refusing to stop a process outside the job home" >&2
+    echo "Refusing to record a process outside the job home" >&2
     exit 1
   fi
 }
 
-stop_recorded_pid() {
-  local pid="$1" marker="$2"
-  [ -n "$pid" ] || return 0
-  kill -0 "$pid" 2>/dev/null || return 0
-  validate_recorded_pid "$pid" "$marker"
-  kill "$pid"
-  for _attempt in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || return 0
-    sleep 0.2
-  done
-  kill -KILL "$pid"
-  for _attempt in 1 2 3 4 5; do
-    kill -0 "$pid" 2>/dev/null || return 0
-    sleep 0.2
-  done
-  echo "Recorded cleanup process $pid did not stop" >&2
-  exit 1
-}
-
+auth_proxy_pid="$(read_recorded_pid "$job_home/.nemoclaw/ollama-auth-proxy.pid")"
+gateway_pid="$(read_recorded_pid "$job_home/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid")"
+cloudflared_pid="$(read_recorded_pid "$service_directory/cloudflared.pid")"
 validate_recorded_pid "$auth_proxy_pid" ollama-auth-proxy.
 validate_recorded_pid "$gateway_pid" openshell-gateway
 validate_recorded_pid "$cloudflared_pid" cloudflared
@@ -192,6 +165,163 @@ for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
   fi
 done
 printf '%s\n' nemoclaw-cleanup-evidence-v1-end
+JETSON_DISCOVERY
+)"
+
+canonical_evidence="$(
+  # shellcheck disable=SC2016
+  printf '%s\n' "$discovery_output" | /usr/bin/node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const stateDirectory = process.argv[1];
+    const jobId = process.argv[2];
+    if (!/^[a-f0-9]{64}$/.test(jobId)) process.exit(1);
+    const begin = "nemoclaw-cleanup-evidence-v1-begin";
+    const end = "nemoclaw-cleanup-evidence-v1-end";
+    const lines = fs.readFileSync(0, "utf8").replace(/\r/g, "").trimEnd().split("\n");
+    const beginIndex = lines.indexOf(begin);
+    const endIndex = lines.indexOf(end);
+    if (beginIndex < 0 || endIndex < 0 || beginIndex !== lines.lastIndexOf(begin) || endIndex !== lines.lastIndexOf(end) || beginIndex >= endIndex) process.exit(1);
+    const discovered = { schemaVersion: 1, volumes: [], processIds: [] };
+    for (const line of lines.slice(beginIndex + 1, endIndex)) {
+      const fields = line.split("\t");
+      if (fields.length !== 2) process.exit(1);
+      if (fields[0] === "volume" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(fields[1])) discovered.volumes.push(fields[1]);
+      else if (fields[0] === "processId" && /^[1-9][0-9]*$/.test(fields[1]) && Number.isSafeInteger(Number(fields[1]))) discovered.processIds.push(Number(fields[1]));
+      else process.exit(1);
+    }
+    const cleanupFile = path.join(stateDirectory, `${jobId}.cleanup.json`);
+    let previous = { schemaVersion: 1, volumes: [], processIds: [] };
+    if (fs.existsSync(cleanupFile)) {
+      const metadata = fs.lstatSync(cleanupFile);
+      if (!metadata.isFile() || metadata.nlink !== 1 || (metadata.mode & 0o077) !== 0 || metadata.size > 64 * 1024) process.exit(1);
+      previous = JSON.parse(fs.readFileSync(cleanupFile, "utf8"));
+    }
+    const validate = (record) => {
+      const keys = Object.keys(record).sort();
+      if (JSON.stringify(keys) !== JSON.stringify(["processIds", "schemaVersion", "volumes"]) || record.schemaVersion !== 1 || !Array.isArray(record.volumes) || !Array.isArray(record.processIds)) process.exit(1);
+      if (!record.volumes.every((value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(value))) process.exit(1);
+      if (!record.processIds.every((value) => Number.isSafeInteger(value) && value > 0)) process.exit(1);
+    };
+    validate(previous);
+    validate(discovered);
+    const merged = {
+      schemaVersion: 1,
+      volumes: [...new Set([...previous.volumes, ...discovered.volumes])].sort(),
+      processIds: [...new Set([...previous.processIds, ...discovered.processIds])].sort((a, b) => a - b),
+    };
+    const serialized = `${JSON.stringify(merged)}\n`;
+    if (Buffer.byteLength(serialized) > 64 * 1024) process.exit(1);
+    const temporaryFile = path.join(stateDirectory, `.${jobId}.${process.pid}.cleanup.tmp`);
+    let descriptor;
+    try {
+      descriptor = fs.openSync(temporaryFile, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+      fs.fchmodSync(descriptor, 0o600);
+      fs.writeFileSync(descriptor, serialized, "utf8");
+      fs.fsyncSync(descriptor);
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
+    fs.renameSync(temporaryFile, cleanupFile);
+    const directoryDescriptor = fs.openSync(stateDirectory, fs.constants.O_RDONLY);
+    try { fs.fsyncSync(directoryDescriptor); } finally { fs.closeSync(directoryDescriptor); }
+    process.stdout.write(serialized);
+  ' "$state_directory" "$job_id"
+)"
+
+cleanup_evidence_base64="$(printf '%s\n' "$canonical_evidence" | base64 --wrap=0)"
+ssh "${ssh_args[@]}" "$destination" bash -s -- "$job_id" "$cleanup_evidence_base64" <<'JETSON_CLEANUP'
+set -euo pipefail
+
+job_id="$1"
+cleanup_evidence_base64="$2"
+[[ "$job_id" =~ ^[a-f0-9]{64}$ ]]
+
+workspace_root=/var/tmp/nemoclaw-jetson-e2e
+workspace="$workspace_root/$job_id"
+job_home="$workspace/home"
+sandbox_name=e2e-jetson-nvmap
+gateway_name=nemoclaw
+gateway_container=openshell-cluster-nemoclaw
+service_directory="/tmp/nemoclaw-services-$sandbox_name"
+
+require_plain_directory_if_present() {
+  local directory="$1"
+  if [ -L "$directory" ] || { [ -e "$directory" ] && [ ! -d "$directory" ]; }; then
+    echo "Refusing an untrusted cleanup directory: $directory" >&2
+    exit 1
+  fi
+}
+
+require_plain_directory_if_present "$workspace_root"
+require_plain_directory_if_present "$workspace"
+require_plain_directory_if_present "$job_home"
+require_plain_directory_if_present "$job_home/.nemoclaw"
+require_plain_directory_if_present "$job_home/.local"
+require_plain_directory_if_present "$job_home/.local/state"
+require_plain_directory_if_present "$job_home/.local/state/nemoclaw"
+require_plain_directory_if_present "$job_home/.local/state/nemoclaw/openshell-docker-gateway"
+require_plain_directory_if_present "$service_directory"
+
+cleanup_rows="$(
+  printf '%s' "$cleanup_evidence_base64" | base64 --decode | node -e '
+    const fs = require("node:fs");
+    const value = JSON.parse(fs.readFileSync(0, "utf8"));
+    const keys = Object.keys(value).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(["processIds", "schemaVersion", "volumes"]) || value.schemaVersion !== 1 || !Array.isArray(value.volumes) || !Array.isArray(value.processIds)) process.exit(1);
+    for (const volume of value.volumes) {
+      if (typeof volume !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(volume)) process.exit(1);
+      process.stdout.write("volume\t" + volume + "\n");
+    }
+    for (const pid of value.processIds) {
+      if (!Number.isSafeInteger(pid) || pid < 1) process.exit(1);
+      process.stdout.write("processId\t" + pid + "\n");
+    }
+  '
+)"
+recorded_volumes=()
+recorded_process_ids=()
+if [ -n "$cleanup_rows" ]; then
+  while IFS=$'\t' read -r kind identity; do
+    case "$kind" in
+      volume) recorded_volumes+=("$identity") ;;
+      processId) recorded_process_ids+=("$identity") ;;
+      *) exit 1 ;;
+    esac
+  done <<<"$cleanup_rows"
+fi
+
+stop_recorded_pid() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null || return 0
+  local process_uid cmdline
+  process_uid="$(awk '/^Uid:/ { print $2; exit }' "/proc/$pid/status")"
+  [ "$process_uid" = "$(id -u)" ] || {
+    echo "Refusing to stop a process owned by another user" >&2
+    exit 1
+  }
+  cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline")"
+  case "$cmdline" in
+    *ollama-auth-proxy.* | *openshell-gateway* | *cloudflared*) ;;
+    *) echo "Refusing to stop a recorded PID with an unexpected command" >&2; exit 1 ;;
+  esac
+  if ! tr '\000' '\n' <"/proc/$pid/environ" | grep -Fqx "HOME=$job_home"; then
+    echo "Refusing to stop a process outside the job home" >&2
+    exit 1
+  fi
+  kill "$pid"
+  for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  kill -KILL "$pid"
+  for _attempt in 1 2 3 4 5; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  echo "Recorded cleanup process $pid did not stop" >&2
+  exit 1
+}
 
 gateway_present=0
 if [ -d "$job_home" ]; then
@@ -202,25 +332,19 @@ if [ -d "$job_home" ]; then
     if (!Array.isArray(rows)) throw new Error("invalid gateway list");
     process.stdout.write(rows.some((row) => row && row.name === "nemoclaw") ? "present" : "absent");
   ')"
-  if [ "$gateway_state" = present ]; then
-    gateway_present=1
-  fi
+  [ "$gateway_state" = present ] && gateway_present=1
 fi
 
 if [ "$gateway_present" -eq 1 ]; then
   forward_list="$(HOME="$job_home" openshell forward list --gateway "$gateway_name")"
   while IFS= read -r port; do
     [ -n "$port" ] || continue
-    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || {
-      echo "Refusing an invalid recorded OpenShell forward port" >&2
-      exit 1
-    }
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || exit 1
     HOME="$job_home" openshell forward stop "$port" "$sandbox_name"
   done < <(
     printf '%s\n' "$forward_list" | awk -v sandbox="$sandbox_name" \
       '$1 == sandbox && $3 ~ /^[0-9]+$/ { print $3 }'
   )
-
   sandbox_names="$(HOME="$job_home" openshell sandbox list --names -g "$gateway_name")"
   if printf '%s\n' "$sandbox_names" | grep -Fqx "$sandbox_name"; then
     HOME="$job_home" openshell sandbox delete "$sandbox_name"
@@ -251,14 +375,18 @@ if [ "$gateway_present" -eq 1 ]; then
   fi
 fi
 
-stop_recorded_pid "$auth_proxy_pid" ollama-auth-proxy.
-stop_recorded_pid "$gateway_pid" openshell-gateway
-stop_recorded_pid "$cloudflared_pid" cloudflared
+for pid in "${recorded_process_ids[@]}"; do
+  stop_recorded_pid "$pid"
+done
 
+mapfile -t sandbox_containers < <(
+  docker ps -aq \
+    --filter label=openshell.ai/managed-by=openshell \
+    --filter "label=openshell.ai/sandbox-name=$sandbox_name"
+)
 for container in "${sandbox_containers[@]}"; do
-  if docker container inspect "$container" >/dev/null 2>&1; then
-    docker container rm --force "$container"
-  fi
+  [[ "$container" =~ ^[a-f0-9]{12,64}$ ]] || exit 1
+  docker container rm --force "$container"
 done
 if docker container inspect "$gateway_container" >/dev/null 2>&1; then
   docker container rm --force "$gateway_container"
@@ -291,10 +419,20 @@ for volume in "${recorded_volumes[@]}"; do
     exit 1
   fi
 done
-for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+for pid in "${recorded_process_ids[@]}"; do
+  if kill -0 "$pid" 2>/dev/null; then
     echo "A recorded test-owned helper process remains" >&2
     exit 1
   fi
 done
 JETSON_CLEANUP
+
+printf '%s\n' nemoclaw-cleanup-evidence-v1-begin
+# shellcheck disable=SC2016
+printf '%s\n' "$canonical_evidence" | /usr/bin/node -e '
+  const fs = require("node:fs");
+  const value = JSON.parse(fs.readFileSync(0, "utf8"));
+  for (const volume of value.volumes) console.log(`volume\t${volume}`);
+  for (const pid of value.processIds) console.log(`processId\t${pid}`);
+'
+printf '%s\n' nemoclaw-cleanup-evidence-v1-end

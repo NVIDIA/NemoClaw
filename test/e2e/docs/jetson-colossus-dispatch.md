@@ -207,7 +207,17 @@ Changing one of those values requires a corresponding reviewed source change.
 The dispatcher invokes it after success, failure, cancellation, and timeout.
 The dispatcher also invokes it during startup when `device.lock` remains from an interrupted service process.
 
-The cleanup program must perform these bounded actions:
+The cleanup program uses these phases in order:
+
+1. Run read-only discovery over pinned-host-key SSH and validate every discovered volume and process identity.
+2. Strictly parse and merge those identities with the existing private cleanup record on Colossus.
+3. Persist the merged record before starting destructive cleanup over pinned-host-key SSH.
+
+For durable persistence, the helper writes a mode-`0600` temporary file in the state directory.
+It fsyncs the file, atomically renames it to `<jobId>.cleanup.json`, and fsyncs the state directory.
+If discovery, validation, or durable persistence fails, the helper does not start destructive cleanup.
+
+The destructive phase must perform these bounded actions:
 
 1. Stop and remove only the named sandbox, its forwards, and the named gateway.
 2. Stop only the recorded helper PIDs after verifying the process owner, command marker, and job `HOME`.
@@ -221,9 +231,7 @@ It must exit nonzero when target ownership is ambiguous, cleanup fails, or absen
 It must not remove `/var/lib/nemoclaw-jetson-dispatch/state/device.lock`.
 The dispatcher removes that lock only after cleanup and absence verification succeed.
 
-Before any destructive cleanup action, the helper validates every discovered Docker volume name and process ID.
-The helper then emits one bounded evidence block between its versioned sentinel lines.
-The worker writes these identities to this private state file with mode `0600`:
+The durable cleanup record uses this path:
 
 ```text
 /var/lib/nemoclaw-jetson-dispatch/state/<jobId>.cleanup.json
@@ -240,11 +248,12 @@ The file has this exact schema:
 ```
 
 Either identity array can be empty.
-The worker merges new identities with the existing record instead of replacing earlier identities.
-After the helper succeeds, the worker parses and merges the evidence block before independent verification.
-If a later helper action fails, the worker receives `ProcessFailure`.
-The worker parses and merges the emitted block before it rethrows that failure.
-The failure keeps the device lock for startup recovery.
+The helper merges new identities with the existing record instead of replacing earlier identities.
+The destructive phase receives this merged record and acts on every recorded identity.
+After destructive cleanup succeeds, the helper emits one bounded evidence block for the merged record.
+The worker reads and revalidates that successful output against the durable record before independent verification.
+Failure durability belongs to the helper's pre-cleanup record, not to worker parsing of failed process output.
+Any helper failure or interruption keeps the device lock for startup recovery.
 The dispatcher retains the cleanup record after it removes the device lock.
 
 After the helper succeeds, the worker independently verifies these conditions over pinned-host-key SSH:
@@ -503,9 +512,12 @@ If cleanup fails, startup fails or the completed job reports `conclusion: "clean
 If cleanup succeeds but lock removal fails, the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "succeeded"`.
 The lock remains in either case.
 
-A helper failure after evidence emission leaves validated identities in the private cleanup record.
-On the next startup attempt, the worker merges new identities with every identity already in that record.
-After the helper succeeds, independent verification checks every retained and new identity before the dispatcher removes the lock.
+If the service stops before durable persistence completes, destructive cleanup has not started.
+If it stops after durable persistence, the cleanup record and device lock remain for startup recovery.
+On startup, the helper discovers current identities and merges them with every retained identity before cleanup resumes.
+For example, termination after container removal cannot erase the volume identities recorded before that removal.
+The startup cleanup passes those retained volumes into deletion and independent verification.
+After the helper succeeds, the worker revalidates its output and every retained identity before the dispatcher removes the lock.
 
 The unit uses `Restart=on-failure`, so a startup cleanup failure otherwise retries every five seconds.
 Stop that retry loop before investigation or repair:
