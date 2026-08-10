@@ -310,6 +310,7 @@ export function buildLlamaCppHostLocalDockerArgv(
 }
 
 const dockerLoopbackPublishAuthorityBrand = Symbol("DockerLoopbackPublishAuthority");
+const consumedDockerLoopbackPublishAuthorities = new WeakSet<object>();
 const MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION = [28, 3, 3] as const;
 
 export interface DockerLoopbackPublishAuthority {
@@ -352,7 +353,8 @@ export function qualifyDockerLoopbackPublishAuthority(
   });
 }
 
-export function assertDockerLoopbackPublishAuthority(
+/** Consume a single-use authority immediately before one Docker loopback publication. */
+export function consumeDockerLoopbackPublishAuthority(
   authority: DockerLoopbackPublishAuthority,
 ): void {
   if (
@@ -362,6 +364,10 @@ export function assertDockerLoopbackPublishAuthority(
   ) {
     throw new Error("llama.cpp Docker loopback publishing authority is invalid.");
   }
+  if (consumedDockerLoopbackPublishAuthorities.has(authority)) {
+    throw new Error("llama.cpp Docker loopback publishing authority was already consumed.");
+  }
+  consumedDockerLoopbackPublishAuthorities.add(authority);
 }
 
 /** Activate the request guard only with live, patched Docker loopback-publish authority. */
@@ -370,7 +376,7 @@ export function buildLlamaCppRequestGuardDockerArgv(
   bindings: LlamaCppHostLocalRuntimeBindings,
   loopbackPublishAuthority: DockerLoopbackPublishAuthority,
 ): string[] {
-  assertDockerLoopbackPublishAuthority(loopbackPublishAuthority);
+  consumeDockerLoopbackPublishAuthority(loopbackPublishAuthority);
   validateContract(contract);
   validateBindings(contract, bindings);
   const { limits } = contract.serve;

@@ -9,8 +9,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  assertDockerLoopbackPublishAuthority,
   buildLlamaCppRequestGuardDockerArgv,
+  consumeDockerLoopbackPublishAuthority,
   type DockerLoopbackPublishAuthority,
   qualifyDockerLoopbackPublishAuthority,
   type VerifiedLocalModelArtifact,
@@ -759,14 +759,11 @@ async function removeOwnedRegistry(names: RuntimeNames): Promise<void> {
   }
 }
 
-function startRegistry(
-  names: RuntimeNames,
-  loopbackPublishAuthority: DockerLoopbackPublishAuthority,
-): void {
-  assertDockerLoopbackPublishAuthority(loopbackPublishAuthority);
+function startRegistry(names: RuntimeNames): void {
   if (dockerContainerOwner(names.registryName) !== null) {
     throw new Error("isolated registry name is already in use");
   }
+  consumeDockerLoopbackPublishAuthority(qualifyLiveDockerLoopbackPublishAuthority());
   runCommand(
     "docker",
     [
@@ -781,6 +778,12 @@ function startRegistry(
       registryImage,
     ],
     { capture: false },
+  );
+}
+
+function qualifyLiveDockerLoopbackPublishAuthority(): DockerLoopbackPublishAuthority {
+  return qualifyDockerLoopbackPublishAuthority(
+    runCommand("docker", ["version", "--format", "{{.Server.Version}}"]).toString("utf8"),
   );
 }
 
@@ -904,9 +907,6 @@ async function runQualification(
     if (!commandSucceeds(command, ["--version"]))
       throw new Error(`qualification requires ${command}`);
   }
-  const loopbackPublishAuthority = qualifyDockerLoopbackPublishAuthority(
-    runCommand("docker", ["version", "--format", "{{.Server.Version}}"]).toString("utf8"),
-  );
   validateCandidateCheckout(invocation);
   const planSource = readBoundedRegularFile(invocation.planFile, maximumPlanBytes);
   const plan = validateQualificationPlan(planSource, invocation.planSha256);
@@ -927,7 +927,7 @@ async function runQualification(
     ) {
       throw new Error("refusing to reuse the declarative llama.cpp agent qualification port");
     }
-    startRegistry(names, loopbackPublishAuthority);
+    startRegistry(names);
     await waitForRegistry();
     runCommand("docker", buildCandidateImageArgv(plan, invocation, metadataFile), {
       capture: false,
@@ -982,7 +982,7 @@ async function runQualification(
         registryOwner: names.registryOwner,
         runtimeGid,
         runtimeUid,
-        loopbackPublishAuthority,
+        loopbackPublishAuthority: qualifyLiveDockerLoopbackPublishAuthority(),
         ...(plan.qualification.agentQualification.execution === "enabled"
           ? { hostPort: plan.recipe.serve.port }
           : {}),

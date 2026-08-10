@@ -30,6 +30,7 @@ import {
   validateRuntimeLogRedaction,
   validateStartupLog,
 } from "../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
+import { consumeDockerLoopbackPublishAuthority } from "../src/lib/inference/llama-cpp/host-local-runtime";
 
 const BASE_SHA = "b".repeat(40);
 const HEAD_SHA = "a".repeat(40);
@@ -45,7 +46,9 @@ const config = loadLlamaCppImageConfig();
 const planSource = config.publication_qualification_plan;
 const planDigest = config.publication_qualification_plan_sha256;
 const plan = validateQualificationPlan(planSource, planDigest);
-const loopbackPublishAuthority = qualifyDockerLoopbackPublishAuthority("28.3.3");
+function loopbackPublishAuthority(): ReturnType<typeof qualifyDockerLoopbackPublishAuthority> {
+  return qualifyDockerLoopbackPublishAuthority("28.3.3");
+}
 
 function trustedEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -135,6 +138,12 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       "28.3.3+ubuntu.1",
     );
     expect(qualifyDockerLoopbackPublishAuthority("29.0.0").serverVersion).toBe("29.0.0");
+
+    const singleUseAuthority = qualifyDockerLoopbackPublishAuthority("28.3.3");
+    expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).not.toThrow();
+    expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).toThrow(
+      /already consumed/u,
+    );
   });
 
   it("accepts only the canonical digest-bound declarative execution plan (#8260)", () => {
@@ -324,7 +333,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
         runtimeGid: 1001,
         runtimeUid: 1001,
-        loopbackPublishAuthority,
+        loopbackPublishAuthority: loopbackPublishAuthority(),
       });
       expect(argv).toEqual(
         expect.arrayContaining([
@@ -397,7 +406,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
         runtimeGid: 1001,
         runtimeUid: 1001,
-        loopbackPublishAuthority,
+        loopbackPublishAuthority: loopbackPublishAuthority(),
       });
       expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
@@ -430,7 +439,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
           runtimeGid: 1001,
           runtimeUid: 0,
-          loopbackPublishAuthority,
+          loopbackPublishAuthority: loopbackPublishAuthority(),
         }),
       ).toThrow(/runtime uid/u);
     } finally {
