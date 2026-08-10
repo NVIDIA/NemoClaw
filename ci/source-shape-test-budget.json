@@ -282,6 +282,11 @@
       "category": "security"
     },
     {
+      "file": "test/managed-image-publication-workflow.test.ts",
+      "test": "builds and exercises every shipped agent from an exact PR image before merge (#7744)",
+      "category": "security"
+    },
+    {
       "file": "test/messaging-image-env-contract.test.ts",
       "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
       "category": "security"

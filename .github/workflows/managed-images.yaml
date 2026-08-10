@@ -208,6 +208,56 @@ jobs:
           provenance: false
           sbom: false
 
+      - name: Reject a symlinked runtime directory during image assembly
+        if: ${{ matrix.agent == 'langchain-deepagents-code' }}
+        shell: bash
+        env:
+          BASE_REFERENCE: ${{ steps.base.outputs.ref }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          probe_dockerfile="$RUNNER_TEMP/runtime-directory-symlink.Dockerfile"
+          probe_log="$RUNNER_TEMP/runtime-directory-symlink.log"
+          {
+            cat <<'PROBE_HEADER'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          USER root
+          COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+          COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/BUNDLED_PACKAGES.json
+          COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/THIRD_PARTY_LICENSES.txt
+          COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs
+          RUN rm -rf /run/nemoclaw \
+              && ln -s /tmp /run/nemoclaw
+          PROBE_HEADER
+            awk '
+              /^RUN managed_runtime_assertion_failed\(\)/ { copying = 1 }
+              copying { print }
+              copying && /managed_runtime_assertion_failed runtime-directory-metadata-0:0:755 \/run\/nemoclaw$/ { exit }
+            ' "$DOCKERFILE"
+          } > "$probe_dockerfile"
+
+          if [ "$(grep -c '^RUN managed_runtime_assertion_failed()' "$probe_dockerfile")" -ne 1 ]; then
+            echo "ERROR: could not extract one managed runtime assertion from $DOCKERFILE." >&2
+            exit 1
+          fi
+          if docker buildx build \
+            --platform linux/amd64 \
+            --build-arg "BASE_IMAGE=${BASE_REFERENCE}" \
+            --progress plain \
+            --file "$probe_dockerfile" \
+            . > "$probe_log" 2>&1; then
+            echo "ERROR: image assembly accepted a symlinked /run/nemoclaw directory." >&2
+            exit 1
+          fi
+          if ! grep -Fq \
+            'ERROR: managed image assertion failed: runtime-directory-non-symlink path=/run/nemoclaw' \
+            "$probe_log"; then
+            tail -80 "$probe_log" >&2
+            echo "ERROR: image assembly failed without the runtime-directory-non-symlink diagnostic." >&2
+            exit 1
+          fi
+
       - name: Validate exact PR managed image contract
         id: contract
         shell: bash

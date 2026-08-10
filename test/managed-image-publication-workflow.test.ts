@@ -435,8 +435,11 @@ describe("complete managed-image publication workflow", () => {
     }
   });
 
+  // source-shape-contract: security -- PR image builds must reject a symlinked runtime path before final image contract validation
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
-    const workflow = readWorkflow("managed-images.yaml");
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(repoRoot, ".github/workflows/managed-images.yaml"), "utf8"),
+    ) as Workflow;
     const prBuilder = managedPrBuilder(workflow);
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
@@ -466,11 +469,28 @@ describe("complete managed-image publication workflow", () => {
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
-    expect(step(prBuilder, "Build PR managed image locally").with).toMatchObject({
+    const build = step(prBuilder, "Build PR managed image locally");
+    expect(build.with).toMatchObject({
       platforms: "linux/amd64",
       load: true,
       push: false,
     });
+    const runtimeDirectoryProbe = step(
+      prBuilder,
+      "Reject a symlinked runtime directory during image assembly",
+    );
+    expect(runtimeDirectoryProbe.if).toBe("${{ matrix.agent == 'langchain-deepagents-code' }}");
+    expect(runtimeDirectoryProbe.run).toContain("docker buildx build");
+    expect(runtimeDirectoryProbe.run).toContain(
+      "managed_runtime_assertion_failed runtime-directory-metadata-0:0:755",
+    );
+    expect(runtimeDirectoryProbe.run).toContain(
+      "ERROR: managed image assertion failed: runtime-directory-non-symlink path=/run/nemoclaw",
+    );
+    expect(steps.indexOf(build)).toBeLessThan(steps.indexOf(runtimeDirectoryProbe));
+    expect(steps.indexOf(runtimeDirectoryProbe)).toBeLessThan(
+      steps.indexOf(step(prBuilder, "Validate exact PR managed image contract")),
+    );
     expect(step(prBuilder, "Exercise managed startup root stdin and hold").run).toContain(
       "run-managed-image-direct-e2e.ts",
     );
