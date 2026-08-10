@@ -89,6 +89,23 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(seen.args.join(" ")).toContain("nc -zw7 host.openshell.internal 9090");
   });
 
+  it("routes portable profile probes through the OpenShell Podman host gateway", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const seen: { args: readonly string[] } = { args: [] };
+
+    await isSandboxBridgeGatewayReachable({
+      inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" }),
+      usesHostGatewayRouteImpl: () => false,
+      runImpl: (args) => {
+        seen.args = args;
+        return { status: 0 };
+      },
+    });
+
+    expect(seen.args).toContain("host.openshell.internal:169.254.1.2");
+    expect(seen.args).not.toContain("host.openshell.internal:10.89.0.1");
+  });
+
   it("does not call a missing Docker network a firewall failure", async () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => undefined,
