@@ -440,6 +440,9 @@ describe("complete managed-image publication workflow", () => {
     const prBuilder = managedPrBuilder(workflow);
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
+    const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
+    const build = step(prBuilder, "Build PR managed image locally");
+    const contract = step(prBuilder, "Validate exact PR managed image contract");
 
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
@@ -453,6 +456,10 @@ describe("complete managed-image publication workflow", () => {
       "langchain-deepagents-code",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
+    expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
+      steps.indexOf(step(prBuilder, "Checkout")),
+    );
+    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(build));
 
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
@@ -466,11 +473,91 @@ describe("complete managed-image publication workflow", () => {
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
-    expect(step(prBuilder, "Build PR managed image locally").with).toMatchObject({
+    expect(build.with).toMatchObject({
       platforms: "linux/amd64",
       load: true,
       push: false,
     });
+    const contractSource = required(contract.run, "PR managed image contract is missing");
+    expect(contractSource).toContain(
+      'docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id"',
+    );
+    expect(contractSource).toContain('find -L "$discovery_runtime"');
+    expect(contractSource).toContain('find -P "$discovery_runtime" ! -user root');
+    expect(contractSource).toContain("\\( ! -user root -o -perm /022 \\) -print -quit");
+    expect(contractSource).toContain("-type d ! -perm 0555");
+    expect(contractSource).toContain("-type f ! -perm 0444");
+    expect(contractSource).toContain('node "$discovery_runtime/mcp-tool-discovery.mjs"');
+    expect(contractSource).toContain(
+      '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}',
+    );
+
+    const permissionDriftSource = required(
+      permissionDrift.run,
+      "reviewed discovery permission drift fixture is missing",
+    );
+    const permissionFixture = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-discovery-permission-drift-"),
+    );
+    const reviewedRoot = path.join(
+      permissionFixture,
+      "tools",
+      "mcp-tool-discovery-runtime",
+      "reviewed-runtime-bundle",
+      "mcp-tool-discovery",
+    );
+    const reviewedArtifacts = [
+      "BUNDLED_PACKAGES.json",
+      "THIRD_PARTY_LICENSES.txt",
+      "mcp-tool-discovery.bundle",
+    ];
+    const permissionDriftScript = path.join(permissionFixture, "permission-drift.sh");
+    fs.writeFileSync(permissionDriftScript, permissionDriftSource, { mode: 0o700 });
+    fs.mkdirSync(reviewedRoot, { recursive: true });
+    for (const artifact of reviewedArtifacts) {
+      const source = path.join(
+        repoRoot,
+        "tools",
+        "mcp-tool-discovery-runtime",
+        "reviewed-runtime-bundle",
+        "mcp-tool-discovery",
+        artifact,
+      );
+      const fixture = path.join(reviewedRoot, artifact);
+      fs.copyFileSync(source, fixture);
+      fs.chmodSync(fixture, 0o444);
+    }
+    try {
+      const drifted = spawnSync("bash", [permissionDriftScript], {
+        cwd: permissionFixture,
+        encoding: "utf8",
+      });
+      expect(drifted.status, drifted.stderr).toBe(0);
+      expect(drifted.stdout).toBe("");
+      expect(drifted.stderr).toBe("");
+      for (const artifact of reviewedArtifacts) {
+        expect(fs.statSync(path.join(reviewedRoot, artifact)).mode & 0o777).toBe(0o664);
+      }
+
+      const linkedArtifact = path.join(reviewedRoot, reviewedArtifacts[0]);
+      const externalArtifact = path.join(permissionFixture, "external-reviewed-artifact.json");
+      fs.unlinkSync(linkedArtifact);
+      fs.writeFileSync(externalArtifact, "{}\n", { mode: 0o444 });
+      fs.symlinkSync(externalArtifact, linkedArtifact);
+      const rejected = spawnSync("bash", [permissionDriftScript], {
+        cwd: permissionFixture,
+        encoding: "utf8",
+      });
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stdout).toBe("");
+      expect(rejected.stderr).toContain(
+        "ERROR: reviewed discovery permission fixture must be a regular non-symlink:",
+      );
+      expect(fs.statSync(externalArtifact).mode & 0o777).toBe(0o444);
+    } finally {
+      fs.rmSync(permissionFixture, { recursive: true, force: true });
+    }
+
     expect(step(prBuilder, "Exercise managed startup root stdin and hold").run).toContain(
       "run-managed-image-direct-e2e.ts",
     );

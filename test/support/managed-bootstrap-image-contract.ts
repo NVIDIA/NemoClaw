@@ -139,7 +139,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     permissionReplayPaths.map((artifactPath) => [artifactPath, fs.readFileSync(artifactPath)]),
   );
   const permissionReplayForHost = permissionReplaySource
-    .replaceAll(DISCOVERY_RUNTIME_ROOT, permissionReplayRoot)
+    .replaceAll(DISCOVERY_RUNTIME_ROOT, '"$NEMOCLAW_TEST_DISCOVERY_ROOT"')
     // The source contract pins root:root. Use the current identity so this
     // extracted production command can also run on an unprivileged test host.
     .replaceAll("root:root", '"$(id -u):$(id -g)"');
@@ -231,12 +231,17 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
           ...(findStatus === undefined ? [] : [`find() { return ${findStatus}; }`]),
           functionSource,
           permissionReplayForHost,
-          `${JSON.stringify(process.execPath)} ${JSON.stringify(permissionReplayBundlePath)}`,
+          '"$NEMOCLAW_TEST_NODE" "$NEMOCLAW_TEST_DISCOVERY_BUNDLE"',
         ].join("\n"),
       ],
       {
         encoding: "utf-8",
-        env: { PATH: process.env.PATH ?? "" },
+        env: {
+          NEMOCLAW_TEST_DISCOVERY_BUNDLE: permissionReplayBundlePath,
+          NEMOCLAW_TEST_DISCOVERY_ROOT: permissionReplayRoot,
+          NEMOCLAW_TEST_NODE: process.execPath,
+          PATH: process.env.PATH ?? "",
+        },
       },
     );
 
@@ -259,18 +264,25 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       ok: false,
       detail: "tool discovery received invalid runtime arguments",
     });
-    expect(fs.statSync(permissionReplayRoot).mode & 0o777).toBe(0o555);
     const expectedUid = process.getuid?.() ?? 0;
     const expectedGid = process.getgid?.() ?? 0;
-    for (const artifactPath of [permissionReplayRoot, ...permissionReplayPaths]) {
-      const artifact = fs.statSync(artifactPath);
-      expect(artifact.uid).toBe(expectedUid);
-      expect(artifact.gid).toBe(expectedGid);
-      expect(artifact.mode & 0o022).toBe(0);
-    }
+    const permissionReplayDirectory = fs.statSync(permissionReplayRoot);
+    expect(permissionReplayDirectory.uid).toBe(expectedUid);
+    expect(permissionReplayDirectory.gid).toBe(expectedGid);
+    expect(permissionReplayDirectory.mode & 0o022).toBe(0);
+    expect(permissionReplayDirectory.mode & 0o777).toBe(0o555);
     for (const artifactPath of permissionReplayPaths) {
-      expect(fs.statSync(artifactPath).mode & 0o777).toBe(0o444);
-      expect(fs.readFileSync(artifactPath)).toEqual(permissionReplayContents.get(artifactPath));
+      const artifactHandle = fs.openSync(artifactPath, "r");
+      try {
+        const artifact = fs.fstatSync(artifactHandle);
+        expect(artifact.uid).toBe(expectedUid);
+        expect(artifact.gid).toBe(expectedGid);
+        expect(artifact.mode & 0o022).toBe(0);
+        expect(artifact.mode & 0o777).toBe(0o444);
+        expect(fs.readFileSync(artifactHandle)).toEqual(permissionReplayContents.get(artifactPath));
+      } finally {
+        fs.closeSync(artifactHandle);
+      }
     }
     expect(fs.lstatSync(externalPermissionLink).isSymbolicLink()).toBe(true);
     expect(fs.statSync(externalPermissionTarget).mode & 0o777).toBe(0o664);

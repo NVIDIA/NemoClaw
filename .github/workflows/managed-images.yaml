@@ -94,6 +94,24 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
+      - name: Reproduce reviewed discovery permission drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed_root="tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery"
+          for artifact in \
+            BUNDLED_PACKAGES.json \
+            THIRD_PARTY_LICENSES.txt \
+            mcp-tool-discovery.bundle
+          do
+            artifact_path="${reviewed_root}/${artifact}"
+            if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
+              echo "ERROR: reviewed discovery permission fixture must be a regular non-symlink: ${artifact_path}" >&2
+              exit 1
+            fi
+            chmod 0664 "$artifact_path"
+          done
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
@@ -238,6 +256,56 @@ jobs:
                  .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
                ' <<< "$image_json" >/dev/null; then
             echo "ERROR: PR managed image contract does not match the exact build identity." >&2
+            exit 1
+          fi
+
+          discovery_runtime="/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime"
+          expected_discovery_contract='{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}'
+          if ! actual_discovery_contract="$(
+            docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id" -c '
+              set -eu
+              discovery_runtime="$1"
+              if ! entry_owner_unsafe="$(
+                find -P "$discovery_runtime" ! -user root -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery entry ownership inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$entry_owner_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery entry is not root-owned: $entry_owner_unsafe" >&2
+                exit 1
+              fi
+              if ! owner_or_write_unsafe="$(
+                find -L "$discovery_runtime" \
+                  \( ! -user root -o -perm /022 \) -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery tree inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$owner_or_write_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery tree is not root-owned and read-only: $owner_or_write_unsafe" >&2
+                exit 1
+              fi
+              if ! mode_unsafe="$(
+                find -P "$discovery_runtime" \
+                  \( \( -type d ! -perm 0555 \) -o \( -type f ! -perm 0444 \) \) \
+                  -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery mode inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$mode_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery path has an unexpected mode: $mode_unsafe" >&2
+                exit 1
+              fi
+              node "$discovery_runtime/mcp-tool-discovery.mjs"
+            ' -- "$discovery_runtime"
+          )"; then
+            echo "ERROR: final PR managed image discovery contract probe failed." >&2
+            exit 1
+          fi
+          if [ "$actual_discovery_contract" != "$expected_discovery_contract" ]; then
+            echo "ERROR: final PR managed image discovery bundle contract mismatch." >&2
             exit 1
           fi
 
