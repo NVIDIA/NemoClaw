@@ -222,4 +222,45 @@ describe("protected managed-image readiness commands", () => {
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
   });
+
+  it("retains the vLLM readiness failure after oversized failing Docker logs", async () => {
+    const fixture = createReadinessFixture();
+    const sensitiveValue = "oversized-vllm-readiness-sensitive-value";
+    const command = protectedVllmReadinessCommand();
+    const sourceLog = path.join(fixture.root, "vllm-oversized-source.log");
+    fs.writeFileSync(
+      sourceLog,
+      `${"x".repeat(command.captureLimitBytes + 1_024)}${sensitiveValue}\n`,
+      "utf8",
+    );
+    writeCommand(fixture.binDir, "curl", "/bin/sleep 0.2\nexit 1");
+    writeCommand(fixture.binDir, "seq", "printf '1\\n'");
+    writeCommand(fixture.binDir, "sleep", "exit 0");
+    writeCommand(
+      fixture.binDir,
+      "docker",
+      `if [ "$1" = "container" ]; then
+  printf 'true\\n'
+  exit 0
+fi
+/bin/cat "$FAKE_VLLM_SOURCE_LOG"
+exit 42`,
+    );
+
+    const result = await fixture.host.command(command.command, command.args, {
+      artifactName: "vllm-readiness-oversized-failure",
+      captureLimitBytes: command.captureLimitBytes,
+      env: { ...fixture.env, FAKE_VLLM_SOURCE_LOG: sourceLog },
+      redactionValues: [sensitiveValue],
+      timeoutMs: 5_000,
+    });
+    const stderrArtifact = fs.readFileSync(result.artifacts.stderr, "utf8");
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("[shell-probe omitted ");
+    expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
+    expect(result.stderr).toContain("[REDACTED]");
+    expect(result.stderr).not.toContain(sensitiveValue);
+    expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
+  });
 });
