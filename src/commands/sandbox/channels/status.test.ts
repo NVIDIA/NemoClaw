@@ -4,7 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const showSandboxChannelStatusMock = vi.hoisted(() => vi.fn());
-vi.mock("../../../lib/actions/sandbox/channel-status", () => ({
+vi.mock("../../../lib/actions/sandbox/channel-status", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/actions/sandbox/channel-status")>()),
   showSandboxChannelStatus: showSandboxChannelStatusMock,
 }));
 
@@ -18,45 +19,7 @@ describe("SandboxChannelsStatusCommand readiness flags", () => {
     process.exitCode = undefined;
     showSandboxChannelStatusMock.mockResolvedValue({
       schemaVersion: 1,
-      sandbox: "alpha",
-      channel: "slack",
-      status: {
-        schemaVersion: 1,
-        sandbox: "alpha",
-        channel: "slack",
-        report: {
-          schemaVersion: 1,
-          channel: "slack",
-          agent: "openclaw",
-          verdict: "healthy",
-          probedAt: "2026-08-07T12:00:00.000Z",
-          signals: [],
-          hints: [],
-          readiness: {
-            state: "ready",
-            category: null,
-            reason: "operational",
-            retryable: false,
-            lastTransitionAt: "2026-08-07T12:00:00.000Z",
-          },
-        },
-      },
-      readiness: {
-        state: "ready",
-        category: null,
-        reason: "operational",
-        retryable: false,
-        attempts: 2,
-        elapsedMs: 5_000,
-        lastTransitionAt: "2026-08-07T12:00:00.000Z",
-        lastObserved: {
-          state: "ready",
-          category: null,
-          reason: "operational",
-          retryable: false,
-          lastTransitionAt: "2026-08-07T12:00:00.000Z",
-        },
-      },
+      readiness: { state: "ready" },
     });
   });
 
@@ -80,16 +43,17 @@ describe("SandboxChannelsStatusCommand readiness flags", () => {
     "terminal",
     "timeout",
   ] as const)("sets exit code 1 for a non-ready %s JSON result (#7383)", async (state) => {
-    showSandboxChannelStatusMock.mockResolvedValue({
-      schemaVersion: 1,
-      readiness: { state },
-    });
+    showSandboxChannelStatusMock.mockResolvedValue({ schemaVersion: 1, readiness: { state } });
 
     await SandboxChannelsStatusCommand.run(
       ["alpha", "--channel", "slack", "--wait", "--json"],
       rootDir,
     );
 
+    expect(showSandboxChannelStatusMock).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ timeoutSeconds: 180 }),
+    );
     expect(process.exitCode).toBe(1);
   });
 

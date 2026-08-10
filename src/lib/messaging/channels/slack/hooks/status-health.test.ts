@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { MessagingHookContext, MessagingHookResult } from "../../../hooks/types";
-import type { ChannelHealthReport } from "../../channel-health";
+import type { ChannelHealthReport, ChannelReadiness } from "../../channel-health";
 import { createSlackStatusHealthHook } from "./status-health";
 
 const BASE_INPUTS = {
@@ -13,6 +13,13 @@ const BASE_INPUTS = {
   channelEnabledInRegistry: true,
   presetInRegistry: true,
   presetOnGateway: true as boolean | null,
+};
+const READY_ACCOUNT = {
+  enabled: true,
+  configured: true,
+  running: true,
+  connected: true,
+  probe: { ok: true },
 };
 
 function context(inputs = BASE_INPUTS): MessagingHookContext {
@@ -24,38 +31,35 @@ function context(inputs = BASE_INPUTS): MessagingHookContext {
   } as unknown as MessagingHookContext;
 }
 
-function payload(account: Record<string, unknown>): string {
-  return JSON.stringify({
-    channels: { slack: { configured: true } },
-    channelAccounts: { slack: [{ accountId: "default", ...account }] },
-  });
-}
-
 function reportOf(result: MessagingHookResult | Promise<MessagingHookResult>): ChannelHealthReport {
   const output = (result as MessagingHookResult).outputs?.channelHealth;
   expect(output).toBeDefined();
-  const value = output?.value as unknown as { report: ChannelHealthReport };
-  return value.report;
+  return (output?.value as unknown as { report: ChannelHealthReport }).report;
+}
+
+function runProbe(
+  account: Record<string, unknown> = {},
+  inputOverrides: Partial<typeof BASE_INPUTS> = {},
+): { report: ChannelHealthReport; execute: ReturnType<typeof vi.fn> } {
+  const stdout = JSON.stringify({
+    channels: { slack: { configured: true } },
+    channelAccounts: { slack: [{ accountId: "default", ...READY_ACCOUNT, ...account }] },
+  });
+  const execute = vi.fn(() => ({ status: 0, stdout, stderr: "" }));
+  const report = reportOf(
+    createSlackStatusHealthHook({ executeSandboxCommand: execute })(
+      context({ ...BASE_INPUTS, ...inputOverrides }),
+    ),
+  );
+  return { report, execute };
 }
 
 describe("slack.statusHealth hook", () => {
   it("reports operational readiness for a connected account with a successful probe (#7383)", () => {
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: payload({
-        enabled: true,
-        configured: true,
-        running: true,
-        connected: true,
-        lastStartAt: Date.parse("2026-08-07T11:59:30.000Z"),
-        lastProbeAt: Date.parse("2026-08-07T12:00:00.000Z"),
-        probe: { ok: true, bot: { name: "test-bot" } },
-      }),
-      stderr: "",
-    }));
-    const report = reportOf(
-      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
-    );
+    const { report, execute } = runProbe({
+      lastProbeAt: Date.parse("2026-08-07T12:00:00.000Z"),
+      probe: { ok: true, bot: { name: "test-bot" } },
+    });
 
     expect(report.verdict).toBe("healthy");
     expect(report.readiness).toEqual({
@@ -65,6 +69,13 @@ describe("slack.statusHealth hook", () => {
       retryable: false,
       lastTransitionAt: "2026-08-07T12:00:00.000Z",
     });
+    expect(report.signals.map(({ label }) => label)).toEqual([
+      "Channel registration",
+      "Policy coverage",
+      "Runtime process",
+      "Socket Mode transport",
+      "Account probe",
+    ]);
     expect(execute).toHaveBeenCalledWith(
       "alpha",
       "openclaw channels status --channel slack --probe --json --timeout 8000",
@@ -72,23 +83,13 @@ describe("slack.statusHealth hook", () => {
     );
   });
 
-  it("keeps deferred Socket Mode initialization retryable while omitting raw Slack errors and credentials (#7383)", () => {
+  it("keeps deferred Socket Mode initialization retryable without exposing errors or credentials (#7383)", () => {
     const secret = "xoxb-secret-sentinel";
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: payload({
-        enabled: true,
-        configured: true,
-        running: true,
-        connected: false,
-        lastError: "socket mode connection timed out",
-        probe: { ok: false, error: `network timeout ${secret}` },
-      }),
-      stderr: "",
-    }));
-    const report = reportOf(
-      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
-    );
+    const { report } = runProbe({
+      connected: false,
+      lastError: "socket mode connection timed out",
+      probe: { ok: false, error: "network timeout " + secret },
+    });
 
     expect(report.readiness).toMatchObject({
       state: "waiting",
@@ -99,105 +100,51 @@ describe("slack.statusHealth hook", () => {
     expect(JSON.stringify(report)).not.toContain("socket mode connection timed out");
   });
 
-  it("waits when effective policy coverage cannot be verified (#7383)", () => {
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: payload({
-        enabled: true,
-        configured: true,
-        running: true,
-        connected: true,
-        probe: { ok: true },
-      }),
-      stderr: "",
-    }));
-    const report = reportOf(
-      createSlackStatusHealthHook({ executeSandboxCommand: execute })(
-        context({ ...BASE_INPUTS, presetOnGateway: null }),
-      ),
-    );
-
-    expect(report.readiness).toMatchObject({
-      state: "waiting",
-      category: "network",
-      reason: "policy_status_unavailable",
-      retryable: true,
-    });
-  });
-
-  it("classifies unavailable Slack credentials as a terminal failure (#7383)", () => {
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: payload({
-        enabled: true,
-        configured: true,
+  for (const [name, account, inputs, expected, signal] of [
+    [
+      "waits when effective policy coverage cannot be verified (#7383)",
+      {},
+      { presetOnGateway: null },
+      ["waiting", "network", "policy_status_unavailable", true],
+      { label: "Policy coverage", severity: "info" },
+    ],
+    [
+      "classifies unavailable Slack credentials as terminal (#7383)",
+      {
         running: false,
         connected: false,
         botTokenStatus: "configured_unavailable",
-        appTokenStatus: "available",
         probe: { ok: false, error: "missing token" },
-      }),
-      stderr: "",
-    }));
-    const report = reportOf(
-      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
-    );
-
-    expect(report.readiness).toMatchObject({
-      state: "terminal",
-      category: "credential",
-      reason: "credentials_unavailable",
+      },
+      {},
+      ["terminal", "credential", "credentials_unavailable", false],
+      { label: "Account probe", severity: "fail" },
+    ],
+    [
+      "classifies a Slack plugin probe failure as terminal (#7383)",
+      { probe: { ok: false, error: "plugin failed to load" } },
+      {},
+      ["terminal", "plugin", "plugin_probe_failed", false],
+      { label: "Account probe", severity: "warn" },
+    ],
+  ] as const) {
+    it(name, () => {
+      const [state, category, reason, retryable] = expected;
+      const report = runProbe(account, inputs).report;
+      expect(report.readiness).toMatchObject({
+        state,
+        category,
+        reason,
+        retryable,
+      } satisfies Partial<ChannelReadiness>);
+      expect(report.signals).toContainEqual(expect.objectContaining(signal));
     });
-    expect(report.signals).toContainEqual(
-      expect.objectContaining({
-        label: "Account probe",
-        severity: "fail",
-      }),
-    );
-  });
-
-  it("classifies a Slack plugin probe failure as terminal (#7383)", () => {
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: payload({
-        enabled: true,
-        configured: true,
-        running: true,
-        connected: true,
-        probe: { ok: false, error: "plugin failed to load" },
-      }),
-      stderr: "",
-    }));
-    const report = reportOf(
-      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
-    );
-
-    expect(report.readiness).toMatchObject({
-      state: "terminal",
-      category: "plugin",
-      reason: "plugin_probe_failed",
-      retryable: false,
-    });
-  });
+  }
 
   it("returns a null transition time for an out-of-range Slack timestamp (#7383)", () => {
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: payload({
-        enabled: true,
-        configured: true,
-        running: true,
-        connected: true,
-        lastProbeAt: Number.MAX_SAFE_INTEGER,
-        probe: { ok: true },
-      }),
-      stderr: "",
-    }));
-    const report = reportOf(
-      createSlackStatusHealthHook({ executeSandboxCommand: execute })(context()),
-    );
-
-    expect(report.readiness?.lastTransitionAt).toBeNull();
+    expect(
+      runProbe({ lastProbeAt: Number.MAX_SAFE_INTEGER }).report.readiness?.lastTransitionAt,
+    ).toBeNull();
   });
 
   it("keeps an unreachable live status probe retryable until the caller timeout (#7383)", () => {
@@ -212,10 +159,7 @@ describe("slack.statusHealth hook", () => {
       reason: "status_probe_unreachable",
     });
     expect(report.signals).toContainEqual(
-      expect.objectContaining({
-        label: "Runtime process",
-        severity: "warn",
-      }),
+      expect.objectContaining({ label: "Runtime process", severity: "warn" }),
     );
   });
 });

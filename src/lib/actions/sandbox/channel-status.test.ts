@@ -332,62 +332,72 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 });
 
-function slackStatusJson(account: Record<string, unknown>): string {
+function slackStatusJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     channels: { slack: { configured: true } },
-    channelAccounts: { slack: [{ accountId: "default", ...account }] },
+    channelAccounts: {
+      slack: [
+        {
+          accountId: "default",
+          enabled: true,
+          configured: true,
+          running: true,
+          connected: true,
+          probe: { ok: true },
+          ...overrides,
+        },
+      ],
+    },
+  });
+}
+
+function slackWaitHarness(accounts: readonly Record<string, unknown>[] | null) {
+  let clock = 0;
+  let readinessProbe = 0;
+  const sleep = vi.fn(async (milliseconds: number) => {
+    clock += milliseconds;
+  });
+  const nextSlackStatus = () => {
+    const account = accounts?.[Math.min(readinessProbe, accounts.length - 1)] ?? {};
+    readinessProbe += 1;
+    return { status: 0, stdout: slackStatusJson(account), stderr: "" };
+  };
+  const { deps } = makeDeps({
+    sandbox: entry(["slack"]),
+    appliedPresets: ["slack"],
+    gatewayPresets: ["slack"],
+    exec: (_sandbox, command) =>
+      command.startsWith("openclaw channels status")
+        ? accounts === null
+          ? null
+          : nextSlackStatus()
+        : { status: 0, stdout: "{}", stderr: "" },
+    nowMs: () => clock,
+    sleep,
+  });
+  return { deps, sleep };
+}
+
+function waitForSlack(deps: ReturnType<typeof slackWaitHarness>["deps"], timeoutSeconds = 10) {
+  return showSandboxChannelStatus("alpha", {
+    deps,
+    channel: "slack",
+    wait: true,
+    timeoutSeconds,
+    pollIntervalMs: 5_000,
+    asJson: true,
+    quietJson: true,
   });
 }
 
 describe("showSandboxChannelStatus Slack readiness wait", () => {
   it("waits through deferred initialization and returns structured success (#7383)", async () => {
-    let clock = 0;
-    let readinessProbe = 0;
-    const states = [
-      slackStatusJson({
-        enabled: true,
-        configured: true,
-        running: true,
-        connected: false,
-        probe: { ok: true },
-      }),
-      slackStatusJson({
-        enabled: true,
-        configured: true,
-        running: true,
-        connected: true,
-        lastProbeAt: Date.parse("2026-08-07T12:00:00.000Z"),
-        probe: { ok: true },
-      }),
-    ];
-    const nextSlackStatus = () => {
-      const stdout = states[Math.min(readinessProbe, states.length - 1)];
-      readinessProbe += 1;
-      return { status: 0, stdout, stderr: "" };
-    };
-    const { deps } = makeDeps({
-      sandbox: entry(["slack"]),
-      appliedPresets: ["slack"],
-      gatewayPresets: ["slack"],
-      exec: (_sandbox, command) =>
-        command.startsWith("openclaw channels status")
-          ? nextSlackStatus()
-          : { status: 0, stdout: "{}", stderr: "" },
-      nowMs: () => clock,
-      sleep: async (milliseconds) => {
-        clock += milliseconds;
-      },
-    });
+    const { deps } = slackWaitHarness([
+      { connected: false },
+      { lastProbeAt: Date.parse("2026-08-07T12:00:00.000Z") },
+    ]);
 
-    const result = await showSandboxChannelStatus("alpha", {
-      deps,
-      channel: "slack",
-      wait: true,
-      timeoutSeconds: 10,
-      pollIntervalMs: 5_000,
-      asJson: true,
-      quietJson: true,
-    });
+    const result = await waitForSlack(deps);
 
     expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
       state: "ready",
@@ -400,39 +410,16 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
   });
 
   it("returns a terminal credential failure without another poll (#7383)", async () => {
-    const sleep = vi.fn(async () => undefined);
-    const { deps } = makeDeps({
-      sandbox: entry(["slack"]),
-      appliedPresets: ["slack"],
-      gatewayPresets: ["slack"],
-      exec: (_sandbox, command) =>
-        command.startsWith("openclaw channels status")
-          ? {
-              status: 0,
-              stdout: slackStatusJson({
-                enabled: true,
-                configured: true,
-                running: false,
-                connected: false,
-                botTokenStatus: "configured_unavailable",
-                appTokenStatus: "available",
-                probe: { ok: false, error: "missing token" },
-              }),
-              stderr: "",
-            }
-          : { status: 0, stdout: "{}", stderr: "" },
-      nowMs: () => 0,
-      sleep,
-    });
+    const { deps, sleep } = slackWaitHarness([
+      {
+        running: false,
+        connected: false,
+        botTokenStatus: "configured_unavailable",
+        probe: { ok: false, error: "missing token" },
+      },
+    ]);
 
-    const result = await showSandboxChannelStatus("alpha", {
-      deps,
-      channel: "slack",
-      wait: true,
-      timeoutSeconds: 10,
-      asJson: true,
-      quietJson: true,
-    });
+    const result = await waitForSlack(deps);
 
     expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
       state: "terminal",
@@ -445,27 +432,9 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
   });
 
   it("returns timeout with the last retryable network reason (#7383)", async () => {
-    let clock = 0;
-    const { deps } = makeDeps({
-      sandbox: entry(["slack"]),
-      appliedPresets: ["slack"],
-      gatewayPresets: ["slack"],
-      exec: () => null,
-      nowMs: () => clock,
-      sleep: async (milliseconds) => {
-        clock += milliseconds;
-      },
-    });
+    const { deps } = slackWaitHarness(null);
 
-    const result = await showSandboxChannelStatus("alpha", {
-      deps,
-      channel: "slack",
-      wait: true,
-      timeoutSeconds: 5,
-      pollIntervalMs: 5_000,
-      asJson: true,
-      quietJson: true,
-    });
+    const result = await waitForSlack(deps, 5);
 
     expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
       state: "timeout",

@@ -132,6 +132,10 @@ const DEFAULT_WAIT_POLL_INTERVAL_MS = 5_000;
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
 const channelManifestRegistry = createBuiltInChannelManifestRegistry();
 
+function positiveNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function severityLabel(severity: DiagnosticSeverity): string {
   switch (severity) {
     case "ok":
@@ -268,7 +272,7 @@ function renderSingleChannelSignals(
   deps.out("");
 }
 
-function exitCodeFor(report: ChannelStatusReport): number {
+export function exitCodeFor(report: ChannelStatusReport): number {
   if ("readiness" in report) return report.readiness.state === "ready" ? 0 : 1;
   if ("channels" in report) return 0;
   if ("report" in report) {
@@ -500,19 +504,8 @@ async function waitForChannelReadiness(
   deps: Required<StatusDeps>,
 ): Promise<ChannelStatusWaitReport> {
   const startedAt = deps.nowMs();
-  const timeoutSeconds =
-    typeof options.timeoutSeconds === "number" &&
-    Number.isFinite(options.timeoutSeconds) &&
-    options.timeoutSeconds > 0
-      ? options.timeoutSeconds
-      : DEFAULT_WAIT_TIMEOUT_SECONDS;
-  const timeoutMs = timeoutSeconds * 1_000;
-  const pollIntervalMs =
-    typeof options.pollIntervalMs === "number" &&
-    Number.isFinite(options.pollIntervalMs) &&
-    options.pollIntervalMs > 0
-      ? options.pollIntervalMs
-      : DEFAULT_WAIT_POLL_INTERVAL_MS;
+  const timeoutMs = positiveNumber(options.timeoutSeconds, DEFAULT_WAIT_TIMEOUT_SECONDS) * 1_000;
+  const pollIntervalMs = positiveNumber(options.pollIntervalMs, DEFAULT_WAIT_POLL_INTERVAL_MS);
   let attempts = 0;
 
   for (;;) {

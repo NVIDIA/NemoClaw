@@ -4,14 +4,11 @@
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
 import type { MessagingSerializableValue } from "../../../manifest";
 import {
+  type ChannelReadinessCategory,
   type ChannelStatusHealthHookOptions,
   MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
 } from "../../channel-health";
-import {
-  evaluateSlackReadiness,
-  type SlackFailureCategory,
-  type SlackReadinessInput,
-} from "./status-health-eval";
+import { evaluateSlackReadiness, type SlackReadinessInput } from "./status-health-eval";
 
 export const SLACK_STATUS_HEALTH_HOOK_HANDLER_ID = "slack.statusHealth";
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -30,13 +27,14 @@ export function createSlackStatusHealthHook(
 
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
     const probe = runSlackStatusProbe(execute, sandboxName, timeoutMs);
+    const accountProbe = readObject(probe.account?.probe);
     const input: SlackReadinessInput = {
       agent: normalizeString(context.inputs?.agent) ?? "openclaw",
       probedAt: normalizeString(context.inputs?.probedAt) ?? "",
       lastTransitionAt: probe.lastTransitionAt,
       channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
       presetInRegistry: Boolean(context.inputs?.presetInRegistry),
-      presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
+      presetOnGateway: normalizeBoolean(context.inputs?.presetOnGateway),
       probeReachable: probe.probeReachable,
       pluginConfigured: probe.pluginConfigured,
       accountPresent: probe.account !== null,
@@ -45,8 +43,8 @@ export function createSlackStatusHealthHook(
       running: normalizeBoolean(probe.account?.running),
       connected: normalizeBoolean(probe.account?.connected),
       credentialUnavailable: hasUnavailableCredential(probe.account),
-      probeOk: readProbeOk(probe.account),
-      probeFailureCategory: classifyFailure(readProbeError(probe.account)),
+      probeOk: normalizeBoolean(accountProbe?.ok),
+      probeFailureCategory: classifyFailure(normalizeString(accountProbe?.error)),
       lastErrorCategory: classifyFailure(normalizeString(probe.account?.lastError)),
     };
     const report = evaluateSlackReadiness(input);
@@ -138,17 +136,7 @@ function hasUnavailableCredential(account: Record<string, unknown> | null): bool
   return CREDENTIAL_STATUS_KEYS.some((key) => account[key] === "configured_unavailable");
 }
 
-function readProbeOk(account: Record<string, unknown> | null): boolean | null {
-  const probe = readObject(account?.probe);
-  return normalizeBoolean(probe?.ok);
-}
-
-function readProbeError(account: Record<string, unknown> | null): string | null {
-  const probe = readObject(account?.probe);
-  return normalizeString(probe?.error);
-}
-
-function classifyFailure(value: string | null): SlackFailureCategory {
+function classifyFailure(value: string | null): ChannelReadinessCategory | null {
   if (!value) return null;
   if (
     /invalid[_ -]?auth|token[_ -]?(?:revoked|expired)|not[_ -]?authed|credential|unauthor/i.test(
@@ -187,10 +175,6 @@ function normalizeString(value: unknown): string | null {
 
 function normalizeBoolean(value: unknown): boolean | null {
   return value === true ? true : value === false ? false : null;
-}
-
-function normalizeTristate(value: unknown): boolean | null {
-  return normalizeBoolean(value);
 }
 
 function normalizeTimeoutMs(value: number | undefined): number {

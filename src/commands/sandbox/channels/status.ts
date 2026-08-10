@@ -3,7 +3,7 @@
 
 import { Flags } from "@oclif/core";
 
-import { showSandboxChannelStatus } from "../../../lib/actions/sandbox/channel-status";
+import { exitCodeFor, showSandboxChannelStatus } from "../../../lib/actions/sandbox/channel-status";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 
@@ -50,16 +50,7 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
       timeoutSeconds: flags.timeout,
     });
     if (this.jsonEnabled()) {
-      if (report && "readiness" in report) {
-        if (report.readiness.state !== "ready") process.exitCode = 1;
-        return report;
-      }
-      if (report && "report" in report) {
-        const verdict = report.report.verdict;
-        if (verdict !== "healthy" && verdict !== "unknown") {
-          process.exitCode = 1;
-        }
-      }
+      if (report && exitCodeFor(report) !== 0) process.exitCode = 1;
       return report;
     }
   }
