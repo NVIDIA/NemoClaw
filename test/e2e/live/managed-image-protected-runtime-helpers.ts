@@ -49,8 +49,15 @@ const NIM_CATALOG_MODEL = "nvidia/nemotron-3-nano-30b-a3b";
 const NIM_CONTAINER = "nemoclaw-managed-image-nim-e2e";
 const AGENT_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
 const ROLLBACK_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
+const PROTECTED_READINESS_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 type RuntimeFixtures = Pick<E2ETargetFixtures, "artifacts" | "cleanup" | "host" | "progress">;
+
+interface ProtectedRuntimeReadinessCommand {
+  readonly command: "bash";
+  readonly args: string[];
+  readonly captureLimitBytes: number;
+}
 
 function imageContracts(): ProtectedManagedImageContract[] {
   const contractPath = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT;
@@ -126,27 +133,47 @@ async function qualifyEveryAgent(
   }
 }
 
+export function protectedOllamaReadinessCommand(logPath: string): ProtectedRuntimeReadinessCommand {
+  if (!path.isAbsolute(logPath) || /[\0\r\n]/u.test(logPath)) {
+    throw new Error("protected Ollama log path must be an absolute single-line path");
+  }
+  return {
+    command: "bash",
+    captureLimitBytes: PROTECTED_READINESS_CAPTURE_LIMIT_BYTES,
+    args: [
+      "-c",
+      `set -euo pipefail
+log_path=$1
+OLLAMA_HOST=127.0.0.1:11434 nohup ollama serve >"$log_path" 2>&1 &
+attempt=0
+for attempt in $(seq 1 120); do
+  if curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    printf 'managed-image-ollama-ready attempts=%s\n' "$attempt"
+    exit 0
+  fi
+  sleep 1
+done
+tail -n 200 -- "$log_path" >&2 || true
+printf 'managed-image-ollama-not-ready attempts=%s\n' "$attempt" >&2
+exit 1`,
+      "managed-image-ollama-readiness",
+      logPath,
+    ],
+  };
+}
+
 async function startProtectedOllama(host: HostCliClient): Promise<string> {
   await ensureOllama(host);
   await cleanupOllama(host, "pre-cleanup-managed-image-ollama");
-  const start = await host.command(
-    "bash",
-    [
-      "-lc",
-      `set -euo pipefail
-OLLAMA_HOST=127.0.0.1:11434 nohup ollama serve >"${process.env.RUNNER_TEMP ?? "/tmp"}/managed-image-ollama.log" 2>&1 &
-for _ in $(seq 1 120); do
-  curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0
-  sleep 1
-done
-exit 1`,
-    ],
-    {
-      artifactName: "start-managed-image-ollama",
-      env: gpuEnv(),
-      timeoutMs: 150_000,
-    },
+  const readiness = protectedOllamaReadinessCommand(
+    path.join(process.env.RUNNER_TEMP ?? "/tmp", "managed-image-ollama.log"),
   );
+  const start = await host.command(readiness.command, readiness.args, {
+    artifactName: "start-managed-image-ollama",
+    captureLimitBytes: readiness.captureLimitBytes,
+    env: gpuEnv(),
+    timeoutMs: 150_000,
+  });
   expect(start.exitCode, resultText(start)).toBe(0);
   const pull = await host.command("ollama", ["pull", OLLAMA_MODEL], {
     artifactName: "pull-managed-image-ollama-model",
@@ -214,25 +241,13 @@ async function startProtectedVllm(host: HostCliClient): Promise<void> {
     },
   );
   expect(start.exitCode, resultText(start)).toBe(0);
-  const ready = await host.command(
-    "bash",
-    [
-      "-lc",
-      `set -euo pipefail
-for _ in $(seq 1 300); do
-  curl -fsS --connect-timeout 2 http://127.0.0.1:8000/v1/models >/dev/null 2>&1 && exit 0
-  docker container inspect "${VLLM_CONTAINER}" --format '{{.State.Running}}' | grep -Fx true >/dev/null
-  sleep 2
-done
-docker logs --tail 200 "${VLLM_CONTAINER}" >&2
-exit 1`,
-    ],
-    {
-      artifactName: "wait-vllm",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 11 * 60_000,
-    },
-  );
+  const readiness = protectedVllmReadinessCommand();
+  const ready = await host.command(readiness.command, readiness.args, {
+    artifactName: "wait-vllm",
+    captureLimitBytes: readiness.captureLimitBytes,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 11 * 60_000,
+  });
   expect(ready.exitCode, resultText(ready)).toBe(0);
   const cuda = await host.command(
     "docker",
@@ -250,6 +265,29 @@ exit 1`,
     },
   );
   expect(cuda.exitCode, resultText(cuda)).toBe(0);
+}
+
+export function protectedVllmReadinessCommand(): ProtectedRuntimeReadinessCommand {
+  return {
+    command: "bash",
+    captureLimitBytes: PROTECTED_READINESS_CAPTURE_LIMIT_BYTES,
+    args: [
+      "-c",
+      `set -euo pipefail
+attempt=0
+for attempt in $(seq 1 300); do
+  if curl -fsS --connect-timeout 2 http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
+    printf 'managed-image-vllm-ready attempts=%s\n' "$attempt"
+    exit 0
+  fi
+  docker container inspect "${VLLM_CONTAINER}" --format '{{.State.Running}}' | grep -Fx true >/dev/null
+  sleep 2
+done
+printf 'managed-image-vllm-not-ready attempts=%s\n' "$attempt" >&2
+docker logs --tail 200 "${VLLM_CONTAINER}" >&2
+exit 1`,
+    ],
+  };
 }
 
 async function startProtectedNim(host: HostCliClient, apiKey: string): Promise<string> {
