@@ -22,7 +22,7 @@ import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 // must reject a missing or malformed security manifest instead of letting the
 // CLI start with a weakened credential-name denylist. Input, package, image,
 // and workflow contracts pin its structure, installed path, and version.
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.99.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.101.json";
 
 export {
   MCP_SERVER_URL_MAX_LENGTH,
@@ -145,7 +145,7 @@ export function assertMcpCredentialBoundaryRuntimeVersion(
 // key and exposes or executes the provider value outside the intended request.
 // sourceBoundary: the versioned JSON manifest pins OpenShell-owned keys to the
 // shipped source commit; NemoClaw owns host and agent runtime-control rejects.
-// whyNotSourceFix: v0.0.99 exposes provider keys to every fresh sandbox exec
+// whyNotSourceFix: v0.0.101 exposes provider keys to every fresh sandbox exec
 // and does not advertise safe credential-name capabilities at runtime.
 // regressionTest: the mcp-bridge-input validation/runtime suites check every
 // pinned and runtime key; package contracts require version alignment.

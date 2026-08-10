@@ -19,11 +19,12 @@ import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
-  ensureHermesGatewayAfterStateRestore,
-  ensureHermesGatewayAfterStateRestoreForCronGate,
   type HermesCronRestoreIdentity,
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
+  restartHermesGatewayAfterStateRestore,
+  verifyHermesGatewayAfterStateRestore,
+  verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 import {
   type McpRebuildPreparation,
@@ -283,15 +284,27 @@ export async function runRebuildPostRestorePhase(
     }
   }
 
+  // Restart before restoring MCP. The Hermes MCP transaction performs an
+  // acknowledged reload of its own; restarting afterwards would replace the
+  // only runtime whose managed MCP configuration was proven to have loaded.
+  const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
+    sandboxName,
+    targetAgentName,
+  );
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
   const hermesGatewayVerification = hermesCronRestoreIdentity
-    ? ensureHermesGatewayAfterStateRestoreForCronGate(
+    ? verifyHermesGatewayAfterStateRestoreForCronGate(
         sandboxName,
         targetAgentName,
+        hermesGatewayRestartState,
         hermesCronRestoreIdentity,
       )
     : {
-        state: ensureHermesGatewayAfterStateRestore(sandboxName, targetAgentName),
+        state: verifyHermesGatewayAfterStateRestore(
+          sandboxName,
+          targetAgentName,
+          hermesGatewayRestartState,
+        ),
         replacementIdentity: undefined,
       };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
