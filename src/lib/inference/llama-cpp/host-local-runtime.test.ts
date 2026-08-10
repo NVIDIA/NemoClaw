@@ -198,6 +198,76 @@ describe("llama.cpp host-local runtime materializer", () => {
     expect(valuesAfter(argv, "--timeout")).toEqual(["600"]);
   });
 
+  it("materializes a declared container chat template and reasoning contract", () => {
+    const input = contract();
+    const templated = {
+      ...input,
+      serve: {
+        ...input.serve,
+        chatTemplate: "container-jinja-file",
+        chatTemplateFile:
+          "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
+        reasoning: { format: "deepseek", mode: "auto" },
+      },
+    } satisfies LlamaCppHostLocalLaunchContract;
+
+    for (const argv of [
+      buildLlamaCppHostLocalDockerArgv(templated, bindings()),
+      buildLlamaCppRequestGuardDockerArgv(templated, bindings()),
+    ]) {
+      expect(valuesAfter(argv, "--chat-template-file")).toEqual([
+        "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
+      ]);
+      expect(valuesAfter(argv, "--reasoning-format")).toEqual(["deepseek"]);
+      expect(valuesAfter(argv, "--reasoning")).toEqual(["auto"]);
+      expect(argv).toContain("--jinja");
+    }
+  });
+
+  it.each([
+    [
+      "a missing container template file",
+      { chatTemplate: "container-jinja-file" },
+    ],
+    [
+      "a path outside the owned template directory",
+      { chatTemplate: "container-jinja-file", chatTemplateFile: "/run/secrets/template.jinja" },
+    ],
+    [
+      "a traversing container template path",
+      {
+        chatTemplate: "container-jinja-file",
+        chatTemplateFile:
+          "/usr/local/share/nemoclaw/llama-cpp/chat-templates/../private/template.jinja",
+      },
+    ],
+    [
+      "an external template on the embedded-template contract",
+      {
+        chatTemplate: "nemotron-v3-embedded",
+        chatTemplateFile:
+          "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
+      },
+    ],
+    [
+      "reasoning on the embedded-template contract",
+      {
+        chatTemplate: "nemotron-v3-embedded",
+        reasoning: { format: "deepseek", mode: "auto" },
+      },
+    ],
+  ])("rejects %s", (_case, serveOverrides) => {
+    const input = contract();
+    const invalid = {
+      ...input,
+      serve: { ...input.serve, ...serveOverrides },
+    } as unknown as LlamaCppHostLocalLaunchContract;
+
+    expect(() => buildLlamaCppHostLocalDockerArgv(invalid, bindings())).toThrow(
+      "chat-template or reasoning contract is invalid",
+    );
+  });
+
   it("materializes the complete Docker argument contract in stable order (#8144)", () => {
     const input = contract();
     const runtime = bindings();

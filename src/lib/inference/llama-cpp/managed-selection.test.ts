@@ -7,7 +7,10 @@ import type { SystemReadinessReport } from "../../readiness/types";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ManagedInferenceServingPreset } from "../serving/types";
 import { LLAMA_CPP_RECIPE_ENV } from "./contract";
-import { resolveManagedLlamaCppSelection } from "./managed-selection";
+import {
+  listManagedLlamaCppSelectionChoices,
+  resolveManagedLlamaCppSelection,
+} from "./managed-selection";
 
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
@@ -65,6 +68,39 @@ function fixture(presetId = SPARK_PRESET_ID) {
   const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
   expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
   return { catalog, preset: preset!, report: readinessReport(preset!) };
+}
+
+function withSyntheticRecipe(
+  catalog: ReturnType<typeof loadManagedInferenceCatalog>,
+  priority: number,
+) {
+  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID)!;
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === SPARK_PRESET_ID)!;
+  const recipeId = "llama-cpp.synthetic.spark-single.v1";
+  const presetId = "llama-cpp.dgx-spark-gb10.single.synthetic";
+  return {
+    recipeId,
+    presetId,
+    catalog: {
+      ...catalog,
+      recipes: [
+        ...catalog.recipes,
+        { ...recipe, metadata: { ...recipe.metadata, id: recipeId } },
+      ],
+      presets: [
+        ...catalog.presets,
+        {
+          ...preset,
+          metadata: { ...preset.metadata, id: presetId, displayName: "Synthetic" },
+          spec: {
+            ...preset.spec,
+            priority,
+            plan: { ...preset.spec.plan, recipeRef: recipeId },
+          },
+        },
+      ],
+    },
+  };
 }
 
 describe("managed llama.cpp selection", () => {
@@ -129,8 +165,63 @@ describe("managed llama.cpp selection", () => {
     expect(resolved).toMatchObject({
       kind: "selected",
       selection: {
+        selection: "automatic",
         recipe: { metadata: { id: RECIPE_ID } },
         preset: { spec: { plan: { backend: "install-llama-cpp" } } },
+      },
+    });
+  });
+
+  it("selects the highest-priority compatible managed llama.cpp recipe", () => {
+    const { catalog, report } = fixture();
+    const synthetic = withSyntheticRecipe(catalog, 500);
+
+    const resolved = resolveManagedLlamaCppSelection({}, synthetic.catalog, report);
+
+    expect(resolved).toMatchObject({
+      kind: "selected",
+      selection: {
+        selection: "automatic",
+        recipe: { metadata: { id: synthetic.recipeId } },
+        preset: { metadata: { id: synthetic.presetId } },
+      },
+    });
+    expect(
+      listManagedLlamaCppSelectionChoices(synthetic.catalog, report).map(
+        ({ priority, selection }) => [priority, selection.recipe.metadata.id],
+      ),
+    ).toEqual([
+      [500, synthetic.recipeId],
+      [450, RECIPE_ID],
+    ]);
+  });
+
+  it("rejects equal-priority automatic recipes instead of choosing by catalog order", () => {
+    const { catalog, report } = fixture();
+    const synthetic = withSyntheticRecipe(catalog, 450);
+
+    expect(resolveManagedLlamaCppSelection({}, synthetic.catalog, report)).toEqual({
+      kind: "rejected",
+      reason: `Automatic managed llama.cpp selection is ambiguous at priority 450: ${SPARK_PRESET_ID}, ${synthetic.presetId}.`,
+    });
+  });
+
+  it("allows an explicit recipe to override automatic priority", () => {
+    const { catalog, report } = fixture();
+    const synthetic = withSyntheticRecipe(catalog, 500);
+
+    const resolved = resolveManagedLlamaCppSelection(
+      { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
+      synthetic.catalog,
+      report,
+    );
+
+    expect(resolved).toMatchObject({
+      kind: "selected",
+      selection: {
+        selection: "explicit",
+        recipe: { metadata: { id: RECIPE_ID } },
+        preset: { metadata: { id: SPARK_PRESET_ID } },
       },
     });
   });
@@ -215,7 +306,7 @@ describe("managed llama.cpp selection", () => {
 
     expect(resolved).toEqual({
       kind: "rejected",
-      reason: `Managed llama.cpp recipe ${RECIPE_ID} matches more than one explicit serving preset: ${GENERIC_PRESET_ID}, ${GENERIC_PRESET_ID}.duplicate.`,
+      reason: `Managed llama.cpp recipe ${RECIPE_ID} matches more than one serving preset: ${GENERIC_PRESET_ID}, ${GENERIC_PRESET_ID}.duplicate.`,
     });
   });
 

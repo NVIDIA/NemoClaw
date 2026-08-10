@@ -10,7 +10,7 @@ metadata:
   supportState: experimental
 
 spec:
-  selection: explicit-only
+  selection: automatic
   priority: 450
 
   requirements:

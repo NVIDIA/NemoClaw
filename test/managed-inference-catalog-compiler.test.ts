@@ -88,13 +88,13 @@ describe("managed inference YAML profile contract", () => {
     expect(catalog.presets.some(({ metadata }) => metadata.id === syntheticPresetId)).toBe(true);
   });
 
-  it("compiles the explicit DGX Spark llama.cpp profile from YAML (#8173)", () => {
+  it("compiles the automatic DGX Spark llama.cpp profile from YAML", () => {
     const catalog = compile(catalogSources());
     const preset = catalog.presets.find(({ metadata }) => metadata.id === LLAMA_CPP_PROFILE_ID);
     const recipe = catalog.recipes.find(({ metadata }) => metadata.id === LLAMA_CPP_RECIPE_ID);
 
     expect(preset?.spec).toMatchObject({
-      selection: "explicit-only",
+      selection: "automatic",
       plan: { backend: "install-llama-cpp", recipeRef: LLAMA_CPP_RECIPE_ID },
     });
     expect(preset?.spec.requirements?.all).toContainEqual({
@@ -140,7 +140,7 @@ describe("managed inference YAML profile contract", () => {
     });
   });
 
-  it("keeps vLLM automatic while llama.cpp remains explicit-only (#8173)", () => {
+  it("keeps vLLM and llama.cpp profiles eligible for automatic selection", () => {
     const catalog = compile(catalogSources());
     const vllmPreset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);
     const llamaCppPreset = catalog.presets.find(
@@ -148,7 +148,7 @@ describe("managed inference YAML profile contract", () => {
     );
 
     expect(vllmPreset?.spec.selection).toBe("automatic");
-    expect(llamaCppPreset?.spec.selection).toBe("explicit-only");
+    expect(llamaCppPreset?.spec.selection).toBe("automatic");
   });
 
   it("does not enable arbitrary remote model code in shipped managed recipes (#8129)", () => {
