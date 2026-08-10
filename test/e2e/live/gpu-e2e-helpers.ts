@@ -235,14 +235,53 @@ export async function cleanupOllama(
   host: HostCliClient,
   artifactName: string,
 ): Promise<ShellProbeResult> {
-  return await host.command(
-    "bash",
-    [
-      "-lc",
-      "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f '[o]llama serve' 2>/dev/null || true; pkill -f '[o]llama-auth-proxy' 2>/dev/null || true",
-    ],
-    { artifactName, env: env(), timeoutMs: 30_000 },
-  );
+  return await host.command("bash", ["-lc", ollamaCleanupScript()], {
+    artifactName,
+    env: env(),
+    timeoutMs: 30_000,
+  });
+}
+
+export function ollamaCleanupScript(): string {
+  return `set -euo pipefail
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user stop ollama.service >/dev/null 2>&1 || true
+  if systemctl cat ollama.service >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+      systemctl stop ollama.service
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      sudo -n systemctl stop ollama.service
+    else
+      echo 'Ollama system service exists but passwordless sudo is unavailable' >&2
+      exit 1
+    fi
+  fi
+fi
+pkill -f '[o]llama-auth-proxy' >/dev/null 2>&1 || true
+pkill -f '[o]llama serve' >/dev/null 2>&1 || true
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  sudo -n pkill -f '[o]llama serve' >/dev/null 2>&1 || true
+fi
+
+if pgrep -f '[o]llama serve' >/dev/null 2>&1; then
+  echo 'Ollama cleanup left a daemon process' >&2
+  pgrep -af '[o]llama serve' >&2 || true
+  exit 1
+fi
+if node -e '
+  const net = require("node:net");
+  const socket = net.createConnection({ host: "127.0.0.1", port: 11434 });
+  const finish = (code) => {
+    socket.destroy();
+    process.exit(code);
+  };
+  socket.setTimeout(2_000, () => finish(1));
+  socket.once("connect", () => finish(0));
+  socket.once("error", () => finish(1));
+'; then
+  echo 'Ollama cleanup left a listener on 127.0.0.1:11434' >&2
+  exit 1
+fi`;
 }
 
 export function assertNvidiaAvailable(
