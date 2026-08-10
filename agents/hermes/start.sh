@@ -1664,6 +1664,15 @@ _nemoclaw_ca_merge_warn() {
   echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
 }
 merge_corporate_proxy_ca() {
+  # Trust-anchor tampering (#8650): the image bakes this path as a root-owned
+  # 0444 regular file, so a symlink here is never a legitimate state. Reject it
+  # before any read; following it would merge attacker-chosen bytes into the
+  # trust bundle. This is not the recoverable "merge failed" case below, which
+  # safely keeps OpenShell-only trust, so it fails closed instead of warning.
+  if [ -L "$_NEMOCLAW_CORPORATE_CA_FILE" ]; then
+    echo "[nemoclaw] refusing symlinked corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file (#8650)" >&2
+    exit 1
+  fi
   [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
   _base_bundle=""
   if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
