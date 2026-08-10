@@ -82,7 +82,7 @@ describe("sandbox base runtime tools", () => {
 
   it.each(
     MANAGED_BASE_DOCKERFILES,
-  )("%s installs dos2unix under a version prefix pin that resolves on arm64 (#8691)", (dockerfile) => {
+  )("%s declares dos2unix as a version-prefix pin rather than an exact pin (#8691)", (dockerfile) => {
     const source = fs.readFileSync(dockerfile, "utf-8");
 
     expect(source).toContain('"dos2unix=7.5.2-1*"');
