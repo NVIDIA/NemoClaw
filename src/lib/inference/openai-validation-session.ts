@@ -343,9 +343,8 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
               }),
             retryTransientHttp,
           );
-        let result = await requestChat();
-        if (!requireToolCall || !result.ok) return result;
-        if (isReasoningOnlyLengthResponse(result.body)) {
+        const retryReasoningOnly = (candidate: CurlProbeResult) => {
+          if (!isReasoningOnlyLengthResponse(candidate.body)) return null;
           retriedReasoningTruncation = true;
           console.log(STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE);
           addTraceEvent("tool_call_reasoning_retry", {
@@ -353,7 +352,11 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
             retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
           });
           return requestChat(STRICT_TOOL_PROBE_RETRY_TOKENS, false);
-        }
+        };
+        let result = await requestChat();
+        if (!requireToolCall || !result.ok) return result;
+        const initialReasoningRetry = retryReasoningOnly(result);
+        if (initialReasoningRetry) return initialReasoningRetry;
         for (const delayMs of RETRY_DELAYS_MS) {
           if (
             options.retryChatCompletionsToolReadiness !== true ||
@@ -371,6 +374,8 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
           await waitForRetry(delayMs);
           result = await requestChat(STRICT_TOOL_PROBE_INITIAL_TOKENS, false);
           if (!result.ok) break;
+          const reasoningRetry = retryReasoningOnly(result);
+          if (reasoningRetry) return reasoningRetry;
         }
         return result;
       },
