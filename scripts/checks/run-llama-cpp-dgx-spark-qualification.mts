@@ -335,7 +335,7 @@ export function buildServerContainerArgv(
   if (plan.qualification.requestGuard !== "required") {
     throw new Error("llama.cpp qualification requires the declarative request guard");
   }
-  return buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
+  const argv = buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
     apiKeyHostPath: options.apiKeyHostPath,
     containerName: options.containerName,
     imageReference: options.imageReference,
@@ -346,6 +346,14 @@ export function buildServerContainerArgv(
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
   });
+  const entrypointIndex = argv.indexOf("--entrypoint");
+  const hostPort = options.hostPort === undefined ? "" : String(options.hostPort);
+  return [
+    ...argv.slice(0, entrypointIndex),
+    "--publish",
+    `127.0.0.1:${hostPort}:${String(plan.recipe.serve.port)}`,
+    ...argv.slice(entrypointIndex),
+  ];
 }
 
 export function validateOpenClawQualificationImageLabels(
