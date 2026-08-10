@@ -375,16 +375,18 @@ describe("shields command flow", () => {
     );
   });
 
-  it("loads 257 managed keys recorded by Shields down (#7952)", { timeout: 15_000 }, () => {
+  it("reconciles 257 saved managed keys with the current policy (#7952)", {
+    timeout: 15_000,
+  }, () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const snapshotPath = path.join(stateDir, "policy-snapshot-many-managed-keys.yaml");
-    const policies = Array.from({ length: 257 }, (_, index) => managedMcpPolicy(`server${index}`));
-    const keys = policies.map(({ key }) => key);
-    const networkPolicies = Object.fromEntries(
-      policies.map(({ key, networkPolicy }) => [key, networkPolicy]),
-    );
+    const keys = Array.from({ length: 257 }, (_, index) => `mcp_bridge_server${index}`);
+    const currentPolicy = managedMcpPolicy("server256");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, YAML.stringify({ network_policies: networkPolicies }));
+    fs.writeFileSync(
+      snapshotPath,
+      YAML.stringify({ network_policies: Object.fromEntries(keys.map((key) => [key, {}])) }),
+    );
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
@@ -394,15 +396,17 @@ describe("shields command flow", () => {
       }),
     );
     const harness = createHarness({
-      livePolicyYaml: YAML.stringify({ version: 1, network_policies: networkPolicies }),
-      sandboxEntry: managedMcpSandbox(policies),
+      livePolicyYaml: YAML.stringify({
+        version: 1,
+        network_policies: { [currentPolicy.key]: currentPolicy.networkPolicy },
+      }),
+      sandboxEntry: managedMcpSandbox([currentPolicy]),
     });
 
     expect(harness.applyShieldsPolicySnapshot("openclaw", snapshotPath).status).toBe(0);
     const applied = YAML.parse(harness.policySetBodies.at(-1)!);
     const appliedKeys = Object.keys(applied.network_policies);
-    expect([...appliedKeys].sort()).toEqual([...keys].sort());
-    expect(appliedKeys).toHaveLength(257);
+    expect(appliedKeys).toEqual([currentPolicy.key]);
     expect(appliedKeys).toContain("mcp_bridge_server256");
   });
 

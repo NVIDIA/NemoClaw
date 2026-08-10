@@ -168,8 +168,8 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     }
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.99", () => {
-    const commit = "8c7dd148a9e6360c9d5b2830e339a0dc4b3f3032";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.0.101", () => {
+    const commit = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
     const citations = [
       `${sourcePath}:3030-3055`,
@@ -188,7 +188,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     expect(docs).toContain("reopens proxy-side DNS resolution");
 
     const migrationReview = fs.readFileSync(
-      "docs/security/openshell-0.0.99-migration-review.md",
+      "docs/security/openshell-0.0.101-migration-review.md",
       "utf8",
     );
     expect(migrationReview).toContain(commit);

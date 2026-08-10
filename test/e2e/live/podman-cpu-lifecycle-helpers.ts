@@ -33,7 +33,7 @@ import {
 
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
 export const GATEWAY_NAME = "podman-proof";
-export const OPENSHELL_VERSION = "0.0.99";
+export const OPENSHELL_VERSION = "0.0.101";
 export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/u;
@@ -137,7 +137,7 @@ export async function startPinnedGateway(
   artifactDir = ARTIFACT_DIR,
 ): Promise<ChildProcess> {
   const child = spawnObservedChild(gatewayBin, [], {
-    activityLabel: "command: pinned OpenShell 0.0.99 Podman gateway",
+    activityLabel: "command: pinned OpenShell 0.0.101 Podman gateway",
     progress,
     spawn: {
       env: { ...process.env, ...gatewayEnv },

@@ -164,7 +164,14 @@ export function restartHermesGatewayAfterStateRestore(
 ): HermesPostRestoreGatewayRestartState {
   if (agentName !== "hermes") return "not-applicable";
   const restart = deps.restartSandboxGateway ?? processRecovery.restartSandboxGateway;
-  return restart(sandboxName, { quiet: true }).ok ? "restarted" : "restart-failed";
+  const result = restart(sandboxName, { quiet: true });
+  if (result.ok) return "restarted";
+  const mcpRestoreCanSupersede =
+    result.failureLayer === "MCP reconciliation refusal" &&
+    result.restarted === true &&
+    result.healthPassed === true;
+  // Final verification still requires MCP reconciliation after restoration.
+  return mcpRestoreCanSupersede ? "restarted" : "restart-failed";
 }
 
 export function verifyHermesGatewayAfterStateRestore(

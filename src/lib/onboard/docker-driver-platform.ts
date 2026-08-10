@@ -5,24 +5,15 @@ import { resolveCurrentOpenShellComputePlan, usesManagedDockerGateway } from "./
 
 export { resolveCurrentOpenShellComputePlan } from "./compute/plan";
 
-export const EXPERIMENTAL_PROFILE_ENV = "NEMOCLAW_EXPERIMENTAL_PROFILE";
-export const PORTABLE_EXPERIMENTAL_PROFILE = "portable";
-export const PORTABLE_HOST_GATEWAY_IP = "169.254.1.2";
-export const PORTABLE_LOCAL_REGISTRY = "localhost:5000";
-
-export type ExperimentalOnboardProfile = typeof PORTABLE_EXPERIMENTAL_PROFILE;
-
-export function resolveExperimentalOnboardProfile(
-  env: NodeJS.ProcessEnv = process.env,
-): ExperimentalOnboardProfile | null {
-  return env[EXPERIMENTAL_PROFILE_ENV] === PORTABLE_EXPERIMENTAL_PROFILE
-    ? PORTABLE_EXPERIMENTAL_PROFILE
-    : null;
-}
-
-export function isPortableExperimentalProfile(env: NodeJS.ProcessEnv = process.env): boolean {
-  return resolveExperimentalOnboardProfile(env) === PORTABLE_EXPERIMENTAL_PROFILE;
-}
+export {
+  type ExperimentalOnboardProfile,
+  EXPERIMENTAL_PROFILE_ENV,
+  isPortableExperimentalProfile,
+  PORTABLE_EXPERIMENTAL_PROFILE,
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_LOCAL_REGISTRY,
+  resolveExperimentalOnboardProfile,
+} from "./experimental/portable-profile";
 
 export function isLinuxDockerDriverGatewayEnabled(
   platform: NodeJS.Platform = process.platform,

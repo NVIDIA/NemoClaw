@@ -11,6 +11,17 @@ const phaseMocks = vi.hoisted(() => ({
   openRecreateJournal: vi.fn(),
 }));
 
+const gatewayAuthority = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  mode: "nemoclaw-managed",
+  source: "standalone",
+  endpoint: null,
+  stateDir: null,
+  supervisor: null,
+  requiredCapabilities: [],
+} as const;
+
 vi.mock("./rebuild-recreate-journal", () => ({
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
@@ -55,6 +66,7 @@ describe("rebuild shields relock guard", () => {
         observabilityEnabled: false,
         targetGatewayName: "nemoclaw",
         targetGatewayPort: 8080,
+        rebuildGatewayAuthority: gatewayAuthority,
       },
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
@@ -77,6 +89,7 @@ describe("rebuild shields relock guard", () => {
     });
     phaseMocks.openRecreateJournal.mockReturnValue({
       id: "journal-1",
+      gatewayAuthority,
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",
       markDeleting: vi.fn(),
