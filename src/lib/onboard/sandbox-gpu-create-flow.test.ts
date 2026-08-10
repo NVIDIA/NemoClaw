@@ -627,8 +627,49 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(output).not.toContain("super-secret-create-value");
   });
 
+  it("captures replacement evidence before rolling back a nonzero create (#8690)", async () => {
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 17,
+      output: "policy application failed",
+      sawProgress: true,
+    });
+    const callOrder: string[] = [];
+    const patch = createPatch();
+    patch.captureLifecycleFailureDiagnostics.mockImplementation(() => {
+      callOrder.push("capture");
+      return null;
+    });
+    patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(async () => {
+      callOrder.push("rollback");
+    });
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mockExit(17);
+
+    await expect(runSandboxGpuCreateFlow(createInput(), createDeps())).rejects.toThrow(
+      "process.exit:17",
+    );
+
+    expect(callOrder).toEqual(["capture", "rollback"]);
+    expect(patch.captureLifecycleFailureDiagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cleanupReason: "create_stream_failed",
+        additionalSummaryLines: ["create_stream_status=17"],
+      }),
+    );
+  });
+
   it("does not retry compatibility for a non-GPU native readiness failure (#6110)", async () => {
     mockReadinessFailure();
+    const callOrder: string[] = [];
+    const patch = createPatch();
+    patch.captureLifecycleFailureDiagnostics.mockImplementation(() => {
+      callOrder.push("capture");
+      return null;
+    });
+    patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(async () => {
+      callOrder.push("rollback");
+    });
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     const deps = createDeps();
     vi.mocked(deps.runCaptureOpenshell).mockReturnValue(
       "gpu-device-initialization-failed Failed\nother-sandbox Error NVIDIA GPU device unavailable",
@@ -643,6 +684,16 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(callOrder).toEqual(["capture", "rollback"]);
+    expect(patch.captureLifecycleFailureDiagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cleanupReason: "sandbox_readiness_terminal_failure_phase",
+        additionalSummaryLines: expect.arrayContaining([
+          "readiness_reason=terminal_failure_phase",
+          "readiness_failure_phase=Failed",
+        ]),
+      }),
+    );
   });
 
   it("preserves a nonzero create status when separate readiness polling fails (#6110)", async () => {

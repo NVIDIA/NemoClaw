@@ -221,6 +221,8 @@ describe("RuntimeProviderBundle registry contract", () => {
         waitForSupervisorReconnectIfNeeded: vi.fn(),
         commitAfterReady: vi.fn(),
         selectedMode: vi.fn(() => null),
+        recordLifecycleObservation: vi.fn(),
+        captureLifecycleFailureDiagnostics: vi.fn(() => null),
         printReadinessFailureIfEnabled: vi.fn(),
         verifyGpuOrExit: vi.fn(async (verify) => verify("alpha")),
       },

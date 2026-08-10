@@ -3,6 +3,7 @@
 
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
@@ -19,8 +20,13 @@ import type {
   DockerGpuPatchFailureContext,
   DockerGpuPatchMode,
   DockerGpuPatchResult,
+  DockerRecreateLifecycleObservation,
 } from "./docker-gpu-patch-types";
-import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
+import {
+  captureDockerGpuPreRollbackDiagnostics,
+  type DockerGpuPreRollbackDiagnostics,
+  type DockerRecreateFailureDiagnosticOptions,
+} from "./docker-gpu-pre-rollback-diagnostics";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { isDockerDesktopWslRuntime } from "./docker-gpu-sandbox-create-plan";
@@ -83,6 +89,9 @@ type DockerGpuSandboxCreatePatchOptions = {
   openshellSandboxCommand?: readonly string[] | null;
   requiredUlimits?: Parameters<RecreateStartupPatchFn>[0]["requiredUlimits"];
   timeoutSecs: number;
+  lifecycleGeneration?: string | null;
+  diagnosticSummaryLines?: readonly string[];
+  diagnosticSensitiveValues?: readonly string[];
   backend?: DockerGpuPatchBackend;
   /**
    * Whether the host is Docker Desktop WSL. Defaults to the cached
@@ -130,6 +139,12 @@ export type DockerGpuSandboxCreatePatch = {
    */
   commitAfterReady: () => Promise<void>;
   selectedMode: () => DockerGpuPatchMode | null;
+  recordLifecycleObservation: (
+    observation: Omit<DockerRecreateLifecycleObservation, "at"> & { at?: string },
+  ) => void;
+  captureLifecycleFailureDiagnostics: (
+    options: DockerRecreateFailureDiagnosticOptions,
+  ) => DockerGpuPreRollbackDiagnostics | null;
   /**
    * Print the Docker GPU readiness-failure block (including the Error-phase
    * classification + patched container State diagnostics) when the
@@ -160,6 +175,35 @@ export function createDockerGpuSandboxCreatePatch(
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
   let cutoverFinalizationFailure: Error | null = null;
+  const lifecycleObservations: DockerRecreateLifecycleObservation[] = [];
+  let lifecycleObservationDroppedCount = 0;
+  const lifecycleRedactor = createDockerGpuDiagnosticRedactor(options.diagnosticSensitiveValues);
+  const boundLifecycleOutput = (value: string | undefined): string | undefined => {
+    if (value === undefined) return undefined;
+    const redacted = lifecycleRedactor.redactText(value);
+    if (Buffer.byteLength(redacted) <= 1_500) return redacted;
+    const tail = Buffer.from(redacted).subarray(-1_500).toString("utf8");
+    const firstNewline = tail.indexOf("\n");
+    return firstNewline < 0
+      ? "[oversized single-line lifecycle output omitted]"
+      : `[lifecycle output truncated to complete trailing lines]\n${tail.slice(firstNewline + 1)}`;
+  };
+  const recordLifecycleObservation = (
+    observation: Omit<DockerRecreateLifecycleObservation, "at"> & { at?: string },
+  ): void => {
+    const output = boundLifecycleOutput(observation.output);
+    lifecycleObservations.push({
+      ...observation,
+      ...(output === undefined ? {} : { output }),
+      at: observation.at ?? new Date().toISOString(),
+    });
+    if (lifecycleObservations.length > 128) {
+      // Preserve the create/replacement anchors while retaining the newest
+      // readiness and cleanup evidence around the failure.
+      lifecycleObservations.splice(16, 1);
+      lifecycleObservationDroppedCount += 1;
+    }
+  };
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
@@ -179,6 +223,27 @@ export function createDockerGpuSandboxCreatePatch(
     homedir: options.deps.homedir,
     now: options.deps.now,
   };
+  const mergeFailureDiagnosticOptions = (
+    diagnosticOptions: DockerRecreateFailureDiagnosticOptions = {},
+  ) => ({
+    ...diagnosticOptions,
+    additionalSummaryLines: [
+      ...(routeAdapter.additionalSummaryLines ?? []),
+      ...(options.diagnosticSummaryLines ?? []),
+      ...(diagnosticOptions.additionalSummaryLines ?? []),
+    ],
+    additionalSensitiveValues: [
+      ...(options.diagnosticSensitiveValues ?? []),
+      ...(diagnosticOptions.additionalSensitiveValues ?? []),
+    ],
+    lifecycleGeneration: options.lifecycleGeneration ?? null,
+    lifecycleObservations,
+    lifecycleObservationDroppedCount,
+    captureStage:
+      cutoverFinalized && cutoverFinalizationOutcome === "commit"
+        ? ("post-cutover-pre-cleanup" as const)
+        : ("pre-rollback" as const),
+  });
 
   const applyOptions = {
     sandboxName: options.sandboxName,
@@ -207,6 +272,11 @@ export function createDockerGpuSandboxCreatePatch(
     if (!recreationEnabled) return;
     result = recreateSelectedPatch(false, deps);
     needsSupervisorWait = true;
+    recordLifecycleObservation({
+      stage: "container_recreate",
+      event: "replacement_started",
+      output: `old_container_id=${result.oldContainerId}\nnew_container_id=${result.newContainerId}\nbackup_container_name=${result.backupContainerName}`,
+    });
     console.log(`  ✓ Docker container mode selected: ${result.mode.label}`);
   };
 
@@ -262,7 +332,11 @@ export function createDockerGpuSandboxCreatePatch(
     onPatchFailureExit(options.sandboxName, patchError, {
       runCaptureOpenshell: options.deps.runCaptureOpenshell,
       dockerCapture: options.deps.dockerCapture,
-      additionalSummaryLines: routeAdapter.additionalSummaryLines,
+      additionalSummaryLines: [
+        ...routeAdapter.additionalSummaryLines,
+        ...(options.diagnosticSummaryLines ?? []),
+      ],
+      additionalSensitiveValues: options.diagnosticSensitiveValues,
     });
   };
   const selectedMode = (): DockerGpuPatchMode | null =>
@@ -317,7 +391,11 @@ export function createDockerGpuSandboxCreatePatch(
       if (!rollbackError) return;
       onPatchFailureExit(options.sandboxName, rollbackError, {
         ...failureDiagnosticDeps,
-        additionalSummaryLines: routeAdapter.additionalSummaryLines,
+        additionalSummaryLines: [
+          ...routeAdapter.additionalSummaryLines,
+          ...(options.diagnosticSummaryLines ?? []),
+        ],
+        additionalSensitiveValues: options.diagnosticSensitiveValues,
         context: {
           ...failureContext(),
           rolledBack: false,
@@ -348,11 +426,35 @@ export function createDockerGpuSandboxCreatePatch(
         options.sandboxName,
         supervisorReconnectTimeoutSecs,
         {
-          runOpenshell: options.deps.runOpenshell,
-          runCaptureOpenshell: options.deps.runCaptureOpenshell,
+          runOpenshell: options.deps.runOpenshell
+            ? (args, runOptions) => {
+                const reconnectResult = options.deps.runOpenshell?.(args, runOptions) ?? {};
+                recordLifecycleObservation({
+                  stage: "supervisor_reconnect",
+                  event: "exec_probe",
+                  status: reconnectResult.status ?? null,
+                });
+                return reconnectResult;
+              }
+            : undefined,
+          runCaptureOpenshell: options.deps.runCaptureOpenshell
+            ? (args, runOptions) => {
+                const output = options.deps.runCaptureOpenshell?.(args, runOptions) ?? "";
+                recordLifecycleObservation({
+                  stage: "supervisor_reconnect",
+                  event: "sandbox_phase_probe",
+                  output,
+                });
+                return output;
+              }
+            : undefined,
           sleep: options.deps.sleep,
         },
       );
+      recordLifecycleObservation({
+        stage: "supervisor_reconnect",
+        event: supervisorReady ? "reconnected" : "failed",
+      });
       if (supervisorReady) {
         // Reconnect completes the legacy recreation check. Keep its rollback
         // backup until the caller accepts authoritative Ready and the required
@@ -368,11 +470,18 @@ export function createDockerGpuSandboxCreatePatch(
       if (result) {
         try {
           preRollbackClassification =
-            captureFailedClone(options.sandboxName, result, options.deps)?.classification ?? null;
-        } catch (error) {
-          console.warn(
-            `  ⚠ Could not capture the failed GPU container before rollback: ${error instanceof Error ? error.message : String(error)}`,
-          );
+            captureFailedClone(
+              options.sandboxName,
+              result,
+              options.deps,
+              mergeFailureDiagnosticOptions({
+                error: new Error("OpenShell supervisor did not reconnect before rollback."),
+                cleanupReason: "supervisor_reconnect_failed",
+                cleanupStartedAt: new Date().toISOString(),
+              }),
+            )?.classification ?? null;
+        } catch {
+          console.warn("  ⚠ Could not capture the failed container before rollback.");
         }
       }
       const finalizeOutcome = result
@@ -389,7 +498,11 @@ export function createDockerGpuSandboxCreatePatch(
         dockerLogs: options.deps.dockerLogs,
         homedir: options.deps.homedir,
         now: options.deps.now,
-        additionalSummaryLines: routeAdapter.additionalSummaryLines,
+        additionalSummaryLines: [
+          ...routeAdapter.additionalSummaryLines,
+          ...(options.diagnosticSummaryLines ?? []),
+        ],
+        additionalSensitiveValues: options.diagnosticSensitiveValues,
         preRollbackClassification,
         context: {
           sandboxName: options.sandboxName,
@@ -420,7 +533,11 @@ export function createDockerGpuSandboxCreatePatch(
         onPatchFailureExit(options.sandboxName, failure, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
-          additionalSummaryLines: routeAdapter.additionalSummaryLines,
+          additionalSummaryLines: [
+            ...routeAdapter.additionalSummaryLines,
+            ...(options.diagnosticSummaryLines ?? []),
+          ],
+          additionalSensitiveValues: options.diagnosticSensitiveValues,
         });
         throw failure;
       }
@@ -455,7 +572,11 @@ export function createDockerGpuSandboxCreatePatch(
             onPatchFailureExit(options.sandboxName, failure, {
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
               dockerCapture: options.deps.dockerCapture,
-              additionalSummaryLines: routeAdapter.additionalSummaryLines,
+              additionalSummaryLines: [
+                ...routeAdapter.additionalSummaryLines,
+                ...(options.diagnosticSummaryLines ?? []),
+              ],
+              additionalSensitiveValues: options.diagnosticSensitiveValues,
               context: {
                 ...failureContext(),
                 rolledBack: rollbackError === null,
@@ -468,6 +589,10 @@ export function createDockerGpuSandboxCreatePatch(
           ? finalizeBackup({ result, supervisorReady: true }, options.deps)
           : null;
         cutoverFinalized = true;
+        recordLifecycleObservation({
+          stage: "backup_finalize",
+          event: finalizeOutcome?.backupRemoved ? "backup_removed" : "backup_removal_failed",
+        });
         if (!finalizeOutcome || finalizeOutcome.backupRemoved) return;
         const failure = new Error(
           "Managed startup passed Ready, but its rollback backup could not be removed.",
@@ -476,7 +601,11 @@ export function createDockerGpuSandboxCreatePatch(
         onPatchFailureExit(options.sandboxName, failure, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
-          additionalSummaryLines: routeAdapter.additionalSummaryLines,
+          additionalSummaryLines: [
+            ...routeAdapter.additionalSummaryLines,
+            ...(options.diagnosticSummaryLines ?? []),
+          ],
+          additionalSensitiveValues: options.diagnosticSensitiveValues,
           context: failureContext(),
         });
         throw failure;
@@ -497,13 +626,29 @@ export function createDockerGpuSandboxCreatePatch(
       return selectedMode();
     },
 
+    recordLifecycleObservation,
+
+    captureLifecycleFailureDiagnostics(diagnosticOptions) {
+      if (!result) return null;
+      return captureFailedClone(
+        options.sandboxName,
+        result,
+        options.deps,
+        mergeFailureDiagnosticOptions(diagnosticOptions),
+      );
+    },
+
     printReadinessFailureIfEnabled() {
       if (!routeAdapter.enabled) return;
       printDockerGpuReadinessFailure(options.sandboxName, selectedMode(), {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
         context: failureContext(),
-        additionalSummaryLines: routeAdapter.additionalSummaryLines,
+        additionalSummaryLines: [
+          ...routeAdapter.additionalSummaryLines,
+          ...(options.diagnosticSummaryLines ?? []),
+        ],
+        additionalSensitiveValues: options.diagnosticSensitiveValues,
       });
     },
 
@@ -533,7 +678,11 @@ export function createDockerGpuSandboxCreatePatch(
             runCaptureOpenshell: options.deps.runCaptureOpenshell,
             dockerCapture: options.deps.dockerCapture,
             context: currentFailureContext,
-            additionalSummaryLines: routeAdapter.additionalSummaryLines,
+            additionalSummaryLines: [
+              ...routeAdapter.additionalSummaryLines,
+              ...(options.diagnosticSummaryLines ?? []),
+            ],
+            additionalSensitiveValues: options.diagnosticSensitiveValues,
           });
           const rollbackError = await rollbackAfterFailure();
           if (rollbackError) {
@@ -559,7 +708,11 @@ export function createDockerGpuSandboxCreatePatch(
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
           context: routeAdapter.enabled ? currentFailureContext : null,
-          additionalSummaryLines: routeAdapter.additionalSummaryLines,
+          additionalSummaryLines: [
+            ...routeAdapter.additionalSummaryLines,
+            ...(options.diagnosticSummaryLines ?? []),
+          ],
+          additionalSensitiveValues: options.diagnosticSensitiveValues,
         });
         const rollbackError = await rollbackAfterFailure();
         if (rollbackError) {

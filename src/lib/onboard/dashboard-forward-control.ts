@@ -3,8 +3,24 @@
 
 import { bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
+export type DashboardForwardRollbackContext = {
+  sandboxName: string;
+  reason:
+    | "dashboard_port_allocation_failed"
+    | "dashboard_port_reallocation_refused"
+    | "dashboard_forward_start_failed"
+    | "messaging_forward_start_failed";
+  cleanupStartedAt: string;
+  error: unknown;
+  dashboardPort?: number;
+  forwardPort?: number;
+  forwardDiagnostic?: string | null;
+  forwardListOutput?: string | null;
+};
+
 export interface DashboardForwardOptions {
   rollbackSandboxOnFailure?: boolean;
+  beforeSandboxRollback?: (context: DashboardForwardRollbackContext) => void;
   preserveSandboxPorts?: Array<number | string>;
   allowPortReallocation?: boolean;
 }

@@ -423,6 +423,7 @@ const {
 const gatewayReuse: typeof import("./onboard/gateway-reuse") = require("./onboard/gateway-reuse");
 const messagingConfig: typeof import("./onboard/messaging-config") = require("./onboard/messaging-config");
 const {
+  buildMessagingCredentialRecreateDiagnosticLines,
   detectMessagingCredentialRotation,
   getMessagingChannelForEnvKey,
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
@@ -803,8 +804,10 @@ const {
   formatEnvAssignment,
   parsePolicyPresetEnv,
 } = urlUtils;
-const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
-  require("./onboard/credential-env");
+const {
+  collectCredentialEnvSensitiveValues,
+  hydrateCredentialEnv,
+}: typeof import("./onboard/credential-env") = require("./onboard/credential-env");
 
 const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
@@ -2222,6 +2225,11 @@ async function createSandboxWithBaseImageResolution(
   });
   const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
   const { messagingTokenDefs, hasMessagingTokens } = messagingCapabilities;
+  let credentialRecreateDiagnosticLines: string[] = [];
+  const recreateDiagnosticSensitiveValues = collectCredentialEnvSensitiveValues(
+    process.env,
+    messagingTokenDefs.map(({ token }) => token),
+  );
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
@@ -2449,6 +2457,10 @@ async function createSandboxWithBaseImageResolution(
 
     if (credentialRotation.changed && existingSandboxState === "ready") {
       const rotatedNames = credentialRotation.changedProviders.join(", ");
+      credentialRecreateDiagnosticLines = buildMessagingCredentialRecreateDiagnosticLines(
+        messagingTokenDefs,
+        credentialRotation.changedProviders,
+      );
       console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
       console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
       if (!shouldSkipPreRecreateBackup(process.env)) {
@@ -2582,6 +2594,8 @@ async function createSandboxWithBaseImageResolution(
       sandboxEnv,
       sandboxStartupCommand,
       lifecycleGeneration: recreateRuntime.targetGeneration,
+      failureDiagnosticSummaryLines: credentialRecreateDiagnosticLines,
+      failureDiagnosticSensitiveValues: recreateDiagnosticSensitiveValues,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2611,11 +2625,23 @@ async function createSandboxWithBaseImageResolution(
 
   if (manageDashboard) {
     console.log("  Waiting for NemoClaw dashboard to become ready...");
-    sandboxReadinessTracing.waitForDashboardReadyWithTrace({
+    const dashboardReady = sandboxReadinessTracing.waitForDashboardReadyWithTrace({
       sandboxName,
       port: effectiveDashboardPort,
-      runCaptureOpenshell,
+      runCaptureOpenshell: (args, options) => {
+        const output = runCaptureOpenshell(args, options);
+        runtimePatch.recordLifecycleObservation({
+          stage: "dashboard_readiness",
+          event: "health_probe",
+          output,
+        });
+        return output;
+      },
       sleep: sleepSeconds,
+    });
+    runtimePatch.recordLifecycleObservation({
+      stage: "dashboard_readiness",
+      event: dashboardReady ? "ready" : "timeout",
     });
   }
 
@@ -2640,6 +2666,28 @@ async function createSandboxWithBaseImageResolution(
   if (manageDashboard) {
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
+      beforeSandboxRollback: (context) => {
+        runtimePatch.recordLifecycleObservation({
+          stage: "dashboard_forward",
+          event: context.reason,
+          output: context.forwardListOutput ?? undefined,
+        });
+        runtimePatch.captureLifecycleFailureDiagnostics({
+          error: context.error,
+          cleanupReason: context.reason,
+          cleanupStartedAt: context.cleanupStartedAt,
+          forwardDiagnostic: context.forwardDiagnostic,
+          forwardListOutput: context.forwardListOutput,
+          additionalSummaryLines: [
+            ...(context.dashboardPort !== undefined || context.forwardPort === undefined
+              ? [`dashboard_port=${String(context.dashboardPort ?? effectiveDashboardPort)}`]
+              : []),
+            ...(context.forwardPort !== undefined
+              ? [`forward_port=${String(context.forwardPort)}`]
+              : []),
+          ],
+        });
+      },
     });
     if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
       chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;

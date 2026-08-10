@@ -239,7 +239,12 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
 
-    expect(capturePreRollbackDiagnostics).toHaveBeenCalledWith("alpha", result, deps);
+    expect(capturePreRollbackDiagnostics).toHaveBeenCalledWith(
+      "alpha",
+      result,
+      deps,
+      expect.objectContaining({ cleanupReason: "supervisor_reconnect_failed" }),
+    );
     expect(capturePreRollbackDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
       finalizeBackup.mock.invocationCallOrder[0],
     );

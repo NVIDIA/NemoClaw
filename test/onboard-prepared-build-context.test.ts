@@ -105,6 +105,8 @@ dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   waitForSupervisorReconnectIfNeeded: () => {},
   commitAfterReady: async () => {},
   selectedMode: () => null,
+  recordLifecycleObservation: () => {},
+  captureLifecycleFailureDiagnostics: () => null,
   printReadinessFailureIfEnabled: () => {},
   verifyGpuOrExit: async (verify) => verify(sandboxName),
 });

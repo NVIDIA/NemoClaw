@@ -11,6 +11,7 @@ import {
   buildDockerGpuMode,
   collectDockerGpuPatchDiagnostics,
   type DockerContainerInspect,
+  type DockerContainerState,
   printDockerGpuPatchFailureAndExit,
 } from "./docker-gpu-patch";
 
@@ -42,8 +43,10 @@ describe("Docker GPU diagnostic redaction", () => {
       "nemoclaw-start",
     ].join(" ");
     const suffixCanary = ["redaction", "sentinel"].join("-");
+    const unallowlistedStateCanary = "future-runtime-payload-8690";
     const inspect: DockerContainerInspect = {
       Id: "new-container-id",
+      Image: `sha256:${"d".repeat(64)}`,
       Name: `/openshell-alpha-${canaries.inspect}`,
       Config: {
         Image: "openshell/sandbox:test",
@@ -61,6 +64,17 @@ describe("Docker GPU diagnostic redaction", () => {
         RestartPolicy: { Name: "unless-stopped" },
         GroupAdd: ["1000"],
       },
+      State: {
+        Status: "running",
+        Running: true,
+        ExitCode: 0,
+        Health: {
+          Status: "healthy",
+          FailingStreak: 0,
+          Log: [{ Output: unallowlistedStateCanary }],
+        },
+        FutureRuntimeField: unallowlistedStateCanary,
+      } as DockerContainerInspect["State"],
       NetworkSettings: {
         Networks: {
           "openshell-docker": {
@@ -117,7 +131,13 @@ describe("Docker GPU diagnostic redaction", () => {
               Status: "exited",
               ExitCode: 125,
               Error: `useful state context ${canaries.containerState}`,
-            },
+              FutureRuntimeField: unallowlistedStateCanary,
+              Health: {
+                Status: "unhealthy",
+                FailingStreak: 2,
+                Log: [{ Output: unallowlistedStateCanary }],
+              },
+            } as DockerContainerState,
           },
           classification: {
             kind: "patched_container_failed",
@@ -157,6 +177,7 @@ describe("Docker GPU diagnostic redaction", () => {
       const published = `${diagnostics?.summaryLines.join("\n")}\n${Object.values(contents).join("\n")}`;
       for (const canary of Object.values(canaries)) expect(published).not.toContain(canary);
       expect(published).not.toContain(suffixCanary);
+      expect(published).not.toContain(unallowlistedStateCanary);
 
       expect(contents["summary.txt"]).toContain("failure_kind=patched_container_failed");
       expect(contents["summary.txt"]).toContain("useful failure context <REDACTED>");
@@ -165,8 +186,15 @@ describe("Docker GPU diagnostic redaction", () => {
       );
       expect(contents["openshell-sandbox-get.txt"]).toContain("useful get context <REDACTED>");
       expect(contents["docker-network-summary.txt"]).toContain("network_mode=openshell-docker");
+      expect(contents["docker-network-summary.txt"]).toContain(`image_id=sha256:${"d".repeat(64)}`);
       const state = JSON.parse(contents["patched-container-state.json"]);
       expect(state.Error).toBe("useful state context <REDACTED>");
+      expect(state).toEqual({
+        Status: "exited",
+        ExitCode: 125,
+        Error: "useful state context <REDACTED>",
+        Health: { Status: "unhealthy", FailingStreak: 2 },
+      });
       const inspected = JSON.parse(contents["docker-inspect.json"]);
       expect(inspected[0].Config.Env).toEqual([
         "OPENSHELL_SANDBOX_COMMAND=<REDACTED>",
@@ -174,6 +202,13 @@ describe("Docker GPU diagnostic redaction", () => {
       ]);
       expect(inspected[0].Config.Labels).toEqual({ "openshell.ai/sandbox-name": "alpha" });
       expect(inspected[0].Config.Cmd).toEqual(["hidden", "<1 additional arguments omitted>"]);
+      expect(inspected[0].Image).toBe(`sha256:${"d".repeat(64)}`);
+      expect(inspected[0].State).toEqual({
+        Status: "running",
+        Running: true,
+        ExitCode: 0,
+        Health: { Status: "healthy", FailingStreak: 0 },
+      });
 
       const fullInspectOrders = dockerCapture.mock.calls
         .map(([args], index) => ({ args, order: dockerCapture.mock.invocationCallOrder[index] }))
@@ -185,6 +220,113 @@ describe("Docker GPU diagnostic redaction", () => {
       );
     } finally {
       writeFileSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { label: "exact", observed: ["a".repeat(64)], expected: "yes" },
+    { label: "wrong", observed: ["b".repeat(64)], expected: "no" },
+    { label: "missing", observed: [], expected: "missing" },
+    {
+      label: "ambiguous",
+      observed: ["a".repeat(64), "b".repeat(64)],
+      expected: "ambiguous",
+    },
+  ])("records $label replacement identity evidence (#8690)", ({ observed, expected }) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-container-identity-"));
+    const expectedId = "a".repeat(64);
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: expectedId,
+          },
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps" && args.includes("--no-trunc") ? `${observed.join("\n")}\n` : "",
+          ),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-07-02T00:10:00Z"),
+        },
+      );
+
+      const summary = fs.readFileSync(path.join(diagnostics?.dir ?? "", "summary.txt"), "utf8");
+      expect(summary).toContain(`expected_container_id=${expectedId}`);
+      expect(summary).toContain("container_identity_query=succeeded");
+      expect(summary).toContain(`container_identity_match=${expected}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records unknown identity when the Docker label query fails (#8690)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-container-query-failure-"));
+    const expectedId = "a".repeat(64);
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: expectedId,
+          },
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) => {
+            if (args[0] === "ps" && args.includes("--no-trunc")) {
+              throw new Error("Docker query timed out");
+            }
+            return "";
+          }),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-07-02T00:11:00Z"),
+        },
+      );
+
+      const summary = fs.readFileSync(path.join(diagnostics?.dir ?? "", "summary.txt"), "utf8");
+      expect(summary).toContain("observed_container_ids=unknown");
+      expect(summary).toContain("container_identity_query=failed");
+      expect(summary).toContain("container_identity_match=unknown");
+      expect(summary).not.toContain("container_identity_match=missing");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps oversized lifecycle evidence bounded and valid JSON (#8690)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-json-"));
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          lifecycleObservations: Array.from({ length: 200 }, (_, attempt) => ({
+            at: "2026-07-02T00:20:00Z",
+            stage: "sandbox_readiness" as const,
+            event: "phase_probe",
+            attempt,
+            output: "alpha Ready ".repeat(125),
+          })),
+        },
+        {
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-07-02T00:20:00Z"),
+        },
+      );
+      const lifecyclePath = path.join(diagnostics?.dir ?? "", "lifecycle-history.json");
+      const published = fs.readFileSync(lifecyclePath, "utf8");
+
+      expect(() => JSON.parse(published)).not.toThrow();
+      expect(JSON.parse(published)).toMatchObject({ diagnosticTruncated: true });
+      expect(fs.statSync(lifecyclePath).size).toBeLessThanOrEqual(256_000);
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

@@ -37,6 +37,35 @@ export interface ManagedBootstrapRuntimeLimit {
   readonly hard: number;
 }
 
+export interface ManagedBootstrapRuntimeLifecycleObservation {
+  readonly at: string;
+  readonly stage:
+    | "create_stream"
+    | "container_recreate"
+    | "supervisor_reconnect"
+    | "sandbox_readiness"
+    | "backup_finalize"
+    | "dashboard_readiness"
+    | "dashboard_forward";
+  readonly event: string;
+  readonly attempt?: number;
+  readonly status?: number | null;
+  readonly output?: string;
+}
+
+export interface ManagedBootstrapRuntimeFailureDiagnosticOptions {
+  readonly error?: unknown;
+  readonly additionalSummaryLines?: readonly string[];
+  readonly additionalSensitiveValues?: readonly string[];
+  readonly cleanupReason?: string | null;
+  readonly cleanupStartedAt?: string | null;
+  readonly lifecycleGeneration?: string | null;
+  readonly lifecycleObservations?: readonly ManagedBootstrapRuntimeLifecycleObservation[];
+  readonly lifecycleObservationDroppedCount?: number;
+  readonly forwardDiagnostic?: string | null;
+  readonly forwardListOutput?: string | null;
+}
+
 /** Provider-neutral lifecycle surface consumed by sandbox-create coordinators. */
 export interface ManagedBootstrapRuntimePatch {
   maybeApplyDuringCreate(): void | Promise<void>;
@@ -52,6 +81,12 @@ export interface ManagedBootstrapRuntimePatch {
     readonly device: string;
     readonly args: readonly string[];
   } | null;
+  recordLifecycleObservation(
+    observation: Omit<ManagedBootstrapRuntimeLifecycleObservation, "at"> & { at?: string },
+  ): void;
+  captureLifecycleFailureDiagnostics(
+    options: ManagedBootstrapRuntimeFailureDiagnosticOptions,
+  ): unknown;
   printReadinessFailureIfEnabled(): void;
   verifyGpuOrExit(
     verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,

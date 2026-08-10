@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ManagedBootstrapRuntimeLifecycleObservation } from "./managed-bootstrap/runtime-create";
+
 type DockerRunResult = {
   status?: number | null;
   stdout?: string | Buffer | null;
@@ -136,9 +138,16 @@ export type DockerGpuCloneRunOptions = {
 export type DockerGpuPatchDiagnostics = {
   dir: string;
   cleanupCommands: string[];
-  cleanupDisposition: "manual" | "not_required" | "pending_rollback" | "unknown";
+  cleanupDisposition:
+    | "manual"
+    | "not_required"
+    | "pending_rollback"
+    | "pending_sandbox_delete"
+    | "unknown";
   summaryLines: string[];
 };
+
+export type DockerRecreateLifecycleObservation = ManagedBootstrapRuntimeLifecycleObservation;
 
 /**
  * Subset of `docker inspect --format '{{json .State}}'` fields surfaced when
@@ -199,6 +208,8 @@ export type DockerContainerInspect = {
   Id?: string;
   Image?: string;
   Name?: string;
+  Created?: string;
+  RestartCount?: number;
   Config?: {
     Image?: string;
     AttachStdin?: boolean;
@@ -216,12 +227,7 @@ export type DockerContainerInspect = {
     StopTimeout?: number | null;
     Volumes?: Record<string, unknown> | null;
   } | null;
-  State?: {
-    Running?: boolean;
-    Paused?: boolean;
-    Restarting?: boolean;
-    Dead?: boolean;
-  } | null;
+  State?: DockerContainerState | null;
   HostConfig?: {
     Binds?: string[] | null;
     Mounts?: Array<{

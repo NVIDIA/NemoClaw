@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../src/lib/adapters/openshell/timeouts";
 import type { AgentDefinition } from "../src/lib/agent/defs";
 import { loadAgent } from "../src/lib/agent/defs";
 import { printDashboardUi } from "../src/lib/agent/onboard";
@@ -221,6 +222,137 @@ describe("onboard dashboard helpers", () => {
     ).toHaveLength(1);
     expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("captures dashboard-forward failure evidence before destructive sandbox cleanup (#8690)", () => {
+    const callOrder: string[] = [];
+    const beforeSandboxRollback = vi.fn((context) => {
+      callOrder.push("diagnostics");
+      expect(context).toMatchObject({
+        sandboxName: "my-sandbox",
+        reason: "dashboard_forward_start_failed",
+        dashboardPort: 18789,
+      });
+      expect(context.forwardDiagnostic).toContain("ENOENT");
+      expect(context.error).toMatchObject({
+        message: "Dashboard forward failed before sandbox cleanup.",
+      });
+    });
+    const runOpenshell = vi.fn((args: string[]) => {
+      if (args.join(" ") === "sandbox delete my-sandbox") callOrder.push("delete");
+      return { status: 0 };
+    });
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: () => ["/definitely/missing/openshell"],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("test-exit");
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() =>
+      helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789", {
+        rollbackSandboxOnFailure: true,
+        beforeSandboxRollback,
+      }),
+    ).toThrow("test-exit");
+
+    expect(callOrder).toEqual(["diagnostics", "delete"]);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("does not let diagnostic capture failure block owned-sandbox cleanup (#8690)", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: () => ["/definitely/missing/openshell"],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+    vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("test-exit");
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(() =>
+      helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789", {
+        rollbackSandboxOnFailure: true,
+        beforeSandboxRollback: () => {
+          throw new Error("diagnostic sink unavailable");
+        },
+      }),
+    ).toThrow("test-exit");
+
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "my-sandbox"], {
+      ignoreError: true,
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("diagnostic sink unavailable"));
+  });
+
+  it("does not let forward-list evidence capture block owned-sandbox cleanup (#8690)", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn((_args: string[], options?: Record<string, unknown>) => {
+      if (options?.ignoreError === true && options?.timeout === OPENSHELL_PROBE_TIMEOUT_MS) {
+        throw new Error("forward list unavailable");
+      }
+      return "";
+    });
+    const beforeSandboxRollback = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell,
+      openshellArgv: () => ["/definitely/missing/openshell"],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+    vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("test-exit");
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() =>
+      helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789", {
+        rollbackSandboxOnFailure: true,
+        beforeSandboxRollback,
+      }),
+    ).toThrow("test-exit");
+
+    expect(beforeSandboxRollback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "dashboard_forward_start_failed",
+        forwardListOutput: null,
+      }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "my-sandbox"], {
+      ignoreError: true,
+    });
   });
 
   it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {

@@ -82,6 +82,8 @@ export interface SandboxGpuCreateFlowInput {
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
+  failureDiagnosticSummaryLines?: readonly string[];
+  failureDiagnosticSensitiveValues?: readonly string[];
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;

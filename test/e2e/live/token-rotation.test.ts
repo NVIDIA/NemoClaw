@@ -13,7 +13,16 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { retainOnboardFailureArtifacts } from "../fixtures/onboard-failure-artifacts.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import {
+  buildSequentialTokenRotationSteps,
+  parseTokenRotationOrder,
+  TOKEN_ROTATION_ORDER_ENV,
+  TOKEN_ROTATION_PROVIDER_SUFFIXES,
+  type TokenRotationTokenSet,
+  tokenRotationPhaseNames,
+} from "../fixtures/token-rotation-order.ts";
 
 // Keep this free-standing and direct: the contract is the real CLI +
 // OpenShell/provider boundary for messaging credential reuse/rotation, not the
@@ -30,21 +39,14 @@ const PHASE_TIMEOUT_MS = 40 * 60_000;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-interface TokenSet {
-  telegram: string;
-  discord: string;
-  slackBot: string;
-  slackApp: string;
-}
-
-const TOKEN_A: TokenSet = {
+const TOKEN_A: TokenRotationTokenSet = {
   telegram: process.env.TELEGRAM_BOT_TOKEN_A ?? "test-fake-token-A-rotation-e2e",
   discord: process.env.DISCORD_BOT_TOKEN_A ?? "dc-a-rotation-e2e",
   slackBot: process.env.SLACK_BOT_TOKEN_A ?? "xoxb-fake-A-rotation-e2e",
   slackApp: process.env.SLACK_APP_TOKEN_A ?? "xapp-fake-A-rotation-e2e",
 };
 
-const TOKEN_B: TokenSet = {
+const TOKEN_B: TokenRotationTokenSet = {
   telegram: process.env.TELEGRAM_BOT_TOKEN_B ?? "test-fake-token-B-rotation-e2e",
   discord: process.env.DISCORD_BOT_TOKEN_B ?? "dc-b-rotation-e2e",
   slackBot: process.env.SLACK_BOT_TOKEN_B ?? "xoxb-fake-B-rotation-e2e",
@@ -65,11 +67,18 @@ type RegistrySandboxEntry = {
   };
 };
 
+const TOKEN_ROTATION_ORDER = parseTokenRotationOrder(process.env[TOKEN_ROTATION_ORDER_ENV]);
+const SEQUENTIAL_ROTATION_STEPS = buildSequentialTokenRotationSteps(
+  TOKEN_ROTATION_ORDER,
+  TOKEN_A,
+  TOKEN_B,
+);
+
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
-function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
+function onboardEnv(endpointUrl: string, tokens: TokenRotationTokenSet): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
     COMPATIBLE_API_KEY: "token-rotation-compatible-e2e",
@@ -173,7 +182,7 @@ function redactionValues(): string[] {
 async function runInstall(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   endpointUrl: string,
-  tokens: TokenSet,
+  tokens: TokenRotationTokenSet,
   extraEnv: NodeJS.ProcessEnv = {},
 ) {
   return host.command("bash", ["install.sh", "--non-interactive"], {
@@ -189,13 +198,14 @@ async function runInstall(
 }
 
 async function runOnboard(
+  artifacts: import("../fixtures/artifacts.ts").ArtifactSink,
   host: import("../fixtures/clients/host.ts").HostCliClient,
   endpointUrl: string,
-  tokens: TokenSet,
+  tokens: TokenRotationTokenSet,
   artifactName: string,
   extraEnv: NodeJS.ProcessEnv = {},
 ) {
-  return host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
+  const result = await host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
     artifactName,
     env: {
       ...onboardEnv(endpointUrl, tokens),
@@ -204,6 +214,23 @@ async function runOnboard(
     redactionValues: redactionValues(),
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
+  if (result.exitCode !== 0) {
+    artifacts.addRedactionValues(redactionValues());
+    try {
+      await retainOnboardFailureArtifacts({
+        artifacts,
+        artifactName,
+        diagnosticOutput: resultText(result),
+        homeDir: process.env.HOME ?? "/tmp",
+        sandboxName: SANDBOX_NAME,
+      });
+    } catch (error) {
+      await artifacts.writeJson(`${artifactName}-diagnostic-retention-error.json`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return result;
 }
 
 async function assertSandboxRunning(
@@ -273,10 +300,7 @@ test(
       e2ePhases: [
         "confirm Docker and start hermetic inference",
         "install the sandbox and confirm provider hashes",
-        "rotate only the Telegram provider",
-        "reuse the sandbox after the unchanged Telegram token",
-        "rotate only the Discord provider",
-        "reuse the sandbox after the unchanged Discord token",
+        ...tokenRotationPhaseNames(SEQUENTIAL_ROTATION_STEPS),
         "rotate only the Slack providers",
         "reuse the sandbox and record rotation evidence",
       ],
@@ -330,6 +354,7 @@ test(
       },
       documentedException:
         "The replacement uses the legacy-supported fake OpenAI-compatible endpoint path so the messaging credential-rotation guard is not blocked by unrelated NVIDIA endpoint 429 rate limits.",
+      providerOrder: TOKEN_ROTATION_ORDER,
       contract: [
         "first onboard stores messaging credential hashes and creates provider attachments",
         "rotating Telegram rebuilds and names only telegram-bridge",
@@ -481,72 +506,60 @@ test(
     }
     await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
-    progress.phase("rotate only the Telegram provider");
-    const telegram = await runOnboard(
-      host,
-      fakeOpenAI.baseUrl,
-      { ...TOKEN_A, telegram: TOKEN_B.telegram },
-      "phase-2-rotate-telegram",
-    );
-    const telegramText = resultText(telegram);
-    expect(telegram.exitCode, telegramText).toBe(0);
-    expectRotationOutput(
-      telegramText,
-      [`${SANDBOX_NAME}-telegram-bridge`],
-      [
-        `${SANDBOX_NAME}-discord-bridge`,
-        `${SANDBOX_NAME}-slack-bridge`,
-        `${SANDBOX_NAME}-slack-app`,
-      ],
-    );
-    await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
+    for (const step of SEQUENTIAL_ROTATION_STEPS) {
+      if (step.provider === "telegram") {
+        progress.phase("rotate only the Telegram provider");
+      } else {
+        progress.phase("rotate only the Discord provider");
+      }
+      const rotation = await runOnboard(
+        artifacts,
+        host,
+        fakeOpenAI.baseUrl,
+        step.tokens,
+        `phase-${step.phaseNumber}-rotate-${step.artifactSlug}`,
+      );
+      const rotationText = resultText(rotation);
+      expect(rotation.exitCode, rotationText).toBe(0);
+      const expectedProviders = step.providerSuffixes.map(
+        (suffix) => `${SANDBOX_NAME}-${suffix}`,
+      );
+      const expectedProviderSuffixes = new Set<string>(step.providerSuffixes);
+      const forbiddenProviders = TOKEN_ROTATION_PROVIDER_SUFFIXES.filter(
+        (suffix) => !expectedProviderSuffixes.has(suffix),
+      ).map((suffix) => `${SANDBOX_NAME}-${suffix}`);
+      expectRotationOutput(rotationText, expectedProviders, forbiddenProviders);
+      await assertSandboxRunning(
+        host,
+        `phase-${step.phaseNumber}-sandbox-running-after-${step.artifactSlug}-rotation`,
+      );
 
-    progress.phase("reuse the sandbox after the unchanged Telegram token");
-    const afterTelegramSame = await runOnboard(
-      host,
-      fakeOpenAI.baseUrl,
-      { ...TOKEN_A, telegram: TOKEN_B.telegram },
-      "phase-3-same-after-telegram",
-    );
-    const afterTelegramSameText = resultText(afterTelegramSame);
-    expect(afterTelegramSame.exitCode, afterTelegramSameText).toBe(0);
-    expect(afterTelegramSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterTelegramSameText).toContain("reusing it");
-
-    progress.phase("rotate only the Discord provider");
-    const discord = await runOnboard(
-      host,
-      fakeOpenAI.baseUrl,
-      { ...TOKEN_A, telegram: TOKEN_B.telegram, discord: TOKEN_B.discord },
-      "phase-4-rotate-discord",
-    );
-    const discordText = resultText(discord);
-    expect(discord.exitCode, discordText).toBe(0);
-    expectRotationOutput(
-      discordText,
-      [`${SANDBOX_NAME}-discord-bridge`],
-      [
-        `${SANDBOX_NAME}-telegram-bridge`,
-        `${SANDBOX_NAME}-slack-bridge`,
-        `${SANDBOX_NAME}-slack-app`,
-      ],
-    );
-    await assertSandboxRunning(host, "phase-4-sandbox-running-after-discord-rotation");
-
-    progress.phase("reuse the sandbox after the unchanged Discord token");
-    const afterDiscordSame = await runOnboard(
-      host,
-      fakeOpenAI.baseUrl,
-      { ...TOKEN_A, telegram: TOKEN_B.telegram, discord: TOKEN_B.discord },
-      "phase-5-same-after-discord",
-    );
-    const afterDiscordSameText = resultText(afterDiscordSame);
-    expect(afterDiscordSame.exitCode, afterDiscordSameText).toBe(0);
-    expect(afterDiscordSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterDiscordSameText).toContain("reusing it");
+      if (step.provider === "telegram") {
+        progress.phase("reuse the sandbox after the unchanged Telegram token");
+      } else {
+        progress.phase("reuse the sandbox after the unchanged Discord token");
+      }
+      const unchanged = await runOnboard(
+        artifacts,
+        host,
+        fakeOpenAI.baseUrl,
+        step.tokens,
+        `phase-${step.reusePhaseNumber}-same-after-${step.artifactSlug}`,
+      );
+      const unchangedText = resultText(unchanged);
+      expect(unchanged.exitCode, unchangedText).toBe(0);
+      expect(unchangedText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
+      expect(unchangedText).toContain("reusing it");
+    }
 
     progress.phase("rotate only the Slack providers");
-    const slack = await runOnboard(host, fakeOpenAI.baseUrl, TOKEN_B, "phase-6-rotate-slack");
+    const slack = await runOnboard(
+      artifacts,
+      host,
+      fakeOpenAI.baseUrl,
+      TOKEN_B,
+      "phase-6-rotate-slack",
+    );
     const slackText = resultText(slack);
     expect(slack.exitCode, slackText).toBe(0);
     expectRotationOutput(
@@ -558,6 +571,7 @@ test(
 
     progress.phase("reuse the sandbox and record rotation evidence");
     const afterSlackSame = await runOnboard(
+      artifacts,
       host,
       fakeOpenAI.baseUrl,
       TOKEN_B,
@@ -579,6 +593,7 @@ test(
         slackRotationIsolated: true,
         unchangedTokensReuseSandbox: true,
       },
+      providerOrder: TOKEN_ROTATION_ORDER,
     });
   },
 );

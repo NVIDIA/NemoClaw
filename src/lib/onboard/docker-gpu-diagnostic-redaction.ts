@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { redact, redactFull } from "../security/redact";
-import type { DockerContainerInspect } from "./docker-gpu-patch-types";
+import type { DockerContainerInspect, DockerContainerState } from "./docker-gpu-patch-types";
 
 const SENSITIVE_ENV_KEY =
   /(?:api_?key|private_?key|(?:^|_)key$|token|secret|password|credential|authorization|cookie|proxy)/i;
@@ -46,6 +46,7 @@ export type DockerGpuDiagnosticRedactor = {
   rememberInspect(inspect: DockerContainerInspect): void;
   redactText(text: string): string;
   redactValue(value: unknown): unknown;
+  sanitizeState(state: DockerContainerState): DockerContainerState;
   sanitizeInspect(inspect: DockerContainerInspect): DockerContainerInspect;
 };
 
@@ -105,6 +106,32 @@ export function createDockerGpuDiagnosticRedactor(
       Object.entries(value).map(([key, entry]) => [redactText(key), redactValue(entry, seen)]),
     );
   };
+  const sanitizeState = (state: DockerContainerState): DockerContainerState => ({
+    ...(typeof state.Status === "string" ? { Status: redactText(state.Status) } : {}),
+    ...(typeof state.Running === "boolean" ? { Running: state.Running } : {}),
+    ...(typeof state.Paused === "boolean" ? { Paused: state.Paused } : {}),
+    ...(typeof state.Restarting === "boolean" ? { Restarting: state.Restarting } : {}),
+    ...(typeof state.OOMKilled === "boolean" ? { OOMKilled: state.OOMKilled } : {}),
+    ...(typeof state.Dead === "boolean" ? { Dead: state.Dead } : {}),
+    ...(typeof state.ExitCode === "number" ? { ExitCode: state.ExitCode } : {}),
+    ...(typeof state.Error === "string" ? { Error: redactText(state.Error) } : {}),
+    ...(typeof state.StartedAt === "string" ? { StartedAt: redactText(state.StartedAt) } : {}),
+    ...(typeof state.FinishedAt === "string" ? { FinishedAt: redactText(state.FinishedAt) } : {}),
+    ...(state.Health === null
+      ? { Health: null }
+      : state.Health && typeof state.Health === "object"
+        ? {
+            Health: {
+              ...(typeof state.Health.Status === "string"
+                ? { Status: redactText(state.Health.Status) }
+                : {}),
+              ...(typeof state.Health.FailingStreak === "number"
+                ? { FailingStreak: state.Health.FailingStreak }
+                : {}),
+            },
+          }
+        : {}),
+  });
   const sanitizeInspect = (inspect: DockerContainerInspect): DockerContainerInspect => {
     const envKeys = [...inspectEnv(inspect).keys()].sort();
     const labels = Object.fromEntries(
@@ -124,7 +151,10 @@ export function createDockerGpuDiagnosticRedactor(
     );
     return {
       Id: inspect.Id ? redactText(inspect.Id) : inspect.Id,
+      Image: inspect.Image ? redactText(inspect.Image) : inspect.Image,
       Name: inspect.Name ? redactText(inspect.Name) : inspect.Name,
+      Created: inspect.Created ? redactText(inspect.Created) : inspect.Created,
+      RestartCount: inspect.RestartCount,
       Config: {
         Image: inspect.Config?.Image ? redactText(inspect.Config.Image) : inspect.Config?.Image,
         User: inspect.Config?.User ? redactText(inspect.Config.User) : inspect.Config?.User,
@@ -147,8 +177,9 @@ export function createDockerGpuDiagnosticRedactor(
           : inspect.HostConfig?.RestartPolicy,
         GroupAdd: inspect.HostConfig?.GroupAdd?.map(redactText),
       },
+      State: inspect.State ? sanitizeState(inspect.State) : inspect.State,
       NetworkSettings: { Networks: networks },
     };
   };
-  return { rememberInspect, redactText, redactValue, sanitizeInspect };
+  return { rememberInspect, redactText, redactValue, sanitizeState, sanitizeInspect };
 }

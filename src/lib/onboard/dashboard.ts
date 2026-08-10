@@ -18,6 +18,7 @@ import * as dashboardAccess from "./dashboard-access";
 import {
   createSandboxForwardStopper,
   type DashboardForwardOptions,
+  type DashboardForwardRollbackContext,
   normalizeDashboardForwardOptions,
 } from "./dashboard-forward-control";
 import {
@@ -241,7 +242,29 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return lines;
   }
 
-  function rollbackSandboxAndExit(sandboxName: string, err: unknown): never {
+  function rollbackSandboxAndExit(
+    sandboxName: string,
+    err: unknown,
+    context: Omit<DashboardForwardRollbackContext, "sandboxName" | "cleanupStartedAt" | "error"> & {
+      diagnosticError?: unknown;
+    },
+    beforeSandboxRollback?: DashboardForwardOptions["beforeSandboxRollback"],
+  ): never {
+    const { diagnosticError, ...diagnosticContext } = context;
+    try {
+      beforeSandboxRollback?.({
+        sandboxName,
+        cleanupStartedAt: new Date().toISOString(),
+        error: diagnosticError ?? err,
+        ...diagnosticContext,
+      });
+    } catch (diagnosticError) {
+      console.warn(
+        `  ⚠ Could not capture sandbox diagnostics before cleanup: ${deps.redact(
+          diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError),
+        )}`,
+      );
+    }
     const delResult = deps.runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     for (const line of buildOrphanedSandboxRollbackMessage(
       sandboxName,
@@ -253,6 +276,17 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     process.exit(1);
   }
 
+  function captureForwardListBeforeRollback(): string | null {
+    try {
+      return deps.runCaptureOpenshell(["forward", "list"], {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
+    } catch {
+      return null;
+    }
+  }
+
   function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
@@ -260,6 +294,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): number {
     const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
       normalizeDashboardForwardOptions(options);
+    const { beforeSandboxRollback } = options;
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
@@ -290,7 +325,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
-      rollbackSandboxAndExit(sandboxName, err);
+      rollbackSandboxAndExit(
+        sandboxName,
+        err,
+        { reason: "dashboard_port_allocation_failed" },
+        beforeSandboxRollback,
+      );
     }
 
     if (actualPort !== preferredPort) {
@@ -306,7 +346,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             `CHAT_UI_URL=${preferredPort}. Free the port and re-run \`${deps.cliName()} onboard\`, ` +
             `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`,
         );
-        rollbackSandboxAndExit(sandboxName, err);
+        rollbackSandboxAndExit(
+          sandboxName,
+          err,
+          { reason: "dashboard_port_reallocation_refused", dashboardPort: preferredPort },
+          beforeSandboxRollback,
+        );
       }
       console.warn(`  ! Port ${preferredPort} is taken. Using port ${actualPort} instead.`);
     }
@@ -349,7 +394,18 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
                 `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`
             : `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
         );
-        rollbackSandboxAndExit(sandboxName, err);
+        rollbackSandboxAndExit(
+          sandboxName,
+          err,
+          {
+            reason: "dashboard_forward_start_failed",
+            dashboardPort: actualPort,
+            diagnosticError: new Error("Dashboard forward failed before sandbox cleanup."),
+            forwardDiagnostic: fwdDiagnostic,
+            forwardListOutput: captureForwardListBeforeRollback(),
+          },
+          beforeSandboxRollback,
+        );
       }
       if (looksLikePortConflict) {
         console.warn(
@@ -376,6 +432,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           buildRollbackMessage: buildOrphanedSandboxRollbackMessage,
           cliName: deps.cliName,
           forwardPortsToStop: [actualPort],
+          beforeSandboxRollback,
         },
       });
     }

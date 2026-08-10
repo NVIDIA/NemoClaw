@@ -201,6 +201,7 @@ export function printDockerGpuPatchFailureAndExit(
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
     additionalSummaryLines?: readonly string[];
+    additionalSensitiveValues?: readonly string[];
     /**
      * Classification captured while the replacement container still existed.
      * The failure path cannot rely on that replacement remaining inspectable
@@ -236,12 +237,13 @@ export function printDockerGpuPatchFailureAndExit(
       snapshot,
       classification,
       additionalSummaryLines: deps.additionalSummaryLines,
+      additionalSensitiveValues: deps.additionalSensitiveValues,
     },
     deps,
   );
   const errorMessage =
     error instanceof Error && error.message
-      ? createDockerGpuDiagnosticRedactor().redactText(error.message)
+      ? createDockerGpuDiagnosticRedactor(deps.additionalSensitiveValues).redactText(error.message)
       : "";
   console.error("");
   console.error("  Docker GPU patch failed.");
@@ -270,6 +272,7 @@ export function printDockerGpuReadinessFailure(
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
     additionalSummaryLines?: readonly string[];
+    additionalSensitiveValues?: readonly string[];
   },
 ): void {
   const context = deps.context ?? null;
@@ -288,6 +291,7 @@ export function printDockerGpuReadinessFailure(
       snapshot,
       classification,
       additionalSummaryLines: deps.additionalSummaryLines,
+      additionalSensitiveValues: deps.additionalSensitiveValues,
     },
     inspectDeps,
   );
@@ -305,6 +309,7 @@ export function printDockerGpuProofFailure(
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
     additionalSummaryLines?: readonly string[];
+    additionalSensitiveValues?: readonly string[];
   },
 ): void {
   const context = deps.context ?? null;
@@ -326,6 +331,7 @@ export function printDockerGpuProofFailure(
       snapshot,
       classification,
       additionalSummaryLines: deps.additionalSummaryLines,
+      additionalSensitiveValues: deps.additionalSensitiveValues,
     },
     inspectDeps,
   );

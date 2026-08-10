@@ -3,7 +3,8 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { hydrateCredentialEnv } from "./credential-env";
+import { collectCredentialEnvSensitiveValues, hydrateCredentialEnv } from "./credential-env";
+import { buildMessagingCredentialRecreateDiagnosticLines } from "./messaging-credentials";
 
 const ORIGINAL_TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -35,5 +36,42 @@ describe("hydrateCredentialEnv", () => {
     expect(hydrated).toBe("stored-telegram-token");
     expect(process.env.TELEGRAM_BOT_TOKEN).toBe("stored-telegram-token");
     expect(missing).toBeNull();
+  });
+});
+
+describe("collectCredentialEnvSensitiveValues", () => {
+  it("collects supported and conventionally named credentials without benign values", () => {
+    expect(
+      collectCredentialEnvSensitiveValues(
+        {
+          COMPATIBLE_API_KEY: "opaque-compatible-key",
+          CUSTOM_AUTH_TOKEN: "opaque-auth-token",
+          PATH: "/usr/bin",
+          LOG_LEVEL: "debug",
+        },
+        ["opaque-messaging-token", "opaque-compatible-key", null],
+      ),
+    ).toEqual(["opaque-compatible-key", "opaque-auth-token", "opaque-messaging-token"]);
+  });
+});
+
+describe("credential recreation diagnostic inputs", () => {
+  it("records provider identities and change categories without token values or hashes", () => {
+    const lines = buildMessagingCredentialRecreateDiagnosticLines(
+      [
+        { name: "sandbox-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: "secret-a" },
+        { name: "sandbox-discord-bridge", envKey: "DISCORD_BOT_TOKEN", token: "secret-b" },
+      ],
+      ["sandbox-discord-bridge"],
+    );
+
+    expect(lines).toEqual([
+      "recreate_reason=messaging_credential_rotation",
+      "provider_identities=sandbox-discord-bridge,sandbox-telegram-bridge",
+      "changed_credential_hash_providers=sandbox-discord-bridge",
+      "unchanged_credential_hash_providers=sandbox-telegram-bridge",
+    ]);
+    expect(lines.join("\n")).not.toContain("secret-a");
+    expect(lines.join("\n")).not.toContain("secret-b");
   });
 });

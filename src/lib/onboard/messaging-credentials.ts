@@ -78,3 +78,19 @@ export function detectMessagingCredentialRotation(
   }
   return { changed: changedProviders.length > 0, changedProviders };
 }
+
+export function buildMessagingCredentialRecreateDiagnosticLines(
+  tokenDefs: readonly MessagingTokenDefinition[],
+  changedProviders: readonly string[],
+): string[] {
+  const changedProviderNames = new Set(changedProviders);
+  const providerNames = tokenDefs.map(({ name }) => name).sort();
+  return [
+    "recreate_reason=messaging_credential_rotation",
+    `provider_identities=${providerNames.join(",") || "none"}`,
+    `changed_credential_hash_providers=${[...changedProviderNames].sort().join(",") || "none"}`,
+    `unchanged_credential_hash_providers=${
+      providerNames.filter((name) => !changedProviderNames.has(name)).join(",") || "none"
+    }`,
+  ];
+}

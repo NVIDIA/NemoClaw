@@ -10,6 +10,7 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
+import type { DashboardForwardOptions } from "./dashboard-forward-control";
 
 type RunOpenshell = (
   args: string[],
@@ -25,6 +26,7 @@ export interface MessagingHostForwardRollbackOptions {
   ) => readonly string[];
   readonly cliName: () => string;
   readonly forwardPortsToStop?: readonly (number | string | null | undefined)[];
+  readonly beforeSandboxRollback?: DashboardForwardOptions["beforeSandboxRollback"];
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
 }
@@ -104,6 +106,21 @@ function abortMessagingHostForwardFailure({
   readonly forward: SandboxMessagingHostForwardPlan;
   readonly rollback: MessagingHostForwardRollbackOptions;
 }): never {
+  const error = new Error(
+    `Failed to start ${forward.label} forward on port ${forward.port}. Free the port and ` +
+      `re-run \`${rollback.cliName()} onboard\`, or choose a different messaging channel port.`,
+  );
+  try {
+    rollback.beforeSandboxRollback?.({
+      sandboxName,
+      reason: "messaging_forward_start_failed",
+      cleanupStartedAt: new Date().toISOString(),
+      error,
+      forwardPort: forward.port,
+    });
+  } catch {
+    // Best-effort evidence capture must never prevent owned-sandbox cleanup.
+  }
   const portsToStop = new Set<string>();
   for (const port of rollback.forwardPortsToStop ?? []) {
     if (port !== null && port !== undefined && String(port).trim() !== "") {
@@ -118,10 +135,6 @@ function abortMessagingHostForwardFailure({
   const deleteResult = rollback.runOpenshell(["sandbox", "delete", sandboxName], {
     ignoreError: true,
   });
-  const error = new Error(
-    `Failed to start ${forward.label} forward on port ${forward.port}. Free the port and ` +
-      `re-run \`${rollback.cliName()} onboard\`, or choose a different messaging channel port.`,
-  );
   const writeError = rollback.error ?? console.error;
   for (const line of rollback.buildRollbackMessage(sandboxName, error, deleteResult.status === 0)) {
     writeError(line);

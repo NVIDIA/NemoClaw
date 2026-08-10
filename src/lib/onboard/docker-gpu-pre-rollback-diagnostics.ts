@@ -23,6 +23,7 @@ import type {
   DockerGpuPatchFailureClassification,
   DockerGpuPatchFailureContext,
   DockerGpuPatchResult,
+  DockerRecreateLifecycleObservation,
 } from "./docker-gpu-patch-types";
 
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
@@ -66,7 +67,12 @@ function boundedDiagnosticsDeps(deps: PreRollbackDiagnosticsDeps): PreRollbackDi
     ...deps,
     dockerCapture: (args, options) => {
       const bounded = boundedOptions(options);
-      if (!bounded) return "";
+      if (!bounded) {
+        if (options?.ignoreError === false) {
+          throw new Error("Diagnostic capture budget exhausted before Docker query.");
+        }
+        return "";
+      }
       return capture(args, bounded);
     },
     dockerLogs: (containerName, options) => {
@@ -135,6 +141,20 @@ export type DockerGpuPreRollbackDiagnostics = {
   diagnostics: DockerGpuPatchDiagnostics | null;
 };
 
+export type DockerRecreateFailureDiagnosticOptions = {
+  error?: unknown;
+  additionalSummaryLines?: readonly string[];
+  additionalSensitiveValues?: readonly string[];
+  cleanupReason?: string | null;
+  cleanupStartedAt?: string | null;
+  lifecycleGeneration?: string | null;
+  lifecycleObservations?: readonly DockerRecreateLifecycleObservation[];
+  lifecycleObservationDroppedCount?: number;
+  forwardDiagnostic?: string | null;
+  forwardListOutput?: string | null;
+  captureStage?: "pre-rollback" | "post-cutover-pre-cleanup";
+};
+
 function logsShowMissingManagedStartupCommand(logs: string): boolean {
   return MISSING_MANAGED_STARTUP_COMMAND_LOG.test(logs);
 }
@@ -143,7 +163,9 @@ export function captureDockerGpuPreRollbackDiagnostics(
   sandboxName: string,
   result: DockerGpuPatchResult,
   deps: PreRollbackDiagnosticsDeps = {},
+  options: DockerRecreateFailureDiagnosticOptions = {},
 ): DockerGpuPreRollbackDiagnostics | null {
+  const captureStage = options.captureStage ?? "pre-rollback";
   const context: DockerGpuPatchFailureContext = {
     sandboxName,
     oldContainerId: result.oldContainerId,
@@ -160,11 +182,10 @@ export function captureDockerGpuPreRollbackDiagnostics(
     { patchedContainerId: result.newContainerId },
     diagnosticDeps,
   );
-  const additionalSensitiveValues = primeSensitiveDiagnosticValues(
-    sandboxName,
-    result,
-    diagnosticDeps,
-  );
+  const additionalSensitiveValues = [
+    ...primeSensitiveDiagnosticValues(sandboxName, result, diagnosticDeps),
+    ...(options.additionalSensitiveValues ?? []),
+  ];
   let patchedContainerLogs = "";
   try {
     const logs = diagnosticDeps.dockerLogs ?? defaultDockerLogs;
@@ -194,16 +215,30 @@ export function captureDockerGpuPreRollbackDiagnostics(
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
     {
+      error: options.error,
       context,
       selectedMode: result.mode,
       snapshot,
       classification,
       additionalSensitiveValues,
+      additionalSummaryLines: options.additionalSummaryLines,
       dockerTopOutput,
-      cleanupDisposition: "pending-rollback",
+      cleanupReason: options.cleanupReason,
+      cleanupStartedAt: options.cleanupStartedAt,
+      lifecycleGeneration: options.lifecycleGeneration,
+      lifecycleObservations: options.lifecycleObservations,
+      lifecycleObservationDroppedCount: options.lifecycleObservationDroppedCount,
+      forwardDiagnostic: options.forwardDiagnostic,
+      forwardListOutput: options.forwardListOutput,
+      captureStage,
+      cleanupDisposition:
+        captureStage === "pre-rollback" ? "pending-rollback" : "pending-sandbox-delete",
     },
     diagnosticDeps,
   );
-  if (diagnostics) console.error(`  Pre-rollback diagnostics saved: ${diagnostics.dir}`);
+  if (diagnostics) {
+    const label = captureStage === "pre-rollback" ? "Pre-rollback" : "Pre-cleanup";
+    console.error(`  ${label} diagnostics saved: ${diagnostics.dir}`);
+  }
   return { classification: redactedClassification, diagnostics };
 }

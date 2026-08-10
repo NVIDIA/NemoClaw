@@ -31,10 +31,14 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gpu-pre-rollback-"));
     const secretCanary = "pre-rollback-secret-canary-value";
     const discoveredSecretCanary = "discovered-only-secret-canary-value";
+    const callbackSecretCanary = "callback-only-secret-canary-value";
     const inspectOutput = JSON.stringify([
       {
         Id: "new-container-id",
+        Image: `sha256:${"f".repeat(64)}`,
         Name: "/openshell-alpha",
+        Created: "2026-07-01T22:59:00Z",
+        RestartCount: 2,
         Config: {
           Image: "openshell/sandbox:test",
           Cmd: null,
@@ -47,6 +51,14 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
           },
         },
         HostConfig: { NetworkMode: "openshell-docker" },
+        State: {
+          Status: "running",
+          Running: true,
+          ExitCode: 0,
+          StartedAt: "2026-07-01T22:59:01Z",
+          FinishedAt: "0001-01-01T00:00:00Z",
+          Health: { Status: "healthy", FailingStreak: 0 },
+        },
         NetworkSettings: { Networks: { "openshell-docker": {} } },
       },
     ]);
@@ -81,13 +93,27 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
       ["inspect old-container-id", "[]"],
       ["inspect backup-container", "[]"],
       ["inspect discovered-container-id", discoveredInspectOutput],
+      [
+        "exec new-container-id sh -c test -f /tmp/nemoclaw-start.log && tail -n 240 /tmp/nemoclaw-start.log",
+        `managed startup active ${callbackSecretCanary}\n`,
+      ],
+      [
+        "exec new-container-id sh -c test -f /tmp/gateway.log && tail -n 240 /tmp/gateway.log",
+        `OpenClaw gateway active ${callbackSecretCanary}\n`,
+      ],
     ]);
     const dockerCapture = vi.fn((args: readonly string[], _options?: Record<string, unknown>) => {
       return dockerResponses.get(args.join(" ")) ?? "";
     });
     const openshellResponses = new Map([
-      ["sandbox get", `Phase: Error\ndetail=${secretCanary} ${discoveredSecretCanary}\n`],
+      [
+        "sandbox get",
+        `Id: openshell-sandbox-id\nPhase: Error\ndetail=${secretCanary} ${discoveredSecretCanary}\n`,
+      ],
       ["sandbox list", `alpha  Error  ${secretCanary} ${discoveredSecretCanary}\n`],
+      ["--version", "openshell 0.0.101\n"],
+      ["forward list", `alpha 18789 failed ${callbackSecretCanary}\n`],
+      ["doctor logs", `gateway reconnect log ${callbackSecretCanary}\n`],
     ]);
     const runCaptureOpenshell = vi.fn(
       (args: string[], _options?: Record<string, unknown>) =>
@@ -99,21 +125,55 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     );
 
     try {
-      const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
-        dockerCapture,
-        dockerLogs,
-        homedir: () => tmpDir,
-        now: () => new Date("2026-07-01T23:00:00Z"),
-        runCaptureOpenshell,
-      });
+      const captured = captureDockerGpuPreRollbackDiagnostics(
+        "alpha",
+        patchResult(),
+        {
+          dockerCapture,
+          dockerLogs,
+          homedir: () => tmpDir,
+          now: () => new Date("2026-07-01T23:00:00Z"),
+          runCaptureOpenshell,
+        },
+        {
+          captureStage: "post-cutover-pre-cleanup",
+          additionalSensitiveValues: [callbackSecretCanary],
+          additionalSummaryLines: [
+            "recreate_reason=messaging_credential_rotation",
+            "changed_credential_hash_providers=alpha-discord-bridge",
+          ],
+          cleanupReason: "dashboard_forward_start_failed",
+          cleanupStartedAt: "2026-07-01T23:00:01Z",
+          lifecycleGeneration: "generation-2",
+          lifecycleObservationDroppedCount: 3,
+          lifecycleObservations: [
+            {
+              at: "2026-07-01T23:00:00Z",
+              stage: "sandbox_readiness",
+              event: "phase_probe",
+              output: `alpha Ready ${callbackSecretCanary}`,
+            },
+          ],
+          forwardDiagnostic: `sandbox is not ready ${callbackSecretCanary}`,
+          forwardListOutput: `alpha 18789 dead ${callbackSecretCanary}`,
+        },
+      );
       const diagnostics = captured?.diagnostics;
 
       expect(diagnostics?.dir).toBeTruthy();
       const summary = fs.readFileSync(path.join(diagnostics?.dir ?? "", "summary.txt"), "utf-8");
       expect(diagnostics?.cleanupCommands).toEqual([]);
-      expect(summary).toContain("rolled_back=pending");
-      expect(summary).toContain("cleanup_disposition=pending_rollback");
+      expect(summary).toContain("capture_stage=post_cutover_pre_cleanup");
+      expect(summary).toContain("rolled_back=not_applicable");
+      expect(summary).toContain("cleanup_disposition=pending_sandbox_delete");
       expect(summary).toContain("cleanup_required=unknown");
+      expect(summary).toContain("lifecycle_generation=generation-2");
+      expect(summary).toContain("lifecycle_history_dropped=3");
+      expect(summary).toContain("expected_container_id=new-container-id");
+      expect(summary).toContain("container_identity_match=ambiguous");
+      expect(summary).toContain("cleanup_reason=dashboard_forward_start_failed");
+      expect(summary).toContain("changed_credential_hash_providers=alpha-discord-bridge");
+      expect(summary).toMatch(/openshell_identity_fingerprint=[a-f0-9]{64}/);
       expect(summary).not.toContain("openshell sandbox delete");
       expect(
         fs.readFileSync(path.join(diagnostics?.dir ?? "", "docker-top.txt"), "utf-8"),
@@ -126,19 +186,49 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
       );
       expect(inspect[0]).toMatchObject({
         Id: "new-container-id",
+        Image: `sha256:${"f".repeat(64)}`,
         Config: {
           Image: "openshell/sandbox:test",
           Cmd: null,
           Env: ["OPENSHELL_SANDBOX_COMMAND=<REDACTED>"],
         },
         HostConfig: { NetworkMode: "openshell-docker" },
+        Created: "2026-07-01T22:59:00Z",
+        RestartCount: 2,
+        State: {
+          Status: "running",
+          Running: true,
+          ExitCode: 0,
+          StartedAt: "2026-07-01T22:59:01Z",
+          FinishedAt: "0001-01-01T00:00:00Z",
+          Health: { Status: "healthy", FailingStreak: 0 },
+        },
       });
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "lifecycle-history.json"), "utf-8"),
+      ).toContain("alpha Ready <REDACTED>");
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "forward-start.txt"), "utf-8"),
+      ).toContain("sandbox is not ready <REDACTED>");
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "openshell-version.txt"), "utf-8"),
+      ).toContain("openshell 0.0.101");
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "openshell-forward-list.txt"), "utf-8"),
+      ).toContain("alpha 18789 failed <REDACTED>");
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "managed-startup.log"), "utf-8"),
+      ).toContain("managed startup active <REDACTED>");
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir ?? "", "openclaw-gateway.log"), "utf-8"),
+      ).toContain("OpenClaw gateway active <REDACTED>");
       const diagnosticContents = fs
         .readdirSync(diagnostics?.dir ?? "")
         .map((name) => fs.readFileSync(path.join(diagnostics?.dir ?? "", name), "utf-8"))
         .join("\n");
       expect(diagnosticContents).not.toContain(secretCanary);
       expect(diagnosticContents).not.toContain(discoveredSecretCanary);
+      expect(diagnosticContents).not.toContain(callbackSecretCanary);
       expect(diagnosticContents).not.toContain("untrusted.secret");
       const returnedClassification = JSON.stringify(captured?.classification);
       expect(returnedClassification).not.toContain(secretCanary);
@@ -172,7 +262,7 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
         expect(Number(options?.timeout)).toBeLessThanOrEqual(2_000);
       }
       expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining("Pre-rollback diagnostics saved:"),
+        expect.stringContaining("Pre-cleanup diagnostics saved:"),
       );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -331,6 +421,8 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
       );
       expect(`${summary}\n${state}`).not.toContain(canary);
       expect(summary).toContain("sandbox_list_row=alpha Error <REDACTED>");
+      expect(summary).toContain("container_identity_query=failed");
+      expect(summary).toContain("container_identity_match=unknown");
       expect(JSON.parse(state).Error).toBe("state <REDACTED>");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -69,6 +69,8 @@ export function createGpuPatchFixture() {
     waitForSupervisorReconnectIfNeeded: vi.fn(),
     commitAfterReady: vi.fn(),
     selectedMode: vi.fn(() => null),
+    recordLifecycleObservation: vi.fn(),
+    captureLifecycleFailureDiagnostics: vi.fn(() => null),
     printReadinessFailureIfEnabled: vi.fn(),
     verifyGpuOrExit: vi.fn(() => VERIFIED_GPU_PROOF),
   };

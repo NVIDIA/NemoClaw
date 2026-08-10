@@ -143,6 +143,9 @@ export function createSandboxGpuCreateAttemptRunner(
         openshellSandboxCommand: input.sandboxStartupCommand,
         requiredUlimits: input.requiredUlimits,
         timeoutSecs: input.sandboxReadyTimeoutSecs,
+        lifecycleGeneration: input.lifecycleGeneration,
+        diagnosticSummaryLines: input.failureDiagnosticSummaryLines,
+        diagnosticSensitiveValues: input.failureDiagnosticSensitiveValues,
         backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
         deps,
       });
@@ -159,7 +162,13 @@ export function createSandboxGpuCreateAttemptRunner(
       streamSandboxCreate(createExecutable, createExecutableArgs, input.sandboxEnv, {
         readyCheck: () => {
           const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-          return isSandboxReady(list, input.sandboxName);
+          const ready = isSandboxReady(list, input.sandboxName);
+          runtimePatch.recordLifecycleObservation({
+            stage: "create_stream",
+            event: ready ? "ready" : "not_ready",
+            output: list,
+          });
+          return ready;
         },
         onPoll: () => runtimePatch.maybeApplyDuringCreate(),
         readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
@@ -198,7 +207,15 @@ export function createSandboxGpuCreateAttemptRunner(
               const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
                 sandboxName: input.sandboxName,
                 timeoutSecs: input.sandboxReadyTimeoutSecs,
-                runCaptureOpenshell: deps.runCaptureOpenshell,
+                runCaptureOpenshell: (args, options) => {
+                  const output = deps.runCaptureOpenshell(args, options);
+                  runtimePatch.recordLifecycleObservation({
+                    stage: "sandbox_readiness",
+                    event: "managed_incomplete_probe",
+                    output,
+                  });
+                  return output;
+                },
                 isSandboxReady,
                 getSandboxFailurePhase,
                 stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
@@ -252,10 +269,28 @@ export function createSandboxGpuCreateAttemptRunner(
     } else {
       createResult = await streamCreate();
     }
+    runtimePatch.recordLifecycleObservation({
+      stage: "create_stream",
+      event: "complete",
+      status: createResult.status,
+      output: createResult.output,
+    });
     if (!state.firstCreateOutput) state.firstCreateOutput = createResult.output;
     await runtimePatch.exitOnPatchError();
     if (createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);
+      if (failure.kind !== "sandbox_create_incomplete") {
+        try {
+          runtimePatch.captureLifecycleFailureDiagnostics({
+            error: new Error(`Sandbox create stream exited with code ${createResult.status}.`),
+            cleanupReason: "create_stream_failed",
+            cleanupStartedAt: new Date().toISOString(),
+            additionalSummaryLines: [`create_stream_status=${String(createResult.status)}`],
+          });
+        } catch {
+          console.warn("  ⚠ Could not capture sandbox create diagnostics before cleanup.");
+        }
+      }
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
         if (managedIncompleteCreateRecovered) {
@@ -334,11 +369,24 @@ export function createSandboxGpuCreateAttemptRunner(
     const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
+      runCaptureOpenshell: (args, options) => {
+        const output = deps.runCaptureOpenshell(args, options);
+        runtimePatch.recordLifecycleObservation({
+          stage: "sandbox_readiness",
+          event: "phase_probe",
+          output,
+        });
+        return output;
+      },
       isSandboxReady,
       getSandboxFailurePhase,
       stableReadyPolls: compatibility || managedBootstrap ? REPLACEMENT_STABLE_READY_POLLS : 1,
       sleep: deps.sleep,
+    });
+    runtimePatch.recordLifecycleObservation({
+      stage: "sandbox_readiness",
+      event: readiness.ready ? "accepted" : readiness.reason,
+      output: readiness.failurePhase ?? undefined,
     });
     if (!readiness.ready) {
       console.error("");
@@ -347,6 +395,21 @@ export function createSandboxGpuCreateAttemptRunner(
         input.sandboxName,
         input.sandboxReadyTimeoutSecs,
       );
+      try {
+        runtimePatch.captureLifecycleFailureDiagnostics({
+          error: new Error(
+            `Sandbox readiness failed (${readiness.reason}${readiness.failurePhase ? `: ${readiness.failurePhase}` : ""}).`,
+          ),
+          cleanupReason: `sandbox_readiness_${readiness.reason}`,
+          cleanupStartedAt: new Date().toISOString(),
+          additionalSummaryLines: [
+            `readiness_reason=${readiness.reason}`,
+            `readiness_failure_phase=${readiness.failurePhase ?? "none"}`,
+          ],
+        });
+      } catch {
+        console.warn("  ⚠ Could not capture sandbox readiness diagnostics before cleanup.");
+      }
       const canClassifyNativeReadiness =
         route === "native" &&
         input.gpuRoutePlan === "native-with-fallback" &&

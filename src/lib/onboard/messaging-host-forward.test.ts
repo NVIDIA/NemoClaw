@@ -170,10 +170,22 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
   });
 
   it("rolls back and exits when the forward cannot be started", () => {
+    const callOrder: string[] = [];
     const ensureForward = vi.fn(() => false);
-    const runOpenshell = vi.fn((args: string[]) => ({
-      status: args[0] === "sandbox" && args[1] === "delete" ? 0 : 0,
-    }));
+    const runOpenshell = vi.fn((args: string[]) => {
+      if (args[0] === "forward" && args[1] === "stop") callOrder.push("stop");
+      if (args[0] === "sandbox" && args[1] === "delete") callOrder.push("delete");
+      return { status: 0 };
+    });
+    const beforeSandboxRollback = vi.fn((context) => {
+      callOrder.push("diagnostics");
+      expect(context).toMatchObject({
+        sandboxName: "demo",
+        reason: "messaging_forward_start_failed",
+        forwardPort: 3978,
+      });
+      expect(context).not.toHaveProperty("dashboardPort");
+    });
     const errors: string[] = [];
 
     expect(() =>
@@ -186,6 +198,7 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
           runOpenshell,
           cliName: () => "nemoclaw",
           forwardPortsToStop: ["18789", undefined, 3978],
+          beforeSandboxRollback,
           error: (message = "") => errors.push(message),
           exit: (code) => {
             throw new Error(`process.exit(${code})`);
@@ -208,9 +221,38 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
       ignoreError: true,
     });
     expect(runOpenshell).toHaveBeenCalledTimes(3);
+    expect(callOrder).toEqual(["diagnostics", "stop", "stop", "delete"]);
     expect(errors.join("\n")).toContain("rollback:true");
     expect(errors.join("\n")).toContain(
       "Failed to start Microsoft Teams webhook forward on port 3978",
     );
+  });
+
+  it("does not let diagnostic capture failure block messaging forward cleanup", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      ensureMessagingHostForwardIfConfigured({
+        sandboxName: "demo",
+        plan: makePlan(),
+        ensureForward: vi.fn(() => false),
+        note: vi.fn(),
+        rollbackOnFailure: {
+          runOpenshell,
+          cliName: () => "nemoclaw",
+          beforeSandboxRollback: () => {
+            throw new Error("diagnostic failure");
+          },
+          exit: (code) => {
+            throw new Error(`process.exit(${code})`);
+          },
+          buildRollbackMessage: () => [],
+        },
+      }),
+    ).toThrow("process.exit(1)");
+
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "demo"], {
+      ignoreError: true,
+    });
   });
 });
