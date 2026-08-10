@@ -44,6 +44,24 @@ export function buildHermesMcpChatProbeScript(payload: string, resultToken: stri
   ].join("\n");
 }
 
+export function buildHermesMcpRuntimeDiagnosticsScript(): string {
+  return [
+    "set -eu",
+    "set -a",
+    "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
+    "set +a",
+    "{",
+    'for log in /tmp/nemoclaw-start.log /tmp/gateway.log; do printf \'== %s ==\\n\' "$log"; tail -n 100 "$log" 2>&1 || true; done',
+    "printf '%s\\n' '== permissions =='",
+    "stat -c '%a %U:%G %n' /sandbox /sandbox/.hermes /sandbox/.hermes/logs 2>&1 || true",
+    "printf '%s\\n' '== managed supervisor =='",
+    "cat /run/nemoclaw/gateway-control/status 2>&1 || true",
+    "printf '%s\\n' '== gateway identity =='",
+    "cat /sandbox/.hermes/runtime/gateway.pid 2>&1 || true",
+    `} | /usr/bin/python3 -I -S -c ${shellQuote(FAILURE_BODY_EMITTER)} /dev/stdin`,
+  ].join("\n");
+}
+
 function sanitizedPreview(text: string, explicitValues: Iterable<string>): string {
   const sanitized = redactString(text, explicitValues)
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "")
