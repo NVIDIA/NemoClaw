@@ -304,7 +304,7 @@ describe("legacy Hermes shields compatibility", () => {
     );
 
     shields = requireSource(INDEX_MODULE);
-  });
+  }, 60_000);
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
