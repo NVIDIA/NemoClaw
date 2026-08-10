@@ -9,6 +9,11 @@ import {
   captureSandboxRecreateOpenshellCommand,
 } from "./sandbox-recreate-probe";
 
+// Keep OpenShell binary resolution behind the established onboarding adapter.
+// Readiness and runtime callers reuse this export instead of creating parallel
+// dependencies on the low-level resolver.
+export { resolveOpenshell };
+
 export interface OpenshellCliDeps {
   getCachedBinary(): string | null;
   setCachedBinary(binary: string): void;

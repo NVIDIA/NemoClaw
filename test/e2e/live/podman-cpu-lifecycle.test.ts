@@ -50,12 +50,12 @@ const BASE_IMAGE =
   // Keep the rootless proof on the immutable sandbox-base from the NemoClaw
   // v0.0.89 fixture, which runs OpenShell v0.0.85. Unlike a minimal Ubuntu
   // image, it includes the `ip` binary needed before workload startup and
-  // exercises the v0.0.85 image-to-v0.0.99 supervisor compatibility boundary.
+  // exercises the v0.0.85 image-to-v0.0.101 supervisor compatibility boundary.
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1";
 const ACTIVATION_POLICY = path.join(REPO_ROOT, "test/e2e/live/podman-cpu-lifecycle-policy.yaml");
 const GATEWAY_PORT = 18_080;
 const SUPERVISOR_IMAGE =
-  "ghcr.io/nvidia/openshell/supervisor@sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6";
+  "ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb";
 const E2E_PHASES = [
   "pin the exact rootless Podman endpoint",
   "qualify the Podman 5 host contract",

@@ -47,7 +47,7 @@
       "status": "tested",
       "prd_priority": "P1",
       "ci_tested": true,
-      "notes": "Use the standard installer and `$$nemoclaw onboard`. The automatic two-DGX Spark managed-vLLM profile is Experimental, and physical two-node end-to-end validation is pending. For the profile requirements and controls, see [Set Up vLLM on Two DGX Sparks](../inference/local-inference/set-up-vllm-on-two-dgx-sparks). For the validated single-DGX Spark walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
+      "notes": "Use the standard installer and `$$nemoclaw onboard`. DGX Spark Express keeps automatic managed-vLLM serving-profile selection as option 1 and offers the fixed single-host catalog profile as option 2. The automatic two-DGX Spark managed-vLLM profile is Experimental, and physical two-node end-to-end validation is pending. For the profile requirements and controls, see [Set Up vLLM on Two DGX Sparks](../inference/local-inference/set-up-vllm-on-two-dgx-sparks). For the validated single-DGX Spark walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
     },
     {
       "name": "Windows WSL2",
@@ -149,7 +149,7 @@
       "name": "Local NVIDIA NIM",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard/fatal-runtime-preflight.ts`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. On Linux arm64 DGX Spark and DGX Station hosts, onboarding warns that some NIM images may not publish a `linux/arm64` manifest; the warning is advisory, and the selected image pull can still fail when the registry has no matching platform manifest. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a healthy CDI spec. Onboarding evaluates the canonical `host.gpu.nvidia_available`, `host.gpu.container_toolkit_available`, and `host.gpu.cdi_healthy` readiness capabilities before gateway, image, or sandbox lifecycle effects. NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. On Linux arm64 DGX Spark and DGX Station hosts, onboarding warns that some NIM images may not publish a `linux/arm64` manifest; the warning is advisory, and the selected image pull can still fail when the registry has no matching platform manifest. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
     },
     {
       "name": "Local vLLM (already running)",
@@ -223,9 +223,9 @@
       "notes": "OpenClaw, Hermes, and LangChain Deep Agents Code support authenticated HTTPS Streamable HTTP MCP server lifecycle through `$$nemoclaw <name> mcp`. NemoClaw stores only credential names and ownership metadata, while OpenShell keeps raw credential values outside the sandbox and replaces credential placeholders at approved egress boundaries."
     },
     {
-      "name": "Host readiness reporting",
+      "name": "System readiness reporting",
       "status": "tested",
-      "notes": "`$$nemoclaw host probe` reports host observations, capabilities, qualifications, findings, evidence, and CLI provenance without changing host, gateway, provider, policy, credential, or sandbox state. The human-readable and JSON formats use the same schema-versioned report and deterministic exit codes."
+      "notes": "`$$nemoclaw host probe` reports host and gateway observations, capabilities, qualifications, findings, evidence, and CLI provenance without changing host, Docker, gateway, provider, policy, credential, or sandbox state. The human-readable and JSON formats use the same schema-versioned report and deterministic exit codes."
     },
     {
       "name": "Deep Agents trace export",
@@ -258,7 +258,7 @@
     {
       "name": "Intel Mac (macOS x86_64)",
       "status": "unsupported",
-      "notes": "The supported OpenShell Homebrew gateway service path is Apple Silicon only, and OpenShell does not publish macOS x86_64 standalone gateway assets. The top-level installer rejects Intel Mac hosts before release-ref resolution or downloads (`install.sh:108`), and the OpenShell installer retains a downstream asset guard (`scripts/install-openshell.sh:689`). See issue #954 (closed)."
+      "notes": "The supported OpenShell Homebrew gateway service path is Apple Silicon only, and OpenShell does not publish macOS x86_64 standalone gateway assets. The top-level installer rejects Intel Mac hosts before release-ref resolution or downloads (`install.sh:108`), and the OpenShell installer retains a downstream asset guard (`scripts/install-openshell.sh:687`). See issue #954 (closed)."
     },
     {
       "name": "Non-Ubuntu/Debian Linux distros",
@@ -283,7 +283,7 @@
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",
       "status": "unsupported",
-      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard/fatal-runtime-preflight.ts`). NemoClaw does not install non-NVIDIA accelerator drivers."
+      "notes": "GPU-backed local vLLM and NIM onboarding requires the canonical `host.gpu.nvidia_available`, `host.gpu.container_toolkit_available`, and `host.gpu.cdi_healthy` readiness capabilities. NemoClaw does not install non-NVIDIA accelerator drivers."
     },
     {
       "name": "Other LangChain, AutoGen, CrewAI, or non-listed agent harnesses",
