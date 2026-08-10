@@ -10,6 +10,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
+  type StopHostGatewayResult,
+  stopHostGatewayProcesses,
+} from "../../src/lib/onboard/host-gateway-process.ts";
+import {
   type InitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
 } from "../../src/lib/onboard/initial-policy.ts";
@@ -139,12 +143,34 @@ type OnboardModule = {
   startGatewayForRecovery(options: { gatewayName: string; gatewayPort: number }): Promise<void>;
 };
 
-export function resolveManagedImageOnboardModule(value: unknown): OnboardModule {
-  const candidate = (value as { default?: OnboardModule }).default ?? (value as OnboardModule);
-  // biome-ignore format: keep the harness contract compact
-  const missing = (["openshellArgv", "runOpenshell", "runCaptureOpenshell", "sleepSeconds", "startGatewayForRecovery"] as const).find((hook) => typeof candidate?.[hook] !== "function");
-  if (missing) throw new Error(`missing callable onboard hook: ${missing}`);
-  return candidate;
+const REQUIRED_ONBOARD_OPERATIONS = [
+  "openshellArgv",
+  "runOpenshell",
+  "runCaptureOpenshell",
+  "sleepSeconds",
+  "startGatewayForRecovery",
+] as const satisfies readonly (keyof OnboardModule)[];
+
+export function resolveManagedImageOnboardModule(onboardImport: unknown): OnboardModule {
+  const importRecord =
+    typeof onboardImport === "object" && onboardImport !== null
+      ? (onboardImport as Record<string, unknown>)
+      : null;
+  const candidate =
+    importRecord && "default" in importRecord ? importRecord.default : onboardImport;
+  const candidateRecord =
+    typeof candidate === "object" && candidate !== null
+      ? (candidate as Record<string, unknown>)
+      : null;
+  const missing = REQUIRED_ONBOARD_OPERATIONS.filter(
+    (operation) => typeof candidateRecord?.[operation] !== "function",
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `managed-image onboard module is missing required operation(s): ${missing.join(", ")}`,
+    );
+  }
+  return candidate as OnboardModule;
 }
 
 function requiredValue(argv: readonly string[], flag: string): string {
@@ -250,48 +276,20 @@ function isDockerNotFound(result: ReturnType<typeof commandResult>): boolean {
   );
 }
 
-function readGatewayPid(stateDir: string): number | null {
-  try {
-    const value = Number.parseInt(
-      fs.readFileSync(path.join(stateDir, "openshell-gateway.pid"), "utf8").trim(),
-      10,
-    );
-    return Number.isSafeInteger(value) && value > 1 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
+export function removeManagedImageGatewayStateIfSafe(
+  stateDir: string,
+  gatewayStop: Pick<StopHostGatewayResult, "failed" | "ownershipFailures">,
+  gatewayRemovalStatus: number | null,
+): boolean {
+  if (
+    gatewayStop.failed.length > 0 ||
+    (gatewayStop.ownershipFailures?.length ?? 0) > 0 ||
+    gatewayRemovalStatus !== 0
+  ) {
     return false;
   }
-}
-
-export async function stopProcess(pid: number | null): Promise<boolean> {
-  if (!pid || !processExists(pid)) return true;
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return !processExists(pid);
-  }
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (!processExists(pid)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // The process exited between the liveness probe and the final signal.
-  }
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (!processExists(pid)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return !processExists(pid);
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  return true;
 }
 
 function createProtectedAuthorityStore(stateDir: string): ManagedBootstrapAuthorityStore {
@@ -331,18 +329,18 @@ function createProtectedAuthorityStore(stateDir: string): ManagedBootstrapAuthor
   };
 }
 
-export async function assertGatewayPortAvailable(port = GATEWAY_PORT): Promise<void> {
+async function assertGatewayPortAvailable(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = net.createServer();
     server.unref();
     server.once("error", () => {
       reject(
         new Error(
-          `refusing to disturb an existing listener on the managed-image E2E gateway port ${port}`,
+          `refusing to disturb an existing listener on the managed-image E2E gateway port ${GATEWAY_PORT}`,
         ),
       );
     });
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(GATEWAY_PORT, "127.0.0.1", () => {
       server.close((error) => {
         if (error) reject(error);
         else resolve();
@@ -987,18 +985,33 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         15_000,
       );
     }
-    const gatewayPid = readGatewayPid(stateDir);
-    if (!(await stopProcess(gatewayPid))) {
-      cleanupErrors.push(`OpenShell gateway process ${String(gatewayPid)} did not stop`);
+    const gatewayStop = stopHostGatewayProcesses(
+      {},
+      {
+        clearRuntimeFiles: false,
+        openShellGatewayName: "nemoclaw",
+        openShellGatewayPort: GATEWAY_PORT,
+        scopedGatewayStop: true,
+        stateDir,
+        usePgrepFallback: false,
+      },
+    );
+    if (gatewayStop.failed.length > 0 || (gatewayStop.ownershipFailures?.length ?? 0) > 0) {
+      cleanupErrors.push(
+        `OpenShell gateway cleanup failed: ${[
+          ...gatewayStop.failed.map((pid) => `process ${String(pid)} did not stop`),
+          ...(gatewayStop.ownershipFailures ?? []),
+        ].join("; ")}`,
+      );
     }
-    // biome-ignore format: keep cleanup verification beside the existing process check
-    await assertGatewayPortAvailable().catch(() => cleanupErrors.push(`OpenShell gateway listener on port ${String(GATEWAY_PORT)} did not stop`));
+    let gatewayRemovalStatus: number | null = null;
     if (onboard) {
       const removeGateway = commandResult(
         onboard.openshellArgv(["gateway", "remove", "nemoclaw"]),
         process.env,
         15_000,
       );
+      gatewayRemovalStatus = removeGateway.status;
       if (removeGateway.status !== 0) {
         cleanupErrors.push(`OpenShell gateway removal failed: ${commandDetail(removeGateway)}`);
       }
@@ -1084,7 +1097,11 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
     try {
-      fs.rmSync(stateDir, { recursive: true, force: true });
+      if (!removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, gatewayRemovalStatus)) {
+        cleanupErrors.push(
+          `OpenShell gateway ownership evidence remains at ${stateDir} because gateway cleanup did not complete`,
+        );
+      }
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }

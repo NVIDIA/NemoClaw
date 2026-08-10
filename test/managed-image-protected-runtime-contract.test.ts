@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
-import { once } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -17,30 +17,73 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
-  assertGatewayPortAvailable,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
+  removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
-  stopProcess,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
-  it("validates onboarding hooks and reaps the owned gateway listener (#8759)", async () => {
-    const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.js"));
-    expect(onboard.runOpenshell).toBeTypeOf("function");
-    expect(() => resolveManagedImageOnboardModule({})).toThrow(/openshellArgv/u);
+  it("loads every OpenShell operation required before protected image launch (#7744)", async () => {
+    const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.ts"));
 
-    // biome-ignore format: keep the focused child-listener regression compact
-    const child = spawn(process.execPath, ["-e", 'const n=require("node:net"),s=n.createServer();s.listen(0,"127.0.0.1",()=>process.send(s.address().port));setTimeout(()=>process.exit(),10000).unref()'], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
-    const [port] = await once(child, "message");
-    expect(await stopProcess(child.pid ?? null)).toBe(true);
-    await expect(assertGatewayPortAvailable(port as number)).resolves.toBeUndefined();
+    for (const operation of [
+      "openshellArgv",
+      "runOpenshell",
+      "runCaptureOpenshell",
+      "sleepSeconds",
+      "startGatewayForRecovery",
+    ] as const) {
+      expect(onboard[operation], operation).toBeTypeOf("function");
+    }
+  });
+
+  it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
+    expect(() =>
+      resolveManagedImageOnboardModule({
+        default: {
+          openshellArgv: () => [],
+          runCaptureOpenshell: () => "",
+          sleepSeconds: () => undefined,
+          startGatewayForRecovery: async () => undefined,
+        },
+      }),
+    ).toThrow("managed-image onboard module is missing required operation(s): runOpenshell");
+  });
+
+  it.each([
+    ["unknown ownership", { failed: [], ownershipFailures: ["status cannot be proven"] }, 0],
+    ["denied signal", { failed: [9_999_601], ownershipFailures: [] }, 0],
+    ["failed gateway removal", { failed: [], ownershipFailures: [] }, 1],
+  ])("retains gateway evidence after %s (#7744)", (_case, gatewayStop, removalStatus) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-retain-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, "9999601\n");
+
+    try {
+      expect(removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, removalStatus)).toBe(
+        false,
+      );
+      expect(fs.readFileSync(pidFile, "utf8")).toBe("9999601\n");
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("removes gateway state only after scoped stop and gateway removal succeed (#7744)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-remove-"));
+    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), "9999601\n");
+
+    expect(
+      removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0),
+    ).toBe(true);
+    expect(fs.existsSync(stateDir)).toBe(false);
   });
 
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
