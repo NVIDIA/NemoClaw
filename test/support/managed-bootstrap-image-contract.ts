@@ -31,6 +31,10 @@ const COMPILER_FLAGS = [
 
 const MANAGED_BOOTSTRAP_BUILDER_IMAGE =
   "node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da";
+const DISCOVERY_RUNTIME_ROOT = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
+const DISCOVERY_RUNTIME_PATH = `${DISCOVERY_RUNTIME_ROOT}/mcp-tool-discovery.mjs`;
+const DISCOVERY_EXPECTED_CONTRACT =
+  '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}';
 const MANAGED_STARTUP_RUNTIME_PATH = "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
 
 function expectManagedRuntimeDiagnostic(dockerfile: string): void {
@@ -40,20 +44,33 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       instruction.body.includes("managed_runtime_assertion_failed()"),
   );
   expect(instructions).toHaveLength(1);
-  const logicalInstruction = (instructions[0]?.body ?? "").replace(/\\\r?\n[ \t]*/gu, " ");
+  const logicalInstruction = (instructions[0]?.body ?? "")
+    .replace(/\\\r?\n[ \t]*/gu, " ")
+    .replace(/[ \t]+/gu, " ");
   const discoveryStart = logicalInstruction.indexOf("discovery_contract=");
   expect(discoveryStart).toBeGreaterThan(0);
+  const managedRuntimeStart = logicalInstruction.indexOf(
+    `&& { test -f ${MANAGED_STARTUP_RUNTIME_PATH}`,
+    discoveryStart,
+  );
+  expect(managedRuntimeStart).toBeGreaterThan(discoveryStart);
   const functionSource = logicalInstruction.slice(0, discoveryStart).trim();
+  const discoverySource = logicalInstruction.slice(discoveryStart, managedRuntimeStart).trim();
 
   for (const fragment of [
     "stat -c 'uid=%u gid=%g type=%F mode=%a' -- \"$nemoclaw_artifact_path\" 2>/dev/null",
     "uid=unavailable gid=unavailable type=missing mode=unavailable",
     "printf 'ERROR: managed image assertion failed: %s path=%s %s symlink=%s\\n'",
+    "printf 'ERROR: managed image assertion failed: %s exit-status=%s\\n'",
   ]) {
     expect(functionSource).toContain(fragment);
   }
 
   for (const assertion of [
+    `discovery_contract="$(node ${DISCOVERY_RUNTIME_PATH})" || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"`,
+    "ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s",
+    `discovery_unsafe="$(find -L ${DISCOVERY_RUNTIME_ROOT} \\( ! -user root -o -perm /022 \\) -print -quit)" || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"`,
+    'test -z "$discovery_unsafe" || managed_runtime_assertion_failed mcp-tool-discovery-tree-safety "$discovery_unsafe"',
     `test -f ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed regular-file ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `test ! -L ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed non-symlink ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chown root:root ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed owner-root-root ${MANAGED_STARTUP_RUNTIME_PATH}`,
@@ -69,6 +86,55 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
   const linkPath = path.join(tmp, "runtime-link.cjs");
   fs.writeFileSync(targetPath, "fixture\n", { mode: 0o444 });
   fs.symlinkSync(targetPath, linkPath);
+  const runDiscoveryChecks = ({
+    discoveryOutput = DISCOVERY_EXPECTED_CONTRACT,
+    discoveryStatus = 0,
+    findOutput = "",
+    findStatus = 0,
+    statOutput = "uid=0 gid=0 type=regular file mode=444",
+  }: {
+    discoveryOutput?: string;
+    discoveryStatus?: number;
+    findOutput?: string;
+    findStatus?: number;
+    statOutput?: string;
+  } = {}) =>
+    spawnSync(
+      "sh",
+      [
+        "-c",
+        [
+          "node() {",
+          '  if [ "$1" = "$NEMOCLAW_TEST_DISCOVERY_RUNTIME" ]; then',
+          "    printf '%s' \"$NEMOCLAW_TEST_DISCOVERY_OUTPUT\"",
+          '    return "$NEMOCLAW_TEST_DISCOVERY_STATUS"',
+          "  fi",
+          '  "$NEMOCLAW_TEST_NODE" "$@"',
+          "}",
+          "find() {",
+          "  printf '%s' \"$NEMOCLAW_TEST_FIND_OUTPUT\"",
+          '  return "$NEMOCLAW_TEST_FIND_STATUS"',
+          "}",
+          "stat() { printf '%s' \"$NEMOCLAW_TEST_STAT_OUTPUT\"; }",
+          functionSource,
+          discoverySource,
+          "printf 'discovery-ok\\n'",
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          PATH: process.env.PATH ?? "",
+          NEMOCLAW_TEST_DISCOVERY_OUTPUT: discoveryOutput,
+          NEMOCLAW_TEST_DISCOVERY_RUNTIME: DISCOVERY_RUNTIME_PATH,
+          NEMOCLAW_TEST_DISCOVERY_STATUS: String(discoveryStatus),
+          NEMOCLAW_TEST_FIND_OUTPUT: findOutput,
+          NEMOCLAW_TEST_FIND_STATUS: String(findStatus),
+          NEMOCLAW_TEST_NODE: process.execPath,
+          NEMOCLAW_TEST_STAT_OUTPUT: statOutput,
+        },
+      },
+    );
   const runDiagnostic = (artifactPath: string, invariant: string, statOutput: string) =>
     spawnSync(
       "sh",
@@ -92,6 +158,63 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     );
 
   try {
+    const bundleFailure = runDiscoveryChecks({
+      discoveryOutput: "output must remain private",
+      discoveryStatus: 23,
+    });
+    expect(bundleFailure.status).toBe(1);
+    expect(bundleFailure.stdout).toBe("");
+    expect(bundleFailure.stderr).toBe(
+      "ERROR: managed image assertion failed: mcp-tool-discovery-bundle-execution exit-status=23\n",
+    );
+
+    const credential = "gho_diagnosticSecretValue0123456789";
+    const contractFailure = runDiscoveryChecks({
+      discoveryOutput: JSON.stringify({
+        protocol: 2,
+        ok: true,
+        detail: `wrong\n${credential}\tcontinued\u001b[31m`,
+      }),
+    });
+    expect(contractFailure.status).toBe(1);
+    expect(contractFailure.stdout).toBe("");
+    expect(contractFailure.stderr).toBe(
+      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>?continued?[31m"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+    );
+    expect(contractFailure.stderr).not.toContain(credential);
+    expect(contractFailure.stderr).not.toContain("\u001b");
+
+    const findFailure = runDiscoveryChecks({ findOutput: linkPath, findStatus: 42 });
+    expect(findFailure.status).toBe(1);
+    expect(findFailure.stdout).toBe("");
+    expect(findFailure.stderr).toBe(
+      "ERROR: managed image assertion failed: mcp-tool-discovery-tree-find-execution exit-status=42\n",
+    );
+
+    const unsafePath = runDiscoveryChecks({
+      findOutput: linkPath,
+      statOutput: "uid=123 gid=456 type=symbolic link mode=777",
+    });
+    expect(unsafePath.status).toBe(1);
+    expect(unsafePath.stdout).toBe("");
+    expect(unsafePath.stderr).toBe(
+      `ERROR: managed image assertion failed: mcp-tool-discovery-tree-safety path=${linkPath} uid=123 gid=456 type=symbolic link mode=777 symlink=yes\n`,
+    );
+
+    const success = runDiscoveryChecks({
+      discoveryOutput: JSON.stringify({
+        protocol: 1,
+        ok: false,
+        detail: "tool discovery received invalid runtime arguments",
+        count: 0,
+        tools: [],
+        truncated: false,
+      }),
+    });
+    expect(success.status, success.stderr).toBe(0);
+    expect(success.stdout).toBe("discovery-ok\n");
+    expect(success.stderr).toBe("");
+
     const missing = runDiagnostic(missingPath, "regular-file", "unused");
     expect(missing.status).toBe(1);
     expect(missing.stdout).toBe("");
