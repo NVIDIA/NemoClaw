@@ -34,6 +34,14 @@ function resolve(
   });
 }
 
+function portableInferenceEnvironment(): NodeJS.ProcessEnv {
+  return {
+    COMPATIBLE_API_KEY: "nvapi-test-value-12345",
+    NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+    NEMOCLAW_MODEL: "vendor/model-v1",
+  };
+}
+
 const COMPATIBLE_NANO_PROFILE = {
   id: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
   displayName: "NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark",
@@ -437,9 +445,9 @@ describe("onboard command options", () => {
 
   it("prepares and scopes portable profile defaults around onboarding", async () => {
     const env: NodeJS.ProcessEnv = {
+      ...portableInferenceEnvironment(),
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
-      NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
       NEMOCLAW_POLICY_TIER: "previous-tier",
@@ -454,6 +462,8 @@ describe("onboard command options", () => {
           "NEMOCLAW_EXPERIMENTAL_PROFILE",
           "NEMOCLAW_PROVIDER",
           "NEMOCLAW_MODEL",
+          "NEMOCLAW_ENDPOINT_URL",
+          "NEMOCLAW_PREFERRED_API",
           "NEMOCLAW_OLLAMA_NO_AUTOSTART",
           "NEMOCLAW_POLICY_MODE",
           "NEMOCLAW_POLICY_TIER",
@@ -466,8 +476,10 @@ describe("onboard command options", () => {
 
     expect(observed).toEqual({
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-      NEMOCLAW_PROVIDER: "ollama",
-      NEMOCLAW_MODEL: "qwen3-vl:4b",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_MODEL: "vendor/model-v1",
+      NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
       NEMOCLAW_POLICY_MODE: "suggested",
       NEMOCLAW_POLICY_TIER: "personal",
@@ -476,7 +488,8 @@ describe("onboard command options", () => {
     expect(env).toMatchObject({
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
-      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_MODEL: "vendor/model-v1",
+      NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
       NEMOCLAW_POLICY_TIER: "previous-tier",
@@ -536,7 +549,8 @@ describe("onboard command options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-agents-manifest-"));
     const manifestPath = path.join(tmpDir, "agents.yaml");
     fs.writeFileSync(manifestPath, "agents: [\n");
-    const env: NodeJS.ProcessEnv = {};
+    const env: NodeJS.ProcessEnv =
+      testCase.name === "portable profile" ? portableInferenceEnvironment() : {};
 
     try {
       await expect(
@@ -547,7 +561,13 @@ describe("onboard command options", () => {
           runOnboard: vi.fn(),
         }),
       ).rejects.toThrow("--agents YAML parse error");
-      for (const key of testCase.keys) expect(env[key]).toBeUndefined();
+      for (const key of testCase.keys) {
+        if (testCase.name === "portable profile" && key === "NEMOCLAW_MODEL") {
+          expect(env[key]).toBe("vendor/model-v1");
+        } else {
+          expect(env[key]).toBeUndefined();
+        }
+      }
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
