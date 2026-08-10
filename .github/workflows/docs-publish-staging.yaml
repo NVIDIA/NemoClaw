@@ -55,7 +55,7 @@ jobs:
         run: |
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
           cd fern
-          npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE"
+          npx --yes --ignore-scripts "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE"
 
   delete-preview:
     runs-on: ubuntu-latest
@@ -130,7 +130,7 @@ jobs:
               continue
             fi
             preview_url="https://${FERN_ORG}-preview-${preview_id}.docs.buildwithfern.com${INSTANCE_PATH}"
-            if ! delete_output=$(npx --yes "fern-api@${FERN_VERSION}" docs preview delete "$preview_url" 2>&1); then
+            if ! delete_output=$(npx --yes --ignore-scripts "fern-api@${FERN_VERSION}" docs preview delete "$preview_url" 2>&1); then
               if grep -Fxq "Domain not registered" <<< "$delete_output"; then
                 echo "::notice::Fern preview ${preview_id} does not exist."
                 continue

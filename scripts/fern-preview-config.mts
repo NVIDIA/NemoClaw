@@ -28,6 +28,7 @@ export function buildFernPreviewArgs(options: {
 }): string[] {
   return [
     "--yes",
+    "--ignore-scripts",
     `fern-api@${options.fernVersion}`,
     "generate",
     "--docs",
