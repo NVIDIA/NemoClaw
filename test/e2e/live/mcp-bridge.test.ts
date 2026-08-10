@@ -38,6 +38,7 @@ import {
   assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout,
   assertHermesReloadRollback,
   assertHermesRemovalSurvivesGatewayRestart,
+  lowerHermesShieldsForCleanup,
   reopenHermesMcpMaintenanceWindow,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
@@ -1168,16 +1169,7 @@ mcpBridgeShardTest("hermes")(
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await captureHermesGatewayIdentity(sandbox, "hermes-gateway-identity-after-mcp-restore");
     cleanup.add("lower Hermes Shields before teardown", async () => {
-      const result = await host.nemoclaw(
-        [HERMES_SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "E2E cleanup"],
-        {
-          artifactName: "cleanup-hermes-shields-down",
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 3 * 60_000,
-        },
-      );
-      const sandboxMissing = /not found|does not exist/iu.test(resultText(result));
-      expect(result.exitCode === 0 || sandboxMissing).toBe(true);
+      await lowerHermesShieldsForCleanup(host, HERMES_SANDBOX_NAME);
     });
     cleanup.add("capture Hermes post-rebuild MCP evidence", async () => {
       await artifacts.writeJson(
