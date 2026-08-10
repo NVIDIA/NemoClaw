@@ -194,8 +194,10 @@ diagnose_ollama
 exit 1`;
 }
 
-async function startProtectedOllama(host: HostCliClient): Promise<string> {
+export async function startProtectedOllama(host: HostCliClient): Promise<string> {
   await ensureOllama(host);
+  const cleanup = await cleanupOllama(host, "pre-cleanup-managed-image-ollama");
+  expect(cleanup.exitCode, resultText(cleanup)).toBe(0);
   const start = await host.command(
     "bash",
     [

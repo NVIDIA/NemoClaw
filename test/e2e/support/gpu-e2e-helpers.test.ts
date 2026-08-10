@@ -20,7 +20,10 @@ import {
   openClawModelConfigProjectionScript,
   shouldBootstrapLlamaCppGenericGpuTarget,
 } from "../live/gpu-e2e-helpers.ts";
-import { protectedOllamaStartScript } from "../live/managed-image-protected-runtime-helpers.ts";
+import {
+  protectedOllamaStartScript,
+  startProtectedOllama,
+} from "../live/managed-image-protected-runtime-helpers.ts";
 
 const GPU_MODEL = "qwen3.5:9b";
 
@@ -356,6 +359,33 @@ describe("GPU E2E helpers", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a stale Ollama listener before protected startup", async () => {
+    const artifacts: string[] = [];
+    const host = {
+      command: async (
+        _command: string,
+        _args: string[],
+        options: { artifactName?: string } = {},
+      ) => {
+        artifacts.push(options.artifactName ?? "");
+        if (options.artifactName === "command-v-ollama") {
+          return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/ollama\n" };
+        }
+        if (options.artifactName === "pre-cleanup-managed-image-ollama") {
+          return {
+            exitCode: 1,
+            stderr: "Ollama still listens on 127.0.0.1:11434",
+            stdout: "",
+          };
+        }
+        throw new Error(`unexpected command after failed cleanup: ${options.artifactName ?? ""}`);
+      },
+    } as unknown as HostCliClient;
+
+    await expect(startProtectedOllama(host)).rejects.toThrow(/still listens/u);
+    expect(artifacts).toEqual(["command-v-ollama", "pre-cleanup-managed-image-ollama"]);
   });
 
   it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
