@@ -16,6 +16,15 @@
  *
  * It never reads credential file contents or lists session directories.
  *
+ * The documented repair for a dashboard-only session points
+ * `platforms.whatsapp.extra.session_path` at another directory, so the default
+ * gateway path stays empty while the gateway reads credentials elsewhere. When
+ * the default path holds no credentials the probe reads that key from the
+ * Hermes config and re-checks the configured directory, so the repair can be
+ * confirmed instead of reported as an unresolved split. The probe parses the
+ * whole config file in the host process but keeps and reports only the
+ * configured session path.
+ *
  * This is a bounded compatibility probe for Hermes dashboard pairing that can
  * write credentials under profiles/dashboard-home while the gateway reads the
  * default session path. Remove the dashboard profile branch after Hermes uses
@@ -48,6 +57,8 @@
  * state-string enums, and epoch timestamps make it into the report.
  */
 
+import { shellQuote } from "../../../../core/shell-quote";
+import { parseConfig } from "../../../../sandbox/config-format";
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
 import type { MessagingSerializableValue } from "../../../manifest";
 import {
@@ -69,6 +80,12 @@ export const WHATSAPP_STATUS_HEALTH_HOOK_HANDLER_ID = "whatsapp.statusHealth";
 // inheriting that hang.
 const DEFAULT_TIMEOUT_MS = 8_000;
 const HERMES_SESSION_PROBE_SENTINEL = "NEMOCLAW_HERMES_WHATSAPP_SESSION_V1";
+const HERMES_CONFIG_PATH = "/sandbox/.hermes/config.yaml";
+const HERMES_DEFAULT_SESSION_DIR = "/sandbox/.hermes/platforms/whatsapp/session";
+const HERMES_DASHBOARD_SESSION_DIR =
+  "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session";
+const HERMES_SESSION_PATH_KEYS = ["platforms", "whatsapp", "extra", "session_path"] as const;
+const HERMES_SESSION_DIR_PATTERN = /^\/sandbox\/\.hermes\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
 /** WhatsApp uses the generic channel-health hook options unchanged. */
 export type WhatsappStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 
@@ -228,16 +245,36 @@ function runHermesSessionProbe(
   sandboxName: string,
   timeoutMs: number,
 ): ProbeResult {
-  const command = hermesSessionProbeCommand();
-  let exec: ReturnType<typeof execute>;
-  try {
-    exec = execute(sandboxName, command, timeoutMs);
-  } catch {
-    return PROBE_UNREACHABLE;
+  const defaultLocations = probeHermesSessionDirs(
+    execute,
+    sandboxName,
+    HERMES_DEFAULT_SESSION_DIR,
+    timeoutMs,
+  );
+  if (!defaultLocations) return PROBE_UNREACHABLE;
+  if (defaultLocations.gatewaySessionCreds !== false) {
+    return hermesProbeResult(defaultLocations, "default");
   }
-  if (!exec || exec.status !== 0) return PROBE_UNREACHABLE;
-  const locations = parseHermesSessionProbe(String(exec.stdout ?? ""));
-  if (!locations) return PROBE_UNREACHABLE;
+
+  const fallbackTimeoutMs = Math.max(1, Math.floor(timeoutMs / 2));
+  const configured = readHermesConfiguredSessionDir(execute, sandboxName, fallbackTimeoutMs);
+  if (configured.source !== "config") {
+    return hermesProbeResult(defaultLocations, configured.source);
+  }
+  const configuredLocations = probeHermesSessionDirs(
+    execute,
+    sandboxName,
+    configured.dir,
+    fallbackTimeoutMs,
+  );
+  if (!configuredLocations) return hermesProbeResult(defaultLocations, "default");
+  return hermesProbeResult(configuredLocations, "config");
+}
+
+function hermesProbeResult(
+  locations: WhatsappSessionLocations,
+  gatewaySessionPathSource: HermesSessionPathSource,
+): ProbeResult {
   const gatewaySession = locations.gatewaySessionCreds === true;
   return {
     probeReachable: true,
@@ -245,14 +282,73 @@ function runHermesSessionProbe(
     bridgeProcessAlive: null,
     heartbeat: null,
     recentLogSignals: [],
-    sessionLocations: locations,
+    sessionLocations: { ...locations, gatewaySessionPathSource },
   };
 }
 
-function hermesSessionProbeCommand(): string {
+function probeHermesSessionDirs(
+  execute: NonNullable<WhatsappStatusHealthHookOptions["executeSandboxCommand"]>,
+  sandboxName: string,
+  gatewaySessionDir: string,
+  timeoutMs: number,
+): WhatsappSessionLocations | null {
+  let exec: ReturnType<typeof execute>;
+  try {
+    exec = execute(sandboxName, hermesSessionProbeCommand(gatewaySessionDir), timeoutMs);
+  } catch {
+    return null;
+  }
+  if (!exec || exec.status !== 0) return null;
+  return parseHermesSessionProbe(String(exec.stdout ?? ""));
+}
+
+type HermesSessionPathSource = NonNullable<WhatsappSessionLocations["gatewaySessionPathSource"]>;
+
+function readHermesConfiguredSessionDir(
+  execute: NonNullable<WhatsappStatusHealthHookOptions["executeSandboxCommand"]>,
+  sandboxName: string,
+  timeoutMs: number,
+): { readonly dir: string; readonly source: HermesSessionPathSource } {
+  const fallback = { dir: HERMES_DEFAULT_SESSION_DIR, source: "default" } as const;
+  let exec: ReturnType<typeof execute>;
+  try {
+    exec = execute(sandboxName, `cat ${shellQuote(HERMES_CONFIG_PATH)}`, timeoutMs);
+  } catch {
+    return fallback;
+  }
+  if (!exec || exec.status !== 0) return fallback;
+  let configured: unknown;
+  try {
+    configured = readConfiguredSessionPath(parseConfig(String(exec.stdout ?? ""), "yaml"));
+  } catch {
+    return fallback;
+  }
+  if (configured === undefined || configured === null) return fallback;
+  if (!isSupportedHermesSessionDir(configured)) {
+    return { dir: HERMES_DEFAULT_SESSION_DIR, source: "unsupported" };
+  }
+  if (configured === HERMES_DEFAULT_SESSION_DIR) return fallback;
+  return { dir: configured, source: "config" };
+}
+
+function readConfiguredSessionPath(config: unknown): unknown {
+  let node: unknown = config;
+  for (const key of HERMES_SESSION_PATH_KEYS) {
+    if (!isObjectRecord(node)) return undefined;
+    node = node[key];
+  }
+  return node;
+}
+
+function isSupportedHermesSessionDir(value: unknown): value is string {
+  if (typeof value !== "string" || !HERMES_SESSION_DIR_PATTERN.test(value)) return false;
+  return value.split("/").every((segment) => segment !== "." && segment !== "..");
+}
+
+function hermesSessionProbeCommand(gatewaySessionDir: string): string {
   return [
-    'gateway="/sandbox/.hermes/platforms/whatsapp/session/creds.json"',
-    'dashboard="/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json"',
+    `gateway=${shellQuote(`${gatewaySessionDir}/creds.json`)}`,
+    `dashboard=${shellQuote(`${HERMES_DASHBOARD_SESSION_DIR}/creds.json`)}`,
     `printf '%s\\n' '${HERMES_SESSION_PROBE_SENTINEL}'`,
     'if [ -f "$gateway" ]; then printf "%s\\n" "GATEWAY_SESSION=present"; else printf "%s\\n" "GATEWAY_SESSION=missing"; fi',
     'if [ -f "$dashboard" ]; then printf "%s\\n" "DASHBOARD_SESSION=present"; else printf "%s\\n" "DASHBOARD_SESSION=missing"; fi',

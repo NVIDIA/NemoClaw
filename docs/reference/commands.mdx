@@ -2486,9 +2486,14 @@ With `--channel`, it prints the detailed status for that channel.
 For an OpenClaw WhatsApp sandbox, `--channel whatsapp` probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
-For a Hermes WhatsApp sandbox, `--channel whatsapp` probes only whether the default gateway session path and the `profiles/dashboard-home` session path contain `creds.json`.
-If the dashboard path has credentials and the gateway path is empty, the report prints the supported `config set` command for the `platforms.whatsapp.extra.session_path` configuration key, including the new-configuration-key opt-in when generated configs do not already contain that key.
-NemoClaw does not treat a Hermes session file as live inbound-health evidence.
+For a Hermes WhatsApp sandbox, `--channel whatsapp` reports only whether the gateway session path and the `profiles/dashboard-home` session path contain `creds.json`.
+If no supported session-path override is set, the dashboard path has credentials, and the gateway path is empty, the report prints the supported `config set` command for the `platforms.whatsapp.extra.session_path` configuration key, including the new-configuration-key opt-in when generated configs do not already contain that key.
+When the default gateway session path holds no credentials, the probe reads `platforms.whatsapp.extra.session_path` from `/sandbox/.hermes/config.yaml` and checks the configured path, so a completed session-path repair reports the session as found rather than as an unresolved split.
+The report then adds an info `Session path override` line that states the gateway session check used the path set in `platforms.whatsapp.extra.session_path`.
+Remove the override only after Hermes uses one WhatsApp session path for dashboard pairing and gateway startup.
+The probe uses the configured path only when it is an absolute path under `/sandbox/.hermes` whose segments contain only letters, digits, periods, underscores, and hyphens.
+Any other value, including a path with a `.` or `..` segment, keeps the default path check and reports the override as unsupported.
+A repaired Hermes sandbox reports verdict `unknown` and exits 0, because NemoClaw does not treat a Hermes session file as live inbound-health evidence.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison.
 It classifies the state as `healthy`, `idle`, `token_rejected`, `unreachable`, `not_started`, `policy_gap`, `config_gap`, `unknown`, or `probe_failed`.

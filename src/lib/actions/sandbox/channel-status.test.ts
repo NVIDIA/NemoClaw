@@ -28,6 +28,42 @@ function hermesSessionProbeOutput(options: {
   ].join("\n");
 }
 
+const HERMES_DEFAULT_SESSION_DIR = "/sandbox/.hermes/platforms/whatsapp/session";
+const HERMES_DASHBOARD_SESSION_DIR =
+  "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session";
+
+function hermesConfigYaml(sessionPath: string): string {
+  return [
+    "platforms:",
+    "  whatsapp:",
+    "    extra:",
+    `      session_path: ${JSON.stringify(sessionPath)}`,
+  ].join("\n");
+}
+
+function hermesExec(options: {
+  readonly configYaml?: string;
+  readonly credsDirs: readonly string[];
+}) {
+  const hasCreds = (credsFile: string) =>
+    options.credsDirs.some((dir) => credsFile === `${dir}/creds.json`);
+  return vi.fn((_sandbox: string, command: string, _timeoutMs?: number) => {
+    if (command.startsWith("cat ")) {
+      return options.configYaml === undefined
+        ? { status: 1, stdout: "", stderr: "cat: no such file" }
+        : { status: 0, stdout: options.configYaml, stderr: "" };
+    }
+    return {
+      status: 0,
+      stdout: hermesSessionProbeOutput({
+        gatewaySessionCreds: hasCreds(/gateway='([^']*)'/.exec(command)?.[1] ?? ""),
+        dashboardSessionCreds: hasCreds(/dashboard='([^']*)'/.exec(command)?.[1] ?? ""),
+      }),
+      stderr: "",
+    };
+  });
+}
+
 describe("showSandboxChannelStatus (whatsapp)", () => {
   it("returns idle verdict and exit code 1 when paired but no inbound observed", async () => {
     const stdout = waStatusJson({
@@ -279,6 +315,57 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
         ? result.report.signals.find((signal) => signal.label === "Session location")
         : undefined;
     expect(session?.severity).toBe("ok");
+  });
+
+  it("clears the session-path split after the documented session_path repair (#8718)", async () => {
+    const exec = hermesExec({
+      configYaml: hermesConfigYaml(HERMES_DASHBOARD_SESSION_DIR),
+      credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
+    });
+    const { deps, out_lines } = makeDeps({
+      exec,
+      agentName: "hermes",
+      sandbox: entry(["whatsapp"], [], {}, "hermes"),
+    });
+    const result = await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    const signals = result && "report" in result ? result.report.signals : [];
+    const dump = out_lines.join("\n");
+    expect(result && "report" in result && result.report.verdict).not.toBe("unpaired");
+    expect(signals.find((signal) => signal.label === "Session location")?.severity).toBe("ok");
+    expect(signals.find((signal) => signal.label === "Session path override")?.severity).toBe(
+      "info",
+    );
+    expect(dump).not.toContain("the Hermes gateway session path is empty");
+    expect(exec.mock.calls.map((call) => String(call[1] ?? "")).join("\n")).toContain(
+      `gateway='${HERMES_DASHBOARD_SESSION_DIR}/creds.json'`,
+    );
+  });
+
+  it("keeps the default session path when the configured session path is unsupported (#8718)", async () => {
+    const exec = hermesExec({
+      configYaml: hermesConfigYaml("/etc/hermes/session"),
+      credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    const { deps } = makeDeps({
+      exec,
+      agentName: "hermes",
+      sandbox: entry(["whatsapp"], [], {}, "hermes"),
+    });
+    let threw: Error | null = null;
+    try {
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    } catch (err) {
+      threw = err as Error;
+    } finally {
+      exitSpy.mockRestore();
+    }
+    const commands = exec.mock.calls.map((call) => String(call[1] ?? "")).join("\n");
+    expect(threw?.message).toBe("process.exit(1)");
+    expect(commands).toContain(`gateway='${HERMES_DEFAULT_SESSION_DIR}/creds.json'`);
+    expect(commands).not.toContain("/etc/hermes/session");
   });
 
   it("skips the deep probe and reports paused state when WhatsApp is in disabledChannels", async () => {

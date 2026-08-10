@@ -93,6 +93,7 @@ export type WhatsappProbeInput = {
 export type WhatsappSessionLocations = {
   gatewaySessionCreds: boolean | null;
   dashboardSessionCreds: boolean | null;
+  gatewaySessionPathSource?: "default" | "config" | "unsupported";
 };
 
 /**
@@ -180,7 +181,8 @@ function hermesDashboardOnlySession(input: WhatsappProbeInput): boolean {
   return (
     input.agent === "hermes" &&
     input.sessionLocations?.gatewaySessionCreds === false &&
-    input.sessionLocations.dashboardSessionCreds === true
+    input.sessionLocations.dashboardSessionCreds === true &&
+    input.sessionLocations.gatewaySessionPathSource !== "config"
   );
 }
 
@@ -189,6 +191,20 @@ function sessionLocationSignal(input: WhatsappProbeInput): DiagnosticSignal | nu
   if (!locations) return null;
   const gateway = locations.gatewaySessionCreds;
   const dashboard = locations.dashboardSessionCreds;
+  if (locations.gatewaySessionPathSource === "config" && gateway !== null) {
+    return gateway
+      ? {
+          label: "Session location",
+          severity: "ok",
+          detail: "the configured Hermes WhatsApp session path contains credentials",
+        }
+      : {
+          label: "Session location",
+          severity: "warn",
+          detail: "the configured Hermes WhatsApp session path has no WhatsApp credentials",
+          hint: "pair WhatsApp again, or set `platforms.whatsapp.extra.session_path` to the session path that holds the credentials",
+        };
+  }
   if (gateway === false && dashboard === true) {
     return {
       label: "Session location",
@@ -225,6 +241,29 @@ function sessionLocationSignal(input: WhatsappProbeInput): DiagnosticSignal | nu
     severity: "info",
     detail: "Hermes session paths could not be inspected",
   };
+}
+
+function sessionPathOverrideSignal(input: WhatsappProbeInput): DiagnosticSignal | null {
+  const source = input.sessionLocations?.gatewaySessionPathSource;
+  if (source === "config") {
+    return {
+      label: "Session path override",
+      severity: "info",
+      detail:
+        "the gateway session check used the path set in `platforms.whatsapp.extra.session_path`",
+      hint: "remove the override after Hermes uses one WhatsApp session path for dashboard pairing and gateway startup",
+    };
+  }
+  if (source === "unsupported") {
+    return {
+      label: "Session path override",
+      severity: "warn",
+      detail:
+        "`platforms.whatsapp.extra.session_path` is not a supported session path, so the gateway session check used the default path",
+      hint: "set `platforms.whatsapp.extra.session_path` to an absolute path under `/sandbox/.hermes` that has no `.` or `..` segment",
+    };
+  }
+  return null;
 }
 
 function websocketSignal(input: WhatsappProbeInput): DiagnosticSignal {
@@ -507,10 +546,12 @@ function buildHints(verdict: WhatsappVerdict, input: WhatsappProbeInput): string
 
 export function evaluateWhatsappDiagnostics(input: WhatsappProbeInput): WhatsappDiagnosticReport {
   const sessionSignal = sessionLocationSignal(input);
+  const overrideSignal = sessionPathOverrideSignal(input);
   const signals: DiagnosticSignal[] = [
     configCoverageSignal(input),
     pairingSignal(input),
     ...(sessionSignal ? [sessionSignal] : []),
+    ...(overrideSignal ? [overrideSignal] : []),
     bridgeProcessSignal(input),
     websocketSignal(input),
     inboundSignal(input),
