@@ -297,6 +297,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
 
   // Phase 0: pre-cleanup, after the secret gate so local skipped runs do not
   // mutate host state.
+  progress.phase("prepare clean Hermes runner");
   await cleanupHermes("pre-cleanup");
 
   // Phase 1: prerequisites.
