@@ -52,15 +52,25 @@ uname -m
 tr -d '\0' </proc/device-tree/model
 cat /etc/nv_tegra_release
 node --version
+node -e '
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 22 || (major === 22 && minor < 19)) process.exit(1);
+'
 git --version
 npm --version
-command -v bash curl docker git node npm ollama timeout
+npm_version="$(npm --version)"
+test "${npm_version%%.*}" -ge 10
+command -v bash curl docker git node npm ollama openshell timeout
+openshell --version
+ollama list
 docker info --format '{{json .Runtimes}}'
 test -c /dev/nvmap
 if sudo -n true 2>/dev/null; then echo 'unexpected passwordless sudo'; exit 1; fi
 ```
 
-The architecture must be `aarch64`, and Node.js must have major version 22.
+The architecture must be `aarch64`.
+Node.js must be version 22.19.0 or later, and npm must have major version 10 or later.
+The OpenShell version command and `ollama list` must both succeed.
 Docker must expose the NVIDIA runtime required by the existing Jetson live E2E test.
 Preinstall Ollama so candidate code does not invoke its host installer.
 The `nvidia` account must not have passwordless `sudo` access.
@@ -92,7 +102,10 @@ Before candidate execution, the worker records this protected tool and model bas
 The dispatcher stores the recorded values in a private `<jobId>.baseline.json` state file.
 After cleanup, the worker repeats the probes and compares them with that record.
 Before and after candidate execution, the worker also requires `/dev/nvmap` and the Docker NVIDIA runtime to be available.
-The worker removes the record only after every comparison and cleanup absence check succeeds.
+The worker keeps the record through cleanup and device-lock release so startup recovery can repeat the same comparison.
+The host retention policy may remove it only after no device lock exists.
+Before a replay of the same job ID, the worker removes the earlier record and writes a new record before it invokes candidate code.
+If the initial baseline probe fails, the worker never invokes candidate code; cleanup verifies current prerequisites and allowlisted-resource absence without a before-and-after comparison.
 
 These other host resources also remain outside the cleanup allowlist:
 
@@ -279,6 +292,7 @@ EnvironmentFile=/etc/nemoclaw-jetson-dispatch/environment
 ExecStart=/usr/bin/node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-service.mts
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=360
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -436,6 +450,7 @@ The uploaded `e2e-jetson-nvmap-gpu` artifact must contain `jetson-dispatch.json`
 It must also contain `jetson-e2e-artifacts.tar.gz`.
 The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace.
 It rejects an artifact directory or compressed archive larger than 1 MiB.
+Before a restarted dispatcher replays the same deterministic job ID, it removes the earlier log and archive so evidence cannot cross executions.
 
 After the workflow completes, independently verify every allowlisted resource is absent.
 Then run one controlled failing candidate and confirm that its artifact records the same cleanup evidence.
@@ -456,10 +471,24 @@ If cleanup fails, startup fails or the completed job reports `conclusion: "clean
 If cleanup succeeds but lock removal fails, the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "succeeded"`.
 The lock remains in either case.
 
+The unit uses `Restart=on-failure`, so a startup cleanup failure otherwise retries every five seconds.
+Stop that retry loop before investigation or repair:
+
+```bash
+sudo systemctl stop nemoclaw-jetson-dispatch.service
+```
+
 Do not delete `device.lock` to bypass recovery.
-For `cleanup: "failed"`, repair the cleanup program or the allowlisted resource state.
+For `cleanup: "failed"`, inspect the recorded error before choosing a recovery action.
+Repair the cleanup program or allowlisted resource state only when that named operation failed.
+If the protected tool or Ollama model baseline differs after cleanup, investigate candidate activity and external host drift without assigning the change to cleanup.
 For `cleanup: "succeeded"` with a lock-removal error, repair the state-directory filesystem or permissions.
-Restart the dispatcher after the repair.
+Start the dispatcher after the named condition is fixed:
+
+```bash
+sudo systemctl start nemoclaw-jetson-dispatch.service
+```
+
 Startup runs cleanup and absence verification again before it removes the stale lock.
 
 Do not dispatch another job when cleanup verification is inconclusive.
@@ -467,15 +496,78 @@ Manual recovery must stay within the same cleanup allowlist.
 Escalate any suspected protected baseline change for separate host investigation.
 Cleanup evidence alone is not evidence that every candidate host change was reversed.
 
-Preserve the job JSON and log files for diagnosis.
-These private state files can contain candidate output, and the dispatcher does not prune them.
+Preserve the job JSON, log, artifact, and protected-baseline files for diagnosis and stale-lock recovery.
+These private state files can contain candidate output, and the dispatcher does not otherwise prune them.
 Apply the host's approved retention policy after GitHub uploads the artifact and no device lock exists.
 
-To disable the temporary path, leave `allow_jetson_dispatch=false` on later dispatches and run:
+To disable the temporary path, first prevent another controller from reaching the dispatcher.
+Delete the repository variable and stop the public tunnel, but keep the dispatcher and its SSH credentials available while any accepted job finishes its bounded execution and cleanup:
 
 ```bash
 gh variable delete JETSON_DISPATCH_URL --repo NVIDIA/NemoClaw
 sudo systemctl disable --now nemoclaw-jetson-tunnel.service
+```
+
+Use the last accepted job ID from the controller log.
+Wait for the device lock to disappear, require that job's private status to report successful cleanup, and independently check the remaining allowlisted resources:
+
+```bash
+LAST_JOB_ID=0000000000000000000000000000000000000000000000000000000000000000
+[[ "$LAST_JOB_ID" =~ ^[a-f0-9]{64}$ ]]
+state=/var/lib/nemoclaw-jetson-dispatch/state
+timeout 3600 bash -c 'while [ -e "$1" ]; do sleep 5; done' wait-lock \
+  "$state/device.lock"
+test ! -e "$state/device.lock"
+/usr/bin/node -e '
+  const fs = require("node:fs");
+  const status = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (status.state !== "completed" || status.cleanup !== "succeeded") process.exit(1);
+' "$state/$LAST_JOB_ID.json"
+sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+  -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
+  -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
+  nvidia@192.168.55.1 bash -s -- "$LAST_JOB_ID" <<'VERIFY_JETSON_IDLE'
+set -euo pipefail
+job_id="$1"
+[[ "$job_id" =~ ^[a-f0-9]{64}$ ]]
+job_home="/var/tmp/nemoclaw-jetson-e2e/$job_id/home"
+test ! -e "/var/tmp/nemoclaw-jetson-e2e/$job_id"
+test ! -e /tmp/nemoclaw-services-e2e-jetson-nvmap
+if [ -e /var/tmp/nemoclaw-jetson-e2e ]; then
+  test -d /var/tmp/nemoclaw-jetson-e2e
+  test ! -L /var/tmp/nemoclaw-jetson-e2e
+  test -z "$(find /var/tmp/nemoclaw-jetson-e2e -mindepth 1 -maxdepth 1 -print -quit)"
+fi
+test -z "$(docker ps -aq --filter label=openshell.ai/managed-by=openshell \
+  --filter label=openshell.ai/sandbox-name=e2e-jetson-nvmap)"
+! docker container inspect openshell-cluster-nemoclaw >/dev/null 2>&1
+! docker volume inspect openshell-cluster-nemoclaw >/dev/null 2>&1
+for proc_dir in /proc/[0-9]*; do
+  [ -r "$proc_dir/environ" ] || continue
+  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
+  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  case "$cmdline" in
+    *ollama-auth-proxy.*|*openshell-gateway*|*cloudflared*)
+      echo "A job-owned helper process remains: ${proc_dir##*/}" >&2
+      exit 1
+      ;;
+  esac
+done
+command -v node npm ollama openshell
+ollama list >/dev/null
+test -c /dev/nvmap
+case "$(docker info --format '{{json .Runtimes}}')" in
+  *nvidia*) ;;
+  *) exit 1 ;;
+esac
+VERIFY_JETSON_IDLE
+```
+
+If any check fails, keep the dispatcher and SSH credentials, then use the recovery procedure above.
+Only after every check passes should you stop the dispatcher:
+
+```bash
 sudo systemctl disable --now nemoclaw-jetson-dispatch.service
 ```
 
@@ -511,4 +603,4 @@ test -z "$(gh variable list --repo NVIDIA/NemoClaw --json name \
 
 Remove the dedicated Jetson public key and the Colossus SSH private key.
 After the required retention period, remove the private job state and logs.
-Remove the dispatcher environment, service unit, and trusted checkout when no investigation or rollback requirement remains.
+Remove the dispatcher environment, service unit, and trusted checkout when no investigation, recovery, or retention requirement remains.

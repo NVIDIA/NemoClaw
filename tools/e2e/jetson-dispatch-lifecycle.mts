@@ -245,6 +245,7 @@ export class JetsonDispatchCoordinator {
       cleanup: "pending",
     };
     try {
+      this.#clearPriorResultFiles(jobId);
       this.#persist(status);
     } catch (error) {
       fs.unlinkSync(this.#lockPath);
@@ -409,6 +410,11 @@ export class JetsonDispatchCoordinator {
 
   #artifactPath(jobId: string): string {
     return path.join(this.#stateDirectory, `${jobId}.artifacts.tar.gz.b64`);
+  }
+
+  #clearPriorResultFiles(jobId: string): void {
+    fs.rmSync(this.#logPath(jobId), { force: true });
+    fs.rmSync(this.#artifactPath(jobId), { force: true });
   }
 
   #evictOldestCompletedJob(): void {

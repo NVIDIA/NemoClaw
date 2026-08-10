@@ -48,6 +48,14 @@ node_path="$(command -v node)"
 npm_path="$(command -v npm)"
 ollama_path="$(command -v ollama)"
 openshell_path="$(command -v openshell)"
+node_version="$(node --version)"
+node -e '
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 22 || (major === 22 && minor < 19)) process.exit(1);
+'
+npm_version="$(npm --version)"
+npm_major="${"${npm_version%%.*}"}"
+[[ "$npm_major" =~ ^[0-9]+$ ]] && (( npm_major >= 10 ))
 test -c /dev/nvmap
 docker_runtimes="$(docker info --format '{{json .Runtimes}}')"
 case "$docker_runtimes" in
@@ -56,9 +64,9 @@ case "$docker_runtimes" in
 esac
 ollama_models_sha256="$(ollama list | awk 'NR > 1 && NF >= 2 { print $1 "\t" $2 }' | sort | sha256sum | cut -d ' ' -f 1)"
 printf 'nodePath\t'; printf '%s' "$node_path" | clean_line
-printf '\nnodeVersion\t'; node --version | clean_line
+printf '\nnodeVersion\t'; printf '%s' "$node_version" | clean_line
 printf '\nnpmPath\t'; printf '%s' "$npm_path" | clean_line
-printf '\nnpmVersion\t'; npm --version | clean_line
+printf '\nnpmVersion\t'; printf '%s' "$npm_version" | clean_line
 printf '\nollamaPath\t'; printf '%s' "$ollama_path" | clean_line
 printf '\nollamaModelsSha256\t'; printf '%s' "$ollama_models_sha256" | clean_line
 printf '\nopenshellPath\t'; printf '%s' "$openshell_path" | clean_line
@@ -127,9 +135,13 @@ fetched_sha="$(git -C "$workspace/repository" rev-parse FETCH_HEAD)"
 git -C "$workspace/repository" checkout --quiet --detach "$candidate_sha"
 cd "$workspace/repository"
 
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
-[[ "$node_major" == "22" ]] || {
-  echo "Jetson E2E requires Node.js 22" >&2
+node -e '
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 22 || (major === 22 && minor < 19)) process.exit(1);
+' || { echo "Jetson E2E requires Node.js 22.19.0 or later" >&2; exit 1; }
+npm_major="$(npm --version | cut -d . -f 1)"
+[[ "$npm_major" =~ ^[0-9]+$ ]] && (( npm_major >= 10 )) || {
+  echo "Jetson E2E requires npm 10 or later" >&2
   exit 1
 }
 npm ci --ignore-scripts
@@ -471,6 +483,7 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     request: JetsonDispatchRequest,
     options: { jobId: string; signal: AbortSignal },
   ): Promise<JetsonWorkerResult> {
+    fs.rmSync(this.#baselinePath(options.jobId), { force: true });
     const baselineResult = await this.#runProcess({
       executable: "ssh",
       args: [...this.#sshArgs(), this.#config.destination, "bash", "-s"],
@@ -597,10 +610,9 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
       signal: options.signal,
     });
     const expectedRaw = readPrivateRegularFile(this.#baselinePath(options.jobId), {
+      allowMissing: true,
       maxBytes: MAX_BASELINE_BYTES,
     });
-    if (expectedRaw === null) throw new Error("Jetson protected-baseline record is missing");
-    const expected = parsePreservedBaselineJson(expectedRaw);
     const verification = await this.#runProcess({
       executable: "ssh",
       args: [...this.#sshArgs(), this.#config.destination, "bash", "-s", "--", options.jobId],
@@ -608,10 +620,11 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
       signal: options.signal,
     });
     const actual = parsePreservedBaseline(verification.stdout);
+    if (expectedRaw === null) return;
+    const expected = parsePreservedBaselineJson(expectedRaw);
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-      throw new Error("Jetson cleanup changed the protected tool or Ollama model baseline");
+      throw new Error("Jetson protected tool or Ollama model baseline differs after cleanup");
     }
-    fs.unlinkSync(this.#baselinePath(options.jobId));
   }
 
   #baselinePath(jobId: string): string {

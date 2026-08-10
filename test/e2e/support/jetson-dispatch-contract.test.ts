@@ -413,11 +413,18 @@ describe("Jetson single-device lifecycle", () => {
   });
 
   it("keeps cleanup evidence accurate when lock removal fails (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
     const cleanup = vi.fn(async () => {});
-    vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
-      throw new Error("lock filesystem unavailable");
+    const unlinkSync = fs.unlinkSync.bind(fs);
+    let rejectLockRemoval = true;
+    vi.spyOn(fs, "unlinkSync").mockImplementation((file) => {
+      if (rejectLockRemoval) {
+        rejectLockRemoval = false;
+        throw new Error("lock filesystem unavailable");
+      }
+      return unlinkSync(file);
     });
-    const dispatch = coordinator(temporaryDirectory(), worker({ cleanup }));
+    const dispatch = coordinator(stateDirectory, worker({ cleanup }));
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
     const completed = await waitForCompletion(dispatch, accepted.jobId);
@@ -427,6 +434,36 @@ describe("Jetson single-device lifecycle", () => {
       error: "Jetson lock removal failed: lock filesystem unavailable",
       cleanup: "succeeded",
     });
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+
+    const restarted = coordinator(stateDirectory, worker({ cleanup }));
+    await restarted.initialize();
+
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
+  });
+
+  it("does not return an archive from an earlier replay after restart (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const first = coordinator(stateDirectory, worker());
+    await first.initialize();
+    const firstAccepted = first.dispatch(REQUEST, identity());
+    await waitForCompletion(first, firstAccepted.jobId);
+    expect(first.artifact(firstAccepted.jobId).artifactArchiveBase64).toBe(ARTIFACT_ARCHIVE_BASE64);
+
+    const replay = coordinator(
+      stateDirectory,
+      worker({ run: async () => Promise.reject(new Error("replayed candidate failed")) }),
+    );
+    await replay.initialize();
+    const replayAccepted = replay.dispatch(REQUEST, identity());
+    const replayCompleted = await waitForCompletion(replay, replayAccepted.jobId);
+    const replayArtifact = replay.artifact(replayAccepted.jobId);
+
+    expect(replayAccepted.jobId).toBe(firstAccepted.jobId);
+    expect(replayCompleted).toMatchObject({ conclusion: "failure", cleanup: "succeeded" });
+    expect(replayArtifact.log).toBe("");
+    expect(replayArtifact).not.toHaveProperty("artifactArchiveBase64");
   });
 
   it("bounds retained in-memory job status while preserving private evidence (#8142)", async () => {

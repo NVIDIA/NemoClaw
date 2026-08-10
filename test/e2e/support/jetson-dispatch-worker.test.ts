@@ -101,6 +101,11 @@ describe("Colossus SSH worker deployment boundary", () => {
 
   it("collects a bounded artifact archive before the remote workspace is removed (#8142)", async () => {
     const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    const baselinePath = path.join(files.stateDirectory, `${jobId}.baseline.json`);
+    fs.writeFileSync(baselinePath, `${JSON.stringify({ ...BASELINE, nodeVersion: "v22.0.0" })}\n`, {
+      mode: 0o600,
+    });
     const artifactArchiveBase64 = Buffer.from("remote archive").toString("base64");
     const processRunner = vi
       .fn()
@@ -123,12 +128,21 @@ describe("Colossus SSH worker deployment boundary", () => {
           workflowRunId: "123",
           workflowRunAttempt: 1,
         },
-        { jobId: "b".repeat(64), signal: new AbortController().signal },
+        { jobId, signal: new AbortController().signal },
       ),
     ).resolves.toMatchObject({
       artifactArchiveBase64,
       log: expect.stringContaining("test passed"),
     });
+    expect(processRunner.mock.calls[0]![0].input).toContain(
+      "major < 22 || (major === 22 && minor < 19)",
+    );
+    expect(processRunner.mock.calls[0]![0].input).toContain("npm_major >= 10");
+    expect(processRunner.mock.calls[2]![0].input).toContain(
+      "major < 22 || (major === 22 && minor < 19)",
+    );
+    expect(processRunner.mock.calls[2]![0].input).toContain("npm_major >= 10");
+    expect(JSON.parse(fs.readFileSync(baselinePath, "utf8"))).toEqual(BASELINE);
     expect(processRunner.mock.calls[2]![0].input).not.toContain("trap cleanup EXIT");
     expect(processRunner.mock.calls[3]![0].input).not.toContain("trap cleanup EXIT");
     expect(processRunner.mock.calls[3]![0].input).toContain("base64 --wrap=0");
@@ -250,11 +264,8 @@ describe("Colossus SSH worker deployment boundary", () => {
   it("invokes the fixed cleanup executable without request-controlled arguments (#8142)", async () => {
     const files = deploymentFiles();
     const jobId = "b".repeat(64);
-    fs.writeFileSync(
-      path.join(files.stateDirectory, `${jobId}.baseline.json`),
-      `${JSON.stringify(BASELINE)}\n`,
-      { mode: 0o600 },
-    );
+    const baselinePath = path.join(files.stateDirectory, `${jobId}.baseline.json`);
+    fs.writeFileSync(baselinePath, `${JSON.stringify(BASELINE)}\n`, { mode: 0o600 });
     const processRunner = vi
       .fn()
       .mockResolvedValueOnce({ stdout: "", stderr: "" })
@@ -280,6 +291,24 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(processRunner.mock.calls[1]![0].args).toEqual(
       expect.arrayContaining(["nvidia@192.168.55.1", "--", jobId]),
     );
+    expect(fs.existsSync(baselinePath)).toBe(true);
+  });
+
+  it("verifies cleanup after a pre-candidate failure without a baseline record (#8142)", async () => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(
+      worker.cleanup({ jobId, signal: new AbortController().signal }),
+    ).resolves.toBeUndefined();
+
+    expect(processRunner).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(files.stateDirectory, `${jobId}.baseline.json`))).toBe(false);
   });
 
   it.each([
@@ -300,7 +329,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
     await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
-      "Jetson cleanup changed the protected tool or Ollama model baseline",
+      "Jetson protected tool or Ollama model baseline differs after cleanup",
     );
     expect(fs.existsSync(baselinePath)).toBe(true);
   });
@@ -323,5 +352,41 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram).not.toContain("ollama serve");
     expect(cleanupProgram).not.toMatch(/apt(?:-get)?|boardctl|reboot|shutdown|nvidia-l4t/u);
     expect(cleanupProgram).not.toMatch(/npm uninstall|uninstall\.sh|rm .*openshell|rm .*ollama/u);
+  });
+
+  it("requires every protected Jetson prerequisite before dispatch (#8142)", () => {
+    expect(dispatcherRunbook).toContain(
+      "command -v bash curl docker git node npm ollama openshell timeout",
+    );
+    expect(dispatcherRunbook).toContain(
+      "if (major < 22 || (major === 22 && minor < 19)) process.exit(1)",
+    );
+    expect(dispatcherRunbook).toContain('test "${npm_version%%.*}" -ge 10');
+    expect(dispatcherRunbook).toContain("ollama list");
+  });
+
+  it("keeps recovery credentials until idle teardown verification succeeds (#8142)", () => {
+    const stopTunnel = dispatcherRunbook.indexOf(
+      "sudo systemctl disable --now nemoclaw-jetson-tunnel.service",
+    );
+    const waitForLock = dispatcherRunbook.indexOf(
+      "timeout 3600 bash -c 'while [ -e \"$1\" ]; do sleep 5; done'",
+    );
+    const verifyCleanup = dispatcherRunbook.indexOf(
+      'if (status.state !== "completed" || status.cleanup !== "succeeded") process.exit(1)',
+    );
+    const stopDispatcher = dispatcherRunbook.indexOf(
+      "sudo systemctl disable --now nemoclaw-jetson-dispatch.service",
+    );
+    const removeSshKey = dispatcherRunbook.indexOf(
+      "Remove the dedicated Jetson public key and the Colossus SSH private key.",
+    );
+
+    expect(dispatcherRunbook).toContain("TimeoutStopSec=360");
+    expect(stopTunnel).toBeGreaterThan(-1);
+    expect(waitForLock).toBeGreaterThan(stopTunnel);
+    expect(verifyCleanup).toBeGreaterThan(waitForLock);
+    expect(stopDispatcher).toBeGreaterThan(verifyCleanup);
+    expect(removeSshKey).toBeGreaterThan(stopDispatcher);
   });
 });
