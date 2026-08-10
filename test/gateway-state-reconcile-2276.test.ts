@@ -124,7 +124,7 @@ function emit(r) {
 }
 
 if (args[0] === "-V" || args[0] === "--version") {
-  process.stdout.write("openshell 0.0.99\\n");
+  process.stdout.write("openshell 0.0.101\\n");
   process.exit(0);
 }
 
@@ -180,7 +180,7 @@ process.exit(0);
       path.join(homeLocalBin, component),
       `#!${process.execPath}
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.99\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.101\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -357,6 +357,11 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
     );
     const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
 
+    assert.doesNotMatch(
+      rebuildOut,
+      /below minimum required version|Installing OpenShell/,
+      `rebuild must use the fixture OpenShell binaries, got:\n${rebuildOut}`,
+    );
     assert.doesNotMatch(
       rebuildOut,
       /does not exist/,
