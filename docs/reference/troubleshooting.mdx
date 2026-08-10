@@ -3054,6 +3054,48 @@ Then rerun portable onboarding:
 $$nemoclaw onboard --experimental-profile portable
 ```
 
+### Portable Host Gateway Is Unreachable
+
+The portable experimental profile maps `host.openshell.internal` to the OpenShell Podman host gateway.
+Do not apply the Docker bridge UFW command when portable onboarding reports this route as unreachable.
+
+Portable onboarding reports output like this:
+
+```text
+✗ Sandbox containers cannot reach the gateway at host.openshell.internal:8080.
+  The probe mapped host.openshell.internal to the OpenShell Podman host gateway.
+```
+
+Restart the user-scoped Podman service and enable its socket:
+
+```bash
+systemctl --user try-restart podman.service
+systemctl --user enable --now podman.socket
+```
+
+These commands restart the current user's Podman service and keep its API socket active.
+They do not change system services or credentials.
+
+Verify that the socket is active:
+
+```bash
+systemctl --user is-active podman.socket
+```
+
+Expected output:
+
+```text
+active
+```
+
+Then rerun portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
+
+Continue only when onboarding no longer reports that the OpenShell Podman host gateway is unreachable.
+
 <AgentOnly variant="hermes">
 
 ## Hermes

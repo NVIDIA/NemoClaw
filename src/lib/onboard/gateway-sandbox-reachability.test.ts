@@ -501,7 +501,9 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
       gatewayIp: "169.254.1.2",
     });
     expect(msg).toContain("OpenShell Podman host gateway");
-    expect(msg).toContain("Restart Podman");
+    expect(msg).toContain("systemctl --user try-restart podman.service");
+    expect(msg).toContain("systemctl --user enable --now podman.socket");
+    expect(msg).toContain("nemoclaw onboard --experimental-profile portable");
     expect(msg).not.toContain("Restart Docker");
     expect(msg).not.toContain("ufw allow");
   });

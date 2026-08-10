@@ -471,7 +471,10 @@ export function formatSandboxBridgeUnreachableMessage(
     return [
       failLine(`Sandbox containers cannot reach the gateway at ${HOST_INTERNAL_NAME}:${port}.`),
       `    The probe mapped ${HOST_INTERNAL_NAME} to the OpenShell Podman host gateway.`,
-      `    Restart Podman and the OpenShell gateway, then re-run \`${cliName()} onboard\`.`,
+      "    Restart the user-scoped Podman service and socket:",
+      "      systemctl --user try-restart podman.service",
+      "      systemctl --user enable --now podman.socket",
+      `    Then rerun \`${cliName()} onboard --experimental-profile portable\` to restart the OpenShell gateway.`,
     ].join("\n");
   }
 
