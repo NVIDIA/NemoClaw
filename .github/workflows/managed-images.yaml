@@ -72,8 +72,8 @@ jobs:
           persist-credentials: false
 
       # Run 31396519688 built this source locally and never published it. Keep
-      # the recorded local-only index digest as provenance, then reproduce the
-      # base from the exact source and producer command in one Docker daemon.
+      # the recorded local-only index digest as provenance. Rebuild the base from
+      # the exact source with Dockerfile.base and its repository build context.
       - name: Checkout exact staging QA base source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,7 +86,7 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Validate staging QA source and recorded digest
+      - name: Validate staging QA source and recorded digest format
         shell: bash
         run: |
           set -euo pipefail
