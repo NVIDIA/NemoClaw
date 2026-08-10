@@ -76,9 +76,10 @@ The command polls the manifest-defined Slack readiness check until all these con
 - Socket Mode is connected.
 - The OpenClaw account probe succeeds.
 
-Each poll runs the live OpenClaw account probe and can send traffic through the configured Slack policy.
+Each poll for an active Slack channel runs the live OpenClaw account probe and can send traffic through the configured Slack policy.
 The command does not change channel configuration or display Slack credentials.
 The default timeout is 180 seconds.
+The `--timeout` value is the total wait budget; NemoClaw limits live probes to the remaining budget and starts none at or after the deadline.
 
 Deferred initialization is reported as retryable.
 A successful result exits with status 0 and reports the readiness evidence in JSON.
@@ -86,6 +87,7 @@ The `readiness` object reports its state, category, reason, retryability, attemp
 If the timeout expires, `readiness.state`, `readiness.category`, and `readiness.reason` are `timeout`; `readiness.retryable` mirrors `readiness.lastObserved.retryable`, and `readiness.lastObserved.category` and `readiness.lastObserved.reason` retain the underlying cause.
 
 A terminal credential, policy, plugin, or runtime error exits nonzero with a structured category and reason.
+If Slack is paused with `channels stop`, the command skips the live probe and returns one terminal result with `readiness.reason` set to `channel_paused`.
 The command also exits nonzero with the `timeout` category when Slack does not become operational before the timeout.
 Use the category and reason to correct a terminal error.
 If the result reports a timeout during deferred initialization, inspect the OpenClaw logs, then rerun the readiness check.

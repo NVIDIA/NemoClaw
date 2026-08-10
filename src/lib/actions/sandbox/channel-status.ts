@@ -23,6 +23,7 @@ import {
   type ChannelReadiness,
   type ChannelReadinessCategory,
   channelHealthProbeInputs,
+  DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS,
   type DiagnosticSeverity,
   type DiagnosticSignal,
 } from "../../messaging/channels/channel-health";
@@ -393,17 +394,15 @@ function channelSupportedByAgent(channelName: string, agent: AgentDefinition): b
     .some((manifest) => manifest.id === channelName);
 }
 
-// Manifest-first gate for `runChannelHealthHook`: returns true when the
-// channel declares a `phase: "status"` hook that emits a `channelHealth`
-// output. That is the output id `readChannelHealthOutputs` looks for, so
-// keying the gate off it keeps orchestration + hook wiring in sync without
-// hard-coding channel names or `deepProbe` strings.
-function channelHasChannelHealthStatusHook(channelName: string): boolean {
-  const manifest = channelManifestRegistry.get(channelName);
-  if (!manifest) return false;
-  return manifest.hooks.some(
+function channelHealthStatusHook(channelName: string, agent: AgentDefinition) {
+  const agentId = agent.name === "hermes" ? "hermes" : "openclaw";
+  const manifest = channelManifestRegistry
+    .listAvailable(getMessagingManifestAvailabilityContext(agent, channelManifestRegistry.list()))
+    .find((candidate) => candidate.id === channelName);
+  return manifest?.hooks.find(
     (hook) =>
       hook.phase === "status" &&
+      (!hook.agents || hook.agents.includes(agentId)) &&
       hook.outputs?.some((output) => output.id === "channelHealth") === true,
   );
 }
@@ -422,6 +421,7 @@ function runChannelHealthHook(
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
   diagnostic: MessagingChannelDiagnosticSpec,
+  probeTimeoutMs?: number,
 ): ChannelHealthReport | undefined {
   const entry = deps.getSandbox(sandboxName);
   const channelEnabledInRegistry = registry
@@ -447,7 +447,10 @@ function runChannelHealthHook(
     channels: new Set([channelName]),
     currentSandbox: sandboxName,
     hookRegistry: createBuiltInMessagingHookRegistry({
-      statusHealth: { executeSandboxCommand: deps.execSandbox },
+      statusHealth: {
+        executeSandboxCommand: deps.execSandbox,
+        timeoutMs: probeTimeoutMs,
+      },
     }),
     extraInputs: channelHealthProbeInputs({
       currentSandbox: sandboxName,
@@ -467,26 +470,40 @@ function collectChannelReport(
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
   diagnostic: MessagingChannelDiagnosticSpec,
+  hasHealthHook: boolean,
+  deadlineMs?: number,
 ): ChannelStatusSingleReport {
+  const collectionDeps = deadlineMs === undefined ? deps : withExecDeadline(deps, deadlineMs);
+  const probeTimeoutMs =
+    deadlineMs === undefined
+      ? undefined
+      : Math.max(1, Math.min(DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS, deadlineMs - deps.nowMs()));
   const disabledChannels = new Set(
-    registry.getDisabledMessagingChannelsFromEntry(deps.getSandbox(sandboxName)),
+    registry.getDisabledMessagingChannelsFromEntry(collectionDeps.getSandbox(sandboxName)),
   );
   const channelIsPaused = disabledChannels.has(channelName);
   const healthReport =
-    channelHasChannelHealthStatusHook(channelName) && !channelIsPaused
-      ? runChannelHealthHook(sandboxName, channelName, agent, deps, diagnostic)
+    hasHealthHook && !channelIsPaused
+      ? runChannelHealthHook(
+          sandboxName,
+          channelName,
+          agent,
+          collectionDeps,
+          diagnostic,
+          probeTimeoutMs,
+        )
       : undefined;
   if (!healthReport) {
-    return buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic, {
+    return buildBasicChannelReport(sandboxName, channelName, agent, collectionDeps, diagnostic, {
       channelPaused: channelIsPaused,
     });
   }
   const configSignals = buildConfigStatusSignals(
     sandboxName,
     channelName,
-    deps.getSandbox(sandboxName),
+    collectionDeps.getSandbox(sandboxName),
     agent,
-    deps,
+    collectionDeps,
   );
   return {
     schemaVersion: 1,
@@ -496,53 +513,87 @@ function collectChannelReport(
   };
 }
 
+function withExecDeadline(deps: Required<StatusDeps>, deadlineMs: number): Required<StatusDeps> {
+  return {
+    ...deps,
+    execSandbox: (sandboxName, command, requestedTimeoutMs) => {
+      const remainingMs = deadlineMs - deps.nowMs();
+      if (remainingMs <= 0) return null;
+      return deps.execSandbox(
+        sandboxName,
+        command,
+        Math.min(requestedTimeoutMs ?? remainingMs, remainingMs),
+      );
+    },
+  };
+}
+
 async function waitForChannelReadiness(
   sandboxName: string,
   channelName: string,
-  collect: () => ChannelStatusSingleReport,
+  readinessSupported: boolean,
+  collect: (deadlineMs?: number) => ChannelStatusSingleReport,
   options: ChannelStatusOptions,
   deps: Required<StatusDeps>,
 ): Promise<ChannelStatusWaitReport> {
   const startedAt = deps.nowMs();
   const timeoutMs = positiveNumber(options.timeoutSeconds, DEFAULT_WAIT_TIMEOUT_SECONDS) * 1_000;
+  const deadlineMs = startedAt + timeoutMs;
   const pollIntervalMs = positiveNumber(options.pollIntervalMs, DEFAULT_WAIT_POLL_INTERVAL_MS);
-  let attempts = 0;
-
-  for (;;) {
-    attempts += 1;
-    const status = collect();
-    const observed = "report" in status ? status.report.readiness : undefined;
-    const elapsedMs = Math.max(0, deps.nowMs() - startedAt);
-    const lastObserved: ChannelReadiness = observed ?? {
+  const channelPaused = registry
+    .getDisabledMessagingChannelsFromEntry(deps.getSandbox(sandboxName))
+    .includes(channelName);
+  const pausedReadiness: ChannelReadiness | undefined =
+    channelPaused && readinessSupported
+      ? {
+          state: "terminal",
+          category: "runtime",
+          reason: "channel_paused",
+          retryable: false,
+          lastTransitionAt: null,
+        }
+      : undefined;
+  const readReadiness = (status: ChannelStatusSingleReport): ChannelReadiness =>
+    pausedReadiness ??
+    ("report" in status ? status.report.readiness : undefined) ?? {
       state: "terminal",
       category: "runtime",
       reason: "readiness_not_supported",
       retryable: false,
       lastTransitionAt: null,
     };
-    if (lastObserved.state === "waiting" && elapsedMs < timeoutMs) {
-      await deps.sleep(Math.min(pollIntervalMs, timeoutMs - elapsedMs));
-      continue;
-    }
-    const state: ChannelStatusWaitState =
-      lastObserved.state === "waiting" ? "timeout" : lastObserved.state;
-    return {
-      schemaVersion: 1,
-      sandbox: sandboxName,
-      channel: channelName,
-      status,
-      readiness: {
-        state,
-        category: state === "timeout" ? "timeout" : lastObserved.category,
-        reason: state === "timeout" ? "timeout" : lastObserved.reason,
-        retryable: lastObserved.retryable,
-        attempts,
-        elapsedMs,
-        lastTransitionAt: lastObserved.lastTransitionAt,
-        lastObserved,
-      },
-    };
+
+  let attempts = 1;
+  let status = collect(deadlineMs);
+  let lastObserved = readReadiness(status);
+  let elapsedMs = Math.max(0, deps.nowMs() - startedAt);
+  while (lastObserved.state === "waiting" && elapsedMs < timeoutMs) {
+    await deps.sleep(Math.min(pollIntervalMs, timeoutMs - elapsedMs));
+    elapsedMs = Math.max(0, deps.nowMs() - startedAt);
+    if (elapsedMs >= timeoutMs) break;
+    attempts += 1;
+    status = collect(deadlineMs);
+    lastObserved = readReadiness(status);
+    elapsedMs = Math.max(0, deps.nowMs() - startedAt);
   }
+  const state: ChannelStatusWaitState =
+    lastObserved.state === "waiting" ? "timeout" : lastObserved.state;
+  return {
+    schemaVersion: 1,
+    sandbox: sandboxName,
+    channel: channelName,
+    status,
+    readiness: {
+      state,
+      category: state === "timeout" ? "timeout" : lastObserved.category,
+      reason: state === "timeout" ? "timeout" : lastObserved.reason,
+      retryable: lastObserved.retryable,
+      attempts,
+      elapsedMs,
+      lastTransitionAt: lastObserved.lastTransitionAt,
+      lastObserved,
+    },
+  };
 }
 
 /**
@@ -616,9 +667,26 @@ export async function showSandboxChannelStatus(
     process.exit(1);
   }
 
-  const collect = () => collectChannelReport(sandboxName, channelName, agent, deps, diagnostic);
+  const statusHook = channelHealthStatusHook(channelName, agent);
+  const collect = (deadlineMs?: number) =>
+    collectChannelReport(
+      sandboxName,
+      channelName,
+      agent,
+      deps,
+      diagnostic,
+      Boolean(statusHook),
+      deadlineMs,
+    );
   const report: ChannelStatusReport = options.wait
-    ? await waitForChannelReadiness(sandboxName, channelName, collect, options, deps)
+    ? await waitForChannelReadiness(
+        sandboxName,
+        channelName,
+        statusHook?.providesReadiness === true,
+        collect,
+        options,
+        deps,
+      )
     : collect();
 
   if (!(asJson && quietJson)) {

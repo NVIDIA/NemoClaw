@@ -28,7 +28,6 @@ export * from "./openclaw-bridge-health";
 export * from "./socket-mode-gateway-conflict";
 export * from "./socket-mode-gateway-status";
 export * from "./status-health";
-export * from "./status-health-eval";
 export * from "./validate-credentials";
 
 export interface SlackHookOptions {

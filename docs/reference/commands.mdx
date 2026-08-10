@@ -2500,11 +2500,11 @@ Telegram health is probed only for OpenClaw sandboxes; a Hermes Telegram sandbox
 For OpenClaw Slack, `--channel slack` reports registration, policy coverage, the account runtime, Socket Mode transport, and the account probe.
 Add `--wait` to poll these conditions until Slack becomes operational, a terminal error occurs, or the timeout expires.
 The default timeout is 180 seconds, and `--timeout <seconds>` requires `--wait`.
+NemoClaw treats the timeout as the total budget for polling and live probes, limits each live probe to the remaining budget, and starts no probe at or after the deadline.
 Use `--json` with `--wait` for a structured readiness result with `readiness.state`, `readiness.category`, `readiness.reason`, `readiness.retryable`, `readiness.attempts`, `readiness.elapsedMs`, `readiness.lastTransitionAt`, and `readiness.lastObserved`.
-Slack `--wait` applies only to OpenClaw sandboxes.
-Other channel manifests return `readiness_not_supported` until they define equivalent readiness checks.
-On timeout, the command exits nonzero with `readiness.state`, `readiness.category`, and `readiness.reason` set to `timeout`.
-`readiness.retryable` mirrors the last observed channel state, while `readiness.lastObserved.category` and `readiness.lastObserved.reason` preserve the underlying network or runtime cause.
+Slack `--wait` applies only to OpenClaw sandboxes and uses its manifest-defined check; other channel manifests return `readiness_not_supported` until they define one.
+If Slack is paused with `channels stop`, the command skips the live probe and returns one terminal result with `readiness.reason` set to `channel_paused`.
+On timeout, the command exits nonzero with `readiness.state`, `readiness.category`, and `readiness.reason` set to `timeout`; its `readiness.retryable` mirrors the last observed state, whose category and reason preserve the underlying cause.
 
 For registered channel details and the compact summary, the status output compares non-secret config inputs from the sandbox registry against the values rendered into the agent config, such as Telegram group policy in `openclaw.json` or mention mode in Hermes config.
 Secret inputs, including tokens, are not printed.

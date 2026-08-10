@@ -252,6 +252,7 @@ export const slackManifest = {
       id: "slack-status-health",
       phase: "status",
       handler: "slack.statusHealth",
+      providesReadiness: true,
       agents: ["openclaw"],
       outputs: [
         {

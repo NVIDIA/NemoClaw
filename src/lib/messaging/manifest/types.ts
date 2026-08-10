@@ -260,6 +260,7 @@ export interface ChannelHookSpec {
   readonly id: string;
   readonly phase: ChannelHookPhase;
   readonly handler: string;
+  readonly providesReadiness?: true;
   readonly agents?: readonly MessagingAgentId[];
   readonly inputs?: readonly string[];
   readonly outputs?: readonly ChannelHookOutputSpec[];

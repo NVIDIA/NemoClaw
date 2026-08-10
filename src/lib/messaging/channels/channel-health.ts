@@ -54,6 +54,8 @@ export type ChannelHealthReport = {
 /** `kind: "status"` output `value.type` carrying a {@link ChannelHealthReport}. */
 export const MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE = "messaging-channel-health";
 
+export const DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS = 8_000;
+
 export interface ChannelHealthCommandResult {
   readonly status?: number | null;
   readonly stdout?: unknown;

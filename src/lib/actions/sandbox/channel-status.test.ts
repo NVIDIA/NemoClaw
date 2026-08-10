@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { entry, makeDeps, showSandboxChannelStatus } from "./channel-status.test-helpers";
+import {
+  entry,
+  makeDeps,
+  showSandboxChannelStatus,
+  TELEGRAM_PROBE_UNKNOWN_STDOUT,
+} from "./channel-status.test-helpers";
 
 // The whatsapp status hook now reads OpenClaw's authoritative live status JSON
 // (`openclaw channels status --channel whatsapp --json`) instead of scraping
@@ -351,40 +356,58 @@ function slackStatusJson(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-function slackWaitHarness(accounts: readonly Record<string, unknown>[] | null) {
+function slackWaitHarness(
+  accounts: readonly Record<string, unknown>[],
+  options: {
+    paused?: boolean;
+    agentName?: "openclaw" | "hermes";
+    probeDurationsMs?: readonly number[];
+    configDurationMs?: number;
+  } = {},
+) {
   let clock = 0;
   let readinessProbe = 0;
   const sleep = vi.fn(async (milliseconds: number) => {
     clock += milliseconds;
   });
-  const nextSlackStatus = () => {
+  const probe = vi.fn((timeoutMs = 0) => {
+    const probeDurationMs =
+      options.probeDurationsMs?.[Math.min(readinessProbe, options.probeDurationsMs.length - 1)] ??
+      0;
+    clock += Math.min(probeDurationMs, timeoutMs);
     const account = accounts?.[Math.min(readinessProbe, accounts.length - 1)] ?? {};
     readinessProbe += 1;
     return { status: 0, stdout: slackStatusJson(account), stderr: "" };
-  };
+  });
+  const configRead = vi.fn((timeoutMs = 0) => {
+    clock += Math.min(options.configDurationMs ?? 0, timeoutMs);
+    return { status: 0, stdout: "{}", stderr: "" };
+  });
+  const agentName = options.agentName ?? "openclaw";
   const { deps } = makeDeps({
-    sandbox: entry(["slack"]),
+    agentName,
+    sandbox: entry(["slack"], options.paused ? ["slack"] : [], {}, agentName),
     appliedPresets: ["slack"],
     gatewayPresets: ["slack"],
-    exec: (_sandbox, command) =>
-      command.startsWith("openclaw channels status")
-        ? accounts === null
-          ? null
-          : nextSlackStatus()
-        : { status: 0, stdout: "{}", stderr: "" },
+    exec: (_sandbox, command, timeoutMs) =>
+      command.startsWith("openclaw channels status") ? probe(timeoutMs) : configRead(timeoutMs),
     nowMs: () => clock,
     sleep,
   });
-  return { deps, sleep };
+  return { deps, probe, configRead, sleep };
 }
 
-function waitForSlack(deps: ReturnType<typeof slackWaitHarness>["deps"], timeoutSeconds = 10) {
+function waitForSlack(
+  deps: ReturnType<typeof slackWaitHarness>["deps"],
+  timeoutSeconds = 10,
+  pollIntervalMs = 5_000,
+) {
   return showSandboxChannelStatus("alpha", {
     deps,
     channel: "slack",
     wait: true,
     timeoutSeconds,
-    pollIntervalMs: 5_000,
+    pollIntervalMs,
     asJson: true,
     quietJson: true,
   });
@@ -409,32 +432,34 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
     });
   });
 
-  it("returns a terminal credential failure without another poll (#7383)", async () => {
-    const { deps, sleep } = slackWaitHarness([
-      {
-        running: false,
-        connected: false,
-        botTokenStatus: "configured_unavailable",
-        probe: { ok: false, error: "missing token" },
-      },
-    ]);
+  it.each([
+    ["openclaw", "channel_paused"],
+    ["hermes", "readiness_not_supported"],
+  ] as const)("returns the agent-appropriate terminal result for paused %s Slack (#7383)", async (agentName, reason) => {
+    const { deps, probe, sleep } = slackWaitHarness([{}], { paused: true, agentName });
 
     const result = await waitForSlack(deps);
 
     expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
       state: "terminal",
-      category: "credential",
-      reason: "credentials_unavailable",
+      category: "runtime",
+      reason,
+      retryable: false,
       attempts: 1,
       elapsedMs: 0,
     });
+    expect(result && (await import("./channel-status")).exitCodeFor(result)).toBe(1);
+    expect(probe).not.toHaveBeenCalled();
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("returns timeout with the last retryable network reason (#7383)", async () => {
-    const { deps } = slackWaitHarness(null);
+  it("bounds every sandbox command by one wait deadline (#7383)", async () => {
+    const { deps, probe, configRead, sleep } = slackWaitHarness(
+      [{ connected: false }, { connected: false }],
+      { probeDurationsMs: [400, 800], configDurationMs: 300 },
+    );
 
-    const result = await waitForSlack(deps, 5);
+    const result = await waitForSlack(deps, 2, 500);
 
     expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
       state: "timeout",
@@ -442,12 +467,53 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
       reason: "timeout",
       retryable: true,
       attempts: 2,
-      elapsedMs: 5_000,
+      elapsedMs: 2_000,
       lastObserved: {
-        state: "waiting",
         category: "network",
-        reason: "status_probe_unreachable",
+        reason: "socket_mode_connecting",
       },
     });
+    expect(probe.mock.calls.map(([timeoutMs]) => timeoutMs)).toEqual([2_000, 800]);
+    expect(configRead.mock.calls.map(([timeoutMs]) => timeoutMs)).toEqual([1_600]);
+    expect(sleep).toHaveBeenCalledWith(500);
+  });
+});
+
+describe("showSandboxChannelStatus unsupported readiness wait", () => {
+  it("returns readiness_not_supported after one Telegram status collection (#7383)", async () => {
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const exec = vi.fn((_sandbox: string, command: string, _timeoutMs?: number) => ({
+      status: 0,
+      stdout: command.includes("/tmp/gateway.log") ? TELEGRAM_PROBE_UNKNOWN_STDOUT : "{}",
+      stderr: "",
+    }));
+    const { deps } = makeDeps({
+      exec,
+      sandbox: entry(["telegram"]),
+      appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
+      sleep,
+    });
+
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "telegram",
+      wait: true,
+      asJson: true,
+      quietJson: true,
+    });
+
+    expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
+      state: "terminal",
+      category: "runtime",
+      reason: "readiness_not_supported",
+      attempts: 1,
+      lastObserved: { reason: "readiness_not_supported" },
+    });
+    expect(result && (await import("./channel-status")).exitCodeFor(result)).toBe(1);
+    expect(
+      exec.mock.calls.filter(([, command]) => String(command).includes("/tmp/gateway.log")),
+    ).toHaveLength(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
 });

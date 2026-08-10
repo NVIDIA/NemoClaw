@@ -1,18 +1,31 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
+import type {
+  MessagingHookHandler,
+  MessagingHookInputMap,
+  MessagingHookRegistration,
+} from "../../../hooks/types";
 import type { MessagingSerializableValue } from "../../../manifest";
 import {
+  type ChannelHealthReport,
+  type ChannelReadiness,
   type ChannelReadinessCategory,
   type ChannelStatusHealthHookOptions,
+  DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS,
+  type DiagnosticSignal,
   MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
 } from "../../channel-health";
-import { evaluateSlackReadiness, type SlackReadinessInput } from "./status-health-eval";
 
 export const SLACK_STATUS_HEALTH_HOOK_HANDLER_ID = "slack.statusHealth";
-const DEFAULT_TIMEOUT_MS = 8_000;
 const CREDENTIAL_STATUS_KEYS = ["botTokenStatus", "appTokenStatus"] as const;
+const HINTS: Record<ChannelReadinessCategory, string> = {
+  credential: "replace the rejected Slack credential, then rebuild the sandbox",
+  plugin: "rebuild the sandbox and inspect OpenClaw plugin startup logs",
+  policy: "restore the slack network policy preset before retrying",
+  network: "inspect OpenClaw logs if Socket Mode does not connect before the timeout",
+  runtime: "inspect OpenClaw logs if the Slack account does not start before the timeout",
+};
 
 export type SlackStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 
@@ -25,29 +38,14 @@ export function createSlackStatusHealthHook(
     const sandboxName = normalizeString(context.inputs?.currentSandbox);
     if (!execute || !sandboxName) return {};
 
-    const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+    const timeoutMs =
+      typeof options.timeoutMs === "number" &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
+        ? options.timeoutMs
+        : DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS;
     const probe = runSlackStatusProbe(execute, sandboxName, timeoutMs);
-    const accountProbe = readObject(probe.account?.probe);
-    const input: SlackReadinessInput = {
-      agent: normalizeString(context.inputs?.agent) ?? "openclaw",
-      probedAt: normalizeString(context.inputs?.probedAt) ?? "",
-      lastTransitionAt: probe.lastTransitionAt,
-      channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
-      presetInRegistry: Boolean(context.inputs?.presetInRegistry),
-      presetOnGateway: normalizeBoolean(context.inputs?.presetOnGateway),
-      probeReachable: probe.probeReachable,
-      pluginConfigured: probe.pluginConfigured,
-      accountPresent: probe.account !== null,
-      accountEnabled: normalizeBoolean(probe.account?.enabled),
-      accountConfigured: normalizeBoolean(probe.account?.configured),
-      running: normalizeBoolean(probe.account?.running),
-      connected: normalizeBoolean(probe.account?.connected),
-      credentialUnavailable: hasUnavailableCredential(probe.account),
-      probeOk: normalizeBoolean(accountProbe?.ok),
-      probeFailureCategory: classifyFailure(normalizeString(accountProbe?.error)),
-      lastErrorCategory: classifyFailure(normalizeString(probe.account?.lastError)),
-    };
-    const report = evaluateSlackReadiness(input);
+    const report = evaluateSlackReadiness(context.inputs, probe);
     return {
       outputs: {
         channelHealth: {
@@ -90,19 +88,19 @@ function runSlackStatusProbe(
   sandboxName: string,
   timeoutMs: number,
 ): SlackStatusProbe {
-  let result: ReturnType<typeof execute>;
+  let payload: unknown;
   try {
-    result = execute(
+    const result = execute(
       sandboxName,
       `openclaw channels status --channel slack --probe --json --timeout ${timeoutMs}`,
       timeoutMs,
     );
+    if (!result || result.status !== 0) return UNREACHABLE_PROBE;
+    payload = JSON.parse(String(result.stdout ?? ""));
   } catch {
     return UNREACHABLE_PROBE;
   }
-  if (!result || result.status !== 0) return UNREACHABLE_PROBE;
-  const payload = parseJsonObject(String(result.stdout ?? ""));
-  if (!payload || payload.gatewayReachable === false) return UNREACHABLE_PROBE;
+  if (!isObjectRecord(payload) || payload.gatewayReachable === false) return UNREACHABLE_PROBE;
   const accountsByChannel = readObject(payload.channelAccounts);
   if (!accountsByChannel) return UNREACHABLE_PROBE;
   const accounts = Array.isArray(accountsByChannel.slack)
@@ -119,6 +117,164 @@ function runSlackStatusProbe(
   };
 }
 
+function evaluateSlackReadiness(
+  inputs: MessagingHookInputMap | undefined,
+  probe: SlackStatusProbe,
+): ChannelHealthReport & { readiness: ChannelReadiness } {
+  const accountProbe = readObject(probe.account?.probe);
+  const input = {
+    agent: normalizeString(inputs?.agent) ?? "openclaw",
+    probedAt: normalizeString(inputs?.probedAt) ?? "",
+    lastTransitionAt: probe.lastTransitionAt,
+    channelEnabledInRegistry: Boolean(inputs?.channelEnabledInRegistry),
+    presetInRegistry: Boolean(inputs?.presetInRegistry),
+    presetOnGateway: normalizeBoolean(inputs?.presetOnGateway),
+    probeReachable: probe.probeReachable,
+    pluginConfigured: probe.pluginConfigured,
+    accountPresent: probe.account !== null,
+    accountEnabled: normalizeBoolean(probe.account?.enabled),
+    accountConfigured: normalizeBoolean(probe.account?.configured),
+    running: normalizeBoolean(probe.account?.running),
+    connected: normalizeBoolean(probe.account?.connected),
+    credentialUnavailable: CREDENTIAL_STATUS_KEYS.some(
+      (key) => probe.account?.[key] === "configured_unavailable",
+    ),
+    probeOk: normalizeBoolean(accountProbe?.ok),
+    probeFailureCategory: classifyFailure(normalizeString(accountProbe?.error)),
+    lastErrorCategory: classifyFailure(normalizeString(probe.account?.lastError)),
+  };
+  const result = (
+    state: ChannelReadiness["state"],
+    category: ChannelReadinessCategory | null,
+    reason: string,
+  ): ChannelReadiness => ({
+    state,
+    category,
+    reason,
+    retryable: state === "waiting",
+    lastTransitionAt: input.lastTransitionAt,
+  });
+  const classify = (): ChannelReadiness => {
+    if (!input.channelEnabledInRegistry)
+      return result("terminal", "runtime", "channel_not_registered");
+    if (!input.presetInRegistry || input.presetOnGateway === false)
+      return result("terminal", "policy", "policy_missing");
+    if (input.presetOnGateway === null)
+      return result("waiting", "network", "policy_status_unavailable");
+    if (!input.probeReachable) return result("waiting", "network", "status_probe_unreachable");
+    if (input.pluginConfigured === false)
+      return result("terminal", "plugin", "plugin_not_configured");
+    if (!input.accountPresent) return result("waiting", "runtime", "account_initializing");
+    if (input.credentialUnavailable || input.accountConfigured === false)
+      return result("terminal", "credential", "credentials_unavailable");
+    if (input.accountEnabled === false) return result("terminal", "runtime", "account_disabled");
+    if (input.lastErrorCategory === "credential")
+      return result("terminal", "credential", "credential_rejected");
+    if (input.lastErrorCategory === "plugin") return result("terminal", "plugin", "plugin_failed");
+    if (input.lastErrorCategory === "runtime")
+      return result("terminal", "runtime", "runtime_failed");
+    if (input.running !== true) return result("waiting", "runtime", "runtime_starting");
+    if (input.connected !== true) return result("waiting", "network", "socket_mode_connecting");
+    if (input.probeOk === false) {
+      if (input.probeFailureCategory === "credential")
+        return result("terminal", "credential", "credential_probe_failed");
+      if (input.probeFailureCategory === "plugin")
+        return result("terminal", "plugin", "plugin_probe_failed");
+      return result("waiting", input.probeFailureCategory ?? "network", "account_probe_retryable");
+    }
+    return input.probeOk === true
+      ? result("ready", null, "operational")
+      : result("waiting", "runtime", "account_probe_pending");
+  };
+  const runtimeSignal = (): DiagnosticSignal => {
+    if (!input.probeReachable)
+      return signal("Runtime process", "warn", "OpenClaw channel status is not reachable");
+    if (input.pluginConfigured === false)
+      return signal(
+        "Runtime process",
+        "fail",
+        "OpenClaw does not report a configured Slack plugin",
+      );
+    if (!input.accountPresent)
+      return signal("Runtime process", "warn", "OpenClaw has not published the Slack account yet");
+    if (input.accountEnabled === false)
+      return signal("Runtime process", "fail", "Slack account is disabled");
+    return signal(
+      "Runtime process",
+      input.running === true ? "ok" : "warn",
+      input.running === true ? "Slack account runtime is running" : "Slack account is starting",
+    );
+  };
+  const probeSignal = (): DiagnosticSignal => {
+    if (input.credentialUnavailable)
+      return signal(
+        "Account probe",
+        "fail",
+        "Slack credentials are configured but unavailable to OpenClaw",
+      );
+    if (input.probeOk === true)
+      return signal("Account probe", "ok", "Slack account probe succeeded");
+    if (input.probeOk === false)
+      return signal(
+        "Account probe",
+        input.probeFailureCategory === "credential" ? "fail" : "warn",
+        input.probeFailureCategory === "credential"
+          ? "Slack rejected the account credential"
+          : "Slack account probe did not complete",
+      );
+    return signal("Account probe", "info", "Slack account probe is pending");
+  };
+
+  const readiness = classify();
+  const policyMissing = !input.presetInRegistry || input.presetOnGateway === false;
+  return {
+    schemaVersion: 1,
+    channel: "slack",
+    agent: input.agent,
+    verdict:
+      readiness.state === "ready"
+        ? "healthy"
+        : readiness.state === "waiting"
+          ? "initializing"
+          : (readiness.category ?? "runtime") + "_failure",
+    probedAt: input.probedAt,
+    signals: [
+      signal(
+        "Channel registration",
+        input.channelEnabledInRegistry ? "ok" : "fail",
+        input.channelEnabledInRegistry ? "slack registered" : "slack not registered",
+        input.channelEnabledInRegistry
+          ? undefined
+          : "add the Slack channel before waiting for readiness",
+      ),
+      signal(
+        "Policy coverage",
+        policyMissing ? "fail" : input.presetOnGateway === true ? "ok" : "info",
+        !input.presetInRegistry
+          ? "slack preset not recorded for the sandbox"
+          : input.presetOnGateway === false
+            ? "slack preset missing from the OpenShell gateway"
+            : input.presetOnGateway === true
+              ? "slack preset applied"
+              : "slack preset recorded; gateway policy could not be inspected",
+      ),
+      runtimeSignal(),
+      signal(
+        "Socket Mode transport",
+        input.connected === true ? "ok" : input.connected === false ? "warn" : "info",
+        input.connected === true
+          ? "connected"
+          : input.connected === false
+            ? "not connected"
+            : "connection state not reported",
+      ),
+      probeSignal(),
+    ],
+    hints: readiness.state === "ready" ? [] : [HINTS[readiness.category ?? "runtime"]],
+    readiness,
+  };
+}
+
 function latestTimestamp(account: Record<string, unknown> | null): string | null {
   if (!account) return null;
   const candidates = ["lastStartAt", "lastStopAt", "lastProbeAt"]
@@ -129,11 +285,6 @@ function latestTimestamp(account: Record<string, unknown> | null): string | null
   if (candidates.length === 0) return null;
   const latest = new Date(Math.max(...candidates));
   return Number.isNaN(latest.getTime()) ? null : latest.toISOString();
-}
-
-function hasUnavailableCredential(account: Record<string, unknown> | null): boolean {
-  if (!account) return false;
-  return CREDENTIAL_STATUS_KEYS.some((key) => account[key] === "configured_unavailable");
 }
 
 function classifyFailure(value: string | null): ChannelReadinessCategory | null {
@@ -152,15 +303,6 @@ function classifyFailure(value: string | null): ChannelReadinessCategory | null 
   return "runtime";
 }
 
-function parseJsonObject(value: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return isObjectRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 function readObject(value: unknown): Record<string, unknown> | null {
   return isObjectRecord(value) ? value : null;
 }
@@ -177,8 +319,11 @@ function normalizeBoolean(value: unknown): boolean | null {
   return value === true ? true : value === false ? false : null;
 }
 
-function normalizeTimeoutMs(value: number | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : DEFAULT_TIMEOUT_MS;
+function signal(
+  label: string,
+  severity: DiagnosticSignal["severity"],
+  detail: string,
+  hint?: string,
+): DiagnosticSignal {
+  return { label, severity, detail, ...(hint ? { hint } : {}) };
 }

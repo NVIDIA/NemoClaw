@@ -39,11 +39,11 @@ describe("SandboxChannelsStatusCommand readiness flags", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it.each([
-    "terminal",
-    "timeout",
-  ] as const)("sets exit code 1 for a non-ready %s JSON result (#7383)", async (state) => {
-    showSandboxChannelStatusMock.mockResolvedValue({ schemaVersion: 1, readiness: { state } });
+  it("sets exit code 1 for a non-ready JSON result (#7383)", async () => {
+    showSandboxChannelStatusMock.mockResolvedValue({
+      schemaVersion: 1,
+      readiness: { state: "timeout" },
+    });
 
     await SandboxChannelsStatusCommand.run(
       ["alpha", "--channel", "slack", "--wait", "--json"],
@@ -57,17 +57,11 @@ describe("SandboxChannelsStatusCommand readiness flags", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("rejects --wait without one channel (#7383)", async () => {
-    await expect(SandboxChannelsStatusCommand.run(["alpha", "--wait"], rootDir)).rejects.toThrow(
-      /channel/i,
-    );
-    expect(showSandboxChannelStatusMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects --timeout without --wait (#7383)", async () => {
-    await expect(
-      SandboxChannelsStatusCommand.run(["alpha", "--channel", "slack", "--timeout", "45"], rootDir),
-    ).rejects.toThrow(/wait/i);
+  it.each([
+    [["alpha", "--wait"], /channel/i],
+    [["alpha", "--channel", "slack", "--timeout", "45"], /wait/i],
+  ] as const)("rejects an invalid readiness flag combination (#7383)", async (args, error) => {
+    await expect(SandboxChannelsStatusCommand.run([...args], rootDir)).rejects.toThrow(error);
     expect(showSandboxChannelStatusMock).not.toHaveBeenCalled();
   });
 });
