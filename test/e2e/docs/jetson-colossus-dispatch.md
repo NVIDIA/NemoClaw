@@ -753,6 +753,8 @@ An invalid matching file fails initialization before the dispatcher accepts work
 Status and artifact requests both restore an evicted completed status from its private file.
 Only an artifact request returns the persisted log and archive.
 A repeated deterministic dispatch returns the persisted completed status without rerunning candidate code or clearing its evidence.
+The dispatcher persists terminal status before it removes `device.lock`.
+If that persistence fails, it reports a completed in-memory failure and retains the lock.
 
 After the workflow completes, independently verify every allowlisted resource is absent.
 Require the private `<jobId>.cleanup.json` file and verify every recorded volume and process ID is absent.
@@ -773,6 +775,9 @@ They do not attest that cleanup reversed every possible host change made by cand
 The dispatcher permits one active job.
 A process interruption leaves `device.lock` in the state directory.
 On startup, the dispatcher invokes the cleanup program before it removes that stale lock or accepts more work.
+After successful cleanup, a valid queued or running record for the locked job becomes a durable completed failure with `cleanup: "succeeded"` and error `Jetson dispatcher restarted before terminal status was persisted`.
+Only then does the dispatcher remove the lock; if this recovery persistence fails, the lock remains.
+A repeated deterministic dispatch returns that recovered failure without rerunning candidate code.
 If cleanup fails, startup fails or the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "failed"`.
 If cleanup succeeds but lock removal fails, the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "succeeded"`.
 The lock remains in either case.
@@ -794,9 +799,11 @@ sudo systemctl stop nemoclaw-jetson-dispatch.service
 An invalid matching `<jobId>.json` file also fails startup and enters the same retry loop.
 Set `JOB_ID` from the exact basename in the startup error.
 For this failure, preserve and inspect the named private file under the approved incident-retention policy; treat its JSON as private candidate output.
-The following command validates the exact basename, stops the retry loop, requires `ActiveState=inactive`, and proves `device.lock` absent before quarantine.
+The following command validates the exact basename, stops the retry loop, requires `ActiveState=inactive`, and accepts either no `device.lock` or the service-owned, mode `0600`, single-link regular lock whose exact contents are `JOB_ID` plus its terminating newline.
+A mismatched, nonregular, or symbolic-link lock blocks recovery.
 It rejects a symbolic link or non-directory quarantine parent and verifies `root:root` mode `0700` without following links.
 It then moves the exact object without overwriting retained evidence and restarts the service.
+For a matching lock, startup reruns cleanup and removes the lock only after cleanup succeeds; never remove the lock manually.
 After it returns, repeat the loopback-bind and anonymous HTTP `401` checks under [Configure the Dispatcher Service](#configure-the-dispatcher-service) before accepting work.
 
 ```bash
@@ -807,12 +814,19 @@ state=/var/lib/nemoclaw-jetson-dispatch/state
 status_file="$state/$JOB_ID.json"
 quarantine=/var/lib/nemoclaw-jetson-status-quarantine
 quarantine_file="$quarantine/$JOB_ID.json.invalid"
+lock="$state/device.lock"
+dispatcher_uid="$(id -u nemoclaw-jetson-dispatch)"
+dispatcher_gid="$(id -g nemoclaw-jetson-dispatch)"
 sudo systemctl stop nemoclaw-jetson-dispatch.service
 test "$(sudo systemctl show --property=ActiveState --value \
   nemoclaw-jetson-dispatch.service)" = inactive
 sudo stat -- "$status_file"
-sudo test ! -e "$state/device.lock"
-sudo test ! -L "$state/device.lock"
+sudo test ! -L "$lock"
+if sudo test -e "$lock"; then
+  test "$(sudo stat --format='%F:%u:%g:%a:%h' -- "$lock")" = \
+    "regular file:$dispatcher_uid:$dispatcher_gid:600:1"
+  printf '%s\n' "$JOB_ID" | sudo cmp --silent -- "$lock" -
+fi
 sudo test ! -L "$quarantine"
 if sudo test -e "$quarantine"; then
   test "$(sudo stat --format='%F:%u:%g:%a' -- "$quarantine")" = \

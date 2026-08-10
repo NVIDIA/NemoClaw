@@ -440,6 +440,66 @@ describe("Jetson single-device lifecycle", () => {
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
   });
 
+  it("keeps the lock until restart persists a terminal result (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const expectedResult = await worker().run(REQUEST, {
+      jobId: "e".repeat(64),
+      signal: new AbortController().signal,
+    });
+    let finishRun!: () => void;
+    const run = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finishRun = resolve;
+      });
+      return expectedResult;
+    });
+    const first = coordinator(stateDirectory, worker({ run }));
+    await first.initialize();
+    const accepted = first.dispatch(REQUEST, identity());
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const statusPath = path.join(stateDirectory, `${accepted.jobId}.json`);
+    const runningStatus = fs.readFileSync(statusPath, "utf8");
+    fs.rmSync(statusPath);
+    fs.mkdirSync(statusPath);
+
+    finishRun();
+    const failedPersistence = await waitForCompletion(first, accepted.jobId);
+
+    expect(failedPersistence).toMatchObject({
+      cleanup: "succeeded",
+      conclusion: "failure",
+      error: expect.stringContaining("Final status persistence failed"),
+    });
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+
+    const recoveryCleanup = vi.fn(async () => {});
+    await expect(
+      coordinator(stateDirectory, worker({ cleanup: recoveryCleanup })).initialize(),
+    ).rejects.toThrow(`Jetson dispatch status ${accepted.jobId}.json is invalid`);
+    expect(recoveryCleanup).toHaveBeenCalledOnce();
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+
+    fs.rmSync(statusPath, { recursive: true });
+    fs.writeFileSync(statusPath, runningStatus, { mode: 0o600 });
+    const replayRun = vi.fn(worker().run);
+    const restarted = coordinator(
+      stateDirectory,
+      worker({ cleanup: recoveryCleanup, run: replayRun }),
+    );
+    await restarted.initialize();
+
+    expect(restarted.status(accepted.jobId)).toMatchObject({
+      cleanup: "succeeded",
+      conclusion: "failure",
+      error: "Jetson dispatcher restarted before terminal status was persisted",
+      state: "completed",
+    });
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
+    expect(recoveryCleanup).toHaveBeenCalledTimes(2);
+    expect(restarted.dispatch(REQUEST, identity()).state).toBe("completed");
+    expect(replayRun).not.toHaveBeenCalled();
+  });
+
   it("restores completed evidence without replaying the job after restart (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
     const first = coordinator(stateDirectory, worker());

@@ -176,10 +176,7 @@ function parseDeviceIdentity(value: unknown): JetsonDeviceIdentity | undefined {
   };
 }
 
-function parsePersistedCompletedStatus(
-  contents: string,
-  expectedJobId: string,
-): JetsonDispatchStatus | null {
+function parsePersistedStatus(contents: string, expectedJobId: string): JetsonDispatchStatus {
   let value: unknown;
   try {
     value = JSON.parse(contents);
@@ -198,7 +195,23 @@ function parsePersistedCompletedStatus(
   ) {
     throw new Error("persisted Jetson dispatch status does not match its job ID");
   }
-  if (status.state === "queued" || status.state === "running") return null;
+  const createdAt = parseTimestamp(status.createdAt, "createdAt");
+  if (status.state === "queued" || status.state === "running") {
+    if (status.cleanup !== "pending") {
+      throw new Error("persisted incomplete Jetson dispatch cleanup is invalid");
+    }
+    return {
+      schemaVersion: 1,
+      jobId: expectedJobId,
+      request,
+      state: status.state,
+      createdAt,
+      ...(status.state === "running"
+        ? { startedAt: parseTimestamp(status.startedAt, "startedAt") }
+        : {}),
+      cleanup: "pending",
+    };
+  }
   if (status.state !== "completed") {
     throw new Error("persisted Jetson dispatch status has an invalid state");
   }
@@ -211,7 +224,6 @@ function parsePersistedCompletedStatus(
   ) {
     throw new Error("persisted Jetson dispatch result fields are invalid");
   }
-  const createdAt = parseTimestamp(status.createdAt, "createdAt");
   const startedAt = parseTimestamp(status.startedAt, "startedAt");
   const completedAt = parseTimestamp(status.completedAt, "completedAt");
   const device = parseDeviceIdentity(status.device);
@@ -298,6 +310,16 @@ export class JetsonDispatchCoordinator {
       await withTimeout(this.#cleanupTimeoutMs, (signal) =>
         this.#worker.cleanup({ jobId, signal }),
       );
+      const recoveredStatus = this.#readStatus(jobId);
+      if (recoveredStatus && recoveredStatus.state !== "completed") {
+        recoveredStatus.state = "completed";
+        recoveredStatus.conclusion = "failure";
+        recoveredStatus.startedAt ??= recoveredStatus.createdAt;
+        recoveredStatus.completedAt = new Date().toISOString();
+        recoveredStatus.cleanup = "succeeded";
+        recoveredStatus.error = "Jetson dispatcher restarted before terminal status was persisted";
+        this.#persist(recoveredStatus);
+      }
       fs.unlinkSync(this.#lockPath);
     }
     this.#restoreCompletedStatuses();
@@ -463,29 +485,39 @@ export class JetsonDispatchCoordinator {
           : cleanupError;
         conclusion = "cleanup-failed";
       }
-      if (status.cleanup === "succeeded") {
+      status.conclusion = conclusion;
+      status.state = "completed";
+      status.completedAt = new Date().toISOString();
+      let terminalStatusPersisted = false;
+      try {
+        this.#persist(status);
+        terminalStatusPersisted = true;
+      } catch (error) {
+        const persistenceError = `Final status persistence failed: ${safeError(error)}`;
+        status.error = status.error
+          ? `${status.error}; ${persistenceError}`.slice(0, 500)
+          : persistenceError;
+        if (status.conclusion !== "cleanup-failed") status.conclusion = "failure";
+      }
+      if (status.cleanup === "succeeded" && terminalStatusPersisted) {
         try {
           fs.unlinkSync(this.#lockPath);
         } catch (error) {
           const lockError = `Jetson lock removal failed: ${safeError(error)}`;
           status.error = status.error ? `${status.error}; ${lockError}`.slice(0, 500) : lockError;
-          conclusion = "cleanup-failed";
+          status.conclusion = "cleanup-failed";
+          try {
+            this.#persist(status);
+          } catch (persistError) {
+            const persistenceError = `Lock failure persistence failed: ${safeError(persistError)}`;
+            status.error = `${status.error}; ${persistenceError}`.slice(0, 500);
+          }
         }
       }
-      status.conclusion = conclusion;
-      status.state = "completed";
-      status.completedAt = new Date().toISOString();
-      try {
-        this.#persist(status);
-      } catch (error) {
-        status.error = `Final status persistence failed: ${safeError(error)}`;
-        status.conclusion = "failure";
-      } finally {
-        this.#activeAbort = undefined;
-        this.#activeRun = undefined;
-        this.#activeJobId = undefined;
-        this.#cancelRequested = false;
-      }
+      this.#activeAbort = undefined;
+      this.#activeRun = undefined;
+      this.#activeJobId = undefined;
+      this.#cancelRequested = false;
     }
   }
 
@@ -513,21 +545,21 @@ export class JetsonDispatchCoordinator {
   #findStatus(jobId: string): JetsonDispatchStatus | undefined {
     const existing = this.#jobs.get(jobId);
     if (existing || !JOB_ID_PATTERN.test(jobId)) return existing;
-    const restored = this.#readCompletedStatus(jobId);
-    if (restored) {
+    const restored = this.#readStatus(jobId);
+    if (restored?.state === "completed") {
       this.#evictOldestCompletedJob();
       this.#jobs.set(jobId, restored);
     }
-    return restored ?? undefined;
+    return restored?.state === "completed" ? restored : undefined;
   }
 
-  #readCompletedStatus(jobId: string): JetsonDispatchStatus | null {
+  #readStatus(jobId: string): JetsonDispatchStatus | null {
     try {
       const contents = readPrivateRegularFile(this.#statusPath(jobId), {
         allowMissing: true,
         maxBytes: MAX_JETSON_DISPATCH_STATUS_BYTES,
       });
-      return contents === null ? null : parsePersistedCompletedStatus(contents, jobId);
+      return contents === null ? null : parsePersistedStatus(contents, jobId);
     } catch (error) {
       throw new Error(`Jetson dispatch status ${jobId}.json is invalid: ${safeError(error)}`);
     }
@@ -539,8 +571,8 @@ export class JetsonDispatchCoordinator {
       .flatMap((name) => {
         const match = STATUS_FILE_PATTERN.exec(name);
         if (!match) return [];
-        const status = this.#readCompletedStatus(match[1]!);
-        return status === null ? [] : [status];
+        const status = this.#readStatus(match[1]!);
+        return status?.state === "completed" ? [status] : [];
       })
       .sort((left, right) => left.completedAt!.localeCompare(right.completedAt!))
       .slice(-MAX_RETAINED_JOB_STATUSES);
