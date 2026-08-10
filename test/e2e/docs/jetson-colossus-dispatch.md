@@ -60,8 +60,19 @@ git --version
 npm --version
 npm_version="$(npm --version)"
 test "${npm_version%%.*}" -ge 10
-command -v bash curl docker git node npm ollama openshell timeout
-openshell --version
+command -v bash curl docker git node npm ollama timeout
+for openshell_component in openshell openshell-gateway openshell-sandbox; do
+  if command -v "$openshell_component" >/dev/null 2>&1; then
+    echo 'OpenShell must be absent from the prepared Jetson' >&2
+    exit 1
+  fi
+  for host_bin in \
+    "/usr/local/bin/$openshell_component" \
+    "/usr/bin/$openshell_component" \
+    "$HOME/.local/bin/$openshell_component"; do
+    test ! -e "$host_bin" && test ! -L "$host_bin"
+  done
+done
 ollama list
 docker info --format '{{json .Runtimes}}'
 test -c /dev/nvmap
@@ -70,13 +81,31 @@ if sudo -n true 2>/dev/null; then echo 'unexpected passwordless sudo'; exit 1; f
 
 The architecture must be `aarch64`.
 Node.js must be version 22.19.0 or later, and npm must have major version 10 or later.
-The OpenShell version command and `ollama list` must both succeed.
+OpenShell must be absent from the host `PATH` and the three checked host binary directories.
+Do not preinstall OpenShell on the Jetson.
+The `ollama list` command must succeed.
 Docker must expose the NVIDIA runtime required by the existing Jetson live E2E test.
 Preinstall Ollama so candidate code does not invoke its host installer.
 The `nvidia` account must not have passwordless `sudo` access.
-The worker gives each job its own `HOME`, `TMPDIR`, XDG directories, and npm prefix under the job workspace.
-The test installs the NemoClaw CLI and its state only in those job-owned paths, so workspace removal removes them without a host-wide uninstall.
-If a later reviewed cleanup path requires the NemoClaw uninstaller, it must use `--keep-openshell` and must retain the same resource allowlist.
+
+The worker creates `/var/tmp/nemoclaw-jetson-e2e/<jobId>` and sets these job-local paths:
+
+- `HOME=<workspace>/home`
+- `TMPDIR=<workspace>/tmp`
+- `XDG_CACHE_HOME=<workspace>/home/.cache`
+- `XDG_CONFIG_HOME=<workspace>/home/.config`
+- `XDG_DATA_HOME=<workspace>/home/.local/share`
+- `XDG_STATE_HOME=<workspace>/home/.local/state`
+- `XDG_BIN_HOME=<workspace>/home/.local/bin`
+- `npm_config_prefix=<workspace>/npm-prefix`
+- `PATH=$XDG_BIN_HOME:<workspace>/npm-prefix/bin:$PATH`
+
+The worker must not set `NEMOCLAW_DEFER_OPENSHELL_INSTALL`.
+It must not invoke `scripts/install-openshell.sh`.
+The existing live E2E runs `bash install.sh --non-interactive`.
+NemoClaw onboarding owns the compatible pinned OpenShell installation in the job workspace.
+After onboarding, `nemoclaw`, `openshell`, `openshell-gateway`, and `openshell-sandbox` must resolve canonically inside the job workspace.
+The worker rejects a symbolic link or resolved path that leaves that workspace.
 
 Reserve these names and paths for this E2E target:
 
@@ -88,6 +117,7 @@ Reserve these names and paths for this E2E target:
 - OpenShell-managed Docker containers labeled for `e2e-jetson-nvmap`.
 - The volumes recorded from those labeled containers.
 - The `openshell-cluster-nemoclaw` gateway container, volume, and recorded attached volumes.
+- `nemoclaw-sandbox-local` images whose tag begins with `e2e-jetson-nvmap-`.
 
 Do not run unrelated work under these reserved names.
 The cleanup program must act only on this allowlist.
@@ -97,7 +127,7 @@ Before candidate execution, the worker records this protected tool and model bas
 - The resolved Node.js path and version.
 - The resolved npm path and version.
 - The resolved Ollama path and a SHA-256 digest of the sorted Ollama model names and IDs.
-- The resolved OpenShell path.
+- The required absence of host-level `openshell`, `openshell-gateway`, and `openshell-sandbox` binaries.
 
 The dispatcher stores the recorded values in a private `<jobId>.baseline.json` state file.
 After cleanup, the worker repeats the probes and compares them with that record.
@@ -109,13 +139,13 @@ If the initial baseline probe fails, the worker never invokes candidate code; cl
 
 These other host resources also remain outside the cleanup allowlist:
 
-- Node.js, npm, the OpenShell executable, and the Docker engine.
+- Node.js, npm, and the Docker engine.
 - The Ollama binary, service, models, configuration, and unrelated `ollama serve` processes.
 - The NVIDIA container runtime and Docker images that the test does not own exclusively.
 - The `/dev/nvmap` character device and its permissions.
 - JetPack, Jetson Linux, CUDA, NVIDIA packages, other `apt` packages, SDK Manager, and downloaded flashing files.
 - User accounts, SSH keys, and user files outside the current job workspace and named NemoClaw resources.
-- Docker resources without the exact label or name association defined above.
+- Docker resources without the exact label, repository tag, or name association defined above.
 - Processes other than the recorded job-home helper processes defined above.
 - Colossus credentials, service configuration, and job evidence.
 
@@ -207,23 +237,17 @@ Changing one of those values requires a corresponding reviewed source change.
 The dispatcher invokes it after success, failure, cancellation, and timeout.
 The dispatcher also invokes it during startup when `device.lock` remains from an interrupted service process.
 
-The cleanup program uses these phases in order:
-
-1. Run read-only discovery over pinned-host-key SSH and validate every discovered volume and process identity.
-2. Strictly parse and merge those identities with the existing private cleanup record on Colossus.
-3. Persist the merged record before starting destructive cleanup over pinned-host-key SSH.
-
-For durable persistence, the helper writes a mode-`0600` temporary file in the state directory.
-It fsyncs the file, atomically renames it to `<jobId>.cleanup.json`, and fsyncs the state directory.
-If discovery, validation, or durable persistence fails, the helper does not start destructive cleanup.
+Before destructive cleanup, the program discovers and validates the job-owned Docker volume and process identities.
+It merges them into a mode-`0600` private `<jobId>.cleanup.json` record on Colossus.
+The record survives retries so stale-lock recovery can clean and verify the same identities.
 
 The destructive phase must perform these bounded actions:
 
-1. Stop and remove only the named sandbox, its forwards, and the named gateway.
+1. Use only the canonical job-local OpenShell installation to stop the named forwards, sandbox, and gateway.
 2. Stop only the recorded helper PIDs after verifying the process owner, command marker, and job `HOME`.
-3. Remove only the labeled sandbox containers, the exact gateway container, and their recorded volumes.
+3. Remove only the labeled sandbox containers, exact gateway container, recorded volumes, and reserved test image tags.
 4. Remove only the helper-service directory and `/var/tmp/nemoclaw-jetson-e2e/<validated-job-id>` workspace for the locked job.
-5. Verify that every allowlisted resource is absent.
+5. After workspace removal, verify that the allowlisted resources are absent, host OpenShell remains absent, and the host baseline matches.
 
 The cleanup program must be idempotent.
 It must treat an already absent allowlisted resource as success.
@@ -231,7 +255,7 @@ It must exit nonzero when target ownership is ambiguous, cleanup fails, or absen
 It must not remove `/var/lib/nemoclaw-jetson-dispatch/state/device.lock`.
 The dispatcher removes that lock only after cleanup and absence verification succeed.
 
-The durable cleanup record uses this path:
+The private cleanup record uses this path:
 
 ```text
 /var/lib/nemoclaw-jetson-dispatch/state/<jobId>.cleanup.json
@@ -248,11 +272,7 @@ The file has this exact schema:
 ```
 
 Either identity array can be empty.
-The helper merges new identities with the existing record instead of replacing earlier identities.
-The destructive phase receives this merged record and acts on every recorded identity.
-After destructive cleanup succeeds, the helper emits one bounded evidence block for the merged record.
-The worker reads and revalidates that successful output against the durable record before independent verification.
-Failure durability belongs to the helper's pre-cleanup record, not to worker parsing of failed process output.
+The helper merges new identities with the existing record and cleans every recorded identity.
 Any helper failure or interruption keeps the device lock for startup recovery.
 The dispatcher retains the cleanup record after it removes the device lock.
 
@@ -261,8 +281,10 @@ After the helper succeeds, the worker independently verifies these conditions ov
 - The validated job workspace is absent and is not a symbolic link.
 - No OpenShell-managed container has the `e2e-jetson-nvmap` sandbox label.
 - The `openshell-cluster-nemoclaw` gateway container and volume are absent.
+- No `nemoclaw-sandbox-local` image has a tag that begins with `e2e-jetson-nvmap-`.
 - Every Docker volume and process ID in the merged cleanup record is absent.
-- Every recorded Node.js, npm, Ollama, Ollama model, and OpenShell baseline value matches.
+- Every recorded Node.js, npm, Ollama, and Ollama model baseline value matches.
+- No host-level `openshell`, `openshell-gateway`, or `openshell-sandbox` binary resolves or exists in a checked host binary path.
 - `/dev/nvmap` exists, and Docker still reports the NVIDIA runtime.
 
 The worker reports cleanup failure when any helper or independent verification step fails.
@@ -461,7 +483,25 @@ gh variable set JETSON_DISPATCH_URL --repo NVIDIA/NemoClaw \
   --body 'https://jetson-e2e.example.com'
 ```
 
-First select only the Jetson target from the trusted `main` workflow:
+Resolve the non-fork pull request (PR) and trusted workflow identities.
+Replace `1234` with the PR number:
+
+```bash
+set -euo pipefail
+PR_NUMBER=1234
+PR_JSON="$(gh api "repos/NVIDIA/NemoClaw/pulls/$PR_NUMBER")"
+CANDIDATE_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
+CANDIDATE_SHA="$(jq -r .head.sha <<<"$PR_JSON")"
+BASE_SHA="$(jq -r .base.sha <<<"$PR_JSON")"
+git fetch --prune origin main
+WORKFLOW_SHA="$(git rev-parse origin/main)"
+test "$CANDIDATE_REPOSITORY" = NVIDIA/NemoClaw
+[[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+[[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+[[ "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]]
+```
+
+Select only the Jetson target from the trusted `main` workflow:
 
 ```bash
 gh workflow run .github/workflows/e2e.yaml --repo NVIDIA/NemoClaw --ref main \
@@ -470,7 +510,13 @@ gh workflow run .github/workflows/e2e.yaml --repo NVIDIA/NemoClaw --ref main \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=false \
   -f allow_jetson_dispatch=true \
-  -f allow_dgx_spark_runner_queue=false
+  -f allow_dgx_spark_runner_queue=false \
+  -f "pr_number=$PR_NUMBER" \
+  -f "checkout_sha=$CANDIDATE_SHA" \
+  -f "checkout_repository=$CANDIDATE_REPOSITORY" \
+  -f "base_sha=$BASE_SHA" \
+  -f "workflow_sha=$WORKFLOW_SHA" \
+  -f review_reason='Reviewed this PR commit for the isolated Jetson E2E.'
 ```
 
 The controller must run on `ubuntu-latest`.
@@ -478,11 +524,67 @@ The GitHub controller log must show one `Jetson dispatch accepted as <jobId>` li
 The Colossus journal must not contain a bearer token.
 The uploaded `e2e-jetson-nvmap-gpu` artifact must contain `jetson-dispatch.json` with these results:
 
-- The requested candidate commit SHA and workflow run identity.
+- The requested candidate commit SHA and workflow run ID and attempt.
 - The Jetson model, JetPack package version or `unavailable`, Jetson Linux release, and kernel.
 - The test conclusion and bounded log.
-- `cleanup: "succeeded"`.
-- `conclusion: "success"` for the successful proof job.
+- `status.cleanup: "succeeded"`.
+- `status.conclusion: "success"` for the successful proof job.
+
+Download the trusted `e2e-dispatch-<run-id>-<attempt>` receipt artifact and the `e2e-jetson-nvmap-gpu` artifact.
+Set `RUN_ID` and `RUN_ATTEMPT` from the selected workflow run:
+
+```bash
+EVIDENCE_DIR="$(mktemp -d)"
+chmod 700 "$EVIDENCE_DIR"
+RUN_ID=123456789
+RUN_ATTEMPT=1
+gh run download "$RUN_ID" --repo NVIDIA/NemoClaw \
+  --name "e2e-dispatch-$RUN_ID-$RUN_ATTEMPT" \
+  --dir "$EVIDENCE_DIR/trusted-dispatch"
+gh run download "$RUN_ID" --repo NVIDIA/NemoClaw \
+  --name e2e-jetson-nvmap-gpu \
+  --dir "$EVIDENCE_DIR/jetson"
+DISPATCH_JSON="$EVIDENCE_DIR/trusted-dispatch/dispatch.json"
+JETSON_JSON="$EVIDENCE_DIR/jetson/jetson-dispatch.json"
+```
+
+Require `dispatch.json` to establish the repository, PR number, base SHA, candidate SHA, and trusted workflow SHA independently:
+
+```bash
+jq -e \
+  --arg repository NVIDIA/NemoClaw \
+  --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+  --arg candidateSha "$CANDIDATE_SHA" \
+  --arg baseSha "$BASE_SHA" \
+  --arg workflowSha "$WORKFLOW_SHA" \
+  --arg workflowRunId "$RUN_ID" \
+  --argjson prNumber "$PR_NUMBER" \
+  --argjson workflowRunAttempt "$RUN_ATTEMPT" '
+    .kind == "nemoclaw-e2e-dispatch-v2" and
+    .repository == $repository and
+    .candidateRepository == $candidateRepository and
+    .candidateRepository == .repository and
+    .candidateSha == $candidateSha and
+    .prNumber == $prNumber and
+    .baseSha == $baseSha and
+    .workflowSha == $workflowSha and
+    .workflowRunId == $workflowRunId and
+    .workflowRunAttempt == $workflowRunAttempt and
+    .allowJetsonDispatch == true
+  ' "$DISPATCH_JSON"
+```
+
+Then bind `jetson-dispatch.json` to that trusted receipt by comparing its candidate SHA and workflow run ID and attempt:
+
+```bash
+jq -e --slurpfile dispatch "$DISPATCH_JSON" '
+  .status.request.candidateSha == $dispatch[0].candidateSha and
+  .status.request.workflowRunId == $dispatch[0].workflowRunId and
+  .status.request.workflowRunAttempt == $dispatch[0].workflowRunAttempt and
+  .status.cleanup == "succeeded" and
+  .status.conclusion == "success"
+' "$JETSON_JSON"
+```
 
 It must also contain `jetson-e2e-artifacts.tar.gz`.
 The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace.
@@ -493,7 +595,7 @@ After the workflow completes, independently verify every allowlisted resource is
 Require the private `<jobId>.cleanup.json` file and verify every recorded volume and process ID is absent.
 The private cleanup record is Colossus state and is not part of the uploaded artifact.
 Then run one controlled failing candidate.
-Confirm that its `jetson-dispatch.json` artifact shows `cleanup: "succeeded"` and `conclusion: "failure"`.
+Confirm that its `jetson-dispatch.json` artifact shows `status.cleanup: "succeeded"` and `status.conclusion: "failure"`.
 Require its private cleanup record and verify every recorded identity is absent.
 For a cancellation proof, cancel a controller after it logs the job ID.
 The controller can exit before it downloads an artifact.
@@ -684,8 +786,23 @@ for proc_dir in /proc/[0-9]*; do
       ;;
   esac
 done
-command -v node npm ollama openshell
+test -z "$(docker image ls --format '{{.Repository}}\t{{.Tag}}' |
+  awk '$1 == "nemoclaw-sandbox-local" && index($2, "e2e-jetson-nvmap-") == 1 { print $1 ":" $2 }')"
+command -v node npm ollama
 ollama list >/dev/null
+for openshell_component in openshell openshell-gateway openshell-sandbox; do
+  if command -v "$openshell_component" >/dev/null 2>&1; then
+    echo "A host-level OpenShell binary remains after cleanup: $openshell_component" >&2
+    exit 1
+  fi
+  for host_bin in \
+    "/usr/local/bin/$openshell_component" \
+    "/usr/bin/$openshell_component" \
+    "$HOME/.local/bin/$openshell_component"; do
+    test ! -e "$host_bin"
+    test ! -L "$host_bin"
+  done
+done
 test -c /dev/nvmap
 case "$(docker info --format '{{json .Runtimes}}')" in
   *nvidia*) ;;
@@ -734,5 +851,46 @@ test -z "$(gh variable list --repo NVIDIA/NemoClaw --json name \
 ```
 
 Remove the dedicated Jetson public key and the Colossus SSH private key.
+Encode the exact authorized-key line so the space-containing value remains one remote-command argument, then verify that exact line is absent before deleting the Colossus key:
+
+```bash
+JETSON_PUBLIC_KEY="$(sudo cat /var/lib/nemoclaw-jetson-dispatch/id_ed25519.pub)"
+case "$JETSON_PUBLIC_KEY" in
+  ssh-ed25519\ *) ;;
+  *) echo 'Unexpected Jetson public key format' >&2; exit 1 ;;
+esac
+JETSON_AUTHORIZED_KEY_LINE="from=\"192.168.55.100\",restrict $JETSON_PUBLIC_KEY"
+JETSON_AUTHORIZED_KEY_B64="$(printf '%s' "$JETSON_AUTHORIZED_KEY_LINE" | base64 --wrap=0)"
+sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+  -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
+  -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
+  nvidia@192.168.55.1 bash -s -- "$JETSON_AUTHORIZED_KEY_B64" <<'REMOVE_DISPATCH_KEY'
+set -euo pipefail
+authorized_key_line="$(printf '%s' "$1" | base64 --decode)"
+authorized_keys="$HOME/.ssh/authorized_keys"
+test -f "$authorized_keys"
+temporary="$(mktemp "$HOME/.ssh/.authorized_keys.XXXXXX")"
+trap 'rm -f "$temporary"' EXIT
+chmod 600 "$temporary"
+while IFS= read -r line || [ -n "$line" ]; do
+  if [ "$line" != "$authorized_key_line" ]; then
+    printf '%s\n' "$line"
+  fi
+done <"$authorized_keys" >"$temporary"
+mv "$temporary" "$authorized_keys"
+trap - EXIT
+if grep -Fqx -- "$authorized_key_line" "$authorized_keys"; then
+  echo 'Dedicated Jetson public key remains authorized' >&2
+  exit 1
+fi
+REMOVE_DISPATCH_KEY
+sudo rm -- \
+  /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
+  /var/lib/nemoclaw-jetson-dispatch/id_ed25519.pub
+sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/id_ed25519
+sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/id_ed25519.pub
+```
+
 After the required retention period, remove the private job state and logs.
 Remove the dispatcher environment, service unit, and trusted checkout when no investigation, recovery, or retention requirement remains.

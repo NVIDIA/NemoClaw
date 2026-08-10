@@ -200,10 +200,10 @@ export class JetsonDispatchCoordinator {
       maxBytes: 1024,
     });
     if (staleLock !== null) {
-      const jobId = staleLock.trim();
-      if (!/^[a-f0-9]{64}$/u.test(jobId)) {
+      if (!/^[a-f0-9]{64}\n?$/u.test(staleLock)) {
         throw new Error("Jetson device lock contains an invalid job ID");
       }
+      const jobId = staleLock.endsWith("\n") ? staleLock.slice(0, -1) : staleLock;
       await withTimeout(this.#cleanupTimeoutMs, (signal) =>
         this.#worker.cleanup({ jobId, signal }),
       );

@@ -551,6 +551,22 @@ describe("Jetson single-device lifecycle", () => {
     expect(cleanup).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
   });
+
+  it.each([
+    `${"d".repeat(64)}\nextra\n`,
+    `${"d".repeat(64)}\n\n`,
+  ])("rejects trailing data in a stale device lock (#8142)", async (lockContents) => {
+    const stateDirectory = temporaryDirectory();
+    fs.writeFileSync(path.join(stateDirectory, "device.lock"), lockContents, { mode: 0o600 });
+    const cleanup = vi.fn(async () => {});
+    const dispatch = coordinator(stateDirectory, worker({ cleanup }));
+
+    await expect(dispatch.initialize()).rejects.toThrow(
+      "Jetson device lock contains an invalid job ID",
+    );
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+  });
 });
 
 describe("Jetson dispatch HTTP boundary", () => {

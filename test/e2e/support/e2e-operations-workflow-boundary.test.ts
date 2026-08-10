@@ -228,27 +228,29 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to empty selectors or protected managed-runtime qualification", () => {
+  it("limits manual PR runs to empty selectors, protected managed-runtime qualification, or Jetson dispatch", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR E2E accepts only empty selectors, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
     );
   });
 
   it.each([
-    ["maintain", "", 0, ""],
-    ["maintain", "managed-image-protected-runtime", 0, ""],
-    ["maintain", "gpu-e2e", 1, "accepts only empty selectors or managed-image-protected-runtime"],
-    ["write", "", 1, "requires a repository maintainer or administrator"],
-  ])("requires a maintainer role and bounded selector before manual PR E2E for %s with %s", (role, jobs, expectedStatus, expectedStderr) => {
+    ["maintain", "", "", "false", 0, ""],
+    ["maintain", "managed-image-protected-runtime", "", "false", 0, ""],
+    ["maintain", "", "jetson-nvmap-gpu", "true", 0, ""],
+    ["maintain", "", "jetson-nvmap-gpu", "false", 1, "accepts only empty selectors"],
+    ["maintain", "gpu-e2e", "", "false", 1, "accepts only empty selectors"],
+    ["write", "", "", "false", 1, "requires a repository maintainer or administrator"],
+  ])("requires a maintainer role and bounded selector before manual PR E2E for %s with jobs %s and targets %s", (role, jobs, targets, allowJetsonDispatch, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
@@ -273,6 +275,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         env: {
           ...process.env,
           ACTOR: "maintainer",
+          ALLOW_JETSON_DISPATCH: allowJetsonDispatch,
           BASE_SHA: baseSha,
           CHECKOUT_REPOSITORY: "contributor/NemoClaw",
           CHECKOUT_SHA: headSha,
@@ -284,7 +287,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           PR_NUMBER: "42",
           REVIEW_REASON: "Reviewed PR head revision",
           RUN_ATTEMPT: "1",
-          TARGETS: "",
+          TARGETS: targets,
           TRIGGERING_ACTOR: "maintainer",
           WORKFLOW_EVENT: "workflow_dispatch",
           WORKFLOW_REF: "refs/heads/main",

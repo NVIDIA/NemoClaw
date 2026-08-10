@@ -271,6 +271,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   const authEnvironment = {
     ACTOR: "${{ github.actor }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -305,7 +306,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "Manual PR E2E requires a repository maintainer or administrator",
-    "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+    "Manual PR E2E accepts only empty selectors, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,

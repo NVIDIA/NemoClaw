@@ -77,6 +77,22 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
+  it("rejects a direct OpenShell installer step in the Jetson controller (#8142)", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        steps?: Array<{ name?: string; run?: string }>;
+      };
+      job.steps!.push({
+        name: "Install OpenShell directly",
+        run: "bash scripts/install-openshell.sh",
+      });
+    });
+
+    expect(errors).toContain(
+      "jetson-nvmap-gpu controller must contain only checkout, Node setup, dispatch, and upload",
+    );
+  });
+
   it("keeps the runner temporary artifact path on the dispatch step (#8142)", () => {
     const errors = validateWorkflowMutation((workflow) => {
       const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {

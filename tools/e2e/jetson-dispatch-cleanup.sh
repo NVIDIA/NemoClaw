@@ -15,7 +15,12 @@ identity_file=/var/lib/nemoclaw-jetson-dispatch/id_ed25519
 known_hosts_file=/var/lib/nemoclaw-jetson-dispatch/known_hosts
 destination=nvidia@192.168.55.1
 
-IFS= read -r job_id <"$lock_file"
+mapfile -t lock_lines <"$lock_file"
+if [ "${#lock_lines[@]}" -ne 1 ]; then
+  echo "Jetson cleanup lock contains trailing data" >&2
+  exit 1
+fi
+job_id="${lock_lines[0]}"
 if ! [[ "$job_id" =~ ^[a-f0-9]{64}$ ]]; then
   echo "Jetson cleanup lock contains an invalid job ID" >&2
   exit 1
@@ -47,6 +52,7 @@ job_home="$workspace/home"
 sandbox_name=e2e-jetson-nvmap
 gateway_container=openshell-cluster-nemoclaw
 gateway_volume=openshell-cluster-nemoclaw
+image_repository=nemoclaw-sandbox-local
 service_directory="/tmp/nemoclaw-services-$sandbox_name"
 
 require_plain_directory_if_present() {
@@ -102,6 +108,11 @@ for container in "${sandbox_containers[@]}"; do
     echo "Refusing an invalid recorded Docker container ID" >&2
     exit 1
   }
+  container_image="$(docker container inspect --format '{{.Config.Image}}' "$container")"
+  case "$container_image" in
+    "$image_repository:$sandbox_name-"*) ;;
+    *) echo "Refusing a sandbox container whose image is not test-owned" >&2; exit 1 ;;
+  esac
   record_container_volumes "$container"
 done
 if docker container inspect "$gateway_container" >/dev/null 2>&1; then
@@ -243,6 +254,7 @@ job_home="$workspace/home"
 sandbox_name=e2e-jetson-nvmap
 gateway_name=nemoclaw
 gateway_container=openshell-cluster-nemoclaw
+image_repository=nemoclaw-sandbox-local
 service_directory="/tmp/nemoclaw-services-$sandbox_name"
 
 require_plain_directory_if_present() {
@@ -323,9 +335,39 @@ stop_recorded_pid() {
   exit 1
 }
 
+openshell_bin=""
+openshell_install_complete=1
+for component in openshell openshell-gateway openshell-sandbox; do
+  component_path="$job_home/.local/bin/$component"
+  if [ -x "$component_path" ]; then
+    canonical_component="$(realpath -e "$component_path")"
+    case "$canonical_component" in
+      "$workspace"/*) ;;
+      *) echo "Refusing an OpenShell binary outside the job workspace" >&2; exit 1 ;;
+    esac
+  else
+    openshell_install_complete=0
+  fi
+done
+if [ "$openshell_install_complete" -eq 1 ]; then
+  openshell_bin="$job_home/.local/bin/openshell"
+fi
+
+job_openshell() {
+  HOME="$job_home" \
+    TMPDIR="$workspace/tmp" \
+    XDG_BIN_HOME="$job_home/.local/bin" \
+    XDG_CACHE_HOME="$job_home/.cache" \
+    XDG_CONFIG_HOME="$job_home/.config" \
+    XDG_DATA_HOME="$job_home/.local/share" \
+    XDG_STATE_HOME="$job_home/.local/state" \
+    PATH="$job_home/.local/bin:$workspace/npm-prefix/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "$openshell_bin" "$@"
+}
+
 gateway_present=0
-if [ -d "$job_home" ]; then
-  gateway_json="$(HOME="$job_home" openshell gateway list -o json)"
+if [ -n "$openshell_bin" ]; then
+  gateway_json="$(job_openshell gateway list -o json)"
   gateway_state="$(printf '%s' "$gateway_json" | node -e '
     const fs = require("node:fs");
     const rows = JSON.parse(fs.readFileSync(0, "utf8"));
@@ -336,33 +378,33 @@ if [ -d "$job_home" ]; then
 fi
 
 if [ "$gateway_present" -eq 1 ]; then
-  forward_list="$(HOME="$job_home" openshell forward list --gateway "$gateway_name")"
+  forward_list="$(job_openshell forward list --gateway "$gateway_name")"
   while IFS= read -r port; do
     [ -n "$port" ] || continue
     [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || exit 1
-    HOME="$job_home" openshell forward stop "$port" "$sandbox_name"
+    job_openshell forward stop "$port" "$sandbox_name"
   done < <(
     printf '%s\n' "$forward_list" | awk -v sandbox="$sandbox_name" \
       '$1 == sandbox && $3 ~ /^[0-9]+$/ { print $3 }'
   )
-  sandbox_names="$(HOME="$job_home" openshell sandbox list --names -g "$gateway_name")"
+  sandbox_names="$(job_openshell sandbox list --names -g "$gateway_name")"
   if printf '%s\n' "$sandbox_names" | grep -Fqx "$sandbox_name"; then
-    HOME="$job_home" openshell sandbox delete "$sandbox_name"
+    job_openshell sandbox delete "$sandbox_name"
   fi
-  sandbox_names="$(HOME="$job_home" openshell sandbox list --names -g "$gateway_name")"
+  sandbox_names="$(job_openshell sandbox list --names -g "$gateway_name")"
   if printf '%s\n' "$sandbox_names" | grep -Fqx "$sandbox_name"; then
     echo "The test-owned OpenShell sandbox remains" >&2
     exit 1
   fi
-  forward_list="$(HOME="$job_home" openshell forward list --gateway "$gateway_name")"
+  forward_list="$(job_openshell forward list --gateway "$gateway_name")"
   if printf '%s\n' "$forward_list" | awk -v sandbox="$sandbox_name" \
     '$1 == sandbox && $3 ~ /^[0-9]+$/ { found = 1 } END { exit found ? 0 : 1 }'; then
     echo "A test-owned OpenShell forward remains" >&2
     exit 1
   fi
-  HOME="$job_home" openshell gateway remove "$gateway_name" \
-    || HOME="$job_home" openshell gateway destroy -g "$gateway_name"
-  gateway_json="$(HOME="$job_home" openshell gateway list -o json)"
+  job_openshell gateway remove "$gateway_name" \
+    || job_openshell gateway destroy -g "$gateway_name"
+  gateway_json="$(job_openshell gateway list -o json)"
   gateway_state="$(printf '%s' "$gateway_json" | node -e '
     const fs = require("node:fs");
     const rows = JSON.parse(fs.readFileSync(0, "utf8"));
@@ -397,6 +439,26 @@ for volume in "${recorded_volumes[@]}"; do
   fi
 done
 
+list_test_owned_images() {
+  local image_rows repository tag
+  image_rows="$(docker image ls "$image_repository" --format '{{.Repository}}\t{{.Tag}}')"
+  while IFS=$'\t' read -r repository tag; do
+    [ -n "$repository" ] || continue
+    if [ "$repository" = "$image_repository" ] && [[ "$tag" =~ ^e2e-jetson-nvmap-[a-z0-9_.-]+$ ]]; then
+      printf '%s:%s\n' "$repository" "$tag"
+    fi
+  done <<<"$image_rows"
+}
+
+job_images_output="$(list_test_owned_images)"
+job_images=()
+if [ -n "$job_images_output" ]; then
+  mapfile -t job_images <<<"$job_images_output"
+fi
+for image in "${job_images[@]}"; do
+  docker image rm "$image"
+done
+
 if [ -e "$service_directory" ]; then
   rm -rf -- "$service_directory"
 fi
@@ -424,6 +486,23 @@ for pid in "${recorded_process_ids[@]}"; do
     echo "A recorded test-owned helper process remains" >&2
     exit 1
   fi
+done
+if [ -n "$(list_test_owned_images)" ]; then
+  echo "A test-owned Jetson image remains" >&2
+  exit 1
+fi
+for openshell_component in openshell openshell-gateway openshell-sandbox; do
+  if PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    command -v "$openshell_component" >/dev/null 2>&1; then
+    echo "A host-level OpenShell binary remains after cleanup" >&2
+    exit 1
+  fi
+  for host_bin in "/usr/local/bin/$openshell_component" "/usr/bin/$openshell_component" "$HOME/.local/bin/$openshell_component"; do
+    if [ -e "$host_bin" ] || [ -L "$host_bin" ]; then
+      echo "A host-level OpenShell binary remains after cleanup" >&2
+      exit 1
+    fi
+  done
 done
 JETSON_CLEANUP
 

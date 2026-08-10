@@ -56,7 +56,18 @@ clean_line() { tr -d '\000\r\n\t'; }
 node_path="$(command -v node)"
 npm_path="$(command -v npm)"
 ollama_path="$(command -v ollama)"
-openshell_path="$(command -v openshell)"
+for openshell_component in openshell openshell-gateway openshell-sandbox; do
+  if command -v "$openshell_component" >/dev/null 2>&1; then
+    echo "Jetson dispatch requires OpenShell to be absent before the job" >&2
+    exit 1
+  fi
+  for host_bin in "/usr/local/bin/$openshell_component" "/usr/bin/$openshell_component" "$HOME/.local/bin/$openshell_component"; do
+    if [ -e "$host_bin" ] || [ -L "$host_bin" ]; then
+      echo "Jetson dispatch requires host-level OpenShell binaries to be absent" >&2
+      exit 1
+    fi
+  done
+done
 node_version="$(node --version)"
 node -e '
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -72,13 +83,15 @@ case "$docker_runtimes" in
   *) echo "Docker does not report the NVIDIA runtime" >&2; exit 1 ;;
 esac
 ollama_models_sha256="$(ollama list | awk 'NR > 1 && NF >= 2 { print $1 "\t" $2 }' | sort | sha256sum | cut -d ' ' -f 1)"
+test_owned_images="$(docker image ls nemoclaw-sandbox-local --format '{{.Repository}}\t{{.Tag}}' | awk '$1 == "nemoclaw-sandbox-local" && index($2, "e2e-jetson-nvmap-") == 1 { print $1 ":" $2 }')"
+[ -z "$test_owned_images" ] || { echo "A test-owned Jetson image remains before dispatch" >&2; exit 1; }
 printf 'nodePath\t'; printf '%s' "$node_path" | clean_line
 printf '\nnodeVersion\t'; printf '%s' "$node_version" | clean_line
 printf '\nnpmPath\t'; printf '%s' "$npm_path" | clean_line
 printf '\nnpmVersion\t'; printf '%s' "$npm_version" | clean_line
 printf '\nollamaPath\t'; printf '%s' "$ollama_path" | clean_line
 printf '\nollamaModelsSha256\t'; printf '%s' "$ollama_models_sha256" | clean_line
-printf '\nopenshellPath\t'; printf '%s' "$openshell_path" | clean_line
+printf '\nopenshellState\tabsent'
 printf '\n'
 `;
 
@@ -163,7 +176,15 @@ if [ -e "$workspace" ]; then
   exit 1
 fi
 install -d -m 0700 "$workspace"
-install -d -m 0700 "$workspace/home" "$workspace/npm-prefix" "$workspace/tmp"
+install -d -m 0700 \
+  "$workspace/home" \
+  "$workspace/home/.cache" \
+  "$workspace/home/.config" \
+  "$workspace/home/.local/bin" \
+  "$workspace/home/.local/share" \
+  "$workspace/home/.local/state" \
+  "$workspace/npm-prefix" \
+  "$workspace/tmp"
 
 export HOME="$workspace/home"
 export TMPDIR="$workspace/tmp"
@@ -171,9 +192,16 @@ export XDG_CACHE_HOME="$workspace/home/.cache"
 export XDG_CONFIG_HOME="$workspace/home/.config"
 export XDG_DATA_HOME="$workspace/home/.local/share"
 export XDG_STATE_HOME="$workspace/home/.local/state"
+export XDG_BIN_HOME="$workspace/home/.local/bin"
 export npm_config_prefix="$workspace/npm-prefix"
-export PATH="$workspace/npm-prefix/bin:$PATH"
-export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
+export PATH="$XDG_BIN_HOME:$workspace/npm-prefix/bin:$PATH"
+export NEMOCLAW_JETSON_WORKSPACE="$workspace"
+unset NEMOCLAW_OPENSHELL_BIN NEMOCLAW_OPENSHELL_GATEWAY_BIN
+
+if [ -w /usr/local/bin ] || [ -w /usr/bin ]; then
+  echo "Jetson job user must not be able to install OpenShell into a host binary directory" >&2
+  exit 1
+fi
 
 git init --quiet "$workspace/repository"
 git -C "$workspace/repository" remote add origin https://github.com/NVIDIA/NemoClaw.git
@@ -210,6 +238,15 @@ export OPENSHELL_GATEWAY=nemoclaw
 timeout --foreground --signal=TERM --kill-after=30s "${"${timeout_seconds}"}s" \
   npx tsx tools/e2e/live-vitest-invocation.mts run \
   --test-path test/e2e/live/jetson-nvmap-gpu.test.ts
+
+for installed_command in nemoclaw openshell openshell-gateway openshell-sandbox; do
+  installed_path="$(command -v "$installed_command")"
+  canonical_path="$(realpath -e "$installed_path")"
+  case "$canonical_path" in
+    "$workspace"/*) ;;
+    *) echo "$installed_command resolved outside the Jetson job workspace" >&2; exit 1 ;;
+  esac
+done
 `;
 
 const COLLECT_ARTIFACT_SCRIPT = String.raw`set -euo pipefail
@@ -441,7 +478,7 @@ interface JetsonPreservedBaseline {
   npmVersion: string;
   ollamaPath: string;
   ollamaModelsSha256: string;
-  openshellPath: string;
+  openshellState: "absent";
 }
 
 function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
@@ -466,7 +503,7 @@ function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
     "npmVersion",
     "ollamaPath",
     "ollamaModelsSha256",
-    "openshellPath",
+    "openshellState",
   ] as const;
   if (entries.size !== expected.length || expected.some((key) => !entries.has(key))) {
     throw new Error("Jetson protected-baseline output is incomplete");
@@ -478,8 +515,11 @@ function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
     npmVersion: entries.get("npmVersion")!,
     ollamaPath: entries.get("ollamaPath")!,
     ollamaModelsSha256: entries.get("ollamaModelsSha256")!,
-    openshellPath: entries.get("openshellPath")!,
+    openshellState: entries.get("openshellState") as "absent",
   };
+  if (baseline.openshellState !== "absent") {
+    throw new Error("Jetson protected-baseline OpenShell state is malformed");
+  }
   if (!/^[a-f0-9]{64}$/u.test(baseline.ollamaModelsSha256)) {
     throw new Error("Jetson protected-baseline Ollama model digest is malformed");
   }
@@ -507,7 +547,7 @@ function parsePreservedBaselineJson(output: string): JetsonPreservedBaseline {
     "npmVersion",
     "ollamaPath",
     "ollamaModelsSha256",
-    "openshellPath",
+    "openshellState",
   ];
   if (
     Object.keys(record).length !== expected.length ||
@@ -736,6 +776,7 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     const reportedEvidence = parseCleanupCommandEvidence(cleanupResult.stdout);
     const evidencePath = this.#cleanupEvidencePath(options.jobId);
     const persistedRaw = readPrivateRegularFile(evidencePath, {
+      allowMissing: true,
       maxBytes: MAX_CLEANUP_EVIDENCE_BYTES,
     });
     if (persistedRaw === null) throw new Error("Jetson cleanup evidence is missing");

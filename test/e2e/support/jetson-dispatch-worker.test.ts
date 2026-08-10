@@ -21,6 +21,14 @@ const cleanupProgram = fs.readFileSync(
   path.join(process.cwd(), "tools/e2e/jetson-dispatch-cleanup.sh"),
   "utf8",
 );
+const workerProgram = fs.readFileSync(
+  path.join(process.cwd(), "tools/e2e/jetson-dispatch-worker.mts"),
+  "utf8",
+);
+const jetsonLiveTest = fs.readFileSync(
+  path.join(process.cwd(), "test/e2e/live/jetson-nvmap-gpu.test.ts"),
+  "utf8",
+);
 const temporaryDirectories: string[] = [];
 const BASELINE = {
   nodePath: "/usr/bin/node",
@@ -29,7 +37,7 @@ const BASELINE = {
   npmVersion: "10.9.3",
   ollamaPath: "/usr/local/bin/ollama",
   ollamaModelsSha256: "a".repeat(64),
-  openshellPath: "/usr/local/bin/openshell",
+  openshellState: "absent",
 };
 
 function baselineOutput(overrides: Partial<typeof BASELINE> = {}): string {
@@ -369,7 +377,6 @@ describe("Colossus SSH worker deployment boundary", () => {
     ["npm", { npmVersion: "11.0.0" }],
     ["Ollama executable", { ollamaPath: "/tmp/ollama" }],
     ["Ollama models", { ollamaModelsSha256: "c".repeat(64) }],
-    ["OpenShell executable", { openshellPath: "/tmp/openshell" }],
   ])("rejects cleanup when the protected %s baseline changes (#8142)", async (_name, change) => {
     const files = deploymentFiles();
     const jobId = "b".repeat(64);
@@ -386,6 +393,26 @@ describe("Colossus SSH worker deployment boundary", () => {
       "Jetson protected tool or Ollama model baseline differs after cleanup",
     );
     expect(fs.existsSync(baselinePath)).toBe(true);
+  });
+
+  it("rejects cleanup unless OpenShell returns to the absent baseline (#8142)", async () => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    fs.writeFileSync(
+      path.join(files.stateDirectory, `${jobId}.baseline.json`),
+      `${JSON.stringify(BASELINE)}\n`,
+      { mode: 0o600 },
+    );
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
+      .mockResolvedValueOnce({ stdout: baselineOutput({ openshellState: "present" }), stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
+      "Jetson protected-baseline OpenShell state is malformed",
+    );
   });
 
   it("retains every validated cleanup identity across stale-lock recovery (#8142)", async () => {
@@ -522,6 +549,18 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(processRunner).toHaveBeenCalledTimes(1);
   });
 
+  it("reports a missing durable cleanup record after valid helper output (#8142)", async () => {
+    const files = deploymentFiles();
+    const worker = new SshJetsonDispatchWorker(
+      loadConfig(files),
+      vi.fn().mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" }),
+    );
+
+    await expect(
+      worker.cleanup({ jobId: "b".repeat(64), signal: new AbortController().signal }),
+    ).rejects.toThrow("Jetson cleanup evidence is missing");
+  });
+
   it("keeps cleanup targets fixed and preserves the Jetson baseline (#8142)", () => {
     const fileFsync = cleanupProgram.indexOf("fs.fsyncSync(descriptor)");
     const atomicRename = cleanupProgram.indexOf("fs.renameSync(temporaryFile, cleanupFile)");
@@ -531,7 +570,8 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram).toContain("gateway_name=nemoclaw");
     expect(cleanupProgram).toContain("destination=nvidia@192.168.55.1");
     expect(cleanupProgram).toContain('if [ "$#" -ne 0 ]');
-    expect(cleanupProgram).toContain('IFS= read -r job_id <"$lock_file"');
+    expect(cleanupProgram).toContain('mapfile -t lock_lines <"$lock_file"');
+    expect(cleanupProgram).toContain('[ "${#lock_lines[@]}" -ne 1 ]');
     expect(cleanupProgram).toContain('require_plain_directory_if_present "$service_directory"');
     expect(cleanupProgram).toContain('rm -rf -- "$workspace"');
     expect(cleanupProgram).toContain("ollama-auth-proxy.pid");
@@ -539,6 +579,14 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram).toContain('grep -Fqx "HOME=$job_home"');
     expect(cleanupProgram).toContain('kill "$pid"');
     expect(cleanupProgram).toContain("label=openshell.ai/sandbox-name=$sandbox_name");
+    expect(cleanupProgram).toContain("image_repository=nemoclaw-sandbox-local");
+    expect(cleanupProgram).toContain('docker image rm "$image"');
+    expect(cleanupProgram.indexOf('docker image rm "$image"')).toBeLessThan(
+      cleanupProgram.indexOf('rm -rf -- "$workspace"'),
+    );
+    expect(cleanupProgram).toContain('"$job_home/.local/bin/openshell"');
+    expect(cleanupProgram).toContain("Refusing an OpenShell binary outside the job workspace");
+    expect(cleanupProgram).toContain("A host-level OpenShell binary remains after cleanup");
     expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-begin");
     expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-end");
     expect(cleanupProgram.indexOf("nemoclaw-cleanup-evidence-v1-begin")).toBeLessThan(
@@ -556,13 +604,31 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram).not.toContain('rm -rf -- "$workspace_root"');
     expect(cleanupProgram).not.toContain("ollama serve");
     expect(cleanupProgram).not.toMatch(/apt(?:-get)?|boardctl|reboot|shutdown|nvidia-l4t/u);
-    expect(cleanupProgram).not.toMatch(/npm uninstall|uninstall\.sh|rm .*openshell|rm .*ollama/u);
+    expect(cleanupProgram).not.toMatch(/npm uninstall|uninstall\.sh|rm .*ollama/u);
+  });
+
+  it("keeps OpenShell installation owned by NemoClaw onboarding inside the job workspace (#8142)", () => {
+    expect(workerProgram).not.toContain("NEMOCLAW_DEFER_OPENSHELL_INSTALL");
+    expect(jetsonLiveTest).not.toContain("NEMOCLAW_DEFER_OPENSHELL_INSTALL");
+    expect(workerProgram).not.toContain("scripts/install-openshell.sh");
+    expect(cleanupProgram).not.toContain("scripts/install-openshell.sh");
+    expect(jetsonLiveTest).not.toContain("scripts/install-openshell.sh");
+    expect(jetsonLiveTest).toContain('host.command("bash", ["install.sh", "--non-interactive"]');
+    expect(workerProgram).toContain('export XDG_BIN_HOME="$workspace/home/.local/bin"');
+    expect(workerProgram).toContain('export PATH="$XDG_BIN_HOME:$workspace/npm-prefix/bin:$PATH"');
+    expect(workerProgram).toContain(
+      "for installed_command in nemoclaw openshell openshell-gateway openshell-sandbox",
+    );
+    expect(jetsonLiveTest).toContain(
+      "for installed_command in nemoclaw openshell openshell-gateway openshell-sandbox",
+    );
+    expect(cleanupProgram.indexOf("job_openshell sandbox delete")).toBeLessThan(
+      cleanupProgram.indexOf('rm -rf -- "$workspace"'),
+    );
   });
 
   it("requires every protected Jetson prerequisite before dispatch (#8142)", () => {
-    expect(dispatcherRunbook).toContain(
-      "command -v bash curl docker git node npm ollama openshell timeout",
-    );
+    expect(dispatcherRunbook).toContain("OpenShell must be absent");
     expect(dispatcherRunbook).toContain(
       "if (major < 22 || (major === 22 && minor < 19)) process.exit(1)",
     );

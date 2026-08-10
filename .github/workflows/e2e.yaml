@@ -224,6 +224,7 @@ jobs:
         if: ${{ inputs.checkout_sha != '' }}
         env:
           ACTOR: ${{ github.actor }}
+          ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -268,10 +269,10 @@ jobs:
             exit 1
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
-          case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}" in
-            ::false | managed-image-protected-runtime::false) ;;
+          case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}:${ALLOW_JETSON_DISPATCH}" in
+            ::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;
             *)
-              echo "::error::Manual PR E2E accepts only empty selectors or managed-image-protected-runtime without target or Launchable selectors" >&2
+              echo "::error::Manual PR E2E accepts only empty selectors, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag" >&2
               exit 1
               ;;
           esac
@@ -286,7 +287,7 @@ jobs:
 
 
           require_maintainer "$ACTOR"
-          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+          if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
             require_maintainer "$TRIGGERING_ACTOR"
           fi
 
@@ -403,7 +404,7 @@ jobs:
           }
 
           require_maintainer "$ACTOR"
-          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+          if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
             require_maintainer "$TRIGGERING_ACTOR"
           fi
 

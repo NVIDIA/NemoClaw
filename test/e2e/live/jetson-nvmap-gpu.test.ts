@@ -21,14 +21,19 @@ const TIMEOUT_MS = 50 * 60_000;
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
-    NEMOCLAW_DEFER_OPENSHELL_INSTALL: process.env.NEMOCLAW_DEFER_OPENSHELL_INSTALL,
+    HOME: process.env.HOME,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_JETSON_WORKSPACE: process.env.NEMOCLAW_JETSON_WORKSPACE,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER ?? "ollama",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    PATH: process.env.PATH,
+    TMPDIR: process.env.TMPDIR,
+    XDG_BIN_HOME: process.env.XDG_BIN_HOME,
     XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
     XDG_DATA_HOME: process.env.XDG_DATA_HOME,
     XDG_STATE_HOME: process.env.XDG_STATE_HOME,
     npm_config_prefix: process.env.npm_config_prefix,
@@ -228,6 +233,23 @@ fi`,
   const installedCli = await hostShell(host, "command -v nemoclaw", "phase-2-command-v-nemoclaw");
   expect(installedCli.exitCode, resultText(installedCli)).toBe(0);
   expect(installedCli.stdout.trim()).not.toBe("");
+
+  const installedBinaries = await hostShell(
+    host,
+    String.raw`set -euo pipefail
+[ -n "$NEMOCLAW_JETSON_WORKSPACE" ]
+for installed_command in nemoclaw openshell openshell-gateway openshell-sandbox; do
+  installed_path="$(command -v "$installed_command")"
+  canonical_path="$(realpath -e "$installed_path")"
+  case "$canonical_path" in
+    "$NEMOCLAW_JETSON_WORKSPACE"/*) printf '%s\t%s\n' "$installed_command" "$canonical_path" ;;
+    *) echo "$installed_command resolved outside the Jetson job workspace" >&2; exit 1 ;;
+  esac
+done`,
+    "phase-2-job-local-installation",
+  );
+  expect(installedBinaries.exitCode, resultText(installedBinaries)).toBe(0);
+  expect(installedBinaries.stdout.trim().split("\n")).toHaveLength(4);
 
   // A4: the Jetson recreate must grant Tegra device-node groups via --group-add.
   expect(resultText(install)).toContain(
