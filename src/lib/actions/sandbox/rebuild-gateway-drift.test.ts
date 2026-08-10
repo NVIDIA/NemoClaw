@@ -242,6 +242,52 @@ describe("rebuild gateway drift preflight", () => {
   });
 
   it.each([
+    {
+      failure: "query failure",
+      queryResults: [{ ok: false, ids: [], error: "docker unavailable" }],
+      removeResult: { status: 0 },
+      removeCalls: 0,
+    },
+    {
+      failure: "removal failure",
+      queryResults: [{ ok: true, ids: ["orphan-container-id"] }],
+      removeResult: { status: 1 },
+      removeCalls: 1,
+    },
+    {
+      failure: "confirmation failure",
+      queryResults: [
+        { ok: true, ids: ["orphan-container-id"] },
+        { ok: true, ids: ["orphan-container-id"] },
+      ],
+      removeResult: { status: 0 },
+      removeCalls: 1,
+    },
+  ])("fails closed before registry recovery on Docker orphan $failure (#8720)", async ({
+    queryResults,
+    removeResult,
+    removeCalls,
+  }) => {
+    const entry = { ...makeSandboxEntry(), openshellDriver: "docker" };
+    vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
+    captureOpenshellSpy
+      .mockReturnValueOnce({ status: 0, output: "" })
+      .mockReturnValueOnce({ status: 1, output: "Error: sandbox not found" });
+    queryDockerContainersSpy.mockReturnValueOnce(queryResults[0] as never);
+    if (queryResults[1]) {
+      queryDockerContainersSpy.mockReturnValueOnce(queryResults[1] as never);
+    }
+    forceRemoveDockerContainerSpy.mockReturnValue(removeResult);
+
+    await expect(resolveRebuildLiveState("alpha", entry, vi.fn(), bail)).rejects.toThrow(
+      "Stale-recovery Docker orphan cleanup failed",
+    );
+
+    expect(forceRemoveDockerContainerSpy).toHaveBeenCalledTimes(removeCalls);
+    expect(registryPersistence.load).not.toHaveBeenCalled();
+  });
+
+  it.each([
     { gatewayName: "nemoclaw", gatewayPort: 8080 },
     { gatewayName: "nemoclaw-12345", gatewayPort: 12345 },
   ])("recovers $gatewayName and returns stale state after confirming the sandbox is absent (#4497)", async ({
