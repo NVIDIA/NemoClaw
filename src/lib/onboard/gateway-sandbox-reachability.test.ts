@@ -123,6 +123,28 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.detail).toContain("not found");
   });
 
+  it("classifies an unavailable portable daemon before route inspection completes", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const runtimeProbeImpl = vi.fn(() => ({
+      status: 1,
+      stderr: "Cannot connect to Podman. Verify the user service and socket.",
+    }));
+
+    const result = await isSandboxBridgeGatewayReachable({
+      inspectNetworkImpl: () => undefined,
+      runtimeProbeImpl,
+      usesHostGatewayRouteImpl: () => false,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "docker_daemon_unreachable",
+      networkName: "openshell-docker",
+    });
+    expect(result.detail).toContain("Cannot connect to Podman");
+    expect(runtimeProbeImpl).toHaveBeenCalledOnce();
+  });
+
   it("does not call helper DNS failures firewall failures", async () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => ({ subnet: "172.19.0.0/16", gatewayIp: "172.19.0.1" }),

@@ -93,6 +93,8 @@ export interface SandboxBridgeReachabilityOptions {
   runImpl?: (args: readonly string[], timeoutMs: number) => SandboxBridgeProbeRunResult;
   inspectNetworkImpl?: (networkName: string) => DockerBridgeNetworkInfo | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
+
+  runtimeProbeImpl?: () => SandboxBridgeProbeRunResult;
   /** Inject a precomputed image-cache result; bypasses real pre-pull. */
   ensureImageCachedOverride?: import("./preflight").EnsureProbeImageCachedResult;
 }
@@ -283,14 +285,34 @@ export async function isSandboxBridgeGatewayReachable(
   const usesHostGatewayRoute = opts.usesHostGatewayRouteImpl ?? defaultUsesHostGatewayRoute;
   const runImpl = opts.runImpl ?? defaultRunImpl;
 
+  const portableProfile = isPortableExperimentalProfile();
+  const runtimeProbe =
+    opts.runtimeProbeImpl ??
+    (() =>
+      defaultRunImpl(
+        ["info", "--format", "{{.ServerVersion}}"],
+        timeoutSec * 1000 + PROBE_RUN_OVERHEAD_MS,
+      ));
+
   const network = inspectNetwork(networkName);
   const route = buildOpenShellDockerRoute(
     networkName,
     network,
     usesHostGatewayRoute(),
-    isPortableExperimentalProfile() ? PORTABLE_HOST_GATEWAY_IP : undefined,
+    portableProfile ? PORTABLE_HOST_GATEWAY_IP : undefined,
   );
   if (!route) {
+    if (portableProfile) {
+      const runtimeResult = runtimeProbe();
+      if (runtimeResult.status !== 0) {
+        return {
+          ok: false,
+          reason: "docker_daemon_unreachable",
+          networkName,
+          detail: summarizeProbeResult(runtimeResult),
+        };
+      }
+    }
     return {
       ok: false,
       reason: "probe_unavailable",
