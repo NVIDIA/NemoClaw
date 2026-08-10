@@ -88,7 +88,7 @@ If a known-image restore and independent attestation cannot be automated, stop t
 Run these commands on Colossus.
 Replace the checkout path if the host uses a managed deployment location.
 The dispatcher requires `/usr/bin/node` 22.19.0 or later.
-Replace `REVIEWED_COMMIT_SHA` with the full 40-character SHA of the reviewed commit to deploy.
+Replace `REVIEWED_COMMIT_SHA` with the full lowercase 40-character SHA of the reviewed commit to deploy.
 
 ```bash
 /usr/bin/node --version
@@ -116,7 +116,8 @@ test -z "$(sudo git -C /opt/nemoclaw-jetson-dispatch status --short)"
 
 The two final checks must pass before the dispatcher service starts.
 Do not deploy a branch reference or automatically update this checkout.
-The service runs controller and dispatcher files from this trusted commit.
+The Colossus service runs the dispatcher files from this trusted commit.
+The GitHub-hosted controller runs the client from the trusted workflow commit.
 It never checks candidate code out on Colossus.
 
 Create a dedicated SSH key owned by the service account:
