@@ -2322,21 +2322,25 @@ export function releaseCompletedPersistedEngineStateMutation<T>(
     scope: AuthorizedPersistedEngineLifecycle,
     completed: PersistedEngineLifecycleRecord,
   ) => T,
-): PersistedEngineStateMutationResult<T>;
+): PersistedEngineStateMutationResult<T | undefined>;
 export function releaseCompletedPersistedEngineStateMutation<T>(
   input: PersistedEngineLifecycleExecutionInput,
   release: (
     scope: AuthorizedPersistedEngineLifecycle,
     completed: PersistedEngineLifecycleRecord,
   ) => Promise<T> | T,
-): PersistedEngineStateMutationResult<T> | Promise<PersistedEngineStateMutationResult<T>>;
+):
+  | PersistedEngineStateMutationResult<T | undefined>
+  | Promise<PersistedEngineStateMutationResult<T | undefined>>;
 export function releaseCompletedPersistedEngineStateMutation<T>(
   input: PersistedEngineLifecycleExecutionInput,
   release: (
     scope: AuthorizedPersistedEngineLifecycle,
     completed: PersistedEngineLifecycleRecord,
   ) => Promise<T> | T,
-): PersistedEngineStateMutationResult<T> | Promise<PersistedEngineStateMutationResult<T>> {
+):
+  | PersistedEngineStateMutationResult<T | undefined>
+  | Promise<PersistedEngineStateMutationResult<T | undefined>> {
   if (input.action !== "state-mutation") {
     throw new Error("Persisted state mutation requires the state-mutation lifecycle action.");
   }
@@ -2357,10 +2361,10 @@ export function releaseCompletedPersistedEngineStateMutation<T>(
         lease,
         current.resultSha256 as string,
       );
-      return Object.freeze({ record: finalized, value: undefined as T });
+      return Object.freeze({ record: finalized, value: undefined });
     }
     const released = release(authorizedScope(input, current, lease), current);
-    const finalize = (value: T): PersistedEngineStateMutationResult<T> => {
+    const finalize = (value: T): PersistedEngineStateMutationResult<T | undefined> => {
       input.lifecycleStore.assertMutationExecution(lease);
       const finalized = input.lifecycleStore.finalizeStateMutationRelease(
         lease,

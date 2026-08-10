@@ -867,29 +867,35 @@ with tempfile.TemporaryDirectory() as root:
     ready_read, ready_write = os.pipe()
     writer_pid = os.fork()
     if writer_pid == 0:
-        os.close(ready_read)
-        os.close(ready_write)
-        while True:
-            fd = os.open(mutation_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            os.write(fd, b"x")
-            os.close(fd)
-            time.sleep(0.01)
+        try:
+            os.close(ready_read)
+            os.close(ready_write)
+            while True:
+                fd = os.open(mutation_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                os.write(fd, b"x")
+                os.close(fd)
+                time.sleep(0.01)
+        finally:
+            os._exit(0)
     controller_pid = os.fork()
     if controller_pid == 0:
-        os.close(ready_read)
-        lock_fd = os.open(lock_path, os.O_RDWR)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        def guardian_hold(_fence, _mount, _activation):
-            os.kill(writer_pid, signal.SIGSTOP)
-            fd = os.open(held_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            os.write(fd, b"held")
-            os.close(fd)
-            time.sleep(0.25)
-        control._hold_exact_processes = guardian_hold
-        _guard = real_start_activation_guard(fence, "mnt:[401]", lock_fd)
-        os.write(ready_write, b"R")
-        while True:
-            signal.pause()
+        try:
+            os.close(ready_read)
+            lock_fd = os.open(lock_path, os.O_RDWR)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            def guardian_hold(_fence, _mount, _activation):
+                os.kill(writer_pid, signal.SIGSTOP)
+                fd = os.open(held_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.write(fd, b"held")
+                os.close(fd)
+                time.sleep(0.25)
+            control._hold_exact_processes = guardian_hold
+            _guard = real_start_activation_guard(fence, "mnt:[401]", lock_fd)
+            os.write(ready_write, b"R")
+            while True:
+                signal.pause()
+        finally:
+            os._exit(0)
     os.close(ready_write)
     try:
         results["guardian_controller_ready"] = os.read(ready_read, 1) == b"R"
@@ -960,58 +966,64 @@ with tempfile.TemporaryDirectory() as root:
     ready_read, ready_write = os.pipe()
     writer_pid = os.fork()
     if writer_pid == 0:
-        os.close(ready_read)
-        os.close(ready_write)
-        while True:
-            fd = os.open(mutation_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            os.write(fd, b"x")
-            os.close(fd)
-            time.sleep(0.01)
+        try:
+            os.close(ready_read)
+            os.close(ready_write)
+            while True:
+                fd = os.open(mutation_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                os.write(fd, b"x")
+                os.close(fd)
+                time.sleep(0.01)
+        finally:
+            os._exit(0)
     controller_pid = os.fork()
     if controller_pid == 0:
-        os.close(ready_read)
-        lock_fd = os.open(lock_path, os.O_RDWR)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        def failed_guardian_hold(_fence, _mount, _activation):
-            raise RuntimeError("injected hold failure")
-        enumeration_calls = [0]
-        def last_resort_pids():
-            enumeration_calls[0] += 1
-            fd = os.open(
-                enumeration_path,
-                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
-                0o600,
-            )
-            if enumeration_calls[0] % 2:
-                os.write(fd, b"E")
-                os.close(fd)
-                raise OSError("injected procfs failure")
-            os.write(fd, b"0")
-            os.close(fd)
-            return ()
-        def last_resort_broadcast():
-            try:
+        try:
+            os.close(ready_read)
+            lock_fd = os.open(lock_path, os.O_RDWR)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            def failed_guardian_hold(_fence, _mount, _activation):
+                raise RuntimeError("injected hold failure")
+            enumeration_calls = [0]
+            def last_resort_pids():
+                enumeration_calls[0] += 1
                 fd = os.open(
-                    parked_path,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    enumeration_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_APPEND,
                     0o600,
                 )
-            except FileExistsError:
-                pass
-            else:
-                os.write(fd, b"parked")
+                if enumeration_calls[0] % 2:
+                    os.write(fd, b"E")
+                    os.close(fd)
+                    raise OSError("injected procfs failure")
+                os.write(fd, b"0")
                 os.close(fd)
-            os.kill(writer_pid, signal.SIGSTOP)
-        control._hold_exact_processes = failed_guardian_hold
-        control._pid_namespace_process_ids = last_resort_pids
-        control._kernel_pid_namespace_stop = last_resort_broadcast
-        guard = real_start_activation_guard(fence, "mnt:[401]", lock_fd)
-        fd = os.open(guardian_pid_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        os.write(fd, str(guard.pid).encode("ascii"))
-        os.close(fd)
-        os.write(ready_write, b"R")
-        while True:
-            signal.pause()
+                return ()
+            def last_resort_broadcast():
+                try:
+                    fd = os.open(
+                        parked_path,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                    )
+                except FileExistsError:
+                    pass
+                else:
+                    os.write(fd, b"parked")
+                    os.close(fd)
+                os.kill(writer_pid, signal.SIGSTOP)
+            control._hold_exact_processes = failed_guardian_hold
+            control._pid_namespace_process_ids = last_resort_pids
+            control._kernel_pid_namespace_stop = last_resort_broadcast
+            guard = real_start_activation_guard(fence, "mnt:[401]", lock_fd)
+            fd = os.open(guardian_pid_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.write(fd, str(guard.pid).encode("ascii"))
+            os.close(fd)
+            os.write(ready_write, b"R")
+            while True:
+                signal.pause()
+        finally:
+            os._exit(0)
     os.close(ready_write)
     guardian_pid = None
     try:
@@ -1033,6 +1045,7 @@ with tempfile.TemporaryDirectory() as root:
             time.sleep(0.01)
         selected = 0
         status = 0
+        deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             selected, status = os.waitpid(writer_pid, os.WUNTRACED | os.WNOHANG)
             if selected == writer_pid and os.WIFSTOPPED(status):

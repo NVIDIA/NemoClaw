@@ -144,6 +144,14 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(qualifyDockerLoopbackPublishAuthority("29.0.0").serverVersion).toBe("29.0.0");
 
     const singleUseAuthority = qualifyDockerLoopbackPublishAuthority("28.3.3");
+    for (const clonedAuthority of [
+      Object.create(singleUseAuthority),
+      Object.assign({}, singleUseAuthority),
+    ] as DockerLoopbackPublishAuthority[]) {
+      expect(() => consumeDockerLoopbackPublishAuthority(clonedAuthority)).toThrow(
+        /authority is invalid/u,
+      );
+    }
     expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).not.toThrow();
     expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).toThrow(
       /already consumed/u,

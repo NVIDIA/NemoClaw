@@ -310,6 +310,7 @@ export function buildLlamaCppHostLocalDockerArgv(
 }
 
 const dockerLoopbackPublishAuthorityBrand = Symbol("DockerLoopbackPublishAuthority");
+const issuedDockerLoopbackPublishAuthorities = new WeakSet<object>();
 const consumedDockerLoopbackPublishAuthorities = new WeakSet<object>();
 const MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION = [28, 3, 3] as const;
 
@@ -347,10 +348,12 @@ export function qualifyDockerLoopbackPublishAuthority(
       "llama.cpp qualification requires Docker Engine 28.3.3 or newer for loopback publishing.",
     );
   }
-  return Object.freeze({
+  const authority = Object.freeze({
     serverVersion,
     [dockerLoopbackPublishAuthorityBrand]: true as const,
   });
+  issuedDockerLoopbackPublishAuthorities.add(authority);
+  return authority;
 }
 
 /** Consume a single-use authority immediately before one Docker loopback publication. */
@@ -360,7 +363,8 @@ export function consumeDockerLoopbackPublishAuthority(
   if (
     typeof authority !== "object" ||
     authority === null ||
-    authority[dockerLoopbackPublishAuthorityBrand] !== true
+    authority[dockerLoopbackPublishAuthorityBrand] !== true ||
+    !issuedDockerLoopbackPublishAuthorities.has(authority)
   ) {
     throw new Error("llama.cpp Docker loopback publishing authority is invalid.");
   }

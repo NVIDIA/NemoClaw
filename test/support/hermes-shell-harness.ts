@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -101,6 +102,7 @@ export function runHermesSandboxInitPreludeWithFakePath(startScript: string, env
     "# SECURITY: Lock down PATH before resolving or sourcing root startup helpers.",
   );
   const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
+  assert(start >= 0 && end >= 0, "Hermes start.sh prelude markers not found");
   const prelude = src
     .slice(start, end)
     .replaceAll("/opt/hermes/.venv/bin/python3", fakeGatePython)

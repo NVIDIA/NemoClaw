@@ -754,7 +754,7 @@ describe("persisted engine lifecycle", () => {
     });
     expect(
       releaseCompletedPersistedEngineStateMutation(runtime.input, duplicateRelease),
-    ).toMatchObject({ record: { phase: "completed" } });
+    ).toMatchObject({ record: { phase: "completed" }, value: undefined });
     expect(duplicateRelease).not.toHaveBeenCalled();
     expect(fs.existsSync(claimPath)).toBe(false);
 
