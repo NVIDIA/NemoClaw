@@ -7,6 +7,7 @@ import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-ins
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
 const LEGACY_GATEWAY_DOCKER_NETWORK = "openshell-cluster-nemoclaw";
+export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
 
 export interface LegacyGatewayUpgradeFixture {
   nemoclawRef: string;
@@ -71,19 +72,28 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
   return "HEAD";
 }
 
-export function legacyGatewayUpgradeDockerNetwork(nemoclawRef: string): string | undefined {
+export function legacyGatewayUpgradeHostFirewallOptions(nemoclawRef: string): {
+  networkName: string | undefined;
+  waitForNetworkMs: number;
+} {
+  let networkName: string | undefined;
   switch (nemoclawRef) {
     case "v0.0.36":
       // This cluster-era gateway names its bridge after the gateway; newer
       // Docker gateways use the host fixture's openshell-docker default.
-      return LEGACY_GATEWAY_DOCKER_NETWORK;
+      networkName = LEGACY_GATEWAY_DOCKER_NETWORK;
+      break;
     case "v0.0.55":
     case "v0.0.74":
     case "v0.0.89":
-      return undefined;
+      networkName = undefined;
+      break;
     default:
       throw new Error(`Unsupported gateway-upgrade network fixture: ${nemoclawRef}`);
   }
+  // The historical install creates its network after fetching and building
+  // its payload, so keep the parallel probe alive for the full install budget.
+  return { networkName, waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS };
 }
 
 export function throwGatewayUpgradeSetupFailures(
