@@ -533,6 +533,23 @@ fi
       ]);
       expect(fs.readFileSync(sleepsPath, "utf8").trim().split("\n")).toEqual(["5", "5", "5"]);
 
+      const recoveredOnFinalAttempt = runAuth({
+        authRequired: "1",
+        successAttempt: 5,
+        token: "test-docker-token",
+        username: "test-user",
+      });
+      expect(recoveredOnFinalAttempt.status, recoveredOnFinalAttempt.stderr).toBe(0);
+      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toHaveLength(5);
+      expect(fs.readFileSync(tokensPath, "utf8").trim().split("\n")).toEqual([
+        "test-docker-token",
+        "test-docker-token",
+        "test-docker-token",
+        "test-docker-token",
+        "test-docker-token",
+      ]);
+      expect(fs.readFileSync(sleepsPath, "utf8").trim().split("\n")).toEqual(["5", "5", "5", "5"]);
+
       const exhausted = runAuth({
         authRequired: "1",
         successAttempt: 6,
