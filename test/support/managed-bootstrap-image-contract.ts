@@ -69,13 +69,18 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
   const linkPath = path.join(tmp, "runtime-link.cjs");
   fs.writeFileSync(targetPath, "fixture\n", { mode: 0o444 });
   fs.symlinkSync(targetPath, linkPath);
-  const runDiagnostic = (artifactPath: string, invariant: string, statOutput: string) =>
+  const runDiagnostic = (
+    artifactPath: string,
+    invariant: string,
+    statOutput: string,
+    statStatus = 0,
+  ) =>
     spawnSync(
       "sh",
       [
         "-c",
         [
-          `stat() { printf '%s' \"$NEMOCLAW_TEST_STAT_OUTPUT\"; }`,
+          `stat() { printf '%s' \"$NEMOCLAW_TEST_STAT_OUTPUT\"; return \"$NEMOCLAW_TEST_STAT_STATUS\"; }`,
           functionSource,
           'managed_runtime_assertion_failed "$NEMOCLAW_TEST_INVARIANT" "$NEMOCLAW_TEST_ARTIFACT"',
         ].join("\n"),
@@ -87,6 +92,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
           NEMOCLAW_TEST_ARTIFACT: artifactPath,
           NEMOCLAW_TEST_INVARIANT: invariant,
           NEMOCLAW_TEST_STAT_OUTPUT: statOutput,
+          NEMOCLAW_TEST_STAT_STATUS: String(statStatus),
         },
       },
     );
@@ -108,6 +114,13 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     expect(symlink.stdout).toBe("");
     expect(symlink.stderr).toBe(
       `ERROR: managed image assertion failed: non-symlink path=${linkPath} uid=0 gid=0 type=symbolic link mode=777 symlink=yes\n`,
+    );
+
+    const unavailableMetadata = runDiagnostic(targetPath, "metadata-0:0:444", "", 1);
+    expect(unavailableMetadata.status).toBe(1);
+    expect(unavailableMetadata.stdout).toBe("");
+    expect(unavailableMetadata.stderr).toBe(
+      `ERROR: managed image assertion failed: metadata-0:0:444 path=${targetPath} uid=unavailable gid=unavailable type=unavailable mode=unavailable symlink=no\n`,
     );
   } finally {
     fs.rmSync(tmp, { force: true, recursive: true });
