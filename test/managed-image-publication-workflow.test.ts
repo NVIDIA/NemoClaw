@@ -677,6 +677,7 @@ describe("complete managed-image publication workflow", () => {
       step(managedPrBuilder(workflow), "Reproduce reviewed discovery permission drift").run,
     );
     expect(drift["working-directory"]).toBe("candidate");
+    expect(steps.indexOf(prCheckout)).toBeLessThan(steps.indexOf(drift));
     expect(steps.indexOf(drift)).toBeLessThan(steps.indexOf(baseBuild));
     expect(steps.indexOf(baseBuild)).toBeLessThan(steps.indexOf(finalBuild));
     expect(steps.indexOf(finalBuild)).toBeLessThan(steps.indexOf(contract));
