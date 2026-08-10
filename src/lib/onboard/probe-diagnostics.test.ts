@@ -92,4 +92,23 @@ describe("summarizeProbeForDisplay", () => {
       "timeout",
     );
   });
+  it("surfaces a missing structured tool call without raw provider text (#8714)", () => {
+    const summary = summarizeProbeForDisplay({
+      message: "raw provider response with secret-key",
+      failures: [
+        {
+          name: "Chat Completions API",
+          httpStatus: 200,
+          curlStatus: 0,
+          message: "raw provider response with secret-key",
+          body: "raw provider response with secret-key",
+          diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+        },
+      ],
+    });
+
+    expect(summary).toBe("Chat Completions API: missing structured tool call");
+    expect(summary).not.toContain("secret-key");
+    expect(summary).not.toContain("raw provider response");
+  });
 });

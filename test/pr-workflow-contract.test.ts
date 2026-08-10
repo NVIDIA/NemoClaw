@@ -80,8 +80,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardMatrix = [1, 2, 3, 4, 5, 6, 7, 8] as const;
-const cliShardCount = String(cliShardMatrix.length);
+const cliShardCount = "12";
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
@@ -416,22 +415,30 @@ describe("pull request and main workflow contracts", () => {
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-validation-"));
     const marker = join(temp, "injected");
     const shellPayload = `$(touch ${marker})`;
+    const output = join(temp, "github-output");
 
     try {
+      const validShard = runWorkflowShellStep(shardValidationStep, {
+        CLI_SHARD: cliShardCount,
+        CLI_SHARD_COUNT: cliShardCount,
+        GITHUB_OUTPUT: output,
+      });
       const invalidShard = runWorkflowShellStep(shardValidationStep, {
         CLI_SHARD: shellPayload,
-        CLI_SHARD_COUNT: "8",
-        GITHUB_OUTPUT: join(temp, "github-output"),
+        CLI_SHARD_COUNT: cliShardCount,
+        GITHUB_OUTPUT: output,
       });
       const invalidRange = runWorkflowShellStep(shardValidationStep, {
-        CLI_SHARD: "9",
-        CLI_SHARD_COUNT: "8",
+        CLI_SHARD: "13",
+        CLI_SHARD_COUNT: cliShardCount,
         GITHUB_OUTPUT: join(temp, "github-output"),
       });
       const invalidCount = runWorkflowShellStep(mergeValidationStep, {
         CLI_SHARD_COUNT: shellPayload,
       });
 
+      expect(validShard.status).toBe(0);
+      expect(readFileSync(output, "utf8")).toContain("upload_build_artifact=false");
       expect(invalidShard.status).not.toBe(0);
       expect(invalidShard.stdout).toContain("Invalid CLI shard");
       expect(invalidRange.status).not.toBe(0);
@@ -530,7 +537,7 @@ describe("pull request and main workflow contracts", () => {
     const failedShards = workflowJobListing([
       workflowJob(101, "cli-test-shards (1)", "success"),
       workflowJob(102, "cli-test-shards (2)", "failure"),
-      workflowJob(108, "cli-test-shards (8)", "cancelled"),
+      workflowJob(112, "cli-test-shards (12)", "cancelled"),
       workflowJob(109, "plugin-tests", "success"),
     ]);
     const malformedShards = workflowJobListing([
@@ -572,7 +579,7 @@ describe("pull request and main workflow contracts", () => {
 
       expect(failure.status, `${workflowName}: ${failure.stderr}`).not.toBe(0);
       expect(failure.stdout).toContain(`${runUrl}/job/102`);
-      expect(failure.stdout).toContain(`${runUrl}/job/108`);
+      expect(failure.stdout).toContain(`${runUrl}/job/112`);
       expect(malformed.status).not.toBe(0);
       expect(malformed.stdout).toContain(`Details: ${runUrl}`);
       expect(malformed.stdout).not.toContain(`${runUrl}/job/`);

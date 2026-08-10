@@ -93,20 +93,30 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     expectedVersion: "0.2.0",
     policyAdditionsPath,
   };
+  const resolveGatewayAuthority = ({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    source: "standalone" as const,
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  });
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
-    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
-      gatewayName,
-      gatewayPort,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    }),
+    resolveGatewayAuthority,
+  );
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayRebuildAuthority").mockImplementation(
+    resolveGatewayAuthority,
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
@@ -210,13 +220,20 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         : defaultHydrateCredentialEnv(credentialEnv);
     },
   );
-  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockReturnValue({
-    exists: overrides.hermesProviderExists ?? true,
-    credentialKeys:
-      (overrides.hermesProviderExists ?? true)
-        ? (overrides.hermesCredentialKeys ?? ["OPENAI_API_KEY"])
-        : null,
-  });
+  let hermesProviderExists = overrides.hermesProviderExists ?? true;
+  let hermesCredentialKeys = hermesProviderExists
+    ? (overrides.hermesCredentialKeys ?? ["OPENAI_API_KEY"])
+    : null;
+  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockImplementation(() => ({
+    exists: hermesProviderExists,
+    credentialKeys: hermesCredentialKeys,
+  }));
+  const registerHermesInferenceProviderSpy = vi
+    .spyOn(hermesProviderAuth, "registerHermesInferenceProvider")
+    .mockImplementation((...args: unknown[]) => {
+      hermesProviderExists = true;
+      hermesCredentialKeys = [String(args[2] ?? "OPENAI_API_KEY")];
+    });
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     if (typeof mutator !== "function") {
@@ -542,6 +559,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         policies.resolveSandboxBaselinePolicy(String(preflightOptions.sandboxName ?? ""));
       }
       await overrides.preflightAuthoritativeRebuildTarget?.(preflightOptions);
+      return {
+        gatewayName: String(preflightOptions.targetGatewayName ?? "nemoclaw"),
+        gatewayPort: Number(preflightOptions.targetGatewayPort ?? 8080),
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      };
     },
   );
   const ensureValidatedBraveSearchCredentialSpy = vi
@@ -658,6 +685,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     registryUpdateSpy,
     setDefaultSpy,
     setDefault: (name: string) => registry.setDefault(name),
+    registerHermesInferenceProviderSpy,
     registerSandboxEntry: (name: string) => {
       currentRegistryEntryNames.add(name);
       if (currentDefaultSandbox === null) {

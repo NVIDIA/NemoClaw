@@ -88,22 +88,32 @@ describe("rebuild resume snapshot repair", () => {
       session = cloneSession((mutator as (value: Session) => Session | void)(current) ?? current);
       return loadSession();
     };
+    const resolveGatewayAuthority = ({
+      gatewayName,
+      gatewayPort,
+    }: {
+      gatewayName: string;
+      gatewayPort: number;
+    }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed" as const,
+      source: "standalone" as const,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    });
 
     spies.push(
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
       vi
         .spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority")
-        .mockImplementation(({ gatewayName, gatewayPort }) => ({
-          gatewayName,
-          gatewayPort,
-          mode: "nemoclaw-managed",
-          source: "standalone",
-          endpoint: null,
-          stateDir: null,
-          supervisor: null,
-          requiredCapabilities: [],
-        })),
+        .mockImplementation(resolveGatewayAuthority),
+      vi
+        .spyOn(gatewayTeardownAuthority, "resolveGatewayRebuildAuthority")
+        .mockImplementation(resolveGatewayAuthority),
       vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
         recovered: true,
         before: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
@@ -211,7 +221,16 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(nim, "detectGpu").mockReturnValue(null),
       vi
         .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
-        .mockResolvedValue(undefined),
+        .mockResolvedValue({
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        }),
       vi.spyOn(rebuildImagePreflight, "preflightRebuildImage").mockResolvedValue({
         ok: true,
         imageTag: null,
