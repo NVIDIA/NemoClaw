@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -20,12 +22,63 @@ import {
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
+  removeManagedImageGatewayStateIfSafe,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
+  it("loads every OpenShell operation required before protected image launch (#7744)", async () => {
+    const onboardImport = (await import("../src/lib/onboard.ts")) as unknown as Record<
+      string,
+      unknown
+    >;
+    const onboard = ("default" in onboardImport ? onboardImport.default : onboardImport) as Record<
+      string,
+      unknown
+    >;
+
+    for (const operation of [
+      "openshellArgv",
+      "runOpenshell",
+      "runCaptureOpenshell",
+      "sleepSeconds",
+      "startGatewayForRecovery",
+    ]) {
+      expect(onboard[operation], operation).toBeTypeOf("function");
+    }
+  });
+
+  it.each([
+    ["unknown ownership", { failed: [], ownershipFailures: ["status cannot be proven"] }, 0],
+    ["denied signal", { failed: [9_999_601], ownershipFailures: [] }, 0],
+    ["failed gateway removal", { failed: [], ownershipFailures: [] }, 1],
+  ])("retains gateway evidence after %s (#7744)", (_case, gatewayStop, removalStatus) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-retain-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, "9999601\n");
+
+    try {
+      expect(removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, removalStatus)).toBe(
+        false,
+      );
+      expect(fs.readFileSync(pidFile, "utf8")).toBe("9999601\n");
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("removes gateway state only after scoped stop and gateway removal succeed (#7744)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-remove-"));
+    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), "9999601\n");
+
+    expect(
+      removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0),
+    ).toBe(true);
+    expect(fs.existsSync(stateDir)).toBe(false);
+  });
+
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
     const routeKinds = [...MANAGED_IMAGE_LOCAL_INFERENCE_KINDS, "rollback"] as const;
     const qualifications = PROTECTED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>

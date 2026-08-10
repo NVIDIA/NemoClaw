@@ -10,6 +10,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
+  type StopHostGatewayResult,
+  stopHostGatewayProcesses,
+} from "../../src/lib/onboard/host-gateway-process.ts";
+import {
   type InitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
 } from "../../src/lib/onboard/initial-policy.ts";
@@ -242,48 +246,20 @@ function isDockerNotFound(result: ReturnType<typeof commandResult>): boolean {
   );
 }
 
-function readGatewayPid(stateDir: string): number | null {
-  try {
-    const value = Number.parseInt(
-      fs.readFileSync(path.join(stateDir, "openshell-gateway.pid"), "utf8").trim(),
-      10,
-    );
-    return Number.isSafeInteger(value) && value > 1 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
+export function removeManagedImageGatewayStateIfSafe(
+  stateDir: string,
+  gatewayStop: Pick<StopHostGatewayResult, "failed" | "ownershipFailures">,
+  gatewayRemovalStatus: number | null,
+): boolean {
+  if (
+    gatewayStop.failed.length > 0 ||
+    (gatewayStop.ownershipFailures?.length ?? 0) > 0 ||
+    gatewayRemovalStatus !== 0
+  ) {
     return false;
   }
-}
-
-function stopProcess(pid: number | null): boolean {
-  if (!pid || !processExists(pid)) return true;
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return !processExists(pid);
-  }
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (!processExists(pid)) return true;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // The process exited between the liveness probe and the final signal.
-  }
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (!processExists(pid)) return true;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-  }
-  return !processExists(pid);
+  fs.rmSync(stateDir, { recursive: true, force: true });
+  return true;
 }
 
 function createProtectedAuthorityStore(stateDir: string): ManagedBootstrapAuthorityStore {
@@ -982,16 +958,33 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         15_000,
       );
     }
-    const gatewayPid = readGatewayPid(stateDir);
-    if (!stopProcess(gatewayPid)) {
-      cleanupErrors.push(`OpenShell gateway process ${String(gatewayPid)} did not stop`);
+    const gatewayStop = stopHostGatewayProcesses(
+      {},
+      {
+        clearRuntimeFiles: false,
+        openShellGatewayName: "nemoclaw",
+        openShellGatewayPort: GATEWAY_PORT,
+        scopedGatewayStop: true,
+        stateDir,
+        usePgrepFallback: false,
+      },
+    );
+    if (gatewayStop.failed.length > 0 || (gatewayStop.ownershipFailures?.length ?? 0) > 0) {
+      cleanupErrors.push(
+        `OpenShell gateway cleanup failed: ${[
+          ...gatewayStop.failed.map((pid) => `process ${String(pid)} did not stop`),
+          ...(gatewayStop.ownershipFailures ?? []),
+        ].join("; ")}`,
+      );
     }
+    let gatewayRemovalStatus: number | null = null;
     if (onboard) {
       const removeGateway = commandResult(
         onboard.openshellArgv(["gateway", "remove", "nemoclaw"]),
         process.env,
         15_000,
       );
+      gatewayRemovalStatus = removeGateway.status;
       if (removeGateway.status !== 0) {
         cleanupErrors.push(`OpenShell gateway removal failed: ${commandDetail(removeGateway)}`);
       }
@@ -1077,7 +1070,11 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
     try {
-      fs.rmSync(stateDir, { recursive: true, force: true });
+      if (!removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, gatewayRemovalStatus)) {
+        cleanupErrors.push(
+          `OpenShell gateway ownership evidence remains at ${stateDir} because gateway cleanup did not complete`,
+        );
+      }
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
