@@ -201,7 +201,7 @@ interface ProcessResult {
   stderr: string;
 }
 
-class ProcessFailure extends Error {
+export class ProcessFailure extends Error {
   readonly result: ProcessResult;
 
   constructor(message: string, result: ProcessResult) {
@@ -355,11 +355,21 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     } catch (error) {
       testError = error;
     }
-    const artifactArchiveBase64 = options.signal.aborted
-      ? undefined
-      : await this.#collectArtifact(options.jobId, options.signal);
+    let artifactArchiveBase64: string | undefined;
+    let artifactCollectionError: unknown;
+    if (!options.signal.aborted) {
+      try {
+        artifactArchiveBase64 = await this.#collectArtifact(options.jobId, options.signal);
+      } catch (error) {
+        artifactCollectionError = error;
+      }
+    }
     if (testError instanceof ProcessFailure) {
-      const failure = new Error(testError.message) as Error & {
+      const collectionFailure =
+        artifactCollectionError instanceof Error
+          ? `; artifact collection failed: ${artifactCollectionError.message}`
+          : "";
+      const failure = new Error(`${testError.message}${collectionFailure}`) as Error & {
         artifactArchiveBase64?: string;
         log: string;
       };
@@ -378,6 +388,7 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
       throw failure;
     }
     if (testError) throw testError;
+    if (artifactCollectionError) throw artifactCollectionError;
     if (!testResult) throw new Error("Jetson E2E did not return a process result");
     if (artifactArchiveBase64 === undefined) {
       throw new Error("Successful Jetson E2E did not produce a bounded artifact archive");

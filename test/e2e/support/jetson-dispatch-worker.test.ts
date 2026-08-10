@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   loadSshJetsonWorkerConfig,
+  ProcessFailure,
   SshJetsonDispatchWorker,
 } from "../../../tools/e2e/jetson-dispatch-worker.mts";
 
@@ -106,6 +107,44 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(processRunner.mock.calls[1]![0].input).not.toContain("trap cleanup EXIT");
     expect(processRunner.mock.calls[2]![0].input).toContain("trap cleanup EXIT");
     expect(processRunner.mock.calls[2]![0].input).toContain("base64 --wrap=0");
+  });
+
+  it("preserves test-failure logs when artifact collection fails (#8142)", async () => {
+    const files = deploymentFiles();
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout:
+          "model\tNVIDIA Jetson AGX Thor Developer Kit\njetpackVersion\t7.2.2\njetsonLinuxRelease\tR38\nkernel\t6.8.12-tegra\n",
+        stderr: "",
+      })
+      .mockRejectedValueOnce(
+        new ProcessFailure("Jetson test failed", {
+          stdout: "failed test output\n",
+          stderr: "failed test error\n",
+        }),
+      )
+      .mockRejectedValueOnce(new Error("artifact collection unavailable"));
+    const worker = new SshJetsonDispatchWorker(
+      loadSshJetsonWorkerConfig(environment(files)),
+      processRunner,
+    );
+
+    await expect(
+      worker.run(
+        {
+          schemaVersion: 1,
+          target: "jetson-nvmap-gpu",
+          candidateSha: "a".repeat(40),
+          workflowRunId: "123",
+          workflowRunAttempt: 1,
+        },
+        { jobId: "b".repeat(64), signal: new AbortController().signal },
+      ),
+    ).rejects.toMatchObject({
+      message: "Jetson test failed; artifact collection failed: artifact collection unavailable",
+      log: expect.stringContaining("failed test output"),
+    });
   });
 
   it.each([

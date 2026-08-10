@@ -314,6 +314,21 @@ describe("Jetson single-device lifecycle", () => {
     });
   });
 
+  it("returns completed evidence when its result log is missing (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const dispatch = coordinator(stateDirectory, worker());
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    await waitForCompletion(dispatch, accepted.jobId);
+    fs.rmSync(path.join(stateDirectory, `${accepted.jobId}.log`));
+
+    expect(dispatch.artifact(accepted.jobId)).toMatchObject({
+      artifactArchiveBase64: ARTIFACT_ARCHIVE_BASE64,
+      log: "",
+      status: { conclusion: "success", state: "completed" },
+    });
+  });
+
   it("rejects a second job while the Jetson lock is held (#8142)", async () => {
     let finish: (() => void) | undefined;
     const run = vi.fn(
@@ -440,6 +455,33 @@ describe("Jetson single-device lifecycle", () => {
 });
 
 describe("Jetson dispatch HTTP boundary", () => {
+  it("reports the controller deadline when cancellation also fails (#8142)", async () => {
+    const jobId = "d".repeat(64);
+    const request = vi.fn().mockRejectedValue(new Error("tunnel unavailable"));
+
+    await expect(
+      pollJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        deadlineMs: 10_000,
+        initialStatus: {
+          schemaVersion: 1,
+          jobId,
+          request: REQUEST,
+          state: "queued",
+          createdAt: new Date(0).toISOString(),
+          reset: "pending",
+        },
+        jobId,
+        now: () => 10_000,
+        request,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow("Jetson dispatcher did not complete before the controller deadline");
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${jobId}` }),
+    );
+  });
+
   it("retries transient status failures and cancels after the bounded limit (#8142)", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const jobId = "d".repeat(64);

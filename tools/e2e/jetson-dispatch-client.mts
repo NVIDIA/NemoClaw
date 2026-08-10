@@ -219,7 +219,7 @@ export async function pollJetsonDispatch(options: {
         method: "DELETE",
         path: `v1/jobs/${options.jobId}`,
         maxBytes: MAX_STATUS_BYTES,
-      });
+      }).catch(() => undefined);
       throw new Error("Jetson dispatcher did not complete before the controller deadline");
     }
     await wait(POLL_INTERVAL_MS);
@@ -298,7 +298,7 @@ async function main(): Promise<void> {
   jobId = dispatched.jobId;
   console.log(`Jetson dispatch accepted as ${jobId}`);
   const deadline = Date.now() + MAX_WAIT_MS;
-  const status = await pollJetsonDispatch({
+  await pollJetsonDispatch({
     baseUrl,
     deadlineMs: deadline,
     initialStatus: dispatched,

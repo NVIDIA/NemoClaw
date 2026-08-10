@@ -290,6 +290,7 @@ export class JetsonDispatchCoordinator {
       throw new JetsonDispatchBusyError("Jetson job is not complete");
     const log =
       readPrivateRegularFile(this.#logPath(jobId), {
+        allowMissing: true,
         maxBytes: MAX_JETSON_DISPATCH_LOG_BYTES,
       }) ?? "";
     const artifactArchiveBase64 = readPrivateRegularFile(this.#artifactPath(jobId), {
