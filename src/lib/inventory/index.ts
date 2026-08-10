@@ -197,13 +197,13 @@ function safeStatusString(value: string | null | undefined): string | null {
 
 /**
  * Resolve the agent every inventory surface reports. The registry stores `null`
- * for an OpenClaw sandbox, so text and JSON must resolve that marker here or
- * they disagree on the same sandbox.
+ * or omits `agent` for an OpenClaw sandbox, so text and JSON must resolve that
+ * marker here or they report different agents for the same sandbox.
  *
  * #5714: a sandbox recovered display-only from the live gateway has an unknown
  * agent (the gateway sandbox list does not expose it). Surface "unknown" rather
- * than the OpenClaw default, which would misrepresent a Deep Agents/Hermes
- * sandbox as OpenClaw.
+ * than the OpenClaw default, which would misrepresent a Hermes or Deep Agents
+ * Code sandbox as OpenClaw.
  */
 function resolveDisplayAgent(sandbox: SandboxEntry): string {
   if (sandbox.agent) return sandbox.agent;
@@ -420,7 +420,7 @@ function buildStatusSandboxRow(
           .filter((policy): policy is string => typeof policy === "string")
           .map((policy) => safeStatusString(policy) || policy)
       : [],
-    agent: safeStatusString(resolveDisplayAgent(sandbox)) ?? "openclaw",
+    agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(dashboardPort != null ? { dashboardPort } : {}),
     isDefault,
   };
