@@ -1642,7 +1642,7 @@ ensure_cli_shim() {
   expected_shim="$(
     cat <<EOF
 #!/usr/bin/env bash
-export PATH="$node_dir:\$PATH"
+[[ "\$(command -v node 2>/dev/null)" == "$node_path" ]] || export PATH="$node_dir:\$PATH"
 exec "$cli_path" "\$@"
 EOF
   )"
