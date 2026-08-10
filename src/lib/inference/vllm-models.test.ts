@@ -453,6 +453,7 @@ describe("vllm model registry", () => {
 
     expect(muse).toMatchObject({
       id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+      label: "Muse Glimmer 30B NVFP4 W4A4 [Experimental]",
       revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
       servedModelId: "muse-glimmer",
       maxModelLen: 32768,

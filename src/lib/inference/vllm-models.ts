@@ -358,7 +358,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
   },
   {
     id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
-    label: "Muse Glimmer 30B NVFP4 W4A4",
+    label: "Muse Glimmer 30B NVFP4 W4A4 [Experimental]",
     envValue: "muse-glimmer-30b",
     downloadSizeBytes: 25_447_097_878,
     maxModelLen: 32768,
