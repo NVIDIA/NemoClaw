@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("node:fs");
-const net = require("node:net");
+import fs from "node:fs";
+import net from "node:net";
 
 const markerPath = process.argv[2];
 if (!markerPath) throw new Error("A readiness marker path is required.");
