@@ -102,6 +102,16 @@ function productionManagedBaseUrlResolver(
     });
 }
 
+function hostLocalDiagnosticCapture(argv: readonly string[]): string {
+  return argv[0] === "curl"
+    ? "200"
+    : argv.at(-1) === "/etc/hosts"
+      ? "172.18.0.1\thost.openshell.internal"
+      : argv.includes("-o")
+        ? "503"
+        : "";
+}
+
 beforeEach(() => {
   vi.stubEnv(LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV, undefined);
   managedClusterRecovery.endpoint.mockReset();
@@ -297,12 +307,7 @@ describe("managed vLLM authentication", () => {
       baseUrl: "http://127.0.0.1:8000",
       apiKey: API_KEY,
     });
-    const capture = vi.fn((argv: readonly string[]) => {
-      if (argv[0] === "curl") return "200";
-      if (argv.at(-1) === "/etc/hosts") return "172.18.0.1\thost.openshell.internal";
-      if (argv.includes("-o")) return "503";
-      return "";
-    });
+    const capture = vi.fn(hostLocalDiagnosticCapture);
 
     const result = validateLocalProvider("vllm-local", capture, () => undefined);
     const dockerCommands = capture.mock.calls
