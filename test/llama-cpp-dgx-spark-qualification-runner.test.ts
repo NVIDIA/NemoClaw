@@ -466,7 +466,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         expect(imageIndex).toBeGreaterThan(0);
         expect(argv.slice(imageIndex - 2, imageIndex)).toEqual(["--publish", expectedMapping]);
         expect(argv.filter((argument) => argument === "--publish")).toHaveLength(1);
-        const [publishedHost, , publishedContainerPort] = expectedMapping.split(":");
+        const [publishedHost, , publishedContainerPort] = argv[imageIndex - 1].split(":");
         expect([publishedHost, publishedContainerPort]).toEqual(["127.0.0.1", servePort]);
       }
     } finally {
