@@ -261,7 +261,14 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
   if (output.includes("GATEWAY_HEALTH_TIMEOUT") || output.includes("SUPERVISOR_TIMEOUT")) {
     return { layer: "health timeout", detail: detail || "gateway health timeout" };
   }
-  return { layer: "launch failure", detail: detail || `restart exited ${result.status}` };
+  return {
+    layer: "launch failure",
+    detail:
+      detail ||
+      (output.trim() === ""
+        ? `restart exited ${result.status}`
+        : `restart exited ${result.status} with no printable output`),
+  };
 }
 
 export function isGatewayIntegrityRepairLayer(

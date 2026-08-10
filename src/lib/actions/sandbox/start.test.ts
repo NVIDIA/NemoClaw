@@ -198,6 +198,26 @@ describe("startSandbox", () => {
     );
   });
 
+  it("waits after an empty startup controller exit 137 before repeating full recovery (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState
+      .mockReturnValueOnce({
+        ...FAILED_RECOVERY,
+        recoveryFailureLayer: "launch failure",
+        recoveryFailureDetail: "restart exited 137",
+      })
+      .mockReturnValueOnce(SUCCESSFUL_RECOVERY);
+    h.waitForManagedGatewaySupervisor.mockReturnValue(true);
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledWith("my-sandbox");
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+  });
+
   it("preserves the first recovery failure when the managed supervisor remains absent (#8726)", async () => {
     const h = harness();
     h.restoreStartupState.mockReturnValue({
@@ -208,6 +228,22 @@ describe("startSandbox", () => {
 
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
       "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("preserves exit 137 when the managed supervisor settling wait fails (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "launch failure",
+      recoveryFailureDetail: "restart exited 137",
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "launch failure: restart exited 137",
     );
     expect(h.restoreStartupState).toHaveBeenCalledOnce();
     expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
@@ -258,6 +294,7 @@ describe("startSandbox", () => {
       "supervisor not running",
       "prefix SUPERVISOR_NOT_RUNNING suffix",
     ],
+    ["diagnostic exit 137", "launch failure", "restart exited 137 with diagnostic output"],
   ] as const)("does not wait after a %s (#8726)", async (_label, layer, detail) => {
     const h = harness();
     h.restoreStartupState.mockReturnValue({

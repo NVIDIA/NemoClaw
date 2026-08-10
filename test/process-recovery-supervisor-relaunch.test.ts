@@ -147,6 +147,65 @@ function scriptedPinnedGatewayRecovery(
 }
 
 describe("waitForManagedGatewaySupervisor", () => {
+  it("waits through an exact empty exit 137 from a settling controller probe (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({ status: 137, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("fails after the bounded wait when empty exit 137 persists (#8726)", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 137,
+          stdout: "",
+          stderr: "",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("does not wait through exit 137 with controller output (#8726)", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 137,
+          stdout: "",
+          stderr: "container stopped",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
   it("waits through an exact missing-supervisor startup race", () => {
     const sleepImpl = vi.fn();
     const requestGatewaySupervisorActionImpl = vi

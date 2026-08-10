@@ -351,6 +351,18 @@ function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | nul
   return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
 }
 
+function isExactlyInterruptedManagedSupervisorProbe(result: SandboxCommandResult | null): boolean {
+  // An empty 137 proves only that the read-only controller probe was killed.
+  // Keep it inconclusive inside this bounded waiter: authenticated supervisor
+  // proof is still required for success, and persistent interruptions fail.
+  return (
+    result !== null &&
+    result.status === 137 &&
+    result.stdout.trim() === "" &&
+    result.stderr.trim() === ""
+  );
+}
+
 export function waitForManagedGatewaySupervisor(
   sandboxName: string,
   options: {
@@ -373,7 +385,8 @@ export function waitForManagedGatewaySupervisor(
       !isExactlyMissingManagedSupervisor(result) &&
       !isExactlyRetryableManagedRecoveryFailure(result) &&
       !isExactlyPendingManagedSupervisorControl(result) &&
-      !isExactlyPendingManagedGatewayHealth(result)
+      !isExactlyPendingManagedGatewayHealth(result) &&
+      !isExactlyInterruptedManagedSupervisorProbe(result)
     ) {
       return false;
     }
