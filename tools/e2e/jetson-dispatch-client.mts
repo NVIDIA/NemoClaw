@@ -14,11 +14,11 @@ import {
   decodeJetsonArtifactArchive,
   type JetsonDispatchArtifact,
   type JetsonDispatchStatus,
+  MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
 } from "./jetson-dispatch-lifecycle.mts";
 import { writePrivateRegularFile } from "./private-file.mts";
 
 const MAX_STATUS_BYTES = 64 * 1024;
-const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
 const POLL_INTERVAL_MS = 10_000;
 const MAX_WAIT_MS = 54 * 60_000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
@@ -310,7 +310,7 @@ async function main(): Promise<void> {
     baseUrl,
     method: "GET",
     path: `v1/jobs/${jobId}/artifact`,
-    maxBytes: MAX_ARTIFACT_BYTES,
+    maxBytes: MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
   });
   const artifact = validateArtifact(artifactValue, jobId);
   const { artifactArchiveBase64, ...artifactReceipt } = artifact;

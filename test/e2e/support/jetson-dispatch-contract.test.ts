@@ -27,6 +27,9 @@ import {
   JetsonDispatchNotFoundError,
   type JetsonDispatchStatus,
   type JetsonDispatchWorker,
+  MAX_JETSON_ARTIFACT_ARCHIVE_BYTES,
+  MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
+  MAX_JETSON_DISPATCH_LOG_BYTES,
 } from "../../../tools/e2e/jetson-dispatch-lifecycle.mts";
 import { createJetsonDispatchServer } from "../../../tools/e2e/jetson-dispatch-service.mts";
 
@@ -270,6 +273,27 @@ describe("Jetson dispatch request and OIDC boundary", () => {
 });
 
 describe("Jetson single-device lifecycle", () => {
+  it("keeps the maximum log and archive response within the controller bound (#8142)", () => {
+    const artifact = {
+      artifactArchiveBase64: Buffer.alloc(MAX_JETSON_ARTIFACT_ARCHIVE_BYTES).toString("base64"),
+      log: "\0".repeat(MAX_JETSON_DISPATCH_LOG_BYTES),
+      status: {
+        schemaVersion: 1,
+        jobId: "d".repeat(64),
+        request: REQUEST,
+        state: "completed",
+        conclusion: "success",
+        createdAt: new Date(0).toISOString(),
+        completedAt: new Date(0).toISOString(),
+        reset: "succeeded",
+      },
+    };
+
+    expect(Buffer.byteLength(`${JSON.stringify(artifact)}\n`)).toBeLessThanOrEqual(
+      MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
+    );
+  });
+
   it("records success only after reset succeeds (#8142)", async () => {
     const reset = vi.fn(async () => {});
     const dispatch = coordinator(temporaryDirectory(), worker({ reset }));

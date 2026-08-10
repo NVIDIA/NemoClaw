@@ -11,11 +11,16 @@ import {
   writePrivateRegularFile,
 } from "./private-file.mts";
 
-const MAX_LOG_BYTES = 4 * 1024 * 1024;
+export const MAX_JETSON_DISPATCH_LOG_BYTES = 4 * 1024 * 1024;
 const MAX_RETAINED_JOB_STATUSES = 128;
 export const MAX_JETSON_ARTIFACT_ARCHIVE_BYTES = 1024 * 1024;
 const MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS =
   Math.ceil(MAX_JETSON_ARTIFACT_ARCHIVE_BYTES / 3) * 4;
+const MAX_JETSON_DISPATCH_ARTIFACT_JSON_OVERHEAD_BYTES = 256 * 1024;
+export const MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES =
+  MAX_JETSON_DISPATCH_LOG_BYTES * 6 +
+  MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS +
+  MAX_JETSON_DISPATCH_ARTIFACT_JSON_OVERHEAD_BYTES;
 
 export type JetsonDispatchConclusion =
   | "cancelled"
@@ -77,7 +82,9 @@ function safeError(error: unknown): string {
 function workerErrorLog(error: unknown): string | undefined {
   if (!error || typeof error !== "object" || !("log" in error)) return undefined;
   const log = (error as { log?: unknown }).log;
-  if (typeof log !== "string" || Buffer.byteLength(log) > MAX_LOG_BYTES) return undefined;
+  if (typeof log !== "string" || Buffer.byteLength(log) > MAX_JETSON_DISPATCH_LOG_BYTES) {
+    return undefined;
+  }
   return log;
 }
 
@@ -281,7 +288,10 @@ export class JetsonDispatchCoordinator {
     const status = this.status(jobId);
     if (status.state !== "completed")
       throw new JetsonDispatchBusyError("Jetson job is not complete");
-    const log = readPrivateRegularFile(this.#logPath(jobId), { maxBytes: MAX_LOG_BYTES }) ?? "";
+    const log =
+      readPrivateRegularFile(this.#logPath(jobId), {
+        maxBytes: MAX_JETSON_DISPATCH_LOG_BYTES,
+      }) ?? "";
     const artifactArchiveBase64 = readPrivateRegularFile(this.#artifactPath(jobId), {
       allowMissing: true,
       maxBytes: MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS,
@@ -314,8 +324,8 @@ export class JetsonDispatchCoordinator {
         jobId: status.jobId,
         signal: controller.signal,
       });
-      if (Buffer.byteLength(result.log) > MAX_LOG_BYTES) {
-        throw new Error(`Jetson log exceeds ${MAX_LOG_BYTES} bytes`);
+      if (Buffer.byteLength(result.log) > MAX_JETSON_DISPATCH_LOG_BYTES) {
+        throw new Error(`Jetson log exceeds ${MAX_JETSON_DISPATCH_LOG_BYTES} bytes`);
       }
       writePrivateRegularFile(this.#logPath(status.jobId), result.log);
       if (result.artifactArchiveBase64 !== undefined) {
@@ -333,11 +343,9 @@ export class JetsonDispatchCoordinator {
         if (artifactArchiveBase64 !== undefined) {
           writePrivateRegularFile(this.#artifactPath(status.jobId), artifactArchiveBase64);
         }
-      } catch (logError) {
-        status.error = `${status.error}; log persistence failed: ${safeError(logError)}`.slice(
-          0,
-          500,
-        );
+      } catch (resultError) {
+        status.error =
+          `${status.error}; result persistence failed: ${safeError(resultError)}`.slice(0, 500);
       }
     } finally {
       clearTimeout(timer);

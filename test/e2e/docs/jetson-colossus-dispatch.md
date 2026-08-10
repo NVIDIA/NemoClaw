@@ -29,7 +29,7 @@ The credentials have these lifecycles:
 
 | Credential | Location and access | Lifetime and removal |
 | --- | --- | --- |
-| GitHub OIDC token | GitHub-hosted controller process memory and the authenticated request | The client requests a new token for each request. It does not write the token to disk. |
+| GitHub OIDC token | GitHub-hosted controller process memory and the authenticated request | The client reuses a token in process memory for at most four minutes and then requests another. It does not write the token to disk. |
 | Cloudflare account certificate | The administrator account that runs `cloudflared tunnel login` | Remove `cert.pem` from Colossus after tunnel creation and DNS routing. Reauthenticate before later management changes. |
 | Cloudflare Tunnel credential | `/etc/cloudflared/TUNNEL_UUID.json`, readable only by the tunnel service account | Keep it for this temporary deployment. Revoke the tunnel and remove the file when the deployment ends. |
 | Jetson SSH private key | `/var/lib/nemoclaw-jetson-dispatch/id_ed25519`, readable only by the dispatcher service account | Keep it for this temporary deployment. Remove the matching Jetson public key and private key when the deployment ends. |
@@ -373,7 +373,8 @@ The uploaded `e2e-jetson-nvmap-gpu` artifact must contain `jetson-dispatch.json`
 - `reset: "succeeded"` before `conclusion: "success"`.
 
 It must also contain `jetson-e2e-artifacts.tar.gz`.
-The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace and rejects archives larger than 1 MiB.
+The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace.
+It rejects an artifact directory or compressed archive larger than 1 MiB.
 
 After the workflow completes, independently rerun the baseline checks.
 Then run one controlled failing candidate and confirm that its artifact records the same reset evidence.
@@ -387,11 +388,14 @@ Independently rerun the baseline checks after that cancellation.
 The dispatcher permits one active job.
 A process crash leaves `device.lock` in the state directory.
 On restart, the dispatcher invokes the reset program before it removes that stale lock or accepts more work.
-If reset fails, startup fails or the completed job reports `reset-failed`.
-The lock remains after either reset failure.
+If reset fails, startup fails or the completed job reports `conclusion: "reset-failed"` with `reset: "failed"`.
+If reset succeeds but lock removal fails, the completed job reports `conclusion: "reset-failed"` with `reset: "succeeded"`.
+The lock remains in either case.
 
 Do not delete `device.lock` to bypass recovery.
-Repair the reset path, run and verify the reset program, and restart the dispatcher.
+For `reset: "failed"`, repair the reset path.
+For `reset: "succeeded"` with a lock-removal error, repair the state-directory filesystem or permissions.
+Then restart the dispatcher; startup runs and verifies another reset before removing the stale lock.
 Preserve the job JSON and log files for diagnosis.
 These private state files can contain candidate output, and the dispatcher does not prune them.
 Apply the host's approved retention policy after GitHub uploads the artifact and no device lock exists.
