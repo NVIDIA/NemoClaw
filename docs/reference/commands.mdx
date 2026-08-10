@@ -1419,7 +1419,8 @@ When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats
 For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
 Recovery accepts at most 3 `SUPERVISOR_BUSY` results.
 Status `137` and the Docker restart result share the 11-attempt managed-control budget.
-Managed settle confirmation treats only exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+Status `137` and the Docker restart result remain terminal during that confirmation.
 The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
 Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results are terminal.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes.
