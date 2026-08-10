@@ -18,6 +18,8 @@ import type {
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
+export const RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION = 1 as const;
+export const RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
 export type RuntimeProviderLifecycleAction = "start" | "stop";
@@ -216,6 +218,56 @@ export interface RuntimeProviderManagedProfileRestoreAuthority {
   readonly profileFingerprint: string;
 }
 
+export type RuntimeProviderStateMutationSelector =
+  | { readonly kind: "path"; readonly path: string }
+  | { readonly kind: "prefix"; readonly prefix: string };
+
+/** One bounded runtime provider state mutation. Providers never accept commands or callbacks. */
+export interface RuntimeProviderStateMutationPlan {
+  readonly schemaVersion: typeof RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION;
+  readonly intent: "protection-transition" | "restore";
+  readonly stateRoot: string;
+  readonly selectors: readonly RuntimeProviderStateMutationSelector[];
+  /** Digest of the complete projection produced by the selected AgentDefinition. */
+  readonly projectionSha256: string;
+}
+
+export interface RuntimeProviderPreparedStateMutationPlan {
+  readonly plan: RuntimeProviderStateMutationPlan;
+  readonly planSha256: string;
+  readonly projectionSha256: string;
+}
+
+export interface RuntimeProviderStateMutationContext {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+}
+
+/** Opaque provider proof for one active, exact-runtime provider state mutation fence. */
+export interface RuntimeProviderStateMutationFence {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly stateRoot: string;
+  readonly planSha256: string;
+  readonly projectionSha256: string;
+  readonly nonce: string;
+  readonly providerHandle: string;
+}
+
+/** Fresh service evidence required before a runtime provider state mutation fence may retire. */
+export interface RuntimeProviderStateMutationActivationProof {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly configurationGeneration: string;
+  readonly listenerIdentity: string;
+  readonly healthSha256: string;
+}
+
 /**
  * Complete normalized source state supplied to the owning restore facet.
  * `providerHandle` binds the lifecycle generation and full runtime receipt.
@@ -284,6 +336,30 @@ export type RuntimeProviderLifecycleSurface =
 export type RuntimeProviderMutationAuthoritySurface =
   | RuntimeProviderSupportedSurface<{
       readonly operations: readonly RuntimeProviderMutationOperation[];
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+export type RuntimeProviderStateMutationSurface =
+  | RuntimeProviderSupportedSurface<{
+      readonly contractVersion: typeof RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION;
+      acquire(
+        input: RuntimeProviderStateMutationContext & {
+          /** Frozen, digested runtime provider state mutation plan. */
+          readonly plan: RuntimeProviderPreparedStateMutationPlan;
+        },
+      ): Promise<RuntimeProviderStateMutationFence>;
+      assertFenced(
+        input: RuntimeProviderStateMutationContext,
+        fence: RuntimeProviderStateMutationFence,
+      ): Promise<void>;
+      activate(
+        input: RuntimeProviderStateMutationContext,
+        fence: RuntimeProviderStateMutationFence,
+        proof: RuntimeProviderStateMutationActivationProof,
+      ): Promise<void>;
+      recover(
+        input: RuntimeProviderStateMutationContext,
+      ): Promise<RuntimeProviderStateMutationFence | null>;
     }>
   | RuntimeProviderUnsupportedSurface;
 
@@ -386,6 +462,7 @@ export interface RuntimeProviderBundle {
   readonly hostLocalInference: RuntimeProviderHostLocalInferenceSurface;
   readonly lifecycle: RuntimeProviderLifecycleSurface;
   readonly mutationAuthority: RuntimeProviderMutationAuthoritySurface;
+  readonly stateMutation: RuntimeProviderStateMutationSurface;
   readonly bootstrap: RuntimeProviderBootstrapSurface;
   readonly snapshot: RuntimeProviderSnapshotSurface;
   readonly recovery: RuntimeProviderRecoverySurface;

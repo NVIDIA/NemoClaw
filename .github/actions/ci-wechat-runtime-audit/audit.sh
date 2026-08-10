@@ -249,11 +249,54 @@ fs.writeFileSync(process.env.PROVENANCE_PATH, `${JSON.stringify(provenance, null
 if (failure !== undefined) process.exitCode = 1;
 NODE
 
+run_signature_audit() {
+  local attempt
+  local attempt_report
+  local command_status
+  local signature_attempt_limit=3
+  local signature_report="$report_dir/npm-audit-signatures.txt"
+  local signature_debug_dir="$report_dir/npm-audit-signature-debug"
+
+  : >"$signature_report"
+  for ((attempt = 1; attempt <= signature_attempt_limit; attempt += 1)); do
+    attempt_report="$report_dir/npm-audit-signatures-attempt-${attempt}.txt"
+    command_status=0
+    npm --prefix "$runtime_dir" audit signatures \
+      --userconfig "$trusted_npmrc" \
+      --registry "$npm_registry" \
+      --cache "$trusted_cache" \
+      >"$attempt_report" 2>&1 || command_status=$?
+    {
+      printf 'attempt=%d status=%d\n' "$attempt" "$command_status"
+      cat "$attempt_report"
+    } >>"$signature_report"
+
+    if ((command_status == 0)); then
+      return 0
+    fi
+
+    if [[ -d "$trusted_cache/_logs" ]]; then
+      mkdir -p "$signature_debug_dir"
+      cp -a "$trusted_cache/_logs/." "$signature_debug_dir/"
+    fi
+
+    # Retry only when failed npm output contains the registry download marker.
+    # A failure without this marker stops further signature audit attempts.
+    if ! grep -Fq "npm error Failed to download" "$attempt_report"; then
+      return "$command_status"
+    fi
+    if ((attempt < signature_attempt_limit)); then
+      printf 'retrying transient signature download after attempt %d\n' "$attempt" \
+        >>"$signature_report"
+      sleep 2
+    fi
+  done
+
+  return "$command_status"
+}
+
 signature_status=0
-npm --prefix "$runtime_dir" audit signatures \
-  --userconfig "$trusted_npmrc" \
-  --registry "$npm_registry" \
-  >"$report_dir/npm-audit-signatures.txt" 2>&1 || signature_status=$?
+run_signature_audit || signature_status=$?
 
 # Reproduce the sandbox-user npm-pack boundary with the exact reviewed archive.
 # The trusted source cache is read-only; only its short-lived copy is writable.

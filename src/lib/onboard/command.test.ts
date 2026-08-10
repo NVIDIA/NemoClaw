@@ -13,6 +13,10 @@ import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
+import {
+  LOCAL_MODEL_PROFILE_ENABLED_ENV,
+  LOCAL_MODEL_PROFILE_RUNTIME_ENV,
+} from "./local-model-profile/plan";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -143,6 +147,35 @@ describe("onboard command options", () => {
       ),
     ).toThrow("exit:1");
     expect(errors.join("\n")).toContain("changed since onboarding started");
+  });
+
+  it("records installer local-model profile intent before onboarding and reuses it on resume", () => {
+    const catalog = loadServingCatalog();
+    const fresh = resolve(
+      {},
+      {
+        env: {
+          [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+          [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
+        },
+        loadServingCatalog: () => catalog,
+      },
+    );
+
+    expect(fresh.servingProfile).toBeNull();
+    expect(fresh.servingProfileProvenance?.preset.id).toBe("local-model-profile.vllm.spark.v1");
+
+    const resumed = resolve(
+      { resume: true },
+      {
+        env: {},
+        loadServingCatalog: () => catalog,
+        loadSession: () => ({
+          servingProfileProvenance: fresh.servingProfileProvenance,
+        }),
+      },
+    );
+    expect(resumed.servingProfileProvenance).toEqual(fresh.servingProfileProvenance);
   });
 
   it("keeps legacy resume compatible but refuses to add new profile intent (#8384)", () => {
@@ -432,6 +465,26 @@ describe("onboard command options", () => {
     });
 
     expect(observed).toBe(COMPATIBLE_NANO_PROFILE.id);
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("records an installer profile without activating the disabled generic preset", async () => {
+    const env: NodeJS.ProcessEnv = {
+      [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+      [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
+    };
+    await runOnboardCommand({
+      flags: {},
+      env,
+      runOnboard: async (options) => {
+        expect(options.servingProfile).toBeNull();
+        expect(options.servingProfileProvenance?.preset.id).toBe(
+          "local-model-profile.vllm.spark.v1",
+        );
+        expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+      },
+    });
+
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 

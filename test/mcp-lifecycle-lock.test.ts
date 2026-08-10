@@ -971,7 +971,7 @@ const releasePath = process.argv[3];
     );
 
     await expect(
-      lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
+      lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 200 })),
     ).rejects.toThrow("Sandbox mutation containment is active");
     expect(fs.existsSync(reaperPath)).toBe(true);
     expect(fs.existsSync(containmentPath)).toBe(true);

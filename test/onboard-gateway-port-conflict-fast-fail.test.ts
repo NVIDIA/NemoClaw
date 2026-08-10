@@ -32,7 +32,7 @@ describe("onboard gateway port conflict fast-fail (#6752)", () => {
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           `printf '%s\\n' "$*" >> ${JSON.stringify(openshellCallLog)}`,
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.99\\n" "${0##*/}"; exit 0;;',
+          '  --version|-V) printf "%s 0.0.101\\n" "${0##*/}"; exit 0;;',
           '  status|"gateway info"|"gateway info -g nemoclaw"*) sleep 20; exit 0;;',
           "esac",
           "exit 1",

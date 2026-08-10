@@ -64,10 +64,11 @@ classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-
 station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
 station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 bash() {
-  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \
+  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s SPARK_SELECTION=%s\\n" \
     "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
     "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \
-    "\${NEMOCLAW_STATION_EXPRESS:-}"
+    "\${NEMOCLAW_STATION_EXPRESS:-}" "\${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" "\${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" \
+    "\${_SPARK_EXPRESS_INFERENCE_SELECTION:-}"
   exit 0
 }
 main "$@"
@@ -84,10 +85,11 @@ if [ "\${FORCE_EXPRESS_PROMPT_READ_FAILURE:-}" = "1" ]; then
   read() { return 1; }
 fi
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s PROFILE_GATE=%s PROFILE_RUNTIME=%s SPARK_SELECTION=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
   "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \\
-  "\${NEMOCLAW_STATION_EXPRESS:-}"
+  "\${NEMOCLAW_STATION_EXPRESS:-}" "\${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" "\${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" \\
+  "\${_SPARK_EXPRESS_INFERENCE_SELECTION:-}"
 '''
 env = dict(os.environ)
 env["INSTALLER_UNDER_TEST"] = installer
@@ -144,7 +146,11 @@ while True:
         ready, _, _ = select.select([fd], [], [], 0.1)
         if ready:
             pty_closed = read_output()
-        if (not sent) and b"[Y/n]" in output:
+        spark_choice_ready = (
+            b"Choose the DGX Spark inference setup" in output
+            and b"Choose 1 or 2 [1]:" in output
+        )
+        if (not sent) and (spark_choice_ready or b"[Y/n]" in output):
             os.write(fd, answer)
             sent = True
     if pty_closed:

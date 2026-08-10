@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture } from "../adapters/docker/run";
+import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
 import * as registry from "../state/registry";
 import { compareAndSetLegacySandboxLifecycleGeneration } from "../state/registry/lifecycle-generation";
@@ -78,8 +79,7 @@ function registeredSandboxNames(sandboxName: string): string[] {
 }
 
 function containerNameMatchesSandbox(containerName: string, sandboxName: string): boolean {
-  const exact = `openshell-${sandboxName}`;
-  return containerName === exact || containerName.startsWith(`${exact}-`);
+  return resolveSandboxContainerOwner(containerName, sandboxName, [sandboxName]) === containerName;
 }
 
 function owningRegisteredSandboxName(
@@ -134,7 +134,10 @@ function selectDirectSandboxContainer(
 }
 
 function expectedDirectContainerPattern(sandboxName: string): string {
-  return `openshell-${sandboxName} or openshell-${sandboxName}-*`;
+  return (
+    `openshell-${sandboxName}, openshell-${sandboxName}-*, or ` +
+    `openshell-default--${sandboxName}-*`
+  );
 }
 
 function findDirectSandboxContainer(sandboxName: string): string | null {

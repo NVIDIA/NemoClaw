@@ -66,6 +66,7 @@ const {
 const {
   buildSandboxConfigSyncScript,
   runSandboxConfigSync,
+  sandboxConfigSyncArgs,
   writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
@@ -177,7 +178,6 @@ const {
   dockerInspect,
   dockerRemoveVolumesByPrefix,
   dockerRm,
-  dockerRmi,
   dockerStop,
 } = docker;
 const gatewayDrift: typeof import("./adapters/openshell/gateway-drift") = require("./adapters/openshell/gateway-drift");
@@ -738,6 +738,7 @@ const {
   openshellArgv,
   runOpenshell,
   runCaptureOpenshell,
+  captureOpenshell,
   getGatewayPortArg,
   getDockerDriverGatewayEndpointArg,
 } = createOpenshellCliHelpers({
@@ -788,8 +789,7 @@ const { refreshDockerDriverGatewayReuseState } =
   });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { getSandboxReuseState, getSandboxRecreateObservation } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME });
-
+const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, captureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME, waitUntil });
 const {
   executeSandboxCommandForVerification,
 }: typeof import("./onboard/sandbox-verification-exec") =
@@ -2528,22 +2528,8 @@ async function createSandboxWithBaseImageResolution(
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, sandboxName], { ignoreError: true }); }
+    if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, sandboxName], { ignoreError: true }); if (!waitForSandboxRecreateDeleteAbsence(sandboxName, recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, note)) throw new Error(`Cannot continue sandbox '${sandboxName}' recreation: OpenShell did not confirm explicit source absence after delete.`); }
     recreateRuntime.confirmDeleted();
-    const replacementReusesPreviousImage =
-      replacementWorkload.source.kind === "managed-image" &&
-      replacementWorkload.source.reference === previousEntry?.imageTag;
-    if (
-      previousEntry?.imageTag &&
-      previousEntry.workload?.shared !== true &&
-      !replacementReusesPreviousImage
-    ) {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      const rmiResult = dockerRmi(previousEntry.imageTag, { ignoreError: true, suppressOutput: true });
-      if (rmiResult.status !== 0) {
-        console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
-      }
-    }
     sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
   const preparedSandboxWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
@@ -2595,7 +2581,7 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
-      lifecycleRegistrationFields: recreateRuntime.registrationFields,
+      lifecycleGeneration: recreateRuntime.targetGeneration,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2725,6 +2711,7 @@ async function createSandboxWithBaseImageResolution(
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
           ...lifecycleRegistrationFields,
+          ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
@@ -3601,12 +3588,11 @@ const setupMessagingChannels = createSetupMessagingChannels({
 });
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
-
 function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void {
   runSandboxConfigSync(sandboxName, {
     getSelectionConfig: () => getProviderSelectionConfig(provider, model),
     runConnectScript: (name, scriptContent) => {
-      run(openshellArgv(["sandbox", "connect", name]), {
+      run(openshellArgv(sandboxConfigSyncArgs(name)), {
         stdio: ["pipe", "ignore", "inherit"],
         input: scriptContent,
       });

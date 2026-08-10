@@ -4,22 +4,9 @@
 import { describe, expect, it } from "vitest";
 
 import { buildConfig } from "../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "./helpers/openclaw-env-fixture";
 
-const BASE_ENV: Record<string, string> = {
-  NEMOCLAW_MODEL: "test-model",
-  NEMOCLAW_PROVIDER_KEY: "test-provider",
-  NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
-  CHAT_UI_URL: "http://127.0.0.1:18789",
-  NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
-  NEMOCLAW_INFERENCE_API: "openai",
-  NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("{}").toString("base64"),
-  NEMOCLAW_PROXY_HOST: "10.200.0.1",
-  NEMOCLAW_PROXY_PORT: "3128",
-  NEMOCLAW_CONTEXT_WINDOW: "131072",
-  NEMOCLAW_MAX_TOKENS: "4096",
-  NEMOCLAW_REASONING: "false",
-  NEMOCLAW_AGENT_TIMEOUT: "600",
-};
+const BASE_ENV = baseOpenClawGenerationEnv();
 
 function buildWebSearchConfig(env: Record<string, string>) {
   return buildConfig({ ...BASE_ENV, ...env });

@@ -174,3 +174,4 @@ jobs:
           path: |
             C:\Users\runneradmin\AppData\Local\Temp\nemoclaw-e2e-install.log
           if-no-files-found: ignore
+          retention-days: 14
