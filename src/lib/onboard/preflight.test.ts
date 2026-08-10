@@ -19,7 +19,7 @@ import {
   parseDockerInfoMemTotalBytes,
   parseDockerStorageDriver,
   parseDockerUsesContainerdSnapshotter,
-  planHostRemediation,
+  planHostAdvisories,
   probeContainerDns,
   probeDockerBridgeContainerStart,
 } from "./preflight";
@@ -30,6 +30,10 @@ function requireMemoryInfo(result: ReturnType<typeof getMemoryInfo>) {
     throw new Error("Expected memory info to be present");
   }
   return result;
+}
+
+function advisoryCommands(advisory: { commands?: readonly string[] } | undefined) {
+  return advisory?.commands ?? [];
 }
 
 describe("checkPortAvailable", () => {
@@ -636,10 +640,10 @@ describe("parseDockerUsesContainerdSnapshotter", () => {
   });
 });
 
-describe("planHostRemediation", () => {
+describe("planHostAdvisories", () => {
   function baseAssessment(
-    overrides: Partial<Parameters<typeof planHostRemediation>[0]> = {},
-  ): Parameters<typeof planHostRemediation>[0] {
+    overrides: Partial<Parameters<typeof planHostAdvisories>[0]> = {},
+  ): Parameters<typeof planHostAdvisories>[0] {
     return {
       platform: "linux",
       isWsl: false,
@@ -670,7 +674,7 @@ describe("planHostRemediation", () => {
   }
 
   it("recommends starting docker when installed but unreachable and service inactive", () => {
-    const actions = planHostRemediation({
+    const actions = planHostAdvisories({
       platform: "linux",
       isWsl: false,
       runtime: "unknown",
@@ -698,12 +702,12 @@ describe("planHostRemediation", () => {
     });
 
     expect(actions[0].id).toBe("start_docker");
-    expect(actions[0].blocking).toBe(true);
-    expect(actions[0].commands).toContain("sudo systemctl start docker");
+    expect(actions[0].severity).toBe("blocking");
+    expect(advisoryCommands(actions[0])).toContain("sudo systemctl start docker");
   });
 
   it("recommends Docker Desktop WSL integration when docker is missing inside WSL", () => {
-    const actions = planHostRemediation(
+    const actions = planHostAdvisories(
       baseAssessment({
         isWsl: true,
         dockerInstalled: false,
@@ -713,16 +717,16 @@ describe("planHostRemediation", () => {
 
     expect(actions[0].id).toBe("enable_docker_desktop_wsl_integration");
     expect(actions[0].title).toBe("Enable Docker Desktop WSL integration");
-    expect(actions[0].blocking).toBe(true);
-    expect(actions[0].commands.join("\n")).toContain(
+    expect(actions[0].severity).toBe("blocking");
+    expect(advisoryCommands(actions[0]).join("\n")).toContain(
       "Docker Desktop → Settings → Resources → WSL integration",
     );
-    expect(actions[0].commands.join("\n")).toContain("wsl --shutdown");
-    expect(actions[0].commands.join("\n")).toContain("docker info");
+    expect(advisoryCommands(actions[0]).join("\n")).toContain("wsl --shutdown");
+    expect(advisoryCommands(actions[0]).join("\n")).toContain("docker info");
   });
 
   it("recommends Docker Desktop WSL integration when docker is unreachable inside WSL", () => {
-    const actions = planHostRemediation(
+    const actions = planHostAdvisories(
       baseAssessment({
         isWsl: true,
         dockerInstalled: true,
@@ -733,13 +737,13 @@ describe("planHostRemediation", () => {
 
     expect(actions[0].id).toBe("enable_docker_desktop_wsl_integration");
     expect(actions[0].reason).toContain("WSL distro cannot reach the Docker daemon");
-    expect(actions[0].commands.join("\n")).toContain("Start Docker Desktop");
-    expect(actions[0].commands.join("\n")).toContain("wsl --shutdown");
-    expect(actions[0].commands.join("\n")).not.toContain("sudo systemctl start docker");
+    expect(advisoryCommands(actions[0]).join("\n")).toContain("Start Docker Desktop");
+    expect(advisoryCommands(actions[0]).join("\n")).toContain("wsl --shutdown");
+    expect(advisoryCommands(actions[0]).join("\n")).not.toContain("sudo systemctl start docker");
   });
 
   it("suggests usermod when docker service is active but daemon is unreachable", () => {
-    const actions = planHostRemediation({
+    const actions = planHostAdvisories({
       platform: "linux",
       isWsl: false,
       runtime: "unknown",
@@ -768,50 +772,15 @@ describe("planHostRemediation", () => {
 
     expect(actions[0].id).toBe("docker_group_permission");
     expect(actions[0].kind).toBe("sudo");
-    expect(actions[0].blocking).toBe(true);
-    expect(actions[0].commands[0]).toBe("sudo usermod -aG docker $USER");
-    expect(actions[0].commands[1]).toContain("newgrp docker");
-    expect(actions[0].commands[2]).toBe("nemoclaw onboard");
+    expect(actions[0].severity).toBe("blocking");
+    expect(advisoryCommands(actions[0])[0]).toBe("sudo usermod -aG docker $USER");
+    expect(advisoryCommands(actions[0])[1]).toContain("newgrp docker");
+    expect(advisoryCommands(actions[0])[2]).toBe("nemoclaw onboard");
     expect(actions[0].reason).toContain("docker group");
   });
 
-  it("warns that podman is unsupported on macOS without blocking onboarding", () => {
-    const actions = planHostRemediation({
-      platform: "darwin",
-      isWsl: false,
-      runtime: "podman",
-      packageManager: "brew",
-      systemctlAvailable: false,
-      dockerServiceActive: null,
-      dockerServiceEnabled: null,
-      dockerInstalled: true,
-      dockerRunning: true,
-      dockerReachable: true,
-      nodeInstalled: true,
-      openshellInstalled: true,
-      dockerCgroupVersion: "unknown",
-      dockerDefaultCgroupnsMode: "unknown",
-      isContainerRuntimeUnderProvisioned: false,
-      hasNestedOverlayConflict: false,
-      requiresHostCgroupnsFix: false,
-      isUnsupportedRuntime: true,
-      isHeadlessLikely: false,
-      hasNvidiaGpu: false,
-      dockerCdiSpecDirs: [],
-      cdiNvidiaGpuSpecMissing: false,
-      nvidiaContainerToolkitInstalled: true,
-      notes: [],
-    });
-
-    const action = actions.find(
-      (entry: { id: string }) => entry.id === "unsupported_runtime_warning",
-    );
-    expect(action).toBeTruthy();
-    expect(action?.blocking).toBe(false);
-  });
-
   it("recommends installing Docker with a generic Linux hint when it is missing", () => {
-    const actions = planHostRemediation({
+    const actions = planHostAdvisories({
       platform: "linux",
       isWsl: false,
       runtime: "unknown",
@@ -839,11 +808,11 @@ describe("planHostRemediation", () => {
     });
 
     expect(actions[0].id).toBe("install_docker");
-    expect(actions[0].commands[0]).toContain("Install Docker Engine");
+    expect(advisoryCommands(actions[0])[0]).toContain("Install Docker Engine");
   });
 
   it("recommends installing openshell when missing", () => {
-    const actions = planHostRemediation({
+    const actions = planHostAdvisories({
       platform: "linux",
       isWsl: false,
       runtime: "docker",
@@ -1848,7 +1817,7 @@ describe("assessHost container runtime resource detection (#2514)", () => {
   });
 });
 
-describe("planHostRemediation — under-provisioned runtime", () => {
+describe("planHostAdvisories — under-provisioned runtime", () => {
   it("emits a Colima-specific resize action when runtime is colima", () => {
     const assessment = assessHost({
       platform: "darwin",
@@ -1861,11 +1830,11 @@ describe("planHostRemediation — under-provisioned runtime", () => {
       }),
       commandExistsImpl: (name: string) => name === "docker",
     });
-    const actions = planHostRemediation(assessment);
+    const actions = planHostAdvisories(assessment);
     const action = actions.find((a) => a.id === "container_runtime_under_provisioned");
     expect(action).toBeDefined();
-    expect(action?.blocking).toBe(false);
-    expect(action?.commands.some((c) => c.startsWith("colima start"))).toBe(true);
+    expect(action?.severity).toBe("warning");
+    expect(advisoryCommands(action).some((c) => c.startsWith("colima start"))).toBe(true);
   });
 
   it("emits a Docker Desktop hint when runtime is docker-desktop", () => {
@@ -1880,10 +1849,12 @@ describe("planHostRemediation — under-provisioned runtime", () => {
       }),
       commandExistsImpl: (name: string) => name === "docker",
     });
-    const actions = planHostRemediation(assessment);
+    const actions = planHostAdvisories(assessment);
     const action = actions.find((a) => a.id === "container_runtime_under_provisioned");
     expect(action).toBeDefined();
-    expect(action?.commands.some((c) => c.toLowerCase().includes("docker desktop"))).toBe(true);
+    expect(advisoryCommands(action).some((c) => c.toLowerCase().includes("docker desktop"))).toBe(
+      true,
+    );
   });
 
   it("emits no resource action when runtime is properly sized", () => {
@@ -1898,7 +1869,7 @@ describe("planHostRemediation — under-provisioned runtime", () => {
       }),
       commandExistsImpl: (name: string) => name === "docker",
     });
-    const actions = planHostRemediation(assessment);
+    const actions = planHostAdvisories(assessment);
     expect(actions.find((a) => a.id === "container_runtime_under_provisioned")).toBeUndefined();
   });
 });

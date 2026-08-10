@@ -307,6 +307,34 @@ describe("vLLM profile detection", () => {
     expect(profile!.defaultModel.envValue).toBe("qwen3.6-35b-a3b-nvfp4");
   });
 
+  it("resolves Muse Glimmer to its authenticated DGX Spark runtime", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
+
+    expect(profile).not.toBeNull();
+    expect(muse).toBeDefined();
+    const runtime = resolveVllmRuntimeProfile(profile!, muse!);
+    expect(runtime.image).toBe(
+      "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
+    );
+    expect(runtime.imageDownloadSizeBytes).toBe(10_507_991_780);
+    expect(runtime.modelDownloadSizeBytes).toBe(25_447_097_878);
+
+    const apiKey = "a".repeat(64);
+    const args = buildVllmRunArgs(
+      runtime,
+      muse!,
+      runtime.dockerRunFlags,
+      { VLLM_API_KEY: apiKey },
+      "172.18.0.1",
+    );
+    const bindings = args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []));
+
+    expect(bindings).toEqual(["127.0.0.1:8000:8000", "172.18.0.1:8000:8000"]);
+    expect(args).toEqual(expect.arrayContaining(["--env", "VLLM_API_KEY", runtime.image]));
+    expect(args).not.toContain(apiKey);
+  });
+
   it.each([
     {
       arch: "arm64",

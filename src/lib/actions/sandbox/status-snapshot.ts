@@ -9,6 +9,13 @@ import {
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
+import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
+import {
+  type CuaStateValidationDeps,
+  getObservedValidatedCuaState,
+  isCuaPublicStateEnabled,
+  type ObservedCuaInferenceRoute,
+} from "../../cua/state";
 import {
   type GatewayInference,
   parseGatewayInference,
@@ -175,6 +182,8 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  /** Current, validated, credential-free CUA candidate runtime readiness. */
+  cuaRuntime?: registry.SandboxEntry["cuaRuntimeReadiness"] | null;
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
   /** Observed enforcement state for each recorded baseline exclusion. */
@@ -290,6 +299,9 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
+  observeCuaLiveInference?: (entry: registry.SandboxEntry) => ObservedCuaInferenceRoute;
+  observeCuaLiveAppliedPolicy?: (entry: registry.SandboxEntry) => CuaAppliedPolicyIdentity;
+  validateCuaRuntimeReadiness?: CuaStateValidationDeps["validateRuntimeReadiness"];
   listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
@@ -675,6 +687,13 @@ async function buildSandboxStatusReport(
       }
     : null;
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
+  const cua = getObservedValidatedCuaState(sb, process.env, {
+    observeLiveInference: deps.observeCuaLiveInference,
+    observeLiveAppliedPolicy: deps.observeCuaLiveAppliedPolicy,
+    ...(deps.validateCuaRuntimeReadiness
+      ? { validation: { validateRuntimeReadiness: deps.validateCuaRuntimeReadiness } }
+      : {}),
+  });
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -706,6 +725,7 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
+    ...(isCuaPublicStateEnabled() ? { cuaRuntime: cua.readiness } : {}),
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,

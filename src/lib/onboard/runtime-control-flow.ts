@@ -3,7 +3,6 @@
 
 import { type Session, updateSession } from "../state/onboard-session";
 import { clearAgentScopedResumeState } from "./agent-resume-state";
-import { setOnboardBrandingAgent } from "./branding";
 import { isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { stopTrackedModelRouterForAgentChange } from "./model-router-process";
@@ -23,7 +22,6 @@ export interface SelectedAgentTransitionDeps extends RuntimeControlAgentDeps {
   note(message: string): void;
   stopTrackedModelRouterForAgentChange(session: Session, routerPort: number): Promise<void>;
   clearAgentScopedResumeState(session: Session, selectedAgentName: string): Session;
-  setOnboardBrandingAgent(agentName: string): void;
   updateSession(mutator: (session: Session) => Session | void): Session;
 }
 
@@ -85,7 +83,14 @@ export function validateSessionAgentObservability(
   }
 }
 
-export async function applySelectedAgentTransition(
+export interface SelectedAgentTransitionPlan {
+  session: Session;
+  resumeAgentChanged: boolean;
+  commit(): Promise<Session>;
+}
+
+/** Plan an agent transition without changing durable state or stopping a router. */
+export function planSelectedAgentTransition(
   input: {
     resume: boolean;
     session: Session | null;
@@ -94,34 +99,50 @@ export async function applySelectedAgentTransition(
     note(message: string): void;
   },
   overrides: SelectedAgentTransitionOverrides = {},
-): Promise<{ session: Session; resumeAgentChanged: boolean }> {
+): SelectedAgentTransitionPlan {
   const deps: SelectedAgentTransitionDeps = {
     note: input.note,
     stopTrackedModelRouterForAgentChange,
     clearAgentScopedResumeState,
-    setOnboardBrandingAgent,
     updateSession,
     error: console.error,
     exitProcess: (code) => process.exit(code),
     ...overrides,
   };
   validateSessionAgentObservability(input.session, input.selectedAgentName, deps);
+  if (!input.session) throw new Error("Agent transition requires an active onboarding session.");
 
   const selectedAgentName = normalizeSandboxAgentName(input.selectedAgentName);
   const recordedAgentName = normalizeSandboxAgentName(input.session?.agent);
   const resumeAgentChanged = Boolean(
     input.resume && input.session && recordedAgentName !== selectedAgentName,
   );
-  if (resumeAgentChanged && input.session) {
-    deps.note(
-      `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
-    );
-    await deps.stopTrackedModelRouterForAgentChange(input.session, input.routerPort);
-    deps.updateSession((current) => deps.clearAgentScopedResumeState(current, selectedAgentName));
+  const originalSession = structuredClone(input.session);
+  let projectedSession = structuredClone(input.session);
+  if (resumeAgentChanged) {
+    projectedSession = deps.clearAgentScopedResumeState(projectedSession, selectedAgentName);
   }
-  deps.setOnboardBrandingAgent(input.selectedAgentName || "openclaw");
-  const session = deps.updateSession((current) =>
-    updateSessionAgent(current, input.selectedAgentName, deps),
-  );
-  return { session, resumeAgentChanged };
+  projectedSession = updateSessionAgent(projectedSession, input.selectedAgentName, deps);
+  let committed: Promise<Session> | null = null;
+  return {
+    session: projectedSession,
+    resumeAgentChanged,
+    commit() {
+      committed ??= (async () => {
+        if (resumeAgentChanged) {
+          deps.note(
+            `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
+          );
+          await deps.stopTrackedModelRouterForAgentChange(originalSession, input.routerPort);
+        }
+        return deps.updateSession((current) => {
+          const transitioned = resumeAgentChanged
+            ? deps.clearAgentScopedResumeState(current, selectedAgentName)
+            : current;
+          return updateSessionAgent(transitioned, input.selectedAgentName, deps);
+        });
+      })();
+      return committed;
+    },
+  };
 }

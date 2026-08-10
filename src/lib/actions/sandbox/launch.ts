@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as agentRuntime from "../../agent/runtime";
+import { requireCuaLifecycleReadiness } from "../../cua/lifecycle-readiness";
+import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
+import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import { prepareInteractiveSession } from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import { execSandbox } from "./exec";
+import { getKnownSandboxTarget } from "./gateway-target";
 
 /**
  * Connect to a sandbox and start its agent in one host-side step (#6006).
@@ -13,9 +18,57 @@ import { execSandbox } from "./exec";
  * agent started over `exec` without process recovery renders a TUI that sits
  * disconnected because the gateway was never checked or restarted.
  */
-export async function launchSandbox(sandboxName: string): Promise<void> {
+interface LaunchSandboxDeps {
+  getSandbox?: typeof getKnownSandboxTarget;
+  requireCuaReadiness?: (entry: NonNullable<ReturnType<typeof getKnownSandboxTarget>>) => unknown;
+  resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
+  withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
+  withSandboxMutationLock?: typeof withSandboxMutationLock;
+}
+
+async function launchCuaUnderMutationLocks(
+  sandboxName: string,
+  deps: LaunchSandboxDeps,
+): Promise<void> {
+  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
+  const lockGateway = deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock;
+  const getSandbox = deps.getSandbox ?? getKnownSandboxTarget;
+  const resolveGateway = deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName;
+  await lockSandbox(sandboxName, async () => {
+    const lockedEntry = getSandbox(sandboxName);
+    if (!lockedEntry || lockedEntry.agent !== "nemocua") {
+      throw new Error(
+        `NemoCUA authority changed while waiting to launch sandbox '${sandboxName}'.`,
+      );
+    }
+    const gatewayName = resolveGateway(lockedEntry);
+    await lockGateway(gatewayName, async () => {
+      (deps.requireCuaReadiness ?? requireCuaLifecycleReadiness)(lockedEntry);
+      await execSandbox(sandboxName, ["nemocua", "interactive"], {
+        tty: true,
+        stdin: true,
+        // 0 means no timeout. Any other value kills a long interactive session.
+        timeoutSeconds: 0,
+      });
+    });
+  });
+}
+
+export async function launchSandbox(
+  sandboxName: string,
+  deps: LaunchSandboxDeps = {},
+): Promise<void> {
   const { agent, sb } = await prepareInteractiveSession(sandboxName);
-  const agentCommand = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+  const isCua = sb?.agent === "nemocua";
+  const agentCommand = isCua
+    ? agentRuntime.getTerminalCommand(agent, "interactive")
+    : agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+  if (!agentCommand) {
+    throw new Error(`Cannot resolve an interactive command for sandbox '${sandboxName}'.`);
+  }
+  if (isCua && agentCommand !== "nemocua interactive") {
+    throw new Error("NemoCUA interactive command must be exactly 'nemocua interactive'");
+  }
 
   // `connect` runs this immediately before opening its SSH session. It is not
   // part of prepareInteractiveSession, so `launch` must call it too: without it
@@ -31,7 +84,12 @@ export async function launchSandbox(sandboxName: string): Promise<void> {
   // file through the profile. Passing bare argv here would silently start the
   // agent under a different auth mode than `connect` gives it, so `-l` is
   // load-bearing: do not flatten this to `bash -c` or to the split command.
-  await execSandbox(sandboxName, ["bash", "-lc", agentCommand], {
+  if (isCua) {
+    await launchCuaUnderMutationLocks(sandboxName, deps);
+    return;
+  }
+  const command = ["bash", "-lc", agentCommand];
+  await execSandbox(sandboxName, command, {
     tty: true,
     stdin: true,
     // 0 means no timeout. Any other value kills a long interactive session.

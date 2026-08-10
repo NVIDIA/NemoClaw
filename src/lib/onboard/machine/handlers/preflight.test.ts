@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { GpuDetection } from "../../../inference/nim";
-import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { createSession, type Session } from "../../../state/onboard-session";
+import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
 type Gpu = GpuDetection | null;
@@ -50,16 +50,18 @@ function createDeps(
         }
         return { flag: "enable" as const, device: "0" };
       },
+      detectGpuForReadiness: () => ({ type: "nvidia" }) as Gpu,
       detectGpu: () => ({ type: "nvidia" }) as Gpu,
       runPreflight: async () => ({ type: "nvidia" }) as Gpu,
       assessHost: () => ({ cdiNvidiaGpuSpecMissing: false }),
-      assertCdiNvidiaGpuSpecPresent: vi.fn(),
+      assertOnboardHostReadiness: vi.fn(),
+      assertGatewayReadiness: vi.fn(async () => undefined),
       resolveSandboxGpuConfig: (
         _gpu: Gpu,
         opts: { flag: "enable" | "disable" | null; device: string | null | undefined },
       ) => ({
         sandboxGpuEnabled: opts.flag === "enable",
-        mode: opts.flag === "enable" ? "1" : "0",
+        mode: opts.flag === "enable" ? "1" : opts.flag === "disable" ? "0" : "auto",
         sandboxGpuDevice: opts.device,
       }),
       validateSandboxGpuPreflight: vi.fn(),
@@ -157,13 +159,13 @@ describe("handlePreflightState", () => {
     expect(result.gpuPassthrough).toBe(false);
   });
 
-  it("skips full preflight on resume but re-detects GPU and revalidates CDI/sandbox GPU", async () => {
+  it("skips recorded preflight on resume but re-runs live host readiness (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
     session.gpuPassthrough = false;
     const harness = createDeps({
       detectGpu: vi.fn(() => ({ type: "nvidia" }) as Gpu),
-      assertCdiNvidiaGpuSpecPresent: vi.fn(),
+      assertOnboardHostReadiness: vi.fn(),
       validateSandboxGpuPreflight: vi.fn(),
       skippedStepMessage: vi.fn(),
       startRecordedStep: vi.fn(async () => undefined),
@@ -179,26 +181,99 @@ describe("handlePreflightState", () => {
     expect(harness.deps.skippedStepMessage).toHaveBeenCalledWith("preflight", "cached");
     expect(harness.deps.recordStateSkipped).toHaveBeenCalledWith("preflight", {
       reason: "resume",
-      validation: "gpu-cdi",
+      validation: "host-readiness",
     });
     expect(harness.deps.detectGpu).toHaveBeenCalledOnce();
     expect(harness.deps.runPreflight).not.toHaveBeenCalled();
     expect(harness.deps.startRecordedStep).not.toHaveBeenCalled();
-    expect(harness.deps.assertCdiNvidiaGpuSpecPresent).toHaveBeenCalledWith(
+    expect(harness.deps.assertOnboardHostReadiness).toHaveBeenCalledWith(
       { cdiNvidiaGpuSpecMissing: false },
-      true,
-      undefined,
+      { type: "nvidia" },
+      expect.objectContaining({ explicitlyOptedOutGpuPassthrough: false, resuming: true }),
     );
     expect(harness.deps.validateSandboxGpuPreflight).toHaveBeenCalledOnce();
     expect(result.resumePreflight).toBe(true);
   });
 
-  it("passes host GPU platform into the resumed CDI guard", async () => {
+  it("rejects changed gateway ownership before cached resume probe effects (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
-    const assertCdiNvidiaGpuSpecPresent = vi.fn();
+    const assertDockerBridgeAndContainerDnsHealthy = vi.fn();
+    const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
     const harness = createDeps({
-      assertCdiNvidiaGpuSpecPresent,
+      assertGatewayReadiness: vi.fn(async () => {
+        throw new Error("gateway ownership changed");
+      }),
+      detectGpu,
+      assertDockerBridgeAndContainerDnsHealthy,
+    });
+
+    await expect(
+      handlePreflightState({
+        ...baseOptions(harness.deps, session),
+        resume: true,
+      }),
+    ).rejects.toThrow("gateway ownership changed");
+    expect(detectGpu).not.toHaveBeenCalled();
+    expect(assertDockerBridgeAndContainerDnsHealthy).not.toHaveBeenCalled();
+  });
+
+  it("admits live host and gateway facts before resolving a cached resume GPU proof (#7411)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    const calls: string[] = [];
+    const harness = createDeps({
+      assessHost: () => {
+        calls.push("host-observation");
+        return { cdiNvidiaGpuSpecMissing: false };
+      },
+      detectGpuForReadiness: () => {
+        calls.push("gpu-observation");
+        return null;
+      },
+      assertOnboardHostReadiness: () => {
+        calls.push("host-admission");
+      },
+      assertGatewayReadiness: async () => {
+        calls.push("gateway-admission");
+      },
+      detectGpu: () => {
+        calls.push("gpu-runtime-proof");
+        return { type: "nvidia" } as Gpu;
+      },
+      validateSandboxGpuPreflight: () => {
+        calls.push("gpu-validation");
+      },
+      assertDockerBridgeAndContainerDnsHealthy: () => {
+        calls.push("bridge-dns");
+      },
+    });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+    });
+
+    expect(calls).toEqual([
+      "host-observation",
+      "gpu-observation",
+      "gateway-admission",
+      "host-admission",
+      "gpu-runtime-proof",
+      "host-observation",
+      "gateway-admission",
+      "host-admission",
+      "gpu-validation",
+      "bridge-dns",
+    ]);
+  });
+
+  it("passes the fresh host and GPU observations into resumed readiness (#7411)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({
+      assertOnboardHostReadiness,
       resolveSandboxGpuConfig: vi.fn(
         (
           _gpu: Gpu,
@@ -218,11 +293,114 @@ describe("handlePreflightState", () => {
       explicitSandboxGpuFlag: "enable",
     });
 
-    expect(assertCdiNvidiaGpuSpecPresent).toHaveBeenCalledWith(
+    expect(assertOnboardHostReadiness).toHaveBeenCalledWith(
       { cdiNvidiaGpuSpecMissing: false },
-      true,
-      "jetson",
+      { type: "nvidia" },
+      expect.objectContaining({ explicitlyOptedOutGpuPassthrough: false, resuming: true }),
     );
+  });
+
+  it("preserves a failed resumed WSL GPU proof for canonical readiness (#7411)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({
+      detectGpuForReadiness: () => null,
+      detectGpu: () => null,
+      assertOnboardHostReadiness,
+      resolveSandboxGpuConfig,
+    });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+      explicitSandboxGpuFlag: "enable",
+    });
+
+    expect(assertOnboardHostReadiness).toHaveBeenLastCalledWith(
+      { cdiNvidiaGpuSpecMissing: false },
+      null,
+      expect.objectContaining({
+        explicitlyOptedOutGpuPassthrough: false,
+        wslDockerDesktopGpuProofPassed: false,
+        resuming: true,
+      }),
+    );
+  });
+
+  it("reuses environment CPU-only intent when validating a cached preflight (#7411)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({
+      assertOnboardHostReadiness,
+      resolveSandboxGpuConfig,
+    });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+      env: { NEMOCLAW_SANDBOX_GPU: "0" },
+    });
+
+    expect(assertOnboardHostReadiness).toHaveBeenCalledWith(
+      { cdiNvidiaGpuSpecMissing: false },
+      { type: "nvidia" },
+      expect.objectContaining({ explicitlyOptedOutGpuPassthrough: true, resuming: true }),
+    );
+  });
+
+  it("does not treat an old auto-disabled session outcome as explicit CPU-only intent (#7411)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    session.gpuPassthrough = false;
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({
+      assertOnboardHostReadiness,
+      getResumeSandboxGpuOverrides: () => ({ flag: null, device: null }),
+      resolveSandboxGpuConfig,
+    });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+      env: {},
+    });
+
+    expect(assertOnboardHostReadiness).toHaveBeenCalledWith(
+      { cdiNvidiaGpuSpecMissing: false },
+      { type: "nvidia" },
+      expect.objectContaining({ explicitlyOptedOutGpuPassthrough: false, resuming: true }),
+    );
+  });
+
+  it("rejects a cached resume when host collection exceeds the freshness window (#7411)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
+    const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
+    const bridge = vi.fn();
+    const harness = createDeps({
+      now: () => new Date(currentTime),
+      assessHost: () => {
+        currentTime += 30_001;
+        return { cdiNvidiaGpuSpecMissing: false };
+      },
+      assertOnboardHostReadiness: (_host, _gpu, options) => {
+        expect(options.observedAt).toBe("2026-08-07T12:00:00.000Z");
+        const age = currentTime - Date.parse(options.observedAt as string);
+        expect(age).toBeGreaterThan(30_000);
+        throw new Error("host observations are stale");
+      },
+      detectGpu,
+      assertDockerBridgeAndContainerDnsHealthy: bridge,
+    });
+
+    await expect(
+      handlePreflightState({ ...baseOptions(harness.deps, session), resume: true }),
+    ).rejects.toThrow("host observations are stale");
+    expect(detectGpu).not.toHaveBeenCalled();
+    expect(bridge).not.toHaveBeenCalled();
   });
 
   it("restores saved sandbox GPU intent only when resume has no explicit override", async () => {

@@ -50,6 +50,7 @@ describe("vllm model registry", () => {
       "deepseek-v4-flash": 352_381_000_000,
       "nemotron-3-ultra-550b-a55b": 352_381_245_521,
       "qwen3.6-35b-a3b-nvfp4": 23_500_000_000,
+      "muse-glimmer-30b": 25_447_097_878,
     });
   });
 
@@ -446,6 +447,47 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--data-parallel-size 1");
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
+
+  it("pins the authenticated Muse Glimmer recipe for one DGX Spark", () => {
+    const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
+
+    expect(muse).toMatchObject({
+      id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+      label: "Muse Glimmer 30B NVFP4 W4A4 [Experimental]",
+      revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
+      servedModelId: "muse-glimmer",
+      maxModelLen: 32768,
+      platforms: ["spark"],
+      minComputeCapability: 121,
+      gated: false,
+      installFastSafetensors: false,
+      trustRemoteCode: false,
+      managedBearerAuth: true,
+      runtime: {
+        image:
+          "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
+        imageDownloadSizeBytes: 10_507_991_780,
+        modelDownloadSizeBytes: 25_447_097_878,
+      },
+    });
+
+    const command = buildVllmServeCommand(muse!);
+    expect(command).toContain("vllm serve Inferact/Muse-Glimmer-30B-NVFP4-W4A4");
+    expect(command).toContain("--served-model-name muse-glimmer");
+    expect(command).toContain("--revision d35cb79050f419c457611b1cee5c5d15b176f285");
+    expect(command).toContain("--max-model-len 32768");
+    expect(command).toContain("--gpu-memory-utilization 0.75");
+    expect(command).toContain("--max-num-seqs 1");
+    expect(command).toContain("--max-num-batched-tokens 4096");
+    expect(command).toContain("--enable-auto-tool-choice");
+    expect(command).toContain("--tool-call-parser muse_glimmer");
+    expect(command).toContain("--reasoning-parser muse_glimmer");
+    expect(command).toContain("--generation-config auto");
+    expect(command).not.toContain("--trust-remote-code");
+    expect(command).not.toContain("--quantization");
+    expect(command).not.toContain("--speculative-config");
+    expect(command).not.toContain("pip install");
+  });
 });
 
 describe("modelsForPlatform", () => {
@@ -455,6 +497,7 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("qwen3.6-27b");
     expect(slugs).toContain("nemotron-3-nano-4b");
     expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).toContain("muse-glimmer-30b");
     expect(slugs).not.toContain("deepseek-v4-flash");
   });
 
@@ -466,6 +509,7 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("deepseek-v4-flash");
     expect(slugs).toContain("nemotron-3-ultra-550b-a55b");
     expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).not.toContain("muse-glimmer-30b");
   });
 
   it("omits arch-specific entries from the generic Linux profile", () => {
@@ -474,6 +518,7 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("nemotron-3-nano-4b");
     expect(slugs).toContain("deepseek-r1-distill-70b");
     expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).not.toContain("muse-glimmer-30b");
     expect(slugs).not.toContain("deepseek-v4-flash");
   });
 

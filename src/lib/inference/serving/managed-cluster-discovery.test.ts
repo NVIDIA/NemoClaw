@@ -756,7 +756,11 @@ function connectivityTransport(
     execute: (argv) => {
       const routeResponse = () => ({
         status: 0,
-        stdout: JSON.stringify([{ dev: argv.at(-1), prefsrc: argv[6], scope: "link" }]),
+        // Real iproute2 6.1.0 output for `route get <peer> from <src> oif <dev>`
+        // echoes the source as `from` (no `prefsrc`/`scope`) — see #8684.
+        stdout: JSON.stringify([
+          { dst: argv[4], from: argv[6], dev: argv.at(-1), flags: [], uid: 1000, cache: [] },
+        ]),
         stderr: "",
       });
       const pingResponse = () => ({
@@ -920,9 +924,12 @@ describe("production pinned peer transport", () => {
           status: 0,
           stdout: JSON.stringify([
             {
+              dst: argv[4],
+              from: argv[6],
               dev: argv.at(-1),
-              prefsrc: argv[6],
-              scope: "link",
+              flags: [],
+              uid: 1000,
+              cache: [],
               ...(routedThroughGateway ? { gateway: "192.168.100.254" } : {}),
             },
           ]),
@@ -959,6 +966,50 @@ describe("production pinned peer transport", () => {
       check: "route",
       netdev: "enp1s0f0np0",
     });
+  });
+
+  it("accepts the route source when iproute2 6.1.0 echoes it as `from` on a healthy cluster (#8684)", () => {
+    const deps = createManagedClusterDiscoveryDeps(() => ({ status: 0, stdout: "", stderr: "" }));
+    const requests = connectivityRequests();
+    // Real DGX Spark output (iproute2 6.1.0, DGX OS 7.5.0): `route get <peer>
+    // from <src> oif <dev>` reports the source as `from`, with no
+    // `prefsrc`/`src`/`scope`. Before #8684 the route check read only
+    // `prefsrc ?? src`, so it rejected every healthy dual-Spark rail.
+    const transport: ManagedClusterReadOnlyHostTransport = {
+      execute: (argv) => {
+        const routeResponse = () => ({
+          status: 0,
+          stdout: JSON.stringify([
+            { dst: argv[4], from: argv[6], dev: argv.at(-1), flags: [], uid: 1000, cache: [] },
+          ]),
+          stderr: "",
+        });
+        const neighborResponse = () => {
+          const request = requests.find(({ peerAddress }) => peerAddress === argv[5])!;
+          return {
+            status: 0,
+            stdout: JSON.stringify([
+              {
+                dst: request.peerAddress,
+                dev: request.netdev,
+                lladdr: request.expectedPeerMac,
+                state: ["REACHABLE"],
+              },
+            ]),
+            stderr: "",
+          };
+        };
+        return argv[1] === "-j" && argv[2] === "route"
+          ? routeResponse()
+          : argv[0] === "ping"
+            ? { status: 0, stdout: "", stderr: "" }
+            : neighborResponse();
+      },
+      readFile: () => "",
+      readdir: () => [],
+    };
+
+    expect(deps.probeConnectivity(transport, requests)).toBeNull();
   });
 
   it("accepts a neighbor entry that omits the dev key filtered out by ip (#8519)", () => {

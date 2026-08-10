@@ -10,11 +10,21 @@ import {
 } from "../../onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
+import type { SandboxStartupRecoveryResult } from "./connect";
 import { restoreStoppedSandboxStartupState, type SandboxStartDeps, startSandbox } from "./start";
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
 }
+
+const SUCCESSFUL_RECOVERY = {
+  checked: true,
+  wasRunning: true,
+  recovered: false,
+  forwardRecovered: false,
+} as const satisfies SandboxStartupRecoveryResult;
+const FAILED_RECOVERY = { ...SUCCESSFUL_RECOVERY, wasRunning: false } as const;
+const REDACTED_TOKEN = "opaque-token-8662";
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const getSandbox = vi.fn<NonNullable<SandboxStartDeps["getSandbox"]>>(() => sandbox());
@@ -45,7 +55,12 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const verifyGateway = vi.fn<NonNullable<SandboxStartDeps["verifyGateway"]>>(() =>
     Promise.resolve(),
   );
-  const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>();
+  const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(
+    () => SUCCESSFUL_RECOVERY,
+  );
+  const waitForManagedGatewaySupervisor = vi.fn<
+    NonNullable<SandboxStartDeps["waitForManagedGatewaySupervisor"]>
+  >(() => false);
   const log = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
     [
@@ -64,6 +79,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     getSandbox,
     runtimeProviders,
     restoreStartupState,
+    waitForManagedGatewaySupervisor,
     verifyGateway,
     log,
     ...overrides,
@@ -78,6 +94,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     printDockerRuntimeDownGuidance,
     recoverDockerDriverSandbox,
     restoreStartupState,
+    waitForManagedGatewaySupervisor,
     verifyGateway,
   };
 }
@@ -85,9 +102,10 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 describe("startSandbox", () => {
   it("restores sealed access before recovering sandbox processes (#8112)", () => {
     const restoreAccess = vi.fn();
-    const restoreProcesses = vi.fn();
+    const recovery = SUCCESSFUL_RECOVERY;
+    const restoreProcesses = vi.fn(() => recovery);
 
-    restoreStoppedSandboxStartupState("my-sandbox", {
+    const result = restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "openclaw",
       restoreLockedStartupAccess: restoreAccess,
       restoreProcessState: restoreProcesses,
@@ -98,11 +116,12 @@ describe("startSandbox", () => {
     expect(restoreAccess.mock.invocationCallOrder[0]).toBeLessThan(
       restoreProcesses.mock.invocationCallOrder[0],
     );
+    expect(result).toBe(recovery);
   });
 
   it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", () => {
     const restoreAccess = vi.fn();
-    const restoreProcesses = vi.fn();
+    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
     restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
@@ -133,13 +152,11 @@ describe("startSandbox", () => {
     );
   });
 
-  it("attempts startup restoration again when start is rerun after a failure (#8112)", async () => {
+  it("retries startup after a structured recovery failure (#8662)", async () => {
     const h = harness();
-    h.restoreStartupState.mockImplementationOnce(() => {
-      throw new Error("restore failed");
-    });
+    h.restoreStartupState.mockReturnValueOnce(FAILED_RECOVERY);
 
-    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("restore failed");
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
     expect(h.verifyGateway).not.toHaveBeenCalled();
 
     const result = await startSandbox("my-sandbox", h.deps);
@@ -150,6 +167,158 @@ describe("startSandbox", () => {
     expect(h.restoreStartupState.mock.invocationCallOrder[1]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
+  });
+
+  it("waits for a transient managed supervisor before repeating full startup recovery (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState
+      .mockReturnValueOnce({
+        ...FAILED_RECOVERY,
+        recoveryFailureLayer: "supervisor not running",
+        recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+      })
+      .mockReturnValueOnce(SUCCESSFUL_RECOVERY);
+    h.waitForManagedGatewaySupervisor.mockReturnValue(true);
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledWith("my-sandbox");
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
+      h.waitForManagedGatewaySupervisor.mock.invocationCallOrder[0],
+    );
+    expect(h.waitForManagedGatewaySupervisor.mock.invocationCallOrder[0]).toBeLessThan(
+      h.restoreStartupState.mock.invocationCallOrder[1],
+    );
+    expect(h.restoreStartupState.mock.invocationCallOrder[1]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("preserves the first recovery failure when the managed supervisor remains absent (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "supervisor not running",
+      recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("preserves the first recovery failure when the managed supervisor wait throws (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "supervisor not running",
+      recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+    });
+    h.waitForManagedGatewaySupervisor.mockImplementation(() => {
+      throw new Error("managed supervisor probe failed");
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when recovery still fails after the managed supervisor appears (#8726)", async () => {
+    const h = harness();
+    const missingSupervisor = {
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "supervisor not running" as const,
+      recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+    };
+    h.restoreStartupState.mockReturnValue(missingSupervisor);
+    h.waitForManagedGatewaySupervisor.mockReturnValue(true);
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["definitive supervisor failure", "supervisor unavailable", "SUPERVISOR_UNAVAILABLE"],
+    [
+      "unclassified missing-supervisor output",
+      "supervisor not running",
+      "prefix SUPERVISOR_NOT_RUNNING suffix",
+    ],
+  ] as const)("does not wait after a %s (#8726)", async (_label, layer, detail) => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: layer,
+      recoveryFailureDetail: detail,
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(detail);
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("keeps successful legacy supervisor relaunch recovery free of a settling wait (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...SUCCESSFUL_RECOVERY,
+      wasRunning: false,
+      recovered: true,
+    });
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      "openclaw",
+      "managed gateway recovery",
+      {
+        ...FAILED_RECOVERY,
+        recoveryFailureLayer: "supervisor unavailable",
+        recoveryFailureDetail: `SUPERVISOR_UNAVAILABLE Authorization: Bearer ${REDACTED_TOKEN}`,
+      },
+      /supervisor unavailable/iu,
+    ],
+    [
+      "hermes",
+      "OpenShell readiness",
+      {
+        ...FAILED_RECOVERY,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail: `the sandbox did not become ready in OpenShell: token=${REDACTED_TOKEN}`,
+      },
+      /did not become ready in OpenShell/iu,
+    ],
+  ] as const)("propagates an actionable %s %s failure (#8662)", async (agent, _layer, recovery, expected) => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(sandbox({ agent }));
+    h.restoreStartupState.mockReturnValue(recovery);
+
+    const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
+    expect(failure).toMatch(expected);
+    expect(failure).toMatch(/nemoclaw my-sandbox recover/iu);
+    expect(failure).not.toContain(REDACTED_TOKEN);
+    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
   it("reports the started container by name (#6026)", async () => {
