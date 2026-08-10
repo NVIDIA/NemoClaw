@@ -126,25 +126,95 @@ async function qualifyEveryAgent(
   }
 }
 
-async function startProtectedOllama(host: HostCliClient): Promise<string> {
+export const PROTECTED_OLLAMA_READY_ATTEMPTS = 20;
+export const PROTECTED_OLLAMA_CURL_MAX_SECONDS = 5;
+export const PROTECTED_OLLAMA_READY_SLEEP_SECONDS = 1;
+export const PROTECTED_OLLAMA_START_TIMEOUT_MS = 150_000;
+
+export function protectedOllamaStartScript(logPath: string): string {
+  if (!path.isAbsolute(logPath) || /[\0\r\n]/u.test(logPath)) {
+    throw new Error(`protected Ollama log path must be absolute: ${JSON.stringify(logPath)}`);
+  }
+  const logPathLiteral = `'${logPath.replaceAll("'", "'\\''")}'`;
+  return `set -euo pipefail
+log_path=${logPathLiteral}
+: >"$log_path"
+restart_mode=''
+sudo_prefix=()
+if [ "$(id -u)" -eq 0 ]; then
+  sudo_prefix=()
+elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  sudo_prefix=(sudo -n)
+fi
+
+diagnose_ollama() {
+  tail -n 200 "$log_path" >&2 || true
+  if [ "$restart_mode" = system ]; then
+    "\${sudo_prefix[@]}" journalctl -u ollama.service --no-pager -n 200 >&2 || true
+  elif [ "$restart_mode" = user ]; then
+    journalctl --user -u ollama.service --no-pager -n 200 >&2 || true
+  fi
+}
+
+system_service=0
+if command -v systemctl >/dev/null 2>&1 &&
+  systemctl cat ollama.service >/dev/null 2>&1; then
+  system_service=1
+fi
+
+if [ "$system_service" -eq 1 ]; then
+  restart_mode=system
+  if [ "$(id -u)" -ne 0 ] && [ "\${#sudo_prefix[@]}" -eq 0 ]; then
+    echo 'Ollama system service is installed but cannot be restarted without root or passwordless sudo' >&2
+    exit 1
+  fi
+  if ! "\${sudo_prefix[@]}" systemctl restart ollama.service; then
+    echo 'Ollama system service restart failed' >&2
+    diagnose_ollama
+    exit 1
+  fi
+elif command -v systemctl >/dev/null 2>&1 && systemctl --user restart ollama.service; then
+  restart_mode=user
+else
+  nohup setsid -f env OLLAMA_HOST=127.0.0.1:11434 ollama serve >"$log_path" 2>&1
+  restart_mode=manual
+fi
+
+for _ in $(seq 1 ${PROTECTED_OLLAMA_READY_ATTEMPTS}); do
+  if curl -fsS --connect-timeout 2 --max-time ${PROTECTED_OLLAMA_CURL_MAX_SECONDS} http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    printf 'restart_mode=%s\n' "$restart_mode"
+    exit 0
+  fi
+  if [ "$restart_mode" = system ] &&
+    "\${sudo_prefix[@]}" systemctl is-failed --quiet ollama.service; then
+    echo 'Ollama system service failed before becoming ready' >&2
+    diagnose_ollama
+    exit 1
+  fi
+  sleep ${PROTECTED_OLLAMA_READY_SLEEP_SECONDS}
+done
+
+echo 'Ollama did not become ready on 127.0.0.1:11434' >&2
+diagnose_ollama
+exit 1`;
+}
+
+export async function startProtectedOllama(host: HostCliClient): Promise<string> {
   await ensureOllama(host);
-  await cleanupOllama(host, "pre-cleanup-managed-image-ollama");
+  const cleanup = await cleanupOllama(host, "pre-cleanup-managed-image-ollama");
+  expect(cleanup.exitCode, resultText(cleanup)).toBe(0);
   const start = await host.command(
     "bash",
     [
       "-lc",
-      `set -euo pipefail
-OLLAMA_HOST=127.0.0.1:11434 nohup ollama serve >"${process.env.RUNNER_TEMP ?? "/tmp"}/managed-image-ollama.log" 2>&1 &
-for _ in $(seq 1 120); do
-  curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0
-  sleep 1
-done
-exit 1`,
+      protectedOllamaStartScript(
+        path.join(process.env.RUNNER_TEMP ?? "/tmp", "managed-image-ollama.log"),
+      ),
     ],
     {
       artifactName: "start-managed-image-ollama",
       env: gpuEnv(),
-      timeoutMs: 150_000,
+      timeoutMs: PROTECTED_OLLAMA_START_TIMEOUT_MS,
     },
   );
   expect(start.exitCode, resultText(start)).toBe(0);
@@ -356,7 +426,8 @@ export async function qualifyProtectedManagedImageRuntime(
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {
     killStaleProxy();
-    await cleanupOllama(host, "cleanup-managed-image-ollama");
+    const result = await cleanupOllama(host, "cleanup-managed-image-ollama");
+    expect(result.exitCode, resultText(result)).toBe(0);
   });
 
   let activePhase = "validate protected host runtime";
@@ -384,7 +455,8 @@ export async function qualifyProtectedManagedImageRuntime(
     });
     await proveOllamaGpuPlacement(host);
     killStaleProxy();
-    await cleanupOllama(host, "stop-ollama-before-vllm");
+    const ollamaCleanup = await cleanupOllama(host, "stop-ollama-before-vllm");
+    expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
 
     activePhase = "qualify all managed agents with GPU-backed vLLM";
     progress.phase("qualify all managed agents with GPU-backed vLLM");
