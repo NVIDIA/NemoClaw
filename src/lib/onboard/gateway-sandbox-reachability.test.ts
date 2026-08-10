@@ -93,7 +93,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const seen: { args: readonly string[] } = { args: [] };
 
-    await isSandboxBridgeGatewayReachable({
+    const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" }),
       usesHostGatewayRouteImpl: () => false,
       runImpl: (args) => {
@@ -101,6 +101,8 @@ describe("isSandboxBridgeGatewayReachable", () => {
         return { status: 0 };
       },
     });
+
+    expect(result).toMatchObject({ ok: true, gatewayIp: "169.254.1.2", routeKind: "host_gateway" });
 
     expect(seen.args).toContain("host.openshell.internal:169.254.1.2");
     expect(seen.args).not.toContain("host.openshell.internal:10.89.0.1");
