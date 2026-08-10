@@ -90,8 +90,8 @@ class FakeHost {
   ): Promise<ShellProbeResult> {
     const call = { args, command, options };
     this.calls.push(call);
-    const response = this.responses.shift();
-    if (!response) throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+    expect(this.responses, `unexpected command: ${command} ${args.join(" ")}`).not.toHaveLength(0);
+    const response = this.responses.shift() as CommandResponse;
     return typeof response === "function" ? response(call) : response;
   }
 

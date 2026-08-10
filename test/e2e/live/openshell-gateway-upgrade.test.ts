@@ -47,6 +47,7 @@ import {
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
+  throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
@@ -1208,20 +1209,11 @@ runLinuxOpenShellGatewayUpgrade(
     });
 
     progress.phase("install pinned legacy NemoClaw and its sandbox");
-    const [installResult, firewallResult] = await Promise.allSettled([
+    const setupResults = await Promise.allSettled([
       installOldNemoclawAndClaw(host, artifacts, fake.baseUrl),
-      firewallSetup,
+      firewallSetup.then((result) => artifacts.writeJson("host-mock-firewall.json", result)),
     ]);
-    if (firewallResult.status === "fulfilled") {
-      await artifacts.writeJson("host-mock-firewall.json", firewallResult.value);
-    }
-    const setupFailures = [installResult, firewallResult]
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result) => result.reason);
-    if (setupFailures.length === 1) throw setupFailures[0];
-    if (setupFailures.length > 1) {
-      throw new AggregateError(setupFailures, "legacy install and host mock firewall setup failed");
-    }
+    throwGatewayUpgradeSetupFailures(setupResults);
     const legacyStateContract = await captureOpenClawStateUpgradeProof(host, fake, artifacts);
     const hiddenOldOpenShellDir =
       OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;
