@@ -47,12 +47,9 @@ import {
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
-  getOpenShellGatewayUserServiceBinaryPaths,
-  getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
-  OPENSHELL_GATEWAY_USER_SERVICE,
 } from "../../onboard/docker-driver-gateway-service";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import { isExternallySupervised } from "../../onboard/gateway-ownership";
@@ -61,7 +58,8 @@ import {
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
-  isHostPortFree,
+  hasStateScopedSandboxNamespace,
+  processUsesStateScopedSandboxNamespace,
   type StopHostGatewayOptions,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
@@ -102,7 +100,6 @@ export interface UninstallRunDeps {
   error?: (message: string) => void;
   existsSync?: (target: string) => boolean;
   fs?: FileSystemDeps;
-  /** Test seam for confirming a scoped gateway released only its selected listener. */
   isPortFree?: (port: number) => boolean;
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
@@ -110,9 +107,7 @@ export interface UninstallRunDeps {
   openRegularFile?: typeof openRegularFileNoFollow;
   platform?: NodeJS.Platform;
   readProcessArgv?: (pid: number) => readonly string[] | null;
-  readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
-  readProcessStartIdentity?: (pid: number) => string | null;
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
@@ -422,9 +417,7 @@ interface UninstallRuntime {
   openRegularFile: typeof openRegularFileNoFollow;
   platform: NodeJS.Platform;
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
-  readProcessExecutable: ((pid: number) => string | null) | undefined;
   readProcessEnvironment: ((pid: number) => Record<string, string> | null) | undefined;
-  readProcessStartIdentity: ((pid: number) => string | null) | undefined;
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
@@ -463,9 +456,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     openRegularFile: deps.openRegularFile ?? openRegularFileNoFollow,
     platform: deps.platform ?? process.platform,
     readProcessArgv: deps.readProcessArgv,
-    readProcessExecutable: deps.readProcessExecutable,
     readProcessEnvironment: deps.readProcessEnvironment,
-    readProcessStartIdentity: deps.readProcessStartIdentity,
     readLine: deps.readLine ?? readLineFromStdin,
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
     resolveGatewayTeardownAuthority:
@@ -785,14 +776,6 @@ function pidOwnedByCurrentUser(pid: number, runtime: UninstallRuntime): boolean 
   return result.status === 0 && result.stdout.trim() === expected;
 }
 
-function scopedServicePidOwnedByCurrentUser(pid: number, runtime: UninstallRuntime): boolean {
-  if (typeof process.getuid !== "function") return false;
-  const result = runtime.run("ps", ["-p", String(pid), "-o", "uid="], { env: runtime.env });
-  if (result.status !== 0) return false;
-  const uid = Number.parseInt(result.stdout.trim(), 10);
-  return Number.isSafeInteger(uid) && uid === process.getuid();
-}
-
 function tryStopOllamaProxyPid(pid: number, runtime: UninstallRuntime): boolean {
   // `runtime.kill()` only confirms the signal was sent; the proxy may ignore
   // SIGTERM, take time to clean up, or linger as a zombie. Verify the PID is
@@ -987,7 +970,10 @@ function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
   }
 }
 
-function removeNemoclawOpenShellGatewayUserService(runtime: UninstallRuntime): boolean {
+function removeNemoclawOpenShellGatewayUserService(
+  runtime: UninstallRuntime,
+  scopedStateDir?: string,
+): boolean {
   if (runtime.platform !== "linux") return true;
   const servicePath = getNemoclawOpenShellGatewayUserServicePath(
     runtime.env.HOME || os.homedir(),
@@ -1025,6 +1011,33 @@ function removeNemoclawOpenShellGatewayUserService(runtime: UninstallRuntime): b
 
   const hasSystemctl = runtime.commandExists("systemctl");
   if (hasSystemctl) {
+    if (scopedStateDir !== undefined) {
+      const inspected = runtime.run(
+        "systemctl",
+        [
+          "--user",
+          "show",
+          NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+          "--property=MainPID",
+          "--value",
+        ],
+        { env: runtime.env },
+      );
+      const mainPid = Number(inspected.stdout.trim());
+      if (
+        !hasStateScopedSandboxNamespace(scopedStateDir) ||
+        inspected.status !== 0 ||
+        !inspected.stdout.trim() ||
+        !Number.isSafeInteger(mainPid) ||
+        mainPid < 0 ||
+        (mainPid > 0 && !processUsesStateScopedSandboxNamespace(mainPid, scopedStateDir, runtime))
+      ) {
+        runtime.warn(
+          "Refusing scoped gateway service stop because its loaded sandbox namespace cannot be proven.",
+        );
+        return false;
+      }
+    }
     const disabled = runtime.run(
       "systemctl",
       ["--user", "disable", "--now", NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
@@ -1060,549 +1073,6 @@ function removeNemoclawOpenShellGatewayUserService(runtime: UninstallRuntime): b
   return true;
 }
 
-const SCOPED_GATEWAY_STOP_DROP_IN = "99-nemoclaw-scoped-uninstall.conf";
-const SCOPED_GATEWAY_STOP_DROP_IN_CONTENT = `[Service]
-Restart=no
-KillSignal=SIGKILL
-KillMode=control-group
-`;
-
-type ScopedGatewayServiceIdentity = {
-  active: boolean;
-  execStartPath: string;
-  fragmentPath: string;
-  killMode: string;
-  killSignal: string;
-  mainPid: number;
-  restart: string;
-};
-
-type ScopedGatewayServiceTarget = {
-  removeUnit: boolean;
-  serviceName: string;
-  trustedBinaryPaths: readonly string[];
-  trustedUnitPaths: readonly string[];
-};
-
-function parseSystemctlProperties(output: string): Record<string, string> {
-  return Object.fromEntries(
-    output
-      .split(/\r?\n/)
-      .map((line) => {
-        const separator = line.indexOf("=");
-        return separator > 0 ? [line.slice(0, separator), line.slice(separator + 1).trim()] : null;
-      })
-      .filter((entry): entry is [string, string] => entry !== null),
-  );
-}
-
-function systemdExecStartPath(value: string): string | null {
-  const candidate = /(?:^|[\s;])path=([^\s;]+)/.exec(value)?.[1]?.trim();
-  return candidate && path.isAbsolute(candidate) ? path.normalize(candidate) : null;
-}
-
-function declaredGatewayServiceBinary(contents: string): string | null {
-  const values = contents
-    .split(/\r?\n/)
-    .map((line) => /^ExecStart=(\S+)$/.exec(line.trim())?.[1] ?? null)
-    .filter((value): value is string => value !== null);
-  return values.length === 1 && path.isAbsolute(values[0]) ? path.normalize(values[0]) : null;
-}
-
-function isTrustedManagedGatewayServiceBinary(
-  binaryPath: string,
-  runtime: UninstallRuntime,
-): boolean {
-  const home = runtime.env.HOME || os.homedir();
-  const configuredBinHome = runtime.env.XDG_BIN_HOME?.trim();
-  const userBinHome =
-    configuredBinHome && path.isAbsolute(configuredBinHome)
-      ? path.normalize(configuredBinHome)
-      : path.join(home, ".local", "bin");
-  return [
-    path.join(userBinHome, "openshell-gateway"),
-    "/usr/local/bin/openshell-gateway",
-    "/usr/bin/openshell-gateway",
-  ].some((candidate) => path.normalize(candidate) === binaryPath);
-}
-
-function inspectScopedGatewayService(
-  runtime: UninstallRuntime,
-  target: ScopedGatewayServiceTarget,
-): ScopedGatewayServiceIdentity | null {
-  const result = runtime.run(
-    "systemctl",
-    [
-      "--user",
-      "show",
-      target.serviceName,
-      "--property=FragmentPath",
-      "--property=ExecStart",
-      "--property=ExecStop",
-      "--property=ExecStopPost",
-      "--property=ActiveState",
-      "--property=MainPID",
-      "--property=Restart",
-      "--property=KillSignal",
-      "--property=KillMode",
-    ],
-    { env: runtime.env },
-  );
-  if (result.status !== 0) return null;
-  const properties = parseSystemctlProperties(result.stdout);
-  const fragmentPath = path.normalize(properties.FragmentPath ?? "");
-  const execStartPath = systemdExecStartPath(properties.ExecStart ?? "");
-  const mainPid = Number(properties.MainPID);
-  const activeState = properties.ActiveState;
-  if (
-    !target.trustedUnitPaths.some((candidate) => path.normalize(candidate) === fragmentPath) ||
-    !execStartPath ||
-    !target.trustedBinaryPaths.some((candidate) => path.normalize(candidate) === execStartPath) ||
-    (properties.ExecStop ?? "") !== "" ||
-    (properties.ExecStopPost ?? "") !== "" ||
-    (activeState !== "active" && activeState !== "inactive" && activeState !== "failed") ||
-    !Number.isSafeInteger(mainPid) ||
-    mainPid < 0 ||
-    (activeState === "active" ? mainPid <= 0 : mainPid !== 0)
-  ) {
-    return null;
-  }
-  return {
-    active: activeState === "active",
-    execStartPath,
-    fragmentPath,
-    killMode: properties.KillMode ?? "",
-    killSignal: properties.KillSignal ?? "",
-    mainPid,
-    restart: properties.Restart ?? "",
-  };
-}
-
-function runtimeProcessExecutable(pid: number, runtime: UninstallRuntime): string | null {
-  if (runtime.readProcessExecutable) return runtime.readProcessExecutable(pid);
-  try {
-    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
-  } catch {
-    const result = runtime.run("lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
-      env: runtime.env,
-    });
-    const executable =
-      result.status === 0
-        ? result.stdout
-            .split(/\r?\n/)
-            .find((line) => line.startsWith("n/") && line.length > 2)
-            ?.slice(1)
-        : undefined;
-    return executable ?? null;
-  }
-}
-
-function runtimeProcessStartIdentity(pid: number, runtime: UninstallRuntime): string | null {
-  if (runtime.readProcessStartIdentity) return runtime.readProcessStartIdentity(pid);
-  try {
-    const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
-    const commandEnd = stat.lastIndexOf(")");
-    if (commandEnd < 0) return null;
-    return (
-      stat
-        .slice(commandEnd + 1)
-        .trim()
-        .split(/\s+/)[19] ?? null
-    );
-  } catch {
-    const result = runtime.run("ps", ["-p", String(pid), "-o", "lstart="], {
-      env: runtime.env,
-    });
-    return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : null;
-  }
-}
-
-function scopedGatewayListenerPids(runtime: UninstallRuntime, port: number): number[] | null {
-  if (!runtime.commandExists("lsof")) return null;
-  const result = runtime.run("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"], {
-    env: runtime.env,
-  });
-  if (result.status !== 0 && result.status !== 1) return null;
-  return [
-    ...new Set(
-      splitNonEmptyLines(result.stdout)
-        .map((line) => Number.parseInt(line, 10))
-        .filter((pid) => Number.isSafeInteger(pid) && pid > 0),
-    ),
-  ];
-}
-
-function scopedGatewayPortFree(runtime: UninstallRuntime, port: number): boolean {
-  return (runtime.isPortFree ?? isHostPortFree)(port);
-}
-
-function normalizedExecutablePath(value: string): string {
-  try {
-    return fs.realpathSync.native(value);
-  } catch {
-    return path.normalize(value);
-  }
-}
-
-type ScopedGatewayStopDropIn = { dir: string; path: string };
-
-function scopedGatewayStopDropIn(
-  runtime: UninstallRuntime,
-  serviceName: string,
-): ScopedGatewayStopDropIn {
-  const home = runtime.env.HOME || os.homedir();
-  const userUnitDir = path.join(getOpenShellUserConfigHome(home, runtime.env), "systemd", "user");
-  const dir = path.join(userUnitDir, `${serviceName}.service.d`);
-  return { dir, path: path.join(dir, SCOPED_GATEWAY_STOP_DROP_IN) };
-}
-
-function existingScopedGatewayStopDropIn(
-  runtime: UninstallRuntime,
-  serviceName: string,
-): ScopedGatewayStopDropIn | null | false {
-  const dropIn = scopedGatewayStopDropIn(runtime, serviceName);
-  if (!fs.existsSync(dropIn.path)) return null;
-  try {
-    const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
-    const dirStat = fs.lstatSync(dropIn.dir);
-    const fileStat = fs.lstatSync(dropIn.path);
-    if (
-      dirStat.isSymbolicLink() ||
-      !dirStat.isDirectory() ||
-      fileStat.isSymbolicLink() ||
-      !fileStat.isFile() ||
-      (currentUid !== null && (dirStat.uid !== currentUid || fileStat.uid !== currentUid))
-    ) {
-      return false;
-    }
-    const existing = runtime.openRegularFile(dropIn.path);
-    try {
-      return existing.readUtf8() === SCOPED_GATEWAY_STOP_DROP_IN_CONTENT ? dropIn : false;
-    } finally {
-      existing.close();
-    }
-  } catch {
-    return false;
-  }
-}
-
-function removeScopedGatewayStopDropIn(
-  runtime: UninstallRuntime,
-  dropInPath: string,
-  dropInDir: string,
-): boolean {
-  try {
-    runtime.rmSync(dropInPath, { force: true });
-    if (fs.existsSync(dropInDir) && fs.readdirSync(dropInDir).length === 0) {
-      runtime.rmSync(dropInDir, { force: true, recursive: true });
-    }
-    return true;
-  } catch {
-    runtime.warn(`Failed to remove temporary scoped gateway service override ${dropInPath}`);
-    return false;
-  }
-}
-
-function rollbackScopedGatewayStopDropIn(
-  runtime: UninstallRuntime,
-  dropIn: ScopedGatewayStopDropIn,
-): boolean {
-  const removed = removeScopedGatewayStopDropIn(runtime, dropIn.path, dropIn.dir);
-  const reloaded = runtime.run("systemctl", ["--user", "daemon-reload"], {
-    env: runtime.env,
-    stdio: "ignore",
-  });
-  if (!removed || reloaded.status !== 0) {
-    runtime.warn("Failed to roll back the temporary scoped gateway service override.");
-    return false;
-  }
-  return true;
-}
-
-function installScopedGatewayStopDropIn(
-  runtime: UninstallRuntime,
-  serviceName: string,
-): ScopedGatewayStopDropIn | null {
-  const dropIn = scopedGatewayStopDropIn(runtime, serviceName);
-  try {
-    if (fs.existsSync(dropIn.dir)) {
-      const stat = fs.lstatSync(dropIn.dir);
-      const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
-      if (
-        stat.isSymbolicLink() ||
-        !stat.isDirectory() ||
-        (currentUid !== null && stat.uid !== currentUid)
-      ) {
-        return null;
-      }
-    } else {
-      fs.mkdirSync(dropIn.dir, { mode: 0o700, recursive: true });
-    }
-    const existing = existingScopedGatewayStopDropIn(runtime, serviceName);
-    if (existing === false) return null;
-    if (existing) return existing;
-    const created = runtime.openRegularFile(dropIn.path, {
-      create: true,
-      mode: 0o600,
-      writable: true,
-    });
-    try {
-      created.replaceUtf8(SCOPED_GATEWAY_STOP_DROP_IN_CONTENT, 0o600);
-    } finally {
-      created.close();
-    }
-    return existingScopedGatewayStopDropIn(runtime, serviceName) || null;
-  } catch {
-    return null;
-  }
-}
-
-function removeManagedDefaultGatewayUserServiceScoped(
-  runtime: UninstallRuntime,
-  options: UninstallRunOptions,
-  externallySupervised: boolean,
-): boolean {
-  if (
-    options.keepOpenShell ||
-    externallySupervised ||
-    GATEWAY_PORT !== DEFAULT_GATEWAY_PORT ||
-    runtime.platform !== "linux"
-  ) {
-    return true;
-  }
-  const nemoclawServicePath = getNemoclawOpenShellGatewayUserServicePath(
-    runtime.env.HOME || os.homedir(),
-    runtime.env,
-  );
-  let target: ScopedGatewayServiceTarget | null = null;
-  if (runtime.existsSync(nemoclawServicePath)) {
-    let serviceContents: string;
-    try {
-      const service = runtime.openRegularFile(nemoclawServicePath);
-      try {
-        serviceContents = service.readUtf8();
-      } finally {
-        service.close();
-      }
-    } catch {
-      runtime.warn(
-        `Failed to validate ${nemoclawServicePath}; leaving gateway user service in place.`,
-      );
-      return false;
-    }
-    if (
-      !serviceContents
-        .split(/\r?\n/)
-        .some((line) => line.trimEnd() === NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE)
-    ) {
-      runtime.warn(`Leaving ${nemoclawServicePath} in place because it is not NemoClaw-managed.`);
-      return false;
-    }
-    const declaredBinary = declaredGatewayServiceBinary(serviceContents);
-    if (!declaredBinary || !isTrustedManagedGatewayServiceBinary(declaredBinary, runtime)) {
-      runtime.warn("The managed gateway service executable is not trusted; leaving it running.");
-      return false;
-    }
-    target = {
-      removeUnit: true,
-      serviceName: NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
-      trustedBinaryPaths: [declaredBinary],
-      trustedUnitPaths: [nemoclawServicePath],
-    };
-  } else if (
-    getOpenShellGatewayUserServicePaths().some((candidate) => runtime.existsSync(candidate))
-  ) {
-    target = {
-      removeUnit: false,
-      serviceName: OPENSHELL_GATEWAY_USER_SERVICE,
-      trustedBinaryPaths: getOpenShellGatewayUserServiceBinaryPaths(),
-      trustedUnitPaths: getOpenShellGatewayUserServicePaths(),
-    };
-  }
-  if (!target) return true;
-  if (!runtime.commandExists("systemctl")) {
-    runtime.warn("systemctl not found; cannot safely stop the scoped managed gateway service.");
-    return false;
-  }
-  const before = inspectScopedGatewayService(runtime, target);
-  if (!before) {
-    runtime.warn(
-      "Could not prove the scoped managed gateway service identity; leaving it running.",
-    );
-    return false;
-  }
-  if (!before.active) {
-    if (target.removeUnit) {
-      // A staged NemoClaw unit can be inactive while onboarding has fallen
-      // back to the standalone per-gateway process. Disable only that unit;
-      // the PID/marker proof in the caller owns any live listener teardown.
-      const disabled = runtime.run("systemctl", ["--user", "disable", target.serviceName], {
-        env: runtime.env,
-        stdio: "ignore",
-      });
-      const stillInactive = inspectScopedGatewayService(runtime, target);
-      if (
-        disabled.status !== 0 ||
-        !stillInactive ||
-        stillInactive.active ||
-        stillInactive.fragmentPath !== before.fragmentPath ||
-        stillInactive.execStartPath !== before.execStartPath
-      ) {
-        runtime.warn("The inactive managed gateway service changed while disabling it.");
-        return false;
-      }
-    }
-    const leftoverDropIn = existingScopedGatewayStopDropIn(runtime, target.serviceName);
-    if (leftoverDropIn === false) {
-      runtime.warn("The temporary scoped gateway service override is not safely owned.");
-      return false;
-    }
-    if (
-      leftoverDropIn &&
-      !removeScopedGatewayStopDropIn(runtime, leftoverDropIn.path, leftoverDropIn.dir)
-    ) {
-      return false;
-    }
-    if (target.removeUnit) {
-      try {
-        runtime.rmSync(before.fragmentPath, { force: true });
-      } catch {
-        runtime.run("systemctl", ["--user", "daemon-reload"], {
-          env: runtime.env,
-          stdio: "ignore",
-        });
-        runtime.warn(`Failed to remove ${before.fragmentPath}; leaving it in place.`);
-        return false;
-      }
-    }
-    const reload = runtime.run("systemctl", ["--user", "daemon-reload"], {
-      env: runtime.env,
-      stdio: "ignore",
-    });
-    if (reload.status !== 0) {
-      runtime.warn("Failed to reload the user systemd manager.");
-      return false;
-    }
-    runtime.log(
-      target.removeUnit
-        ? `Disabled and removed ${target.serviceName}.service`
-        : `Preserved inactive package-owned ${target.serviceName}.service`,
-    );
-    return true;
-  }
-
-  const listenerPids = scopedGatewayListenerPids(runtime, DEFAULT_GATEWAY_PORT);
-  const processExecutable = runtimeProcessExecutable(before.mainPid, runtime);
-  const startIdentity = runtimeProcessStartIdentity(before.mainPid, runtime);
-  if (
-    !scopedServicePidOwnedByCurrentUser(before.mainPid, runtime) ||
-    !processExecutable ||
-    processExecutable.endsWith(" (deleted)") ||
-    normalizedExecutablePath(processExecutable) !==
-      normalizedExecutablePath(before.execStartPath) ||
-    !startIdentity ||
-    listenerPids?.length !== 1 ||
-    listenerPids[0] !== before.mainPid
-  ) {
-    runtime.warn(
-      "Could not prove the managed gateway process and listener ownership; leaving it running.",
-    );
-    return false;
-  }
-
-  const dropIn = installScopedGatewayStopDropIn(runtime, target.serviceName);
-  if (!dropIn) {
-    runtime.warn("Could not install the temporary scoped gateway SIGKILL override.");
-    return false;
-  }
-  const reload = runtime.run("systemctl", ["--user", "daemon-reload"], {
-    env: runtime.env,
-    stdio: "ignore",
-  });
-  if (reload.status !== 0) {
-    rollbackScopedGatewayStopDropIn(runtime, dropIn);
-    runtime.warn("Failed to reload the user systemd manager for scoped gateway cleanup.");
-    return false;
-  }
-  const proven = inspectScopedGatewayService(runtime, target);
-  const listenerPidsAfterReload = scopedGatewayListenerPids(runtime, DEFAULT_GATEWAY_PORT);
-  const processExecutableAfterReload = runtimeProcessExecutable(before.mainPid, runtime);
-  if (
-    !proven?.active ||
-    proven.mainPid !== before.mainPid ||
-    proven.fragmentPath !== before.fragmentPath ||
-    proven.execStartPath !== before.execStartPath ||
-    proven.restart !== "no" ||
-    !["9", "KILL", "SIGKILL"].includes(proven.killSignal) ||
-    proven.killMode !== "control-group" ||
-    !scopedServicePidOwnedByCurrentUser(before.mainPid, runtime) ||
-    !processExecutableAfterReload ||
-    processExecutableAfterReload.endsWith(" (deleted)") ||
-    normalizedExecutablePath(processExecutableAfterReload) !==
-      normalizedExecutablePath(before.execStartPath) ||
-    runtimeProcessStartIdentity(before.mainPid, runtime) !== startIdentity ||
-    listenerPidsAfterReload?.length !== 1 ||
-    listenerPidsAfterReload[0] !== before.mainPid
-  ) {
-    rollbackScopedGatewayStopDropIn(runtime, dropIn);
-    runtime.warn(
-      "Managed gateway identity changed before the scoped service stop; leaving it running.",
-    );
-    return false;
-  }
-
-  const stopArgs = target.removeUnit
-    ? ["--user", "disable", "--now", target.serviceName]
-    : ["--user", "stop", target.serviceName];
-  const stopped = runtime.run("systemctl", stopArgs, { env: runtime.env, stdio: "ignore" });
-  if (stopped.status !== 0) {
-    rollbackScopedGatewayStopDropIn(runtime, dropIn);
-    runtime.warn(`Failed to stop ${target.serviceName}.service`);
-    return false;
-  }
-  const after = inspectScopedGatewayService(runtime, target);
-  if (
-    !after ||
-    after.active ||
-    after.fragmentPath !== before.fragmentPath ||
-    after.execStartPath !== before.execStartPath ||
-    !waitForPidExit(before.mainPid, runtime, 1000) ||
-    !scopedGatewayPortFree(runtime, DEFAULT_GATEWAY_PORT)
-  ) {
-    rollbackScopedGatewayStopDropIn(runtime, dropIn);
-    runtime.warn("Scoped managed gateway service stop did not release only its selected process.");
-    return false;
-  }
-
-  try {
-    if (!removeScopedGatewayStopDropIn(runtime, dropIn.path, dropIn.dir)) return false;
-    if (target.removeUnit) runtime.rmSync(before.fragmentPath, { force: true });
-  } catch {
-    runtime.run("systemctl", ["--user", "daemon-reload"], {
-      env: runtime.env,
-      stdio: "ignore",
-    });
-    runtime.warn(
-      `Failed to finalize ${target.serviceName}.service; leaving remaining service state in place.`,
-    );
-    return false;
-  }
-  const finalReload = runtime.run("systemctl", ["--user", "daemon-reload"], {
-    env: runtime.env,
-    stdio: "ignore",
-  });
-  if (finalReload.status !== 0) {
-    runtime.warn("Failed to reload the user systemd manager.");
-    return false;
-  }
-  runtime.log(
-    target.removeUnit
-      ? `Stopped and removed ${target.serviceName}.service`
-      : `Stopped and preserved package-owned ${target.serviceName}.service`,
-  );
-  return true;
-}
-
 // scripts/install.sh stages the NemoClaw-managed gateway user service only for
 // the default gateway port, so an uninstall run for any other port leaves it in
 // place. `--keep-openshell` and an externally supervised authority leave it in
@@ -1611,10 +1081,13 @@ function removeManagedDefaultGatewayUserService(
   runtime: UninstallRuntime,
   options: UninstallRunOptions,
   externallySupervised: boolean,
+  selectedStateDir?: string,
+  scoped = false,
 ): boolean {
-  return options.keepOpenShell || externallySupervised || GATEWAY_PORT !== DEFAULT_GATEWAY_PORT
-    ? true
-    : removeNemoclawOpenShellGatewayUserService(runtime);
+  if (options.keepOpenShell || externallySupervised || GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
+    return true;
+  }
+  return removeNemoclawOpenShellGatewayUserService(runtime, scoped ? selectedStateDir : undefined);
 }
 
 function removeNemoclawOpenShellGatewayEnv(
@@ -2667,11 +2140,15 @@ function executePlan(
         return { ok: false };
       }
       if (scopedToSelectedGateway && !options.keepOpenShell && !externallySupervised) {
-        // A marked default-port user service gets an exact, temporary
-        // systemd SIGKILL override. Standalone gateways use the PID/runtime
-        // ownership proof below. Neither path invokes OpenShell's shared
-        // graceful Docker cleanup.
-        if (!removeManagedDefaultGatewayUserServiceScoped(runtime, options, externallySupervised)) {
+        if (
+          !removeManagedDefaultGatewayUserService(
+            runtime,
+            options,
+            externallySupervised,
+            paths.selectedGatewayLocalStateDir,
+            true,
+          )
+        ) {
           return { ok: false };
         }
         stopHostGatewayProcessesForUninstall(runtime, {
@@ -2833,23 +2310,13 @@ function stopHostGatewayProcessesForUninstall(
       warn: runtime.warn,
       commandExists: runtime.commandExists,
       isPortFree: runtime.isPortFree,
-      readProcessExecutable: runtime.readProcessExecutable,
       readProcessEnvironment: runtime.readProcessEnvironment,
-      readProcessStartIdentity: runtime.readProcessStartIdentity,
     },
     options,
   );
-  const scopedIncomplete =
-    options.scopedGatewayStop === true &&
-    (result.failed.length > 0 ||
-      result.ownershipFailures.length > 0 ||
-      result.skippedNonMatchingPids.length > 0);
-  if (scopedIncomplete) {
-    for (const failure of result.ownershipFailures) {
-      runtime.error(`Scoped gateway ownership check failed: ${failure}`);
-    }
+  if (options.scopedGatewayStop && (result.ownershipFailures?.length || result.failed.length)) {
     runtime.error(
-      "Cannot continue scoped uninstall because the selected gateway process was not proven and stopped.",
+      "Cannot prove ownership of or stop the selected host gateway process; retaining its runtime evidence.",
     );
     throw new IncompleteHostGatewayCleanupError();
   }

@@ -10,10 +10,7 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
-import { getTrustedActiveOpenShellGatewayUserServicePid } from "../../../src/lib/onboard/docker-driver-gateway-service.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -24,7 +21,6 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { requireFixture } from "../support/require-fixture.ts";
 
 const SANDBOX_A = process.env.NEMOCLAW_CGP_SANDBOX_A ?? "e2e-cgp-a";
 const SANDBOX_B = process.env.NEMOCLAW_CGP_SANDBOX_B ?? "e2e-cgp-b";
@@ -36,19 +32,6 @@ const PROBE_ATTEMPTS = Number(process.env.NEMOCLAW_E2E_PROBE_ATTEMPTS ?? 12);
 const PROBE_DELAY_MS = Number(process.env.NEMOCLAW_E2E_PROBE_DELAY_SECONDS ?? 5) * 1_000;
 const TEST_TIMEOUT_MS = 90 * 60_000;
 const POST_UNINSTALL_HEALTH_PROBES = 3;
-
-type GatewayProcessAuthority = "standalone-state" | "systemd-service";
-
-interface GatewayProcessIdentity {
-  authority: GatewayProcessAuthority;
-  pid: number;
-}
-
-interface CapturedProcessIdentity {
-  executable: string;
-  pid: number;
-  startIdentity: string;
-}
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_A);
@@ -69,131 +52,6 @@ function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 function gatewayNameForPort(port: string): string {
   return port === "8080" ? "nemoclaw" : `nemoclaw-${port}`;
-}
-
-function gatewayStateDirForPort(port: string): string {
-  const numericPort = Number(port);
-  requireFixture(
-    Number.isInteger(numericPort) && numericPort >= 1 && numericPort <= 65_535,
-    `invalid gateway port '${port}'`,
-  );
-  const leaf = port === "8080" ? "openshell-docker-gateway" : `openshell-docker-gateway-${port}`;
-  return path.join(process.env.HOME || os.homedir(), ".local", "state", "nemoclaw", leaf);
-}
-
-function readGatewayPid(port: string): number | null {
-  try {
-    const raw = fs.readFileSync(
-      path.join(gatewayStateDirForPort(port), "openshell-gateway.pid"),
-      "utf-8",
-    );
-    const pid = Number.parseInt(raw.trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-function readGatewayRuntimePid(port: string): number | null {
-  try {
-    const marker: unknown = JSON.parse(
-      fs.readFileSync(path.join(gatewayStateDirForPort(port), "runtime.json"), "utf-8"),
-    );
-    const pid =
-      marker && typeof marker === "object" && "pid" in marker
-        ? (marker as { pid?: unknown }).pid
-        : null;
-    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-function readStandaloneGatewayIdentity(port: string): GatewayProcessIdentity | null {
-  const pid = readGatewayPid(port);
-  const runtimePid = readGatewayRuntimePid(port);
-  const absent = pid === null && runtimePid === null;
-  requireFixture(
-    absent || (pid !== null && runtimePid !== null && pid === runtimePid),
-    `gateway ${gatewayNameForPort(port)} has inconsistent standalone process state ` +
-      `(pid file: ${String(pid)}, runtime marker: ${String(runtimePid)})`,
-  );
-  return absent ? null : { authority: "standalone-state", pid: pid as number };
-}
-
-function readDefaultGatewayServiceIdentity(): GatewayProcessIdentity {
-  const pid =
-    process.platform === "linux" && GATEWAY_PORT_A === "8080"
-      ? getTrustedActiveOpenShellGatewayUserServicePid({ env: commandEnv() })
-      : null;
-  requireFixture(
-    pid !== null,
-    `default gateway ${gatewayNameForPort(GATEWAY_PORT_A)} has neither matching ` +
-      "standalone PID/runtime state nor a trusted active systemd MainPID",
-  );
-  return { authority: "systemd-service", pid };
-}
-
-function readDefaultGatewayIdentity(): GatewayProcessIdentity {
-  return readStandaloneGatewayIdentity(GATEWAY_PORT_A) ?? readDefaultGatewayServiceIdentity();
-}
-
-function readAlternateGatewayIdentity(): GatewayProcessIdentity {
-  const identity = readStandaloneGatewayIdentity(GATEWAY_PORT_B);
-  requireFixture(
-    identity,
-    `alternate gateway ${gatewayNameForPort(GATEWAY_PORT_B)} is missing its standalone ` +
-      "PID/runtime ownership proof",
-  );
-  return identity;
-}
-
-function evidenceField(output: string, field: string): string | null {
-  const values = output
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith(`${field}=`))
-    .map((line) => line.slice(field.length + 1).trim())
-    .filter(Boolean);
-  return values.length === 1 ? values[0] : null;
-}
-
-function parseCapturedProcessIdentity(
-  result: ShellProbeResult,
-  pidText: string,
-): CapturedProcessIdentity {
-  const pid = Number(pidText);
-  const executable = evidenceField(result.stdout, "process_executable");
-  const startIdentity = evidenceField(result.stdout, "process_start_identity");
-  requireFixture(
-    Number.isSafeInteger(pid) && pid > 0 && executable && startIdentity,
-    `incomplete gateway process identity evidence:\n${resultText(result)}`,
-  );
-  return { executable, pid, startIdentity };
-}
-
-function capturedProcessIdentity(result: ShellProbeResult): CapturedProcessIdentity | null {
-  const pidText = evidenceField(result.stdout, "active_pid");
-  return pidText === null ? null : parseCapturedProcessIdentity(result, pidText);
-}
-
-function expectOnLinux(assertions: () => void): void {
-  (process.platform === "linux" ? assertions : () => undefined)();
-}
-
-function expectStandaloneGatewayArgv(
-  identity: GatewayProcessIdentity,
-  evidence: ShellProbeResult,
-  gatewayName: string,
-  gatewayPort: string,
-): void {
-  const assertions: Record<GatewayProcessAuthority, () => void> = {
-    "standalone-state": () =>
-      expect(resultText(evidence)).toContain(
-        `openshell-gateway[nemoclaw=${gatewayName};port=${gatewayPort}]`,
-      ),
-    "systemd-service": () => undefined,
-  };
-  assertions[identity.authority]();
 }
 
 function openshellEnvForGateway(gatewayName: string): NodeJS.ProcessEnv {
@@ -234,134 +92,49 @@ async function command(
   });
 }
 
+function evidencePid(evidence: string, gateway: string): string | undefined {
+  return evidence
+    .split(`gateway=${gateway}\n`)[1]
+    ?.split("gateway=")[0]
+    ?.match(/^active_pid=(\d+)$/m)?.[1];
+}
+
 async function captureGatewayEvidence(
   host: HostCliClient,
   sandbox: SandboxClient,
-  options: {
-    authority: GatewayProcessAuthority;
-    gatewayName: string;
-    knownPid?: number | null;
-    port: string;
-    stage: string;
-  },
-): Promise<{
-  host: ShellProbeResult;
-  processIdentity: CapturedProcessIdentity | null;
-  sandbox: ShellProbeResult;
-}> {
-  const stateDir = gatewayStateDirForPort(options.port);
-  const hostEvidence = await host.command(
+  gateways: readonly (readonly [string, string])[],
+  stage: string,
+): Promise<string> {
+  const script = [
+    'for spec in "$@"; do',
+    '  gateway="${spec%%:*}"; port="${spec##*:}"; leaf=openshell-docker-gateway',
+    '  test "$port" = 8080 || leaf="$leaf-$port"',
+    '  state="$HOME/.local/state/nemoclaw/$leaf"; pid=""',
+    '  test ! -r "$state/openshell-gateway.pid" || pid="$(tr -d "[:space:]" < "$state/openshell-gateway.pid")"',
+    '  if test -z "$pid" && test "$port" = 8080 && command -v systemctl >/dev/null; then for service in openshell-gateway nemoclaw-openshell-gateway; do candidate="$(systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)"; test "${candidate:-0}" -le 0 || { pid="$candidate"; break; }; done; fi',
+    '  printf "gateway=%s\\nport=%s\\npid_file=%s\\n" "$gateway" "$port" "${pid:-<missing>}"',
+    '  if test -n "$pid" && ps -p "$pid" >/dev/null 2>&1; then printf "active_pid=%s\\n" "$pid"; ps -p "$pid" -o pid=,ppid=,uid=,lstart=,args=; fi',
+    '  printf "listeners=\\n"; ss -H -ltnp 2>&1 | grep -E "[:.]$port\\b" || true',
+    '  printf "runtime=\\n"; test ! -r "$state/runtime.json" || cat "$state/runtime.json"',
+    '  printf "namespace=\\n"; test ! -r "$state/openshell-gateway.toml" || grep "^sandbox_namespace" "$state/openshell-gateway.toml" || true',
+    "done",
+  ].join("\n");
+  const evidence = await host.command(
     "bash",
-    [
-      "-lc",
-      [
-        'gateway="$1"',
-        'port="$2"',
-        'state_dir="$3"',
-        'known_pid="$4"',
-        'authority="$5"',
-        'pid_file="$state_dir/openshell-gateway.pid"',
-        'runtime_file="$state_dir/runtime.json"',
-        'printf "gateway=%s\\nport=%s\\nstate_dir=%s\\nauthority=%s\\n" "$gateway" "$port" "$state_dir" "$authority"',
-        'if [ -r "$pid_file" ]; then printf "pid_file="; cat "$pid_file"; else printf "pid_file=<missing>\\n"; fi',
-        'if [ -r "$runtime_file" ]; then printf "runtime_marker=\\n"; cat "$runtime_file"; else printf "runtime_marker=<missing>\\n"; fi',
-        'pid="$known_pid"',
-        'if [ "$authority" = "standalone-state" ] && [ -r "$pid_file" ]; then pid="$(tr -d "[:space:]" < "$pid_file")"; fi',
-        'if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ]; then printf "proc_cmdline="; tr "\\000" " " < "/proc/$pid/cmdline"; printf "\\n"; fi',
-        'if [ -n "$pid" ] && ps -p "$pid" -o pid= >/dev/null 2>&1; then',
-        '  printf "active_pid=%s\\n" "$pid"',
-        '  if [ -r "/proc/$pid/stat" ]; then',
-        '    proc_stat="$(cat "/proc/$pid/stat")"',
-        '    proc_stat="${proc_stat##*) }"',
-        "    set -- $proc_stat",
-        "    shift 19",
-        '    printf "process_start_identity=linux:%s\\n" "$1"',
-        "  else",
-        '    process_started="$(ps -p "$pid" -o lstart= 2>/dev/null | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"',
-        '    if [ -n "$process_started" ]; then printf "process_start_identity=ps:%s\\n" "$process_started"; fi',
-        "  fi",
-        '  if [ -L "/proc/$pid/exe" ]; then',
-        '    printf "process_executable="; readlink "/proc/$pid/exe"; printf "\\n"',
-        "  else",
-        '    process_executable="$(ps -p "$pid" -o comm= 2>/dev/null | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"',
-        '    if [ -n "$process_executable" ]; then printf "process_executable=%s\\n" "$process_executable"; fi',
-        "  fi",
-        '  ps -p "$pid" -o pid= -o ppid= -o user= -o command= 2>&1 || true',
-        "fi",
-        'if command -v ss >/dev/null 2>&1; then ss -H -ltnp 2>&1 | awk -v port="$port" \'$4 ~ (":" port "$")\' || true; fi',
-        'if command -v lsof >/dev/null 2>&1; then lsof -nP -a -iTCP:"$port" -sTCP:LISTEN 2>&1 || true; fi',
-      ].join("\n"),
-      "gateway-evidence",
-      options.gatewayName,
-      options.port,
-      stateDir,
-      options.knownPid ? String(options.knownPid) : "",
-      options.authority,
-    ],
-    {
-      artifactName: `${options.stage}-${options.gatewayName}-host-identity`,
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    },
+    ["-lc", script, "gateway-evidence", ...gateways.map(([name, port]) => `${name}:${port}`)],
+    { artifactName: `${stage}-gateway-processes`, env: commandEnv(), timeoutMs: 30_000 },
   );
-  expect(hostEvidence.exitCode, resultText(hostEvidence)).toBe(0);
-
-  const sandboxEvidence = await sandbox.openshell(["sandbox", "list", "-g", options.gatewayName], {
-    artifactName: `${options.stage}-${options.gatewayName}-sandbox-phase`,
-    env: openshellEnvForGateway(options.gatewayName),
-    timeoutMs: 30_000,
-  });
-  return {
-    host: hostEvidence,
-    processIdentity: capturedProcessIdentity(hostEvidence),
-    sandbox: sandboxEvidence,
-  };
-}
-
-async function captureGatewayPairEvidence(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  options: {
-    gatewayA: string;
-    gatewayB: string;
-    identityA: GatewayProcessIdentity;
-    identityB: GatewayProcessIdentity;
-    stage: string;
-  },
-): Promise<{
-  gatewayA: {
-    host: ShellProbeResult;
-    processIdentity: CapturedProcessIdentity | null;
-    sandbox: ShellProbeResult;
-  };
-  gatewayB: {
-    host: ShellProbeResult;
-    processIdentity: CapturedProcessIdentity | null;
-    sandbox: ShellProbeResult;
-  };
-}> {
-  const [gatewayA, gatewayB] = await Promise.all([
-    captureGatewayEvidence(host, sandbox, {
-      authority: options.identityA.authority,
-      gatewayName: options.gatewayA,
-      knownPid: options.identityA.pid,
-      port: GATEWAY_PORT_A,
-      stage: options.stage,
-    }),
-    captureGatewayEvidence(host, sandbox, {
-      authority: options.identityB.authority,
-      gatewayName: options.gatewayB,
-      knownPid: options.identityB.pid,
-      port: GATEWAY_PORT_B,
-      stage: options.stage,
-    }),
-  ]);
-  await sandbox.openshell(["gateway", "list", "-o", "json"], {
-    artifactName: `${options.stage}-gateway-registrations`,
-    env: commandEnv(),
-    timeoutMs: 30_000,
-  });
-  return { gatewayA, gatewayB };
+  expect(evidence.exitCode, resultText(evidence)).toBe(0);
+  await Promise.all(
+    gateways.map(([name]) =>
+      sandbox.openshell(["sandbox", "list", "-g", name], {
+        artifactName: `${stage}-${name}-sandbox-phase`,
+        env: openshellEnvForGateway(name),
+        timeoutMs: 30_000,
+      }),
+    ),
+  );
+  return resultText(evidence);
 }
 
 async function runOnboard(
@@ -469,74 +242,6 @@ async function expectPortNotListening(
   });
   expect(result.exitCode, resultText(result)).toBe(0);
   return result;
-}
-
-async function expectSurvivingGatewayHealthyAcrossProbes(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  options: {
-    dashboardPort: string;
-    gatewayName: string;
-    gatewayPort: string;
-    sandboxName: string;
-  },
-): Promise<string[]> {
-  const phases: string[] = [];
-  for (let attempt = 1; attempt <= POST_UNINSTALL_HEALTH_PROBES; attempt += 1) {
-    const suffix = String(attempt).padStart(2, "0");
-    const sandboxList = await sandbox.openshell(["sandbox", "list", "-g", options.gatewayName], {
-      artifactName: `phase-4-survivor-probe-${suffix}-sandbox-phase`,
-      env: openshellEnvForGateway(options.gatewayName),
-      timeoutMs: 30_000,
-    });
-    expect(sandboxList.exitCode, resultText(sandboxList)).toBe(0);
-    const phase = sandboxPhaseFromList(resultText(sandboxList), options.sandboxName) ?? "missing";
-    phases.push(phase);
-    expect(
-      ["Ready", "Running"],
-      `survivor probe ${String(attempt)} observed ${options.sandboxName} phase '${phase}'`,
-    ).toContain(phase);
-
-    await expectPortListening(
-      host,
-      options.gatewayPort,
-      `phase-4-survivor-probe-${suffix}-gateway-listener`,
-    );
-    const scopedList = await command(host, ["list"], {
-      artifactName: `phase-4-survivor-probe-${suffix}-nemoclaw-list`,
-      env: commandEnv({ NEMOCLAW_GATEWAY_PORT: options.gatewayPort }),
-      timeoutMs: 60_000,
-    });
-    expect(scopedList.exitCode, resultText(scopedList)).toBe(0);
-    expect(outputIncludesSandbox(scopedList.stdout, options.sandboxName), scopedList.stdout).toBe(
-      true,
-    );
-
-    const dashboard = await host.command(
-      "curl",
-      [
-        "-sS",
-        "-L",
-        "--max-time",
-        "10",
-        "-o",
-        "/dev/null",
-        "-w",
-        "%{http_code}",
-        `http://127.0.0.1:${options.dashboardPort}/`,
-      ],
-      {
-        artifactName: `phase-4-survivor-probe-${suffix}-dashboard-http`,
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(dashboard.exitCode, resultText(dashboard)).toBe(0);
-    expect(dashboard.stdout.trim()).toMatch(/^[23][0-9]{2}$/);
-
-    await (attempt < POST_UNINSTALL_HEALTH_PROBES ? sleep(PROBE_DELAY_MS) : Promise.resolve());
-  }
-  return phases;
 }
 
 async function prerequisiteOrSkip(
@@ -814,42 +519,21 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   expect(dashboardB).not.toBe(dashboardA);
 
   progress.phase("uninstall alternate gateway without disrupting default");
-  const gatewayIdentityA = readDefaultGatewayIdentity();
-  const gatewayIdentityB = readAlternateGatewayIdentity();
-  expect(gatewayIdentityA.pid).not.toBe(gatewayIdentityB.pid);
-  expect(gatewayIdentityB.authority).toBe("standalone-state");
-  const beforeUninstallEvidence = await captureGatewayPairEvidence(host, sandbox, {
-    gatewayA,
-    gatewayB,
-    identityA: gatewayIdentityA,
-    identityB: gatewayIdentityB,
-    stage: "phase-4-before-uninstall",
-  });
-  expect(beforeUninstallEvidence.gatewayA.processIdentity?.pid).toBe(gatewayIdentityA.pid);
-  expect(beforeUninstallEvidence.gatewayB.processIdentity?.pid).toBe(gatewayIdentityB.pid);
-  expectOnLinux(() => {
-    expectStandaloneGatewayArgv(
-      gatewayIdentityA,
-      beforeUninstallEvidence.gatewayA.host,
-      gatewayA,
-      GATEWAY_PORT_A,
-    );
-    expect(resultText(beforeUninstallEvidence.gatewayB.host)).toContain(
-      `openshell-gateway[nemoclaw=${gatewayB};port=${GATEWAY_PORT_B}]`,
-    );
-    expect(resultText(beforeUninstallEvidence.gatewayA.host)).toContain(
-      `active_pid=${String(gatewayIdentityA.pid)}`,
-    );
-    expect(resultText(beforeUninstallEvidence.gatewayA.host)).not.toContain(
-      `active_pid=${String(gatewayIdentityB.pid)}`,
-    );
-    expect(resultText(beforeUninstallEvidence.gatewayB.host)).toContain(
-      `active_pid=${String(gatewayIdentityB.pid)}`,
-    );
-    expect(resultText(beforeUninstallEvidence.gatewayB.host)).not.toContain(
-      `active_pid=${String(gatewayIdentityA.pid)}`,
-    );
-  });
+  const gatewayPair = [
+    [gatewayA, GATEWAY_PORT_A],
+    [gatewayB, GATEWAY_PORT_B],
+  ] as const;
+  const beforeEvidence = await captureGatewayEvidence(
+    host,
+    sandbox,
+    gatewayPair,
+    "phase-4-before-uninstall",
+  );
+  const pidA = evidencePid(beforeEvidence, gatewayA);
+  const pidB = evidencePid(beforeEvidence, gatewayB);
+  expect(pidA).toMatch(/^\d+$/);
+  expect(pidB).toMatch(/^\d+$/);
+  expect(pidA).not.toBe(pidB);
 
   const uninstallB = await command(host, ["uninstall", "--yes", "--destroy-user-data"], {
     artifactName: "phase-4-uninstall-gateway-b",
@@ -858,42 +542,56 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   });
   expect(uninstallB.exitCode, resultText(uninstallB)).toBe(0);
 
-  const gatewayIdentityAAfterUninstall = readDefaultGatewayIdentity();
-  expect(gatewayIdentityAAfterUninstall).toEqual(gatewayIdentityA);
-  const afterUninstallEvidence = await captureGatewayPairEvidence(host, sandbox, {
-    gatewayA,
-    gatewayB,
-    identityA: gatewayIdentityAAfterUninstall,
-    identityB: gatewayIdentityB,
-    stage: "phase-4-after-uninstall",
-  });
-  expect(readGatewayPid(GATEWAY_PORT_B)).toBeNull();
-  expect(readGatewayRuntimePid(GATEWAY_PORT_B)).toBeNull();
-  expect(afterUninstallEvidence.gatewayA.processIdentity).toEqual(
-    beforeUninstallEvidence.gatewayA.processIdentity,
+  const afterEvidence = await captureGatewayEvidence(
+    host,
+    sandbox,
+    gatewayPair,
+    "phase-4-after-uninstall",
   );
-  expect(afterUninstallEvidence.gatewayB.processIdentity).toBeNull();
-  expectOnLinux(() => {
-    expectStandaloneGatewayArgv(
-      gatewayIdentityA,
-      afterUninstallEvidence.gatewayA.host,
-      gatewayA,
-      GATEWAY_PORT_A,
-    );
-    expect(resultText(afterUninstallEvidence.gatewayA.host)).toContain(
-      `active_pid=${String(gatewayIdentityA.pid)}`,
-    );
-    expect(resultText(afterUninstallEvidence.gatewayB.host)).not.toContain(
-      `active_pid=${String(gatewayIdentityB.pid)}`,
-    );
-  });
+  expect(evidencePid(afterEvidence, gatewayA)).toBe(pidA);
+  expect(evidencePid(afterEvidence, gatewayB)).toBeUndefined();
 
-  const survivorPhases = await expectSurvivingGatewayHealthyAcrossProbes(host, sandbox, {
-    dashboardPort: dashboardA as string,
-    gatewayName: gatewayA,
-    gatewayPort: GATEWAY_PORT_A,
-    sandboxName: SANDBOX_A,
-  });
+  const survivorPhases: string[] = [];
+  for (let probe = 1; probe <= POST_UNINSTALL_HEALTH_PROBES; probe += 1) {
+    survivorPhases.push(
+      await waitForSandboxReady(
+        sandbox,
+        SANDBOX_A,
+        gatewayA,
+        `phase-4-survivor-probe-${String(probe)}`,
+      ),
+    );
+    await expectPortListening(host, GATEWAY_PORT_A, `phase-4-survivor-port-${String(probe)}`);
+    const scopedList = await command(host, ["list"], {
+      artifactName: `phase-4-survivor-list-${String(probe)}`,
+      env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
+      timeoutMs: 60_000,
+    });
+    expect(scopedList.exitCode, resultText(scopedList)).toBe(0);
+    expect(outputIncludesSandbox(scopedList.stdout, SANDBOX_A), scopedList.stdout).toBe(true);
+    const dashboardProbe = await host.command(
+      "curl",
+      [
+        "-sS",
+        "-L",
+        "--max-time",
+        "10",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        `http://127.0.0.1:${DASHBOARD_PORT_A}/`,
+      ],
+      {
+        artifactName: `phase-4-survivor-dashboard-${String(probe)}`,
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(dashboardProbe.exitCode, resultText(dashboardProbe)).toBe(0);
+    expect(dashboardProbe.stdout.trim()).toMatch(/^[23][0-9]{2}$/);
+    await (probe < POST_UNINSTALL_HEALTH_PROBES ? sleep(PROBE_DELAY_MS) : Promise.resolve());
+  }
   await expectPortNotListening(host, GATEWAY_PORT_B, "phase-4-gateway-port-b-stopped");
 
   const listAAfterUninstallB = await command(host, ["list"], {

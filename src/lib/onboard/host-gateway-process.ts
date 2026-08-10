@@ -6,24 +6,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dockerForceRm as runDockerForceRm } from "../adapters/docker/container";
-import { dockerInspect as runDockerInspect } from "../adapters/docker/inspect";
-import type { DockerRunOptions, DockerRunResult } from "../adapters/docker/run";
 import { waitUntil } from "../core/wait";
+import {
+  gatewayIdForStateDir,
+  hasStateScopedSandboxNamespace,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./docker-driver-gateway-config";
 import {
   clearDockerDriverGatewayRuntimeMarker,
   getDockerDriverGatewayRuntimeMarkerPath,
-  readDockerDriverGatewayRuntimeMarker,
+  parseDockerDriverGatewayRuntimeMarker,
 } from "./docker-driver-gateway-runtime-marker";
 import {
   canonicalGatewayTargetMatches,
-  cleanGatewayProcessToken,
-  DOCKER_DRIVER_GATEWAY_COMPAT_MOUNT_PATH,
-  DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES,
-  gatewayCompatContainerNameForPort,
   type OpenShellGatewayProcessTarget,
   hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,
 } from "./gateway-process-identity";
+
+export { hasStateScopedSandboxNamespace } from "./docker-driver-gateway-config";
 
 export interface RunResult {
   status: number | null;
@@ -36,19 +36,9 @@ export interface HostGatewayProcessDeps {
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   env: NodeJS.ProcessEnv;
   commandExists?: (command: string) => boolean;
-  dockerForceRm: (
-    containerName: string,
-    options?: DockerRunOptions,
-  ) => Pick<DockerRunResult, "status" | "stdout" | "stderr">;
-  dockerInspect: (
-    args: readonly string[],
-    options?: DockerRunOptions,
-  ) => Pick<DockerRunResult, "status" | "stdout" | "stderr">;
   isPortFree?: (port: number) => boolean;
   log?: (message: string) => void;
-  readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
-  readProcessStartIdentity?: (pid: number) => string | null;
   warn?: (message: string) => void;
 }
 
@@ -65,10 +55,7 @@ export interface StopHostGatewayOptions {
   pollIntervalMs?: number;
   /** Keep PID/runtime evidence when a PID-file process does not match the cleanup target. */
   preserveRuntimeFilesOnNonMatching?: boolean;
-  /**
-   * Stop one gateway without invoking OpenShell's shared Docker shutdown cleanup.
-   * Requires exact per-gateway PID, runtime-marker, owner, cmdline, and listener proof.
-   */
+  /** Restrict cleanup to one fully proven PID-file gateway. */
   scopedGatewayStop?: boolean;
   stateDir?: string;
   termWaitMs?: number;
@@ -81,7 +68,7 @@ export interface StopHostGatewayResult {
   failed: number[];
   /** Whether a requested pgrep fallback completed with a usable result. */
   orphanScanComplete?: boolean;
-  ownershipFailures: string[];
+  ownershipFailures?: string[];
   skippedDeadPids: number[];
   skippedNonMatchingPids: number[];
   stopped: number[];
@@ -155,13 +142,9 @@ function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatew
     kill: overrides.kill ?? defaultKill,
     env,
     commandExists: overrides.commandExists ?? ((cmd) => defaultCommandExists(cmd, env)),
-    dockerForceRm: overrides.dockerForceRm ?? runDockerForceRm,
-    dockerInspect: overrides.dockerInspect ?? runDockerInspect,
     isPortFree: overrides.isPortFree ?? ((port) => isHostPortFree(port)),
     log: overrides.log,
-    readProcessExecutable: overrides.readProcessExecutable,
     readProcessEnvironment: overrides.readProcessEnvironment,
-    readProcessStartIdentity: overrides.readProcessStartIdentity,
     warn: overrides.warn,
   };
 }
@@ -197,47 +180,6 @@ function processArgs(pid: number, deps: HostGatewayProcessDeps): string {
   return result.status === 0 ? result.stdout.trim() : "";
 }
 
-function processExecutable(pid: number, deps: HostGatewayProcessDeps): string | null {
-  if (deps.readProcessExecutable) return deps.readProcessExecutable(pid);
-  try {
-    return fs.readlinkSync(`/proc/${String(pid)}/exe`);
-  } catch {
-    const lsof = deps.run("lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
-      env: deps.env,
-    });
-    const lsofPath =
-      lsof.status === 0
-        ? lsof.stdout
-            .split(/\r?\n/)
-            .find((line) => line.startsWith("n/") && line.length > 2)
-            ?.slice(1)
-        : undefined;
-    if (lsofPath) return lsofPath;
-    const result = deps.run("ps", ["-p", String(pid), "-o", "comm="], { env: deps.env });
-    const executable = result.status === 0 ? result.stdout.trim() : "";
-    return executable && path.isAbsolute(executable) ? executable : null;
-  }
-}
-
-function processStartIdentity(pid: number, deps: HostGatewayProcessDeps): string | null {
-  if (deps.readProcessStartIdentity) return deps.readProcessStartIdentity(pid);
-  try {
-    const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
-    const commandEnd = stat.lastIndexOf(")");
-    if (commandEnd < 0) return null;
-    return (
-      stat
-        .slice(commandEnd + 1)
-        .trim()
-        .split(/\s+/)[19] ?? null
-    );
-  } catch {
-    const result = deps.run("ps", ["-p", String(pid), "-o", "lstart="], { env: deps.env });
-    const started = result.status === 0 ? result.stdout.trim() : "";
-    return started ? started : null;
-  }
-}
-
 function pidExists(pid: number, deps: HostGatewayProcessDeps): boolean {
   return deps.run("ps", ["-p", String(pid), "-o", "pid="], { env: deps.env }).status === 0;
 }
@@ -248,151 +190,55 @@ function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
   return result.stdout.trim() || null;
 }
 
-function pidUid(pid: number, deps: HostGatewayProcessDeps): number | null {
-  const result = deps.run("ps", ["-p", String(pid), "-o", "uid="], { env: deps.env });
-  if (result.status !== 0) return null;
-  const uid = Number.parseInt(result.stdout.trim(), 10);
-  return Number.isInteger(uid) && uid >= 0 ? uid : null;
-}
-
-function regularFileUid(filePath: string): number | null {
+function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
+  if (typeof fs.constants.O_NOFOLLOW !== "number") return null;
+  let descriptor: number | undefined;
   try {
-    const stat = fs.lstatSync(filePath);
-    return stat.isFile() && !stat.isSymbolicLink() ? stat.uid : null;
-  } catch {
-    return null;
-  }
-}
-
-function ownedStateDirUid(stateDir: string): number | null {
-  try {
-    const stat = fs.lstatSync(stateDir);
-    return stat.isDirectory() && !stat.isSymbolicLink() ? stat.uid : null;
-  } catch {
-    return null;
-  }
-}
-
-function gatewayEndpointPort(endpoint: string): number | null {
-  try {
-    const parsed = new URL(endpoint);
-    const port = Number.parseInt(parsed.port, 10);
-    return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
-  } catch {
-    return null;
-  }
-}
-
-function listeningPids(
-  port: number,
-  deps: HostGatewayProcessDeps,
-): { complete: boolean; pids: number[] } {
-  if (deps.commandExists && !deps.commandExists("lsof")) {
-    return { complete: false, pids: [] };
-  }
-  const result = deps.run("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"], {
-    env: deps.env,
-  });
-  if (result.status !== 0 && result.status !== 1) {
-    return { complete: false, pids: [] };
-  }
-  return { complete: true, pids: [...new Set(parsePidLines(result.stdout))] };
-}
-
-function dockerCompatContainerForTarget(cmdline: string, port: number): string | null {
-  const tokens = cmdline.trim().split(/\s+/).filter(Boolean).map(cleanGatewayProcessToken);
-  const argv0 = tokens[0] ?? "";
-  if (
-    !DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES.has(path.basename(argv0)) ||
-    tokens[1] !== "run" ||
-    !tokens.slice(1).includes(DOCKER_DRIVER_GATEWAY_COMPAT_MOUNT_PATH)
-  ) {
-    return null;
-  }
-  const containerName = gatewayCompatContainerNameForPort(port);
-  const nameIndex = tokens.findIndex((token) => token === "--name");
-  const inlineName = tokens.find((token) => token.startsWith("--name="))?.slice("--name=".length);
-  const explicitName = nameIndex >= 0 ? tokens[nameIndex + 1] : inlineName;
-  return explicitName === containerName ? containerName : null;
-}
-
-type DockerCompatContainerIdentity = {
-  containerId: string;
-  containerName: string;
-  dockerEnv: NodeJS.ProcessEnv;
-  pid: number;
-};
-
-function dockerCompatContainerIdentity(
-  containerName: string,
-  dockerHost: string,
-  deps: HostGatewayProcessDeps,
-): DockerCompatContainerIdentity | null {
-  // Docker adapters apply the repository subprocess allowlist before spawning.
-  // Pass only the daemon identity we proved instead of treating the complete
-  // parent environment as an explicit override, which would reintroduce
-  // unrelated credentials that the adapter intentionally filters out.
-  const dockerEnv = { DOCKER_HOST: dockerHost };
-  const result = deps.dockerInspect(["--type", "container", containerName], {
-    encoding: "utf-8",
-    env: dockerEnv,
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  if (result.status !== 0) return null;
-  try {
-    const parsed = JSON.parse(String(result.stdout ?? "")) as Array<{
-      Args?: unknown;
-      HostConfig?: { NetworkMode?: unknown };
-      Id?: unknown;
-      Name?: unknown;
-      Path?: unknown;
-      State?: { Pid?: unknown; Running?: unknown };
-    }>;
-    if (!Array.isArray(parsed) || parsed.length !== 1) return null;
-    const container = parsed[0];
-    const containerId = typeof container.Id === "string" ? container.Id : "";
-    const containerPid = container.State?.Pid;
-    if (
-      !/^[a-f0-9]{64}$/i.test(containerId) ||
-      container.Name !== `/${containerName}` ||
-      container.Path !== DOCKER_DRIVER_GATEWAY_COMPAT_MOUNT_PATH ||
-      !Array.isArray(container.Args) ||
-      container.Args.length !== 0 ||
-      container.HostConfig?.NetworkMode !== "host" ||
-      container.State?.Running !== true ||
-      !Number.isSafeInteger(containerPid) ||
-      Number(containerPid) <= 0
-    ) {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || stat.size > 64 * 1024)
       return null;
-    }
-    return {
-      containerId,
-      containerName,
-      dockerEnv,
-      pid: Number(containerPid),
-    };
+    return fs.readFileSync(descriptor, "utf-8");
   } catch {
     return null;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
   }
 }
 
-function processEnvironment(
+export function processUsesStateScopedSandboxNamespace(
   pid: number,
-  deps: HostGatewayProcessDeps,
-): Record<string, string> | null {
-  if (deps.readProcessEnvironment) return deps.readProcessEnvironment(pid);
-  try {
-    const entries = fs.readFileSync(`/proc/${String(pid)}/environ`, "utf-8").split("\0");
-    const environment: Record<string, string> = {};
-    for (const entry of entries) {
-      const separator = entry.indexOf("=");
-      if (separator > 0) environment[entry.slice(0, separator)] = entry.slice(separator + 1);
+  stateDir: string,
+  deps: Pick<HostGatewayProcessDeps, "env" | "readProcessEnvironment" | "run">,
+): boolean {
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  const owner = deps.run("ps", ["-p", String(pid), "-o", "uid="], { env: deps.env });
+  if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
+  let environment = deps.readProcessEnvironment?.(pid) ?? null;
+  if (!environment) {
+    try {
+      environment = Object.fromEntries(
+        fs
+          .readFileSync(`/proc/${String(pid)}/environ`, "utf-8")
+          .split("\0")
+          .filter(Boolean)
+          .map((entry) => [
+            entry.slice(0, entry.indexOf("=")),
+            entry.slice(entry.indexOf("=") + 1),
+          ]),
+      );
+    } catch {
+      const command = deps.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
+        env: deps.env,
+      });
+      const prefix = `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=`;
+      const value = command.stdout.split(/\s+/).find((token) => token.startsWith(prefix));
+      environment = value
+        ? { [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: value.slice(prefix.length) }
+        : null;
     }
-    return environment;
-  } catch {
-    return null;
   }
+  return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
 }
 
 export function hostGatewayCmdlineMatches(
@@ -404,222 +250,48 @@ export function hostGatewayCmdlineMatches(
   return sharedHostGatewayCmdlineMatches(cmdline, gatewayBin, expectedOpenShellGateway, opts);
 }
 
-function normalizeExecutablePath(value: string): string {
-  try {
-    return fs.realpathSync.native(value);
-  } catch {
-    return path.resolve(value);
-  }
-}
-
-function scopedGatewayOwnershipProof(
+function scopedGatewayOwnershipFailure(
   pid: number,
   deps: HostGatewayProcessDeps,
   options: StopHostGatewayOptions,
-  target: { name: string; port: number },
   stateDir: string,
   pidFile: string,
-): {
-  cmdline: string;
-  compatContainerIdentity?: DockerCompatContainerIdentity;
-  compatContainerName: string | null;
-  reason?: string;
-  startIdentity?: string;
-} {
-  const markerPath = getDockerDriverGatewayRuntimeMarkerPath(stateDir);
-  const stateDirUid = ownedStateDirUid(stateDir);
-  const pidFileUid = regularFileUid(pidFile);
-  const markerUid = regularFileUid(markerPath);
-  if (stateDirUid === null) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "gateway state directory is missing, symlinked, or not a directory",
-    };
+  target: { name: string; port: number },
+): string | null {
+  if (!hasStateScopedSandboxNamespace(stateDir)) {
+    return "gateway config does not prove an isolated sandbox namespace";
   }
-  if (pidFileUid === null) {
-    return { cmdline: "", compatContainerName: null, reason: "PID file is not a regular file" };
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  const pidText = readOwnedRuntimeFile(pidFile, uid);
+  const markerText = readOwnedRuntimeFile(getDockerDriverGatewayRuntimeMarkerPath(stateDir), uid);
+  const marker = markerText ? parseDockerDriverGatewayRuntimeMarker(markerText) : null;
+  if (Number(pidText?.trim()) !== pid || marker?.pid !== pid) {
+    return "PID file and runtime marker do not identify the same process";
   }
-  if (markerUid === null) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "runtime marker is missing or not a regular file",
-    };
-  }
-  if (stateDirUid !== pidFileUid || pidFileUid !== markerUid) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "gateway state directory, PID file, and runtime marker have different owners",
-    };
-  }
-  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (currentUid !== null && stateDirUid !== currentUid) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "scoped gateway runtime evidence is not owned by the current user",
-    };
-  }
-  if (readPidFile(pidFile) !== pid) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "PID file identity changed while proving the scoped gateway target",
-    };
-  }
-
-  const marker = readDockerDriverGatewayRuntimeMarker(markerPath);
-  if (!marker) {
-    return { cmdline: "", compatContainerName: null, reason: "runtime marker is invalid" };
-  }
-  if (marker.pid !== pid) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: `runtime marker PID ${String(marker.pid)} does not match PID file ${String(pid)}`,
-    };
-  }
-  if (gatewayEndpointPort(marker.endpoint) !== target.port) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: `runtime marker endpoint does not identify port ${String(target.port)}`,
-    };
-  }
-  if (marker.platform !== process.platform || marker.arch !== process.arch) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "runtime marker platform identity does not match this host",
-    };
+  let markerPort = 0;
+  try {
+    markerPort = Number(new URL(marker.endpoint).port);
+  } catch {
+    return "runtime marker endpoint is invalid";
   }
   if (
-    marker.gatewayBin &&
-    options.gatewayBin &&
-    normalizeExecutablePath(marker.gatewayBin) !== normalizeExecutablePath(options.gatewayBin)
+    markerPort !== target.port ||
+    marker.platform !== process.platform ||
+    marker.arch !== process.arch
   ) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "runtime marker gateway executable does not match the cleanup target",
-    };
+    return "runtime marker does not identify the selected gateway";
   }
-
-  const ownerUid = pidUid(pid, deps);
-  if (ownerUid === null || ownerUid !== pidFileUid) {
-    return {
-      cmdline: "",
-      compatContainerName: null,
-      reason: "gateway process owner does not match the scoped runtime evidence owner",
-    };
+  if (!processUsesStateScopedSandboxNamespace(pid, stateDir, deps)) {
+    return "gateway process owner and loaded sandbox namespace cannot be proven";
   }
-
-  const cmdline = processArgs(pid, deps);
   if (
-    !hostGatewayCmdlineMatches(cmdline, options.gatewayBin, target, {
+    !hostGatewayCmdlineMatches(processArgs(pid, deps), options.gatewayBin, target, {
       requireExpectedFlags: true,
     })
   ) {
-    return {
-      cmdline,
-      compatContainerName: null,
-      reason: `process command line does not prove gateway '${target.name}' on port ${String(target.port)}`,
-    };
+    return "process command line does not identify the selected gateway name and port";
   }
-
-  const compatContainerName = dockerCompatContainerForTarget(cmdline, target.port);
-  if (!compatContainerName) {
-    if (!marker.gatewayBin) {
-      return {
-        cmdline,
-        compatContainerName,
-        reason: "runtime marker does not identify the direct gateway executable",
-      };
-    }
-    const executable = processExecutable(pid, deps);
-    if (
-      !executable ||
-      normalizeExecutablePath(executable) !== normalizeExecutablePath(marker.gatewayBin)
-    ) {
-      return {
-        cmdline,
-        compatContainerName,
-        reason: "gateway process executable does not match the runtime marker",
-      };
-    }
-  }
-  const startIdentity = processStartIdentity(pid, deps);
-  if (!startIdentity) {
-    return {
-      cmdline,
-      compatContainerName,
-      reason: "gateway process start identity could not be proven",
-    };
-  }
-  const listeners = listeningPids(target.port, deps);
-  if (!listeners.complete) {
-    return {
-      cmdline,
-      compatContainerName,
-      reason: `listener ownership for port ${String(target.port)} could not be observed completely`,
-    };
-  }
-  if (compatContainerName) {
-    const parentEnvironment = processEnvironment(pid, deps);
-    const parentDockerHost = parentEnvironment?.DOCKER_HOST?.trim() || null;
-    const provenDockerHost = marker.dockerHost ?? "unix:///var/run/docker.sock";
-    const unsupportedDockerSelector = [
-      "DOCKER_CERT_PATH",
-      "DOCKER_CONFIG",
-      "DOCKER_CONTEXT",
-      "DOCKER_TLS_VERIFY",
-    ].some((key) => Boolean(parentEnvironment?.[key]?.trim()));
-    if (
-      marker.gatewayBin !== null ||
-      !provenDockerHost.startsWith("unix:///") ||
-      !parentEnvironment ||
-      unsupportedDockerSelector ||
-      (marker.dockerHost === null
-        ? parentDockerHost !== null
-        : parentDockerHost !== marker.dockerHost)
-    ) {
-      return {
-        cmdline,
-        compatContainerName,
-        reason: "compatibility gateway Docker daemon identity does not match the runtime marker",
-      };
-    }
-    const compatContainerIdentity = dockerCompatContainerIdentity(
-      compatContainerName,
-      provenDockerHost,
-      deps,
-    );
-    if (!compatContainerIdentity) {
-      return {
-        cmdline,
-        compatContainerName,
-        reason: `compatibility container '${compatContainerName}' identity could not be proven`,
-      };
-    }
-    if (listeners.pids.length !== 1 || listeners.pids[0] !== compatContainerIdentity.pid) {
-      return {
-        cmdline,
-        compatContainerName,
-        reason: `compatibility container '${compatContainerName}' does not solely own the listener on port ${String(target.port)}`,
-      };
-    }
-    return { cmdline, compatContainerIdentity, compatContainerName, startIdentity };
-  } else if (listeners.pids.length !== 1 || listeners.pids[0] !== pid) {
-    return {
-      cmdline,
-      compatContainerName,
-      reason: `PID ${String(pid)} is not the sole listener owner for port ${String(target.port)}`,
-    };
-  }
-
-  return { cmdline, compatContainerName, startIdentity };
+  return null;
 }
 
 function waitForExit(
@@ -701,58 +373,19 @@ function tryStopPid(
   pid: number,
   deps: HostGatewayProcessDeps,
   options: Required<Pick<StopHostGatewayOptions, "killWaitMs" | "pollIntervalMs" | "termWaitMs">>,
-): "stopped" | "failed" {
+  canSignal?: () => boolean,
+): "stopped" | "failed" | "identity-changed" {
   const log = deps.log ?? ((message: string) => console.log(message));
+  if (canSignal && !canSignal()) return "identity-changed";
   deps.kill(pid, "SIGTERM");
   if (waitForExit(pid, deps, options.termWaitMs, options.pollIntervalMs)) {
     log(`Stopped host openshell-gateway process ${pid}`);
     return "stopped";
   }
+  if (canSignal && !canSignal()) return "identity-changed";
   deps.kill(pid, "SIGKILL");
   if (waitForExit(pid, deps, options.killWaitMs, options.pollIntervalMs)) {
     log(`Stopped host openshell-gateway process ${pid} (after SIGKILL)`);
-    return "stopped";
-  }
-  warnSudoRemediation(pid, deps);
-  return "failed";
-}
-
-function tryStopScopedPid(
-  pid: number,
-  compatContainerIdentity: DockerCompatContainerIdentity | undefined,
-  expectedStartIdentity: string,
-  deps: HostGatewayProcessDeps,
-  options: Required<Pick<StopHostGatewayOptions, "killWaitMs" | "pollIntervalMs">>,
-): "stopped" | "failed" | "identity-changed" {
-  const log = deps.log ?? ((message: string) => console.log(message));
-  if (processStartIdentity(pid, deps) !== expectedStartIdentity) return "identity-changed";
-  if (compatContainerIdentity) {
-    const removed = deps.dockerForceRm(compatContainerIdentity.containerId, {
-      encoding: "utf-8",
-      env: compatContainerIdentity.dockerEnv,
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (removed.status !== 0) {
-      const warn = deps.warn ?? ((message: string) => console.warn(message));
-      const detail = String(removed.stderr ?? "").trim() || `status ${String(removed.status)}`;
-      warn(
-        `Failed to remove scoped gateway compatibility container '${compatContainerIdentity.containerName}': ${detail}`,
-      );
-      return "failed";
-    }
-    if (!waitForExit(pid, deps, options.killWaitMs, options.pollIntervalMs)) {
-      return "failed";
-    }
-  } else {
-    // OpenShell 0.0.99 gracefully stops every managed Docker container in its
-    // configured namespace. Scoped teardown has already deleted this gateway's
-    // selected sandboxes, so SIGKILL avoids cross-stopping a sibling gateway's
-    // container while still targeting only the fully proven process.
-    deps.kill(pid, "SIGKILL");
-  }
-  if (waitForExit(pid, deps, options.killWaitMs, options.pollIntervalMs)) {
-    log(`Stopped scoped host openshell-gateway process ${pid}`);
     return "stopped";
   }
   warnSudoRemediation(pid, deps);
@@ -778,57 +411,44 @@ export function stopHostGatewayProcesses(
     sudoRemediationPids: [],
   };
 
-  const scopedGatewayStop = options.scopedGatewayStop ?? false;
   const explicitPids = Array.from(options.pids ?? []).filter(
     (pid): pid is number => Number.isInteger(pid) && pid > 0,
   );
-  let scopedTarget: { name: string; port: number } | null = null;
-  if (scopedGatewayStop) {
-    const port = Number(options.openShellGatewayPort);
-    const name = options.openShellGatewayName?.trim() ?? "";
-    if (
-      !Number.isInteger(port) ||
-      port < 1 ||
-      port > 65_535 ||
-      !canonicalGatewayTargetMatches(name, port)
-    ) {
-      result.ownershipFailures.push(
-        "scoped gateway stop requires one canonical gateway name and port",
-      );
-      return result;
-    }
-    if (options.usePidFile === false || explicitPids.length > 0) {
-      result.ownershipFailures.push(
-        "scoped gateway stop accepts only the selected gateway PID file",
-      );
-      return result;
-    }
-    if (options.usePgrepFallback === true) {
-      result.ownershipFailures.push("scoped gateway stop forbids host-wide process discovery");
-      return result;
-    }
-    scopedTarget = { name, port };
+  const scopedPort = Number(options.openShellGatewayPort);
+  const scopedName = options.openShellGatewayName?.trim() ?? "";
+  const rejectScoped = (reason: string, pid?: number): StopHostGatewayResult => {
+    if (pid) result.skippedNonMatchingPids.push(pid);
+    (result.ownershipFailures ??= []).push(pid ? `PID ${String(pid)}: ${reason}` : reason);
+    return result;
+  };
+  if (
+    options.scopedGatewayStop &&
+    (!Number.isInteger(scopedPort) ||
+      scopedPort < 1 ||
+      scopedPort > 65_535 ||
+      !canonicalGatewayTargetMatches(scopedName, scopedPort) ||
+      options.usePidFile === false ||
+      options.usePgrepFallback === true ||
+      explicitPids.length > 0)
+  ) {
+    return rejectScoped("scoped cleanup requires one canonical name, port, and PID file");
   }
 
   if (options.usePidFile ?? true) {
     const pidFromFile = readPidFile(pidFile);
     if (pidFromFile !== null) {
       addPid(candidates, pidFromFile, "pid-file");
-    } else if (scopedTarget) {
-      const markerPath = getDockerDriverGatewayRuntimeMarkerPath(stateDir);
-      if (fs.existsSync(pidFile) || fs.existsSync(markerPath)) {
-        result.ownershipFailures.push(
-          "scoped gateway PID/runtime evidence is incomplete or invalid",
-        );
-        return result;
+    } else if (options.scopedGatewayStop) {
+      if (
+        fs.existsSync(pidFile) ||
+        fs.existsSync(getDockerDriverGatewayRuntimeMarkerPath(stateDir)) ||
+        deps.isPortFree?.(scopedPort) !== true
+      ) {
+        return rejectScoped("selected gateway has incomplete ownership evidence");
       }
-      const listeners = listeningPids(scopedTarget.port, deps);
-      if (deps.isPortFree?.(scopedTarget.port) !== true || listeners.pids.length > 0) {
-        result.ownershipFailures.push(
-          `gateway port ${String(scopedTarget.port)} is occupied without PID-file ownership evidence`,
-        );
-        return result;
-      }
+      if (options.logNoProcesses)
+        (deps.log ?? console.log)("No host openshell-gateway processes found");
+      return result;
     } else if (clearRuntimeState && fs.existsSync(pidFile)) {
       clearHostGatewayRuntimeFiles(stateDir, pidFile);
     }
@@ -841,7 +461,7 @@ export function stopHostGatewayProcesses(
   // host. Otherwise an onboard drift could terminate an unrelated worktree's
   // gateway. Sweeping callers (uninstall, sandbox destroy of the last sandbox)
   // omit `pids` and so still get the pgrep fallback by default.
-  const useFallback = scopedGatewayStop
+  const useFallback = options.scopedGatewayStop
     ? false
     : (options.usePgrepFallback ?? explicitPids.length === 0);
   let pgrepRan = false;
@@ -868,14 +488,8 @@ export function stopHostGatewayProcesses(
   for (const [pid, sources] of candidates) {
     if (!pidExists(pid, deps)) {
       result.skippedDeadPids.push(pid);
-      if (scopedTarget) {
-        const listeners = listeningPids(scopedTarget.port, deps);
-        if (deps.isPortFree?.(scopedTarget.port) !== true || listeners.pids.length > 0) {
-          result.ownershipFailures.push(
-            `recorded PID ${String(pid)} is dead but port ${String(scopedTarget.port)} remains occupied`,
-          );
-          continue;
-        }
+      if (options.scopedGatewayStop && deps.isPortFree?.(scopedPort) !== true) {
+        return rejectScoped("recorded process is dead but its selected port remains occupied");
       }
       if (clearRuntimeState && sources.has("pid-file") && !clearedRuntimeFiles) {
         clearHostGatewayRuntimeFiles(stateDir, pidFile);
@@ -883,76 +497,15 @@ export function stopHostGatewayProcesses(
       }
       continue;
     }
-
-    if (scopedTarget) {
-      const proof = scopedGatewayOwnershipProof(
-        pid,
-        deps,
-        options,
-        scopedTarget,
-        stateDir,
-        pidFile,
-      );
-      if (proof.reason) {
-        result.skippedNonMatchingPids.push(pid);
-        result.ownershipFailures.push(`PID ${String(pid)}: ${proof.reason}`);
-        continue;
-      }
-      const finalProof = scopedGatewayOwnershipProof(
-        pid,
-        deps,
-        options,
-        scopedTarget,
-        stateDir,
-        pidFile,
-      );
-      if (
-        finalProof.reason ||
-        finalProof.cmdline !== proof.cmdline ||
-        finalProof.startIdentity !== proof.startIdentity ||
-        finalProof.compatContainerIdentity?.containerId !==
-          proof.compatContainerIdentity?.containerId
-      ) {
-        result.skippedNonMatchingPids.push(pid);
-        result.ownershipFailures.push(
-          `PID ${String(pid)}: gateway process identity changed immediately before signaling`,
-        );
-        continue;
-      }
-      const scopedStop = tryStopScopedPid(
-        pid,
-        finalProof.compatContainerIdentity,
-        finalProof.startIdentity as string,
-        deps,
-        waitOptions,
-      );
-      if (scopedStop === "identity-changed") {
-        result.skippedNonMatchingPids.push(pid);
-        result.ownershipFailures.push(
-          `PID ${String(pid)}: gateway process identity changed immediately before signaling`,
-        );
-        continue;
-      }
-      if (scopedStop !== "stopped") {
-        result.failed.push(pid);
-        result.sudoRemediationPids.push(pid);
-        continue;
-      }
-      result.stopped.push(pid);
-      if (!deps.isPortFree?.(scopedTarget.port)) {
-        result.ownershipFailures.push(
-          `gateway port ${String(scopedTarget.port)} remains occupied after stopping PID ${String(pid)}`,
-        );
-        continue;
-      }
-      if (clearRuntimeState && !clearedRuntimeFiles) {
-        clearHostGatewayRuntimeFiles(stateDir, pidFile);
-        clearedRuntimeFiles = true;
-      }
-      continue;
+    if (options.scopedGatewayStop) {
+      const reason = scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, {
+        name: scopedName,
+        port: scopedPort,
+      });
+      if (reason) return rejectScoped(reason, pid);
     }
-
     if (
+      !options.scopedGatewayStop &&
       !hostGatewayCmdlineMatches(
         processArgs(pid, deps),
         options.gatewayBin,
@@ -972,8 +525,26 @@ export function stopHostGatewayProcesses(
       continue;
     }
 
-    if (tryStopPid(pid, deps, waitOptions) === "stopped") {
+    const stopResult = tryStopPid(
+      pid,
+      deps,
+      waitOptions,
+      options.scopedGatewayStop
+        ? () =>
+            scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, {
+              name: scopedName,
+              port: scopedPort,
+            }) === null
+        : undefined,
+    );
+    if (stopResult === "identity-changed") {
+      return rejectScoped("process ownership changed immediately before signaling", pid);
+    }
+    if (stopResult === "stopped") {
       result.stopped.push(pid);
+      if (options.scopedGatewayStop && deps.isPortFree?.(scopedPort) !== true) {
+        return rejectScoped("selected gateway port remains occupied after its process stopped");
+      }
       if (clearRuntimeState && !clearedRuntimeFiles) {
         clearHostGatewayRuntimeFiles(stateDir, pidFile);
         clearedRuntimeFiles = true;
@@ -984,7 +555,7 @@ export function stopHostGatewayProcesses(
     }
   }
 
-  if (options.logNoProcesses && candidates.size === 0 && result.ownershipFailures.length === 0) {
+  if (options.logNoProcesses && candidates.size === 0) {
     if (useFallback && !pgrepRan) {
       // The pid-file branch found nothing and the pgrep fallback could not
       // run (typically `pgrep` is absent on a minimal image). Surface the

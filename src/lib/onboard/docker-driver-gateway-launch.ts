@@ -12,6 +12,7 @@ import {
 } from "./docker-driver-gateway-compat";
 import {
   buildDockerDriverGatewayConfigToml,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import {
@@ -177,6 +178,7 @@ export function buildDockerDriverGatewayRuntimeIdentity(
     ...Object.keys(options.gatewayEnv),
     "OPENSHELL_DOCKER_SUPERVISOR_BIN",
     "OPENSHELL_GATEWAY_CONFIG",
+    NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   ]);
   const desiredEnv = Object.fromEntries(
     Object.entries(launch.env).filter(

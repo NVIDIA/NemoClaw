@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE } from "../../onboard/docker-driver-gateway-service";
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { migrateLegacyPortState } from "../../state/legacy-port-migration";
@@ -21,8 +22,8 @@ function ok(stdout = ""): RunResult {
 }
 
 function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
-  const commandExists = deps.commandExists;
   return {
+    isPortFree: () => true,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -34,11 +35,6 @@ function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
       requiredCapabilities: [],
     }),
     ...deps,
-    isPortFree: deps.isPortFree ?? (() => true),
-    // Scoped teardown must distinguish an absent selected gateway from an
-    // unobservable listener. These unit fixtures model a successful empty
-    // lsof query unless a test overrides the command response with a PID.
-    commandExists: (command) => command === "lsof" || (commandExists?.(command) ?? false),
   };
 }
 

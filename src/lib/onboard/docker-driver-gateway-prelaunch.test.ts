@@ -14,7 +14,6 @@ import type { StopHostGatewayOptions, StopHostGatewayResult } from "./host-gatew
 function emptyResult(overrides: Partial<StopHostGatewayResult> = {}): StopHostGatewayResult {
   return {
     failed: [],
-    ownershipFailures: [],
     skippedDeadPids: [],
     skippedNonMatchingPids: [],
     stopped: [],

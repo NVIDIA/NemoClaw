@@ -46,11 +46,7 @@ export function gatewayTargetMatches(
 }
 
 export function canonicalGatewayTargetMatches(name: string, port: number): boolean {
-  return resolveGatewayName(port) === name;
-}
-
-export function gatewayCompatContainerNameForPort(port: number): string {
-  return resolveGatewayCompatContainerName(port);
+  return resolveGatewayName(port) === name && resolveGatewayPortFromName(name) === port;
 }
 
 function cliFlagValue(tokens: string[], names: string[]): string | null {
@@ -58,14 +54,9 @@ function cliFlagValue(tokens: string[], names: string[]): string | null {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     for (const name of names) {
-      if (token === name) {
-        const value = tokens[index + 1];
-        if (!value) return null;
-        values.push(value);
-      } else if (token.startsWith(`${name}=`)) {
-        const value = token.slice(name.length + 1);
-        if (!value) return null;
-        values.push(value);
+      if (token === name && tokens[index + 1]) values.push(tokens[index + 1]);
+      else if (token.startsWith(`${name}=`) && token.length > name.length + 1) {
+        values.push(token.slice(name.length + 1));
       }
     }
   }
@@ -115,5 +106,5 @@ export function dockerCompatGatewayMatchesTarget(
   const port = Number(target.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
   if (target.name && target.name !== resolveGatewayName(port)) return false;
-  return cliFlagValue(tokens, ["--name"]) === gatewayCompatContainerNameForPort(port);
+  return cliFlagValue(tokens, ["--name"]) === resolveGatewayCompatContainerName(port);
 }

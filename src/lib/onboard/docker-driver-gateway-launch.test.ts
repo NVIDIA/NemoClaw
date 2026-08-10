@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./docker-driver-gateway-config";
 import {
   buildDockerDriverGatewayConfigToml,
   buildDockerDriverGatewayLaunch,
@@ -100,10 +103,20 @@ describe("docker-driver-gateway-launch", () => {
     );
 
     expect(toml).toContain('compute_drivers = ["docker"]');
+    expect(toml).toContain('sandbox_namespace = "nemoclaw"');
     expect(toml).toContain('grpc_endpoint = "https://127.0.0.1:8080"');
     expect(toml).toContain('network_name = "openshell-docker"');
     expect(toml).toContain('supervisor_image = "ghcr.io/nvidia/openshell/supervisor:0.0.44"');
     expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
+  });
+
+  it("assigns different sandbox namespaces to different gateway state roots (#8663)", () => {
+    const defaultNamespace = gatewayIdForStateDir("/tmp/openshell-docker-gateway");
+    const alternateNamespace = gatewayIdForStateDir("/tmp/openshell-docker-gateway-18080");
+
+    expect(defaultNamespace).toBe("nemoclaw-openshell-docker-gateway");
+    expect(alternateNamespace).toBe("nemoclaw-openshell-docker-gateway-18080");
+    expect(defaultNamespace).not.toBe(alternateNamespace);
   });
 
   it("writes the exact rootless socket only for the Podman driver", () => {
@@ -156,6 +169,9 @@ describe("docker-driver-gateway-launch", () => {
       expect(identity.launch?.mode).toBe("host");
       expect(identity.driftGatewayBin).toBe(gatewayBin);
       expect(identity.desiredEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(sandboxBin);
+      expect(identity.desiredEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe(
+        gatewayIdForStateDir(dir),
+      );
       expect(identity.desiredEnv.OPENSHELL_GATEWAY_CONFIG).toBe(
         path.join(dir, "openshell-gateway.toml"),
       );

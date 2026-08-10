@@ -14,7 +14,6 @@ import {
 export {
   buildOwnedHostGatewayArgv0,
   canonicalGatewayTargetMatches,
-  gatewayCompatContainerNameForPort,
   type OpenShellGatewayProcessTarget,
 } from "./gateway-process-target-identity";
 

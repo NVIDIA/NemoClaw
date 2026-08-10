@@ -54,7 +54,6 @@ export interface ReapHostGatewayBeforeLaunchOptions {
 function emptyStopResult(): StopHostGatewayResult {
   return {
     failed: [],
-    ownershipFailures: [],
     skippedDeadPids: [],
     skippedNonMatchingPids: [],
     stopped: [],
